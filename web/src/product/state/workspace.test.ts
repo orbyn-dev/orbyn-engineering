@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import * as projectImages from "../projects/projectImages";
 import { projects } from "../../../mock/fixtures";
-import type { Approval, Project } from "../../api/types";
+import type { Approval, Project, Thread } from "../../api/types";
 import { useWorkspace } from "./workspace";
 
 const approval = (id: string) => ({ id }) as Approval;
@@ -24,7 +24,6 @@ describe("workspace store", () => {
     const spy = vi.spyOn(api, "projects").mockReturnValueOnce(stale.promise);
     try {
       const refresh = useWorkspace.getState().refreshProjects();
-      expect(useWorkspace.getState().projects.loading).toBe(true);
       useWorkspace.getState().putProject(committed);
       const loadingAtCommit = useWorkspace.getState().projects.loading;
       stale.resolve([original, peer]);
@@ -42,7 +41,6 @@ describe("workspace store", () => {
     const spy = vi.spyOn(api, "projects").mockReturnValueOnce(stale.promise);
     try {
       const refresh = useWorkspace.getState().refreshProjects();
-      expect(useWorkspace.getState().projects.loading).toBe(true);
       useWorkspace.getState().dropProject(removed.id);
       const loadingAtCommit = useWorkspace.getState().projects.loading;
       stale.resolve([removed, peer]);
@@ -67,6 +65,31 @@ describe("workspace store", () => {
     first.resolve([approval("old")]);
     await a;
     expect(useWorkspace.getState().approvals.data?.map((x) => x.id)).toEqual(["new"]);
+    spy.mockRestore();
+  });
+
+  it("keeps the thread object when a single-thread refresh finds nothing new", async () => {
+    const thread = { id: "t-same", title: "Same" } as Thread;
+    useWorkspace.setState({ threads: { "t-same": thread }, missingThreads: {} });
+    const before = useWorkspace.getState().threads;
+    const spy = vi.spyOn(api, "thread").mockResolvedValue({ ...thread });
+    await useWorkspace.getState().refreshThread("t-same");
+    expect(useWorkspace.getState().threads).toBe(before);
+    expect(useWorkspace.getState().threads["t-same"]).toBe(thread);
+    spy.mockRestore();
+  });
+
+  it("replaces a changed thread and keeps its neighbours", async () => {
+    const thread = { id: "t-two", title: "Before" } as Thread;
+    const other = { id: "t-three", title: "Other" } as Thread;
+    useWorkspace.setState({ threads: { "t-two": thread, "t-three": other }, missingThreads: {} });
+    const before = useWorkspace.getState().threads;
+    const spy = vi.spyOn(api, "thread").mockResolvedValue({ ...thread, title: "After" });
+    await useWorkspace.getState().refreshThread("t-two");
+    const after = useWorkspace.getState().threads;
+    expect(after).not.toBe(before);
+    expect(after["t-two"]?.title).toBe("After");
+    expect(after["t-three"]).toBe(other);
     spy.mockRestore();
   });
 
@@ -197,5 +220,113 @@ describe("a run that ends", () => {
     } finally {
       workspace.mockRestore();
     }
+  });
+});
+
+describe("an unchanged poll", () => {
+  const project: Project = { ...projects[0]!, metadata_revision: "4" };
+  const thread = { id: "t1", project_id: project.id, title: "One", updated_at: "2026-11-10T00:00:00.000Z" } as unknown as Thread;
+  const online = () => {
+    useWorkspace.setState({
+      projects: { data: [project], error: null, loading: false },
+      threadIds: { [project.id]: { data: ["t1"], error: null, loading: false } },
+      threads: { t1: thread },
+      approvals: { data: [], error: null, loading: false },
+    });
+    const state = useWorkspace.getState();
+    return { projects: state.projects, threads: state.threads, threadIds: state.threadIds, approvals: state.approvals };
+  };
+  const poll = (answer: { projects: Project[]; threads: Thread[]; approvals: Approval[] }) => [
+    vi.spyOn(api, "projects").mockResolvedValue(answer.projects),
+    vi.spyOn(api, "threads").mockResolvedValue(answer.threads),
+    vi.spyOn(api, "allThreads").mockResolvedValue([]),
+    vi.spyOn(api, "pendingApprovals").mockResolvedValue(answer.approvals),
+  ];
+
+  it("leaves every object the sidebar reads at the same identity", async () => {
+    const before = online();
+    const spies = poll({ projects: [{ ...project }], threads: [{ ...thread }], approvals: [] });
+    try {
+      await useWorkspace.getState().refreshAll({ quick: true });
+      const after = useWorkspace.getState();
+      expect(after.projects).toBe(before.projects);
+      expect(after.threads).toBe(before.threads);
+      expect(after.threadIds).toBe(before.threadIds);
+      expect(after.approvals).toBe(before.approvals);
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  it("replaces the thread whose content changed and keeps the other", async () => {
+    online();
+    const second = { ...thread, id: "t2", title: "Two" };
+    useWorkspace.setState((state) => ({ threads: { ...state.threads, t2: second } }));
+    const before = useWorkspace.getState().threads;
+    const spies = poll({ projects: [{ ...project }], threads: [{ ...thread, title: "Renamed" }, { ...second }], approvals: [] });
+    try {
+      await useWorkspace.getState().refreshAll({ quick: true });
+      const after = useWorkspace.getState().threads;
+      expect(after).not.toBe(before);
+      expect(after.t1?.title).toBe("Renamed");
+      expect(after.t2).toBe(second);
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  it("shows loading only while there is nothing on screen", async () => {
+    useWorkspace.setState({ projects: { data: null, error: null, loading: false } });
+    const first = deferred<Project[]>();
+    const spy = vi.spyOn(api, "projects").mockReturnValueOnce(first.promise);
+    try {
+      const refresh = useWorkspace.getState().refreshProjects();
+      expect(useWorkspace.getState().projects.loading).toBe(true);
+      first.resolve([project]);
+      await refresh;
+      const second = deferred<Project[]>();
+      spy.mockReturnValueOnce(second.promise);
+      const again = useWorkspace.getState().refreshProjects();
+      expect(useWorkspace.getState().projects.loading).toBe(false);
+      second.resolve([{ ...project }]);
+      await again;
+      expect(useWorkspace.getState().projects).toEqual({ data: [project], error: null, loading: false });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps an event's read from taking over a running one, and reads once that one ends", async () => {
+    const forced = deferred<never>();
+    const calls: boolean[] = [];
+    const spy = vi.spyOn(api, "workspace").mockImplementation(((_signal?: AbortSignal, refresh?: boolean) => {
+      calls.push(refresh === true);
+      return calls.length === 1 ? forced.promise : Promise.reject(new Error("quiet failure"));
+    }) as never);
+    useWorkspace.setState({ managed: { data: null, error: null, loading: false } });
+    const running = useWorkspace.getState().refreshManaged({ force: true });
+    expect(useWorkspace.getState().managed.loading).toBe(true);
+    await useWorkspace.getState().refreshManaged({ quiet: true });
+    expect(calls).toEqual([true]);
+    forced.resolve({ marker: 1 } as never);
+    await running;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The person's read landed and stays; the quiet read ran after it and its failure showed nothing.
+    expect(calls).toEqual([true, false]);
+    expect(useWorkspace.getState().managed).toEqual({ data: { marker: 1 }, error: null, loading: false });
+    spy.mockRestore();
+  });
+
+  it("shows the error of a forced read that fails, even when an event asked meanwhile", async () => {
+    let failForced!: (error: Error) => void;
+    const forced = new Promise<never>((_resolve, reject) => (failForced = reject));
+    const spy = vi.spyOn(api, "workspace").mockReturnValueOnce(forced).mockResolvedValue({ marker: 2 } as never);
+    useWorkspace.setState({ managed: { data: null, error: null, loading: false } });
+    const running = useWorkspace.getState().refreshManaged({ force: true });
+    await useWorkspace.getState().refreshManaged({ quiet: true });
+    failForced(new Error("forced failure"));
+    await running;
+    expect(useWorkspace.getState().managed.error).not.toBeNull();
+    spy.mockRestore();
   });
 });

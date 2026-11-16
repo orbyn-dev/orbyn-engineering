@@ -14,7 +14,7 @@ let projectId = "";
 
 
 const box = (page: Page) => page.getByRole("textbox", { name: /^Message/ });
-const details = (page: Page) => page.getByRole("complementary", { name: "Thread details" });
+const details = (page: Page) => page.getByRole("dialog", { name: "Thread details" });
 const row = (page: Page, id: string) => page.locator(`li[data-thread-item="${id}"]`);
 const fresh = async (page: Page, prompt: string) => {
   await page.goto(`${service.page}#/new/${projectId}`);

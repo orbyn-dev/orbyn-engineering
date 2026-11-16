@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { readKeybindings, saveKeybinding } from "../api";
 import { inDesktopApp } from "../api";
-import { commandLabel, whenPhrase } from "./commandLabels";
-import { formatShortcut, runHandlers } from "../../../product/shell/shortcuts";
+import { commandLabel, whenClause, whenPhrase } from "./commandLabels";
+import { formatShortcut, runHandlers, shortcutForEvent } from "../../../product/shell/shortcuts";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { AlertCircle, MoreHorizontal, Pencil, Search } from "lucide-react";
 import { IconButton } from "../../../ui/controls";
@@ -31,20 +31,13 @@ export function KeybindingsSection() {
   const pushToast = useUi((state) => state.pushToast);
 
   const capture = (event: React.KeyboardEvent, command: string, when: string | null) => {
-    if (["Meta", "Control", "Shift", "Alt"].includes(event.key)) return;
+    const key = shortcutForEvent(event);
+    if (key === null) return;
     event.preventDefault();
     if (event.key === "Escape") {
       setEditing(null);
       return;
     }
-    const key = [
-      event.metaKey || event.ctrlKey ? "mod" : null,
-      event.altKey ? "alt" : null,
-      event.shiftKey ? "shift" : null,
-      event.key.toLowerCase(),
-    ]
-      .filter(Boolean)
-      .join("+");
     setEditing(null);
     saveKeybinding({ key, command, when, remove: false }).then(
       (next) => {
@@ -94,7 +87,7 @@ export function KeybindingsSection() {
           {view.data.conflicts.map((conflict) => (
             <p key={`${conflict.key}:${conflict.when ?? ""}`} className="banner banner-warn">
               <AlertCircle size={13} aria-hidden />
-              {conflict.commands.map(commandLabel).join(" and ")} both use {keyCaps(conflict.key).join("")}{conflict.when ? ` when ${conflict.when}` : ""}.
+              {conflict.commands.map(commandLabel).join(" and ")} both use {keyCaps(conflict.key).join("")}{whenClause(conflict.when) ? ` ${whenClause(conflict.when)}` : ""}.
             </p>
           ))}
           <div className="set-tbl" role="table" aria-label="Keybindings">
@@ -143,7 +136,7 @@ export function KeybindingsSection() {
               }]}
             />
           ) : null}
-          <p className="muted">{view.data.path}</p>
+          <div className="set-stored"><span className="t3">Stored in</span><span className="set-path mono" title={view.data.path}>{view.data.path}</span></div>
         </>
       )}
     </>

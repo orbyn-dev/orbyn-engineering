@@ -1,0 +1,48 @@
+/* The live Taskboard. Values are the design's own (Crew Designs, the board frames), on the app's tokens. */
+.bd-root { display: flex; flex-direction: column; gap: 12px; padding: 12px 20px 20px; min-width: 0; color: var(--color-textSoft); font-size: var(--text-meta); }
+.bd-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; container-type: inline-size; }
+.bd-crew { display: flex; align-items: center; gap: 8px; color: var(--color-muted); font-size: 12px; }
+.bd-crew select { height: 26px; max-width: 360px; border: 0; border-radius: 8px; background: var(--color-sunken); color: var(--color-text); font: inherit; font-size: 12px; padding: 0 10px; }
+.bd-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.bd-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--color-sunken); color: var(--color-textSoft); font: inherit; font-size: 12px; cursor: pointer; }
+.bd-chip[aria-pressed="true"] { background: var(--color-selected); color: var(--color-text); }
+.bd-chip:focus-visible, .bd-head:focus-visible, .bd-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.bd-note-line { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--color-sunken); color: var(--color-text); font-size: 12px; }
+
+.bd-cols { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; min-width: 0; padding-bottom: 4px; }
+.bd-col { display: flex; flex-direction: column; gap: 8px; flex: 1 0 200px; min-width: 200px; }
+.bd-col[data-rail] { flex: 0 0 40px; min-width: 40px; align-items: center; background: var(--color-sunken); border-radius: var(--radius-xl); padding: 10px 0; gap: 6px; }
+.bd-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: inherit; font: inherit; padding: 0 2px; cursor: pointer; text-align: left; }
+.bd-col[data-rail] .bd-head { flex-direction: column-reverse; width: auto; }
+.bd-col[data-rail] .bd-st { writing-mode: vertical-rl; height: auto; padding: 8px 0; }
+.bd-st { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 500; white-space: nowrap; background: var(--color-sunken); color: var(--color-textSoft); box-shadow: inset 0 0 0 1px var(--color-border); }
+.bd-info { background: var(--color-blueSoft); color: var(--color-blue); box-shadow: none; }
+.bd-ok { background: var(--color-greenSoft); color: var(--color-green); box-shadow: none; }
+.bd-warn { background: var(--color-warnSoft); color: var(--color-warnText); box-shadow: inset 0 0 0 1px var(--color-warnBorder); }
+.bd-n { margin-left: auto; color: var(--color-muted); font-family: var(--font-mono); font-size: 11px; }
+.bd-col[data-rail] .bd-n { margin-left: 0; }
+.bd-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid var(--color-borderStrong); border-top-color: var(--color-textSoft); display: inline-block; animation: spin 900ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { .bd-spin { animation: none; } }
+
+.bd-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.bd-card { background: var(--color-surface); border-radius: var(--radius-11); box-shadow: 0 0 0 1px var(--color-borderStrong); padding: 9px 10px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--color-textSoft); min-width: 0; overflow-wrap: anywhere; }
+.bd-card[data-needs] { background: var(--color-warnSoft); box-shadow: 0 0 0 1px var(--color-warnBorder); }
+.bd-k { display: flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 11.5px; }
+.bd-k b { font-weight: 500; color: var(--color-textSoft); }
+.bd-t { color: var(--color-text); line-height: 1.35; font-weight: 500; font-size: 12.5px; }
+.bd-e { display: flex; flex-direction: column; color: var(--color-textSoft); min-width: 0; }
+.bd-e b { font-weight: 500; color: var(--color-text); }
+.bd-e span { color: var(--color-muted); }
+.bd-ln { color: var(--color-muted); font-size: 11.5px; }
+.bd-amber { color: var(--color-warnText); }
+.bd-more { margin-left: auto; display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; background: none; color: var(--color-muted); border-radius: 7px; cursor: pointer; }
+.bd-more:hover { background: var(--color-sunken); }
+.bd-note { margin-left: 6px; color: var(--color-muted); font-size: 11px; }
+
+/* Below 640 px: a list of state groups, one under the other, with the same headers. */
+@container (max-width: 640px) {
+  .bd-cols { flex-direction: column; overflow-x: visible; }
+  .bd-col, .bd-col[data-rail] { flex: none; min-width: 0; width: 100%; align-items: stretch; background: none; padding: 0; }
+  .bd-col[data-rail] .bd-head { flex-direction: row; width: 100%; }
+  .bd-col[data-rail] .bd-st { writing-mode: horizontal-tb; padding: 0 9px; height: 22px; }
+}

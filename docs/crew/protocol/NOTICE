@@ -1,0 +1,13 @@
+Orbyn Crew Protocol
+Copyright 2026 Anh Dang
+
+This folder (the specification, the JSON Schemas, their examples and the
+conformance cases) is licensed under the Apache License, Version 2.0; see
+LICENSE in this folder. The rest of this repository, including the Orbyn
+Engineering app and the test code that runs these cases, is licensed under the
+PolyForm Strict License 1.0.0; see the LICENSE at the repository root.
+
+The protocol builds on, and is designed to work with, standards owned by other
+parties: the Model Context Protocol, the Agent2Agent protocol, the Agent Client
+Protocol, JSON Schema (draft 2020-12), in-toto attestations and RFC 8259
+(JSON). It copies no text or code from them.

@@ -1,0 +1,56 @@
+import { useEffect, useId, useState } from "react";
+import { CREW_TABS as TABS, routeHref, type CrewTab } from "../../../../product/state/route";
+import { PageBar } from "../../../../product/ui/PageBar";
+import { BoardView } from "../../board/BoardView";
+import { useBoardFocus } from "../../board/focus";
+import { LanesView } from "../../map/LanesView";
+import { MapView } from "../../map/MapView";
+import { CrewTabs } from "../../flow/live/CrewTabs";
+import { FlowView } from "../../flow/live/FlowView";
+import { NeedsYouInbox } from "../../needsyou/NeedsYouInbox";
+import { ApprovalsTab } from "./ApprovalsTab";
+import { BackgroundTab } from "./Background";
+import { FirstRunBanner } from "./FirstRunBanner";
+import { Chip } from "./parts";
+import { TrustTab } from "./Trust";
+import { useCrewPreview } from "./useCrew";
+
+const LABEL: Record<CrewTab, string> = { approvals: "Approvals", trust: "Trust", background: "Background", inbox: "Inbox", flow: "Flow", board: "Board", map: "Map", lanes: "Lanes" };
+export const CREW_TABS: { id: CrewTab; label: string }[] = TABS.map((id) => ({ id, label: LABEL[id] }));
+
+/**
+ * The Crew screens this slice owns: the approval log, trust and background crews. Nothing is drawn while
+ * Crew Preview is off. The other Crew tabs (Flow, Review and the rest) are built elsewhere and join this list.
+ */
+export function CrewSurface({ tab: opened, task }: { tab: CrewTab; task?: string }) {
+  const on = useCrewPreview();
+  // The tab is the screen's own state: the address follows it without a route change, so the tab list keeps focus.
+  const [tab, setTab] = useState(opened);
+  const [locatedTask, setLocatedTask] = useState(task);
+  const select = (next: CrewTab) => {
+    setTab(next);
+    setLocatedTask(undefined);
+    window.history.replaceState(window.history.state, "", routeHref({ name: "crew", tab: next }));
+  };
+  const id = useId();
+  // A map node asked for its Board card: the Board tab opens (a click on its own link, never a load).
+  const wantsBoard = useBoardFocus((state) => state.task !== null);
+  useEffect(() => {
+    if (wantsBoard && task === undefined) select("board");
+    // `select` is rebuilt every render and only sets this screen's own tab.
+  }, [wantsBoard, task]);
+  if (!on) return null;
+  return (
+    <div className="ap-surface">
+      <PageBar>
+        <h1>Crew</h1>
+        <Chip tone="plain">Preview</Chip>
+      </PageBar>
+      <FirstRunBanner />
+      <CrewTabs tabs={CREW_TABS} active={tab} onSelect={select} base={id} />
+      <div className="ap-panel" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${tab}`}>
+        {tab === "approvals" ? <ApprovalsTab /> : tab === "trust" ? <TrustTab /> : tab === "inbox" ? <NeedsYouInbox /> : tab === "flow" ? <FlowView key={locatedTask ?? "list"} task={locatedTask} /> : tab === "board" ? <BoardView /> : tab === "map" ? <MapView /> : tab === "lanes" ? <LanesView /> : <BackgroundTab />}
+      </div>
+    </div>
+  );
+}

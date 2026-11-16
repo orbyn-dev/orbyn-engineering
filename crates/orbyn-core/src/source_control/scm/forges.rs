@@ -6,9 +6,6 @@ use crate::source_control::forge::{self, ALL_FORGES, Forge};
 use crate::source_control::git::git;
 use orbyn_contracts::{ForgeStatus, PublishProject};
 use std::path::Path;
-use std::time::{Duration, Instant};
-
-pub(super) const FORGES_TTL: Duration = Duration::from_secs(60);
 
 impl Core {
     /// Creates the remote and pushes, through the origin-less project's chosen forge.
@@ -47,29 +44,24 @@ impl Core {
         forge::publish(forge, cwd, name, request.private).await
     }
 
-    /// Every forge and what its CLI says about itself, reused for a minute. A sign-in
-    /// happens in the CLI, outside this service, so `rescan` asks the CLIs again; that
-    /// also finds one installed a moment ago.
+    /// Every forge and what its CLI says about itself. The last answer is served at once
+    /// and read again in the background after a minute. A sign-in happens in the CLI,
+    /// outside this service, so `rescan` asks the CLIs again and waits; that also finds
+    /// one installed a moment ago.
     pub async fn forges(&self, rescan: bool) -> Vec<ForgeStatus> {
-        if !rescan && let Some(known) = self.known_forges() {
-            return known;
+        if rescan {
+            // A rescan is how a switch of forge account is picked up, and nothing read
+            // through the old one still holds.
+            self.scm_reads.everything_changed();
         }
-        let reads: Vec<_> = ALL_FORGES.into_iter().map(forge::forge_status).collect();
-        let statuses = futures_util::future::join_all(reads).await;
-        *self
-            .forge_statuses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((Instant::now(), statuses.clone()));
-        statuses
-    }
-
-    pub(super) fn known_forges(&self) -> Option<Vec<ForgeStatus>> {
-        let known = self
-            .forge_statuses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (at, statuses) = known.as_ref()?;
-        (at.elapsed() < FORGES_TTL).then(|| statuses.clone())
+        let read = || async {
+            let reads: Vec<_> = ALL_FORGES.into_iter().map(forge::forge_status).collect();
+            Ok(futures_util::future::join_all(reads).await)
+        };
+        self.scm_reads
+            .forges
+            .get(&crate::util::swr::key(&["forges"]), "forges", rescan, read)
+            .await
+            .unwrap_or_default()
     }
 }

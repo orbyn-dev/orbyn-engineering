@@ -1,0 +1,19 @@
+{
+  "type": "fact",
+  "v": 0,
+  "id": "sha256:a946eb95726a4a2658de3ebeba0e1d0eb658944587f89d156fa460335035cb1b",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "codex",
+    "member": "worker-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "key": "crew-demo.build-time",
+  "class": "observation",
+  "value": "about 40 seconds",
+  "rev": 0,
+  "base_rev": 1,
+  "evidence": []
+}

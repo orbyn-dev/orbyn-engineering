@@ -109,6 +109,19 @@ impl RunManager {
             at_checkout = engine_cwd == checkout;
             start = engine_cwd;
         }
+        let confine = self.confinement_for(
+            thread,
+            driver.as_ref(),
+            &super::confine::Launch {
+                library: &root,
+                checkout: &checkout,
+                start: &start,
+                run_dir,
+                resume: resume.as_deref(),
+            },
+        )?;
+        // A process started ahead of this turn was not started under the restriction.
+        let warm = if confine.is_some() { None } else { warm };
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -176,6 +189,7 @@ impl RunManager {
             resume,
             mcp_url,
             run_dir: run_dir.to_path_buf(),
+            confine,
         };
         let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
         let mut warm = warm;
@@ -411,6 +425,12 @@ impl RunManager {
                         EngineEvent::Item(item) => {
                             if let Err(error) = self.store.record_item(&scope.run_id, &item) {
                                 tracing::debug!(%error, "could not keep an engine item");
+                            }
+                            // A guarded Crew command the engine reports finished gets its exit status in the ledger.
+                            if item.exit_code.is_some()
+                                && let Some(core) = self.crew.get().and_then(std::sync::Weak::upgrade)
+                            {
+                                core.guard_exit_seen(&scope.thread_id, &item);
                             }
                         }
                         EngineEvent::Files(paths) => {

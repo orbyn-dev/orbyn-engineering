@@ -8,7 +8,9 @@ app updates. Its rules are in
 ## Contract
 
 - It runs `orbynd` with `--parent-stdin` and talks to it over that process's
-  stdin and stdout. The product UI never calls the shell directly.
+  stdin and stdout. The product UI calls the shell in one place only: `crew_presence`, which
+  shows the native dialog for approving one held Crew command
+  (`src/presence.rs`).
 - The product UI comes from `build/ui`, which `npm run prepare-bundle` fills.
   `loader/index.html` is the embedded startup page, the only document allowed to
   call `restart_core`. The product UI restarts the service through the service's
@@ -18,6 +20,14 @@ app updates. Its rules are in
 ## Consumers
 
 People, through the installed app. Nothing in this repository imports it.
+
+## Testing
+
+`cargo test` in `src-tauri` runs the shell's unit tests with no window. The approval dialog
+itself cannot run there; try it by hand in a built app (`npm run dev` in `desktop`) with a held
+command. A fresh checkout needs `build/ui`, `build/library` and placeholder
+`src-tauri/binaries/orbynd-<target>` and `orbyn-<target>` files (all ignored by Git) before it
+compiles; `npm run prepare-bundle` makes the real ones.
 
 ## Known limitations
 

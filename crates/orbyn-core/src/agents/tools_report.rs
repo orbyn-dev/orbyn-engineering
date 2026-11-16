@@ -84,7 +84,8 @@ pub(crate) fn redact(text: &str) -> String {
             !bare.is_empty() && (lower == "bearer" || (lower.ends_with(':') && names_secret));
         out.push(format!("{cleaned}{tail}"));
     }
-    out.concat()
+    // Whatever the word rules missed, a recognised secret format never gets through.
+    crate::redaction::Redactor::locked().replace_each(&out.concat(), "[hidden]")
 }
 
 /// The first sentence or line of `text`, cut to `max` characters.

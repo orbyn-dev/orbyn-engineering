@@ -3,6 +3,7 @@ import { api, queryProjectScopes } from "../api";
 import type { Project, ServerSettings, Thread } from "../../../api/types";
 import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode";
 import type { ProjectScopeCatalog } from "../../../generated/ProjectScopeCatalog";
+import { readKept, writeKept } from "../../../lib/keptData";
 
 /** True while Mod is held on its own, when number badges show on the first rows. */
 export function useJumpHeld() {
@@ -26,20 +27,15 @@ export function useJumpHeld() {
 export const searchFields = (thread: Thread, project: string) =>
   `${thread.title} ${project} ${thread.worktree?.branch ?? ""}`.toLowerCase();
 
+const SETTINGS_KEY = "sidebar:settings";
+const CATALOG_KEY = "sidebar:grouping-catalog";
+
 export function useSidebarCatalog(
   list: Project[],
   projectFolders: boolean,
   projectGrouping: ProjectGroupingMode,
   projectGroupingOverrides: Record<string, ProjectGroupingMode>,
 ) {
-  const [settings, setSettings] = useState<ServerSettings | null>(null);
-  const [groupingCatalog, setGroupingCatalog] = useState<ProjectScopeCatalog | null>(null);
-  useEffect(() => {
-    const abort = new AbortController();
-    api.settings(abort.signal).then(setSettings, () => undefined);
-    return () => abort.abort();
-  }, []);
-  const presets = useMemo(() => settings?.snooze_presets ?? [], [settings]);
   const groupingOverrides = useMemo(
     () =>
       Object.entries(projectGroupingOverrides)
@@ -54,6 +50,19 @@ export function useSidebarCatalog(
   const overridesKey = JSON.stringify(groupingOverrides);
   // A renamed, added or re-iconed project changes the catalog's labels and members too.
   const projectsKey = list.map((project) => `${project.id}:${project.name}:${project.metadata_revision ?? ""}`).join("|");
+  const catalogKey = `${CATALOG_KEY}:${projectFolders}:${projectGrouping}:${overridesKey}:${projectsKey}`;
+  // A sidebar that mounts again (a drawer, reading mode) draws what it last read at once.
+  const [settings, setSettings] = useState<ServerSettings | null>(() => readKept<ServerSettings>(SETTINGS_KEY) ?? null);
+  const [groupingCatalog, setGroupingCatalog] = useState<ProjectScopeCatalog | null>(() => readKept<ProjectScopeCatalog>(catalogKey) ?? null);
+  useEffect(() => {
+    const abort = new AbortController();
+    api.settings(abort.signal).then((read) => {
+      writeKept(SETTINGS_KEY, read);
+      setSettings(read);
+    }, () => undefined);
+    return () => abort.abort();
+  }, []);
+  const presets = useMemo(() => settings?.snooze_presets ?? [], [settings]);
   useEffect(() => {
     // Separate grouping with no overrides is one folder per project, which needs no catalog.
     if (!projectFolders || (projectGrouping === "separate" && overridesKey === "[]")) {
@@ -64,11 +73,14 @@ export function useSidebarCatalog(
     queryProjectScopes(
       { recipe: { mode: projectGrouping, overrides: JSON.parse(overridesKey) as typeof groupingOverrides } },
       abort.signal,
-    ).then(setGroupingCatalog, () => {
+    ).then((read) => {
+      writeKept(catalogKey, read);
+      setGroupingCatalog(read);
+    }, () => {
       if (!abort.signal.aborted) setGroupingCatalog(null);
     });
     return () => abort.abort();
-  }, [overridesKey, projectsKey, projectFolders, projectGrouping]);
+  }, [overridesKey, projectsKey, projectFolders, projectGrouping, catalogKey]);
   return { presets, groupingCatalog };
 }
 

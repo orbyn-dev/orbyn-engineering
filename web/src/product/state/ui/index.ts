@@ -1,8 +1,9 @@
 // Front door: the UI store, its saved preferences and the theme applier.
+export { fileName, fileTabId, parseFileTab, type FileTarget } from "./fileTab";
 export { applyTheme, resolveTheme } from "./theme";
 export { useUi } from "./store";
+export { defaults as defaultPrefs } from "./defaults";
 export {
-  CLOSED_AT_FIRST,
   DEFAULT_SIDEBAR_WIDTH,
   DRAFT_LAYOUT,
   LAYOUT_CHOICES,
@@ -13,6 +14,12 @@ export {
   type LayoutChoice,
   type PaletteStart,
   type RightTab,
+  type BuiltinTab,
+  type FileTabId,
+  type LeftBarView,
+  isFileTab,
+  defaultOrder,
+  isPanelTab,
   type StashedPrompt,
   type ThemeChoice,
   type ThreadLayout,

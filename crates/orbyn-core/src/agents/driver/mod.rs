@@ -7,7 +7,7 @@ pub mod agui;
 pub mod claude;
 pub mod codex;
 pub mod diagnostics;
-mod pipes;
+pub(crate) mod pipes;
 pub mod rpc;
 pub mod terminal;
 
@@ -108,6 +108,34 @@ pub struct RunSpec {
     pub mcp_url: Option<String>,
     /// Private scratch directory for this run, removed at run end.
     pub run_dir: PathBuf,
+    /// Set for a crew worker: the engine process starts under this restriction. A driver
+    /// that cannot apply it must not start the run.
+    pub confine: Option<crate::host::confine::Confinement>,
+}
+
+/// A separate, ephemeral approval turn. It has no checkout, session, attachments,
+/// MCP binding or tools. Budgets distinguish the provider's output cap and
+/// estimated-spend stop from post-usage acceptance limits. Neither total input
+/// usage nor billed spend has a hard pre-spend ceiling.
+#[derive(Clone, Debug)]
+pub struct ApprovalSpec {
+    pub run_id: String,
+    pub thread_id: String,
+    pub prompt: String,
+    pub family: String,
+    pub model: String,
+    pub effort: Option<String>,
+    pub options: BTreeMap<String, String>,
+    /// Version obtained by the registry's ordinary status path, never inferred.
+    pub engine_version: Option<String>,
+    pub deadline: std::time::Instant,
+    pub max_output_tokens: u32,
+    /// Reject an answer whose reported total usage exceeds this; usage may
+    /// already have been spent before it is reported.
+    pub max_reported_tokens: u64,
+    /// Provider estimated-spend stop, which can overshoot. Core also rejects a
+    /// completed answer reporting estimated cost above this amount.
+    pub estimated_spend_stop_usd: f64,
 }
 
 /// Historical replay captured without admitting a run or sending a prompt.
@@ -305,6 +333,32 @@ impl RunKind {
 #[async_trait]
 pub trait EngineDriver: Send + Sync {
     fn descriptor(&self) -> EngineDescriptor;
+
+    /// Only true when `start_approval` implements the complete tool-free,
+    /// bounded-turn contract. Unsupported providers fail closed.
+    fn supports_approval(&self) -> bool {
+        false
+    }
+
+    fn supports_approval_version(&self, _version: Option<&str>) -> bool {
+        self.supports_approval()
+    }
+
+    /// Bind a requested model to an exact approval receipt identity. Native
+    /// drivers may require effective-run metadata to resolve mutable aliases.
+    fn approval_model(&self, selected: &str, _effective: Option<&str>) -> Option<String> {
+        Some(selected.to_owned())
+    }
+
+    async fn start_approval(
+        &self,
+        _spec: ApprovalSpec,
+        _events: mpsc::Sender<EngineEvent>,
+    ) -> Result<RunHandle> {
+        Err(crate::error::CoreError::Unsupported(
+            "This engine cannot run a bounded tool-free approval.".into(),
+        ))
+    }
 
     /// Local-process drivers resolve their configured executable here without
     /// starting it. Endpoint and synthetic drivers have no executable to check.
@@ -611,7 +665,16 @@ pub(crate) struct ProbeDir(PathBuf);
 
 impl ProbeDir {
     pub(crate) fn new() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("orbyn-probe-{}", crate::util::new_id()));
+        Self::create(std::env::temp_dir().join(format!("orbyn-probe-{}", crate::util::new_id())))
+    }
+
+    /// A private folder at `path`, for a process that holds a run's token before the run
+    /// exists. `path` is under Orbyn's runs folder, never a shared temporary one: the
+    /// worker profile denies the data folder, and a start-up sweep removes what is left.
+    pub(crate) fn create(path: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         let builder = {

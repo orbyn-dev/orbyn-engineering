@@ -12,6 +12,10 @@ export interface PreferenceRow {
   key: string;
   title: string;
   description?: string;
+  /** A description that follows another row's current value, given any row's value by key. Wins over `description`. */
+  describe?(valueOf: (key: string) => unknown): string | undefined;
+  /** What an empty text field says. */
+  placeholder?: string;
   /** Only where the preference response describes the whole inheritance chain. */
   inheritance?: boolean;
   /** Value and label, for a fixed choice. */

@@ -4,6 +4,8 @@ import { SseParser } from "./sse";
 import type { ShellAction, ShellEvent } from "./types";
 
 const RETRY_MS = 3000;
+/** A stream down this long may have missed a change; a shorter gap is a retry. */
+const REAL_GAP_MS = 2000;
 /** A stream that stayed up this long was healthy, whatever it delivered. */
 const STABLE_MS = 5000;
 
@@ -18,6 +20,47 @@ export async function readShellStatus(signal?: AbortSignal) {
   return status;
 }
 
+/** What the desktop shell hands a page: the Tauri bridge the window has. No other module reads it for this. */
+type Bridge = { invoke?: (command: string, args?: Record<string, unknown>) => unknown };
+
+const bridge = (): Bridge | undefined => (window as unknown as { __TAURI_INTERNALS__?: Bridge }).__TAURI_INTERNALS__;
+
+/**
+ * True when this page can ask the desktop shell to confirm a person is there: the service says the window belongs
+ * to the desktop app, and the window has the shell's bridge. A plain browser tab has neither.
+ */
+export const canAskPresence = () => attached && typeof bridge()?.invoke === "function";
+
+/** Why the shell gave no nonce: the stable code it failed with (`cancelled`, `busy`, `timeout`, `presence_refused:<code>`, ...). */
+export class PresenceFailure extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "PresenceFailure";
+  }
+}
+
+/**
+ * Asks the person, in the desktop shell's own native dialog, to approve one held Crew command, and returns the one-time
+ * nonce the approve route needs in `x-orbyn-confirm`. This is the only shell command the page calls, and the name is not a
+ * parameter: nothing here can reach another command.
+ *
+ * The caller must call this only from the person's own click (see `approvals/presence.ts`): the dialog's default
+ * button approves, so a call the person did not make could be answered by a stray key. Nothing here retries, and the
+ * nonce is returned once and not kept, logged or put anywhere.
+ */
+export async function askPresence(holdId: string): Promise<string> {
+  const invoke = bridge()?.invoke;
+  if (!attached || typeof invoke !== "function") throw new PresenceFailure("unavailable");
+  let nonce: unknown;
+  try {
+    nonce = await invoke.call(bridge(), "crew_presence", { holdId });
+  } catch (caught) {
+    throw new PresenceFailure(typeof caught === "string" && caught ? caught : "unavailable");
+  }
+  if (typeof nonce !== "string" || nonce === "" || nonce.length > 256) throw new PresenceFailure("invalid_answer");
+  return nonce;
+}
+
 const changeListeners = new Set<() => void>();
 
 /** Calls back when the shell's facts change. Returns a stop function. */
@@ -29,6 +72,27 @@ export function onShellChange(listener: () => void): () => void {
 }
 
 export const shellChanged = () => changeListeners.forEach((listener) => listener());
+
+const dataListeners = new Set<(what: string) => void>();
+
+/**
+ * Calls back when the service answered from its last known value and a fresher one has landed,
+ * with what changed: `pulls`, `pull:<project>:<number>`, `pull-people:<project>`, `forges`,
+ * `models:<engine>` (or `models` for every engine), `workspace`, `updates`, `limits:<engine>`,
+ * `tools:<thread>`, `engine-tools:<engine>` and `health`. A listener ignores names it does not
+ * show, and reads again when it opens: a slow window can miss an event. Returns a stop function.
+ */
+export function onDataChanged(listener: (what: string) => void): () => void {
+  dataListeners.add(listener);
+  return () => {
+    dataListeners.delete(listener);
+  };
+}
+
+export const dataChanged = (what: string) => dataListeners.forEach((listener) => listener(what));
+
+/** Not a service topic: the event stream came back after a gap, so anything may have changed unheard. */
+export const ALL_DATA = "*";
 
 /** Zoom keys the native menu doesn't catch: the keypad, and Cmd with the shifted `+`. */
 export function zoomKeyAction(event: KeyboardEvent): ShellAction | null {
@@ -50,6 +114,9 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
   // was up for a while is retried within 250 ms. One that connects and closes at once (a server that accepts and
   // drops) counts as a failure, so it backs off from 250 ms up to RETRY_MS instead of being retried hot forever.
   let failures = 0;
+  // Events are dropped while the stream is down. A stream that comes back after a real gap says everything may
+  // have changed; a quick retry (a server that accepts and drops, a restart) would only make every screen read in a storm.
+  let downSince: number | null = null;
   const connect = async () => {
     let delivered = false;
     // When the stream came up, set outside the try so a stream that then errors is still measured.
@@ -62,6 +129,8 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
       });
       if (!response.ok || !response.body) throw new Error("no stream");
       upSince = Date.now();
+      if (downSince !== null && Date.now() - downSince >= REAL_GAP_MS) dataChanged(ALL_DATA);
+      downSince = null;
       const parser = new SseParser();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       for (;;) {
@@ -80,6 +149,7 @@ export function followShell(onEvent: (event: ShellEvent) => void): () => void {
       // Retried below, unless this stream was stopped.
     }
     if (controller.signal.aborted) return;
+    downSince ??= Date.now();
     const upFor = upSince === null ? 0 : Date.now() - upSince;
     // Healthy: it delivered something or stayed up for a few seconds. Then the next try is the first, not a retry.
     failures = delivered || upFor >= STABLE_MS ? 1 : failures + 1;

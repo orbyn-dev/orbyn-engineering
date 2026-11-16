@@ -24,9 +24,8 @@ export function UpdateAction({ engine }: { engine: EngineStatus }) {
       <>
         <span className="inline-status" role="status">
           <RefreshCw size={16} className="spin" aria-hidden />
-          Updating
+          Updating…
         </span>
-        <UpdateProgressLine engine={engine.id} />
       </>
     );
   }

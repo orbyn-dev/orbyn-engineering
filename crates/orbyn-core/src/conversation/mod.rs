@@ -3,6 +3,7 @@
 pub mod automations;
 pub mod checkpoints;
 pub mod composer;
+pub mod delegation;
 pub mod file_changes;
 pub mod questions;
 pub mod renders;

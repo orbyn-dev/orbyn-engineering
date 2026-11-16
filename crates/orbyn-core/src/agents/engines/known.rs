@@ -184,6 +184,19 @@ impl KnownEngine {
         files.iter().any(|file| inside_any(file, self.not_from))
     }
 
+    /// Where a program of this engine's name was found that is another CLI, when no real
+    /// one was: the file the person would otherwise expect Orbyn to start.
+    pub fn refused(&self) -> Option<std::path::PathBuf> {
+        if self.is_installed() {
+            return None;
+        }
+        self.programs.iter().find_map(|program| {
+            crate::host::process::resolve(program)
+                .filter(|command| self.is_other(command))
+                .map(|command| command.path)
+        })
+    }
+
     pub fn as_custom(&self) -> CustomEngine {
         CustomEngine {
             id: self.id.to_owned(),

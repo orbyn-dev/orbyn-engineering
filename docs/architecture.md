@@ -41,6 +41,9 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
 8. An engine that cannot ask permission is labelled unmanaged in every surface.
 9. Update only through the installer that provably owns the binary; otherwise
    show manual instructions. Never update during an active run.
+10. A read that costs a process, a forge call or an engine answers from its last known
+    value once it has one, and refreshes in the background ([Instant reads](#instant-reads)).
+    A request never waits on a slow source it has already heard from.
 
 ## Run lifecycle
 
@@ -254,7 +257,8 @@ the session's own options. It then deletes that session where the agent offers
 
 Claude's list is kept until its CLI version or login changes, which is compared at most
 once a minute. Other lists are kept five minutes, a stand-in 30 seconds, and `?refresh=
-true` always asks. A failure, a stand-in or an answer with no models never replaces a good list: the last
+true` always asks. The route answers from the last list at once and checks in the background
+([Instant reads](#instant-reads)). A failure, a stand-in or an answer with no models never replaces a good list: the last
 one stays, with `error` saying why, and a read of Claude stops at 4 MiB. With no list
 yet, a failure is reported with the list empty rather than as an error.
 
@@ -430,7 +434,8 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Subscription
 limits appear only where an engine reports them itself, as Codex does through
-`account/rateLimits/read`, cached for five minutes. Only Codex's `rateLimits`,
+`account/rateLimits/read`, answered from the last report and read again in the background after
+five minutes. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
 reset-credit offers are dropped; `?force=true` reads again and
 spends no model usage. `/api/limits` also gives one number per window length across
@@ -582,7 +587,10 @@ starts sets `fresh` and asks again for every row. If GitHub's rate limit is spen
 no details, `paused` names every withheld field as it appears on the row (`created_at`,
 `requested_reviewers`, `viewer_review_state`, `comment_count`), and details are not asked
 for again for 2 minutes, `fresh` included. `ForgeStatus.viewer` is the login the CLI is
-signed in as, read on each `GET /api/forges` rescan.
+signed in as, read on each `GET /api/forges` rescan. Pull request reads (the lists, a pull
+request's detail, checks, comments, timeline, files, revisions and stack, and the reviewer and
+label candidates) answer from the last known value and take `?refresh=1`; any write to a pull
+request drops what was kept for it ([Instant reads](#instant-reads)).
 
 A git action runs commit, push and pull request in order, logs each phase as `CUSTOM
 git.phase`, and stops at the first failure; earlier phases stand. These are the
@@ -658,7 +666,8 @@ large, so they are reduced to names, states and short descriptions inside the dr
 person can reach and plugins to the installed and enabled. Only names, states and short reasons leave the
 engine's reply: no address, token or request body. Both checks run in a neutral folder, never a project's, so no project config or server starts for a page view.
 Each driver keeps its engine-wide answer for 30 seconds and shares one read between callers, so opening
-threads does not start `claude mcp list` or a Codex app-server each time. A check that fails, or comes back
+threads does not start `claude mcp list` or a Codex app-server each time. The routes answer from the last
+list at once and ask again in the background, keyed by engine, thread and what the thread's last run reported. A check that fails, or comes back
 with an error, returns the last good list marked with that error, and `error` is never set just because a
 group is absent. There is no per-tool switch:
 the engine decides what is enabled.
@@ -1344,7 +1353,10 @@ Storage cleanup removes logs, browser artifacts and worktrees settled past their
 retention. A worktree goes only through `git worktree remove` with no force, so Git
 keeps uncommitted work. Candidates observed as owned by another live thread are
 kept. `?dry_run=true` only reports. Database repair is a `VACUUM`, refused during a run, and suggested at
-1 GiB reclaimable. The OTLP check posts an empty export and reports the status.
+1 GiB reclaimable. The OTLP check posts an empty export to the entered absolute
+HTTP(S) URL and reports its status without following redirects. Localhost and LAN
+collectors are supported. Credentials in the URL, fragments and control characters
+are refused before a request is sent.
 
 ## Environment identity
 
@@ -1533,6 +1545,139 @@ in a `sandbox=""` frame (no scripts, no same origin, no forms or top navigation)
 document starts with a `default-src 'none'` CSP, so it cannot reach the app, its token,
 the API or the network.
 
+### Explorer
+
+The left explorer reads a project's worktrees and their files without a thread. It is a
+person's view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
+and `.../worktrees/:worktree/file`. `POST .../worktrees/:worktree/file-actions` applies
+a person's create, move (including rename), or delete request without a thread.
+`orbynd` only routes; Core
+(`project::explorer`) decides. The project must be trusted like any file route
+(`403 folder_untrusted`).
+
+- **Ids, not paths.** A worktree is named by an opaque id, `wt-` and 16 hex digits of a
+  digest of its real path. The id resolves only against `git worktree list` of that
+  project (a folder outside Git has one worktree, the folder itself), so another project's
+  id, a made-up one or a path in the id field is `404 worktree not found`. A miss reads the
+  list once more, since a worktree may be new. Two projects over the same repository
+  list the same worktrees; the user trusted both.
+- **A path inside a worktree** is a relative `/` path, empty for the root. It is refused
+  (`400 invalid_input`) by spelling when it is absolute, has a `..` part, a backslash or a control
+  character, is over 4,096 bytes, or has a part that names `.git` in any case; on Windows
+  also a drive or stream (`:`), `GIT~1`, trailing dots or spaces and device names. The
+  service decodes the query once, so `%2e%2e` is `..` and refused, and a doubly encoded one
+  is only an odd file name. The path then resolves with links followed and must land inside
+  the worktree's real path, not in Git's folder or file (a linked worktree's `.git` is a file),
+  not in Orbyn's data folder when that sits inside, and, for the library project, not in its
+  `repo/`. A file opens without following a final link and the path its handle names is
+  checked again where the system can say. A folder, device, pipe or socket is never opened, and
+  the last two are not listed.
+- **Only real members.** Git's records can be rewritten by anything that writes inside a `.git`
+  folder, so the list is trusted only where the folders agree with it, and it fails closed. A bare
+  repository, and the Git folder that `git worktree list` names as the main worktree for a
+  `--separate-git-dir` or `.git`-file repository, are no checkouts and are left out (the project's
+  folder stands in when its `.git` file points there). The main checkout's `.git` must be the common
+  directory or a file pointing at it. A linked worktree is read only when its `.git` is a file
+  pointing into the repository's `worktrees/` folder and that entry points back at it. A `prunable`
+  entry, or one whose `gitdir` was redirected, is listed read-only as `missing`, never read and never
+  given a status. With no common directory to check against, or when the project's own folder is not
+  exactly one of the members (a rewritten `commondir` or project `.git` file, or one naming an ancestor repository), nothing is shown (`404`). A Git folder that sets `core.worktree`, as a submodule's does, must name the project's folder. A `--separate-git-dir` repository has no such record to check, so a project whose `.git` file is rewritten to point at another repository's separate Git folder adopts that repository's worktrees: a documented limit whose precondition is a write to the project's `.git` file (tracked in #463).
+- **A project that is a subfolder of a repository** (its own folder has no `.git`, and a member
+  checkout holds it) is rooted at that folder: one row, `is_subfolder`, not the main checkout, with
+  the holding checkout's branch and head and no change letters (`changes: "unavailable"`, since a
+  status names paths from the repository's root). Tree and file reads stay inside the folder; a
+  `..`, absolute or encoded escape, or a link leaving it, is refused as everywhere else, and the
+  repository's other worktrees are not listed. A `.git` file that names an ancestor repository is
+  still refused whole.
+- **Known exposure.** Any worktree of the repository is served to a holder of the service token
+  once the project is trusted, including other sessions' worktrees and ones no thread uses. The
+  thread file routes already reach any thread's folder; the new reach is worktrees with no
+  thread. The trust check on the project is the boundary (tracked in #463).
+- **Secrets.** The app's policy hard-denies Git's folder and Orbyn's data (the service token
+  and every thread's records), and the explorer follows it. It adds no name list such as
+  `.env`: the checkout routes show those files to the person who trusted the folder, and the
+  explorer shows no more than they do. Ignored files are listed, marked `ignored`.
+- **A tree level** is one folder: folders first, then names, each case-insensitively, at most
+  1,000 entries, with `truncated` set when more matched (`filter` narrows by name, ignoring
+  case; at most 20,000 directory entries are looked at). A link is listed as a link and never
+  followed in the listing. Each entry carries its change (`modified`, `added`, `deleted`,
+  `renamed`, `untracked`, `conflicted`), `ignored`, and for a folder `has_changes`. A deleted file
+  is listed though it is gone from disk, and a folder of only deleted files is listed from them.
+- **A file** is text up to 4 MiB, `binary` (a NUL byte or bytes that are not UTF-8) with no
+  content, or `too_large` with its size and no content. Text carries a digest as `revision`.
+- **Letters come from one `git status` per worktree**, through the shared hardened Git runner
+  (no repository filter, converter or attribute runs; `--porcelain=v1 -z --untracked-files=normal --ignored=matching`), kept for 5 seconds and
+  shown for at most 30, with the change letters, ignored paths and dirty summary all read from
+  it. A status gives up after 20 seconds, at most two run at once per project, and a snapshot keeps at most 50,000 paths. A folder is opened without following a link and checked again after its entries are read; the entries themselves are still read by path, so a swap and undo between the two checks is narrowed, not closed. A tree read
+  with nothing kept waits 400 ms for Git, then answers with `changes: "pending"` and no letters,
+  and `data_changed` follows when they land. `changes` is `unavailable` outside Git or when Git
+  failed. The worktree list is kept 10 seconds and shown for at most 60; a listing never waits
+  for a status, so a summary not read yet is `null`.
+- **Read-only worktrees** are marked `read_only` with a reason: `missing` (the folder is gone
+  or Git calls it prunable; its tree is `404`), `locked` (`git worktree lock`) or `other_session`
+  (the asking thread, `?thread=`, differs from a thread that has a run going in it). Each
+  worktree lists its live threads by id and title.
+- **File actions** take a tagged `ExplorerFileAction`: `create_file` creates an empty
+  file, `create_directory` creates one folder, `move` names a source `path` and a
+  `destination`, and `delete` removes a file or an empty folder. Success is `204`.
+  There is no overwrite, recursive delete, parent creation, cross-worktree move or
+  arbitrary absolute path. Existing destinations and nonempty deletion are `400`.
+  The root, links, reparse points and special files are refused. Moving a folder
+  inspects at most 20,000 entries and refuses links or protected entries anywhere
+  below it; larger trees are refused. Application data and the library's `repo/`
+  remain excluded even when absent, and their ancestors cannot be moved.
+  These deny checks fold case on Windows and macOS; worktree containment stays
+  strict after canonicalization.
+- **Write authority is fresh.** Every action reads membership directly, without the
+  read cache, and refuses missing, prunable, nonmember or locked targets. Any active
+  run whose folder overlaps the target refuses the action (`403 policy_denied`); no
+  thread id exempts a run. Core serializes actions, holds the workspace admission
+  fence across the run check and effect, and rechecks project trust there. An audit
+  attempt precedes effects, and the outcome records allow or deny. No file contents
+  or arbitrary request paths enter those audit rows. Reads retain their existing
+  thread-relative read-only display policy.
+- **Person only, and gated.** The route is protected like every token route, and its handler is the
+  only caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a
+  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. That is not enough on its
+  own: until #441 is fixed, `orbynd` writes the per-launch service token to the data folder and the
+  `orbyn` CLI reads it, so an engine or crew worker that can read the data folder can call this
+  route as the person. For that reason it is behind the Preview flag Crew uses
+  (`ORBYN_CREW_PREVIEW`, off by default): with the flag off the route answers `404` like a path
+  that does not exist, and Core refuses too. The gate is removed when #441 is fixed.
+- **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
+  really is before any check, for reads and writes alike, so a project registered under another
+  spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside
+  the real folder. The active-run fence compares both spellings.
+- **What counts as active.** A thread with a run going, or whose engine console is open (the console
+  runs an agent without a run record), blocks writes in any worktree that overlaps its folder. A
+  person's own terminal does not.
+- **File-system limits.** Moves use an exclusive rename (`RENAME_EXCL` on macOS, `RENAME_NOREPLACE`
+  on Linux, `MoveFileExW` without replace on Windows). A file system that cannot do that (an old
+  kernel, some network or FUSE mounts) answers `400` "cannot move files safely"; nothing falls back
+  to a rename that could overwrite. Where names fold case (macOS default, Windows), a rename that
+  changes only the case of a name either renames the entry or, on a volume whose exclusive rename
+  sees the same entry, is refused as an existing destination; the file is never lost or duplicated.
+- **Mutation handles** identify every existing parent without following a final link,
+  fail closed when handle identity is unavailable, and check parents again before
+  effects. Unix operations are relative to the held parent; Windows holds ancestors
+  without delete sharing. Moves use the platform's exclusive rename, never a
+  check-then-overwrite fallback. Concurrent external filesystem changes are not a
+  transaction: parent checks narrow the Unix ancestor-move window, and folder
+  inspection cannot freeze descendants against another process changing them.
+- **A file action drops what is kept** and announces `explorer:<project>`; a run that ends drops
+  the project's and announces `explorer:<project>`.
+
+**The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
+the saved prefs as `leftBarView`; `explorerOpen` holds the rows a person unfolded or folded). The
+rows are one flat list (project, Threads and Worktrees, worktree, folders and files); a folder is read
+when it is unfolded and kept, shows 200 children and a "Show more" row for the rest, and a list over 150
+rows draws only what is on screen. Ignored files are not drawn. Nothing is polled: a `data_changed` for
+`explorer:<project>` reads again, quietly, what that project has loaded. A file opens as a **file tab** in
+the side panel; there is no Files tab. A tab's id is `file:` and its encoded target (`product/state/ui/fileTab.ts`),
+so it is saved with the thread's tab row, and a closed file tab is gone rather than listed. A file in the worktree
+the open thread runs in is read through the thread's own file routes (everything the old Files tab did);
+any other worktree's file is read through the explorer, read-only, with a banner.
+
 ## Renders
 
 An agent's page is stored in app data, never in the checkout:
@@ -1711,6 +1856,84 @@ holding the engine process. A resume must answer every open interrupt, replaying
 one is safe, and new input on a paused thread gets `RUN_ERROR`. `payload.approved`
 carries the decision and anything but `true` denies.
 
+## Instant reads
+
+The webview holds a handful of HTTP/1.1 connections to the service, two of them taken by
+event streams. A request that waits seconds on a forge, an engine or Git holds one, so the
+quick requests behind it arrive late. Reads that cost a process or a network round trip
+therefore answer from the last known value and refresh in the background
+(`util::swr::Swr`, stale-while-revalidate).
+
+- **A kept value answers at once.** Past its fresh time the same call starts one refresh
+  that every other caller shares; a refresh already running is not started again. A value
+  older than its maximum age is not shown: that call waits for a read, which concurrent
+  callers share. The web reads again on `data_changed` (`useAsync`'s `refreshOn`, held for 200 ms so a burst
+  reads once) and after the event stream reconnects from a gap of two seconds or more. These
+  reads are quiet: no loading state, and an error never replaces data on screen. Those that
+  the slow lane carries (pull requests, forges, models, limits, tools) queue behind slow reads a
+  person started; the workspace and update status and a thread's linked pull requests use the
+  interactive lane. A refresh control the person presses sends the read-now flag.
+- **A key holds every input of the read**: project, pull request number, engine, thread,
+  state, query and folder. The update status and the dependency check also key on what they
+  are read from (engine updates and engine set changes, library changes, whether a run is
+  active), so a change to any of them is a new key and shows at once. A value is never served
+  for another key. Keys are capped and the least recently used one goes first. Trust is
+  checked on every call, before the kept value is looked at.
+- **A failure never clobbers.** A failed refresh keeps the last good value and is not
+  retried for 5 seconds. With nothing kept, the call gets the read's own error, as before,
+  and nothing is stored. An engine's model list with `error` set and no stand-in is returned
+  to its callers but not kept; a stand-in list is kept, as before.
+- **`?refresh=1` (or `true`; models keep `refresh=true`, limits `force=true` and forges
+  `rescan=true`) reads now** and waits for the read, whatever is kept. Forced reads that
+  overlap share one read per key. A forced read that fails reports its error and keeps the
+  last good value. A forges rescan also drops every pull request read, since the account may
+  have changed.
+- **A write that changes the data drops it.** Comments, reviews, reviewers, labels, edits,
+  merges, closes and actions drop that pull request's detail, checks, conversation,
+  timeline, files, revisions and stack, and every list. A push from a git action, a workflow
+  approval and a run that ends drop every pull request read of the project. A thread's pull
+  request refresh and a watch pass drop only the pull requests they found changed, silently,
+  so a pass that finds nothing new leaves open screens as they were. Opening a pull request drops the lists. A library
+  change (setup, fetch, update, rollback) drops the workspace status; so does any write to a
+  project, thread, task, queue, clone, run, approval, history or storage route, silently,
+  because the window that wrote reads again. An engine install, update, add, removal or ACP
+  install or removal drops the model lists, and a removed engine is refused before any kept
+  list is looked at. Any update state change drops the update status, and each step of
+  "update all" does. A read that began before the write is not kept, so it cannot put old
+  data back.
+- **A window hears what changed.** A refresh that changed the answer, and a write that
+  dropped it, send `ShellEvent::DataChanged { what }` on `GET /api/shell/events`, so a
+  window showing that data reads it again. `what` is `pulls`, `pull:<project>:<number>`,
+  `pull-people:<project>`, `forges`, `models:<engine>` (`models` after a change to every
+  engine), `workspace`, `updates`, `limits:<engine>`, `tools:<thread>`,
+  `engine-tools:<engine>`, `explorer:<project>` or `health`. A read time or a measured latency that differs on
+  every read is not a change. The channel holds 256 events for a window that is slow to
+  read, and a window skips what it missed, so `data_changed` is a hint: a window also reads
+  again when it opens. `GET /api/updates/events` reads the status afresh for each frame,
+  including the first, and wakes on engine and library changes as well as its own.
+
+| Read | Fresh for | Shown for at most |
+| --- | --- | --- |
+| `GET /api/pulls`, `GET /api/projects/:id/pulls` | 20 s | 60 s |
+| A pull request's detail, checks, comments, timeline, files, revisions and stack | 10 s | 60 s |
+| Reviewer and label candidates | 2 min | 5 min |
+| `GET /api/forges` | 60 s | 15 min |
+| `GET /api/engines/:id/models` | 30 s, then the engine's catalog key is compared at most once a minute | 30 min |
+| `GET /api/workspace` | 15 s | 60 s |
+| `GET /api/updates` | 20 s | 60 s |
+| `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 2 min | 5 min |
+| `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 5 min |
+| `GET /api/projects/:id/worktrees`, a worktree's tree and file letters (one status per worktree) | 10 s list, 5 s status | 60 s list, 30 s status |
+| `GET /api/health/dependencies` | 60 s | 10 min |
+
+The times are named constants beside each read (`LIST_FRESH`, `PULL_MAX_AGE`, `STATUS_MAX_AGE`
+and so on). Once the web re-reads on `data_changed` and sends `refresh`, the maximum ages can
+grow.
+
+`GET /api/threads/:id/commands` waits on the model list only, so it is instant once that is
+kept. Viewed marks on a pull request's files are this service's own and are read on every
+call, never kept with the forge's answer.
+
 ## Driver contract
 
 `EngineDriver` in core declares `EngineDescriptor` (identity, tier, capabilities)
@@ -1740,6 +1963,17 @@ until a run shows the mode it starts in, since its automatic mode writes without
 `fx` JSON viewer from npm or Homebrew is not fx. Each keeps its
 own login, and only the launch has been tested, with the fake agent under those names, except
 OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
+
+`GET /api/providers` is the Providers list: every registered engine (a missing program stays listed, so an
+instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
+program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
+More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
+OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+`Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
+and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
+from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
+for are not verified on a real install.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
@@ -2024,12 +2258,37 @@ characters, without words that look like a path, an address (`host:port`), an `@
 value or a 20-character token, and cut at 160 characters. It is not log text.
 It follows the system light or dark appearance; the app's own theme choice lives in the
 product origin and does not reach this page, and Dim is not offered here.
-There are no default core/plugin command permissions. The startup document is embedded,
+There are no default core/plugin command permissions; the one product command, `crew_presence`, is described below. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
 the service, which asks the shell over stdin/stdout; results return through
-`GET /api/shell/events`. `ShellBridge` owns this Core channel. Events wait, eight at
+`GET /api/shell/events`, which also carries `data_changed` when data the service answers from
+memory changed ([Instant reads](#instant-reads)). `ShellBridge` owns this Core channel. Events wait, eight at
 most, for the first window; `GET /api/shell` counts attached windows. Lines belonging
 to app updates continue to `UpdateCenter`.
+
+Approving a held Crew command needs the person's click in the desktop app's own dialog
+(docs/crew.md, "Approving once: local presence"). Over this channel the shell sends
+`presence_describe {request_id, hold_id}` and `presence_grant {request_id, nonce, hold_id,
+thread_id, task_id, command_sha256}`; the service answers on stdout `presence_hold`
+(the redacted command, worker name, task title, ids and the hold's binding hash, all from
+the service), `presence_ready` or `presence_refused {code}`. `host::presence::PresenceBook`
+keeps one in-memory grant per hold for 60 seconds, bound to the hold, thread, task and hash,
+replaced by a later grant, used once and dropped by a restart; `autopilot_approve_once` checks it
+first without using it, runs its other checks, then takes it. A service without `--parent-stdin`
+(or a remote one) answers `403 desktop_required`; a missing, wrong, used, expired or mismatched
+nonce in `x-orbyn-confirm` is `403 presence_required`. No caller that only speaks HTTP to the
+service can approve once, with or without the service token. This is not OS-level presence: a
+process of the same OS user can still drive the native dialog (Accessibility, SendInput), read the
+shell's memory or write into its pipe. The devtools feature is on in release builds, so a script in
+the page can call `invoke` but cannot click the native dialog (known exposure, issue #532).
+The shell's side is `desktop/src-tauri/src/presence.rs`: the Tauri command `crew_presence(hold_id)`,
+granted to the `main` window by the `allow-crew-presence` permission and allowed at run time only
+from the bundled product document (`desktop_origin::is_application`). It sends `presence_describe`,
+waits for `presence_hold` (10 s), shows a native `tauri-plugin-dialog` message (called from Rust,
+no page permission), and only after a click on Approve once mints the nonce from the OS random
+source, sends `presence_grant` bound to the ids and hash the service described, waits for
+`presence_ready` (10 s) and returns the nonce. One approval at a time; Cancel sends nothing. Not
+built yet: the web card (PR3) that calls it.
 
 Only a service started with `--parent-stdin` accepts cross-origin native API traffic,
 from the two exact product asset origins to a loopback host. Preflight permits only
@@ -2044,9 +2303,18 @@ refused, so pages cannot start arbitrary registered programs.
 
 `orbyn://` links come from outside the app, so they only move a window, and only to a
 place spelled as a route: `thread/<id>`, `new[/<project>]`, `settings[/<section>]`,
-`usage`, `pulls`, or nothing for home. The service turns one into a route and drops
+`usage`, `pulls`, `crew/task/<encoded-task-id>`, or nothing for home. The service turns one into a route and drops
 anything else, and a link that started the app waits in the shell until the service
 runs. A second launch hands its links to the first and exits.
+
+The Crew task locator maps to `#/crew/flow/task/<encoded-task-id>` and only reads the existing Flow task.
+Its ID has the Flow API's grammar: 1–96 ASCII letters, digits, underscore, hyphen, dot or colon, never starting with a dot.
+The locator decodes one segment once and refuses separators, double encoding, query/fragment parameters and extra components.
+Preview off makes no task read; a missing or non-work task uses Flow's existing missing state. The task need not occur in the
+bounded crew list or current task page. Async reads remain scoped to the requested task; the stored task detail supplies its crew.
+Navigation grants no action. This is a copyable installation-local locator for a device holding the task, not a hosted report;
+forge renderers' support for clicking the custom scheme and native macOS/Windows delivery have not been qualified here.
+Generic Markdown safe links and external-open policies retain their own scheme rules.
 
 On macOS the bundle also declares `http` and `https`, and HTML pages at Alternate rank
 (`desktop/src-tauri/Info.plist`), so a person can pick the app as their default browser in
@@ -2134,14 +2402,201 @@ sets no `PATH`: `child_env` widens that for every child without sourcing a shell
 random per run, is passed only to that run's engine, and is revoked at run end.
 An ACP agent that does not report HTTP MCP support gets a stdio server instead,
 which ACP requires every agent to support: the sibling `orbyn acp-mcp-bridge`,
-with the run's endpoint (token included) in `ORBYN_ACP_MCP_ENDPOINT`, never in its
-arguments. The bridge relays each JSON-RPC line to the same route, so it adds no
+with the run's endpoint (token included) in an owner-only file `acp-mcp-endpoint` in the
+run's own folder, named by `ORBYN_ACP_MCP_ENDPOINT_FILE`; neither the arguments nor the
+environment of any process hold the token, and the file goes with the run folder at run end.
+The bridge relays each JSON-RPC line to the same route, so it adds no
 tool, scope or credential. Without a sibling `orbyn` program the agent gets no
 MCP server, as before.
 Tools: `approve` (Claude permission prompt), `skill_search`, `skill_load`, the
 governed `computer_*` tools and `orbyn_*` tools for threads, projects, worktrees,
 attachments, preview tabs, published pages, pull requests, delegation, scheduling and
 declaring writes. `approve` is listed only for Claude.
+
+The Crew tools are Preview: they exist only while
+`CoreConfig::crew_preview` is on (`ORBYN_CREW_PREVIEW=1` for the service; it ships off), and with it off they are neither listed nor
+callable. `crew_route` is a dry run of Router v0 (no model, no run started, no engine started for limits, nothing stored) that
+returns the `RouteDecision` for a brief draft: the chosen engine and model at medium effort,
+the ranked alternatives, a reason for every score and a reason for every rejected engine.
+The router reads only the brief and this machine's own engine registry, model lists and
+the limit reports already kept in the usage cache (an engine with none counts as not reporting; the tool never asks an engine for its limits), so an engine or model the machine has not configured is never routed to. An
+engine or model the lead names is still filtered and, if it fails, refused with the reason,
+never swapped. The answer key is never an input, and a decision is checked for secrets and
+for the key's text before it is stored.
+
+`crew_start` (the lead only; a worker's call is `depth_exceeded`, or `run_ended` once its run is over) takes a brief
+draft and an answer-key draft. The core stamps both, scans every string for secrets (H2; the formats are the recognised formats of the core's redaction module, every one and always, whatever Settings › Secrets says), refuses a brief whose
+write files overlap the key's protected paths (H11) or that holds the key's id or a check command (H1), refuses a
+write lease for a reviewer and a lease that overlaps one another member holds now (H10), stores the task `briefed`,
+routes it (a decision stored with its task takes it to `routed`; a brief no engine can take goes to `needs_person` with
+the reasons), grants the brief's files and runs the worker through `delegate`, which takes it to `running`. The worker
+is sent the brief as data and nothing the `WorkerObject` type does not allow. One start runs at a time.
+A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
+`crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
+the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the
+attempt, without naming the file, if a protected path changed, then runs every check of the key in the task's checkout, writes
+one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. A pass needs
+Evidence (H8). A failure goes through `failed` to the state the loop guard names, in one transaction: a different failure
+retries with the reason, the same failure twice changes approach once, and the same failure after that stops the run
+(`repeated_failure`). The worker is told the reason a check failed, never the check, its id or any other part of the key,
+and the text is proven free of the key and of secrets before it is queued (H1). `failed` and `needs_person` are interim;
+`final` is true only for `passed`, `stopped` and `cancelled`, and the lead is told through its queue when a run ends or
+needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`).
+After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
+A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
+([Crew group](../crates/orbyn-core/src/crew/README.md)).
+
+Crew's Git scope and size checks retain Git's ignore rules and disable the untracked cache.
+Unchanged ignored caches do not require broader scope or data removal; ignored new files
+remain an accepted blind spot, pending isolated-checkout work (#436).
+Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
+checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
+other Git reads keep their settings.
+Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
+which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
+A fix's touched-file guard compares the file's exact byte digest with the digest the core
+recorded in its immutable key. Only a stored fix task can run that internal check; it writes
+normal Evidence and cannot clear a finding by itself. Missing or unreadable files decide nothing.
+
+`crew_review` (the lead only) runs finished work through any number of reviewer lanes, also after the task has passed and
+without reopening it. Each lane is a task of its own through the same start path as `crew_start`: a read-only reviewer, routed by
+role `review` and its lane at the lead tier to another vendor than the builder where one is configured, told the work's purpose
+and the commit and never a check. A reviewer files typed findings with `crew_finding` (stamped by the core; refused once its run
+has ended, H7). A finding has no state and blocks nothing until the core confirms it at a `finding_check` Gate, decided by code and
+citing Evidence: a repro check the lead states that fails, or an independent second review that reports the same file within 3 lines.
+A confirmed finding sends the core's own fix brief to a builder, checked like `crew_start`'s, and the lanes then run again; the same
+finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
+([review group](../crates/orbyn-core/src/crew/review/README.md)).
+
+Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
+subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch
+rechecks the head and atomically consumes the consent under the start lock. A new head or round needs another
+answer; a finished or cancelled run never reopens. A finding-check run always needs another vendor. The exception
+is Security under Full when no other vendor is signed in: a separate lead-tier run, persistent "Same engine as author"
+badge and High risk. The owner reaffirmed the High-risk rule on 16 November 2026; conflicting design copy does not
+lower it. On and Off still ask. A route proposal is not consent, and a failed launch is not a launched reviewer badge.
+
+Each lane has a code-authored `review` Gate with its `lane`, derived from the latest round's completed read-only
+verification Evidence at the expected commit and the unresolved findings. Unchecked or pending findings hold that
+lane's Gate; the existing review `blocked` field remains confirmed-only. Missing Evidence is no pass. A reround or
+different expected head invalidates an older pass. Lifecycle transitions store append-only content-addressed snapshots;
+reads do not write, and merge admission recomputes rather than trusting a historical snapshot. A passing lane Gate
+proves workflow completion, never that a model's review proved correctness.
+
+`crew_publish_review` is a Preview-only lead request to export one advisory lane summary to its same-repository PR.
+The core requires a completed clean-baseline read-only review at the subject's verified Result head and pinned PR base,
+and resolves immutable repository ID and current authenticated author without using CLI defaults. Dirty-baseline reviews
+remain local. Findings retain their adjudication state; publication never approves a PR, changes a Gate or follows reviewer
+completion automatically. The body includes a copyable installation-local task locator, not a public task report.
+An immutable migration-46 intent and private live-run claim bind destination, snapshot, lane/round, exact body digest and mode.
+The real lead binding's Network request enters the hard/host rules and existing two-key chain before ordinary gate policy.
+Off reaches the existing person approval path even with Full Access; an explicit policy deny still wins. No account-only
+or unbound-gate fallback can mint publication authority. Mode, identity, run liveness and head are checked again before sending.
+Publication-specific claim and Sending transactions also reject a persisted Stop while the run is still nonterminal;
+the generic run/event guard is unchanged. Receipt recovery remains possible from a new live lead run after cancellation.
+A CAS commits sending before the single POST; crash/timeout/unknown effects only read-reconcile full comment pages and an
+exact author/body/target receipt. Empty visibility never authorizes retry. A known receipt with head drift needs a person;
+no automatic delete, edit or correction comment follows. Top-level comments do not offer an atomic head CAS.
+Closed/merged PRs remain ineligible for new sends, but immutable destination/auth reads can still recover an existing exact
+receipt and retain it as needing a person. A deliberate `renew` request may supersede only a stale or expired pre-send
+intent proven never to have reached Sending. It creates a fresh immutable intent and admission, links the old record and
+audits the replacement; old bytes remain intact. A partial unique active-scope index and monotonic ever-Sending fence
+prevent renewal from bypassing Sending, Unknown, Published or ambiguous NeedsPerson records.
+
+A local person's review endpoint can remove an unlocked required lane for one subject, with a nonempty reason and
+an audit record. Locked lanes cannot be removed, by anyone. The core reads rules at the subject's pinned base and
+never rewrites the rule file. Removal waives the lane requirement, never a confirmed finding. No model tool exposes
+consent or removal; their HTTP paths are state-changing Crew routes refused by N1. This is the app's local-person
+boundary, not an OS sandbox against another process running as the same user.
+
+ACP tier Settings use a separate device-local exact-engine-id assignment map. Native `CoreConfig::crew_tiers`
+family/model words retain their existing behavior; they do not guess ACP tiers. An unmapped ACP engine is builder-only.
+A local-person save replaces the map with a revision compare-and-swap and audit record, rejecting duplicate,
+unknown, native, unconfigured or unavailable engines. The core pins each assignment to the current configured
+visible explicitly marked default model, refusing no default or multiple defaults. Each submitted assignment names
+`expected_default_model` as a precondition only; the core resolves the default independently and refuses a mismatch
+before any map change. The editor retains saved model pins on untouched rows until the person explicitly resolves
+default drift; a save cannot silently repin those rows. Only the pinned model gains the assigned tier; another engine instance, a hidden model or a changed
+default cannot inherit it. Registry health and model visibility are rechecked on use. Clearing the map restores
+builder-only admission and overrides any initial CoreConfig seed. No model tool edits these settings. The missing
+Settings editor states remain a separate UI criterion.
+
+The map revision guards saved settings, not engine discovery. The saved response's model pins are authoritative
+receipts and stay separate from current discovery facts. If discovery changes after validation, use-time admission
+still requires that exact pin to remain the unique visible default. Builder baseline selection keeps its existing
+fallback; absent or ambiguous defaults never grant an assigned non-builder tier. No registry epoch is introduced.
+
+Autopilot (slice 4f, behind the same flag) puts every request of a Crew worker through the gate's `ActionReview` before any
+rule or person: the always-denied list of the protocol (N1 to N10) first, which no lead, second key, mode or saved allow rule
+can undo, then the lead's approval with a reason, and a second approver on another vendor for network, installs, generated
+scripts and CI files. Keys that disagree give a denial. Three denials in a row or twenty in a run stop the task
+(`too_many_denials`), as does text that reads as injected instructions (`injection_suspected`). Every decision is a row of
+an append-only ledger with no secret and no answer-key text. The mode is `full` by default, `on` or `off` by the person per
+crew or repository. N1 also applies to threads outside Crew: an agent's command or request that names a state-changing account
+route, or a Crew route that changes state (`crew::changes`: the person's answers under `/api/crew`), is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
+
+N3 reads `allowed_hosts` at the task's base commit (at most 64 KiB). Admission and matching
+canonicalize ASCII DNS names and IP literals, reject malformed labels, ports, ambiguous numeric
+address spellings and wildcard IPs, and drop invalid entries individually. DNS labels are at most
+63 bytes and entries at most 253 bytes; case and one terminal DNS dot are normalized. A `*.` DNS
+entry still includes its apex. Loopback and explicitly listed local/private/internal destinations
+remain supported. This checks syntax only, without DNS resolution or proof of destination ownership;
+the detector's heuristic and sandbox limits remain in the Autopilot group README.
+
+With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
+are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
+data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
+whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
+worker admissions; global worker-turn enforcement remains #438. Reported usage is recorded even when the answer is rejected, and
+missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
+no session persistence and one turn, with a 1,024-output-token cap and $0.05 estimated-spend stop. Reported usage above 16,384 tokens
+or estimated cost above $0.05 rejects the answer after spending. The provider stop can overshoot; neither is a hard pre-spend total-token
+or dollar guarantee. Unsupported drivers/options/versions fail closed, never fall back to ordinary runs. Core sends only the redacted
+Summary, no tools, MCP binding, session, transcript, raw page/tool detail or answer key. Strict reasoned JSON, task/attempt/mode liveness,
+deadline and cancellation govern acceptance. These are tool-admission guarantees, not OS isolation.
+Claude aliases bind only through the bounded effective model scalar from the exact active lead run, guarded by project/thread/run/engine
+identity; missing or conflicting init metadata refuses. The separate turn pins that full ID and requires exact receipt equality.
+Idle leads and second Claude instances require an explicit full Anthropic model ID; alias-only catalogs and provider-specific model
+IDs remain unavailable. No raw init payload or model transcript is copied into an approval.
+
+Ordinary Full-mode missing-second-key denials project into server-persistent Needs you notices. The lead's vendor is pinned; only
+an eligible different vendor or an explicit local dismissal writes an idempotent resolution row. Same-vendor instances never clear
+it. The read may record observed availability but grants no action. Stable ledger cursors include old pending notices independently
+of recent denials. Sign in opens Providers; Dismiss hides that notice. Neither blocks, approves nor retries the denied action.
+
+A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
+merge queue serializes one task at a time. Its lead tools use the forge as final writer (GitHub or GitLab), retaining a `--no-ff`
+scratch merge and the task's and repository's checks on the combined state. The service's person-owned required CI names must be
+nonempty; every named check must succeed at the actual candidate head, every observed check must succeed, and the target base
+must still match the checked base. Missing, skipped, neutral, pending and wrong-head evidence cannot pass. Agents cannot supply
+CI policy, remove owed lanes, release holds or answer the person's Review queue. Ordinary agent main-push/forge-merge commands
+remain denied. A merge Gate is code-authored from stored combined-state and current-head CI Evidence, never a model's approval.
+
+Migration 45 stores immutable repository/remote/source/head/base intent and revision checks before publication and merge effects.
+An interrupted create is reconciled by its deterministic source/target and same-repository PR identity; an interrupted merge is
+reconciled by PR identity, head and merge commit. An absent or uncertain receipt never causes a duplicate effect or local fallback.
+Origin supplies the canonical host/repository, with explicit API hostname and PR repository selectors; CLI default repositories
+and host overrides cannot select the destination. Credential-bearing or unsupported origin URLs refuse admission. The actual
+merge tree and parents are compared to the checked combination; a mismatch commits with the Review record as needing a person.
+The existing local branch API is explicit compatibility behavior: compare-and-swap only when no checkout holds the branch, and it
+refuses forge intents. Under `off` every merge waits for a person; under `on` high risk waits; mode, area ceilings, holds, findings
+and owed lanes are rechecked before the forge writer. Same-vendor Security needs a persisted once-consent or Full exception
+receipt, a separate lead-tier run and High risk, or a person's explicit merge release. Risk refreshes on completion and merge
+admission only raise the queued risk; reads do not write and the after-merge Review window uses that effective risk.
+Every applicable pinned-base rule and default owed lane needs its latest passing code-owned lane Gate at the candidate; a person's release may
+stand in for a nonlocked lane but never a locked lane. Reviewer commit and verification counts come from the last passed Result
+and its exact check/Evidence citations, so later merge or finding Gates/Evidence cannot change what work the reviewer reads.
+
+Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base,
+records `NoChecks` as unverified, and asks a person when checks break; it never uses a local branch revert as a forge repair.
+Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
+without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
+24 hours, observes at most 32 confirmed forge targets and never schedules publication or merging. With Preview enabled, startup
+first reconciles up to 128 unfinished effects/confirmed receipts and watches the resulting merges even when periodic work is off;
+only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local
+JSON list, never a tool or HTTP setting. A stored person's Comment becomes a deterministic ordinary task with the
+original write grants, effects and protected checks plus a scope check; a stale checkout or failed admission asks the person.
 
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
@@ -2418,6 +2873,28 @@ that moves an existing database forward reports `database_upgrade: {from, to}` i
 reports nothing. Orbyn has no older thread database to import (A54), so this forward
 upgrade is the only migration event.
 
+The optional account's settings sync keeps its non-secret state here too (`account_*`
+tables, migration 29; migration 35 records which account the local record belongs to): the local copy of each zone's record, the outbox of fields not yet
+uploaded, the zone cursor and the conflicts to show. They stay empty while the sign-in gate
+is `Off`. A preference write queues its fields in its own transaction, so a crash loses
+neither; no key, token or password is stored in them ([account design](account.md)).
+The signed-in session, the ten-minute "Confirm it's you" window and the pause are in
+memory only until the real device client and keychain exist; a restart signs out. Every
+account route is refused to a remote viewer (`local_only`), and each answers
+`account_disabled` under the `Off` gate. In debug builds `ORBYN_ACCOUNT_DEV=1` selects
+the `LocalOnly` gate with an in-memory stand-in for the Engine and throwaway accounts;
+no release build has either.
+
+Crew objects (the [Crew Protocol](crew/protocol/SPEC.md), migration 30) are stored as canonical
+JSON keyed by their content address and verified on the way in: valid, hashing to their own
+`id`, and part of the task's crew and run. They are immutable; only a task's state moves. The
+answer key has its own table and reader, so the brief a worker reads comes from a table that
+cannot hold it (H1). The router's decisions (migration 31) have their own immutable table, and
+a decision is stored only for the brief it answers. Migration 32 adds a run row per task (who leads and who
+works, the checkout, the commit the worker started from and the loop guard's counters, which hold a hash and never a
+check) and an immutable table of the workers' reports. The task's state moves only along the lifecycle, checked in
+the transaction that writes it.
+
 Secret files are created with mode `0600` on Unix. Windows has no mode bits: they
 inherit the ACL of the per-user `%LOCALAPPDATA%` directory, which excludes other
 non-administrator users. Orbyn does not set its own ACL.
@@ -2452,6 +2929,102 @@ Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to t
 it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
 wins, and a shim that points at a shell is refused.
 
+## Crew worker confinement
+
+A Crew worker is an engine process that runs as the person, so it could read the data folder
+(the store holds the answer key and the lead's thread text), run `orbyn` against `service.json` or
+open another run's `runs/<id>/mcp.json`. On macOS `host::confine` starts each worker's engine
+through `/usr/bin/sandbox-exec` with a fixed profile. The profile denies reading and writing the data
+folder, then allows the worker's own run folder (read and write), the library (read), its checkout
+(read and write) and an installed agent's own `acp-agents/<id>` folder (read and run). A path that
+equals or contains the data folder would override the denial, so such a rule is refused and the worker with
+it. It also denies
+the task port, Apple events, LaunchServices opens (a program the worker wrote would otherwise run from
+launchd, outside the profile) and signals to other processes. A worker may signal itself and its own
+children. The data folder and every folder above it, up to `/`, cannot be renamed or removed, because a
+renamed ancestor would put the files under a name the path rules do not cover; the folders on the way down to
+the worker's own folders can be looked at (not listed or read), so `cd` into the checkout works. Paths reach the profile only as `-D`
+parameters and are canonicalised first, because a rule on `/var/...` does not match `/private/var/...`.
+For a Claude worker the profile also closes Claude's saved conversations, where the lead's own transcript lives
+(`CLAUDE_CONFIG_DIR` or `~/.claude`, then `projects/<folder>/<session>.jsonl`, with a subagent and tool-result folder
+`<session>/` beside it). Reading and writing under `projects` is denied, then one session is allowed by pattern: any
+project folder directly under it, then `<own id>.jsonl` or anything under `<own id>/`. Before the engine starts the core makes
+`projects` and the project folder for the start folder (Claude's name for it: the real path with every non-alphanumeric
+character turned into `-`, seen with 2.1.318 for ASCII paths; a non-ASCII path, one of 200 characters or more, or one that does
+not resolve refuses the worker rather than guess) with mode 0700. The worker's id is its stored
+`engine_session`; on its first turn Orbyn makes a version 4 UUID and starts Claude with `--session-id <uuid>`, so the allowance
+names the session before it is written. The pattern does not repeat Claude's folder naming (it keys on the real path of the
+start folder, and a long path is shortened), so a naming difference cannot lock the worker out of its own session. A
+transcript another thread creates after the worker started is denied too, because the rule is on the folder, and the
+folder is not listed, so other session ids are not shown. Claude's prompt history `history.jsonl` is denied (Orbyn's `-p`
+runs do not write it; a person's own terminal sessions do). The saved-conversations folder and every folder above it
+cannot be renamed, as for the data folder. Nothing may be created at `projects` or directly under it, by any means: a profile cannot tell a
+directory made by `mkdir` from one a worker prepared elsewhere (with a link inside) and renamed in, so the folders are made
+by the core and the profile allows no create there. The worker's own `<id>.jsonl` and `<id>/` are the only names it can
+make. A configuration folder that goes through a link (itself or a folder above it), a `projects` folder or a `history.jsonl`
+that is itself a link is not followed: the worker is refused, because a rule by path cannot follow a link that is swapped
+later. A Claude folder that does not resolve, is relative, overlaps the data folder, or a session id
+outside letters, digits, `-` and `_` also refuses the worker with a plain line. Auto memory (`projects/<folder>/memory`) is
+closed with the rest, so a worker starts without it. A worker on any other engine (an ACP agent; Codex is refused) gets
+`projects` and `history.jsonl` closed with no allowance, so an ACP adapter that wraps Claude Code and writes its sessions
+there cannot run as a worker until it can take a `--session-id`; a Claude folder that does not exist yet is named as given.
+The child's `ORBYN_DATA_DIR` is removed. `RunSpec.confine` carries the rules from the run manager
+to the claude and acp drivers; a driver that cannot apply them does not start the run. A process
+started ahead of a turn (warm) is not used for a worker.
+
+Hard rule 7 applies: where the restriction cannot be applied, the worker is refused before it exists,
+with a plain line in the task's "refused by the app" item. That covers Windows and Linux ("Crew runs on
+macOS in the beta; Windows later."), a missing `sandbox-exec`, a core that itself runs under a macOS
+restriction (`sandbox-exec` cannot nest), Codex (it starts its own profile per command, so the core
+refuses it until that is checked; one constant, `CODEX_WORKERS_ALLOWED`) and terminal engines (not
+managed, so not restrictable). Tests on macOS run the real tool: the store, the service handle and another
+run's `mcp.json` cannot be read through a symlinked data path, the worker's own run folder and its
+checkout can, a program the worker wrote cannot be started through `open`, a signal to another process fails,
+the spawn path drops `ORBYN_DATA_DIR`, a confined `orbyn status` cannot find a service that an unrestricted one
+reaches, and an allowance that contains the data folder is refused. For Claude, tests run the real tool against a folder
+shaped like Claude's, with a link, spaces and pattern characters in the path: the lead's transcript, another project's,
+the memory folder and the prompt history cannot be read or changed (nor listed), the worker's own session and its
+subagent files can be read and written, a transcript created after the profile started is denied, a first turn creates
+its own folder and session and no other, `projects`, `history.jsonl` or the folder above them cannot be moved, replaced
+by a link or linked to reach a transcript, a tree prepared outside with a link inside it cannot be moved in under a missing
+project name, over or under the prepared folder, from inside the worker's own folder, or into a missing `projects` (which the
+core makes), nothing but the worker's own session can be created there, a linked configuration folder, `projects` or
+`history.jsonl` refuses the worker, an uncertain start folder name refuses it, and a worker of another engine reads none of it.
+Each of those tests fails if the create allowance is put back. By hand, with the real Claude 2.1.318 and an empty configuration folder (not signed in, so no model turn):
+`--session-id` writes its own session, `--resume` of its own session works, and `--resume` of another session in the same
+folder answers "No conversation found", with the folders made beforehand and no create allowed. What that proves: a worker's own file access to
+Orbyn's data folder (store, `service.json`, other runs' files) is denied, and the Claude lead's transcript is denied to
+confined Claude workers. It says nothing about a lead on another engine.
+
+What it does not cover: the profile does not stop a worker reading other processes' command lines and
+environment (`process-info*` is denied, but `sysctl` reads of another process's arguments and environment still
+work, and `pgrep -lf` shows the service's arguments). Nothing secret is meant to be there: the lead
+bridge's MCP endpoint (token included) is read from an owner-only file in the lead's run folder, which the profile
+denies to other runs' workers, and the Claude run's `--mcp-config` is a path to a file in the run folder (for a process
+started ahead of the next turn, a `warm-<id>` folder under `runs/`, removed when Orbyn drops that process or, once adopted,
+at its run's end, and by the start-up sweep, never a shared temporary folder); Codex
+receives its endpoint over its own standard input. A test starts the bridge and reads its live arguments and
+environment the way a worker could (macOS and Linux) and finds only the file's path, and unit tests check that the
+file is mode 0600, that no stdio or Claude entry carries the token and that the run folder is removed at run end; a
+real-service test shows a warm-started Claude process's token file under `runs/` and in no `orbyn-probe-*` folder.
+That covers the endpoint token of ACP stdio and Claude launches; it does not show that no other value in any
+process is secret. Also not covered: the network, the loopback service (its token is the guard),
+the OS keychain, the engine's own login files (`~/.claude.json`, which Claude must read), other files of the same user,
+and a process a worker leaves running after its turn. The saved conversations of other engines are not covered. Codex's own session files (`~/.codex/sessions` and the state and logs SQLite files under `~/.codex`) are not covered, which is acceptable only because Codex workers stay refused on macOS (`CODEX_WORKERS_ALLOWED` is false) and stay refused until a separate probe is done. Codex keeps
+them in rollout files and in SQLite files under its home, and an ACP agent keeps its own history wherever it chooses, so
+an ACP agent's conversation, including an ACP adapter that writes Claude's folder, is open, and a Claude lead's transcript
+stays closed only for a Claude worker. Claude's other per-session files, which Orbyn does not name and did not observe
+in this change (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do lists, file history,
+debug logs, shell snapshots, the live-session registry `sessions/`), are open to a worker. A worker can learn which project
+folder names exist under `projects` (their metadata may be read), not what is in them. A confined Claude worker can create its own `<own id>.jsonl` and `<own id>/` in any existing project folder, not only its own project's, so a session the worker wrote can appear in another project's resume list. A worker that makes Claude create a session under another id (for example `/clear` inside a turn)
+would have that transcript denied: not tried with a signed-in turn, which also leaves tool-result and subagent folders
+unobserved under the profile. The run
+folder is writable by the worker, so it can edit its own per-run settings and `mcp.json`. The tests do not
+establish the answer key as a whole: it stays open to what is listed here (the process-reading limit above, the other
+engines' conversations, Claude's other per-session files, and the folder names). A
+worker also cannot write to a second checkout that lives inside the data folder. File and folder names in the data
+folder can still be learnt through their inode numbers (the contents cannot be read).
+
 ## ACP registry
 
 `GET /api/acp/registry` reads the public registry on request, and installing an agent
@@ -2464,6 +3037,16 @@ with the digest the entry gives, and one with no digest is not installable. It i
 unpacked into a staging folder under `<data>/acp-agents`, a link leading out or a command
 outside the folder refuses it, and only then does it become the install. Removing one
 takes its files and engine, refused during a run, and threads keep their history.
+
+Each install, update and removal that started is kept as an outcome (`engine_installs`,
+the newest twenty per engine): the engine, the kind, when it started and finished, whether
+it worked, the reason in plain words, the command as shown to a person, the installer's exit
+status and its last lines. Text passes the locked redactor before it is written, so no
+setting can keep a secret in it. A refusal before anything ran (a thread is running on the
+engine, an entry this machine cannot install) is not an attempt and is not kept. Orbyn does
+not install a native engine that is not on the computer: `GET /api/engines/:id/installs`
+gives the vendor's own install page for it from a fixed list of https addresses, and never
+a command. No client supplies a command for an install.
 
 ## Command line
 
@@ -2607,6 +3190,10 @@ every method, path and which routes need a credential.
 | `GET /api/diagnostics`, `POST /api/diagnostics/processes/:pid/stop` | `Diagnostics`, in memory only; a stop reaches only this service's own descendants |
 | `GET /api/projects`, `POST /api/projects/:id/trust` | Projects and folder trust |
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
+| `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
+| `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
+| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
+| `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
@@ -2620,7 +3207,7 @@ every method, path and which routes need a credential.
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
 | `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
-| `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; one failure does not stop the rest |
+| `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |
 | `POST /api/threads/:id/delegate` | `DelegateTask`: a child thread that reports back |
 | `POST /api/threads/:id/project` | `MoveThread`, before the first run; no `project_id` means a new scratch folder |
 | `POST /api/threads/:id/adopt` | `AdoptScratch`: the scratch folder becomes a project in place |
@@ -2686,7 +3273,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
-| `GET /api/forges` | `ForgeStatus[]`; never cached, so it is also the rescan |
+| `GET /api/forges?rescan=true` | `ForgeStatus[]`; the last answer for a minute, then read again in the background; `rescan` asks the CLIs now |
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
 | `GET, POST /api/threads/:id/pulls`, `POST .../pulls/refresh` | Linked pull requests; refresh also links the branch's own |
@@ -2694,7 +3281,7 @@ every method, path and which routes need a credential.
 | `POST /api/watches/check` | One watch pass now (`204`) |
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |
-| `GET /api/pulls?state=&q=&author=&label=` | `PullList` across trusted projects; `failed` names any it could not read |
+| `GET /api/pulls?state=&q=&author=&label=&refresh=` | `PullList` across trusted projects; `failed` names any it could not read |
 | `POST /api/pulls/details` | `PullDetailsResponse` for listed rows: reviewers, viewer review, comment totals, opened time; `paused` names details withheld by a spent rate limit |
 | `GET /api/projects/:id/pulls?state=&q=&author=&label=` | `PullRequest[]` |
 | `POST /api/projects/:id/pulls/close` | `BulkClosePulls` to `PullBulkResult[]` |
@@ -2753,8 +3340,9 @@ every method, path and which routes need a credential.
 | `POST /api/engines/probe-binary` | `ProbeBinary` `{path}` to `BinaryProbe`: whether an absolute path is a runnable file and the version `--version` printed. No shell, fixed argument, 5 second limit; a relative path is refused with a `problem` |
 | `GET /api/engines/:id/native-sessions/count` | `NativeSessionCount`: conversation files in the engine's own history folder (`claude`, `codex`); counted, never opened; `422 unsupported` for other engines |
 | `POST /api/engines/:id/update` | Run the owning installer (`409 engine_busy`) |
-| `GET /api/engines/update-events` | SSE `EngineUpdateProgress` while an engine update runs |
-| `POST, DELETE /api/engines/custom[/:id]` | ACP, AG-UI and terminal engines |
+| `GET /api/engines/update-events` | SSE `EngineUpdateProgress` while an engine update or an ACP install runs |
+| `GET /api/engines/:id/installs` | `EngineInstalls`: the kept outcomes of installs, updates and removals (newest first, twenty at most) and the vendor's install page while the engine is not installed |
+| `POST, DELETE /api/engines/custom[/:id]` | ACP, AG-UI and terminal engines; remove is `409 engine_busy` while a thread runs on it |
 | `GET /api/acp/registry?q=` | `AcpRegistryEntry[]`, with how this machine can install each; `502` if unreachable |
 | `POST, DELETE /api/acp/registry/:id` | `InstallAcpAgent` to `EngineStatus`, `422` if refused; remove, `409 engine_busy` |
 | `GET /api/skills`, `POST /api/skills/rebuild` | Library skills; rebuild only re-reads them |
@@ -2767,6 +3355,16 @@ every method, path and which routes need a credential.
 | `GET, POST /api/policy/rules`, `DELETE /api/policy/rules/:id` | Internal: diagnostics only, no client uses these |
 | `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this |
 | `GET /api/computer`, `POST /api/threads/:id/computer` | Status, and a governed action |
+| `GET /api/account` | `AccountView`: `available` (the sign-in gate is on and a backend answers; false means the window shows nothing of the account), the session's email and device name, the sync line, `confirmed` and `deletion_scheduled`. The only account route that answers under the `Off` gate |
+| `POST /api/account/sign-up/{invite,start,resend,code}` | Sign-up in five steps (invite, email, password, emailed code, done); only the invite check, the password step, the resend and the code send anything. The email step sends nothing. `start` is the password step: it carries the invite, the email and the password once, creates the account and emails the code (the device check and the retry limit are here; a password under twelve characters is `422 weak_password`). `code` signs in; five wrong codes in a row refuse every code (`422 invalid_code`, the same answer) until `resend`. The invite and emailed code normalise case, hyphens and spaces. There is no `register` route |
+| `POST /api/account/sign-in`, `/sign-in/second-factor` | `AccountSignIn` to `AccountSignInResult`; a code (authenticator or recovery) closes the sign-in with `422 sign_in_closed` after five wrong ones |
+| `POST /api/account/confirm` | "Confirm it's you": the password again, checked with the Engine, for one action (`remove_device` with a `device_id`, `sign_out_everywhere`, `approve_device` with the request's id as `device_id`, or `connect_settings` with a `policy` of `use_device` or `use_account`). The confirmation lasts ten minutes, is for that action and device only, is used up by the first use, is kept in memory only and is cleared by sign-out and a restart. Signing in is not a confirmation. It answers `{ nonce }`; the action must send that nonce back in the `x-orbyn-confirm` header (a missing or wrong one is `403 reauth_required` and does not use the confirmation up), so only the window that typed the password can use it. `POST /api/account/confirm/cancel { nonce }` drops it |
+| `DELETE /api/account/devices/:id`, `POST /api/account/sign-out-everywhere`, `POST /api/account/approvals/:id/approve`, `POST /api/account/connect/use-device`, `POST /api/account/connect/use-account` | Need a confirmation for exactly that action, else `403 reauth_required`; a route layer and the core's `Confirmed` token both enforce it, and `routes/account_tests.rs` walks the whole route table (a GET under `/api/account` must be listed in `READS`, a state-changing route in `OPEN` with a reason, anything else must refuse without the confirmation, and no route outside the prefix may name an account, sign-in, sign-out or device). Sign out everywhere answers `409 deletion_scheduled` while deletion is scheduled |
+| `GET /api/account/devices`, `POST /api/account/sign-out`, `/sync/{now,pause,resume}` | `AccountDevice[]`; sign out of this computer (keeps unsynced changes unless `discard_unsynced`); wake, pause or resume the settings worker |
+| `POST /api/account/sign-in/approval`, `POST /api/account/sign-in/digits`, `POST /api/account/sign-in/cancel` | This computer's own request to sign in while a trusted device decides. The first asks how it stands: `AccountApprovalView` (`waiting`, `enter_digits`, `approved`, `denied`, `locked`, `timed_out`, `tries_left` after a wrong entry); it never carries the digits. An allowed request does not sign in by itself. `digits` types the six digits shown on the trusted device (`{ digits }`, never logged or returned): right ones sign in, once; wrong ones answer `200` with `enter_digits` and `tries_left`; the third wrong one closes it (`locked`). Malformed digits are `422 invalid_digits` and cost no try; digits before a trusted device allowed it are `409 request_not_allowed`. Ten minutes, counted on this computer's clock, end it and tell the Engine; cancelling gives it up |
+| `GET /api/account/approvals`, `POST /api/account/approvals/:id/deny` | On a trusted device: the new devices waiting (`AccountApprovalRequest[]`, with `allowed` once a device was allowed and no digits). Refusing, or Cancel on the digits dialog after Allow, closes the request and needs no password (no body); letting one in does (`approve`, above, which answers `{ digits }` once, "418 207") |
+| `POST /api/account/ended/seen` | Dismisses the "You were signed out" notice (`ended_notice` in the view). It is true only while the service ended the session (not the person, not by signing out everywhere) and it was not dismissed; in memory, reset by the next sign-in |
+| `POST /api/account/connect`, `/connect/use-device`, `/connect/use-account`, `/connect/later`, `/connect/seen` | The first time a computer that has settings signs in to an account it has not joined, sync waits (`connect: needed`, status `not_connected`) until the person chooses how to join them: `connect` combines (where the account has a value it replaces this computer's, and settings only this computer has start to upload; no password, because the person keeps what is newest and nothing is deleted), `use-device` (this computer's win on every device) and `use-account` (the account's replace this computer's) each need a confirmation for that choice, single-use like the others. `later` leaves the computer local-only; `seen` closes the summary. A different account signing in on the same data folder starts from nothing: the first account's record and unsent changes are dropped. "Different" compares the email without case or edge spaces until the real client gives an account id; a row from before the owner was recorded is claimed by the next sign-in, not dropped |
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |

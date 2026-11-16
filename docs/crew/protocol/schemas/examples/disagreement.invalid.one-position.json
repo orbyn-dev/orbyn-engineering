@@ -1,0 +1,22 @@
+{
+  "type": "disagreement",
+  "v": 0,
+  "id": "sha256:fc1afd3548b59afa83ce1d496234522892698e91460ac2cb3cb4e330fcb3c298",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-02",
+  "subject": "sha256:ccbf38640db64ca46e0eb0e9f84912a3cc63dba433c1a05d13e2c9a2c1aa1910",
+  "topic": "Is the unchecked multiplication reachable from user input?",
+  "positions": [
+    {
+      "member": "lead-01",
+      "engine": "claude",
+      "stance": "Not reachable.",
+      "evidence": []
+    }
+  ]
+}

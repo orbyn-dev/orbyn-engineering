@@ -140,3 +140,17 @@ it("lists only processes that have run over 2 s, and says nothing is running lon
   expect(screen.queryByRole("button", { name: "Stop sh" })).toBeNull();
   expect(screen.queryByText("Nothing is running long.")).toBeNull();
 });
+
+it("shows Stable as the only live update track, with Nightly dimmed and Planned", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates({ ...(app() as object), checked_at: hour(0) } as never);
+  render(<MaintenanceSection />);
+  const tracks = await screen.findByRole("radiogroup", { name: "Update track" });
+  expect(within(tracks).getByRole("radio", { name: /Stable/ })).toBeChecked();
+  expect(within(tracks).getByText("Tested releases. Recommended.")).toBeVisible();
+  const nightly = within(tracks).getByRole("radio", { name: /Nightly/ });
+  expect(nightly).not.toBeChecked();
+  expect(nightly).toHaveAttribute("aria-disabled", "true");
+  expect(within(nightly).getByText("Planned")).toBeVisible();
+  expect(screen.getByText("0.42.1 · up to date")).toBeVisible();
+});

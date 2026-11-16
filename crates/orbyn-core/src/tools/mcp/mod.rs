@@ -64,6 +64,15 @@ pub struct McpService {
 }
 
 impl McpService {
+    /// Whether the Crew Preview tools exist. They are off until the flag is on, and then
+    /// they are listed and callable for every run.
+    fn crew_enabled(&self) -> bool {
+        self.host
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|core| core.crew_enabled())
+    }
+
     pub fn new(
         gate: Arc<ApprovalGate>,
         questions: Arc<QuestionDesk>,
@@ -80,9 +89,14 @@ impl McpService {
         }
     }
 
-    /// Connects Orbyn's own tools. Until then they refuse rather than guess.
+    /// Connects Orbyn's own tools and Crew. Until then they refuse rather than guess.
     pub fn bind_host(&self, core: &Arc<Core>) {
         let _ = self.host.set(Arc::downgrade(core));
+        core.runs.bind_crew(core);
+        if core.config.crew_preview {
+            core.gate
+                .bind_review(Arc::new(crate::crew::GateReview(Arc::downgrade(core))));
+        }
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {
@@ -152,7 +166,13 @@ impl McpService {
                 "serverInfo": { "name": MCP_SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
             })),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tool_list(binding.permission_prompt) })),
+            "tools/list" => {
+                let mut tools = tool_list(binding.permission_prompt);
+                if self.crew_enabled() {
+                    tools.extend(crate::crew::tool_specs());
+                }
+                Ok(json!({ "tools": tools }))
+            }
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 match budget_for(name) {
@@ -201,6 +221,13 @@ impl McpService {
                     Err(error) => Ok(text_result(&error.public_message(), true)),
                 }
             }
+            tool if crate::crew::is_tool(tool) && self.crew_enabled() => {
+                let Some(core) = self.host.get().and_then(Weak::upgrade) else {
+                    return Ok(text_result("This service is not ready.", true));
+                };
+                let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
+                Ok(text_result(&text, failed))
+            }
             other if crate::tools::mcp_tools::is_tool(other) => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {
                     return Ok(text_result("This service is not ready.", true));
@@ -214,6 +241,11 @@ impl McpService {
                 }
             }
             other if other.starts_with("computer_") => {
+                if let Some(why) = (self.host.get().and_then(Weak::upgrade))
+                    .and_then(|core| core.crew_worker_refusal(binding, other, &args))
+                {
+                    return Ok(text_result(&why, true));
+                }
                 let Some(action) = computer_action(other, &args) else {
                     return Err((METHOD_NOT_FOUND, format!("Unknown tool {other}.")));
                 };

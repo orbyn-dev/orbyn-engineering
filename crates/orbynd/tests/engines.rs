@@ -453,6 +453,54 @@ async fn a_cli_on_this_machine_is_an_engine_with_its_own_launch() {
 }
 
 #[tokio::test]
+async fn the_provider_list_labels_what_was_found_and_lists_what_is_not_built() {
+    let dir = TempDir::new();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let fake = std::path::Path::new(env!("CARGO_BIN_EXE_orbyn-fake-engine"));
+    for program in ["fx", "kimi"] {
+        let name = format!("{program}{}", std::env::consts::EXE_SUFFIX);
+        std::fs::copy(fake, bin.join(name)).unwrap();
+    }
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let options = Options {
+        env: vec![("PATH".into(), path.to_string_lossy().into_owned())],
+        ..Options::default()
+    };
+    let (service, _) = setup(&dir, options, "codex").await;
+    service.post("/api/engines/refresh").send().await.unwrap();
+    let list = service.json("/api/providers").await;
+    let row = |id: &str| {
+        list["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("no {id} row in {list}"))
+    };
+    assert_eq!(row("fx")["group"], "found");
+    assert_eq!(row("fx")["labels"], json!(["unmanaged", "not_verified"]));
+    assert_eq!(row("kimi")["labels"], json!(["not_verified"]));
+    assert_eq!(row("kimi")["group"], "more");
+    assert_eq!(row("fx")["openable"], false);
+    assert_eq!(row("pi")["group"], "planned");
+    assert_eq!(row("pi")["registered"], false);
+    assert_eq!(row("pi")["name"], "Pi");
+    // Engines that are not found do not appear.
+    assert!(
+        list["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["id"] != "cursor")
+    );
+}
+
+#[tokio::test]
 async fn changing_an_instance_forgets_its_previous_catalog_and_validation() {
     let dir = TempDir::new();
     let (service, _) = setup(&dir, Options::default(), "codex").await;

@@ -10,6 +10,10 @@ use tokio::process::{Child, Command};
 
 use crate::error::{CoreError, Result};
 
+#[cfg(all(test, windows))]
+#[path = "process/windows_tests.rs"]
+mod windows_tests;
+
 /// A program ready to spawn. Windows shims resolve to their real entry point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedCommand {
@@ -19,7 +23,7 @@ pub struct ResolvedCommand {
     pub path: PathBuf,
 }
 
-/// Resolves a bare name through PATH, or an explicit path as given.
+/// Resolves a bare name through PATH, or an explicit path, before a child changes cwd.
 pub fn resolve(name: &str) -> Option<ResolvedCommand> {
     let search = crate::host::child_env::widened(std::env::var_os("PATH").as_deref());
     let path = find_on_path(name, Some(&search))?;
@@ -28,12 +32,15 @@ pub fn resolve(name: &str) -> Option<ResolvedCommand> {
 
 fn find_on_path(name: &str, path_var: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let direct = Path::new(name);
-    if direct.components().count() > 1 || direct.is_absolute() {
-        return candidates(direct).into_iter().find(|path| path.is_file());
-    }
-    std::env::split_paths(path_var?)
-        .flat_map(|dir| candidates(&dir.join(name)))
-        .find(|path| is_runnable(path))
+    let path = if direct.components().count() > 1 || direct.is_absolute() {
+        candidates(direct).into_iter().find(|path| path.is_file())
+    } else {
+        std::env::split_paths(path_var?)
+            .flat_map(|dir| candidates(&dir.join(name)))
+            .find(|path| is_runnable(path))
+    }?;
+    // Keep the shim's location (including symlinks), but not its dependency on cwd.
+    std::path::absolute(path).ok()
 }
 
 #[cfg(unix)]
@@ -354,11 +361,14 @@ impl ProcessTree {
             job.terminate();
             return;
         }
-        let _ = std::process::Command::new("taskkill")
+        let mut command = std::process::Command::new("taskkill");
+        command
             .args(["/PID", &self.pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        // A short-lived helper, but every spawn goes through the one gate: it never sees account secrets.
+        crate::host::child_env::for_tool(&mut command);
+        let _ = command.status();
     }
 }
 

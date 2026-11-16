@@ -2,26 +2,80 @@
 //! checks the current owner and state first; followers are woken only after
 //! commit. Calls are short local SQLite operations and never span an await.
 
+mod account_sync;
 mod agent_projects;
 mod approvals;
 mod automations;
 mod catalog;
 mod changes;
 mod checkpoints;
+mod crew;
+mod crew_autonomy;
+mod crew_autonomy_person;
+#[cfg(test)]
+mod crew_autonomy_tests;
+mod crew_autopilot;
+mod crew_background;
+#[cfg(test)]
+mod crew_background_tests;
+mod crew_bus;
+#[cfg(test)]
+mod crew_bus_tests;
+mod crew_cancel;
+mod crew_flow;
+mod crew_guard;
+mod crew_merge_forge;
+mod crew_merges;
+mod crew_rerun;
+mod crew_review;
+mod crew_review_controls;
+#[cfg(test)]
+mod crew_review_migration_tests;
+mod crew_review_publications;
+mod crew_runs;
+mod crew_schema;
+#[cfg(test)]
+mod crew_tests;
+mod crew_tier_settings;
 mod hub;
+mod installs;
 mod migrations;
 mod native_sessions;
 mod project_names;
 mod questions;
 mod queue;
+mod redaction;
 mod runs;
 pub(crate) mod scoped_settings;
+#[cfg(feature = "engine-client")]
+pub(crate) use account_sync::is_old_tombstone;
+pub use account_sync::{MergeReport, SyncConflict};
 mod setup;
 #[cfg(test)]
 mod tests;
 mod threads;
 
 pub use changes::{KeptChange, Snapshot};
+pub use crew::{CrewPinnedRef, CrewTask};
+pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
+pub use crew_autonomy_person::{PersonWrite, Seen};
+pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
+pub use crew_background::{
+    BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
+    RunEnd,
+};
+pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
+pub use crew_cancel::CancelStart;
+#[cfg(test)]
+pub(crate) use crew_flow::last_events_sql;
+pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
+pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
+pub use crew_merge_forge::{ForgeMerge, ForgePhase};
+pub use crew_merges::{MergeEntry, MergeRecord};
+pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
+pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
+pub(crate) use crew_review_publications::{Publication, PublicationState};
+pub use crew_runs::CrewRun;
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -52,7 +106,13 @@ pub struct Store {
     read: Mutex<Connection>,
     epoch: String,
     hub: EventHub,
+    /// Counts runs starting and ending, for what shows whether a run is active.
+    run_changes: tokio::sync::watch::Sender<u64>,
+    /// Counts local changes that queued an account field, to wake the sync worker.
+    account_changes: tokio::sync::watch::Sender<u64>,
     upgrade: Option<orbyn_contracts::DatabaseUpgrade>,
+    /// One lock per Crew task being cancelled, so two cancels of a task run one after the other.
+    cancels: Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 /// One audit row. Rows are only ever inserted.
@@ -118,7 +178,10 @@ impl Store {
             read: Mutex::new(read),
             epoch: epoch.into(),
             hub: EventHub::default(),
+            run_changes: tokio::sync::watch::channel(0).0,
+            account_changes: tokio::sync::watch::channel(0).0,
             upgrade,
+            cancels: Mutex::default(),
         })
     }
 
@@ -126,6 +189,19 @@ impl Store {
     /// A new database is created, not upgraded, so it reports nothing.
     pub fn upgrade(&self) -> Option<orbyn_contracts::DatabaseUpgrade> {
         self.upgrade.clone()
+    }
+
+    /// Wakes on any run starting or ending.
+    pub fn subscribe_run_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.run_changes.subscribe()
+    }
+
+    /// Passes `outcome` on, counting a run start or end when it succeeded.
+    fn run_changed<T>(&self, outcome: Result<T>) -> Result<T> {
+        if outcome.is_ok() {
+            self.run_changes.send_modify(|count| *count += 1);
+        }
+        outcome
     }
 
     pub fn epoch(&self) -> &str {

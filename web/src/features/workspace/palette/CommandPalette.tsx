@@ -7,6 +7,7 @@ import { navigate, parseRoute, SETTINGS_SECTIONS, type Route } from "../../../pr
 import { useUi, type PaletteStart } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { ProjectBadge } from "../../../product/ui/badges";
+import { useAccountAvailable } from "../../account";
 import { AddProjectPalette } from "./AddProjectPalette";
 
 interface Entry {
@@ -87,6 +88,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
 
   const hits = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
+  const accountOn = useAccountAvailable();
   const entries = useMemo<Entry[]>(() => {
     if (searchTitle[start]) {
       return hits.map((hit) => ({
@@ -108,7 +110,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
             { key: "restart", group: "Actions", label: "Restart agent session", icon: <RotateCcw size={16} aria-hidden />, route: "restart-session" as const },
           ]
         : []),
-      ...SETTINGS_SECTIONS.map((section) => ({
+      ...SETTINGS_SECTIONS.filter((section) => section !== "account" || accountOn).map((section) => ({
         key: `settings:${section}`,
         group: "Settings",
         label: title(section),
@@ -151,7 +153,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       route: { message: hit.message_id, thread: hit.thread_id },
     }));
     return [...(needle ? all.filter(found) : all).slice(0, 50), ...inMessages];
-  }, [threads, query, newIn, projects, allProjects, hits, start, messages]);
+  }, [threads, query, newIn, projects, allProjects, hits, start, messages, accountOn]);
 
   const choose = (entry: Entry | undefined) => {
     if (!entry) return;

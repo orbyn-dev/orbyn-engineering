@@ -1,94 +1,25 @@
-import { AlertTriangle, ChevronLeft, CloudOff, RefreshCw, Search } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { addRegistryEntry, api, importHistorySession, listRegistry, removeRegistryEntry, scanHistory } from "../api";
-import type { AcpRegistryEntry } from "../../../api/types";
+import { api, importHistorySession, scanHistory } from "../api";
 import type { HistoryScan } from "../../../generated/HistoryScan";
 import type { HistorySession } from "../../../generated/HistorySession";
-import { toFailure, useAsync } from "../../../lib/useAsync";
-import { useConnection } from "../../../product/state/connection";
+import { toFailure } from "../../../lib/useAsync";
 import { navigate } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Empty, Loading } from "../../../product/ui/states";
 
-const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 const day = (iso: string) => new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
 const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
-function BackBar({ title, onBack, children }: { title: string; onBack(): void; children?: React.ReactNode }) {
+export function BackBar({ title, onBack, children }: { title: string; onBack(): void; children?: React.ReactNode }) {
   return (
     <div className="set-back">
       <Button small tone="quiet" icon={<ChevronLeft size={13} aria-hidden />} onClick={onBack}>Providers</Button>
       <h2 className="set-back-title">{title}</h2>
       {children ? <span className="set-back-end">{children}</span> : null}
     </div>
-  );
-}
-
-/** Agents that speak ACP, listed for adding as instances. */
-export function AcpRegistryView({ onBack }: { onBack(): void }) {
-  const [text, setText] = useState("");
-  const [working, setWorking] = useState<string | null>(null);
-  const offline = useConnection((state) => state.offline);
-  const refreshEngines = useWorkspace((state) => state.refreshEngines);
-  const pushToast = useUi((state) => state.pushToast);
-  const loadedAt = useRef<number | null>(null);
-  const found = useAsync("acp-registry", async (signal) => {
-    const entries = await listRegistry("", signal);
-    loadedAt.current = Date.now();
-    return entries;
-  }, { keep: true });
-  const needle = text.trim().toLowerCase();
-  const rows = (found.data ?? []).filter((entry) => `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
-  const act = async (entry: AcpRegistryEntry, work: Promise<unknown>, done: string) => {
-    setWorking(entry.id);
-    try { await work; await refreshEngines(); found.reload(); pushToast(done); }
-    catch (failure) { pushToast(`Couldn't change ${entry.name}. ${toFailure(failure).message}`); }
-    finally { setWorking(null); }
-  };
-  return (
-    <>
-      <BackBar title="ACP registry" onBack={onBack}>
-        <Button small icon={<RefreshCw size={13} aria-hidden />} busy={found.refreshing && found.status === "ready"} onClick={found.reload}>Refresh</Button>
-      </BackBar>
-      <label className="set-find">
-        <Search size={13} aria-hidden />
-        <input aria-label="Find an agent" placeholder="Find an agent" value={text} onChange={(event) => setText(event.target.value)} />
-      </label>
-      {offline ? (
-        <p className="banner" role="status"><CloudOff size={14} aria-hidden />You're offline.{loadedAt.current !== null ? ` Showing the list from ${clock(loadedAt.current)}.` : ""}</p>
-      ) : null}
-      {found.status === "loading" ? <Loading label="Loading the registry" rows={4} /> : found.status === "error" && !found.data ? (
-        offline ? null : (
-          <p className="banner banner-err" role="alert"><AlertTriangle size={14} aria-hidden />Couldn't load the registry. The server answered with an error.
-            <Button small className="set-back-end" icon={<RefreshCw size={13} aria-hidden />} onClick={found.reload}>Retry</Button></p>
-        )
-      ) : rows.length === 0 ? (
-        needle ? <Empty title={`No agent matches “${text.trim()}”`}><p>Check the spelling or clear the search.</p></Empty> : <Empty title="The registry is empty" />
-      ) : (
-        <div className="set-tbl" role="table" aria-label="ACP registry">
-          {rows.map((entry) => (
-            <div key={entry.id} role="row" className="set-tr" style={{ gridTemplateColumns: "28px minmax(0, 1fr) 150px" }}>
-              <span role="cell"><span className="set-mark">{entry.name.charAt(0).toUpperCase()}</span></span>
-              <span role="cell"><span className="name">{entry.name}</span><br /><span className="sub">{entry.description}</span></span>
-              <span role="cell" className="row-actions">
-                {entry.engine ? (
-                  <>
-                    <span className="set-pill">Installed</span>
-                    <Button small tone="quiet" aria-label={`Remove ${entry.name}`} disabled={working === entry.id}
-                      onClick={() => void act(entry, removeRegistryEntry(entry.id), `${entry.name} removed`)}>Remove</Button>
-                  </>
-                ) : entry.installable.length > 0 ? (
-                  <Button small aria-label={`Add ${entry.name}`} disabled={working === entry.id}
-                    onClick={() => void act(entry, addRegistryEntry(entry.id, entry.installable[0]), `${entry.name} added`)}>Add</Button>
-                ) : <span className="t3">Can't be installed here</span>}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
   );
 }
 

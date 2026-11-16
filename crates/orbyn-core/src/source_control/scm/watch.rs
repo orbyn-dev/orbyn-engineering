@@ -50,6 +50,7 @@ impl Core {
         };
         if state.finished {
             self.store.unwatch_pull(&watch.thread_id, number)?;
+            self.scm_reads.pull_dropped(&thread.project_id, number);
             return Ok(());
         }
         let last = watch
@@ -58,6 +59,9 @@ impl Core {
             .and_then(|text| serde_json::from_str(text).ok())
             .unwrap_or_default();
         let (news, comments_only) = watch_news(&last, &state, viewer.as_deref());
+        if !news.is_empty() {
+            self.scm_reads.pull_dropped(&thread.project_id, number);
+        }
         let wakes = if news.is_empty() {
             watch.comment_wakes
         } else if comments_only {

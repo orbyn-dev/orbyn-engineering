@@ -69,25 +69,33 @@ test("diff, file, terminal and page-element chips are sent as labelled blocks", 
   threadId = threadIdOf(page);
   await settled(service, threadId);
 
-  // Review comment: both diff layouts offer one on the new side of a line; this one is made in split.
+  // Review comment: both diff layouts offer one on the new side of a line; this one is made in split, which needs a wide panel.
   await openPanelTab(page, "Diff");
   const patch = page.locator("[data-diff-file='notes.txt']");
-  await expect(patch.locator(".patch-line").first()).toBeVisible();
+  await expect(patch.locator(".d2 .l").first()).toBeVisible();
   await expect(patch.getByRole("button", { name: "Comment on line 2", exact: true })).toBeAttached();
-  const view = page.getByRole("radiogroup", { name: "Diff view" });
-  await view.getByRole("radio", { name: "Split" }).click();
-  await expect(patch.locator(".patch-split").first()).toBeVisible();
-  await patch.locator(".patch-split", { hasText: "two changed" }).getByRole("button", { name: "Comment on line 2", exact: true }).click();
+  await page.getByRole("button", { name: "Maximise panel", exact: true }).first().click();
+  const viewOption = async (name: string) => {
+    await page.getByRole("button", { name: "View options", exact: true }).click();
+    await page.getByRole("menu", { name: "View options" }).getByRole("menuitemradio", { name }).click();
+    await page.keyboard.press("Escape");
+  };
+  await viewOption("Split");
+  await expect(patch.locator(".sp2").first()).toBeVisible();
+  await patch.locator(".sp2", { hasText: "two changed" }).getByRole("button", { name: "Comment on line 2", exact: true }).click();
   await page.getByRole("textbox", { name: "Review comment on notes.txt line 2" }).fill("Why change two?");
-  await page.getByRole("button", { name: "Add to message", exact: true }).click();
-  await view.getByRole("radio", { name: "Unified" }).click();
+  await page.getByRole("button", { name: "Comment", exact: true }).click();
+  await viewOption("Unified");
+  await page.getByRole("button", { name: "Restore", exact: true }).first().click();
   await expect(chips(page).locator("li[data-kind=review]")).toContainText("notes.txt:2");
 
   // File: the link in the reply reveals line 3, and the open file joins the message there.
   await page.locator(".msg-assistant").getByRole("button", { name: "the notes" }).click();
   const viewer = page.locator(".files-viewer");
   await expect(viewer.getByText("notes.txt", { exact: true })).toBeVisible();
-  await viewer.getByRole("button", { name: "Add file to message" }).click();
+  // A plain text file is in the editor, whose tab menu carries Add file to message; the line the link named goes with it.
+  await page.getByRole("button", { name: "Tab menu" }).click();
+  await page.getByRole("menuitem", { name: "Add file to message" }).click();
   await expect(chips(page).locator("li[data-kind=file]")).toContainText("notes.txt:3");
 
   // Terminal: a selection in the drawer.
@@ -101,7 +109,7 @@ test("diff, file, terminal and page-element chips are sent as labelled blocks", 
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
 
   // Page element: picked from the service's own browser.
-  await page.getByRole("tab", { name: "Browser", exact: true }).click();
+  await openPanelTab(page, "Browser");
   const address = page.getByRole("combobox", { name: "Search or enter URL" });
   await address.fill(`127.0.0.1:${sitePort}/pick`);
   await address.press("Enter");

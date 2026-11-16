@@ -24,6 +24,29 @@ async function wheelBothEnds(page: Page, target: Locator) {
   }
 }
 
+/** Resolves once the chat's height and position hold still for 400 ms. */
+async function chatSettled(page: Page) {
+  const state = () => chat(page).evaluate((element) => `${element.scrollHeight}/${element.scrollTop}`);
+  await expect(async () => {
+    const before = await state();
+    await page.waitForTimeout(400);
+    expect(await state()).toBe(before);
+  }).toPass();
+}
+
+/**
+ * Parks the chat near 600px. A finished turn folds first, which would move the position set here. Rows that mount at the
+ * new place are then measured, and the view shifts by the difference so the row at its top stays put, so the park only
+ * counts once that has settled too.
+ */
+async function parkChat(page: Page) {
+  await chatSettled(page);
+  await chat(page).evaluate((element) => {
+    element.scrollTop = 600;
+  });
+  await chatSettled(page);
+}
+
 async function expectChatUntouched(page: Page, target: Locator) {
   const before = await chatTop(page);
   await wheelBothEnds(page, target);
@@ -52,23 +75,21 @@ test("each panel scrolls alone, past both ends, with the chat parked mid-way", a
   await longThread(page);
   await settled(service, threadIdOf(page));
   await expect(page.getByText("Paragraph 120 of a long answer.")).toBeVisible();
-  await chat(page).evaluate((element) => {
-    element.scrollTop = 600;
-  });
+  await parkChat(page);
   await page.waitForTimeout(100);
 
   const parked = await chatTop(page);
   await openPanelTab(page, "Diff");
   await page.locator("[data-diff-file='big.txt']").waitFor();
   expect(await chatTop(page)).toBe(parked);
-  await expectChatUntouched(page, page.locator(".patch-line").nth(20));
-  const panel = page.getByRole("tabpanel");
-  expect(await panel.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expectChatUntouched(page, page.locator(".d2 .l").nth(20));
+  // The file's lines scroll inside the panel's own view, past both ends, and not the chat.
+  expect(await page.locator(".x2main").evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
   await page.keyboard.press("ControlOrMeta+p");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("combobox", { name: "Search" }).fill("big.txt");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("button", { name: /big\.txt/ }).click();
-  await expectChatUntouched(page, page.locator(".file-source"));
+  await expectChatUntouched(page, page.locator(".ed-ta"));
 
 });
 
@@ -91,12 +112,11 @@ test("images, binaries and oversized text open from the raw route", async ({ pag
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
   await expect(page.getByRole("link", { name: "Save file" })).toHaveAttribute("href", /download=true/);
 
-  await page.getByRole("button", { name: "Files", exact: true }).click();
   await open("blob.bin");
-  await expect(page.getByLabel("Bytes")).toContainText("00 01 02 41 42 ff");
-  await expect(page.getByLabel("Bytes")).toContainText("...AB.");
+  // A file with no text has no editor (editor-binary): it says so and gives its size.
+  await expect(page.getByText("Can’t show this file")).toBeVisible();
+  await expect(page.getByText(/blob\.bin is a binary file \(6 B\)/)).toBeVisible();
 
-  await page.getByRole("button", { name: "Files", exact: true }).click();
   await open("huge.log");
   await expect(page.getByLabel("Text", { exact: true })).toContainText("start of the log");
   await expect(page.getByText(/Showing 65,536 of 5,000,017 bytes/)).toBeVisible();
@@ -114,8 +134,9 @@ test("a historical turn shows file changes without per-file restore", async ({ p
   expect(readFileSync(notes, "utf8")).toBe("changed by the agent\n");
 
   await openPanelTab(page, "Diff");
-  await page.getByRole("radiogroup", { name: "Diff source" }).getByRole("radio", { name: "Turn" }).click();
-  await expect(page.getByRole("button", { name: "Copy path notes.txt" })).toBeVisible();
+  await page.getByRole("button", { name: /^Scope: / }).click();
+  await page.getByRole("menuitem", { name: "Turn", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Changed files" }).getByRole("button", { name: /^Modified notes\.txt/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Restore notes.txt to before this turn" })).toHaveCount(0);
   expect(readFileSync(notes, "utf8")).toBe("changed by the agent\n");
 });
@@ -123,15 +144,7 @@ test("a historical turn shows file changes without per-file restore", async ({ p
 test("the details card and terminal keep the wheel to themselves", async ({ page }) => {
   await longThread(page);
   await settled(service, threadIdOf(page));
-  // A turn folds as it ends, which would move the position this test sets.
-  await expect(async () => {
-    const height = await chat(page).evaluate((element) => element.scrollHeight);
-    await page.waitForTimeout(400);
-    expect(await chat(page).evaluate((element) => element.scrollHeight)).toBe(height);
-  }).toPass();
-  await chat(page).evaluate((element) => {
-    element.scrollTop = 600;
-  });
+  await parkChat(page);
   await expectChatUntouched(page, await openDetails(page));
 
   await page.keyboard.press("ControlOrMeta+j");
@@ -158,9 +171,7 @@ test("the Browser panel and the sidebar keep the wheel to themselves", async ({ 
     });
   }
   await expect(page.locator("li[data-thread-item]").filter({ hasText: "Filler 29" })).toBeVisible({ timeout: 10_000 });
-  await chat(page).evaluate((element) => {
-    element.scrollTop = 600;
-  });
+  await parkChat(page);
   await expectChatUntouched(page, page.locator(".sidebar-scroll"));
 
   await openPanelTab(page, "Browser");
@@ -173,8 +184,8 @@ test("wheeling a panel during a run leaves the chat stuck to the bottom", async 
   await longThread(page, "[scene:stream]");
   await expect(page.getByText("Streamed line 60.")).toBeVisible({ timeout: 15_000 });
   await openPanelTab(page, "Diff");
-  await page.locator(".patch-line").nth(20).waitFor();
-  await wheelBothEnds(page, page.locator(".patch-line").nth(20));
+  await page.locator(".d2 .l").nth(20).waitFor();
+  await wheelBothEnds(page, page.locator(".d2 .l").nth(20));
   await expect(page.getByText("Tick 30.")).toBeAttached({ timeout: 15_000 });
   expect(await gap(page)).toBeLessThan(80);
   await settled(service, threadIdOf(page));

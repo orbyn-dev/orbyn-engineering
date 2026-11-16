@@ -94,6 +94,47 @@ fn known_engine_ids(raw: Option<&std::ffi::OsStr>) -> Result<Option<Vec<String>>
     .transpose()
 }
 
+/// Local startup policy only. Neither HTTP nor a tool can change these values.
+fn crew_merge_config(
+    preview: bool,
+    checks: Option<&std::ffi::OsStr>,
+    interval: Option<&std::ffi::OsStr>,
+) -> Result<(Vec<String>, Option<Duration>), String> {
+    if !preview {
+        return Ok((Vec::new(), None));
+    }
+    let required: Vec<String> = match checks {
+        None => Vec::new(),
+        Some(raw) => serde_json::from_str(
+            raw.to_str()
+                .ok_or("ORBYN_CREW_REQUIRED_CHECKS must be UTF-8 JSON.")?,
+        )
+        .map_err(|_| "ORBYN_CREW_REQUIRED_CHECKS must be a JSON array of check names.")?,
+    };
+    let unique: std::collections::BTreeSet<_> = required.iter().collect();
+    if required.len() > 128
+        || unique.len() != required.len()
+        || required.iter().any(|s| {
+            s.is_empty() || s.len() > 200 || s.trim() != s || s.chars().any(char::is_control)
+        })
+    {
+        return Err("ORBYN_CREW_REQUIRED_CHECKS accepts at most 128 unique nonempty check names of at most 200 bytes.".into());
+    }
+    let every = interval
+        .map(|raw| {
+            let seconds = raw
+                .to_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|n| (60..=86400).contains(n))
+                .ok_or(
+                    "ORBYN_CREW_WATCH_INTERVAL_SECS must be 60 to 86400, or unset to disable.",
+                )?;
+            Ok::<_, String>(Duration::from_secs(seconds))
+        })
+        .transpose()?;
+    Ok((required, every))
+}
+
 fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String> {
     let data_dir = args
         .data_dir
@@ -124,6 +165,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         update_timeout: defaults.update_timeout,
         known_engine_ids: known_engine_ids(std::env::var_os("ORBYN_KNOWN_ENGINE_IDS").as_deref())?,
         cache_dir: None,
+        approval_timeout: defaults.approval_timeout,
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds
@@ -138,8 +180,35 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     }
     config.browser_headless = env_flag("ORBYN_BROWSER_HEADLESS");
     config.browser_in_process_gpu = env_flag("ORBYN_BROWSER_IN_PROCESS_GPU");
+    development_account(&mut config);
+    // Crew is Preview and has no screen yet: a developer turns its tools on here.
+    config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
+    (
+        config.crew_merge_required_checks,
+        config.crew_merge_watch_interval,
+    ) = crew_merge_config(
+        config.crew_preview,
+        std::env::var_os("ORBYN_CREW_REQUIRED_CHECKS").as_deref(),
+        std::env::var_os("ORBYN_CREW_WATCH_INTERVAL_SECS").as_deref(),
+    )?;
     Ok(config)
 }
+
+/// Turns on the account's development stand-in, for debug builds only: the gate
+/// `LocalOnly` and an in-memory backend with throwaway accounts (see
+/// `orbyn_core::account::dev`). A release build has neither the stand-in nor this
+/// flag, so the account stays `Off` there. Real sign-in is `Off` until every condition
+/// in docs/account.md, "Sign-in gate", holds.
+#[cfg(debug_assertions)]
+fn development_account(config: &mut CoreConfig) {
+    if env_flag("ORBYN_ACCOUNT_DEV") {
+        config.account_gate = orbyn_core::account::AccountGate::LocalOnly;
+        config.account_backend = orbyn_core::account::AccountBackendKind::Development;
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn development_account(_config: &mut CoreConfig) {}
 
 /// Returns the stored key digest, creating a key on first remote start. The key
 /// itself is shown once and never stored.
@@ -161,7 +230,7 @@ fn read_parent(core: Arc<Core>, closed: oneshot::Sender<()>) {
         for line in std::io::stdin().lock().lines() {
             match line {
                 Ok(line) => {
-                    if !core.shell.on_line(&line) {
+                    if !core.shell.on_line(&line) && !core.presence_line(&line) {
                         core.updates.on_shell_line(&line);
                     }
                 }
@@ -242,6 +311,7 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
     );
     core.mcp.bind_host(&core);
+    core.set_crew_engine_approvers();
     orbyn_core::operations::diagnostics::start_sampling();
     core.start_telemetry_export(telemetry_interval()?)
         .map_err(|error| error.to_string())?;
@@ -344,6 +414,14 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         let (core, stop) = (core.clone(), stop.clone());
         tokio::spawn(async move { core.run_lifecycle(stop).await })
     };
+    let crew_watch = if core.config.crew_preview {
+        let (core, watch_stop) = (core.clone(), stop.child_token());
+        Some(tokio::spawn(async move {
+            core.run_crew_merge_watch(watch_stop).await
+        }))
+    } else {
+        None
+    };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { activity.run_shell_activity(quit).await });
@@ -378,6 +456,13 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     stop.cancelled().await;
     tracing::info!("stopping");
     let _ = lifecycle.await;
+    if let Some(watch) = crew_watch {
+        match watch.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "Crew watch stopped with an error"),
+            Err(error) => tracing::warn!(%error, "Crew watch task did not complete"),
+        }
+    }
     checks.abort();
     let _ = checks.await;
     let _ = library_upgrades.await;
@@ -442,6 +527,38 @@ mod known_engine_config_tests {
                 known_engine_ids(Some(std::ffi::OsStr::new(value))).is_err(),
                 "{value}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod crew_merge_config_tests {
+    use super::crew_merge_config;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn merge_policy_is_local_bounded_and_off_without_preview() {
+        assert_eq!(
+            crew_merge_config(false, Some(OsStr::new("bad")), Some(OsStr::new("1"))).unwrap(),
+            (Vec::new(), None)
+        );
+        assert_eq!(
+            crew_merge_config(true, None, None).unwrap(),
+            (Vec::new(), None)
+        );
+        let (checks, interval) = crew_merge_config(
+            true,
+            Some(OsStr::new(r#"["Rust (windows-2022)","Web"]"#)),
+            Some(OsStr::new("60")),
+        )
+        .unwrap();
+        assert_eq!(checks, ["Rust (windows-2022)", "Web"]);
+        assert_eq!(interval, Some(std::time::Duration::from_secs(60)));
+        for bad in ["null", "{}", r#"[""]"#, r#"["ci","ci"]"#, r#"[" ci"]"#] {
+            assert!(crew_merge_config(true, Some(OsStr::new(bad)), None).is_err());
+        }
+        for bad in ["0", "59", "86401", "invalid", "-1"] {
+            assert!(crew_merge_config(true, None, Some(OsStr::new(bad))).is_err());
         }
     }
 }

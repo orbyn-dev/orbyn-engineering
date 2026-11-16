@@ -357,7 +357,7 @@ function TaskDefaults() {
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "task_skip_near_limit",
         title: settingsLabel("tasks-skip-near-limit"),
-        description: "Waits until a limit window has room (90% used or more). Applies to scheduled and follow-up runs.",
+        description: "Waits until Codex’s limit window has room (90% used or more). Engines that report no window are never held. Applies to scheduled and follow-up runs.",
       }] }]} />
       <SettingGroup>
         <SettingRow title={title}>
@@ -469,9 +469,6 @@ function TasksView({ page }: { page: boolean }) {
                   </span>
                   <span role="cell" className="task-when">
                     {scheduleLabel(task.schedule)}
-                    <small>
-                      {!task.enabled ? "Paused" : task.next_run_at ? `Next run ${new Date(task.next_run_at).toLocaleString()}` : ""}
-                    </small>
                   </span>
                   <span role="cell">
                     <LastRun task={task} />

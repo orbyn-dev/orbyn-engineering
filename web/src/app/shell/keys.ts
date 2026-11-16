@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { api, setSlowRequestHandler } from "../../api/client";
 import { inDesktopApp, zoomKeyAction } from "../../api/shell";
-import { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from "../../features/workspace/sidebar/threadUndo";
+import { releaseUndoShortcut, undoHasShortcut, undoLatest, useUndoNotice } from "../../features/workspace";
 import { useAsync } from "../../lib/useAsync";
 import { actionIdFromCommand } from "../../product/composer/actionCommand";
 import { navigate, parseRoute, type Route } from "../../product/state/route";

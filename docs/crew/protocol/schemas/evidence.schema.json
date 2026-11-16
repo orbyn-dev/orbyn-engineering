@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/evidence.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "Evidence",
+  "description": "The result of one check run: what ran, on which commit, and what it proves and does not prove. Written only by the core.",
+  "type": "object",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/envelope" }],
+  "required": ["run_id", "check", "command", "outcome", "duration_ms", "commit", "log_hash", "excerpt", "artifacts", "proves", "does_not_prove"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": { "const": "evidence" },
+    "author": { "properties": { "role": { "const": "core" } } },
+    "run_id": { "$ref": "common.schema.json#/$defs/opaque_id" },
+    "check": { "$ref": "common.schema.json#/$defs/opaque_id" },
+    "claim": { "$ref": "common.schema.json#/$defs/hash" },
+    "command": { "description": "The exact command, or the check's own description when nothing ran.", "$ref": "common.schema.json#/$defs/text_short" },
+    "outcome": { "enum": ["pass", "fail", "error", "skipped"] },
+    "exit_code": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "commit": { "$ref": "common.schema.json#/$defs/commit" },
+    "log_hash": { "$ref": "common.schema.json#/$defs/hash" },
+    "excerpt": { "type": "string", "maxLength": 4000 },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["kind", "hash"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "enum": ["screenshot", "diff", "report", "log"] },
+          "hash": { "$ref": "common.schema.json#/$defs/hash" },
+          "name": { "$ref": "common.schema.json#/$defs/text_short" }
+        }
+      }
+    },
+    "proves": { "$ref": "common.schema.json#/$defs/text_short" },
+    "does_not_prove": { "$ref": "common.schema.json#/$defs/text_short" }
+  }
+}

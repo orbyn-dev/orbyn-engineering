@@ -6,9 +6,11 @@ import { COMMAND_LABELS, commandLabel, CONTEXT_PHRASES, whenPhrase } from "./com
 const registry = readFileSync(join(process.cwd(), "../crates/orbyn-core/src/settings/keybindings.rs"), "utf8");
 
 it("names every command the service ships a default for", () => {
-  const ids = [...new Set([...registry.matchAll(/"([a-z][a-zA-Z]*\.[a-zA-Z]+)"/g)].map((match) => match[1] ?? ""))]
-    .filter((id) => !["keybindings.json", "json.partial"].includes(id));
+  const defaults = registry.split("pub(crate) const DEFAULTS")[1]?.split("];")[0] ?? "";
+  const ids = [...new Set([...defaults.matchAll(/"[^"]*",\s*"([a-z][a-zA-Z.0-9]*)",\s*"[^"]*"/g)].map((match) => match[1] ?? ""))];
   expect(ids.length).toBeGreaterThan(40);
+  expect(ids).toContain("thread.jump.9");
+  expect(ids).toContain("usage.period.quarter");
   expect(ids.filter((id) => !COMMAND_LABELS[id])).toEqual([]);
 });
 
@@ -24,8 +26,11 @@ it("uses sentence case and never an id as a label", () => {
 });
 
 it("names every context the service uses", () => {
-  const used = [...new Set([...registry.matchAll(/\b(\w+(?:Focus|Open))\b/g)].map((match) => match[1] ?? ""))];
-  expect(used.filter((name) => !CONTEXT_PHRASES[name] && /^(composer|editable|preview|rightPanel|terminal|usagePage)/.test(name))).toEqual([]);
+  const defaults = registry.split("pub(crate) const DEFAULTS")[1]?.split("];")[0] ?? "";
+  const whens = [...defaults.matchAll(/"[^"]*",\s*"[a-z][a-zA-Z.0-9]*",\s*"([^"]*)"/g)].map((match) => match[1] ?? "");
+  const used = [...new Set(whens.flatMap((when) => when.match(/\w+/g) ?? []))];
+  expect(used.length).toBeGreaterThan(5);
+  expect(used.filter((name) => !CONTEXT_PHRASES[name])).toEqual([]);
 });
 
 it("reads a context as a plain phrase", () => {
@@ -34,4 +39,11 @@ it("reads a context as a plain phrase", () => {
   expect(whenPhrase("rightPanelOpen && terminalFocus")).toBe("When the right panel is open and the terminal is focused");
   expect(whenPhrase("!terminalFocus && !previewFocus")).toBe("When the terminal isn’t focused and the preview isn’t focused");
   expect(whenPhrase("a || b")).toBe("a || b");
+});
+
+it("reads turn and draft contexts", () => {
+  expect(whenPhrase("composerFocus && turnRunning")).toBe("When the composer is focused and a turn is running");
+  expect(whenPhrase("composerFocus && !draftRoute")).toBe("When the composer is focused and a thread is open");
+  expect(commandLabel("thread.jump.3")).toBe("Go to thread 3");
+  expect(commandLabel("usage.period.week")).toBe("Show usage by week");
 });

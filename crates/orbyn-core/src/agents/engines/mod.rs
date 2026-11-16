@@ -6,7 +6,9 @@ pub mod instances;
 pub mod known;
 pub mod maintenance;
 pub mod manifest;
+pub mod outcomes;
 pub mod probe;
+pub mod vendor_pages;
 pub mod warm;
 
 use std::collections::{HashMap, HashSet};
@@ -17,8 +19,8 @@ use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
     AuthState, CustomEngine, EngineCompatibility, EngineFeedbackReceipt, EngineFeedbackRequest,
-    EngineModels, EngineStatus, EngineTier, EngineUpdateProgress, InstallerKind, ModelSelection,
-    ProviderInstance, VersionSupport,
+    EngineInstalls, EngineModels, EngineStatus, EngineTier, EngineUpdateProgress, InstallKind,
+    InstallOutcome, InstallerKind, ModelSelection, ProviderInstance, VersionSupport,
 };
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
@@ -37,12 +39,18 @@ use crate::util::tail;
 use catalog_cache::{CatalogCache, Entry};
 use known::{KNOWN_ENGINES, known_engine};
 use manifest::TestedManifest;
+use outcomes::{Attempt, Ran};
 
 const LATEST_TIMEOUT: Duration = Duration::from_secs(4);
 pub const UPDATE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MODELS_TTL: Duration = Duration::from_secs(5 * 60);
 /// How often an engine's catalog key is compared. Reading it starts processes.
 const MODELS_KEY_CHECK: Duration = Duration::from_secs(60);
+/// A model list is served without a refresh for this long; after it, the next call
+/// answers from the kept list and has the engine's catalog key checked in the background.
+const MODELS_FRESH: Duration = Duration::from_secs(30);
+/// Past this, a kept list is no longer shown without a read.
+const MODELS_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 /// A stand-in list is kept only long enough not to start a process per read.
 const MODELS_RETRY: Duration = Duration::from_secs(30);
 const MODELS_TIMEOUT: Duration = Duration::from_secs(20);
@@ -60,6 +68,9 @@ pub struct EngineConfig {
     pub known_engine_ids: Option<Vec<String>>,
     /// Where the last good model lists are kept. `None` keeps them in memory only.
     pub cache_dir: Option<PathBuf>,
+    /// How long the service waits for a person to answer an approval. Claude's permission prompt is a long
+    /// poll to the service, so its own MCP timeout has to outlast this.
+    pub approval_timeout: Duration,
 }
 
 impl Default for EngineConfig {
@@ -72,6 +83,7 @@ impl Default for EngineConfig {
             update_timeout: UPDATE_TIMEOUT,
             known_engine_ids: None,
             cache_dir: None,
+            approval_timeout: crate::app::DEFAULT_APPROVAL_TIMEOUT,
         }
     }
 }
@@ -92,6 +104,12 @@ pub struct EngineManager {
     installer_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     statuses: tokio::sync::Mutex<Option<Vec<EngineStatus>>>,
     models: tokio::sync::Mutex<HashMap<String, CachedModels>>,
+    /// What `models` answers from while a fresher list is read in the background, so a
+    /// screen or a turn never waits on an engine's process.
+    model_reads: crate::util::swr::Swr<EngineModels>,
+    /// Counts what changes an engine's status: an update starting or ending, a changed
+    /// engine set. What shows engine status (the update status) follows it.
+    changes: tokio::sync::watch::Sender<u64>,
     /// The last good list of each engine, for checks that cannot wait for an engine.
     known_models: Mutex<HashMap<String, EngineModels>>,
     /// The same lists on disk, so a restart keeps what the engine last said.
@@ -128,7 +146,10 @@ impl EngineManager {
         config: EngineConfig,
     ) -> Self {
         let drivers: Vec<Arc<dyn EngineDriver>> = vec![
-            Arc::new(ClaudeDriver::new(config.claude_program.clone())),
+            Arc::new(ClaudeDriver::new(
+                config.claude_program.clone(),
+                config.approval_timeout,
+            )),
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),
@@ -150,7 +171,19 @@ impl EngineManager {
             progress: tokio::sync::broadcast::channel(256).0,
             statuses: tokio::sync::Mutex::new(None),
             models: tokio::sync::Mutex::new(HashMap::new()),
+            model_reads: crate::util::swr::Swr::<EngineModels>::new(
+                MODELS_FRESH,
+                MODELS_MAX_AGE,
+                64,
+            )
+            .keeping(|models| models.error.is_none() || models.fallback)
+            .same_as(|old, new| {
+                let mut new = new.clone();
+                new.checked_at.clone_from(&old.checked_at);
+                *old == new
+            }),
             known_models: Mutex::new(HashMap::new()),
+            changes: tokio::sync::watch::channel(0).0,
         }
     }
 
@@ -443,13 +476,39 @@ impl EngineManager {
         Ok(statuses)
     }
 
+    /// The grouped provider list the Providers page shows, from the same statuses and
+    /// facts the crew router reads.
+    pub async fn provider_list(&self) -> Result<orbyn_contracts::ProviderList> {
+        let statuses = self.statuses(false).await?;
+        Ok(crate::agents::provider_list::list(
+            &statuses,
+            &crate::agents::provider_list::installed_apps(),
+            &crate::agents::provider_list::refused_programs(),
+        ))
+    }
+
     /// Drops the cached list so the next read sees a changed engine set.
     pub async fn invalidate(&self) {
         *self.statuses.lock().await = None;
+        // An engine added, removed or updated: its old model list no longer holds.
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
+        self.changes.send_modify(|count| *count += 1);
+    }
+
+    /// The number of changes to engine status so far.
+    pub fn change_epoch(&self) -> u64 {
+        *self.changes.borrow()
+    }
+
+    pub fn subscribe_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
     }
 
     /// An instance id can now launch another driver, whose old models cannot apply.
     pub async fn instances_changed(&self) {
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
         self.invalidate().await;
         // Keep the catalog lock until both caches are cleared: an in-flight read
         // must not restore the old driver's validation after this returns.
@@ -469,7 +528,28 @@ impl EngineManager {
 
     /// What the engine says it offers. A failure is reported with the list empty,
     /// so custom models still work, and only a good answer is kept for long.
-    pub async fn models(&self, id: &str, refresh: bool) -> Result<EngineModels> {
+    /// The last list answers at once and is checked again in the background after
+    /// 30 seconds, announcing `models:<engine>` when it changed. `refresh` reads now.
+    pub async fn models(self: &Arc<Self>, id: &str, refresh: bool) -> Result<EngineModels> {
+        // A removed engine must not answer with the list it had.
+        self.driver(id)?;
+        let manager = self.clone();
+        let engine = id.to_owned();
+        self.model_reads
+            .get(
+                &crate::util::swr::key(&[id]),
+                &format!("models:{id}"),
+                refresh,
+                move || async move { manager.read_models(&engine, refresh).await },
+            )
+            .await
+    }
+
+    pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
+        self.model_reads.set_notify(notify.clone());
+    }
+
+    async fn read_models(&self, id: &str, refresh: bool) -> Result<EngineModels> {
         let mut cache = self.models.lock().await;
         let driver = self.driver(id)?;
         if !refresh
@@ -665,13 +745,44 @@ impl EngineManager {
             .map(str::to_owned)
     }
 
+    /// Keeps an outcome for the provider page. Failing to keep it never fails the work it
+    /// describes: the work already happened.
+    pub(crate) fn keep_outcome(&self, outcome: &InstallOutcome) {
+        if let Err(error) = self.store.record_install(outcome) {
+            tracing::warn!(%error, engine = %outcome.engine, "an install outcome was not kept");
+        }
+    }
+
+    /// What a provider page shows of installs: the kept outcomes, newest first, and the
+    /// vendor's install page while the engine is not installed.
+    pub async fn installs(&self, id: &str) -> Result<EngineInstalls> {
+        let outcomes = self.store.engine_installs(id)?;
+        let vendor_page = match vendor_pages::vendor_page(id) {
+            Some(page) if !self.status(id).await.is_ok_and(|status| status.installed) => Some(page),
+            _ => None,
+        };
+        Ok(EngineInstalls {
+            engine: id.to_owned(),
+            vendor_page,
+            outcomes,
+        })
+    }
+
     /// Each step of every update from now on: the installer's command, the lines
     /// it prints, then how it ended.
     pub fn update_events(&self) -> tokio::sync::broadcast::Receiver<EngineUpdateProgress> {
         self.progress.subscribe()
     }
 
-    fn emit(&self, event: EngineUpdateProgress) {
+    /// One lock per installer or agent, so two installs of the same thing never overlap.
+    pub(crate) fn installer_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        lock(&self.installer_locks)
+            .entry(key.to_owned())
+            .or_default()
+            .clone()
+    }
+
+    pub(crate) fn emit(&self, event: EngineUpdateProgress) {
         // No listener is not an error: progress is only for whoever is watching.
         let _ = self.progress.send(event);
     }
@@ -772,21 +883,43 @@ impl EngineManager {
         let _installer = installer_lock.lock().await;
         self.emit(EngineUpdateProgress::Started {
             engine: id.to_owned(),
-            command: plan.display(),
+            command: outcomes::hide(&plan.display()),
         });
+        let attempt = Attempt::begin(
+            id,
+            if version.is_some() {
+                InstallKind::Install
+            } else {
+                InstallKind::Update
+            },
+            Some(&plan.display()),
+            before.version.clone(),
+        );
         let mut finish = Finish {
             engines: self,
             id: id.to_owned(),
+            attempt: Some(attempt),
             sent: false,
         };
+        let mut ran = Ran::default();
         let result = self
-            .apply_update(id, driver.as_ref(), &plan, before.version, actor)
+            .apply_update(id, driver.as_ref(), &plan, before.version, actor, &mut ran)
             .await;
         finish.sent = true;
+        if let Some(attempt) = finish.attempt.take() {
+            self.keep_outcome(&attempt.finish(
+                &ran,
+                result.as_ref().err(),
+                result.as_ref().ok().and_then(|after| after.version.clone()),
+            ));
+        }
         self.emit(EngineUpdateProgress::Finished {
             engine: id.to_owned(),
             version: result.as_ref().ok().and_then(|after| after.version.clone()),
-            error: result.as_ref().err().map(ToString::to_string),
+            error: result
+                .as_ref()
+                .err()
+                .map(|error| outcomes::hide(&error.to_string())),
         });
         result
     }
@@ -800,18 +933,19 @@ impl EngineManager {
         plan: &UpdatePlan,
         before: Option<String>,
         actor: &str,
+        ran: &mut Ran,
     ) -> Result<EngineStatus> {
         self.store.append_audit(&AuditRecord {
             actor: actor.to_owned(),
             action: "engine.update".into(),
-            target: plan.display(),
+            target: outcomes::hide(&plan.display()),
             decision: None,
             source: "user".into(),
             thread_id: None,
             run_id: None,
             detail: json!({ "engine": id, "from": before }),
         })?;
-        let result = self.run_update(id, plan).await;
+        let result = self.run_update(id, plan, ran).await;
         let after = driver.probe().await;
         self.store.append_audit(&AuditRecord {
             actor: "system:update".into(),
@@ -825,7 +959,10 @@ impl EngineManager {
                 "ok": result.is_ok(),
                 "from": before,
                 "to": after.version,
-                "output": result.as_ref().map_or_else(|error| error.to_string(), Clone::clone),
+                // The audit log is read back too, so it holds the same hidden text.
+                "output": outcomes::hide(
+                    &result.as_ref().map_or_else(|error| error.to_string(), Clone::clone),
+                ),
             }),
         })?;
         result?;
@@ -843,6 +980,9 @@ impl EngineManager {
             )));
         }
         self.invalidate().await;
+        // Instances may share the installation, so every engine's list is read again.
+        self.model_reads.invalidate_all();
+        self.model_reads.announce("models");
         self.status(id).await
     }
 
@@ -862,15 +1002,17 @@ impl EngineManager {
         // Instances can share the binary, and Windows cannot replace a running one.
         let warm = std::mem::take(&mut *lock(&self.warm));
         drop(warm);
+        self.changes.send_modify(|count| *count += 1);
         Ok(UpdateMarker {
             set: &self.updating,
+            changes: &self.changes,
             id: id.to_owned(),
         })
     }
 
     /// Runs the installer to the end, sending each line it prints as progress. It is
     /// never stopped partway by a person: that could leave a half-written engine.
-    async fn run_update(&self, id: &str, plan: &UpdatePlan) -> Result<String> {
+    async fn run_update(&self, id: &str, plan: &UpdatePlan, ran: &mut Ran) -> Result<String> {
         let command = resolve(&plan.program)
             .ok_or_else(|| CoreError::UpdateFailed(format!("{} was not found.", plan.program)))?;
         let args: Vec<std::ffi::OsString> = plan.args.iter().map(Into::into).collect();
@@ -879,13 +1021,14 @@ impl EngineManager {
         let mut child = ManagedChild::spawn(builder)?;
         let mut stdout = child.child_mut().stdout.take();
         let mut stderr = child.child_mut().stderr.take();
+        // Kept outside the timed block, so a timeout still leaves what the installer printed.
+        let mut out = Vec::new();
+        let mut err = Vec::new();
         let outcome = tokio::time::timeout(self.config.update_timeout, async {
-            let mut out = Vec::new();
-            let mut err = Vec::new();
             let progress = |line: String| {
                 self.emit(EngineUpdateProgress::Output {
                     engine: id.to_owned(),
-                    line,
+                    line: outcomes::hide(&line),
                 });
             };
             let (_, _, status) = tokio::join!(
@@ -893,22 +1036,31 @@ impl EngineManager {
                 read_lines(stderr.as_mut(), &mut err, progress),
                 child.wait()
             );
-            (status, out, err)
+            status
         })
         .await;
-        let Ok((status, out, err)) = outcome else {
-            return Err(CoreError::UpdateFailed(
-                "The update did not finish in time and was stopped.".into(),
-            ));
-        };
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out),
             String::from_utf8_lossy(&err)
         );
+        ran.output = tail(&text, 4096);
+        let Ok(status) = outcome else {
+            return Err(CoreError::UpdateFailed(
+                "The update did not finish in time and was stopped.".into(),
+            ));
+        };
+        ran.exit = status
+            .as_ref()
+            .ok()
+            .and_then(std::process::ExitStatus::code);
         match status {
             Ok(status) if status.success() => Ok(tail(&text, 4096)),
-            _ => Err(CoreError::UpdateFailed(tail(&text, 1024))),
+            _ => {
+                ran.failed = true;
+                // Hidden at the source: this text reaches the error body, the audit row and the stream.
+                Err(CoreError::UpdateFailed(outcomes::hide(&tail(&text, 1024))))
+            }
         }
     }
 }
@@ -1062,19 +1214,25 @@ impl Drop for NativeOperation {
 
 /// Sends `finished` for an update dropped before it ended, so no listener is left
 /// showing it as running.
-struct Finish<'a> {
-    engines: &'a EngineManager,
-    id: String,
-    sent: bool,
+pub(crate) struct Finish<'a> {
+    pub(crate) engines: &'a EngineManager,
+    pub(crate) id: String,
+    pub(crate) attempt: Option<Attempt>,
+    pub(crate) sent: bool,
 }
 
 impl Drop for Finish<'_> {
     fn drop(&mut self) {
         if !self.sent {
+            if let Some(attempt) = self.attempt.take() {
+                let error = CoreError::UpdateFailed("It stopped before it finished.".into());
+                self.engines
+                    .keep_outcome(&attempt.finish(&Ran::default(), Some(&error), None));
+            }
             self.engines.emit(EngineUpdateProgress::Finished {
                 engine: std::mem::take(&mut self.id),
                 version: None,
-                error: Some("The update stopped before it finished.".into()),
+                error: Some("It stopped before it finished.".into()),
             });
         }
     }
@@ -1082,12 +1240,14 @@ impl Drop for Finish<'_> {
 
 struct UpdateMarker<'a> {
     set: &'a Mutex<HashSet<String>>,
+    changes: &'a tokio::sync::watch::Sender<u64>,
     id: String,
 }
 
 impl Drop for UpdateMarker<'_> {
     fn drop(&mut self) {
         lock(self.set).remove(&self.id);
+        self.changes.send_modify(|count| *count += 1);
     }
 }
 

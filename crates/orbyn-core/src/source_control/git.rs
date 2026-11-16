@@ -34,6 +34,17 @@ const BYTE_EXACT: &[&str] = &[
     "core.attributesFile=",
 ];
 
+/// Crew's review checks compare bytes. Line-ending conversion and the untracked cache could
+/// normalize a change away or hide a new file, so only those checks add these on top of `git_hardened`.
+const CREW_BYTE_EXACT: &[&str] = &[
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.safecrlf=false",
+    "-c",
+    "core.untrackedCache=false",
+];
+
 /// The repository's own empty tree. Reading attributes from it hides `.gitattributes`.
 async fn no_attributes(cwd: &Path) -> Result<String> {
     Ok(text(
@@ -61,6 +72,71 @@ pub(crate) async fn git_raw(cwd: &Path, args: &[&str]) -> Result<std::process::O
     }
     .await;
     output.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))
+}
+
+/// The `-c name=` overrides that switch off every filter and diff converter the repository's own config names: a clean filter
+/// can make an edit read as the original bytes, and each of them runs a program the worker chose.
+async fn converter_overrides(cwd: &Path) -> Vec<String> {
+    let Ok(out) = git_raw(
+        cwd,
+        &[
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^(filter\..*\.(clean|smudge|process)|diff\..*\.(textconv|command))$",
+        ],
+    )
+    .await
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .flat_map(|name| ["-c".to_owned(), format!("{name}=")])
+        .collect()
+}
+
+/// Git for the checks that read what a worker changed. Anything the worker could set in the repository to hide an edit, or to
+/// make the core run a program of its choosing, is off: repository filters and diff converters, attributes (from the tree, the
+/// global file and the system), and replace refs. A caller that relies on a changed file showing in a diff uses this.
+pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    hardened(cwd, &[], args).await
+}
+
+/// `git_hardened` plus the settings Crew's byte-exact review checks need: no line-ending conversion and no untracked cache.
+/// Only those checks call this; every other caller keeps `git_hardened` as is.
+pub(crate) async fn git_byte_exact(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    hardened(cwd, CREW_BYTE_EXACT, args).await
+}
+
+async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> {
+    let overrides = converter_overrides(cwd).await;
+    let attributes = no_attributes(cwd).await?;
+    let mut command = command(cwd);
+    command
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_ATTR_SOURCE", &attributes)
+        .args(SAFE_CONFIG)
+        .args(["-c", "core.attributesFile="])
+        .args(extra)
+        .args(&overrides)
+        .args(args);
+    let output = async {
+        crate::host::process::ManagedChild::spawn(command)?
+            .output()
+            .await
+    }
+    .await
+    .map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    if !output.status.success() {
+        return Err(CoreError::Git(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(output.stdout)
 }
 
 pub(crate) fn text(bytes: &[u8]) -> String {
@@ -135,33 +211,80 @@ pub struct RegisteredWorktree {
     pub revision: String,
 }
 
-/// Linked worktrees, without the primary checkout.
-pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktree>> {
+/// One entry of `git worktree list`, with the flags that say whether it can be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorktreeRecord {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub revision: String,
+    pub detached: bool,
+    pub locked: bool,
+    pub prunable: bool,
+    /// The entry is a bare repository, not a checkout.
+    pub bare: bool,
+}
+
+/// Every worktree of the repository, the primary checkout first.
+pub(crate) async fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>> {
     let listing = git(repo, &["worktree", "list", "--porcelain", "-z"]).await?;
+    Ok(parse_worktrees(&listing))
+}
+
+/// Like [`worktree_records`] for a reader that shows what it finds to a person: through
+/// the hardened runner, so no repository setting can start a program.
+pub(crate) async fn worktree_records_hardened(repo: &Path) -> Result<Vec<WorktreeRecord>> {
+    let listing = git_hardened(repo, &["worktree", "list", "--porcelain", "-z"]).await?;
+    Ok(parse_worktrees(&listing))
+}
+
+fn parse_worktrees(listing: &[u8]) -> Vec<WorktreeRecord> {
     let mut worktrees = Vec::new();
-    let mut current: Option<RegisteredWorktree> = None;
+    let mut current: Option<WorktreeRecord> = None;
     for field in listing.split(|byte| *byte == 0) {
         let line = String::from_utf8_lossy(field);
         if let Some(path) = line.strip_prefix("worktree ") {
             worktrees.extend(current.take());
-            current = Some(RegisteredWorktree {
+            current = Some(WorktreeRecord {
                 path: PathBuf::from(path),
                 branch: None,
                 revision: String::new(),
+                detached: false,
+                locked: false,
+                prunable: false,
+                bare: false,
             });
         } else if let Some(entry) = current.as_mut() {
             if let Some(head) = line.strip_prefix("HEAD ") {
                 entry.revision = head.to_owned();
             } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
                 entry.branch = Some(branch.to_owned());
+            } else if line == "detached" {
+                entry.detached = true;
+            } else if line == "bare" {
+                entry.bare = true;
+            } else if line == "locked" || line.starts_with("locked ") {
+                entry.locked = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                entry.prunable = true;
             }
         }
     }
     worktrees.extend(current);
-    if !worktrees.is_empty() {
-        worktrees.remove(0);
-    }
-    Ok(worktrees)
+    worktrees
+}
+
+/// Linked worktrees, without the primary checkout.
+pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktree>> {
+    Ok(worktree_records(repo)
+        .await?
+        .into_iter()
+        .skip(1)
+        .map(|record| RegisteredWorktree {
+            path: record.path,
+            branch: record.branch,
+            revision: record.revision,
+        })
+        .collect())
 }
 
 /// How a new worktree starts, from the settings and the project file.
@@ -604,6 +727,27 @@ fn parse_numstat(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)> 
 mod tests {
     use super::*;
     use crate::testing::TempDir;
+
+    #[tokio::test]
+    async fn only_the_byte_exact_helper_carries_the_crew_flags() {
+        let dir = TempDir::new();
+        crate::testing::run_git(dir.path(), &["init", "-q"]);
+        for (key, value) in [
+            ("core.autocrlf", "true"),
+            ("core.safecrlf", "true"),
+            ("core.untrackedCache", "true"),
+        ] {
+            crate::testing::run_git(dir.path(), &["config", key, value]);
+            let hardened = git_hardened(dir.path(), &["config", "--get", key])
+                .await
+                .unwrap();
+            assert_eq!(text(&hardened), "true", "{key} must stay as configured");
+            let exact = git_byte_exact(dir.path(), &["config", "--get", key])
+                .await
+                .unwrap();
+            assert_eq!(text(&exact), "false", "{key} is off for byte-exact checks");
+        }
+    }
 
     #[tokio::test]
     async fn a_finished_git_leader_does_not_leave_helpers_holding_output() {

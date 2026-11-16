@@ -3,7 +3,7 @@ import { useId, useRef, useState, type ReactNode } from "react";
 import type { PullListEntry } from "../../../api/types";
 import { deriveProjectIdentity } from "../../../product/projects/projectIdentity";
 import { forgeName } from "../../../product/pulls/labels";
-import { checksView, requestedName, yourReview, type PullDetails } from "../model/pullModel";
+import { checksView, requestedName, reviewersWord, yourReview, type PullDetails } from "../model/pullModel";
 import type { DetailsStatus } from "../model/usePullDetails";
 
 /** What the cells need to know about the details request, and who is signed in. */
@@ -172,6 +172,8 @@ function Avatar({ name, team }: { name: string; team: boolean }) {
 
 export function ReviewersCell({ entry, details, env }: { entry: PullListEntry; details: PullDetails | undefined; env: CellEnv }) {
   const people = details?.requested_reviewers;
+  // After the avatars, what the reviews say: Approved, or Changes (amber only on the person's own pull request).
+  const word = reviewersWord(entry.pull, env.viewers);
   const value =
     people === undefined ? undefined : people.length === 0 ? null : (
       <>
@@ -181,6 +183,11 @@ export function ReviewersCell({ entry, details, env }: { entry: PullListEntry; d
           ))}
         </span>
         {people.length > 2 ? <span className="pull-more">+{people.length - 2}</span> : null}
+        {word ? (
+          <span className="pull-rword" data-tone={word.tone}>
+            {word.label}
+          </span>
+        ) : null}
       </>
     );
   const names = people?.map((one) => (one.kind === "team" ? requestedName(`team:${one.name}`) : one.name)).join(", ");

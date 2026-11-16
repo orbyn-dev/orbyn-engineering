@@ -12,8 +12,11 @@
 //! credential, so it is pinned only by both layers being applied to the same
 //! merged router in `router`.
 //!
+//! Each protected row also carries its class, `local` or `person` (`classes.rs`). A route
+//! with no class fails `every_route_has_a_class`. Nothing is enforced by class yet.
+//!
 //! After an intended route change, regenerate the file with
-//! `ORBYN_UPDATE_ROUTES=1 cargo test -p orbynd --bin orbynd route_table`.
+//! `ORBYN_UPDATE_ROUTES=1 cargo test -p orbynd --bin orbynd route_table`, then give each new route a class.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -24,6 +27,7 @@ use axum::Router;
 use orbyn_core::{Core, CoreConfig};
 use tokio::net::TcpListener;
 
+use super::classes::PERSON;
 use super::router;
 use crate::http::AppState;
 use crate::http::access::Access;
@@ -35,7 +39,7 @@ const METHODS: [&str; 9] = [
 ];
 
 /// Every `(method, path)` the router registers, read from its `Debug` text.
-fn registered(router: &Router) -> BTreeSet<(String, String)> {
+pub(super) fn registered(router: &Router) -> BTreeSet<(String, String)> {
     let text = format!("{router:?}");
     let (routes, node) = text
         .split_once("node: Node { paths: {")
@@ -72,8 +76,17 @@ fn registered(router: &Router) -> BTreeSet<(String, String)> {
 async fn observed() -> Value {
     let dir = std::env::temp_dir().join(format!("orbynd-routes-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let core =
-        Arc::new(Core::open(CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into())).unwrap());
+    // The Crew routes hide behind the Preview flag; with it on they are protected routes like the rest.
+    let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
+    let absent = dir.join("absent-native");
+    assert!(absent.is_absolute() && !absent.exists());
+    config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
+    config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
+    config.engines.known_engine_ids = Some(Vec::new());
+    config.engines.lookup_latest = false;
+    config.crew_preview = true;
+    config.crew_confine_workers = false;
+    let core = Arc::new(Core::open(config).unwrap());
     let access = Arc::new(Access::new("token", vec![], None));
     let app = router(AppState {
         core,
@@ -136,17 +149,98 @@ fn one_line_per_route(table: &Value) -> String {
     format!("{{\n{},\n{}\n}}\n", section("protected"), section("public"))
 }
 
+/// The pinned table, read from `tests/routes.json`.
+fn pinned() -> Value {
+    serde_json::from_str(&std::fs::read_to_string(TABLE_PATH).unwrap()).unwrap()
+}
+
+/// The `(method, path)` of each row, the class dropped.
+fn without_class(table: &Value) -> Value {
+    let rows: Vec<Value> = table["protected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| json!([row[0], row[1]]))
+        .collect();
+    json!({ "protected": rows, "public": table["public"] })
+}
+
+/// Adds each route's class: `person` from the table in `classes.rs`, else the class already
+/// pinned, else `unclassified`, which `every_route_has_a_class` refuses.
+fn with_classes(now: &Value, old: Option<&Value>) -> Value {
+    let rows: Vec<Value> = now["protected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let (method, path) = (row[0].as_str().unwrap(), row[1].as_str().unwrap());
+            let class = if PERSON.iter().any(|(m, p, _)| (*m, *p) == (method, path)) {
+                json!("person")
+            } else {
+                old.and_then(|old| old["protected"].as_array())
+                    .and_then(|rows| rows.iter().find(|r| r[0] == row[0] && r[1] == row[1]))
+                    .map_or(json!("unclassified"), |r| r[2].clone())
+            };
+            json!([method, path, class])
+        })
+        .collect();
+    json!({ "protected": rows, "public": now["public"] })
+}
+
 #[tokio::test]
 async fn route_table_is_unchanged() {
     let now = observed().await;
     if std::env::var_os("ORBYN_UPDATE_ROUTES").is_some() {
-        std::fs::write(TABLE_PATH, one_line_per_route(&now)).unwrap();
+        let old = std::fs::read_to_string(TABLE_PATH)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        std::fs::write(
+            TABLE_PATH,
+            one_line_per_route(&with_classes(&now, old.as_ref())),
+        )
+        .unwrap();
         return;
     }
-    let pinned: Value =
-        serde_json::from_str(&std::fs::read_to_string(TABLE_PATH).unwrap()).unwrap();
     assert_eq!(
-        now, pinned,
-        "the route table changed; if that is intended, regenerate tests/routes.json"
+        now,
+        without_class(&pinned()),
+        "the route table changed; if that is intended, regenerate tests/routes.json and classify each new route"
+    );
+}
+
+/// A route nobody classified (a new one is written `unclassified` by the regenerate) fails here, and the
+/// `person` rows are exactly the reviewed table in `classes.rs`.
+#[test]
+fn every_route_has_a_class() {
+    let table = pinned();
+    let rows = table["protected"].as_array().unwrap();
+    let unclassified: Vec<String> = rows
+        .iter()
+        .filter(|row| !matches!(row[2].as_str(), Some("local" | "person")))
+        .map(|row| format!("{} {}", row[0], row[1]))
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "classify these routes as local or person in tests/routes.json (and list a person route in routes/classes.rs): {unclassified:?}"
+    );
+    let person: BTreeSet<(String, String)> = rows
+        .iter()
+        .filter(|row| row[2] == "person")
+        .map(|row| {
+            (
+                row[0].as_str().unwrap().to_owned(),
+                row[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let listed: BTreeSet<(String, String)> = PERSON
+        .iter()
+        .map(|(m, p, _)| ((*m).to_owned(), (*p).to_owned()))
+        .collect();
+    assert_eq!(listed.len(), PERSON.len(), "a Person route is listed twice");
+    assert!(PERSON.iter().all(|(_, _, why)| !why.is_empty()));
+    assert_eq!(
+        person, listed,
+        "the person rows of tests/routes.json and routes/classes.rs PERSON must be the same routes"
     );
 }

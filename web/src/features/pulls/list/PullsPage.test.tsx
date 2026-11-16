@@ -2,6 +2,9 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { pullsApi } from "../../../api/pulls";
 import type { PullList } from "../../../api/types";
+import { dataChanged } from "../../../api/shell";
+import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
+import { forgetKept } from "../../../lib/keptData";
 import { MOTION } from "../../../lib/motion";
 import { setViewportWidth } from "../../../test-support";
 import { PullsPage } from "./PullsPage";
@@ -49,4 +52,44 @@ it("keeps the desktop Filters popover at 700 px; only a phone gets the sheet", (
   expect(screen.getByRole("dialog", { name: "Filters" })).toBeInTheDocument();
   expect(document.querySelector(".pulls-sheet")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Search people" })).toBeInTheDocument();
+});
+
+const entry = (number: number) => ({
+  project_id: "p",
+  project_name: "p",
+  pull: { number, title: `Pull ${number}`, url: `https://github.com/o/r/pull/${number}`, state: "open", draft: false, labels: [] },
+}) as unknown as PullList["pulls"][number];
+
+it("reads again in the background when the service says pull requests changed, with no loading state", async () => {
+  forgetKept();
+  const stop = startDataRefresh();
+  const list = vi.spyOn(pullsApi, "list").mockResolvedValue({ pulls: [entry(1)], failed: [] });
+  render(<PullsPage />);
+  await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+  expect(screen.getByText("Pull 1")).toBeInTheDocument();
+  const before = list.mock.calls.length;
+  list.mockResolvedValue({ pulls: [entry(1), entry(2)], failed: [] });
+  dataChanged("pulls");
+  await act(async () => void (await vi.advanceTimersByTimeAsync(COALESCE_MS)));
+  expect(screen.getByText("Pull 2")).toBeInTheDocument();
+  expect(screen.queryByText("Loading")).toBeNull();
+  expect(screen.queryByText("Refreshing")).toBeNull();
+  // A background read takes the slow lane: no foreground priority, and no forced read.
+  const call = list.mock.calls[before] as unknown[];
+  expect(call[3]).toBeUndefined();
+  expect(call[4]).toBe(false);
+  stop();
+});
+
+it("sends a real read when the person presses Refresh", async () => {
+  forgetKept();
+  const list = vi.spyOn(pullsApi, "list").mockResolvedValue({ pulls: [entry(1)], failed: [] });
+  render(<PullsPage />);
+  await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+  const before = list.mock.calls.length;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+  const call = list.mock.calls[before] as unknown[];
+  expect(call[3]).toEqual({ priority: "foreground" });
+  expect(call[4]).toBe(true);
 });

@@ -53,7 +53,7 @@ custom theme files keep working through `THEME_TOKENS`. Literal colours live onl
 `web/src/styles/tokens.css`; `tokens.test.ts` enforces it.
 
 Ink is alpha white or black over the surface (`--color-text` 92-94%, `--color-textSoft`
-74-78%, `--color-muted` 60-64%, `--color-faint` 52-54%). Muted and faint sit a few points
+74-78%, `--color-muted` 58-64%, `--color-faint` 52-54%). Muted and faint sit a few points
 above the reference mock-up so small text keeps at least 4.5:1 on its surface.
 
 ## Type
@@ -91,15 +91,12 @@ details), `--drawer-w` 360px (Reading panel), `--lights-w` 78px. The sizes 12.5p
   -0.015em tracking, a muted sub line (branch, run status) and actions at the right. The
   thread header, the new-thread header and the pages below use it (`product/ui/PageBar.tsx`). Page content pads 28px.
 - Side panel: 380px (`--context-w`; a dragged width still wins), `--color-background`, 1px
-  left border, and six fixed text tabs without icons (30px, 8px radius, 12.5px; the
-  selected tab has the selected fill): Diff, Files, Browser, Activity, PRs ("Pull
-  requests" to a screen reader) and Side chat. Maximise, the terminal toggle and Close end
-  the row. Several of a kind live one level down, as 24px pills above the content: the
-  Browser's pages (each closable, plus New tab) over its address bar, and a thread's side
-  chats (plus New side chat). The terminal is a drawer under the thread with its own tabs.
-  Choosing the selected tab again, or "Open a surface…" in the command palette, shows the
-  "Open a surface" list with its letter shortcuts; Escape returns to the tab. The tab row
-  is one tablist (arrow keys, Home, End) and fades at its edge when it overflows.
+  left border. Its tab strip is icon-only 32px slots with the open tab's name on the line under it;
+  see [Side panel tabs](#side-panel-tabs). Several of a kind live one level down, as 24px pills above
+  the content: the Browser's pages (each closable, plus New tab) over its address bar, and a thread's
+  side chats (plus New side chat). The terminal is a drawer under the thread with its own tabs. The
+  tab row is one tablist (arrow keys, Home, End) and folds its last tabs into a "..." menu when
+  they do not fit.
 
 ## Thread
 
@@ -133,14 +130,16 @@ has the page heading and 28px content padding.
 - Pull requests: filter pills (Open and Drafts, each with a count) beside search, Sort,
   Filters (state, draft, review, checks, author, label), the project filter and Refresh.
   Rows are a table: select box, title with its number, branch, project and author, Checks
-  (Running, Failing, Passing or No checks), Review (changes requested is an amber pill),
-  Updated, and row actions (Reopen, Ready for review, Merge, Close) that show on hover or
+  (Running, Failing, Passing or No checks), Reviewers (avatars, then Approved or Changes;
+  Changes is amber only on your own pull request, ink on anyone else's), Updated, and row actions (Reopen, Ready for review, Merge, Close) that show on hover or
   focus. Selecting rows offers Close selected. A row opens the pull request as its own
   page with a back button and its title in the title bar; the list keeps its filters. The
   tabs are Summary, Guide, Timeline and Code. Summary has the description and conversation
   beside a side column: status card (status, branch, checks, changes), a merge method,
   Work on this, Close and Merge, then checks, reviewers and labels. On the other tabs and
-  on a narrow window those actions move to the heading. A thread's side panel keeps the
+  on a narrow window those actions move to the heading. Amber on a pull request page means
+  you are waited on: a review asked of you, or changes requested on your own pull request.
+  A conflict, and changes you requested yourself, stay ink. A thread's side panel keeps the
   compact detail.
 - Usage: tabs Usage and Limits under the heading. Usage has period, provider and metric
   (Cost, Tokens) controls, tiles for tokens, estimated cost and cache hits, the daily bar
@@ -207,6 +206,18 @@ of exactly 208px to 224px and turns project folders on, once; a custom width sta
 with saved preferences gets a one-time notice with Turn off; the option lives in Settings ›
 Threads.
 
+## Side panel tabs
+
+The side panel starts with no tab in every thread. Its strip is the + launcher (Changes, Browser,
+Activity, Side chat, Tools and, until the left-bar explorer replaces it, Files) and the maximise and
+close buttons; the empty panel offers Changes, Browser and Tools. Tabs are browser-style: the ⋯ under
+the strip closes the tab, the others or all of them, a drag reorders (a line shows where it lands, the other
+slots slide aside over `--m-fast`, Escape cancels) and "Reset tab order" shows only once the order has
+changed. Which tabs are open, their order and the active one are remembered per thread, and closing the
+panel does not forget them. An entry shows the key its command already has (Changes ⌘D, Browser ⌘⇧J, Ctrl on Windows) and the rest show none. Options whose screens do not exist yet (Review and comments, Crew views,
+Open file) stay hidden until they do. Files is the one old destination kept in the launcher while the
+left-bar explorer (shell PR 1b) is built; the explorer removes it, so the two never ship together for long.
+
 ## Settings
 
 Settings is a page in the frame's main area, not a dialog. A 260px section list sits on
@@ -233,4 +244,5 @@ they open by hash route only: `#/preview/account`, `#/preview/connect-planner`,
 through to the normal app and the code is not in the output (`npm run build` fails if it
 is). Every control is disabled with the reason "Available with Orbyn accounts", and the
 screens make no request. `docs/parity.md` records them as L52–L55, still excluded until
-the platform wiring lands.
+the platform wiring lands. The wiring's design and threat model are in [account.md](account.md) and
+[account-threat-model.md](account-threat-model.md).

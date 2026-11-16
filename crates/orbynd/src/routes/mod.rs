@@ -2,12 +2,19 @@
 //! handlers behind it; this one merges them and applies the credential, activity and
 //! origin layers.
 
+pub mod account;
 mod agent_mcp;
 mod auth;
 mod automations;
 mod checkpoints;
 mod composer;
+mod crew;
+mod crew_areas;
+mod crew_board;
+mod crew_map;
+mod crew_tasks;
 mod engines;
+mod explorer;
 mod files;
 mod governance;
 mod interactions;
@@ -19,6 +26,7 @@ mod pulls;
 mod raw_files;
 mod renders;
 mod runs;
+mod secrets;
 mod settings;
 mod shell;
 mod skills;
@@ -31,6 +39,40 @@ mod updates;
 pub mod usage;
 mod workspace;
 
+#[cfg(test)]
+mod account_approval_tests;
+#[cfg(test)]
+mod account_canary_tests;
+#[cfg(test)]
+mod account_logging_tests;
+#[cfg(test)]
+mod account_tests;
+#[cfg(test)]
+mod classes;
+#[cfg(test)]
+mod crew_areas_tests;
+#[cfg(test)]
+mod crew_background_tests;
+#[cfg(test)]
+mod crew_board_tests;
+#[cfg(test)]
+mod crew_cancel_tests;
+#[cfg(test)]
+mod crew_classes_tests;
+#[cfg(test)]
+mod crew_guard_tests;
+#[cfg(test)]
+mod crew_held_tests;
+#[cfg(test)]
+mod crew_map_tests;
+#[cfg(all(test, unix))]
+mod crew_rerun_tests;
+#[cfg(test)]
+mod crew_tasks_tests;
+#[cfg(test)]
+mod crew_tests;
+#[cfg(test)]
+mod secrets_tests;
 #[cfg(test)]
 mod tests;
 
@@ -46,8 +88,11 @@ const BODY_LIMIT: usize = 4 * 1024 * 1024;
 pub fn router(state: AppState) -> Router {
     let access = state.access.clone();
     let protected = Router::new()
+        .merge(account::routes(state.clone()))
+        .merge(crew::routes(state.clone()))
         .merge(media::routes())
         .merge(settings::routes())
+        .merge(secrets::routes(state.clone()))
         .merge(projects::routes())
         .merge(threads::routes())
         .merge(workspace::routes())
@@ -55,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(explorer::routes(state.clone()))
         .merge(files::routes())
         .merge(raw_files::routes())
         .merge(mcp_apps::routes())

@@ -2,6 +2,7 @@ import { Check, CornerDownRight, Pencil, SmilePlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { PullComment, PullThread } from "../../../api/types";
 import { relativeTime } from "../../../lib/format";
+import { pullChanged } from "../model/pullTopics";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
@@ -159,6 +160,7 @@ function Thread({
 export function PullConversation({ projectId, number }: { projectId: string; number: number }) {
   const conversation = useAsync(`pull-comments:${projectId}:${number}`, (signal) =>
     pullsApi.conversation(projectId, number, signal),
+    { refreshOn: pullChanged(projectId, number) },
   );
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);

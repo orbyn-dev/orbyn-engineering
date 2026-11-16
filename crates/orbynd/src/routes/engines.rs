@@ -45,12 +45,14 @@ pub fn routes() -> Router<AppState> {
         .route("/api/triage/playbook", get(triage_playbook))
         .route("/api/history/import", post(import_history_session))
         .route("/api/engines", get(list_engines))
+        .route("/api/providers", get(list_providers))
         .route("/api/engines/refresh", post(refresh_engines))
         .route("/api/engines/probe-binary", post(probe_engine_binary))
         .route("/api/engines/custom", post(add_custom_engine))
         .route("/api/engines/custom/{id}", delete(delete_custom_engine))
         .route("/api/engines/update-all", post(update_all_engines))
         .route("/api/engines/{id}/update", post(update_engine))
+        .route("/api/engines/{id}/installs", get(engine_installs))
         .route(
             "/api/engines/{id}/install-recommended",
             post(install_recommended_engine),
@@ -198,6 +200,11 @@ async fn list_engines(State(state): State<AppState>) -> ApiResult<impl IntoRespo
     Ok(Json(state.core.engines.statuses(false).await?))
 }
 
+/// The grouped Providers list, with the labels the crew router's filters give the same engines.
+async fn list_providers(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.engines.provider_list().await?))
+}
+
 async fn refresh_engines(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.engines.statuses(true).await?))
 }
@@ -218,6 +225,15 @@ async fn update_engine(
     Ok(Json(
         to_the_end(async move { engines.update(&id, LOCAL_USER).await }).await?,
     ))
+}
+
+/// What installs, updates and removals of one engine did, and the vendor's install page
+/// while it is not installed.
+async fn engine_installs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.engines.installs(&id).await?))
 }
 
 /// Installs the version the signed manifest recommends, through the installer
@@ -282,7 +298,6 @@ async fn delete_custom_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.core.store.delete_custom_engine(&id, LOCAL_USER)?;
-    state.core.engines.invalidate().await;
+    state.core.remove_custom_engine(&id, LOCAL_USER).await?;
     Ok(StatusCode::NO_CONTENT)
 }

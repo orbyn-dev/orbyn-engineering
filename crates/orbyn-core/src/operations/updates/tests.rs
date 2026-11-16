@@ -490,3 +490,96 @@ async fn the_setting_turns_background_checks_off() {
     assert_eq!(f.core.updates.status().await.library.behind, 0);
     assert!(f.core.updates.status().await.checked_at.is_none());
 }
+
+#[tokio::test]
+async fn the_polled_status_is_kept_until_something_changes_and_then_announced() {
+    let f = fixture("exit 0").await;
+    // `Core` already wires the status to the shell's event stream, which windows follow.
+    let mut windows = f.core.shell.watch();
+
+    let first = f.core.updates.cached_status(false).await;
+    lock(&f.core.updates.known).app_latest = Some("99.0.0".into());
+    // Kept: 200 polls answer from memory without reading Git or the engines again.
+    let started = Instant::now();
+    for _ in 0..200 {
+        let kept = f.core.updates.cached_status(false).await;
+        assert_eq!(kept.app.latest, first.app.latest);
+    }
+    assert!(started.elapsed() < Duration::from_millis(500));
+    // A forced read looks again.
+    let forced = f.core.updates.cached_status(true).await;
+    assert_eq!(forced.app.latest.as_deref(), Some("99.0.0"));
+    // Anything that changes the picture drops what was kept and says so.
+    lock(&f.core.updates.known).app_latest = Some("100.0.0".into());
+    f.core.updates.changed();
+    assert_eq!(
+        windows.events.try_recv().unwrap(),
+        orbyn_contracts::ShellEvent::DataChanged {
+            what: "updates".into()
+        }
+    );
+    let after = f.core.updates.cached_status(false).await;
+    assert_eq!(after.app.latest.as_deref(), Some("100.0.0"));
+}
+
+#[tokio::test]
+async fn an_engine_update_shows_in_the_polled_status_without_waiting_for_the_fresh_time() {
+    let f = fixture("exit 0").await;
+    let before = f.core.updates.cached_status(false).await;
+    let current = |status: &orbyn_contracts::UpdateStatus| {
+        status
+            .engines
+            .iter()
+            .find(|engine| engine.id == "fake")
+            .unwrap()
+            .current
+            .clone()
+    };
+    f.core.engines.update("fake", "t").await.unwrap();
+    // The first status is younger than its fresh time, yet the update is already in it.
+    let after = f.core.updates.cached_status(false).await;
+    assert_ne!(current(&before), current(&after));
+}
+
+#[tokio::test]
+async fn a_library_change_or_a_run_is_a_new_status_key_and_wakes_the_stream() {
+    let f = fixture("exit 0").await;
+    let key = || f.core.updates.status_key(f.core.updates.runs_active());
+    let first = key();
+    let mut watch = f.core.updates.watch();
+
+    // A change to the library itself (here a fetch) is a new key.
+    f.core.workspace.update(false).await.unwrap();
+    let library = key();
+    assert_ne!(first, library);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+    );
+
+    // So is a run starting, which also blocks what cannot apply while one runs.
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert!(f.core.updates.runs_active());
+    let running = key();
+    assert_ne!(library, running);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+    );
+    // The polled status reflects it at once, with no fresh time passing.
+    let status = f.core.updates.cached_status(false).await;
+    assert!(!status.library.can_apply);
+
+    // And it ends: another change, another key.
+    wait_running(&f.core, &run.id).await;
+    f.core.runs.cancel(&run.id).unwrap();
+    wait_stopped(&f.core, &run.id).await;
+    assert_ne!(running, key());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+    );
+}

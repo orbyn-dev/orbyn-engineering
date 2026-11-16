@@ -104,6 +104,12 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
+/// `?refresh=1` or `?refresh=true` reads the forge now instead of answering from the
+/// last known value.
+fn refresh_of(query: &HashMap<String, String>) -> bool {
+    matches!(query.get("refresh").map(String::as_str), Some("1" | "true"))
+}
+
 fn filter_of(query: HashMap<String, String>) -> PullFilter {
     let mut query = query;
     PullFilter {
@@ -119,7 +125,10 @@ pub async fn all(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.all_pulls(&filter_of(query)).await?))
+    let refresh = refresh_of(&query);
+    Ok(Json(
+        state.core.all_pulls(&filter_of(query), refresh).await?,
+    ))
 }
 
 /// Details the base list leaves out, asked for after the list has been shown.
@@ -135,16 +144,26 @@ pub async fn list(
     Path(id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
+    let refresh = refresh_of(&query);
     Ok(Json(
-        state.core.project_pulls(&id, &filter_of(query)).await?,
+        state
+            .core
+            .project_pulls(&id, &filter_of(query), refresh)
+            .await?,
     ))
 }
 
 pub async fn detail(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.project_pull(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .project_pull(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn update(
@@ -163,8 +182,14 @@ pub async fn update(
 pub async fn checks(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_checks(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .pull_checks(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn approve_workflow(
@@ -178,29 +203,53 @@ pub async fn approve_workflow(
 pub async fn conversation(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_conversation(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .pull_conversation(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn timeline(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_timeline(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .pull_timeline(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn files(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_files(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .pull_files(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn revisions(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_revisions(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .pull_revisions(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn revision_files(
@@ -284,15 +333,19 @@ pub async fn review(
 pub async fn reviewer_candidates(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_reviewers(&id).await?))
+    Ok(Json(
+        state.core.pull_reviewers(&id, refresh_of(&query)).await?,
+    ))
 }
 
 pub async fn label_candidates(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_labels(&id).await?))
+    Ok(Json(state.core.pull_labels(&id, refresh_of(&query)).await?))
 }
 
 pub async fn set_reviewers(
@@ -359,8 +412,14 @@ pub async fn close_many(
 pub async fn stack(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.pull_stack(&id, number).await?))
+    Ok(Json(
+        state
+            .core
+            .pull_stack(&id, number, refresh_of(&query))
+            .await?,
+    ))
 }
 
 pub async fn stack_action(

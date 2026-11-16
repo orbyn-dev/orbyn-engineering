@@ -33,14 +33,16 @@ test("a draft sends, then forks, rewinds and shows the turn's diff", async ({ pa
   await expect(page.getByRole("navigation", { name: "Workspace" }).getByText("A fresh title")).toBeVisible();
 
   await openPanelTab(page, "Diff");
-  const sources = page.getByRole("radiogroup", { name: "Diff source" });
-  await expect(sources).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Scope: / })).toBeVisible();
   for (const name of ["Turn", "Thread", "Branch", "Working tree"]) {
-    await sources.getByRole("radio", { name }).click();
-    await expect(page.locator(".panel-bar").first()).toBeVisible();
-    await expect(page.getByText(/Couldn't/)).toHaveCount(0);
+    await page.getByRole("button", { name: /^Scope: / }).click();
+    await page.getByRole("menuitem", { name, exact: true }).click();
+    await expect(page.getByRole("button", { name: `Scope: ${name}` })).toBeVisible();
+    await expect(page.getByText("Couldn’t read the changes.")).toHaveCount(0);
   }
 
+  // ⌘F in the Changes panel finds in the diff, so the thread's own find starts from the composer.
+  await page.getByRole("textbox", { name: /^Message/ }).focus();
   await page.keyboard.press("ControlOrMeta+f");
   await page.getByRole("textbox", { name: "Find in thread" }).fill("hello");
   await expect(page.locator(".thread-find-count")).toHaveText(/^1\/\d+$/);

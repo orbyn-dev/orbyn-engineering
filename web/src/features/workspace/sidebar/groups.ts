@@ -129,6 +129,19 @@ export function arrangeThreads(
   return sections;
 }
 
+/** Projects with nothing in them under the current filter, for the empty rows. */
+export function emptyProjectsOf<T extends { id: string }>(
+  list: readonly T[],
+  filter: readonly string[],
+  threads: Record<string, Thread>,
+): T[] {
+  return list.filter(
+    (project) =>
+      (filter.length === 0 || filter.includes(project.id)) &&
+      !Object.values(threads).some((thread) => thread.project_id === project.id),
+  );
+}
+
 export function threadsFlat(sections: ThreadSections): Thread[] {
   return [
     ...sections.pinned,

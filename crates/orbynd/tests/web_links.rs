@@ -39,13 +39,17 @@ async fn allow_links(service: &Service, on: bool) {
     assert!(response.status().is_success());
 }
 
-/// The next shell event a window sees.
+/// The next shell event a window sees. Data a window may re-read (`data_changed`) is not one
+/// of the link events these tests are about, so it is passed over.
 async fn next_event(stream: &mut reqwest::Response, seen: &mut String) -> Value {
     loop {
         if let Some(end) = seen.find("\n\n") {
             let frame: String = seen.drain(..end + 2).collect();
             if let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data:")) {
-                return serde_json::from_str(data.trim()).unwrap();
+                let event: Value = serde_json::from_str(data.trim()).unwrap();
+                if event["type"] != "data_changed" {
+                    return event;
+                }
             }
             continue;
         }

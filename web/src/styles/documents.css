@@ -191,17 +191,7 @@
   width: 24px;
   height: 24px;
 }
-.diff-sources {
-  display: flex;
-  min-width: 0;
-  margin: 8px 8px 0;
-}
-.diff-sources.segment button {
-  flex: 1 1 auto;
-  padding: 0 6px;
-  font-size: var(--text-meta);
-  white-space: nowrap;
-}
+
 .thread-find {
   position: absolute;
   z-index: 8;

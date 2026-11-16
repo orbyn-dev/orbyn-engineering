@@ -66,7 +66,7 @@ impl Core {
             ));
         }
         let project = self.store.project(project_id)?;
-        let detail = self.project_pull(project_id, number).await?;
+        let detail = self.project_pull(project_id, number, true).await?;
         let program = forge::forge_of(Path::new(&project.path))
             .await?
             .program()

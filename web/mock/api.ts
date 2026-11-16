@@ -3,6 +3,7 @@ import type { ProjectScopeCatalog } from "../src/generated/ProjectScopeCatalog.t
 import type { ScopedPreferencesResult } from "../src/generated/ScopedPreferencesResult.ts";
 import type { ScopedPreferencesChange } from "../src/generated/ScopedPreferencesChange.ts";
 import type { JsonValue } from "../src/api/types.ts";
+import type { InstallOutcome } from "../src/generated/InstallOutcome.ts";
 /**
  * createMockApi: an in-memory service with the architecture's HTTP contract.
  * The dev-server plugin and the tests both drive it through `handle`.
@@ -23,10 +24,20 @@ import type {
   WireThreadEvent,
   WorkspaceStatus,
 } from "../src/api/types.ts";
+import { createAccountMock } from "./account.ts";
+import { createCrewMock } from "./crew.ts";
+import { boardMock } from "./board.ts";
+import { flowMock } from "./flow.ts";
+import { createReviewControlsMock } from "./reviewControls.ts";
+import { mapMock } from "./map.ts";
+import { needsYouMock } from "./needsyou.ts";
+import { createExplorerMock } from "./explorer.ts";
+import { createSecretsMock } from "./secrets.ts";
 import * as fixtures from "./fixtures.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
 import { cleanupPreview, cleanupSummary, diagnostics } from "./maintenance.ts";
+import { providerList } from "./providers.ts";
 import { preferenceCatalog, projectPreferenceKeys } from "./preferenceCatalog.ts";
 
 export interface MockResponse {
@@ -42,13 +53,27 @@ export type Scenario =
   | "remote"
   | "offline"
   | "reference"
+  /** The sign-in gate is on, signed out; see `mock/account.ts` for the throwaway accounts. */
+  | "account"
+  /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
+  /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". */
+  /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
+  | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
   | "pulls-details-failed"
   | "pulls-rate-limited"
   | "pulls-signed-out"
   | "pulls-none"
-  | "pulls-unreachable";
+  | "pulls-unreachable"
+  /** The Usage page's Limits tab: Claude Code reads Not reported, Codex reports its windows, and the other providers have no route. */
+  | "limits"
+  | "limits-claude"
+  | "limits-near"
+  | "limits-reached"
+  | "limits-signedout"
+  | "limits-error"
+  | "limits-providers";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -65,9 +90,9 @@ export interface MockOptions {
   stepMs?: number;
 }
 
-const err = (status: number, code: string, message: string): MockResponse => ({
+const err = (status: number, code: string, message: string, detail?: unknown): MockResponse => ({
   status,
-  body: { code, message },
+  body: detail === undefined ? { code, message } : { code, message, detail },
 });
 
 export function createMockApi(options: MockOptions = {}) {
@@ -77,26 +102,36 @@ export function createMockApi(options: MockOptions = {}) {
   let signedIn = false;
   let projects: Project[] = [];
   let threads: Thread[] = [];
+  const explorerRoute = createExplorerMock(() => projects, () => threads);
   let approvals: Approval[] = [];
   let logs: Record<string, WireThreadEvent[]> = {};
   let engines: EngineStatus[] = [];
+  /** What the service keeps of each install, update and removal, newest first, twenty at most. */
+  const installs: Record<string, InstallOutcome[]> = {};
+  const keepInstall = (outcome: InstallOutcome) => {
+    installs[outcome.engine] = [outcome, ...(installs[outcome.engine] ?? [])].slice(0, 20);
+  };
   let managed: WorkspaceStatus = fixtures.workspaceStatus([]);
   let failNextSetup = false;
   let updates: UpdateStatus = fixtures.updateStatus(2);
   let settings: ServerSettings = fixtures.serverSettings();
   let failStep: string | null = null;
   let queued: QueuedMessage[] = [];
+  /** Files the editor saved, by thread and path, with the revision the next save must start from. */
+  const savedFiles = new Map<string, { content: string; revision: string; count: number }>();
   let tasks: ScheduledTask[] = [];
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
+  /** The notes of the reviews sent from a pull request page, by number. */
+  const reviewsSent = new Map<number, string[]>();
   let delayMs = 0;
   let idCounter = 0;
   let preferenceValues: Record<string, JsonValue> = {};
   let preferenceOverrides: Record<string, Record<string, JsonValue>> = {};
   const preferenceDefaults: Record<string, JsonValue> = { ...preferenceCatalog, default_thread_env_mode: "local", branch_name_prefix: "feat",
-    default_engine: "", default_model: "", default_effort: "", default_model_options: {}, fallback_model: "", disabled_engines: [],
+    default_engine: "", default_model: "", default_effort: "", default_model_options: {}, fallback_model: "", disabled_engines: ["cursor", "kimi"],
     auto_thread_titles: true, default_permission_mode: "supervised", response_streaming_mode: "paragraph", pull_request_merge_method: "squash",
     source_control_writing_style: { mode: "conventional_commits", custom_instructions: "", follow_templates: true } };
   const subscribers = new Map<string, Set<Subscriber>>();
@@ -104,19 +139,31 @@ export function createMockApi(options: MockOptions = {}) {
   const nextId = (prefix: string) => `${prefix}-${++idCounter}`;
   const now = () => new Date(fixtures.T0 + idCounter * 1000).toISOString();
 
+  const accountMock = createAccountMock();
+  const crewMock = createCrewMock();
+  const reviewControlsMock = createReviewControlsMock();
+  const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
+
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
     scenario = next;
+    accountMock.reset(next === "account");
+    crewMock.reset(next);
+    reviewControlsMock.reset();
+    secretsMock.reset();
     signedIn = false;
     idCounter = 0;
     preferenceValues = {};
     preferenceOverrides = {};
     failures = [];
     clones = [];
+    reviewsSent.clear();
     delayMs = 0;
     const blank = next === "empty" || next === "first-run" || next === "no-skills";
     projects = blank ? [] : structuredClone(fixtures.projects);
+    // Autopilot by area is drawn for one repository (the design has a separate frame for several): its scenarios keep the first project.
+    if (next.startsWith("crew-areas")) projects = projects.slice(0, 1);
     threads = blank ? [] : fixtures.threads();
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
@@ -135,6 +182,11 @@ export function createMockApi(options: MockOptions = {}) {
     failStep = null;
     if (next === "no-skills") managed = fixtures.workspaceStatus([], false);
     engines = structuredClone([...fixtures.engines, ...instanceEngines(fixtures.engines)]);
+    if (next.startsWith("limits")) {
+      const keep = next === "limits-providers" ? ["gemini-acp", "aider"] : next === "limits-claude" ? ["claude"] : next === "limits-error" ? ["codex", "gemini-acp"] : ["claude", "codex"];
+      engines = engines.filter((engine) => keep.includes(engine.id));
+      for (const engine of engines) if (engine.id === "codex" && next !== "limits-signedout") engine.auth = "logged_in";
+    }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
@@ -407,6 +459,13 @@ export function createMockApi(options: MockOptions = {}) {
       return err(401, "unauthorized", "Sign in with the access key.");
     }
 
+    const explored = explorerRoute(method, seg, query);
+    if (explored) return explored;
+
+    if (method === "POST" && seg[1] === "projects" && seg[3] === "pulls" && seg[5] === "review" && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
+      reviewsSent.set(Number(seg[4]), [...(reviewsSent.get(Number(seg[4])) ?? []), String(data.body ?? "")]);
+      return { status: 204 };
+    }
     if (method === "GET" && seg[1] === "projects" && seg[3] === "pulls" && seg[4] && scenario.startsWith("pulls") && fixtures.pageStates[Number(seg[4])]) {
       const state = fixtures.pageStates[Number(seg[4])]!;
       if (!seg[5]) {
@@ -431,7 +490,12 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (seg[5] === "checks") return { status: 200, body: fixtures.pageChecks(Number(seg[4])) };
       if (seg[5] === "files") return { status: 200, body: fixtures.pageFiles() };
-      if (seg[5] === "timeline") return { status: 200, body: [] };
+      // The conversation: three comments, and each review sent from this page after them.
+      if (seg[5] === "timeline") {
+        const comments = [1, 2, 3].map((id) => ({ id: `c${id}`, kind: "commented", actor: "sam", created_at: null, text: `Comment ${id}` }));
+        const sent = (reviewsSent.get(Number(seg[4])) ?? []).map((text, at) => ({ id: `r${at}`, kind: "reviewed", actor: "you", created_at: null, text }));
+        return { status: 200, body: [...comments, ...sent] };
+      }
       if (seg[5] === "comments") return { status: 200, body: { comments: [], threads: [] } };
       if (seg[5] === "stack") return { status: 200, body: { layers: [], position: 0 } };
     }
@@ -551,6 +615,17 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
       case "GET /api/settings":
         return { status: 200, body: settings };
+      // The editor's save: it writes only over the revision it started from, as the service does.
+      case "PUT /api/threads": {
+        if (seg[3] !== "files" || seg[4] !== "content") break;
+        const { path, content, base_revision } = body as { path: string; content: string; base_revision: string | null };
+        const key = `${seg[2]}:${path}`;
+        const current = savedFiles.get(key)?.revision ?? `mock-${seg[2]}-${path}`;
+        if (base_revision !== current) return err(409, "file_conflict", "The file changed on disk.", { revision: current });
+        const revision = `mock-${(savedFiles.get(key)?.count ?? 0) + 1}`;
+        savedFiles.set(key, { content, revision, count: (savedFiles.get(key)?.count ?? 0) + 1 });
+        return { status: 200, body: { path, content, revision, size: content.length, binary: false, truncated: false } };
+      }
       case "PUT /api/settings":
         if (seg[2] === "preferences") {
           const change = data as unknown as ScopedPreferencesChange;
@@ -623,7 +698,7 @@ export function createMockApi(options: MockOptions = {}) {
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsView() };
       case "GET /api/info":
-        return { status: 200, body: { ...fixtures.info, remote: scenario === "remote" } };
+        return { status: 200, body: { ...fixtures.info, remote: scenario === "remote", ...(scenario === "crew" || scenario.startsWith("crew-") ? { crew_preview: true } : {}) } };
       case "POST /auth/session":
         if (data.key === "orbyn-demo-key") {
           signedIn = true;
@@ -722,8 +797,10 @@ export function createMockApi(options: MockOptions = {}) {
           status: 200,
           body: { host_id: "mock", scanned_at: now(), engines: fixtures.usageEngines() },
         };
-      case "GET /api/limits":
-        return { status: 200, body: { pooled: [], engines: [], unavailable: [] } };
+      case "GET /api/limits": {
+                if (!scenario.startsWith("limits")) return { status: 200, body: { pooled: [], engines: [], unavailable: [] } };
+        return { status: 200, body: fixtures.limits(scenario, now()) };
+      }
       case "PATCH /api/threads": {
         const thread = threads.find((t) => t.id === seg[2]);
         if (!thread) return err(404, "not_found", "Thread not found.");
@@ -765,8 +842,10 @@ export function createMockApi(options: MockOptions = {}) {
           // The Files surface: a small checkout tree, and text for any file in it.
           if (seg[3] === "files" && seg[4] === "content") {
             const file = query.get("path") ?? "";
-            const content = `// ${file}\n// Mock file contents.\n`;
-            return { status: 200, body: { path: file, content, revision: "mock", size: content.length, binary: false, truncated: false } };
+            const saved = savedFiles.get(`${seg[2]}:${file}`);
+            // A thread's file is its own: its text and revision name the thread, so the same path in two threads differs.
+            const content = saved?.content ?? `// ${file}\n// Mock file contents of ${seg[2]}.\n`;
+            return { status: 200, body: { path: file, content, revision: saved?.revision ?? `mock-${seg[2]}-${file}`, size: content.length, binary: false, truncated: false } };
           }
           if (seg[3] === "files" && !seg[4]) {
             const dir = query.get("path") ?? "";
@@ -816,10 +895,18 @@ export function createMockApi(options: MockOptions = {}) {
             skills: fixtures.skills,
           },
         };
+      case "GET /api/providers":
+        return { status: 200, body: providerList(engines) };
       case "GET /api/engines":
         if (seg[3] === "native-sessions" && seg[4] === "count") {
           return { status: 200, body: { engine: seg[2], count: fixtures.nativeSessionCounts[seg[2] ?? ""] ?? 0, truncated: false } };
         }
+        if (seg[3] === "installs") {
+          // Only an engine that is not installed has the vendor's page.
+          const missing = engines.find((e) => e.id === seg[2])?.installed === false;
+          return { status: 200, body: { engine: seg[2], ...(missing ? { vendor_page: { url: `https://${seg[2]}.example/install`, domain: `${seg[2]}.example` } } : {}), outcomes: installs[seg[2] ?? ""] ?? [] } };
+        }
+        if (seg[3] === "limits") return err(502, "engine_unreachable", "The engine did not answer.");
         if (seg[3] === "tools") return { status: 200, body: fixtures.engineTools(seg[2] ?? "claude") };
         if (seg[3] === "models") {
           // The service merges the person's custom models into the list it returns.
@@ -840,6 +927,14 @@ export function createMockApi(options: MockOptions = {}) {
         if (!project) return err(404, "not_found", "Project not found.");
         project.trusted = true;
         return { status: 200, body: project };
+      }
+      // A path a message names: inside the thread's checkout it is that file; a full path outside is not.
+      if (seg[1] === "threads" && seg[3] === "paths" && seg[4] === "resolve") {
+        const thread = threads.find((t) => t.id === seg[2]);
+        if (!thread) return err(404, "not_found", "Thread not found.");
+        const path = String(data.path ?? "");
+        const inside = !path.startsWith("/") || path.startsWith(`${thread.cwd}/`);
+        return { status: 200, body: { cwd: thread.cwd, checkout_path: inside ? path.replace(`${thread.cwd}/`, "") : null, repository_path: null } };
       }
       if (seg[1] === "threads" && !seg[2]) {
         const engine = engines.find((e) => e.id === data.engine);
@@ -979,10 +1074,17 @@ export function createMockApi(options: MockOptions = {}) {
           return err(409, "engine_busy", `${engine.name} has an active run. Finish or cancel it first.`);
         }
         engine.updating = true;
+        const started = now();
+        const from = engine.version;
+        const command = engine.update_command ?? "";
         const timer = setTimeout(() => {
           engine.updating = false;
           finishStep(`engine:${engine.id}`);
           engine.version = engine.latest;
+          keepInstall({
+            id: `${engine.id}-${started}`, engine: engine.id, kind: "update", started_at: started, finished_at: now(), ok: true,
+            command, exit_status: 0, from_version: from ?? undefined, to_version: engine.latest ?? undefined, output: ["added 1 package"],
+          });
         }, stepMs * 20);
         timers.add(timer);
         return { status: 202 };
@@ -991,7 +1093,12 @@ export function createMockApi(options: MockOptions = {}) {
 
     if (method === "DELETE" && seg[0] === "api") {
       if (seg[1] === "engines" && seg[2] === "custom") {
+        if (threads.some((t) => t.engine === seg[3] && t.active_run)) {
+          return err(409, "engine_busy", `${seg[3]} has an active run or update`);
+        }
         engines = engines.filter((e) => e.id !== seg[3]);
+        const at = now();
+        keepInstall({ id: `${seg[3]}-${at}`, engine: seg[3] ?? "", kind: "remove", started_at: at, finished_at: at, ok: true, output: [] });
         return { status: 204 };
       }
     }
@@ -1016,7 +1123,7 @@ export function createMockApi(options: MockOptions = {}) {
     fail(path: string, times: number, status = 500, code = "internal", message = "Something went wrong.") {
       failures.push({ path, remaining: times, status, code, message });
     },
-    handle(method: string, url: string, body?: unknown): MockResponse {
+    handle(method: string, url: string, body?: unknown, confirm?: string): MockResponse {
       const parsed = new URL(url, "http://mock.local");
       if (scenario === "offline" && parsed.pathname.startsWith("/api")) {
         return err(503, "unavailable", "The service is unavailable.");
@@ -1026,7 +1133,18 @@ export function createMockApi(options: MockOptions = {}) {
         failure.remaining -= 1;
         return err(failure.status, failure.code, failure.message);
       }
+      if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
+      if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
+      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? needsYouMock(scenario, method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
+    },
+    /** Changes the account has waiting to upload, for the offline and paused wording. */
+    setAccountWaiting(count: number) {
+      accountMock.setWaiting(count);
+    },
+    /** Account knobs for the states a spec cannot reach by clicking; see `createAccountMock().setKnobs`. */
+    setAccount(knobs: Parameters<typeof accountMock.setKnobs>[0]) {
+      accountMock.setKnobs(knobs);
     },
     events(threadId: string, after: number): WireThreadEvent[] {
       return (logs[threadId] ?? []).filter((event) => event.seq > after);

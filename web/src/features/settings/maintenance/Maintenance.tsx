@@ -461,6 +461,28 @@ function DiagnosticsGroup() {
   );
 }
 
+/**
+ * Stable is the only track a build can follow until the release feed carries a Nightly one, so it is the one selected
+ * and Nightly is drawn dimmed and Planned, with nothing to switch to (update-tracks).
+ */
+function UpdateTrack() {
+  return <>
+    <p className="set-grp">Update track</p>
+    <div className="set-tracks" role="radiogroup" aria-label="Update track">
+      <div role="radio" aria-checked="true" tabIndex={0} className="set-track on">
+        <span className="set-radio on" aria-hidden />
+        <div><b>Stable</b><small>Tested releases. Recommended.</small></div>
+        <span className="set-pill good dot">Current</span>
+      </div>
+      <div role="radio" aria-checked="false" aria-disabled="true" className="set-track off">
+        <span className="set-radio" aria-hidden />
+        <div><b>Nightly</b><small>A build every night. Newer, and sometimes broken.</small></div>
+        <span className="set-pill planned dot">Planned</span>
+      </div>
+    </div>
+  </>;
+}
+
 export function MaintenanceSection() {
   const updates = useWorkspace((state) => state.updates.data);
   const library = useWorkspace((state) => state.managed.data?.library);
@@ -514,7 +536,7 @@ export function MaintenanceSection() {
         </SettingsBanner> : null}
         <SettingRow title="Version" settingId="maintenance-check-for-updates"
           description={ready && updates?.app.latest ? `${updates.app.current} · ${updates.app.latest} is downloaded`
-            : `${updates?.app.current ?? "Unknown"}${checking ? "" : ` · ${updates?.checked_at ? `checked ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "not checked yet"}`}`}>
+            : `${updates?.app.current ?? "Unknown"}${checking ? "" : ` · ${updates?.checked_at ? (app?.latest ? `checked ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "up to date") : "not checked yet"}`}`}>
           {checking ? <span className="set-checking" role="status"><i className="spin" aria-hidden />Checking…</span>
             : downloading ? <span className="set-checking" role="status">Downloading {app?.latest}…
               <span className="set-prog" role="progressbar" aria-label="Download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
@@ -522,6 +544,7 @@ export function MaintenanceSection() {
             : ready ? <Button tone="primary" small onClick={() => void restart()}>Restart to update</Button>
             : <Button small disabled={offline} onClick={() => void check()}>Check for updates</Button>}
         </SettingRow>
+        <UpdateTrack />
         <SettingRow title={settingsLabel("maintenance-background-checks")} description="Look for updates while the app runs">
           <input
             type="checkbox"

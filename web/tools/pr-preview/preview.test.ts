@@ -33,6 +33,14 @@ describe("the Frames built line", () => {
     expect(built("- Frames built: `shell-home`, `shell-home`  @  v50")).toEqual({ line: "ids", ids: ["shell-home"], version: "v50" });
   });
 
+  it("accepts an exact Git artifact revision without inventing a numbered version", () => {
+    const revision = "a582a9ba4fb950d4024ac50541a63e9c01f7669a";
+    expect(built(`Frames built: flow-offline, lane-same-engine @ git:${revision}`)).toEqual({
+      line: "ids", ids: ["flow-offline", "lane-same-engine"], version: `git:${revision}`,
+    });
+    expect(built("Frames built: flow-offline @ git:short").version).toBeNull();
+  });
+
   it("says none when the pull request draws nothing", () => {
     expect(built("Frames built: none")).toMatchObject({ line: "none", ids: [] });
     expect(built("Frames built: n/a @ v56")).toMatchObject({ line: "none" });
@@ -61,7 +69,7 @@ describe("which frames are drawn", () => {
 
 describe("the catalog", () => {
   it("only names routes the app has, and steps the shooter can run", () => {
-    const verbs = ["click", "fill", "press", "route", "offline"];
+    const verbs = ["click", "fill", "press", "route", "offline", "wait"];
     for (const [id, frame] of Object.entries(catalog)) {
       expect(frame.route, id).toMatch(/^#\/(pulls|threads|settings|new)?/);
       for (const step of frame.steps ?? []) expect(verbs, id).toContain(step.do);

@@ -13,6 +13,8 @@ Everything about the coding engines Orbyn runs: which exist, how to talk to each
 | `history_import` | Claude and Codex conversations imported as threads |
 | `console` | The engine's own console resumed in an Orbyn terminal |
 | `permission_modes` | Which permission modes each provider offers |
+| `provider_facts` | One provider's state facts (installed, signed in, broken, managed, approvals), read by the crew router's filters and the Providers list alike |
+| `provider_list` | The grouped Providers list: labels, found apps and engines not built |
 | `selection` | Model, effort and options a turn asks of its engine |
 | `usage` | Usage from each engine's local session history |
 | `triage` | A fresh native support session outside governed runs |

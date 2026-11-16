@@ -1,0 +1,265 @@
+{
+  "suite": "The shared board: compare-and-set writes",
+  "cases": [
+    {
+      "id": "board-new-key",
+      "title": "A new key is written at revision 1",
+      "rules": [
+        "H12"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "v1",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "result_has": {
+              "rev": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "board-update-in-order",
+      "title": "A write on the current revision succeeds",
+      "rules": [
+        "H12"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "v1",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "v2",
+            "base_rev": 1,
+            "evidence": []
+          },
+          "expect": {
+            "result_has": {
+              "rev": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "board-stale-write-conflict",
+      "title": "A write on a stale revision goes to the lead",
+      "rules": [
+        "H12"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "v1",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "other",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "error": "board_conflict",
+            "lead_notified": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "board-read-keeps-first",
+      "title": "After a conflict the first value stands",
+      "rules": [
+        "H12"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "v1",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "other",
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "error": "board_conflict"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.fact.read",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "key": "demo.shape"
+          },
+          "expect": {
+            "result_has": {
+              "rev": 1,
+              "value": "v1"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "board-contract-needs-check",
+      "title": "A contract fact carries the check its consumers get",
+      "rules": [
+        "H12"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.api",
+            "class": "contract",
+            "value": {
+              "route": "/health"
+            },
+            "base_rev": 0,
+            "evidence": []
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    },
+    {
+      "id": "board-contract-with-check",
+      "title": "A contract fact with its check is accepted",
+      "rules": [
+        "H12"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.api",
+            "class": "contract",
+            "value": {
+              "route": "/health"
+            },
+            "base_rev": 0,
+            "evidence": [],
+            "check": {
+              "id": "chk-api",
+              "kind": "http_probe",
+              "params": {
+                "url": "http://127.0.0.1:8080/health",
+                "expect_status": 200
+              },
+              "proves": "The route answers."
+            }
+          },
+          "expect": {}
+        }
+      ]
+    },
+    {
+      "id": "board-forged-revision",
+      "title": "A member cannot set the revision itself",
+      "rules": [
+        "H9"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.fact.write",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "key": "demo.shape",
+            "class": "observation",
+            "value": "x",
+            "base_rev": 0,
+            "rev": 9,
+            "evidence": []
+          },
+          "expect": {
+            "error": "invalid_object"
+          }
+        }
+      ]
+    }
+  ]
+}

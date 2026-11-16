@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiFailure, api, setUnauthorizedHandler } from "../api/client";
 import { followShell, readShellStatus } from "../api/shell";
-import { SignIn } from "../features/onboarding/SignIn";
+import { SignIn } from "../features/onboarding";
 import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../product/state/ui";
@@ -9,9 +9,9 @@ import { ErrorState, Splash } from "../product/ui/states";
 import { onShellEvent, Shell } from "./shell";
 import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
-import { PreviewWindow } from "../features/panels/preview/PreviewWindow";
-import { previewWindowRoute } from "../features/panels/browser/browserPanels";
-import { PreviewScreen, previewScreenRoute } from "../features/platform/previews";
+import { PreviewWindow, previewWindowRoute } from "../features/panels";
+import { CrewPreview, crewPreviewRoute } from "../features/crew";
+import { PreviewScreen, previewScreenRoute } from "../features/platform";
 
 type Boot =
   | { state: "loading" }
@@ -29,6 +29,14 @@ const readHash = () => window.location.hash;
 export function App() {
   const hash = useSyncExternalStore(subscribeHash, readHash);
   const screen = previewScreenRoute(hash);
+  const crewScreen = crewPreviewRoute(hash);
+  if (crewScreen && CrewPreview) {
+    return (
+      <Suspense fallback={null}>
+        <CrewPreview name={crewScreen} />
+      </Suspense>
+    );
+  }
   if (screen && PreviewScreen) {
     return (
       <Suspense fallback={null}>
@@ -58,7 +66,7 @@ function BootedApp() {
     api.info(abort.signal).then(
       (info) => {
         adoptEnvironmentTheme(info.environment_theme);
-        useConnection.setState({ remote: info.remote });
+        useConnection.setState({ remote: info.remote, crewPreview: info.crew_preview === true });
         const upgraded = upgradeToast(info);
         if (upgraded) useUi.getState().pushToast(upgraded);
         setBoot({ state: "ready" });
@@ -80,14 +88,23 @@ function BootedApp() {
   const ready = boot.state === "ready";
   useEffect(() => {
     if (!ready) return;
-    // A theme set from the command line reaches an open window when it next takes focus.
-    const recheck = () => void api.info().then((info) => adoptEnvironmentTheme(info.environment_theme), () => undefined);
+    // A theme set from the command line, or Crew Preview switched by a restarted service, reaches an open window when it next takes focus. A re-check that fails turns the flag off.
+    const recheck = () => void api.info().then((info) => { adoptEnvironmentTheme(info.environment_theme); useConnection.setState({ crewPreview: info.crew_preview === true }); }, () => useConnection.setState({ crewPreview: false }));
     window.addEventListener("focus", recheck);
     return () => window.removeEventListener("focus", recheck);
   }, [ready]);
   useEffect(() => {
     if (!ready) return;
-    return watchConnection((signal) => api.info(signal));
+    return watchConnection((signal) =>
+      api.info(signal).then(
+        (info) => useConnection.setState({ crewPreview: info.crew_preview === true }),
+        (error: unknown) => {
+          // Fail closed: a service that does not answer is not known to run Crew Preview.
+          useConnection.setState({ crewPreview: false });
+          throw error;
+        },
+      ),
+    );
   }, [ready]);
   useEffect(() => {
     if (!ready) return;

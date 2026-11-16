@@ -326,14 +326,14 @@
   padding: 8px 10px;
   cursor: default;
 }
-/* In the details card the list sits inside the card, indented a little. */
-.details .pr-pop {
+/* In the Details popover the list sits inside the card, indented a little. */
+.dcard .pr-pop {
   margin: 0 8px 4px;
 }
-.details .pr-title {
+.dcard .pr-title {
   align-items: flex-start;
 }
-.details .pr-title b {
+.dcard .pr-title b {
   overflow: visible;
   white-space: normal;
 }

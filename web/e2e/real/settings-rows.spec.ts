@@ -32,7 +32,7 @@ test("Maintenance keeps diagnostics without a Network inventory", async ({ page 
 test("About lists its open source licences on request, and Worktrees shows branch naming without a fold", async ({ page }) => {
   await page.goto(`${service.page}#/settings/about`);
   await expect(settings(page).getByText("zustand")).toBeHidden();
-  await settings(page).getByRole("button", { name: "View lists" }).click();
+  await settings(page).getByRole("button", { name: "View" }).click();
   await expect(settings(page).getByText("zustand")).toBeVisible();
   await settings(page).getByRole("radio", { name: /^Service/ }).click();
   await expect(settings(page).getByText("axum", { exact: true })).toBeVisible();

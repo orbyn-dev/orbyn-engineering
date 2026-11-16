@@ -5,6 +5,8 @@ describe("routes", () => {
   it.each<Route>([
     { name: "home" },
     { name: "tasks" },
+    { name: "crew", tab: "flow", task: `sha256:${"a".repeat(64)}` },
+    { name: "crew", tab: "flow", task: "task_1-a.b" },
     { name: "skills" },
     { name: "skills", skill: "a/b x?#" },
     { name: "pulls" },
@@ -20,6 +22,9 @@ describe("routes", () => {
     { name: "settings", section: "worktrees", selection: { kind: "project_group", group_key: "group:/one?x" } },
     { name: "settings", section: "threads", selection: { kind: "checkout", group_key: "group:/one", project_id: "id/2" } },
     { name: "settings", section: "tasks", task: "task/1 x" },
+    { name: "settings", section: "crew", crewPage: "areas" },
+    { name: "settings", section: "crew", crewPage: "areas", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "thresholds", repo: "p-app" },
   ])("round-trips %j", (route) => {
     expect(parseRoute(routeHref(route))).toEqual(route);
   });
@@ -27,6 +32,14 @@ describe("routes", () => {
   it("falls back to the list for a pull request link without a number", () => {
     expect(parseRoute("#/pulls/p1")).toEqual({ name: "pulls" });
     expect(parseRoute("#/pulls/p1/abc")).toEqual({ name: "pulls" });
+  });
+
+  it("refuses malformed or action-bearing Crew task locators", () => {
+    for (const part of ["", ".", "..", "%2Ehidden", "a/b", "a/", "a%2Fb", "a%5Cb", "a%252Fb", "a%3Fb", "a%23b", "a%00b", "a%20b", "a%", "a?once=1", "a#publish", "a/publish", "a".repeat(97)]) {
+      expect(parseRoute(`#/crew/flow/task/${part}`)).toEqual({ name: "home" });
+    }
+    expect(routeHref({name:"crew",tab:"flow",task:"a/b"})).toBe("#/");
+    expect(routeHref({name:"crew",tab:"approvals",task:"task-1"})).toBe("#/");
   });
 
   it("preserves explicit malformed IDs and selection across settings navigation", () => {

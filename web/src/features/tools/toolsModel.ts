@@ -12,6 +12,9 @@ export const GROUP_LABEL: Record<string, string> = {
   skills: "Skills",
 };
 
+/** A group's name in the last-read list. */
+export const GROUP_SHORT: Record<string, string> = { orbyn: "Orbyn tools", mcp: "MCP servers", connectors: "Connectors", plugins: "Plugins" };
+
 /** What a missing group is called in "<Engine> doesn’t report …". */
 const WHAT_IT_REPORTS: Record<string, string> = {
   builtin: "its built-in tools",
@@ -48,12 +51,11 @@ export function summarize(tools: EngineTools): ToolsSummary {
   return total;
 }
 
-/** The details card's second line: only what is not ready, in words. */
+/** The Details popover's second line: only what needs the person or failed, in words. Starting counts as neither. */
 export function problemLine(summary: ToolsSummary): string | null {
   const parts = [
     summary.needsSignIn > 0 ? `${summary.needsSignIn} needs sign-in` : null,
     summary.failed > 0 ? `${summary.failed} failed` : null,
-    summary.starting > 0 ? `${summary.starting} starting` : null,
   ].filter((part): part is string => part !== null);
   return parts.length > 0 ? parts.join(" · ") : null;
 }

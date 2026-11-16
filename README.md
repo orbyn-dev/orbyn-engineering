@@ -74,7 +74,8 @@ and lifecycles govern every change.
 
 For a clean-machine walkthrough on macOS and Windows, see [setup](docs/setup.md).
 
-You need Rust 1.90 or later, Node.js 22 or later and Git. To use an engine,
+You need Rust 1.90 or later, Node.js 22.22.2 or later in the 22.x line (or
+24.15.0 or later in 24.x, or 26 or later), npm 11.4.0 and Git. To use an engine,
 install it and sign in with its own tool, for example `claude` or `codex`.
 
 Run the service with a UI build:

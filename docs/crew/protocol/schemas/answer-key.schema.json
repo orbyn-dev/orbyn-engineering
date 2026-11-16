@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/answer-key.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "AnswerKey",
+  "description": "What the verifier checks. Only the core and the verifier ever see it; it is never sent to a worker.",
+  "type": "object",
+  "allOf": [{ "$ref": "common.schema.json#/$defs/envelope" }],
+  "required": ["brief", "checks", "protected_paths"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": { "const": "answer_key" },
+    "brief": { "$ref": "common.schema.json#/$defs/hash" },
+    "checks": { "type": "array", "minItems": 1, "items": { "$ref": "check.schema.json" } },
+    "protected_paths": {
+      "description": "Every file the checks run or read. The brief's write leases never overlap them.",
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "common.schema.json#/$defs/path_pattern" }
+    }
+  }
+}

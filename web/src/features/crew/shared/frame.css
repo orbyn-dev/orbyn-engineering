@@ -1,0 +1,74 @@
+/* The stage around every drawn screen of Crew Designs v20 to v23. design.css beside it holds the design's own rules for what is inside, under the cx- prefix, on the app's tokens. */
+.cx-root {
+  min-height: 100vh;
+  background: var(--color-background);
+  color: var(--color-textSoft);
+  font-family: var(--font-sans);
+  font-size: var(--text-small);
+}
+.cx-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 0 0 48px;
+}
+.cx-notice {
+  align-self: stretch;
+  margin: 0;
+  padding: 6px 20px;
+  background: var(--color-warnSoft);
+  border-bottom: 1px solid var(--color-warnBorder);
+  color: var(--color-textSoft);
+  font-size: var(--text-meta);
+}
+.cx-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1160px;
+  min-width: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+.cx-frame *,
+.cx-frame *::before,
+.cx-frame *::after {
+  box-sizing: border-box;
+}
+.cx-frame.cx-panel {
+  max-width: 320px;
+  min-height: 560px;
+}
+.cx-frame.cx-sheetpage {
+  padding: 24px 28px;
+}
+:where(.cx-frame) button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+.cx-frame button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.cx-frame .cx-segx .cx-ovf {
+  padding: 0 6px;
+  color: var(--color-textSoft);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cx-spin {
+    animation: none;
+  }
+}

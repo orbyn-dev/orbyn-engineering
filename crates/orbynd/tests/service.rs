@@ -183,6 +183,70 @@ async fn desktop_assets_can_call_only_the_owned_local_service_with_its_token() {
 }
 
 #[tokio::test]
+async fn the_desktop_page_can_send_a_confirmed_account_action_across_origins() {
+    let dir = TempDir::new();
+    let service = Service::start(
+        &dir.path().join("desktop-confirm"),
+        Options {
+            args: vec!["--parent-stdin".into()],
+            ..Options::default()
+        },
+    );
+    let preflight = |headers: &'static str| {
+        service
+            .client
+            .request(
+                reqwest::Method::OPTIONS,
+                format!("{}/api/account/devices/dev-mini", service.url),
+            )
+            .header("Origin", "tauri://localhost")
+            .header("Access-Control-Request-Method", "DELETE")
+            .header("Access-Control-Request-Headers", headers)
+            .send()
+    };
+    // The page loads from tauri://localhost and calls the loopback service, so the browser asks first.
+    let allowed = preflight("authorization,x-orbyn-confirm").await.unwrap();
+    assert_eq!(allowed.status(), 204);
+    assert!(
+        allowed.headers()["access-control-allow-headers"]
+            .to_str()
+            .unwrap()
+            .contains("x-orbyn-confirm")
+    );
+    // Any other unknown header is still refused.
+    assert_eq!(
+        preflight("authorization,x-private-capability")
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        preflight("authorization,x-orbyn-confirm,x-private-capability")
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    // The action itself, as the desktop sends it: the desktop Origin and the nonce header. It
+    // gets past the origin check and reaches the account guard (the gate is off here).
+    let response = service
+        .post("/api/account/sign-out-everywhere")
+        .header("Origin", "tauri://localhost")
+        .header("x-orbyn-confirm", "0".repeat(32))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["access-control-allow-origin"],
+        "tauri://localhost"
+    );
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["code"], "account_disabled");
+}
+
+#[tokio::test]
 async fn allowed_host_flag_extends_the_list() {
     let dir = TempDir::new();
     let service = Service::start(

@@ -159,7 +159,7 @@ export function BranchRow({ thread, branch }: { thread: Thread; branch: string }
         ariaLabel={`Branch ${branch}`}
         value={<span className="mono">{branch}</span>}
         sub={thread.cwd}
-        title={thread.cwd}
+        title={`${branch} · ${thread.cwd}`}
         disabled={thread.active_run !== null}
         onClick={() => setOpen(true)}
       />

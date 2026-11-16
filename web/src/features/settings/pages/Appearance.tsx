@@ -6,7 +6,7 @@ import { applyTheme, useUi, type LayoutChoice, type ThemeChoice, type Typography
 import { Button } from "../../../ui/controls";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
-import { isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
+import { displayColour, isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
 import { ENVIRONMENT_ICON_CHOICES } from "../EnvironmentIcon";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 
@@ -61,7 +61,7 @@ const LAYOUTS: LayoutOption[] = [
   {
     value: "ledger",
     label: "Ledger",
-    description: "What needs you first",
+    description: "What needs you at the top",
     columns: "24% 1fr 22%",
     rows: "14px 1fr",
     cells: [{ span: true, lead: true }, { lead: true }, { span: true }, {}],
@@ -76,7 +76,7 @@ function LayoutRow() {
   const setPrefs = useUi((state) => state.setPrefs);
   const current = LAYOUTS.find((choice) => choice.value === layout) ?? CONSOLE;
   const choose = (value: LayoutChoice) => {
-    if (value === "ledger") setPrefs({ workspaceLayout: value, sidebarCollapsed: false, detailsOpen: true });
+    if (value === "ledger") setPrefs({ workspaceLayout: value, sidebarCollapsed: false });
     else if (value === "reading") setPrefs({ workspaceLayout: value, sidebarCollapsed: true, chatWidth: "comfortable" });
     else setPrefs({ workspaceLayout: value, sidebarCollapsed: false });
     applyTheme(theme);
@@ -248,7 +248,7 @@ function ThemeEditorPage({ onBack }: { onBack(): void }) {
     if (!selected) return;
     const read = readThemeFile(await selected.text());
     if ("colors" in read) { setFailure(null); save(read.colors); }
-    else setFailure(`Couldn't import ${selected.name}. ${read.error} Nothing changed.`);
+    else setFailure(`Couldn’t import ${selected.name}. ${read.error} Nothing changed.`);
     if (file.current) file.current.value = "";
   };
   return (
@@ -276,7 +276,7 @@ function ThemeEditorPage({ onBack }: { onBack(): void }) {
       <div className="tokg">
         {THEME_TOKENS.map(([token, label]) => (
           <TokenRow key={token} label={label}
-            value={custom[token] ?? preset?.colors[token] ?? colourOf(token)}
+            value={custom[token] ?? preset?.colors[token] ?? displayColour(colourOf(token))}
             save={(next) => save({ ...custom, [token]: next })} />
         ))}
       </div>
@@ -297,7 +297,7 @@ function FontRow({ title, label, value, save }: { title: string; label: string; 
   const [seen, setSeen] = useState(value);
   if (seen !== value) { setSeen(value); setDraft(value); }
   return (
-    <SettingRow title={title}>
+    <SettingRow title={title} description="Any installed font name">
       <input aria-label={label} placeholder="Any installed font" value={draft} spellCheck={false}
         onChange={(event) => setDraft(event.target.value)} onBlur={() => { if (draft.trim() !== value) save(draft.trim()); }} />
       {value !== "" ? <Button small tone="quiet" aria-label={`Reset ${label} to default`} onClick={() => { setDraft(""); save(""); }}>Reset to default</Button> : null}

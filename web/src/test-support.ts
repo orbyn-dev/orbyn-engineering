@@ -46,7 +46,7 @@ export function installMockFetch(options: { stepMs?: number } = {}): MockApi {
         return new Response(body, { status: 200 });
       }
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
-      const result = mock.handle(method, input, body);
+      const result = mock.handle(method, input, body, new Headers(init?.headers).get("x-orbyn-confirm") ?? undefined);
       return new Response(result.body === undefined ? null : JSON.stringify(result.body), {
         status: result.status,
       });

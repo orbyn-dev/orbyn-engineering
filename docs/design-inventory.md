@@ -11,9 +11,9 @@ Component paths are under `web/src` and some line numbers are approximate; each 
 re-verifies its rows. Sources of truth and the token file are in
 [design.md](design.md#sources-of-truth).
 
-## Screens (226)
+## Screens (231)
 
-exists: 94, missing: 60, partial: 67, preview-only: 5.
+exists: 98, missing: 60, partial: 68, preview-only: 5.
 
 | n | id | group | title | component | status | phase | Proof |
 |---|---|---|---|---|---|---|---|
@@ -78,9 +78,9 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 59 | `tc-phone-needs-you` | Tool calls, every state | Phone: needs you | `missing` | missing | P2 | |
 | 60 | `panel-diff` | Side panel and terminal | Diff | `features/panels/diff/DiffPanel.tsx` | exists | P2 | |
 | 61 | `panel-files` | Side panel and terminal | Files | `features/panels/files/FilesPanel.tsx` | exists | P2 | |
-| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2 | |
-| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | |
-| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | exists | P2 | |
+| 62 | `panel-browser` | Side panel and terminal | Browser | `features/panels/browser/BrowserPanel.tsx` | exists | P2 | Engineer Designs v98, shell PR 1a |
+| 63 | `panel-activity` | Side panel and terminal | Activity | `features/panels/activity/ActivityPanel.tsx:13` | exists | P2 | Engineer Designs v98, shell PR 1a |
+| 64 | `panel-side` | Side panel and terminal | Side chat | `features/thread/SideChatPanel.tsx` | exists | P2 | Engineer Designs v98, shell PR 1a |
 | 65 | `terminal` | Side panel and terminal | Terminal | `features/panels/terminal/TerminalDrawerBody.tsx:25` | exists | P2 | |
 | 66 | `pulls` | Pages | Pull requests | `features/pulls/list/PullsPage.tsx:42` | exists | P2 | |
 | 67 | `pull-detail` | Pages | Pull request | `features/pulls/detail/PullDetail.tsx` | exists | P2 | |
@@ -243,6 +243,11 @@ exists: 94, missing: 60, partial: 67, preview-only: 5.
 | 224 | `conn-service-down` | Connection states | Can't reach the Orbyn service |  | missing | P1 | |
 | 225 | `conn-service-restart` | Connection states | Restarting the Orbyn service |  | missing | P1 | |
 | 226 | `conn-remote` | Connection states | Paired machine offline |  | preview-only | P2c | |
+| 227 | `panel-empty` | Side panel and terminal | Side panel: no tabs | `features/panels/strip/PanelEmpty.tsx; features/panels/PanelHost.tsx` | exists | P3 | Engineer Designs v98, shell PR 1a |
+| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | partial | P3 | Engineer Designs v98, shell PR 1a: Review and comments, Crew views and Open file are hidden until they exist |
+| 229 | `panel-tab-menu` | Side panel and terminal | Side panel: tab menu | `features/panels/PanelHost.tsx` | exists | P3 | Engineer Designs v98, shell PR 1a |
+| 230 | `panel-tabs-single` | Side panel and terminal | Side panel tabs: one tab | `features/panels/PanelHost.tsx` | exists | P3 | Engineer Designs v98, shell PR 1a |
+| 231 | `panel-tabs-drag` | Side panel and terminal | Side panel tabs: drag to reorder | `features/panels/strip/tabDrag.ts` | exists | P3 | Engineer Designs v98, shell PR 1a |
 
 ## Motion (85)
 

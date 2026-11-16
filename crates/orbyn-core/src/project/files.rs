@@ -296,7 +296,7 @@ fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
 
 /// True when any part of `path` names Git's folder, in any case, because a
 /// case-insensitive disk finds `.GIT` too.
-fn names_git(path: &Path) -> bool {
+pub(crate) fn names_git(path: &Path) -> bool {
     path.components().any(|part| {
         matches!(part, Component::Normal(name)
             if name.to_string_lossy().eq_ignore_ascii_case(".git"))

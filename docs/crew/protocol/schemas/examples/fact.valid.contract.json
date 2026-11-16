@@ -1,0 +1,33 @@
+{
+  "type": "fact",
+  "v": 0,
+  "id": "sha256:145ad8eb20ff49a65443e9470fb9096be2a5ce207a27cf602b8f8b8356619df4",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "opencode",
+    "member": "worker-02"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "key": "crew-demo.error",
+  "class": "contract",
+  "value": {
+    "type": "ParseError",
+    "variants": [
+      "Empty",
+      "BadUnit"
+    ]
+  },
+  "rev": 1,
+  "base_rev": 0,
+  "evidence": [],
+  "check": {
+    "id": "chk-error-shape",
+    "kind": "typecheck",
+    "params": {
+      "run": "cargo check -p crew-demo --all-targets"
+    },
+    "proves": "Consumers compile against ParseError."
+  }
+}

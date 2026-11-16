@@ -15,7 +15,7 @@ const MAX_RULES: usize = 256;
 const MAX_FIELD: usize = 256;
 
 /// `(key, command, when)`.
-const DEFAULTS: &[(&str, &str, &str)] = &[
+pub(crate) const DEFAULTS: &[(&str, &str, &str)] = &[
     ("mod+b", "sidebar.toggle", ""),
     ("f6", "workspace.focusNext", ""),
     ("shift+f6", "workspace.focusPrevious", ""),
@@ -276,16 +276,96 @@ impl Core {
                 "Fix the keybindings file before changing it here.".into(),
             ));
         }
+        // What this rule displaces leaves a removal marker for the account's record, or
+        // another device would keep the old rule beside the new one.
+        let displaced: Vec<KeybindingRule> = own
+            .iter()
+            .filter(|known| {
+                (known.command == rule.command && known.when == rule.when)
+                    || (known.key == rule.key && known.command == rule.command)
+            })
+            .filter(|known| !(known.key == rule.key && known.when == rule.when))
+            .map(|known| KeybindingRule {
+                remove: true,
+                ..known.clone()
+            })
+            .collect();
         own.retain(|known| {
             !(known.command == rule.command && known.when == rule.when)
                 && !(known.key == rule.key && known.command == rule.command)
         });
         own.push(rule.clone());
-        let partial = path.with_extension("json.partial");
-        std::fs::write(&partial, serde_json::to_vec_pretty(&own)?)?;
-        std::fs::rename(&partial, &path)?;
+        write_rules(&path, &own)?;
+        // Queued for sync when the account is on; the file is already saved, so a
+        // failure here never fails the person's edit.
+        let staged: Vec<_> = displaced
+            .iter()
+            .chain(std::iter::once(rule))
+            .map(crate::account::settings_record::stage_keybinding)
+            .collect();
+        if let Err(error) = self
+            .store
+            .account_stage(crate::account::settings_record::ZONE, &staged)
+        {
+            tracing::warn!(%error, "could not queue a keybinding for sync");
+        }
         Ok(self.keybindings())
     }
+}
+
+/// Saves the file by rename, so a crash cannot truncate it.
+fn write_rules(path: &Path, rules: &[KeybindingRule]) -> Result<()> {
+    let partial = path.with_extension("json.partial");
+    std::fs::write(&partial, serde_json::to_vec_pretty(rules)?)?;
+    std::fs::rename(&partial, path)?;
+    Ok(())
+}
+
+/// The rules the person's own file holds, for the account to queue on first sync.
+pub(crate) fn own_rules(path: &Path) -> Vec<KeybindingRule> {
+    read(path).0
+}
+
+/// Writes rules that arrived from another device, and queues nothing. A rule replaces
+/// the one with the same key and context, and one already in the file is left alone, so
+/// applying the same record twice changes nothing. A file that does not parse is left
+/// for the person to fix. Returns whether the file changed.
+pub(crate) fn write_synced_rules(
+    path: &Path,
+    writer: &std::sync::Mutex<()>,
+    rules: &[KeybindingRule],
+) -> Result<bool> {
+    let _writer = writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (mut own, issues) = read(path);
+    if !issues.is_empty() {
+        return Err(CoreError::Invalid(
+            "Fix the keybindings file before changing it here.".into(),
+        ));
+    }
+    let before = own.len();
+    let mut changed = false;
+    // The same chord however it is spelled: `Mod+Y` and `mod+y` are one rule.
+    let same_chord = |a: &KeybindingRule, b: &KeybindingRule| {
+        crate::account::settings_record::normalize_key(&a.key)
+            == crate::account::settings_record::normalize_key(&b.key)
+            && a.when == b.when
+    };
+    for rule in rules.iter().filter(|rule| valid(rule)) {
+        if own.iter().any(|known| {
+            same_chord(known, rule) && known.command == rule.command && known.remove == rule.remove
+        }) {
+            continue;
+        }
+        own.retain(|known| !same_chord(known, rule));
+        own.push(rule.clone());
+        changed = true;
+    }
+    if changed || own.len() != before {
+        write_rules(path, &own)?;
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]

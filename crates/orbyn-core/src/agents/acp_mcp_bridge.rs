@@ -4,8 +4,10 @@
 //! back. `orbyn acp-mcp-call` makes one tool call, for agents that take `mcpServers`
 //! but never show those tools to their model.
 //!
-//! The endpoint URL carries the run's token, which is its only credential, so it
-//! travels in the environment and never on a command line.
+//! The endpoint URL carries the run's token, which is its only credential. Another
+//! process of the same user can read a process's command line and environment, so the
+//! URL travels in neither: it sits in an owner-only file in the run's own folder, and
+//! the bridge is told only that file's path. The folder is removed when the run ends.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,8 +20,10 @@ use tokio::task::JoinSet;
 use crate::agents::driver::MCP_SERVER_NAME;
 use crate::error::{CoreError, Result};
 
-/// The variable that names the run's endpoint, token included.
-pub const ENDPOINT_ENV: &str = "ORBYN_ACP_MCP_ENDPOINT";
+/// The variable that names the file holding the run's endpoint, token included.
+pub const ENDPOINT_FILE_ENV: &str = "ORBYN_ACP_MCP_ENDPOINT_FILE";
+/// The file's name inside the run's folder.
+pub const ENDPOINT_FILE: &str = "acp-mcp-endpoint";
 pub const BRIDGE_COMMAND: &str = "acp-mcp-bridge";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const PARSE_ERROR: i64 = -32700;
@@ -42,13 +46,29 @@ fn bridge_program_beside(current: &Path) -> Option<PathBuf> {
     program.is_file().then_some(program)
 }
 
-/// The ACP `mcpServers` entry that starts the bridge for `endpoint`.
-pub fn stdio_server(program: &Path, endpoint: &str) -> Value {
+/// Writes `endpoint` where only the current user can read it, inside `run_dir`, and
+/// returns the file. The run's cleanup removes it with the folder.
+pub fn write_endpoint(run_dir: &Path, endpoint: &str) -> Result<PathBuf> {
+    let file = run_dir.join(ENDPOINT_FILE);
+    crate::util::write_private(&file, endpoint.as_bytes())?;
+    Ok(file)
+}
+
+/// The endpoint a run left in `file`; none when it is missing, unreadable or empty.
+pub fn read_endpoint(file: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let endpoint = text.trim();
+    (!endpoint.is_empty()).then(|| endpoint.to_owned())
+}
+
+/// The ACP `mcpServers` entry that starts the bridge on the endpoint in `file`. Only
+/// the file's path is offered, never the endpoint.
+pub fn stdio_server(program: &Path, file: &Path) -> Value {
     json!({
         "name": MCP_SERVER_NAME,
         "command": program,
         "args": [BRIDGE_COMMAND],
-        "env": [{ "name": ENDPOINT_ENV, "value": endpoint }],
+        "env": [{ "name": ENDPOINT_FILE_ENV, "value": file.to_string_lossy() }],
     })
 }
 
@@ -256,18 +276,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_stdio_entry_keeps_the_endpoint_off_the_command_line() {
+    fn the_stdio_entry_names_a_file_and_never_the_endpoint() {
         let program = Path::new(if cfg!(windows) {
             r"C:\Program Files\Orbyn\orbyn.exe"
         } else {
             "/Applications/Orbyn.app/Contents/MacOS/orbyn"
         });
-        let entry = stdio_server(program, "http://127.0.0.1:9/mcp/secret");
+        let dir = crate::testing::TempDir::new();
+        let file = write_endpoint(dir.path(), "http://127.0.0.1:9/mcp/secret").unwrap();
+        let entry = stdio_server(program, &file);
         assert_eq!(entry["command"], json!(program));
         assert_eq!(entry["args"], json!([BRIDGE_COMMAND]));
-        assert!(!entry["args"].to_string().contains("secret"));
-        assert_eq!(entry["env"][0]["name"], ENDPOINT_ENV);
+        assert_eq!(entry["env"][0]["name"], ENDPOINT_FILE_ENV);
+        assert_eq!(entry["env"][0]["value"], json!(file.to_string_lossy()));
         assert_eq!(entry["name"], MCP_SERVER_NAME);
+        assert_eq!(entry["env"].as_array().unwrap().len(), 1);
+        assert!(!entry.to_string().contains("secret"));
+        assert!(!entry.to_string().contains("/mcp/"));
+        assert_eq!(
+            read_endpoint(&file).as_deref(),
+            Some("http://127.0.0.1:9/mcp/secret")
+        );
+    }
+
+    #[test]
+    fn the_endpoint_file_is_owner_only_and_empty_or_missing_reads_as_none() {
+        let dir = crate::testing::TempDir::new();
+        let file = write_endpoint(dir.path(), "http://127.0.0.1:9/mcp/secret\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        assert_eq!(
+            read_endpoint(&file).as_deref(),
+            Some("http://127.0.0.1:9/mcp/secret")
+        );
+        std::fs::write(&file, "  \n").unwrap();
+        assert_eq!(read_endpoint(&file), None);
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(read_endpoint(&file), None);
     }
 
     #[test]

@@ -10,6 +10,7 @@ license-file = "../../LICENSE"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["devtools", "tray-icon"] }
@@ -36,3 +37,11 @@ lto = "thin"
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Pull request desktop checks only (ORBYN_CARGO_PROFILE=ci-release in ci.yml): the release
+# profile minus the link-time work that makes the bundle build slow. Main, nightly and
+# release builds keep `release`.
+[profile.ci-release]
+inherits = "release"
+codegen-units = 16
+lto = "off"

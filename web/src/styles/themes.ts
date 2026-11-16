@@ -1,16 +1,32 @@
-/** The colours a theme sets; everything else derives from these tokens. */
+/** The colours the theme editor lists, in the design's order: a row each, with its swatch and value. */
 export const THEME_TOKENS = [
-  ["--color-background", "Background"],
-  ["--color-sidebar", "Sidebar"],
-  ["--color-raised", "Raised surface"],
-  ["--color-border", "Border"],
-  ["--color-text", "Text"],
-  ["--color-muted", "Muted text"],
-  ["--color-primary", "Accent"],
+  ["--color-sidebar", "Window"],
+  ["--color-background", "Surface"],
+  ["--color-sunken", "Raised"],
+  ["--color-selected", "Selected"],
+  ["--color-border", "Line"],
+  ["--color-borderStrong", "Line, strong"],
+  ["--color-text", "Text 1"],
+  ["--color-textSoft", "Text 2"],
+  ["--color-muted", "Text 3"],
+  ["--color-faint", "Text 4"],
+  ["--color-primary", "Button"],
+  ["--color-onAccent", "Button text"],
+  ["--color-warn", "Amber"],
+  ["--color-warnText", "Amber text"],
+  ["--color-green", "Green"],
+  ["--color-blue", "Blue"],
+  ["--color-danger", "Red"],
 ] as const;
 
-export type ThemeToken = (typeof THEME_TOKENS)[number][0];
+/** A colour a preset or an imported file sets that the editor has no row for. */
+const UNLISTED_TOKENS = ["--color-raised"] as const;
+
+export type ThemeToken = (typeof THEME_TOKENS)[number][0] | (typeof UNLISTED_TOKENS)[number];
 export type ThemeColors = Partial<Record<ThemeToken, string>>;
+
+/** Every token a theme may set on the page. */
+export const APPLIED_TOKENS: readonly ThemeToken[] = [...THEME_TOKENS.map(([token]) => token), ...UNLISTED_TOKENS];
 
 export interface ThemePreset {
   id: string;
@@ -21,11 +37,13 @@ export interface ThemePreset {
   tokens?: boolean;
 }
 
+/** A preset gives seven colours: the page, the sidebar, a raised surface, the line, the text, the muted text and the button. */
+const PRESET_TOKENS: readonly ThemeToken[] = ["--color-background", "--color-sidebar", "--color-raised", "--color-border", "--color-text", "--color-muted", "--color-primary"];
 const palette = (id: string, name: string, scheme: "light" | "dark", values: readonly string[]): ThemePreset => ({
   id,
   name,
   scheme,
-  colors: Object.fromEntries(THEME_TOKENS.map(([token], at) => [token, values[at] ?? ""])),
+  colors: Object.fromEntries(PRESET_TOKENS.map((token, at) => [token, values[at] ?? ""])),
 });
 
 export const THEME_PRESETS: ThemePreset[] = [
@@ -60,7 +78,7 @@ export function readThemeFile(text: string): ThemeRead {
   const lines = text.split("\n");
   const out: ThemeColors = {};
   for (const [key, raw] of Object.entries(colors)) {
-    const token = (THEME_TOKENS.find(([name]) => name === key) ?? [null, null])[0] ?? VSCODE_TOKENS[key] ?? null;
+    const token = APPLIED_TOKENS.find((name) => name === key) ?? VSCODE_TOKENS[key] ?? null;
     if (!token) continue;
     if (typeof raw !== "string" || !isColour(raw)) {
       const at = lines.findIndex((line) => line.includes(`"${key}"`));
@@ -81,3 +99,18 @@ const VSCODE_TOKENS: Record<string, ThemeToken> = {
   descriptionForeground: "--color-muted",
   focusBorder: "--color-primary",
 };
+
+/**
+ * How the editor writes a colour the stylesheet holds as `rgb(0 0 0 / 3.5%)`: `rgba(0,0,0,.035)`, or hex when opaque.
+ * A value in any other form is shown as it is.
+ */
+export function displayColour(value: string): string {
+  const match = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*(?:[/,]\s*([\d.]+)(%?))?\s*\)$/i.exec(value.trim());
+  if (!match) return value.trim();
+  const [r, g, b] = [match[1], match[2], match[3]].map(Number) as [number, number, number];
+  const raw = match[4] === undefined ? 1 : match[5] ? Number(match[4]) / 100 : Number(match[4]);
+  if (!(raw >= 0 && raw <= 1) || [r, g, b].some((channel) => channel > 255)) return value.trim();
+  if (raw === 1) return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+  const alpha = Number(raw.toFixed(3)).toString().replace(/^0/, "").padEnd(3, "0");
+  return `rgba(${r},${g},${b},${alpha})`;
+}

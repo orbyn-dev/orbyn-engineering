@@ -55,7 +55,11 @@ fn smallest(models: &[ModelInfo]) -> Option<String> {
 /// The chosen text model when this engine offers it, else its small one, else
 /// the thread's own. The setting is one name and threads differ in engine, so a
 /// name this engine does not list is passed over, not sent.
-async fn title_model(store: &Store, engines: &EngineManager, thread: &Thread) -> Option<String> {
+async fn title_model(
+    store: &Store,
+    engines: &std::sync::Arc<EngineManager>,
+    thread: &Thread,
+) -> Option<String> {
     let chosen = stored_preference(store, TEXT_MODEL_SETTING, Some(&thread.project_id))
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
@@ -75,7 +79,7 @@ async fn title_model(store: &Store, engines: &EngineManager, thread: &Thread) ->
 /// is answering wins, because the save names the title it replaces.
 pub async fn generate_title(
     store: &Store,
-    engines: &EngineManager,
+    engines: &std::sync::Arc<EngineManager>,
     driver: &dyn EngineDriver,
     call: TitleCall<'_>,
 ) -> Result<bool> {

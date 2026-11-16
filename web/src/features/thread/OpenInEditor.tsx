@@ -70,7 +70,7 @@ export function OpenInEditor({ threadId }: { threadId: string }) {
   return (
     <DRow
       icon={<SquareArrowOutUpRight size={16} aria-hidden />}
-      label="Open in editor"
+      label="Open in an outside editor"
       action
       title={`Open in ${primary.name}`}
       value={shortcut ?? undefined}

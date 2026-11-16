@@ -1,13 +1,8 @@
 import { useClearSelectionOnLeave } from "../../lib/clearSelection";
-import { QuitConfirmation } from "../../features/workspace/app-chrome/QuitConfirmation";
+import { CloneJobs, CommandPalette, FoldersNotice, GitHubStarPrompt, QuitConfirmation, Sidebar } from "../../features/workspace";
 import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
-import { CommandPalette } from "../../features/workspace/palette/CommandPalette";
-import { CloneJobs } from "../../features/workspace/app-chrome/CloneJobs";
-import { Sidebar } from "../../features/workspace/sidebar/Sidebar";
-import { SettingsPage } from "../../features/settings/SettingsPage";
+import { SettingsPage } from "../../features/settings";
 import { Toasts } from "../../product/ui/Toasts";
-import { GitHubStarPrompt } from "../../features/workspace/app-chrome/GitHubStarPrompt";
-import { FoldersNotice } from "../../features/workspace/app-chrome/FoldersNotice";
 import { usePanelMotionRoot } from "../../product/panels/panelAnimations";
 import { useTaskRunNotifications } from "../taskNotifications";
 import { useLayoutWidth } from "../../lib/useLayout";
@@ -18,7 +13,8 @@ import { TitleBar } from "../TitleBar";
 import { useReadingNav } from "../readingNav";
 import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
 import { useEscapeClose } from "../../ui/useEscapeClose";
-import { PreviewFloat } from "../../features/panels/preview/PreviewFloat";
+import { PreviewFloat } from "../../features/panels";
+import { startAppDataRefresh } from "./dataRefresh";
 import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
 import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
 import { useGlobalKeys } from "./keys";
@@ -55,6 +51,7 @@ export function Shell() {
   useEffect(() => {
     void loadAll();
     void loadEngines();
+    const stopRefresh = startAppDataRefresh();
     let ticks = 0;
     const timer = setInterval(() => {
       ticks += 1;
@@ -68,6 +65,7 @@ export function Shell() {
     window.addEventListener("focus", onFocus);
     return () => {
       clearInterval(timer);
+      stopRefresh();
       window.removeEventListener("focus", onFocus);
     };
   }, []);
@@ -84,6 +82,9 @@ export function Shell() {
   const drawerOpen = useSidebarDrawer((state) => state.open);
   const closeDrawer = useSidebarDrawer((state) => state.close);
   const showNav = layout === "phone" ? onHome && route.name !== "settings" : small ? drawerOpen : reading ? readingNav : !collapsed;
+  // A docked sidebar stays mounted while collapsed: showing it again must not rebuild every row.
+  const docked = !small && layout !== "phone" && !reading;
+  const navMounted = showNav || docked;
   // Choosing something closes it, and a window that grows past small leaves nothing open behind.
   useEffect(() => {
     closeDrawer();
@@ -112,7 +113,7 @@ export function Shell() {
       </a>
       <TitleBar layout={layout} />
       {small && drawerOpen ? <div className="drawer-scrim" aria-hidden onClick={dismissDrawer} /> : null}
-      {showNav ? (
+      {navMounted ? (
         small ? (
           // Choosing a thread or page closes the drawer, even one already open.
           <div className="sidebar-drawer" onClick={(event) => (event.target as Element).closest("a[href]") && dismissDrawer()}>

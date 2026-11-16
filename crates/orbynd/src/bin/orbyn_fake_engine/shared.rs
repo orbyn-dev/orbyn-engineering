@@ -26,6 +26,7 @@ pub(crate) fn console(mode: &str, args: &[String]) {
 pub(crate) fn record_launch(mode: &str, args: &[String]) {
     if let Ok(path) = std::env::var("ORBYN_FAKE_LAUNCH_FILE") {
         let entry = json!({
+            "pid": std::process::id(),
 
             "mode": mode,
 

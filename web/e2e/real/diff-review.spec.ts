@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDetails, send, settled, startProject, type Service } from "./service";
 
@@ -32,8 +32,10 @@ test("E10: a diff range comment shows inline, follows its chip and reaches the p
   const file = page.locator("[data-diff-file='review.txt']");
   await file.getByRole("button", { name: "Comment on line 1", exact: true }).click();
   await file.getByRole("button", { name: "Comment on line 2", exact: true }).click({ modifiers: ["Shift"] });
+  // A range is selected first; the bar under it offers Comment, Send selection to engine and Copy.
+  await file.getByRole("toolbar", { name: "Selection" }).getByRole("button", { name: "Comment", exact: true }).click();
   await file.getByLabel("Review comment on review.txt line 1–2").fill("Why uppercase?");
-  await file.getByRole("button", { name: "Add to message" }).click();
+  await file.getByRole("button", { name: "Comment", exact: true }).click();
 
   const note = file.getByRole("note", { name: "Review comment review.txt:1–2" });
   await expect(note).toContainText("Why uppercase?");
@@ -53,17 +55,18 @@ test("E10: a diff range comment shows inline, follows its chip and reaches the p
 
   await file.getByRole("button", { name: "Comment on line 2", exact: true }).click();
   await file.getByLabel("Review comment on review.txt line 2").fill("Sent from the diff");
-  await file.getByRole("button", { name: "Add to message" }).click();
+  await file.getByRole("button", { name: "Comment", exact: true }).click();
   await send(page, "look at my comment");
   await settled(service, id);
   const messages = JSON.stringify(await service.api("GET", `/api/threads/${id}/messages?limit=10`));
   expect(messages).toContain("Review on `review.txt:2`");
   expect(messages).toContain("Sent from the diff");
   expect(messages).toContain("BRAVO");
-  await expect(file.getByRole("note", { name: /Review comment/ })).toHaveCount(0);
+  // A sent comment stays under its line, now read as sent.
+  await expect(file.getByRole("note", { name: /Review comment/ })).toContainText("Sent to the agent");
 });
 
-test("E18: a large uncommitted diff loads files as you scroll, and find covers loaded files only", async ({ page }) => {
+test("E18: a large uncommitted diff lists every file, and find counts matches across all of them", async ({ page }) => {
   const dir = join(service.repo, "bulk");
   mkdirSync(dir, { recursive: true });
   for (let at = 0; at < 130; at += 1) writeFileSync(join(dir, `file-${String(at).padStart(3, "0")}.txt`), `marker ${at}\n`);
@@ -71,18 +74,68 @@ test("E18: a large uncommitted diff loads files as you scroll, and find covers l
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto(`${service.page}#/threads/${id}`);
   await (await openDetails(page)).getByRole("button", { name: /^Changes/ }).click();
-  const files = page.locator("[data-diff-file^='bulk/']");
-  await expect(files.first()).toBeVisible();
-  const first = await files.count();
-  expect(first).toBeLessThan(130);
+  // One file's lines are drawn at a time, so the list never mounts 130 diffs: every file is a row.
+  const rows = page.locator("[data-diff-row^='bulk/']");
+  await expect(rows.first()).toBeVisible();
+  // The list draws its first 50 and says how many are not shown; one button adds them all.
+  await expect(rows).toHaveCount(50);
+  await expect(page.getByText(/^\d+ more files not shown\.$/)).toBeVisible();
+  await page.getByRole("button", { name: /^Show \d+ more files$/ }).click();
+  await expect(page.getByText(/more files not shown/)).toHaveCount(0);
+  await expect(rows).toHaveCount(130);
+  await expect(page.locator("[data-diff-file]")).toHaveCount(1);
+  await page.getByRole("group", { name: "Patch" }).focus();
+  await page.keyboard.press("ControlOrMeta+f");
   await page.getByRole("searchbox", { name: "Find in diff" }).fill("marker");
-  await expect(page.getByText(/Find covers the \d+ of 13\d files loaded so far/)).toBeVisible();
-  // Scrolling to the end of the list loads the rest, page by page.
-  for (let round = 0; round < 10 && (await files.count()) < 130; round += 1) {
-    await page.locator(".diff-more").scrollIntoViewIfNeeded();
-    await page.waitForTimeout(150);
-  }
-  await expect(files).toHaveCount(130);
-  await expect(page.getByText(/Find covers/)).toHaveCount(0);
-  await expect(page.locator(".diff-find output")).toHaveText(/^1[3-9]\d matches$/);
+  await expect(page.getByText(/^1 of 1[3-9]\d$/)).toBeVisible();
+});
+
+test("a hunk is reverted and a line edited through the file route, and the working tree is what changes", async ({ page }) => {
+  const path = join(service.repo, "hunks.txt");
+  writeFileSync(path, "one\ntwo\nthree\nfour\n");
+  commit("Hunks base");
+  writeFileSync(path, "one\nTWO\nthree\nfour\nFIVE\n");
+  const { id } = await thread("Hunk actions");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`${service.page}#/threads/${id}`);
+  await (await openDetails(page)).getByRole("button", { name: /^Changes/ }).click();
+  const file = page.locator("[data-diff-file='hunks.txt']");
+  // Hunk buttons show for the hunk under the pointer; bring the target into view and hover before pressing it.
+  const press = async (name: string, nth = 0) => {
+    const target = file.getByRole("button", { name, exact: true }).nth(nth);
+    await target.scrollIntoViewIfNeeded();
+    await (name === "Edit this line" ? target.locator("xpath=..") : file.locator(".hh2").first()).hover();
+    await target.click();
+  };
+  await expect(file.getByRole("button", { name: "Revert hunk" })).toHaveCount(1);
+
+  // Edit one line in place: only that line changes on disk.
+  await press("Edit this line", 1);
+  const field = file.getByRole("textbox", { name: /^Edit line/ });
+  await field.fill("TWO!");
+  await field.press("Meta+Enter");
+  await expect(file.getByText("TWO!")).toBeVisible();
+  expect(readFileSync(path, "utf8")).toBe("one\nTWO!\nthree\nfour\nFIVE\n");
+
+  // Revert the hunk after confirming, then undo it.
+  await press("Revert hunk");
+  const dialog = page.getByRole("dialog", { name: "Revert this hunk?" });
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await dialog.getByRole("button", { name: "Revert hunk" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Hunk reverted in hunks.txt." })).toBeVisible();
+  expect(readFileSync(path, "utf8")).toBe("one\ntwo\nthree\nfour\n");
+  await page.getByRole("button", { name: /^Undo/ }).click();
+  await expect.poll(() => readFileSync(path, "utf8")).toBe("one\nTWO!\nthree\nfour\nFIVE\n");
+
+  // The diff has read the undone file again before the file is changed under it.
+  await expect(file.getByText("TWO!")).toBeVisible();
+  // A file that changed under the diff is left alone. The open dialog holds the hunk as it was drawn, so a refresh of
+  // the diff after this write cannot turn it into the new text.
+  await press("Revert hunk");
+  const stale = page.getByRole("dialog", { name: "Revert this hunk?" });
+  await expect(stale).toBeVisible();
+  writeFileSync(path, "one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
+  await stale.getByRole("button", { name: "Revert hunk" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Nothing was changed." })).toBeVisible();
+  expect(readFileSync(path, "utf8")).toBe("one\nSOMETHING ELSE\nthree\nfour\nFIVE\n");
 });

@@ -9,9 +9,9 @@ describe("the tools summary", () => {
     expect(summary).toEqual({ ready: 8, starting: 0, needsSignIn: 1, failed: 1 });
   });
 
-  it("names only what is not ready, failures and sign-ins before starting", () => {
-    expect(problemLine({ ready: 8, starting: 1, needsSignIn: 1, failed: 1 })).toBe("1 needs sign-in · 1 failed · 1 starting");
-    expect(problemLine({ ready: 8, starting: 0, needsSignIn: 0, failed: 0 })).toBeNull();
+  it("names only what needs the person or failed; a starting entry is neither", () => {
+    expect(problemLine({ ready: 8, starting: 1, needsSignIn: 1, failed: 1 })).toBe("1 needs sign-in · 1 failed");
+    expect(problemLine({ ready: 8, starting: 1, needsSignIn: 0, failed: 0 })).toBeNull();
   });
 
   it("reads Codex's list: a starting app is neither ready nor a problem to fix", () => {

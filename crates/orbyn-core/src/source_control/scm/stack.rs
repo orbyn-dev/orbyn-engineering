@@ -3,7 +3,7 @@
 use super::{FORGE_TIMEOUT, PUSH_TIMEOUT, git_user};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::source_control::forge::{self, Forge, PullFilter, fetch_pull};
+use crate::source_control::forge::{self, Forge, fetch_pull};
 use crate::source_control::git::{git, text};
 use orbyn_contracts::{
     CheckoutPull, MergePull, PullBulkResult, PullCheckout, PullRequest, PullStack, StackAction,
@@ -48,13 +48,13 @@ pub(super) fn stack_of(pulls: &[PullRequest], number: u64) -> Option<PullStack> 
 impl Core {
     /// The chain of open pull requests through `number`: each layer's base is the
     /// head of the one below it.
-    pub async fn pull_stack(&self, project_id: &str, number: u64) -> Result<PullStack> {
-        let filter = PullFilter {
-            state: "open".into(),
-            ..PullFilter::default()
-        };
-        let pulls = self.project_pulls(project_id, &filter).await?;
-        stack_of(&pulls, number).ok_or_else(|| CoreError::NotFound("pull request".into()))
+    pub async fn pull_stack(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<PullStack> {
+        self.cached_stack(project_id, number, refresh).await
     }
 
     /// Merges from the bottom, or rebases each layer on the one below, stopping at
@@ -69,7 +69,7 @@ impl Core {
         if !matches!(action.action.as_str(), "merge" | "rebase") {
             return Err(CoreError::Invalid("Choose merge or rebase.".into()));
         }
-        let stack = self.pull_stack(project_id, number).await?;
+        let stack = self.pull_stack(project_id, number, true).await?;
         let mut results = Vec::new();
         for layer in &stack.layers {
             let outcome = if action.action == "merge" {

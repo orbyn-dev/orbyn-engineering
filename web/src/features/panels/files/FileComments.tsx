@@ -16,23 +16,19 @@ export function fileCommentRange(text: string, start: number, end: number) {
   return { line, endLine, excerpt };
 }
 
-/** Line annotations only change composer context; source bytes remain untouched. */
-export function FileComments({ threadId, cwd, path, revision, text, revealedLine }: {
-  threadId: string; cwd: string; path: string; revision: string; text: string; revealedLine: number | null;
-}) {
-  const [selection, setSelection] = useState<{ anchor: number; end: number } | null>(null);
+interface Where {
+  threadId: string;
+  cwd: string;
+  path: string;
+  revision: string;
+}
+export type LineSelection = { anchor: number; end: number };
+
+/** The comment box for a chosen range: it only adds a chip to the next message, and leaves the source bytes alone. */
+export function CommentForm({ threadId, cwd, path, revision, text, selection, onDone }: Where & { text: string; selection: LineSelection; onDone(): void }) {
   const [comment, setComment] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const source = useRef<HTMLPreElement>(null);
-  // Scroll only when the reveal or the source changes, never on a selection or keystroke.
-  useEffect(() => {
-    source.current?.querySelector("[data-line]")?.scrollIntoView?.({ block: "center" });
-  }, [revealedLine, text]);
-  const all =useComposerChips((state) => state.chips[threadId]);
-  const comments = (all ?? []).filter((chip) => chip.kind === "review" && chip.path === path
-    && chip.sourceRevision === revision && chip.sourceCwd === cwd);
-  const range = selection ? fileCommentRange(text, selection.anchor, selection.end) : null;
-  const cancel = () => { setSelection(null); setComment(""); setError(null); };
+  const range = fileCommentRange(text, selection.anchor, selection.end);
   const submit = () => {
     if (!range || !comment.trim()) return;
     const chip = { id: chipId(), kind: "review" as const, path, ...range,
@@ -44,8 +40,39 @@ export function FileComments({ threadId, cwd, path, revision, text, revealedLine
     }
     useComposerChips.getState().add(threadId, chip);
     useUi.getState().pushToast("Review comment added to your message");
-    cancel();
+    onDone();
   };
+  return <form className="file-comment-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+    <label>Comment on {path}:{Math.min(selection.anchor, selection.end)}{selection.anchor !== selection.end ? `–${Math.max(selection.anchor, selection.end)}` : ""}
+      <textarea aria-label="File comment" value={comment} maxLength={20000} onChange={(event) => setComment(event.target.value)} autoFocus />
+    </label>
+    {!range ? <p role="alert">Select at most 4,000 characters of source for a comment.</p> : null}
+    {error ? <p role="alert">{error}</p> : null}
+    <div><Button onClick={onDone}>Cancel</Button><Button type="submit" disabled={!range || !comment.trim()}>Add comment</Button></div>
+  </form>;
+}
+
+/** The comments already added for this file and revision, each removable before the message is sent. */
+export function CommentList({ threadId, cwd, path, revision }: Where) {
+  const all = useComposerChips((state) => state.chips[threadId]);
+  const comments = (all ?? []).filter((chip) => chip.kind === "review" && chip.path === path
+    && chip.sourceRevision === revision && chip.sourceCwd === cwd);
+  return comments.length ? <ul className="file-comment-list" aria-label="File comments">
+    {comments.map((chip) => <li key={chip.id}>
+      <strong>{chipLabel(chip)}</strong><p>{chip.kind === "review" ? chip.comment : ""}</p>
+      <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>Remove comment</Button>
+    </li>)}
+  </ul> : null;
+}
+
+/** Line annotations only change composer context; source bytes remain untouched. */
+export function FileComments({ threadId, cwd, path, revision, text, revealedLine }: Where & { text: string; revealedLine: number | null }) {
+  const [selection, setSelection] = useState<LineSelection | null>(null);
+  const source = useRef<HTMLPreElement>(null);
+  // Scroll only when the reveal or the source changes, never on a selection or keystroke.
+  useEffect(() => {
+    source.current?.querySelector("[data-line]")?.scrollIntoView?.({ block: "center" });
+  }, [revealedLine, text]);
   return <>
     <p className="file-comment-hint">Select a line to comment. Shift-select another line for a range.</p>
     <pre className="file-source file-comment-source" tabIndex={0} ref={source}>
@@ -55,24 +82,11 @@ export function FileComments({ threadId, cwd, path, revision, text, revealedLine
         return <span key={line} data-line={line === revealedLine || undefined} data-selected={selected || undefined}>
           <button type="button" aria-label={`Comment on line ${line}`} aria-pressed={Boolean(selected)} onClick={(event) => {
             setSelection((current) => ({ anchor: event.shiftKey && current ? current.anchor : line, end: line }));
-            setError(null);
           }}>{line}</button>{row}{"\n"}
         </span>;
       })}
     </pre>
-    {selection ? <form className="file-comment-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <label>Comment on {path}:{Math.min(selection.anchor, selection.end)}{selection.anchor !== selection.end ? `–${Math.max(selection.anchor, selection.end)}` : ""}
-        <textarea aria-label="File comment" value={comment} maxLength={20000} onChange={(event) => setComment(event.target.value)} autoFocus />
-      </label>
-      {!range ? <p role="alert">Select at most 4,000 characters of source for a comment.</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
-      <div><Button onClick={cancel}>Cancel</Button><Button type="submit" disabled={!range || !comment.trim()}>Add comment</Button></div>
-    </form> : null}
-    {comments.length ? <ul className="file-comment-list" aria-label="File comments">
-      {comments.map((chip) => <li key={chip.id}>
-        <strong>{chipLabel(chip)}</strong><p>{chip.kind === "review" ? chip.comment : ""}</p>
-        <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>Remove comment</Button>
-      </li>)}
-    </ul> : null}
+    {selection ? <CommentForm {...{ threadId, cwd, path, revision, text }} selection={selection} onDone={() => setSelection(null)} /> : null}
+    <CommentList {...{ threadId, cwd, path, revision }} />
   </>;
 }

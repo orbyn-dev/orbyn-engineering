@@ -1,0 +1,169 @@
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import type { RightTab } from "../../../product/state/ui";
+import { SLOT_PITCH } from "./tabs";
+
+/** How far a press must move before it is a drag and not a click. */
+const DRAG_START = 4;
+
+/** The gap, 0 to `centers.length`, that a pointer at `x` is nearest: the slot the dragged tab would land before. */
+export function dropGap(centers: readonly number[], x: number): number {
+  let gap = 0;
+  for (const center of centers) if (x > center) gap += 1;
+  return gap;
+}
+
+/** Where the dragged tab lands among the shown tabs once it is lifted out and put into `gap`. */
+export function landing(from: number, gap: number): number {
+  return gap > from ? gap - 1 : gap;
+}
+
+/**
+ * The slot's shift while another tab is dragged: the slots between where it was and where it will
+ * land slide one pitch aside to make room, the rest stay.
+ */
+export function slotShift(at: number, from: number, to: number): number {
+  if (to > from && at > from && at <= to) return -SLOT_PITCH;
+  if (to < from && at >= to && at < from) return SLOT_PITCH;
+  return 0;
+}
+
+/** The index to give `movePanelTab` so the dragged tab lands at `to` among the shown tabs; `order` is the whole row. */
+export function moveIndex(order: readonly RightTab[], shown: readonly RightTab[], id: RightTab, to: number): number {
+  const rest = order.filter((tab) => tab !== id);
+  const others = shown.filter((tab) => tab !== id);
+  const before = others[to];
+  if (before !== undefined) return rest.indexOf(before);
+  const last = others[others.length - 1];
+  return last === undefined ? 0 : rest.indexOf(last) + 1;
+}
+
+export interface TabDrag {
+  id: RightTab;
+  /** Where the dragged tab was in the shown row, and where it will land. */
+  from: number;
+  to: number;
+  dx: number;
+  dy: number;
+}
+
+/**
+ * Drag to reorder the strip with the pointer: the dragged tab lifts and follows the pointer, a line shows
+ * where it will land and the other slots slide aside. Escape puts it back. Letting go commits the order.
+ */
+export function useTabDrag({
+  list,
+  shown,
+  onMove,
+}: {
+  list: RefObject<HTMLElement | null>;
+  shown: readonly RightTab[];
+  onMove(id: RightTab, shownIndex: number): void;
+}) {
+  const [drag, setDrag] = useState<TabDrag | null>(null);
+  const press = useRef<{ id: RightTab; pointerId: number; x: number; y: number; centers: number[]; from: number; active: boolean } | null>(null);
+  // A drag that ends over its own slot is followed by a click, which must not open the tab.
+  const justDragged = useRef(false);
+  const settle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const latest = useRef({ shown, onMove });
+  latest.current = { shown, onMove };
+
+  const markDragged = useCallback(() => {
+    justDragged.current = true;
+    clearTimeout(settle.current);
+    settle.current = setTimeout(() => {
+      justDragged.current = false;
+    }, 0);
+  }, []);
+  /** Puts the tab back: a press that never finished, or a drag that cannot be trusted any more. */
+  const abandon = useCallback(() => {
+    const held = press.current;
+    press.current = null;
+    if (held?.active) markDragged();
+    setDrag(null);
+  }, [markDragged]);
+  // The slot centres were measured when the press began: a tab that opens or closes mid-drag voids them.
+  const tabSet = shown.join(",");
+  useEffect(() => {
+    if (press.current) abandon();
+  }, [tabSet, abandon]);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const held = press.current;
+      if (!held || event.pointerId !== held.pointerId) return;
+      const dx = event.clientX - held.x;
+      const dy = event.clientY - held.y;
+      if (!held.active) {
+        if (Math.hypot(dx, dy) < DRAG_START) return;
+        held.active = true;
+      }
+      const to = landing(held.from, dropGap(held.centers, event.clientX));
+      setDrag({ id: held.id, from: held.from, to, dx, dy });
+    };
+    const end = (event: PointerEvent, commit: boolean) => {
+      const held = press.current;
+      if (!held || event.pointerId !== held.pointerId) return;
+      press.current = null;
+      if (!held.active) return;
+      markDragged();
+      const dx = event.clientX - held.x;
+      const to = landing(held.from, dropGap(held.centers, event.clientX));
+      setDrag(null);
+      if (commit && to !== held.from && Math.abs(dx) >= DRAG_START) latest.current.onMove(held.id, to);
+    };
+    const up = (event: PointerEvent) => end(event, true);
+    const cancel = (event: PointerEvent) => end(event, false);
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !press.current?.active) return;
+      event.stopPropagation();
+      abandon();
+    };
+    // Letting go outside the window, or the window losing focus mid-drag, ends the drag where it began.
+    const lost = (event: PointerEvent) => {
+      if (press.current && event.pointerId === press.current.pointerId) abandon();
+    };
+    const blur = () => abandon();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key, true);
+    window.addEventListener("lostpointercapture", lost, true);
+    window.addEventListener("blur", blur);
+    return () => {
+      clearTimeout(settle.current);
+      window.removeEventListener("lostpointercapture", lost, true);
+      window.removeEventListener("blur", blur);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [abandon, markDragged]);
+
+  const start = (id: RightTab) => (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || press.current) return;
+    const slots = [...(list.current?.querySelectorAll<HTMLElement>("[data-tab]") ?? [])];
+    const from = latest.current.shown.indexOf(id);
+    if (from < 0) return;
+    // Every later move and the release come to the slot, even when the pointer leaves it or the window.
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // A pointer that is already gone cannot be captured; the window listeners still end the drag.
+    }
+    press.current = {
+      id,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      centers: slots.map((slot) => {
+        const rect = slot.getBoundingClientRect();
+        return rect.left + rect.width / 2;
+      }),
+      from,
+      active: false,
+    };
+  };
+
+  return { drag, start, wasDrag: () => justDragged.current };
+}

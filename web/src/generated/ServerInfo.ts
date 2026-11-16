@@ -20,4 +20,9 @@ environment_icon?: string,
 /**
  * Set when this service start moved an existing database to a newer schema.
  */
-database_upgrade?: DatabaseUpgrade, };
+database_upgrade?: DatabaseUpgrade, 
+/**
+ * `true` only when this service runs with the Crew Preview flag on. Absent means off. It is read-only here: the
+ * flag is set by the service's own start (`ORBYN_CREW_PREVIEW`), never by a request.
+ */
+crew_preview?: boolean, };

@@ -49,3 +49,20 @@ describe("failure detail", () => {
     await expect(request("POST", "/x")).rejects.toMatchObject({ detail: { id: "a" } });
   });
 });
+
+describe("checks the person asked for", () => {
+  it("send ?refresh=1 for the workspace and the update status, and only then", async () => {
+    const fetchMock = respond(200, {});
+    vi.stubGlobal("fetch", fetchMock);
+    const { api } = await import("./client");
+    await api.workspace(undefined, true);
+    await api.workspace();
+    await api.updates(undefined, true);
+    await api.updates();
+    const urls = (fetchMock.mock.calls as unknown as [string][]).map(([url]) => url);
+    expect(urls[0]).toContain("/api/workspace?refresh=1");
+    expect(urls[1]).not.toContain("refresh");
+    expect(urls[2]).toContain("/api/updates?refresh=1");
+    expect(urls[3]).not.toContain("refresh");
+  });
+});

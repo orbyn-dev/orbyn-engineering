@@ -1,0 +1,33 @@
+{
+  "type": "route_decision",
+  "v": 0,
+  "id": "sha256:bd4c5fec49f1316f479681465d616f490667f694efd03543dde0e2e9434bf147",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-06",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "engine": "codex",
+  "model": "sol",
+  "effort": "medium",
+  "tier": "lead",
+  "role": "review",
+  "assigned_by": "router",
+  "reasons": [
+    {
+      "code": "other_vendor",
+      "text": "A different vendor from the author."
+    }
+  ],
+  "rejected": [],
+  "scores": [
+    {
+      "engine": "codex",
+      "score": 700,
+      "used_defaults": true
+    }
+  ]
+}

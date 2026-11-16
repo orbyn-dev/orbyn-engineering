@@ -15,6 +15,8 @@ interface ConnectionStore {
   restarting: boolean;
   /** The service says this window reaches it from another computer, which may not stop or restart it. */
   remote: boolean;
+  /** The service says Crew Preview is on (`crew_preview` in its info, read at start). False until it says so: a failed or slow read shows no Crew entry. */
+  crewPreview: boolean;
   setOffline(offline: boolean): void;
   setServiceDown(down: boolean): void;
   setRestarting(restarting: boolean): void;
@@ -25,6 +27,7 @@ export const useConnection = create<ConnectionStore>((set) => ({
   serviceDown: false,
   restarting: false,
   remote: false,
+  crewPreview: false,
   setOffline: (offline) => set({ offline }),
   // A service that answers again is no longer restarting.
   setServiceDown: (serviceDown) => set((state) => (state.serviceDown === serviceDown ? state : { serviceDown, restarting: serviceDown && state.restarting })),

@@ -159,6 +159,10 @@ const KEY_LABELS: Record<string, string> = {
   down: "↓",
   left: "←",
   right: "→",
+  arrowup: "↑",
+  arrowdown: "↓",
+  arrowleft: "←",
+  arrowright: "→",
 };
 
 /** A rule's key as people write it: mod+o is ⌘O on macOS and Ctrl+O elsewhere. */

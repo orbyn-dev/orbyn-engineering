@@ -1,29 +1,41 @@
 import { CloudOff, Maximize2, Minimize2, MoreHorizontal, Plus, RefreshCw, X } from "lucide-react";
-import type { DragEvent, KeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { captureFocusReturn } from "../../ui/focusReturn";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Thread } from "../../api/types";
-import { useUi, type RightTab } from "../../product/state/ui";
+import { isFileTab, parseFileTab, useUi, type BuiltinTab, type RightTab } from "../../product/state/ui";
 import { Button, IconButton } from "../../ui/controls";
 import { ActivityPanel } from "./activity/ActivityPanel";
 import { BrowserPanel } from "./browser/BrowserPanel";
 import { DiffPanel } from "./diff/DiffPanel";
-import { FilesPanel } from "./files/FilesPanel";
+import { FileTab } from "./files/FileTab";
+import { EditorTitleExtras } from "./editor/EditorTitleExtras";
+import { SaveChangesDialog } from "./editor/SaveChangesDialog";
+import { isDirty, saveSession, sessionOfTab, useEditorSessions } from "./editor/editorSessions";
+import { useFileTabMenu, withFileItems } from "./editor/useFileTabMenu";
+import { useFileTabNames } from "../workspace";
+import { useWorkspace } from "../../product/state/workspace";
 import { ToolsTab } from "../tools";
-import { tabOf, tabSlots, tabsChanged, visibleTabs } from "./strip/tabs";
+import { api } from "../../api/client";
+import { useAsync } from "../../lib/useAsync";
+import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
+import { PanelEmpty } from "./strip/PanelEmpty";
+import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
+import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
 import { useConnectionKind } from "../../product/state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 
+/** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
+const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
 const STRIP_PAD = 16;
 const MORE_MENU_WIDTH = 190;
 /** The one line under "Waiting for the Orbyn service", by tab. The Browser is not here: it stays usable. */
-const WAITING_LINE: Partial<Record<RightTab, string>> = {
+const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
   diff: "The diff comes back when the service does.",
-  files: "Files open again as soon as it is back.",
   activity: "Activity shows again as soon as it is back.",
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
   tools: "The tools list comes back when the service does.",
@@ -160,6 +172,9 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
 export type PanelMode = "docked" | "overlay" | "sheet";
 
 const TAB_ID = "context-tab-";
+/** A tab's DOM id: a file tab's own id holds a path, which an id (and a selector) cannot. */
+const domId = (id: RightTab) => (isFileTab(id) ? `f${[...id].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) >>> 0, 7).toString(36)}` : id);
+const tabSelector = (id: RightTab) => `[data-tab="${CSS.escape(id)}"]`;
 
 export function PanelHost({
   thread,
@@ -167,7 +182,6 @@ export function PanelHost({
   closing,
   moves,
   maximized,
-  details = null,
   sideChat = null,
   onToggleMaximize,
   onReturn,
@@ -178,8 +192,6 @@ export function PanelHost({
   /** False while the panel is part of the page as it first appeared. */
   moves: boolean;
   maximized: boolean;
-  /** The thread's details card, which sits at the top of the panel above its tabs. */
-  details?: ReactNode;
   /** The Side chat tab's content; the thread owns it, so it is handed in. */
   sideChat?: ReactNode;
   onToggleMaximize(): void;
@@ -187,14 +199,16 @@ export function PanelHost({
 }) {
   const order = useUi((state) => state.panelTabOrder);
   const closedTabs = useUi((state) => state.panelTabsClosed);
-  const rowIds = order.filter((id) => !closedTabs.includes(id));
-  // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row.
+  const rowIds = order.filter((id) => isFileTab(id) || !closedTabs.includes(id));
+  // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row; with none open, it is empty.
   const chosen = useUi((state) => state.panelTab);
-  const tab: RightTab = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? "diff");
+  const tab: RightTab | null = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? null);
   const toggle = useUi((state) => state.togglePanel);
   const closeTab = useUi((state) => state.closePanelTab);
   const reopenTab = useUi((state) => state.reopenPanelTab);
   const moveTab = useUi((state) => state.movePanelTab);
+  const closeOthers = useUi((state) => state.closeOtherPanelTabs);
+  const closeAll = useUi((state) => state.closeAllPanelTabs);
   const resetTabs = useUi((state) => state.resetPanelTabs);
   const width = useUi((state) => state.panelWidth);
   // A header row of its own, with Back to thread: the phone's sheet, and the reading layout's floating drawer.
@@ -204,15 +218,28 @@ export function PanelHost({
   const list = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLElement>(null);
   const kind = useConnectionKind();
+  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal));
   // Every tab is a fixed slot. When they don't fit, the last ones fold into "..."; the open tab always shows.
   const [slots, setSlots] = useState(Number.POSITIVE_INFINITY);
   const [promoted, setPromoted] = useState<RightTab | null>(null);
+  const [said, setSaid] = useState("");
   const [plusMenu, setPlusMenu] = useState<{ x: number; y: number } | null>(null);
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
-  const [dragging, setDragging] = useState<RightTab | null>(null);
-  const [over, setOver] = useState<RightTab | null>(null);
   const count = rowIds.length;
+  // The line beside the open file's name: the worktree it is in, and for another project's, which project.
+  const target = tab ? parseFileTab(tab) : null;
+  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
+  // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
+  // A Jujutsu checkout is no Git repository either, but has changes to show: only a folder with neither is gitless.
+  const notGit = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
+  const jj = useAsync(`jj-gate:${thread.id}:${notGit}`, (signal) => (notGit ? api.jjStatus(thread.id, signal) : Promise.resolve(null)));
+  const gitless = notGit && jj.status === "ready" && jj.data === null;
+  const subtitle =
+    target === null ? null
+    : target.kind === "thread" ? (thread.worktree?.branch ?? null)
+    : !names.worktree ? null
+    : target.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
   latest.current = { count };
   const refit = useCallback(() => {
@@ -221,7 +248,10 @@ export function PanelHost({
     // A strip with no width yet (not laid out, or hidden) folds nothing.
     if (head.clientWidth === 0) return setSlots(Number.POSITIVE_INFINITY);
     const end = head.querySelector<HTMLElement>(".ctx-end");
-    const room = head.clientWidth - STRIP_PAD - (end?.offsetWidth ?? 0);
+    // A docked panel's strip also stops short of the title bar's end, so its real padding can exceed the usual 16 px.
+    const style = getComputedStyle(head);
+    const pad = Math.max(STRIP_PAD, (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0));
+    const room = head.clientWidth - pad - (end?.offsetWidth ?? 0);
     setSlots(tabSlots(room, latest.current.count));
   }, []);
   useLayoutEffect(() => {
@@ -239,7 +269,14 @@ export function PanelHost({
     if (holder !== promoted) setPromoted(holder);
   }, [holder, promoted]);
   const folded = hidden.length > 0;
-  const changed = tabsChanged(order, closedTabs);
+  const { drag, start: startDrag, wasDrag } = useTabDrag({
+    list,
+    shown,
+    onMove: (id, to) => {
+      moveTab(id, moveIndex(order, shown, id, to));
+      setSaid("Tab moved");
+    },
+  });
 
   const reset: MenuItem = { label: "Reset tab order", icon: <RefreshCw size={14} aria-hidden />, separatorBefore: true, onSelect: resetTabs };
   // The "..." menu: the tabs that do not fit, by name. The one chosen takes the last visible slot.
@@ -255,29 +292,36 @@ export function PanelHost({
       },
     };
   });
-  // The "+" lists the closed surfaces, and Reset tab order once the row has changed.
-  const closedItems: MenuItem[] = [
-    ...order
-      .filter((id) => closedTabs.includes(id))
-      .map((id) => {
-        const { label, icon: Icon } = tabOf(id);
-        return { label, icon: <Icon size={14} aria-hidden />, onSelect: () => reopenTab(id) };
-      }),
-    ...(closedTabs.length === 0 && !changed ? [{ label: "All tabs are open.", disabled: true }] : []),
-    ...(changed ? [{ ...reset, separatorBefore: closedTabs.length > 0 }] : []),
+  // The "+" lists everything that can be opened; choosing one already open shows it. Reset tab order shows once the order has changed.
+  const launcher: MenuItem[] = [
+    ...RIGHT_TABS.map(({ id, label, icon: Icon }) => {
+      const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
+      return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
+    }),
+    ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
-  const [said, setSaid] = useState("");
   const plusButton = useRef<HTMLButtonElement>(null);
   const focusTab = (id: RightTab) =>
-    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`#${TAB_ID}${id}`)?.focus());
+    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(tabSelector(id))?.focus());
+  // A file with unsaved changes asks before its tab goes, one file at a time: Save, Don't save or Cancel. Closing several asks for each.
+  const cwd = useWorkspace((state) => state.threads[thread.id]?.cwd ?? "");
+  const sessions = useEditorSessions((state) => state.sessions);
+  const sessionFor = (id: RightTab) => (isFileTab(id) ? sessionOfTab(sessions, thread.id, cwd, id) : undefined);
+  const [pending, setPending] = useState<{ ids: RightTab[]; then(): void; discard: string[] } | null>(null);
+  const guardClose = (ids: RightTab[], then: () => void) => {
+    const dirty = ids.filter((id) => isDirty(sessionFor(id)));
+    if (dirty.length > 0) setPending({ ids: dirty, then, discard: [] });
+    else then();
+  };
+  const closeWithFocus = (id: RightTab) => guardClose([id], () => closeNow(id));
   /** Closes a tab, then moves focus by the shared rule: the neighbouring tab, else the "+", never the page. */
-  const closeWithFocus = (id: RightTab) => {
+  const closeNow = (id: RightTab) => {
     const at = rowIds.indexOf(id);
     const neighbour = rowIds[at + 1] ?? rowIds[at - 1];
     // A neighbour folded into "..." has no slot to hold focus: the tab that opens takes the last slot.
     const hiddenNext = neighbour !== undefined && !shown.includes(neighbour);
     const target =
-      (neighbour ? list.current?.querySelector<HTMLElement>(`#${TAB_ID}${neighbour}`) : null) ?? plusButton.current ?? list.current;
+      (neighbour ? list.current?.querySelector<HTMLElement>(tabSelector(neighbour)) : null) ?? plusButton.current ?? list.current;
     const back = captureFocusReturn(target);
     flushSync(() => closeTab(id));
     back.restore();
@@ -286,7 +330,7 @@ export function PanelHost({
   };
   // One Tab stop: the chosen tab. Arrows move between tabs, Delete closes one, Alt+Shift+Arrow moves it.
   const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    const at = shown.indexOf(tab);
+    const at = tab ? shown.indexOf(tab) : -1;
     const current = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as RightTab | undefined;
     if (!current) return;
     if (event.altKey && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
@@ -317,16 +361,39 @@ export function PanelHost({
     toggle(target);
     focusTab(target);
   };
-  const onDrop = (event: DragEvent<HTMLElement>, onto: RightTab) => {
-    event.preventDefault();
-    if (dragging && dragging !== onto) {
-      moveTab(dragging, order.indexOf(onto));
-      setSaid("Tab moved");
-    }
-    setDragging(null);
-    setOver(null);
-  };
+  // The ⋯ under the strip belongs to the open tab. With one tab, closing it is closing the panel (the ×), so only Maximise shows.
+  const maximise: MenuItem[] =
+    mode === "sheet" ? [] : [{ label: maximized ? "Restore" : "Maximise panel", icon: maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />, onSelect: onToggleMaximize }];
+  const tabMenuItems: MenuItem[] =
+    tab === null
+      ? []
+      : [
+          ...(rowIds.length > 1
+            ? [
+                { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) },
+                { label: "Close other tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds.filter((one) => one !== tab), () => { closeOthers(tab); setSaid("Other tabs closed"); focusTab(tab); }) },
+                { label: "Close all tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds, () => { closeAll(); setSaid("All tabs closed. Nothing is open."); plusButton.current?.focus(); }) },
+              ]
+            : []),
+          ...maximise.map((item, at) => (at === 0 && rowIds.length > 1 ? { ...item, separatorBefore: true } : item)),
+        ];
 
+  // A file's own items come first and the tab's own menu stays whole after them: Close tab, Close other tabs, Close all tabs, Maximise.
+  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab));
+  const menuItems = withFileItems(fileItems, tabMenuItems);
+  const asked = pending?.ids[0];
+  const askedSession = asked ? sessionFor(asked) : undefined;
+  const nextAsked = () => {
+    if (!pending) return;
+    const rest = pending.ids.slice(1);
+    if (rest.length > 0) setPending({ ...pending, ids: rest });
+    else {
+      // Only now that the whole close goes ahead are the unsaved edits given up.
+      setPending(null);
+      for (const key of pending.discard) useEditorSessions.getState().drop(key);
+      pending.then();
+    }
+  };
   return (
     <aside
       className="context"
@@ -355,9 +422,8 @@ export function PanelHost({
           </span>
         </header>
       ) : null}
-      {details}
       <header ref={strip} className="ctx-strip">
-        <div ref={list} className="ctx-tabs" role="tablist" aria-label="Panel tabs" onKeyDown={onTabKey}>
+        <div ref={list} className="ctx-tabs" role={shown.length > 0 ? "tablist" : undefined} aria-label={shown.length > 0 ? "Panel tabs" : undefined} onKeyDown={onTabKey}>
           {shown.map((id) => {
             const { label, icon: Icon } = tabOf(id);
             return (
@@ -366,42 +432,34 @@ export function PanelHost({
                 type="button"
                 role="tab"
                 className="ctx-slot"
-                id={`${TAB_ID}${id}`}
+                id={`${TAB_ID}${domId(id)}`}
                 data-tab={id}
                 data-tip={label}
                 data-selected={tab === id || undefined}
-                data-dragging={dragging === id || undefined}
-                data-over={over === id && dragging !== id ? "" : undefined}
-                aria-label={label}
+                data-dragging={drag?.id === id || undefined}
+                data-shifted={drag && drag.id !== id && slotShift(shown.indexOf(id), drag.from, drag.to) !== 0 ? "" : undefined}
+                style={
+                  drag
+                    ? drag.id === id
+                      ? { transform: `translate(${drag.dx}px, ${drag.dy}px)` }
+                      : { transform: `translateX(${slotShift(shown.indexOf(id), drag.from, drag.to)}px)` }
+                    : undefined
+                }
+                aria-label={isDirty(sessionFor(id)) ? `${label}, unsaved changes` : label}
                 aria-selected={tab === id}
-                aria-controls={tab === id ? `context-${id}` : undefined}
+                aria-controls={tab === id ? `context-${domId(id)}` : undefined}
                 tabIndex={tab === id ? 0 : -1}
-                draggable
+                onPointerDown={startDrag(id)}
                 onClick={() => {
-                  if (tab !== id) toggle(id);
+                  if (!wasDrag() && tab !== id) toggle(id);
                 }}
-                onDragStart={(event) => {
-                  setDragging(id);
-                  event.dataTransfer?.setData("text/plain", id);
-                }}
-                onDragEnd={() => {
-                  setDragging(null);
-                  setOver(null);
-                }}
-                onDragOver={(event) => {
-                  if (!dragging) return;
-                  event.preventDefault();
-                  setOver(id);
-                }}
-                onDragLeave={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver((current) => (current === id ? null : current));
-                }}
-                onDrop={(event) => onDrop(event, id)}
               >
                 <Icon size={14} aria-hidden />
+                {isDirty(sessionFor(id)) ? <i className="ctx-dot" aria-hidden /> : null}
               </button>
             );
           })}
+          {drag ? <span className="ctx-ins" aria-hidden style={{ left: drag.to * SLOT_PITCH - 1 }} /> : null}
         </div>
         {folded ? (
           <button
@@ -449,25 +507,27 @@ export function PanelHost({
           )}
         </div>
       </header>
-      <div className="ctx-title">
-        <b>{tabOf(tab).label}</b>
-        {rowIds.length > 1 ? (
+      {tab === null ? null : (
+        <div className="ctx-title">
+          <b>{tabOf(tab).label}</b>
+          {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
+          {isFileTab(tab) ? <EditorTitleExtras threadId={thread.id} tabId={tab} onSave={() => { const own = sessionFor(tab); return own ? saveSession(own.key) : undefined; }} /> : null}
           <IconButton
             label="Tab menu"
             pressed={tabMenu !== null}
             aria-haspopup="menu"
             onClick={(event) => {
               const rect = event.currentTarget.getBoundingClientRect();
-              setTabMenu(tabMenu ? null : { x: rect.right - 160, y: rect.bottom + 4 });
+              setTabMenu(tabMenu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
             }}
           >
             <MoreHorizontal size={14} aria-hidden />
           </IconButton>
-        ) : null}
-      </div>
+        </div>
+      )}
       <Presence>
         {plusMenu ? (
-          <Menu x={plusMenu.x} y={plusMenu.y} label="Open a tab" items={closedItems} onClose={() => setPlusMenu(null)} />
+          <Menu x={plusMenu.x} y={plusMenu.y} label="Open a tab" items={launcher} onClose={() => setPlusMenu(null)} />
         ) : null}
       </Presence>
       <Presence>
@@ -479,31 +539,33 @@ export function PanelHost({
             x={tabMenu.x}
             y={tabMenu.y}
             label="Tab menu"
-            items={[{ label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) }]}
+            items={menuItems}
             onClose={() => setTabMenu(null)}
           />
         ) : null}
       </Presence>
       <div className="context-body" data-connection={kind ?? undefined}>
-        {kind === "offline" && tab !== "browser" && NEEDS_NETWORK.includes(tab) ? (
+        {kind === "offline" && tab !== null && tab !== "browser" && NEEDS_NETWORK.includes(tab) ? (
           <p className="conn-banner conn-panel-banner" role="status">
             <CloudOff size={13} aria-hidden />
             <span>You’re offline.</span>
           </p>
         ) : null}
-        {kind === "service-down" && tab !== "browser" ? (
+        {tab === null ? (
+          <PanelEmpty onOpen={reopenTab} gitless={gitless} />
+        ) : kind === "service-down" && tab !== "browser" ? (
           <div className="conn-wait">
             <b>Waiting for the Orbyn service</b>
-            {WAITING_LINE[tab] ? <span>{WAITING_LINE[tab]}</span> : null}
+            {isFileTab(tab) ? <span>Files open again as soon as it is back.</span> : WAITING_LINE[tab] ? <span>{WAITING_LINE[tab]}</span> : null}
           </div>
         ) : (
-          <div id={`context-${tab}`} role="tabpanel" aria-labelledby={`${TAB_ID}${tab}`} className="tabpanel">
+          <div id={`context-${domId(tab)}`} role="tabpanel" aria-labelledby={`${TAB_ID}${domId(tab)}`} className="tabpanel">
             {tab === "browser" ? (
               <BrowserPanel threadId={thread.id} />
             ) : tab === "diff" ? (
               <DiffPanel threadId={thread.id} />
-            ) : tab === "files" ? (
-              <FilesPanel threadId={thread.id} />
+            ) : isFileTab(tab) ? (
+              <FileTab key={tab} id={tab} threadId={thread.id} />
             ) : tab === "activity" ? (
               <ActivityPanel key={thread.id} threadId={thread.id} />
             ) : tab === "tools" ? (
@@ -517,6 +579,22 @@ export function PanelHost({
       <span className="sr-only" role="status" aria-live="polite">
         {said}
       </span>
+      {pending && askedSession ? (
+        <SaveChangesDialog
+          key={askedSession.key}
+          path={askedSession.path}
+          onCancel={() => setPending(null)}
+          onDiscard={() => {
+            if (pending) pending.discard.push(askedSession.key);
+            nextAsked();
+          }}
+          onSave={() => {
+            void saveSession(askedSession.key).then((saved) => {
+              if (saved) nextAsked();
+            });
+          }}
+        />
+      ) : null}
     </aside>
   );
 }

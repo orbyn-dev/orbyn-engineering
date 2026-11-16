@@ -1,0 +1,28 @@
+{
+  "type": "evidence",
+  "v": 0,
+  "id": "sha256:3dfb98087bec455de7e69dfe536143b06b4272306a88a043ed4b1b56a57f801f",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "check": "chk-tests",
+  "command": "cargo test -p crew-demo",
+  "outcome": "pass",
+  "exit_code": 0,
+  "duration_ms": 8123,
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "log_hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "excerpt": "test result: ok. 4 passed; 0 failed",
+  "artifacts": [
+    {
+      "kind": "log",
+      "hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "name": "cargo-test.log"
+    }
+  ],
+  "proves": "The crate's unit tests pass on this commit."
+}

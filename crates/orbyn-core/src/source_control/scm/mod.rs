@@ -5,6 +5,7 @@
 
 mod forges;
 mod pulls;
+pub mod read_cache;
 mod review;
 mod stack;
 mod watch;
@@ -153,6 +154,10 @@ impl Core {
             let outcome = git_user(cwd, &["push", "-u", "origin", &branch], PUSH_TIMEOUT)
                 .await
                 .map(|_| None);
+            // A push to a branch that has a pull request moves its commits, files and checks.
+            if let Ok(thread) = self.store.thread(id) {
+                self.scm_reads.project_all_changed(&thread.project_id);
+            }
             if !self.record_phase(id, &mut phases, phase("push", outcome))? {
                 return Ok(GitActionResult {
                     phases,
@@ -188,6 +193,7 @@ impl Core {
             draft.base.as_deref(),
         )
         .await?;
+        self.scm_reads.lists_changed();
         // The pull request exists now; a failed lookup must not report otherwise.
         match number_from_url(&url) {
             Some(number) => {

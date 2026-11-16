@@ -121,6 +121,74 @@ test("the latest stable release installs and its launcher runs the command", { s
   assert.equal(output, windows ? process.version : "orbyn --version");
 });
 
+test("the Windows launcher preserves Unicode paths, arguments, exit status and code page", { skip: !windows }, async () => {
+  const home = join(root, "r\u00e9sum\u00e9-\u65e5\u672c\u8a9e with spaces");
+  const bin = join(home, "command bin");
+  const result = await install({ ORBYN_HOME: join(home, "data"), ORBYN_INSTALL_DIR: bin });
+  assert.equal(result.status, 0, result.stderr);
+  const probe = join(home, "argument probe.cjs");
+  const receipt = join(home, "arguments.json");
+  writeFileSync(probe, `require("node:fs").writeFileSync(process.env.ORBYN_TEST_RECEIPT, JSON.stringify(process.argv.slice(2))); process.exit(37);`);
+  const driver = join(root, "launch.cmd");
+  const shadowCwd = join(root, "shadow cwd");
+  const shadowPath = join(root, "shadow path");
+  const shadowReceipt = join(root, "shadow-called");
+  for (const folder of [shadowCwd, shadowPath]) {
+    mkdirSync(folder);
+    writeFileSync(join(folder, "chcp.cmd"), '@echo shadow>"%ORBYN_TEST_SHADOW_RECEIPT%"\r\n');
+  }
+  // Environment expansion supplies Unicode paths without encoding them in this driver.
+  writeFileSync(driver, [
+    "@echo off",
+    '"%SystemRoot%\\System32\\chcp.com" %ORBYN_TEST_CODEPAGE% >nul',
+    'call "%ORBYN_TEST_LAUNCHER%" "%ORBYN_TEST_PROBE%" "two words" "" "a&b" "%ORBYN_TEST_ARGUMENT%"',
+    'set "result=%errorlevel%"',
+    '"%SystemRoot%\\System32\\chcp.com"',
+    "exit /b %result%",
+    "",
+  ].join("\r\n"));
+  for (const [codepage, shadow] of [[437, "cwd"], [932, "cwd"], [65001, "cwd"], [437, "path"]]) {
+    for (const shell of ["cmd.exe", "powershell.exe"]) {
+      const args = shell === "cmd.exe"
+        ? ["/d", "/c", driver]
+        : ["-NoProfile", "-Command", "& $env:ORBYN_TEST_DRIVER; exit $LASTEXITCODE"];
+      const actual = await new Promise((done) => execFile(shell, args, {
+        encoding: "utf8",
+        cwd: shadow === "cwd" ? shadowCwd : root,
+        env: {
+          ...process.env,
+          PATH: `${shadowPath};${process.env.PATH}`,
+          ORBYN_TEST_DRIVER: driver,
+          ORBYN_TEST_LAUNCHER: join(bin, "orbyn.cmd"),
+          ORBYN_TEST_PROBE: probe,
+          ORBYN_TEST_RECEIPT: receipt,
+          ORBYN_TEST_CODEPAGE: String(codepage),
+          ORBYN_TEST_ARGUMENT: "r\u00e9sum\u00e9 \u65e5\u672c\u8a9e",
+          ORBYN_TEST_SHADOW_RECEIPT: shadowReceipt,
+        },
+      }, (error, stdout, stderr) => done({ status: error?.code ?? 0, stdout, stderr })));
+      assert.equal(actual.status, 37, `${shell}, code page ${codepage}: ${actual.stderr}`);
+      assert.ok(!existsSync(shadowReceipt), `${shell} executed the ${shadow} chcp shadow`);
+      assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), ["two words", "", "a&b", "r\u00e9sum\u00e9 \u65e5\u672c\u8a9e"]);
+      assert.match(actual.stdout, new RegExp(`\\b${codepage}\\b`), "the caller's code page changed");
+    }
+  }
+});
+
+test("the Windows launcher saves only the digits of the code page, in any locale", { skip: !windows }, async () => {
+  const result = await install({ ORBYN_HOME: join(root, "cp-data"), ORBYN_INSTALL_DIR: join(root, "cp-bin") });
+  assert.equal(result.status, 0, result.stderr);
+  const line = readFileSync(join(root, "cp-bin", "orbyn.cmd"), "utf8").split(/\r?\n/).find((l) => l.startsWith("for /f"));
+  assert.ok(line, "the launcher reads the code page");
+  for (const [output, digits] of [["Active code page: 437", "437"], ["Aktive Codepage: 850.", "850"], ["Page de codes active : 1252", "1252"]]) {
+    const driver = join(root, "codepage.cmd");
+    // Replace chcp with a fixed line of output so every locale's form can be parsed here.
+    writeFileSync(driver, ["@echo off", line.replace(/\('.*'\)/, `('echo ${output}')`), "echo [%_orbyn_cp%]", ""].join("\r\n"));
+    const actual = await new Promise((done) => execFile("cmd.exe", ["/d", "/c", driver], { encoding: "utf8" }, (error, stdout) => done(stdout)));
+    assert.equal(actual.trim(), `[${digits}]`, output);
+  }
+});
+
 test("an exact version and the nightly channel pick their own release", { skip }, async () => {
   for (const [env, folder] of [
     [{ ORBYN_VERSION: "v1.2.3" }, "/download/v1.2.3/"],

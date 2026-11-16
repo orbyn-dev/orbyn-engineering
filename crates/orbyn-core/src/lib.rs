@@ -1,15 +1,18 @@
 //! Orbyn product behavior: store, run lifecycle, policy, audit, skills, engines,
 //! git, terminal and computer gateway. Transport lives in `orbynd`.
 
+pub mod account;
 pub mod agents;
 pub mod app;
 pub mod browser;
 pub mod conversation;
+pub mod crew;
 pub mod error;
 pub mod governance;
 pub mod host;
 pub mod operations;
 pub mod project;
+pub mod redaction;
 pub mod settings;
 pub mod source_control;
 pub mod store;

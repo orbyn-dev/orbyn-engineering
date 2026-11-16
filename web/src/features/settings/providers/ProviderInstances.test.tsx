@@ -8,7 +8,7 @@ import { ProvidersSection } from "./Providers";
 const mock = vi.hoisted(() => ({ refresh: vi.fn(), engines: [] as EngineStatus[] }));
 vi.mock("../../../api/client", async (original) => ({ ...await original<typeof import("../../../api/client")>(), request: vi.fn() }));
 vi.mock("../../../product/state/workspace", () => ({
-  useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null } }),
+  useWorkspace: (select: (state: unknown) => unknown) => select({ refreshEngines: mock.refresh, engines: { data: mock.engines, error: null }, projects: { data: [], error: null }, threads: {} }),
 }));
 vi.mock("../rows/SettingsScopeContext", () => ({ useSettingsScope: () => null }));
 const base = { capabilities: {}, installed: true, version: "2.1.318", auth: "logged_in", latest: null, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as const;
@@ -27,7 +27,11 @@ beforeEach(() => {
   entries = [{ id: "work", driver: "claude", name: "Work", enabled: false, forward: "mine", program: "/opt/work" }, { id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }];
   revision = "revision-1"; conflict = null; writes = []; inUseWrites = []; mock.refresh.mockReset();
   vi.mocked(request).mockReset();
-  vi.mocked(request).mockImplementation(async (method, _path, body) => {
+  vi.mocked(request).mockImplementation(async (method, path, body) => {
+    // The grouped list is a read of its own, and it names every engine here, so the grouped page runs these tests.
+    if (method === "GET" && path === "/api/providers") {
+      return { providers: mock.engines.map((one) => ({ id: one.id, name: one.name, group: "in_use", labels: [], registered: true, openable: true })) } as never;
+    }
     const wanted = (body as { keys?: string[]; edits?: Record<string, { value: JsonValue[] }> });
     if (method === "POST" && wanted.keys?.[0] === "disabled_engines") return { catalog: { version: "members-1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: [], mixed: false, default: [], project_scoped: true, environment: { source: "default", value: [], default: [] }, members: [], overrides: [] }] } as never;
     if (method === "PUT" && wanted.edits?.disabled_engines) { inUseWrites.push(wanted.edits.disabled_engines.value); return {} as never; }
@@ -153,6 +157,7 @@ describe("provider pages", () => {
       engine({ id: "work", name: "Claude Code · Work", tier: "native", instance_of: "claude", account: "sam@acme.com" }),
       engine({ id: "codex", name: "Codex", tier: "native", auth: "logged_out" })];
     render(<ProvidersSection />);
+    await screen.findByRole("rowgroup", { name: "In use" });
     expect(await screen.findByText("sam@example.com")).toBeVisible();
     expect(screen.getByText("Work · sam@acme.com")).toBeVisible();
     expect(screen.getByText("Not signed in")).toBeVisible();
@@ -161,6 +166,7 @@ describe("provider pages", () => {
     const user = userEvent.setup();
     mock.engines = [engine({ id: "claude", name: "Claude Code", tier: "native", account: "sam@example.com" })];
     render(<ProvidersSection />);
+    await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude Code" }));
     expect(await screen.findByText("Signed in as sam@example.com")).toBeVisible();
   });
@@ -190,22 +196,24 @@ describe("provider pages", () => {
   it("hides Native sessions when the service has no count to give", async () => {
     vi.spyOn(api, "nativeSessionCount").mockRejectedValue(new ApiFailure("unsupported", "No history folder.", 400));
     render(<ProvidersSection />);
-    await screen.findByRole("table", { name: "Providers" });
+    await screen.findByRole("rowgroup", { name: "In use" });
     expect(screen.queryByText("Native sessions")).toBeNull();
   });
   it("opens a provider and returns with the back link", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
+    await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude Code · Work" }));
     expect(await screen.findByRole("heading", { name: "Claude Code · Work" })).toBeVisible();
     expect(screen.getByText("/opt/work")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Providers" }));
-    expect(await screen.findByRole("table", { name: "Providers" })).toBeVisible();
+    expect(await screen.findByRole("rowgroup", { name: "In use" })).toBeVisible();
   });
   it("removes only the selected instance record", async () => {
     const user = userEvent.setup(); render(<ProvidersSection />);
+    await screen.findByRole("rowgroup", { name: "In use" });
     await user.click(await screen.findByRole("button", { name: "Claude Code · Work" }));
     await user.click(await screen.findByRole("button", { name: "Remove Claude Code · Work" }));
-    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove provider" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(entries).toEqual([{ id: "other", driver: "acp-base", enabled: true, forward: { nested: true } }]));
   });
 });

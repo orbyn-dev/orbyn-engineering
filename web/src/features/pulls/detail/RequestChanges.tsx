@@ -54,7 +54,7 @@ export function RequestChangesCard({
           ? `${forge} doesn’t provide that here.`
           : unknown
             ? "Couldn’t confirm the review. It may have been sent: check the conversation before trying again."
-            : "Couldn’t submit the review. Nothing was sent. Try again.",
+            : "Couldn’t submit the review. Nothing was sent.",
       );
       if (unknown) onUnknown();
       setBusy(false);
@@ -87,7 +87,7 @@ export function RequestChangesCard({
       {own ? (
         <p className="pull-review-note" data-tone="t2">
           <Lock size={14} aria-hidden />
-          You can{"’"}t request changes on your own pull request.
+          You can{"’"}t review your own pull request.
         </p>
       ) : error ? (
         <p className="pull-review-note" data-tone="danger" role="alert">

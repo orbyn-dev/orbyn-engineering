@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://orbyn.dev/crew/protocol/v0/result.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0. Crew Protocol v0, unpublished.",
+  "title": "CrewResult",
+  "description": "What goes back to the lead about a task. Written only by the core. failed and needs_person are interim; passed, stopped and cancelled are final.",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "if": {
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "passed",
+              "stopped",
+              "cancelled"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "final": {
+            "const": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "final": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "stopped"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "stop_reason"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "stop_reason"
+          ]
+        }
+      }
+    }
+  ],
+  "required": [
+    "run_id",
+    "brief",
+    "state",
+    "final",
+    "summary",
+    "branch",
+    "commit",
+    "checks",
+    "not_verified",
+    "attempts",
+    "usage",
+    "route",
+    "report"
+  ],
+  "unevaluatedProperties": false,
+  "properties": {
+    "type": {
+      "const": "result"
+    },
+    "author": {
+      "properties": {
+        "role": {
+          "const": "core"
+        }
+      }
+    },
+    "run_id": {
+      "$ref": "common.schema.json#/$defs/opaque_id"
+    },
+    "brief": {
+      "$ref": "common.schema.json#/$defs/hash"
+    },
+    "state": {
+      "enum": [
+        "passed",
+        "failed",
+        "stopped",
+        "cancelled",
+        "needs_person"
+      ]
+    },
+    "final": {
+      "type": "boolean"
+    },
+    "stop_reason": {
+      "enum": [
+        "repeated_failure",
+        "budget",
+        "too_many_denials",
+        "injection_suspected",
+        "engine_error",
+        "lead_stopped"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "branch": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[A-Za-z0-9._/-]{1,255}$"
+    },
+    "commit": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/commit"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "check",
+          "evidence",
+          "outcome"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "check": {
+            "$ref": "common.schema.json#/$defs/opaque_id"
+          },
+          "evidence": {
+            "$ref": "common.schema.json#/$defs/hash"
+          },
+          "outcome": {
+            "enum": [
+              "pass",
+              "fail",
+              "error",
+              "skipped"
+            ]
+          }
+        }
+      }
+    },
+    "not_verified": {
+      "description": "What no check covered, so passed never implies more than was checked.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "common.schema.json#/$defs/text_short"
+      }
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_in": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_out": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cost_micros": {
+          "description": "Millionths of the billing unit; never mixed across engines.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "route": {
+      "description": "Null when the task ended before it was routed.",
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "report": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

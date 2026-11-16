@@ -121,7 +121,7 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Relay an ACP agent's stdio MCP to the run endpoint in `ORBYN_ACP_MCP_ENDPOINT`.
+    /// Relay an ACP agent's stdio MCP to the run endpoint named by `ORBYN_ACP_MCP_ENDPOINT_FILE`.
     #[command(name = "acp-mcp-bridge", hide = true)]
     AcpMcpBridge,
     /// Call one of the run's MCP tools from an ACP agent's terminal.
@@ -1291,13 +1291,13 @@ fn usage(message: impl Into<String>) -> Failure {
 }
 
 fn bridge_endpoint(command: &str) -> Outcome<String> {
-    use orbyn_core::agents::acp_mcp_bridge::ENDPOINT_ENV;
-    std::env::var(ENDPOINT_ENV)
-        .ok()
-        .filter(|endpoint| !endpoint.is_empty())
+    use orbyn_core::agents::acp_mcp_bridge::{ENDPOINT_FILE_ENV, read_endpoint};
+    std::env::var_os(ENDPOINT_FILE_ENV)
+        .filter(|file| !file.is_empty())
+        .and_then(|file| read_endpoint(std::path::Path::new(&file)))
         .ok_or_else(|| {
             usage(format!(
-                "{command} needs {ENDPOINT_ENV}, which an Orbyn run sets."
+                "{command} needs {ENDPOINT_FILE_ENV} to name the endpoint file an Orbyn run leaves."
             ))
         })
 }

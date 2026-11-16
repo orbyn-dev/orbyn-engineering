@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from "react";
+import { deferNavigation, navigationSnapshot } from "./navigationGuard";
 import type { ProjectSettingsSelection } from "../../generated/ProjectSettingsSelection";
 
 export const SETTINGS_SECTIONS = [
   "general",
+  "account",
   "appearance",
   "chat",
   "diffs",
@@ -14,12 +16,21 @@ export const SETTINGS_SECTIONS = [
   "projects",
   "source-control",
   "worktrees",
+  "crew",
+  "secrets",
   "maintenance",
   "labs",
   "about",
   "archive",
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+/** The Crew screens built so far; the rest join as they land. */
+export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
+export type CrewTab = (typeof CREW_TABS)[number];
+
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds"] as const;
+export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 export type Route =
   | { name: "home" }
@@ -36,14 +47,21 @@ export type Route =
       task?: string;
       /** With `task`: open the editor instead of the task page. */
       edit?: boolean;
+      /** Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent). */
+      crewPage?: CrewSettingsPage;
+      repo?: string;
     }
   | { name: "usage" }
   | { name: "skills"; skill?: string }
   | { name: "tasks" }
+  /** Crew Preview: drawn only while the service says Crew is on. */
+  | { name: "crew"; tab: CrewTab; task?: string }
   /** The list, or one pull request of one project. */
   | { name: "pulls"; project?: string; number?: number };
 
 const enc = encodeURIComponent;
+// Same grammar as Core Flow valid_id. A locator identifies a read, never an action.
+export const isCrewTaskId = (id: string): boolean => /^[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,95}$/.test(id);
 
 export function routeHref(route: Route): string {
   switch (route.name) {
@@ -63,14 +81,19 @@ export function routeHref(route: Route): string {
       return route.skill === undefined ? "#/skills" : `#/skills/${enc(route.skill)}`;
     case "tasks":
       return "#/tasks";
+    case "crew":
+      if (route.task !== undefined) return route.tab === "flow" && isCrewTaskId(route.task) ? `#/crew/flow/task/${enc(route.task)}` : "#/";
+      return `#/crew/${route.tab}`;
     case "pulls":
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "settings": {
-      const path = route.section ? `#/settings/${route.section}` : "#/settings";
+      const base = route.section ? `#/settings/${route.section}` : "#/settings";
+      const path = route.section === "crew" && route.crewPage ? `${base}/areas${route.crewPage === "thresholds" ? "/thresholds" : ""}` : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
       if (route.selection?.kind === "checkout") params.set("checkout", route.selection.project_id);
+      if (route.repo !== undefined && route.crewPage) params.set("repo", route.repo);
       if (route.task !== undefined) params.set("task", route.task);
       if (route.task !== undefined && route.edit) params.set("edit", "1");
       return params.size ? `${path}?${params}` : path;
@@ -79,6 +102,14 @@ export function routeHref(route: Route): string {
 }
 
 export function parseRoute(hash: string): Route {
+  if (hash.startsWith("#/crew/flow/task")) {
+    const segment = /^#\/crew\/flow\/task\/([^/?#]+)$/.exec(hash)?.[1];
+    if (!segment) return { name: "home" };
+    try {
+      const task = decodeURIComponent(segment);
+      return isCrewTaskId(task) ? { name: "crew", tab: "flow", task } : { name: "home" };
+    } catch { return { name: "home" }; }
+  }
   const separator = hash.indexOf("?");
   const path = separator < 0 ? hash : hash.slice(0, separator);
   const search = separator < 0 ? "" : hash.slice(separator + 1);
@@ -94,7 +125,7 @@ export function parseRoute(hash: string): Route {
         return part;
       }
     });
-  const [head, first, second] = parts;
+  const [head, first, second, third] = parts;
   switch (head) {
     case "threads":
       return first ? { name: "thread", id: first } : { name: "home" };
@@ -110,6 +141,8 @@ export function parseRoute(hash: string): Route {
       return first ? { name: "skills", skill: first } : { name: "skills" };
     case "tasks":
       return { name: "tasks" };
+    case "crew":
+      return { name: "crew", tab: CREW_TABS.find((tab) => tab === first) ?? "approvals" };
     case "pulls": {
       const number = Number(second);
       return first && Number.isInteger(number) && number > 0 ? { name: "pulls", project: first, number } : { name: "pulls" };
@@ -124,6 +157,7 @@ export function parseRoute(hash: string): Route {
         section: SETTINGS_SECTIONS.find((section) => section === first) ?? null,
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),
+        ...(first === "crew" && second === "areas" ? { crewPage: third === "thresholds" ? ("thresholds" as const) : ("areas" as const), ...(params.has("repo") ? { repo: params.get("repo") ?? "" } : {}) } : {}),
         ...(params.has("task") ? { task: params.get("task") ?? "", ...(params.get("edit") === "1" ? { edit: true } : {}) } : {}),
       };
     }
@@ -145,6 +179,7 @@ export function navigate(route: Route): void {
  * [list, list + sheet] becomes [list, destination]. Typed addresses and links out can't be seen.
  */
 export function goToHash(hash: string): void {
+  if (deferNavigation(() => goToHash(hash))) return;
   if ((window.history.state as { sheet?: boolean } | null)?.sheet === true) {
     window.history.replaceState(null, "", `#${hash}`);
     // replaceState says nothing, so tell the router and the sheet.
@@ -166,6 +201,6 @@ const subscribe = (notify: () => void) => {
 };
 
 export function useRoute(): Route {
-  const hash = useSyncExternalStore(subscribe, () => window.location.hash);
+  const hash = useSyncExternalStore(subscribe, () => navigationSnapshot(window.location.hash));
   return parseRoute(hash);
 }

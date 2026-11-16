@@ -13,12 +13,26 @@ fn agents_without_http_mcp_get_the_stdio_bridge() {
     let http = json!({"agentCapabilities":{"mcpCapabilities":{"http":true}}});
     let plain = json!({"agentCapabilities":{}});
     let program = || Some(std::path::PathBuf::from("orbyn"));
-    assert_eq!(servers_for(&http, Some(url), program)[0]["type"], "http");
-    let stdio = servers_for(&plain, Some(url), program);
+    let dir = crate::testing::TempDir::new();
+    let run = dir.path();
+    assert_eq!(
+        servers_for(&http, Some(url), run, program)[0]["type"],
+        "http"
+    );
+    let stdio = servers_for(&plain, Some(url), run, program);
     assert_eq!(stdio[0]["args"], json!(["acp-mcp-bridge"]));
-    assert_eq!(stdio[0]["env"][0]["value"], url);
-    assert_eq!(servers_for(&plain, Some(url), || None), json!([]));
-    assert_eq!(servers_for(&plain, None, program), json!([]));
+    let file = run.join(crate::agents::acp_mcp_bridge::ENDPOINT_FILE);
+    assert_eq!(
+        stdio[0]["env"],
+        json!([{ "name": "ORBYN_ACP_MCP_ENDPOINT_FILE", "value": file.to_string_lossy() }])
+    );
+    assert!(!stdio.to_string().contains("/mcp/token"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), url);
+    assert_eq!(servers_for(&plain, Some(url), run, || None), json!([]));
+    assert_eq!(servers_for(&plain, None, run, program), json!([]));
+    let missing = run.join("gone").join("deeper");
+    std::fs::write(run.join("gone"), b"a file, not a folder").unwrap();
+    assert_eq!(servers_for(&plain, Some(url), &missing, program), json!([]));
 }
 
 #[test]

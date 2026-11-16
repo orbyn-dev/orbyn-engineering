@@ -51,6 +51,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const setFiles = useDraftStore((state) => state.setFiles);
   const reused = useDraftStore((state) => state.reuseWorktree);
   const setReused = useDraftStore((state) => state.setReuseWorktree);
+  const currentCheckout = useDraftStore((state) => state.currentCheckout);
   const fileInput = useRef<HTMLInputElement>(null);
   const adoptLayout = useUi((state) => state.adoptDraftLayout);
   const [picker, setPicker] = useState<DOMRect | null>(null);
@@ -62,7 +63,10 @@ export function DraftView({ projectId }: { projectId: string | null }) {
   const optionOwner = JSON.stringify([project?.id ?? null, engine?.id, pickedModel]);
   const extras = optionDraft?.owner === optionOwner ? optionDraft.values : {};
   const setExtras = (values: Record<string, string>) => setOptionDraft({ owner: optionOwner, values });
-  const { worktree, setWorktree, loading: checkoutLoading, error: checkoutError } = useDraftCheckout(project, reused);
+  const { worktree, setWorktree, loading: checkoutLoading, error: checkoutError } = useDraftCheckout(project, reused, currentCheckout);
+  useEffect(() => {
+    if (currentCheckout) useDraftStore.getState().setCurrentCheckout(false);
+  }, [currentCheckout]);
   const sendBackground = useRef<() => boolean>(() => false);
   useCommand("composer.sendBackground", () => sendBackground.current());
   const checkoutButton = useRef<HTMLButtonElement>(null);

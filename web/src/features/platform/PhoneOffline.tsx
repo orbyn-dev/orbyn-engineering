@@ -7,7 +7,7 @@ const threads = [
   { name: "Usage cost filters", note: "1d" },
 ];
 
-/** Paired machine offline: the phone names the Mac and when it was last seen. Sample data only. */
+/** Paired machine offline: the phone names the Mac and says it is offline. Sample data only. */
 export function PhoneOffline() {
   return (
     <div className="platform-phones">
@@ -17,7 +17,7 @@ export function PhoneOffline() {
         <p className="platform-hint">MacBook Pro is offline</p>
         <p className="conn-banner" role="status" style={{ marginInline: 16 }}>
           <Laptop size={13} aria-hidden />
-          <span>MacBook Pro is offline · last seen 09:12. Threads resume when it’s back.</span>
+          <span>MacBook Pro is offline. Threads resume when it’s back.</span>
         </p>
         <ul className="platform-threads" style={{ opacity: 0.7 }}>
           {threads.map((thread) => (

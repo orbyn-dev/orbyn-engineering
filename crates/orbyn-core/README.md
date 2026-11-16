@@ -23,17 +23,22 @@ group; a new group adds its own `README.md` and a row here.
 | --- | --- |
 | [agents](src/agents/README.md) | Engine registry, drivers, engine sessions and history, model selection, usage |
 | [conversation](src/conversation/README.md) | Threads and runs: admission, composer, questions, checkpoints, changes, automations, published pages, search |
+| [crew](src/crew/README.md) | Crew (Preview, off by default): the router, `crew_start`, `crew_report`, the verifier, the loop guard and the bus (`crew_post`, `crew_ask`, the board); the protocol's objects live in contracts and the store |
 | [governance](src/governance/README.md) | Policy, the approval gate, the computer gateway and the outbound request list |
 | [project](src/project/README.md) | Projects, the managed workspace, project files, icons and images, setup, checkout files |
 | [source_control](src/source_control/README.md) | Git, Jujutsu, forge CLIs, commit text and review guides |
 | [browser](src/browser/README.md) | Preview tabs, their bridge, recordings and remote images |
 | [tools](src/tools/README.md) | The per-run MCP server, Orbyn's agent tools, MCP Apps and skills |
+| [account](src/account/README.md) | The optional account's settings sync core: record, merge, allowlist-only apply, outbox and one worker per zone; inactive while the sign-in gate is `Off` |
 | [settings](src/settings/README.md) | Preferences, keybindings and the environment's published identity |
+| [redaction](src/redaction/README.md) | Secret redaction: the recognised formats, the person's patterns, per-surface and per-project settings; Crew's fixed rule |
 | [operations](src/operations/README.md) | Diagnostics, local traces, telemetry export, maintenance and updates |
 | [host](src/host/README.md) | Child processes, inherited environment, terminals and the desktop shell bridge |
 
 Shared by every group, at the crate root: `app` (assembly), `error`, `store`
-(durable state), `util` and `testing` (unit-test helpers).
+(durable state), `util` (including `util::swr`, the stale-while-revalidate cache that
+slow reads answer from; see [Instant reads](../../docs/architecture.md#instant-reads))
+and `testing` (unit-test helpers).
 
 Before a group calls into another, check that the decision belongs to the group
 being called, not the caller.

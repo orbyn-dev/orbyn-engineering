@@ -1,5 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { openPanelTab, startProject, settled, type Service } from "./service";
@@ -9,16 +9,45 @@ let service: Service;
 let projectId: string;
 let origin: string;
 let loads = 0;
+const ready = new Set<number>();
+let holdNextDocument = false;
+const heldDocuments = new Set<number>();
+const heldResources = new Set<ServerResponse>();
+function releaseResources() {
+  holdNextDocument = false;
+  heldDocuments.clear();
+  for (const response of heldResources) response.end();
+  heldResources.clear();
+}
 const site = createServer((request, response) => {
   if (request.url === "/favicon.ico") {
     response.statusCode = 404;
     response.end();
     return;
   }
+  const url = new URL(request.url ?? "/", "http://fixture");
+  if (url.pathname === "/ready") {
+    ready.add(Number(url.searchParams.get("document")));
+    response.writeHead(204).end();
+    return;
+  }
+  if (url.pathname === "/pending-resource") {
+    response.setHeader("Content-Type", "text/javascript");
+    if (!heldDocuments.has(Number(url.searchParams.get("document")))) {
+      response.end();
+      return;
+    }
+    heldResources.add(response);
+    response.once("close", () => heldResources.delete(response));
+    return;
+  }
   response.setHeader("Content-Type", "text/html");
   // Each served document names itself, so a test can wait for the one it navigated to.
   loads += 1;
-  response.end(`<!doctype html><title>load ${loads}</title><body style='margin:0'><button id=go style='position:absolute;left:100px;top:100px;width:100px;height:40px' onclick="document.title='clicked'">Go</button><input id=secret type=password><button id=mark>Mark</button><a id=link href='/next'>Next</a><button id=reload onclick='location.reload()'>Reload</button></body>`);
+  if (holdNextDocument) heldDocuments.add(loads);
+  const pending = holdNextDocument ? `<script async src='/pending-resource?document=${loads}'></script>` : "";
+  holdNextDocument = false;
+  response.end(`<!doctype html><title>load ${loads}</title><script>addEventListener('load', () => { void fetch('/ready?document=${loads}', { method: 'POST' }); });</script>${pending}<body style='margin:0'><button id=go style='position:absolute;left:100px;top:100px;width:100px;height:40px' onclick="document.title='clicked'">Go</button><input id=secret type=password><button id=mark>Mark</button><a id=link href='/next'>Next</a><button id=reload onclick='location.reload()'>Reload</button></body>`);
 });
 
 test.beforeAll(async () => {
@@ -30,6 +59,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  releaseResources();
   // Independent cleanup owners always run, even if another owner fails.
   const results = await Promise.allSettled([
     service?.stop(),
@@ -38,6 +68,14 @@ test.afterAll(async () => {
   const errors = results.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => result.reason as unknown);
   if (errors.length) throw new AggregateError(errors, "Preview fixture teardown failed");
 });
+
+async function attachJson(info: TestInfo, name: string, value: () => unknown | Promise<unknown>) {
+  try {
+    await info.attach(name, { body: JSON.stringify(await value()), contentType: "application/json" });
+  } catch {
+    // Diagnostics must not replace the assertion or prevent tab cleanup.
+  }
+}
 
 async function withPreview(page: Page, info: TestInfo, work: (context: {
   base: string; tabId: string; threadId: string; cues: Cue[];
@@ -69,7 +107,11 @@ async function withPreview(page: Page, info: TestInfo, work: (context: {
     await work({ base, tabId: tab.id, threadId: thread.id, cues, act });
   } catch (error) {
     primary = error;
-    await info.attach("preview-pointer-events", { body: JSON.stringify(cues, null, 2), contentType: "application/json" });
+    await attachJson(info, "preview-pointer-events", () => cues);
+    await attachJson(info, "preview-tool-results", async () => {
+      const messages = await service.api<{ role: string; text: string }[]>("GET", `${base}/messages`);
+      return messages.filter((message) => message.role === "assistant" && message.text.startsWith("tool error="));
+    });
   }
   let cleanupError: unknown;
   try {
@@ -77,7 +119,7 @@ async function withPreview(page: Page, info: TestInfo, work: (context: {
     await expect.poll(() => existsSync(join(service.dataDir, "preview-profiles", tab.id))).toBe(false);
   } catch (error) { cleanupError = error; }
   if (primary) {
-    if (cleanupError) await info.attach("preview-cleanup-error", { body: String(cleanupError), contentType: "text/plain" });
+    if (cleanupError) await info.attach("preview-cleanup-error", { body: String(cleanupError), contentType: "text/plain" }).catch(() => {});
     throw primary;
   }
   if (cleanupError) throw cleanupError;
@@ -85,6 +127,19 @@ async function withPreview(page: Page, info: TestInfo, work: (context: {
 
 // A late clear from the page settling is not a pointer; only a move or click would be fabricated.
 const pointers = (cues: Cue[]) => cues.filter((cue) => cue.phase !== "clear");
+
+async function documentState(base: string, document: number) {
+  const tabs = await service.api<{ title: string }[]>("GET", `${base}/previews`);
+  return { served: loads, ready: ready.has(document), title: tabs[0]?.title };
+}
+
+async function loadedDocument(base: string, document: number, observe?: (state: Awaited<ReturnType<typeof documentState>>) => void) {
+  await expect.poll(async () => {
+    const state = await documentState(base, document);
+    observe?.(state);
+    return state;
+  }, { timeout: 20_000 }).toEqual({ served: document, ready: true, title: `load ${document}` });
+}
 
 test("approved MCP input reaches the page; failed clicks and typing emit no fabricated pointer", async ({ page }, info) => {
   await withPreview(page, info, async ({ base, cues, act }) => {
@@ -127,20 +182,66 @@ test("page evaluation and denied input cannot publish an agent pointer", async (
   });
 });
 
+test("a new title cannot release the next click before the document loads", async ({ page }, info) => {
+  await withPreview(page, info, async ({ base, cues, act }) => {
+    const served = loads;
+    await loadedDocument(base, served);
+    let allowInput = true;
+    let dispatched = false;
+    let legitimate: Promise<void> | undefined;
+    holdNextDocument = true;
+    try {
+      await act({ action: "click", selector: "#link" });
+      // A pending subresource holds load, while the title is already readable.
+      await expect.poll(async () => documentState(base, served + 1), { timeout: 20_000 }).toEqual({
+        served: served + 1, ready: false, title: `load ${served + 1}`,
+      });
+      const before = pointers(cues).length;
+      let observed!: () => void;
+      let pendingObservations = 0;
+      const blocked = new Promise<void>((resolve) => { observed = resolve; });
+      legitimate = (async () => {
+        await loadedDocument(base, served + 1, (state) => {
+          if (!state.ready && ++pendingObservations === 2) observed();
+        });
+        if (!allowInput) return;
+        dispatched = true;
+        await act({ action: "click", selector: "#mark" });
+      })();
+      await Promise.race([blocked, legitimate]);
+      expect(dispatched).toBe(false);
+      expect(pointers(cues)).toHaveLength(before);
+      releaseResources();
+      await legitimate;
+      expect(dispatched).toBe(true);
+      await expect.poll(() => pointers(cues).length).toBeGreaterThan(before);
+    } finally {
+      allowInput = false;
+      releaseResources();
+      await legitimate?.catch(() => {});
+    }
+  });
+});
+
 test("link navigation and same-URL reload clear the cursor and allow later legitimate clicks", async ({ page }, info) => {
-  // Quarantined: about one run in three the tab's title stays on the old document after the click. See
-  // https://github.com/orbyn-dev/orbyn-engineering/issues/339 for the evidence and what to check.
-  test.fixme(true, "Flaky in CI: issue #339");
   await withPreview(page, info, async ({ base, cues, act }) => {
     for (const selector of ["#link", "#reload"]) {
       const served = loads;
-      // Click only the document that was served last, never one still loading.
-      await expect.poll(async () => (await service.api<{ title: string }[]>("GET", `${base}/previews`))[0]?.title, { timeout: 20_000 }).toBe(`load ${served}`);
+      await loadedDocument(base, served);
       const before = cues.at(-1)?.sequence ?? 0;
       await act({ action: "click", selector });
       await expect.poll(() => cues.some((cue) => cue.sequence > before && cue.phase === "clear")).toBe(true);
-      // The next click needs the new document, not the one being unloaded.
-      await expect.poll(async () => (await service.api<{ title: string }[]>("GET", `${base}/previews`))[0]?.title, { timeout: 20_000 }).toBe(`load ${served + 1}`);
+      // Request, load acknowledgement and title share the original 20-second budget.
+      await test.step(`${selector} loads the next document and refreshes its title`, async () => {
+        try {
+          await loadedDocument(base, served + 1);
+        } finally {
+          await attachJson(info, `preview-navigation-${selector.slice(1)}`, async () => ({
+            servedBeforeClick: served, servedAfterClick: loads, ready: ready.has(served + 1),
+            tabs: await service.api("GET", `${base}/previews`),
+          }));
+        }
+      });
       expect(cues.at(-1)?.phase).toBe("clear");
       await expect(page.locator("[data-agent-browser-cursor]")).toHaveCount(0);
       const cleared = cues.at(-1)?.sequence ?? 0;

@@ -19,9 +19,8 @@ import { relativeTime } from "../../lib/format";
 import { runStateLabels } from "../../product/runs/stateLabels";
 import { useLingering, useSettledAfter } from "../../lib/lingering";
 import { usePanelMotion } from "../../product/panels/panelAnimations";
-import { isWide, panelOverlays, useLayoutWidth } from "../../lib/useLayout";
+import { panelOverlays, useLayoutWidth } from "../../lib/useLayout";
 import { useEscapeClose } from "../../ui/useEscapeClose";
-import { usePopover } from "../../ui/usePopover";
 import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
 import { markReachable, markUnreachable, useConnectionKind } from "../../product/state/connection";
 import { routeHref } from "../../product/state/route";
@@ -36,7 +35,7 @@ import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
 import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./composer/Composer";
-import { DetailsCard } from "./DetailsCard";
+import { DetailsPopover } from "./details/DetailsPopover";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
 import { PullChip } from "./PullChip";
@@ -53,22 +52,10 @@ import { Transcript } from "./Transcript";
 import { FavoriteEditorShortcut } from "./OpenInEditor";
 import { ProjectActionShortcuts } from "./ProjectActionShortcuts";
 
-/** The details card under the Details button while the side panel is closed. Escape or a press outside dismisses it. */
-function DetailsPopover({ thread, onClose }: { thread: Thread; onClose(): void }) {
-  const root = useRef<HTMLDivElement>(null);
-  usePopover({ kind: "fields", root, trigger: () => document.querySelector<HTMLElement>("[data-details-toggle]"), onClose });
-  return (
-    <div ref={root} className="details-popover">
-      <DetailsCard thread={thread} />
-    </div>
-  );
-}
-
 function TopBar({
   thread,
   project,
   detailsShown,
-  detailsPopup,
   panelShown,
   onToggleDetails,
   onTogglePanel,
@@ -76,8 +63,6 @@ function TopBar({
   thread: Thread;
   project: Project | null;
   detailsShown: boolean;
-  /** The card opens as a popover under the button. */
-  detailsPopup: boolean;
   panelShown: boolean;
   onToggleDetails(): void;
   onTogglePanel(): void;
@@ -122,7 +107,7 @@ function TopBar({
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
         {narrow ? null : <PullChip thread={thread} />}
-        <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup={detailsPopup ? "dialog" : undefined} icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
+        <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup="dialog" icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>
         <IconButton label="Terminal" pressed={terminalOpen} onClick={() => togglePanel("terminal")}>
@@ -363,16 +348,12 @@ export function ThreadView({ id }: { id: string }) {
   const panelPref = useUi((state) => state.panelOpen);
   const closePanel = useUi((state) => state.closePanel);
   const setPanelOpen = useUi((state) => state.setPanelOpen);
-  const detailsPref = useUi((state) => state.detailsOpen);
-  const toggleDetailsPref = useUi((state) => state.toggleDetails);
   const terminalOpen = useUi((state) => state.terminalOpen);
   const togglePanel = useUi((state) => state.togglePanel);
   const chatWidth = useUi((state) => state.chatWidth);
   const layout = useLayoutWidth();
-  const wide = isWide(layout);
   const phone = layout === "phone";
   const overlays = panelOverlays(layout);
-  const ledger = useUi((state) => state.workspaceLayout === "ledger");
   const [detailsPopover, setDetailsPopover] = useState(false);
   const [finding, setFinding] = useState(false);
   useCommand("chat.find", () => setFinding(true));
@@ -425,14 +406,14 @@ export function ThreadView({ id }: { id: string }) {
   useEscapeClose(panelOpen && overlays && !maximized, () => setPanelOpen(false), () =>
     document.querySelector<HTMLElement>("[data-panel-toggle]"),
   );
-  // The card moves into the panel when it opens.
-  useEffect(() => {
-    if (panelOpen) setDetailsPopover(false);
-  }, [panelOpen]);
   // A small window has room for the sidebar drawer or the panel, not both: opening one closes the other.
   useEffect(() => {
     if (panelOpen && layout === "small") useSidebarDrawer.getState().close();
   }, [panelOpen, layout]);
+  // The thread and its header are put away when the panel takes their place (a phone, or maximised), so the popover goes too.
+  useEffect(() => {
+    if (panelOpen && (phone || maximized)) setDetailsPopover(false);
+  }, [panelOpen, phone, maximized]);
   const panelPresent = useLingering(panelOpen, motion.exitMs);
   // A panel that is already open when the thread appears stays still; later opens and closes slide.
   const panelMoves = useSettledAfter(thread ? id : null);
@@ -462,14 +443,6 @@ export function ThreadView({ id }: { id: string }) {
   // The panel takes the thread's place on the phone and when maximised; otherwise it docks or floats over it.
   const swapped = panelOpen && (phone || maximized);
   const terminalTakesOver = terminalOpen && layout === "phone";
-  const detailsFit = layout === "xwide" || !panelOpen;
-  // Ledger keeps the details rail beside the thread on a wide window. Otherwise the card sits at the top
-  // of the side panel while it is open (also over the thread, on medium and small windows), and opens
-  // as a popover under the Details button while it is closed.
-  const rail = ledger && wide;
-  const inPanel = !rail && panelOpen && !phone;
-  const detailsShown = rail ? detailsPref && detailsFit : inPanel ? detailsPref : detailsPopover;
-  const toggleDetails = () => (rail || inPanel ? toggleDetailsPref() : setDetailsPopover(!detailsPopover));
 
   const beforeSend = async () => {
     if (!hero) return;
@@ -486,16 +459,14 @@ export function ThreadView({ id }: { id: string }) {
         className="thread-main"
         hidden={swapped}
         aria-label={thread.title}
-        data-details={rail && detailsShown ? "reserved" : undefined}
         data-chat-width={chatWidth}
       >
         <TopBar
           thread={thread}
           project={project}
-          detailsShown={detailsShown}
-          detailsPopup={!rail && !inPanel}
+          detailsShown={detailsPopover}
           panelShown={panelOpen && !phone}
-          onToggleDetails={toggleDetails}
+          onToggleDetails={() => setDetailsPopover(!detailsPopover)}
           onTogglePanel={() => setPanelOpen(!panelOpen)}
         />
         {finding ? <ThreadFind threadId={id} onClose={() => setFinding(false)} /> : null}
@@ -553,10 +524,7 @@ export function ThreadView({ id }: { id: string }) {
         </div>
         <TerminalDrawer threadId={id} open={terminalOpen} moves={panelMoves} onClose={() => togglePanel("terminal")} />
         {terminalOpen ? null : <TerminalBar threadId={id} onOpen={() => togglePanel("terminal")} />}
-        {rail && detailsShown ? <DetailsCard thread={thread} /> : null}
-        {!rail && !inPanel && detailsPopover ? (
-          <DetailsPopover thread={thread} onClose={() => setDetailsPopover(false)} />
-        ) : null}
+        {detailsPopover ? <DetailsPopover thread={thread} onClose={() => setDetailsPopover(false)} /> : null}
       </section>
       {panelPresent ? (
         <PanelHost
@@ -565,7 +533,6 @@ export function ThreadView({ id }: { id: string }) {
           closing={!panelOpen}
           moves={panelMoves}
           maximized={maximized}
-          details={inPanel && detailsPref ? <DetailsCard thread={thread} /> : null}
           sideChat={<SideChatPanel parent={thread} />}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {

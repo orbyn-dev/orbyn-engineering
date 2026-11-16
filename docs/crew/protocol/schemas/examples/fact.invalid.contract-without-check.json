@@ -1,0 +1,25 @@
+{
+  "type": "fact",
+  "v": 0,
+  "id": "sha256:eb75d4b3e8a82b437cc76d40b42509ec88251208132100f7be1b26d76c0a7eb6",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "opencode",
+    "member": "worker-02"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "key": "crew-demo.error",
+  "class": "contract",
+  "value": {
+    "type": "ParseError",
+    "variants": [
+      "Empty",
+      "BadUnit"
+    ]
+  },
+  "rev": 1,
+  "base_rev": 0,
+  "evidence": []
+}

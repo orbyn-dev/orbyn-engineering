@@ -37,6 +37,13 @@ const chip = (over: Record<string, unknown> & Pick<ComposerChip, "kind">): Compo
   }) as unknown as ComposerChip;
 
 describe("composer context", () => {
+  it("keeps a diff selection's range and its way back to the diff through the clipboard", () => {
+    const chip = asChip({ kind: "file", path: "a.ts", line: 2, endLine: 4, fromDiff: true, excerpt: "x", language: "typescript" }, "f")!;
+    expect(chipLabel(chip)).toBe("a.ts:2–4");
+    expect(chipPrompt(chip)).toContain("File `a.ts:2-4`");
+    expect(chipsFromClipboard({ json: chipsClipboard([chip])!.json, html: "" })?.[0]).toMatchObject({ endLine: 4, fromDiff: true });
+  });
+
   it("carries review ranges through the clipboard and preserves legacy one-line comments", () => {
     const ranged = asChip({ kind: "review", path: "a.ts", line: 2, endLine: 4, comment: "why?", excerpt: "captured",
       sourceRevision: "r", sourceCwd: "/project" }, "r")!;

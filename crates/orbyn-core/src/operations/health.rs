@@ -70,43 +70,82 @@ fn not_checked(url: &str) -> DependencyCheck {
     }
 }
 
+/// A health check is served without a refresh for this long.
+pub(crate) const HEALTH_FRESH: std::time::Duration = std::time::Duration::from_secs(60);
+/// Past this, the last check is no longer shown without waiting for a new one.
+pub(crate) const HEALTH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Whether two checks found the same thing: when they ran and how long a host took
+/// are not findings.
+pub(crate) fn same_health(old: &DependencyHealth, new: &DependencyHealth) -> bool {
+    let mut new = new.clone();
+    new.checked_at.clone_from(&old.checked_at);
+    new.github.latency_ms = old.github.latency_ms;
+    for (new, old) in new.providers.iter_mut().zip(&old.providers) {
+        if let (Some(new), Some(old)) = (&mut new.service, &old.service) {
+            new.latency_ms = old.latency_ms;
+        }
+    }
+    *old == new
+}
+
 impl Core {
     /// Checks GitHub and each installed provider's service. In offline mode nothing is
-    /// sent, and every check says it was not made.
-    pub async fn dependency_health(&self) -> Result<DependencyHealth> {
+    /// sent, and every check says it was not made. The last check answers at once and is
+    /// made again in the background, announcing `health` when something changed;
+    /// `refresh` checks now.
+    pub async fn dependency_health(&self, refresh: bool) -> Result<DependencyHealth> {
         let online = self.config.engines.lookup_latest;
-        let check = |url: &'static str| async move {
-            if online {
-                check_url(&self.http, url).await
-            } else {
-                not_checked(url)
-            }
-        };
-        let github = check(GITHUB).await;
-        let mut providers = Vec::new();
-        for status in self.engines.statuses(false).await? {
-            let family = status
-                .instance_of
-                .clone()
-                .unwrap_or_else(|| status.id.clone());
-            let service = match provider_service(&family) {
-                Some(url) if status.installed => Some(check(url).await),
-                _ => None,
-            };
-            providers.push(ProviderHealth {
-                engine: status.id,
-                name: status.name,
-                installed: status.installed,
-                auth: status.auth,
-                problem: status.problem,
-                service,
-            });
-        }
-        Ok(DependencyHealth {
-            checked_at: now(),
-            github,
-            providers,
-        })
+        let (http, engines) = (self.http.clone(), self.engines.clone());
+        self.health_reads
+            .get(
+                // Engine installs, updates and changes to the engine set are inputs of the check.
+                &crate::util::swr::key(&[
+                    "health",
+                    if online { "online" } else { "offline" },
+                    &self.engines.change_epoch().to_string(),
+                ]),
+                "health",
+                refresh,
+                move || async move {
+                    let check = |url: &'static str| {
+                        let http = http.clone();
+                        async move {
+                            if online {
+                                check_url(&http, url).await
+                            } else {
+                                not_checked(url)
+                            }
+                        }
+                    };
+                    let github = check(GITHUB).await;
+                    let mut providers = Vec::new();
+                    for status in engines.statuses(false).await? {
+                        let family = status
+                            .instance_of
+                            .clone()
+                            .unwrap_or_else(|| status.id.clone());
+                        let service = match provider_service(&family) {
+                            Some(url) if status.installed => Some(check(url).await),
+                            _ => None,
+                        };
+                        providers.push(ProviderHealth {
+                            engine: status.id,
+                            name: status.name,
+                            installed: status.installed,
+                            auth: status.auth,
+                            problem: status.problem,
+                            service,
+                        });
+                    }
+                    Ok(DependencyHealth {
+                        checked_at: now(),
+                        github,
+                        providers,
+                    })
+                },
+            )
+            .await
     }
 }
 
@@ -156,5 +195,59 @@ mod tests {
         );
         assert_eq!(provider_service("codex"), Some("https://api.openai.com/"));
         assert_eq!(provider_service("my-acp"), None);
+    }
+
+    #[tokio::test]
+    async fn a_kept_check_answers_at_once_and_a_forced_one_checks_again() {
+        let dir = crate::testing::TempDir::new();
+        let mut config =
+            crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        let first = core.dependency_health(false).await.unwrap();
+        assert!(!first.github.checked, "offline mode sends nothing");
+        let mut kept = first.clone();
+        kept.checked_at = "kept".into();
+        let epoch = core.engines.change_epoch().to_string();
+        core.health_reads
+            .put(&crate::util::swr::key(&["health", "offline", &epoch]), kept);
+        let started = std::time::Instant::now();
+        for _ in 0..100 {
+            assert_eq!(
+                core.dependency_health(false).await.unwrap().checked_at,
+                "kept"
+            );
+        }
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+        assert_ne!(
+            core.dependency_health(true).await.unwrap().checked_at,
+            "kept"
+        );
+    }
+
+    #[test]
+    fn a_new_time_or_latency_is_not_a_change() {
+        let check = |latency| DependencyCheck {
+            host: "github.com".into(),
+            checked: true,
+            reachable: true,
+            status: Some(200),
+            latency_ms: Some(latency),
+            message: None,
+        };
+        let health = |at: &str, latency, reachable| {
+            let mut github = check(latency);
+            github.reachable = reachable;
+            DependencyHealth {
+                checked_at: at.into(),
+                github,
+                providers: Vec::new(),
+            }
+        };
+        assert!(same_health(&health("a", 10, true), &health("b", 900, true)));
+        assert!(!same_health(
+            &health("a", 10, true),
+            &health("a", 10, false)
+        ));
     }
 }

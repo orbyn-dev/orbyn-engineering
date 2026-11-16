@@ -85,6 +85,35 @@ describe("one pull request as a page", () => {
     expect(screen.getByText("Merge is blocked by a failing check.")).toBeInTheDocument();
   });
 
+  it("names a conflict in ink, saying only what the service says", async () => {
+    await show(detail({ review_state: "approved" }, "conflicting"));
+    const banner = screen.getByText("Conflicts with main", { selector: "b" }).closest(".pulls-banner") as HTMLElement;
+    expect(banner).toHaveTextContent("Conflicts with main Merging is blocked.");
+    expect(banner).not.toHaveAttribute("data-tone");
+    expect(screen.getByText("Conflicts").nextElementSibling).toHaveTextContent("Yes");
+    expect(screen.getByText("Conflicts").nextElementSibling).not.toHaveAttribute("data-tone");
+    expect(merge()).toBeDisabled();
+  });
+
+  it("is amber for changes requested on the person's own pull request, and ink on someone else's", async () => {
+    await show(detail({ review_state: "changes_requested", author: "me" }));
+    const mine = document.querySelector(".pulls-banner") as HTMLElement;
+    expect(mine).toHaveTextContent("Changes requested");
+    expect(mine).toHaveAttribute("data-tone", "warn");
+    expect(screen.getByText("Review").nextElementSibling).toHaveAttribute("data-tone", "warn");
+    cleanup();
+    await show(detail({ review_state: "changes_requested", author: "riley" }));
+    expect(document.querySelector(".pulls-banner")).toHaveTextContent("Changes requested");
+    expect(document.querySelector(".pulls-banner")).not.toHaveAttribute("data-tone");
+    expect(screen.getByText("Review").nextElementSibling).not.toHaveAttribute("data-tone");
+  });
+
+  it("says Checks are still running under a Merge that waits for them", async () => {
+    await show(detail({ checks_state: "pending", checks: { total: 4, passing: 2, failing: 0, running: 2, failing_names: [] } }));
+    expect(screen.getByText("Checks are still running.")).toBeInTheDocument();
+    expect(merge()).toBeDisabled();
+  });
+
   it("offers Ready for review on a draft, which marks it ready", async () => {
     await show(detail({ draft: true }));
     expect(screen.getByText("Draft. Nobody is asked to review it yet.")).toBeInTheDocument();
@@ -334,7 +363,7 @@ describe("Request changes", () => {
     fireEvent.change(note(), { target: { value: "Keep me" } });
     fireEvent.click(send());
     await flushAll();
-    expect(screen.getByText("Couldn’t submit the review. Nothing was sent. Try again.")).toBeInTheDocument();
+    expect(screen.getByText("Couldn’t submit the review. Nothing was sent.")).toBeInTheDocument();
     expect(note()).toHaveValue("Keep me");
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
@@ -354,7 +383,7 @@ describe("Request changes", () => {
     expect(screen.getByText("You opened this pull request.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
-    expect(screen.getByText("You can’t request changes on your own pull request.")).toBeInTheDocument();
+    expect(screen.getByText("You can’t review your own pull request.")).toBeInTheDocument();
     expect(send()).toBeDisabled();
   });
 
@@ -405,7 +434,7 @@ describe("Request changes", () => {
     expect(screen.getByText("lint")).toBeInTheDocument();
   });
 
-  it("puts the sent note in the left column as an entry, and the label as an amber pill", async () => {
+  it("puts the sent note in the left column as an entry, and the label as a neutral pill", async () => {
     vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
     await open();
     fireEvent.change(note(), { target: { value: "Fix this" } });
@@ -415,6 +444,23 @@ describe("Request changes", () => {
     expect(entry.closest(".pull-main")).not.toBeNull();
     expect(entry).toHaveTextContent("You requested changes · just now");
     expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
+  });
+
+  it("says Changes requested by you in the Review row, and counts the review in the Conversation tab", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    asked();
+    await show({ ...detail({ review_state: "review_required" }), reviewers: ["me"] });
+    fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(screen.getByText("Requested from you")).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 3");
+    // Once the review is in, the conversation lists it as a fourth entry.
+    vi.mocked(pullsApi.timeline).mockResolvedValue([1, 2, 3, 4].map((id) => ({ id: String(id), kind: "commented", actor: "sam", created_at: null, text: `Item ${id}` })) as never);
+    fireEvent.change(note(), { target: { value: "Fix this" } });
+    fireEvent.click(send());
+    await flushAll();
+    expect(screen.getByText("Changes requested by you")).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toContain("Conversation · 4");
+    expect(document.querySelector(".pull-status b[data-tone=warn]")).toBeNull();
   });
 
   it("says the review may have been sent when the forge did not answer, and reads the reviews again", async () => {

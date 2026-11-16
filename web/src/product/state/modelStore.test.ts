@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../../api/client";
 import type { ModelInfo } from "../../api/types";
-import { arrangeModels, effortValue, resolveModel, searchRows, shortModelName } from "./modelStore";
+import { useModelStore, arrangeModels, effortValue, resolveModel, searchRows, shortModelName } from "./modelStore";
 
 const model = (id: string, over: Partial<ModelInfo> = {}): ModelInfo => ({
   id,
@@ -45,5 +46,37 @@ describe("model lists", () => {
     expect(searchRows(rows, "6 luna").map((row) => row.engine)).toEqual(["codex"]);
     expect(shortModelName("GPT-6-Luna")).toBe("6-Luna");
     expect(shortModelName("Claude Opus 5.5")).toBe("Opus 5.5");
+  });
+});
+
+describe("revalidating the model lists", () => {
+  const listed = (label: string) => ({ engine: "e1", source: "engine", error: null, fallback: false, checked_at: "", models: [model(label)] });
+
+  it("waits for a forced reload instead of making it lose its turn, so loading returns to false", async () => {
+    let finishForced!: (value: ReturnType<typeof listed>) => void;
+    const spy = vi.spyOn(api, "models").mockImplementation(((_e: string, _s?: AbortSignal, refresh?: boolean) =>
+      refresh ? new Promise((resolve) => (finishForced = resolve as never)) : Promise.resolve(listed("stale"))) as never);
+    useModelStore.setState({ byEngine: { e1: listed("before") as never }, loading: {}, errors: {} });
+    const forced = useModelStore.getState().reload("e1");
+    expect(useModelStore.getState().loading.e1).toBe(true);
+    await useModelStore.getState().revalidate("e1");
+    finishForced(listed("forced"));
+    await forced;
+    expect(useModelStore.getState().loading.e1).toBe(false);
+    expect(useModelStore.getState().byEngine.e1?.models[0]?.id).toBe("forced");
+    spy.mockRestore();
+  });
+
+  it("drops an answer that a load made old while it was in flight", async () => {
+    let finishQuiet!: (value: ReturnType<typeof listed>) => void;
+    const spy = vi.spyOn(api, "models").mockImplementation(((_e: string, _s?: AbortSignal, refresh?: boolean) =>
+      refresh ? Promise.resolve(listed("forced")) : new Promise((resolve) => (finishQuiet = resolve as never))) as never);
+    useModelStore.setState({ byEngine: { e1: listed("before") as never }, loading: {}, errors: {} });
+    const quiet = useModelStore.getState().revalidate("e1");
+    await useModelStore.getState().reload("e1");
+    finishQuiet(listed("stale"));
+    await quiet;
+    expect(useModelStore.getState().byEngine.e1?.models[0]?.id).toBe("forced");
+    spy.mockRestore();
   });
 });

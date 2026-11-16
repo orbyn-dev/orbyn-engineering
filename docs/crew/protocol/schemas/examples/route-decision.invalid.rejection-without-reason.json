@@ -1,0 +1,41 @@
+{
+  "type": "route_decision",
+  "v": 0,
+  "id": "sha256:24a473fc14730bcdf974c846de99f1ea4d1005711a9db0ead2143eae14fee8a2",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "engine": "codex",
+  "model": "terra",
+  "effort": "medium",
+  "tier": "worker",
+  "role": "builder",
+  "assigned_by": "person",
+  "requested": {
+    "engine": "codex"
+  },
+  "reasons": [
+    {
+      "code": "assigned_by_person",
+      "text": "Assigned by you (@codex)."
+    }
+  ],
+  "rejected": [
+    {
+      "engine": "opencode",
+      "text": "Not usable."
+    }
+  ],
+  "scores": [
+    {
+      "engine": "codex",
+      "score": 500,
+      "used_defaults": true
+    }
+  ]
+}

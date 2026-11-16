@@ -77,6 +77,23 @@ pub struct CoreConfig {
     pub browser_headless: bool,
     /// Forces `--in-process-gpu`, which the headless shell gets by itself.
     pub browser_in_process_gpu: bool,
+    /// Whether the account may do anything. Ships `Off`.
+    pub account_gate: crate::account::AccountGate,
+    /// What the account talks to. Ships `None`; the development stand-in exists in
+    /// debug builds only.
+    pub account_backend: crate::account::AccountBackendKind,
+    /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
+    pub crew_preview: bool,
+    /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
+    /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
+    pub crew_tiers: Option<crate::crew::RouterConfig>,
+    /// Person-owned CI names for forge merging. Empty disables forge merge effects.
+    pub crew_merge_required_checks: Vec<String>,
+    /// Explicit in-service watch schedule, never publication/merging. None is off; 60s..24h only.
+    pub crew_merge_watch_interval: Option<Duration>,
+    /// Whether a crew worker's process starts under the restriction (and is refused where
+    /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
+    pub crew_confine_workers: bool,
 }
 
 impl CoreConfig {
@@ -94,6 +111,13 @@ impl CoreConfig {
             acp_registry_url: crate::agents::acp_registry::REGISTRY_URL.to_owned(),
             browser_headless: false,
             browser_in_process_gpu: false,
+            account_gate: crate::account::AccountGate::default(),
+            account_backend: crate::account::AccountBackendKind::default(),
+            crew_preview: false,
+            crew_tiers: None,
+            crew_merge_required_checks: Vec::new(),
+            crew_merge_watch_interval: None,
+            crew_confine_workers: true,
         }
     }
 }
@@ -114,25 +138,42 @@ pub struct Core {
     pub(crate) setups: Arc<SetupManager>,
     pub updates: Arc<UpdateCenter>,
     pub shell: ShellBridge,
+    /// A person's approvals given in the desktop app, in memory only.
+    pub(crate) presence: crate::host::presence::PresenceBook,
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
-    pub(crate) keybinding_writer: Mutex<()>,
+    pub(crate) keybinding_writer: Arc<Mutex<()>>,
+    /// Settings that follow the person across computers; inactive under the `Off` gate.
+    pub account: Arc<crate::account::AccountCenter>,
     /// Pull request details asked of GitHub, reused while a pull request is unchanged.
     pub(crate) pull_details: Mutex<crate::source_control::forge::cache::DetailCache>,
-    /// What each forge's CLI said, reused briefly: asking costs a process per forge.
-    pub(crate) forge_statuses:
-        Mutex<Option<(std::time::Instant, Vec<orbyn_contracts::ForgeStatus>)>>,
+    /// Pull request and forge reads answered from the last known value, refreshed in the
+    /// background: asking a forge costs a process and a round trip.
+    pub(crate) scm_reads: Arc<crate::source_control::scm::read_cache::ScmReads>,
     /// The last lists of tools and connectors each engine reported.
+    /// What each engine's tools check last said, served at once while it is asked again.
+    pub(crate) health_reads: crate::util::swr::Swr<orbyn_contracts::DependencyHealth>,
+    /// The explorer's worktree lists and Git statuses, served from the last known value.
+    pub explorer: Arc<crate::project::explorer::ExplorerReads>,
+    pub(crate) tool_reads: crate::util::swr::Swr<Option<orbyn_contracts::EngineTools>>,
     pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
     /// What each engine id's tools check keeps between calls: one per id, because an engine
     /// instance is a new driver on every lookup.
     pub(crate) tool_probes:
         Mutex<std::collections::HashMap<String, Arc<crate::agents::tools_report::ToolsProbe>>>,
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
+    /// Crew Preview: one `crew_start` at a time, so two briefs cannot both be granted a path.
+    pub(crate) crew_starts: tokio::sync::Mutex<()>,
+    /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
+    pub(crate) crew_bus: crate::crew::Bus,
+    /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
+    pub(crate) crew_autopilot: crate::crew::Autopilot,
+    /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
+    pub(crate) crew_merges: tokio::sync::Mutex<()>,
     _lock: File,
 }
 
@@ -172,6 +213,7 @@ impl Core {
             .map_err(|error| CoreError::Internal(error.to_string()))?;
         let mut engine_config = config.engines.clone();
         engine_config.cache_dir = Some(config.data_dir.join("model-cache"));
+        engine_config.approval_timeout = config.approval_timeout;
         let engines = Arc::new(EngineManager::new(
             store.clone(),
             terminals.clone(),
@@ -192,6 +234,8 @@ impl Core {
             skills.clone(),
             computer.clone(),
         ));
+        let scm_reads: Arc<crate::source_control::scm::read_cache::ScmReads> = Arc::default();
+        let explorer: Arc<crate::project::explorer::ExplorerReads> = Arc::default();
         let runs = Arc::new(RunManager::new(RunServices {
             store: store.clone(),
             gate: gate.clone(),
@@ -201,6 +245,8 @@ impl Core {
             workspace: workspace.clone(),
             mcp: mcp.clone(),
             base_url: config.base_url.clone(),
+            scm_reads: scm_reads.clone(),
+            explorer: explorer.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -214,6 +260,14 @@ impl Core {
             engines.clone(),
             http.clone(),
             config.update_manifest.clone(),
+        ));
+        let keybinding_writer = Arc::new(Mutex::new(()));
+        let account = Arc::new(crate::account::AccountCenter::new(
+            config.account_gate,
+            config.account_backend.clone(),
+            store.clone(),
+            config.data_dir.join("keybindings.json"),
+            keybinding_writer.clone(),
         ));
         let core = Self {
             config,
@@ -231,21 +285,67 @@ impl Core {
             setups,
             updates,
             shell: ShellBridge::default(),
+            presence: crate::host::presence::PresenceBook::default(),
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
             http,
             recovery,
-            keybinding_writer: Mutex::new(()),
+            keybinding_writer,
+            account,
             pull_details: Mutex::new(Default::default()),
-            forge_statuses: Mutex::new(None),
+            scm_reads,
+            explorer,
+            health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
+                crate::operations::health::HEALTH_FRESH,
+                crate::operations::health::HEALTH_MAX_AGE,
+                2,
+            )
+            .same_as(crate::operations::health::same_health),
+            tool_reads: crate::util::swr::Swr::<Option<orbyn_contracts::EngineTools>>::new(
+                crate::agents::engine_tools::TOOLS_FRESH,
+                crate::agents::engine_tools::TOOLS_MAX_AGE,
+                64,
+            )
+            .keeping(|tools| tools.as_ref().is_none_or(|tools| tools.error.is_none()))
+            .same_as(|old, new| match (old, new) {
+                (Some(old), Some(new)) => {
+                    let mut new = new.clone();
+                    new.checked_at.clone_from(&old.checked_at);
+                    *old == new
+                }
+                (old, new) => old == new,
+            }),
             tool_lists: Mutex::new(Default::default()),
             tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
+            crew_starts: tokio::sync::Mutex::new(()),
+            crew_bus: crate::crew::Bus::default(),
+            crew_autopilot: crate::crew::Autopilot::default(),
+            crew_merges: tokio::sync::Mutex::new(()),
             _lock: lock,
         };
+        // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
+        // here, before any run can end and claim another.
+        core.store.clear_crew_claims()?;
         core.apply_login_preference()?;
+        core.wire_changes();
         Ok(core)
+    }
+
+    /// Lets every answer kept for later tell the windows, through the shell's event
+    /// stream, when a background refresh changed it.
+    fn wire_changes(&self) {
+        let notify = self.shell.notifier();
+        self.scm_reads.set_notify(&notify);
+        self.engines.set_notify(&notify);
+        self.workspace.set_notify(&notify);
+        self.updates.set_notify(&notify);
+        self.usage.set_notify(&notify);
+        self.account.set_notify(&notify);
+        self.explorer.set_notify(&notify);
+        self.tool_reads.set_notify(notify.clone());
+        self.health_reads.set_notify(notify.clone());
     }
 
     /// Records a user action without exposing store types to transport.

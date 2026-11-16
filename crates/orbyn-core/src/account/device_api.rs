@@ -1,0 +1,130 @@
+//! The app's side of the Engine's `DeviceApi`: push and pull per zone, and status.
+//! It is shaped like the contract in [docs/account.md](../../../../docs/account.md#dependency-on-the-engine)
+//! so the real `orbyn-device-client` can sit behind it (`account::engine`, tag `engine-v0.2.4`,
+//! docs/account.md "Engine pin"). This file names no Engine crate. The client does no sealing
+//! here; a record crosses this trait as plain fields.
+
+use std::time::Duration;
+
+use async_trait::async_trait;
+use tokio::sync::watch;
+
+use super::merge::Record;
+
+/// A zone's version, bumped by the server on every accepted upload.
+pub type Version = u64;
+
+/// A zone's record at one version.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ZoneSnapshot {
+    pub version: Version,
+    pub record: Record,
+}
+
+/// The client's errors, with the contract's names. None carries a request, a header
+/// or a key, so formatting one can leak nothing.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum DeviceError {
+    #[error("offline")]
+    Offline,
+    #[error("session ended")]
+    Unauthorized,
+    #[error("invite required")]
+    InviteRequired,
+    #[error("wrong password")]
+    WrongPassword,
+    #[error("rate limited")]
+    RateLimited { retry_after: Duration },
+    /// The base version was stale: the zone's current record, to merge and upload again.
+    #[error("conflict")]
+    Conflict(ZoneSnapshot),
+    #[error("too large")]
+    TooLarge,
+    #[error("invalid key")]
+    InvalidKey,
+    #[error("server error")]
+    Server { retryable: bool },
+    #[error("invalid code")]
+    InvalidCode,
+    #[error("deletion scheduled")]
+    DeletionScheduled,
+    #[error("protection advanced")]
+    ProtectionAdvanced,
+    #[error("account gone")]
+    AccountGone,
+    /// A request to sign in that ended (expired, was answered or was cancelled) cannot be
+    /// answered any more.
+    #[error("request ended")]
+    RequestGone,
+    /// The six digits typed on the new device were not the ones the trusted device showed.
+    /// `tries_left` is how many tries the request has left; the digits themselves are never
+    /// carried here.
+    #[error("wrong digits")]
+    WrongDigits { tries_left: u8 },
+    /// The tries ran out, or the digits were already used: the request is closed.
+    #[error("digits locked")]
+    DigitsLocked,
+    /// The server asked for proof of work (a 428) and the client could not finish it.
+    #[error("proof of work failed")]
+    ProofFailed,
+    /// A password sign-in in the last ten minutes is needed first ("Confirm it's you").
+    #[error("sign in again to do this")]
+    ReauthRequired,
+    /// The last trusted device of the account cannot be removed.
+    #[error("last trusted device")]
+    LastTrustedDevice,
+    /// This computer already belongs to an account: signing up or in as another never replaces it.
+    #[error("already signed in")]
+    AlreadySignedIn,
+    /// The emailed code was accepted and the account exists, but this computer could not save its
+    /// keys. Nothing is lost: asking again saves them without a new code.
+    #[error("keys not saved")]
+    KeysNotSaved,
+    /// The Engine refused the approval itself: other keys, a reveal that did not match, a signature
+    /// from an approver that cannot sign what this device accepts. The approval is closed.
+    #[error("approval refused")]
+    ApprovalRefused,
+}
+
+/// What the client reports about itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeviceStatus {
+    SignedOut,
+    SigningIn,
+    Online,
+    Offline { since_unix: i64 },
+    Paused { reason: String },
+}
+
+#[async_trait]
+pub trait DeviceApi: Send + Sync {
+    /// The zone's current record, or `None` when the account has none yet.
+    async fn pull(&self, zone: &str) -> Result<Option<ZoneSnapshot>, DeviceError>;
+
+    /// Uploads the whole merged record. `base` is the version it was merged on, or
+    /// `None` for a zone this device has never seen. A stale base is a
+    /// [`DeviceError::Conflict`] carrying the current record.
+    async fn push(
+        &self,
+        zone: &str,
+        base: Option<Version>,
+        record: &Record,
+    ) -> Result<Version, DeviceError>;
+
+    fn status(&self) -> watch::Receiver<DeviceStatus>;
+
+    /// Counts live notices that another device changed a zone.
+    fn notices(&self) -> watch::Receiver<u64>;
+
+    /// The name this device stamps its edits with, when the backend decides it (the Engine's
+    /// device clock). It is stored with the zone the first time sync is switched on, so the
+    /// stamps the app makes and the stamps the Engine makes name this device the same way.
+    fn device_tag(&self) -> Option<String> {
+        None
+    }
+
+    /// The session ended or the account is gone: destroy this device's key material (keys, token,
+    /// vault key) and the sealed snapshot. Settings and the outbox stay. A stand-in that keeps
+    /// no keys has nothing to do.
+    async fn wipe_keys(&self) {}
+}

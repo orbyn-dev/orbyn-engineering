@@ -14,12 +14,16 @@ use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
+use super::browser_stderr::BrowserStderr;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
 
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
+/// A capture is normally a few milliseconds. One sent as the page swaps documents can go
+/// unanswered, and the session is held for the whole wait, so it gets a short limit.
+const FRAME_TIMEOUT: Duration = Duration::from_secs(3);
 /// A step in history is usually instant, and a same-page entry fires no load at all.
 const HISTORY_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -220,6 +224,7 @@ pub struct BrowserSession {
     document: Document,
     on_document_change: Option<Box<dyn Fn() + Send + Sync>>,
     _child: Option<ManagedChild>,
+    _stderr: Option<BrowserStderr>,
     /// Events a caller asked to keep, which would otherwise pass unread between replies.
     kept: Vec<Value>,
     /// Navigation signals received before the corresponding command reply.
@@ -320,19 +325,38 @@ impl BrowserSession {
             .arg("--remote-debugging-port=0")
             .arg(profile_arg)
             .args(["--no-first-run", "--no-default-browser-check"]);
-        command.args(launch_flags(path, options.headless, options.in_process_gpu));
+        let flags = launch_flags(path, options.headless, options.in_process_gpu);
+        command.args(&flags);
         command
             .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
         crate::host::child_env::for_tool(command.as_std_mut());
         let mut child = ManagedChild::spawn(command)?;
-        let url = wait_for_port(&mut child, &port_file).await?;
-        Self::connect(&url, Some(child)).await
+        let mut stderr = BrowserStderr::start(
+            child
+                .child_mut()
+                .stderr
+                .take()
+                .ok_or_else(|| failed("browser stderr is missing"))?,
+        );
+        let url = match wait_for_port(&mut child, &port_file).await {
+            Ok(url) => url,
+            Err(error) => {
+                let detail = stderr.failure_text().await;
+                return Err(CoreError::Computer(format!(
+                    "{error}; startup flags: {flags:?}; stderr: {detail}"
+                )));
+            }
+        };
+        stderr.startup_complete();
+        let mut session = Self::connect(&url, Some(child)).await?;
+        session._stderr = Some(stderr);
+        Ok(session)
     }
 
     /// Attaches to a browser-level WebSocket endpoint.
@@ -345,6 +369,7 @@ impl BrowserSession {
             document: Document::default(),
             on_document_change: None,
             _child: child,
+            _stderr: None,
             kept: Vec::new(),
             navigation_events: VecDeque::new(),
         };
@@ -429,12 +454,16 @@ impl BrowserSession {
     }
 
     async fn browser_call(&mut self, method: &str, params: Value) -> Result<Value> {
-        self.send(method, params, None, false).await
+        self.send(method, params, None, false, CALL_TIMEOUT).await
     }
 
     async fn call(&mut self, method: &str, params: Value) -> Result<Value> {
+        self.call_within(method, params, CALL_TIMEOUT).await
+    }
+
+    async fn call_within(&mut self, method: &str, params: Value, limit: Duration) -> Result<Value> {
         let session = self.session_id.clone();
-        self.send(method, params, Some(session), false).await
+        self.send(method, params, Some(session), false, limit).await
     }
 
     /// Gives up as soon as the page opens a dialog, which would hold the reply.
@@ -443,7 +472,8 @@ impl BrowserSession {
             return Err(failed("a dialog is open"));
         }
         let session = self.session_id.clone();
-        self.send(method, params, Some(session), true).await
+        self.send(method, params, Some(session), true, CALL_TIMEOUT)
+            .await
     }
 
     async fn send(
@@ -452,6 +482,7 @@ impl BrowserSession {
         params: Value,
         session: Option<String>,
         unless_dialog: bool,
+        limit: Duration,
     ) -> Result<Value> {
         self.next_id += 1;
         let id = self.next_id;
@@ -463,7 +494,7 @@ impl BrowserSession {
             .send(Message::text(message.to_string()))
             .await
             .map_err(failed)?;
-        tokio::time::timeout(CALL_TIMEOUT, async {
+        tokio::time::timeout(limit, async {
             loop {
                 let frame = self
                     .socket
@@ -629,9 +660,10 @@ impl BrowserSession {
     /// One frame for a preview, as base64 JPEG.
     pub async fn frame(&mut self, quality: u32) -> Result<String> {
         let reply = self
-            .call(
+            .call_within(
                 "Page.captureScreenshot",
                 json!({ "format": "jpeg", "quality": quality }),
+                FRAME_TIMEOUT,
             )
             .await?;
         reply
@@ -846,6 +878,9 @@ async fn wait_for_port(child: &mut ManagedChild, path: &Path) -> Result<String> 
     .await
     .map_err(|_| failed("the browser did not open its debugging port"))?
 }
+
+#[cfg(test)]
+mod frame_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1257,6 +1292,25 @@ mod tests {
                 .to_string()
                 .contains("exited before opening its debugging port")
         );
+    }
+
+    #[tokio::test]
+    async fn browser_startup_failure_retains_the_childs_stderr() {
+        // The Rust test runner refuses browser flags, so this needs no browser or engine.
+        let profile =
+            std::env::temp_dir().join(format!("browser-stderr-{}", crate::util::new_id()));
+        let error = BrowserSession::launch(
+            &std::env::current_exe().unwrap(),
+            &profile,
+            LaunchOptions::default(),
+        )
+        .await
+        .err()
+        .expect("the test runner cannot launch as a browser")
+        .to_string();
+        std::fs::remove_dir_all(profile).unwrap();
+        assert!(error.contains("exited before opening its debugging port"));
+        assert!(error.contains("Unrecognized option"), "{error}");
     }
 
     #[tokio::test]

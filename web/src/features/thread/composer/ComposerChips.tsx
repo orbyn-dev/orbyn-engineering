@@ -4,6 +4,8 @@ import { createPortal } from "react-dom";
 import { Dialog } from "../../../ui/Dialog";
 import { Button } from "../../../ui/controls";
 import { useComposerChips } from "../../../product/state/composerChipStore";
+import { useUi } from "../../../product/state/ui";
+import { useWorkspace } from "../../../product/state/workspace";
 import { chipLabel, chipsClipboard, type ComposerChip, type ReviewChip } from "../../../product/composer/composerContext";
 
 const ICONS = {
@@ -57,6 +59,7 @@ export function ComposerChipShelf({
   onUpdate?(chip: ReviewChip): boolean;
 }) {
   const draft = useComposerChips((state) => state.reviewDrafts[threadId]);
+  const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
   const setDraft = (value: { chipId: string; text: string } | undefined) => useComposerChips.getState().setReviewDraft(threadId, value);
   const review = chips.find((chip): chip is ReviewChip => chip.id === draft?.chipId && chip.kind === "review");
   if (chips.length === 0) return null;
@@ -69,6 +72,8 @@ export function ComposerChipShelf({
             <Icon size={12} aria-hidden />
             {chip.kind === "review" ? <button type="button" className="review-chip-label" onClick={() => setDraft({ chipId: chip.id, text: chip.comment })}
               aria-label={`Review comment ${chipLabel(chip)}`}>{chipLabel(chip)}</button>
+              : chip.kind === "file" && chip.fromDiff && cwd ? <button type="button" className="review-chip-label" title="Show these lines in Changes"
+                onClick={() => useUi.getState().revealDiff(chip.path, { threadId, cwd })}>{chipLabel(chip)}</button>
               : <span title={chipLabel(chip)}>{chipLabel(chip)}</span>}
             <button type="button" aria-label={`Copy ${chip.kind} chip`} onClick={() => onCopy([chip])}>
               Copy

@@ -12,6 +12,7 @@ use tokio::process::{ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
 use crate::error::{CoreError, Result};
+use crate::host::confine::Confinement;
 use crate::host::process::{ManagedChild, ResolvedCommand, engine_command, resolve};
 use crate::util::tail;
 
@@ -115,7 +116,33 @@ pub(crate) fn spawn_engine_with(
     cwd: &Path,
     env: &[(&str, &str)],
 ) -> Result<EngineProcess> {
+    spawn_engine_confined(command, args, cwd, env, None)
+}
+
+/// `spawn_engine_with`, under a restriction when `confine` is given. It never starts the
+/// process unrestricted if the restriction cannot be put in front of it.
+pub(crate) fn spawn_engine_confined(
+    command: &ResolvedCommand,
+    args: &[OsString],
+    cwd: &Path,
+    env: &[(&str, &str)],
+    confine: Option<&Confinement>,
+) -> Result<EngineProcess> {
+    let mut wrapped;
+    let command = match confine {
+        Some(confinement) => {
+            wrapped = command.clone();
+            confinement
+                .for_program(&command.program)
+                .wrap(&mut wrapped)?;
+            &wrapped
+        }
+        None => command,
+    };
     let mut builder = engine_command(command, args, cwd);
+    if let Some(confinement) = confine {
+        confinement.scrub_env(builder.as_std_mut());
+    }
     builder.envs(env.iter().copied());
     let mut child = ManagedChild::spawn(builder).map_err(|error| {
         CoreError::EngineUnavailable(format!("Could not start engine: {error}"))

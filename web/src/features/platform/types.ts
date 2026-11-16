@@ -30,7 +30,8 @@ export interface SampleAccount {
 
 export interface PairedDevice {
   name: string;
-  lastSeen: string;
+  /** The platform and how long it has been trusted: "iOS 18 · Trusted since today". No activity time. */
+  detail: string;
 }
 
 export interface PairingOffer {

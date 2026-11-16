@@ -1,6 +1,12 @@
 //! Ordered, forward-only schema. Each entry applies once inside a transaction
 //! and is recorded in `schema_migrations`. Published entries never change.
 
+use super::crew_schema::{
+    CREW_AUTONOMY, CREW_AUTOPILOT, CREW_BACKGROUND, CREW_BACKGROUND_RUN_BUDGET, CREW_BUS,
+    CREW_BUS_EVENTS, CREW_GUARD_TARGETS, CREW_MERGES, CREW_PROTECTED, CREW_REVIEW, CREW_ROUTES,
+    CREW_RUNS, CREW_TABLES,
+};
+
 pub const MIGRATIONS: &[(i64, &str)] = &[
     (1, INITIAL),
     (2, THREAD_LIFECYCLE),
@@ -30,7 +36,100 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (26, PROJECT_REMOVAL_KEEPS_THREADS),
     (27, TASK_RUNS),
     (28, TASK_RUN_LINKS),
+    (29, ACCOUNT_SYNC),
+    (30, CREW_TABLES),
+    (31, CREW_ROUTES),
+    (32, CREW_RUNS),
+    (33, CREW_PROTECTED),
+    (34, CREW_BUS),
+    (35, ACCOUNT_OWNER),
+    (36, CREW_BUS_EVENTS),
+    (37, CREW_REVIEW),
+    (38, CREW_AUTOPILOT),
+    (39, CREW_MERGES),
+    (40, ENGINE_INSTALLS),
+    (41, CREW_BACKGROUND),
+    (42, CREW_BACKGROUND_RUN_BUDGET),
+    (43, CREW_GUARD_TARGETS),
+    (44, CREW_AUTONOMY),
+    (45, super::crew_merge_forge::SCHEMA),
+    (46, include_str!("crew_review_controls.sql")),
 ];
+
+// What each install, update and removal of an engine did: when, whether it worked, why not, the
+// command shown to a person and the installer's last lines (already redacted). Bounded per engine
+// by the writer, which keeps the newest twenty. Nothing here is secret.
+const ENGINE_INSTALLS: &str = r#"
+CREATE TABLE engine_installs (
+    id TEXT PRIMARY KEY,
+    engine TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    reason TEXT,
+    command TEXT,
+    exit_status INTEGER,
+    from_version TEXT,
+    to_version TEXT,
+    output TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX engine_installs_by_engine ON engine_installs (engine, finished_at DESC);
+"#;
+
+// The account's settings sync, per zone: the cursor and the capture switch, the local copy
+// of the zone's record with each field's stamp (and whether this device applied it: only a field
+// that came from the account is ever applied, and once), the outbox of fields not yet uploaded (one row
+// per changed field, with the time the person made the edit and the stamp it replaced, so a
+// concurrent edit on another device can be told from an older one), the offline edits that lost,
+// and the settings kept local because they are over a limit. Non-secret: no key, token or
+// password is stored here, and nothing is written until the person's account is on.
+const ACCOUNT_SYNC: &str = r#"
+CREATE TABLE account_sync (
+    zone TEXT PRIMARY KEY,
+    capture INTEGER NOT NULL DEFAULT 0,
+    device TEXT NOT NULL,
+    hlc_wall INTEGER NOT NULL DEFAULT 0,
+    hlc_counter INTEGER NOT NULL DEFAULT 0,
+    version INTEGER
+);
+CREATE TABLE account_fields (
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    wall INTEGER NOT NULL,
+    counter INTEGER NOT NULL,
+    device TEXT NOT NULL,
+    applied INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (zone, field)
+);
+CREATE TABLE account_outbox (
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    wall INTEGER NOT NULL,
+    counter INTEGER NOT NULL,
+    device TEXT NOT NULL,
+    edited_at INTEGER NOT NULL,
+    base_wall INTEGER,
+    base_counter INTEGER,
+    base_device TEXT,
+    PRIMARY KEY (zone, field)
+);
+CREATE TABLE account_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    kept TEXT NOT NULL,
+    lost TEXT NOT NULL,
+    at_ms INTEGER NOT NULL
+);
+CREATE TABLE account_skipped (
+    zone TEXT NOT NULL,
+    field TEXT NOT NULL,
+    PRIMARY KEY (zone, field)
+);
+"#;
 
 // One row per firing of a task, kept to the last 50. How the run ended is read from
 // the run when listed, so nothing here goes stale. The link to the run is in 28.
@@ -516,3 +615,7 @@ CREATE TABLE settings (
     value TEXT NOT NULL
 );
 "#;
+
+// Which account the zone's local record belongs to, so a different account signing in on the same
+// data folder starts from nothing instead of inheriting the first one's changes.
+const ACCOUNT_OWNER: &str = "ALTER TABLE account_sync ADD COLUMN account TEXT;";

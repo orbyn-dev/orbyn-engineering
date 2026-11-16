@@ -1,0 +1,20 @@
+{
+  "type": "lease",
+  "v": 0,
+  "id": "sha256:4b22db466e633f9dbdf029e96e0214bde7c30f774dc4439378987f3d0c4463ed",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "holder": "worker-01",
+  "paths": [
+    "crates/crew-demo/src/**"
+  ],
+  "mode": "write",
+  "state": "granted",
+  "expires_at": "2026-11-12T10:00:00Z",
+  "to": "worker-02"
+}

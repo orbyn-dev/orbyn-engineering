@@ -42,6 +42,7 @@ tracing-subscriber.workspace = true
 windows-sys.workspace = true
 
 [dev-dependencies]
+orbyn-core = { path = "../orbyn-core", features = ["test-support"] }
 ed25519-dalek.workspace = true
 rusqlite.workspace = true
 tokio-tungstenite.workspace = true

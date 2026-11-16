@@ -210,13 +210,15 @@ impl Core {
         } else {
             ("kill", vec![&pid])
         };
-        let status = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await?;
+            .stderr(Stdio::null());
+        // A short-lived helper, but every spawn goes through the one gate: it never sees account secrets.
+        crate::host::child_env::for_tool(command.as_std_mut());
+        let status = command.status().await?;
         if status.success() {
             Ok(())
         } else {

@@ -1,0 +1,18 @@
+{
+  "type": "answer_key",
+  "v": 0,
+  "id": "sha256:75a6d9f816d78d8df2d6ff7adf56bfa944801dda956eb5740bf8d323e01f8f19",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "lead",
+    "engine": "claude",
+    "member": "lead-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "checks": [],
+  "protected_paths": [
+    "crates/crew-demo/tests/**",
+    "scripts/check.sh"
+  ]
+}

@@ -1,10 +1,10 @@
-import { act, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "../../../api/client";
-import { useUi } from "../../../product/state/ui";
+import { fileTabId } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
-import { FilesPanel } from "./FilesPanel";
+import { FileTab } from "./FileTab";
 import { OutsideFileViewer, fullPathOf, isFullPath } from "./OutsideFileViewer";
 
 afterEach(() => vi.restoreAllMocks());
@@ -67,8 +67,7 @@ it("a message link to a full path outside the checkout opens it read-only", asyn
   vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: null, repository_path: null });
   vi.stubGlobal("fetch", vi.fn(async (url: string) =>
     String(url).includes("/files/outside") ? outside("/home/me/notes.md", "# Notes") : new Response("[]")));
-  render(<FilesPanel threadId="t" />);
-  act(() => useUi.getState().revealFile("/home/me/notes.md", null, { threadId: "t", cwd: "/repo" }));
+  render(<FileTab id={fileTabId({ kind: "thread", path: "/home/me/notes.md" })} threadId="t" />);
   expect(await screen.findByText(/Outside checkout · Read-only/)).toBeInTheDocument();
   expect(await screen.findByRole("heading", { name: "Notes" })).toBeInTheDocument();
   expect(screen.queryByRole("radio", { name: "Edit" })).not.toBeInTheDocument();

@@ -1,6 +1,26 @@
 import { describe, expect, it } from "vitest";
 import type { PullListEntry } from "../../../api/types";
-import { activeChips, bodyOpensWith, detailsKey, emptyColumns, checksOf, checksView, mergeGate, noFilters, pageState, takeLabels, statesToAsk, visiblePulls, yourReview, type PullSort } from "./pullModel";
+import {
+  activeChips,
+  bodyOpensWith,
+  changesNeedYou,
+  checksOf,
+  checksView,
+  conflictWords,
+  detailsKey,
+  emptyColumns,
+  mergeGate,
+  noFilters,
+  ownPull,
+  pageState,
+  reviewersWord,
+  reviewWords,
+  statesToAsk,
+  takeLabels,
+  visiblePulls,
+  yourReview,
+  type PullSort,
+} from "./pullModel";
 
 const newest: PullSort = { by: "created", dir: "newest" };
 const oldest: PullSort = { by: "created", dir: "oldest" };
@@ -182,7 +202,7 @@ describe("the pull request page", () => {
     [{}, "mergeable", true, false, "Merge needs a connection."],
     [{}, "conflicting", false, false, "Resolve the conflict to merge."],
     [{ checks_state: "fail" }, "mergeable", false, false, "Merge is blocked by a failing check."],
-    [{ checks_state: "pending" }, "mergeable", false, false, "Merge unlocks when checks pass."],
+    [{ checks_state: "pending" }, "mergeable", false, false, "Checks are still running."],
     [{ review_state: "review_required" }, "mergeable", false, false, "Merge needs an approval."],
     [{ review_state: "approved" }, "mergeable", false, true, "No conflicts"],
   ] as const)("gates Merge for %j: enabled %s, saying %s", (over, mergeable, offline, enabled, hint) => {
@@ -191,6 +211,46 @@ describe("the pull request page", () => {
 
   it("lets Merge wait for checks once auto-merge is chosen", () => {
     expect(mergeGate(pull({ checks_state: "pending" }), "mergeable", { offline: false, auto: true, forge: "GitHub" }).enabled).toBe(true);
+  });
+});
+
+describe("who a review waits on", () => {
+  const pull = (over: Partial<PullListEntry["pull"]> = {}) => entry(1, over).pull;
+
+  it("names the signed-in person \"you\" in the Review line, and others by login", () => {
+    expect(reviewWords(pull(), ["sam"], ["me"])).toBe("Requested from @sam");
+    expect(reviewWords(pull(), ["me", "sam"], ["me"])).toBe("Requested from you, @sam");
+    expect(reviewWords(pull(), [], ["me"])).toBe("Not requested");
+  });
+  it("says Changes requested by you only when the person's own review asked for them", () => {
+    expect(reviewWords(pull({ review_state: "changes_requested" }), ["sam"], ["me"])).toBe("Changes requested");
+    expect(reviewWords(pull({ review_state: "changes_requested" }), ["sam"], ["me"], true)).toBe("Changes requested by you");
+    expect(reviewWords(pull({ review_state: "review_required" }), ["me"], ["me"], true)).toBe("Changes requested by you");
+    expect(reviewWords(pull({ review_state: "approved" }), ["sam"], ["me"], true)).toBe("Approved");
+  });
+  it("says only what the service says about conflicts", () => {
+    expect(conflictWords("conflicting")).toBe("Yes");
+    expect(conflictWords("mergeable")).toBe("None");
+    expect(conflictWords("unknown")).toBe("\u2014");
+    expect(conflictWords(null)).toBe("\u2014");
+  });
+  it("tells the person's own pull request by its author, whatever the case", () => {
+    expect(ownPull(pull({ author: "Me" }), ["me"])).toBe(true);
+    expect(ownPull(pull({ author: "riley" }), ["me"])).toBe(false);
+    expect(ownPull(pull({ author: null }), ["me"])).toBe(false);
+    expect(ownPull(pull({ author: "me" }), [])).toBe(false);
+  });
+  it("is amber for changes only on the person's own pull request", () => {
+    expect(changesNeedYou(pull({ author: "me" }), ["me"])).toBe(true);
+    expect(changesNeedYou(pull({ author: "riley" }), ["me"])).toBe(false);
+  });
+  it("leaves a word in Reviewers for Approved and Changes, amber only on the person's own pull request", () => {
+    expect(reviewersWord(pull({ review_state: "approved" }), ["me"])).toEqual({ label: "Approved", tone: "quiet" });
+    expect(reviewersWord(pull({ review_state: "changes_requested", author: "me" }), ["me"])).toEqual({ label: "Changes", tone: "act" });
+    expect(reviewersWord(pull({ review_state: "changes_requested", author: "riley" }), ["me"])).toEqual({ label: "Changes", tone: "quiet" });
+    expect(reviewersWord(pull({ review_state: "changes_requested", author: "me" }), [])).toEqual({ label: "Changes", tone: "quiet" });
+    expect(reviewersWord(pull({ review_state: "review_required" }), ["me"])).toBeNull();
+    expect(reviewersWord(pull({ review_state: "approved", draft: true }), ["me"])).toBeNull();
   });
 });
 

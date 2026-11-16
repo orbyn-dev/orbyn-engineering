@@ -88,7 +88,7 @@ export function PullLinkPreview({
   useEffect(() => {
     const controller = new AbortController();
     setPull(null);
-    pullsApi.detail(projectId, number, controller.signal).then(
+    pullsApi.detail(projectId, number, controller.signal, { priority: "foreground" }).then(
       (detail) => {
         if (samePullRequest(detail.pull.url, href)) setPull(detail.pull);
       },

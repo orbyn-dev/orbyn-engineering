@@ -163,8 +163,8 @@ async fn delegate(
 async fn batch_threads(
     State(state): State<AppState>,
     ApiJson(body): ApiJson<BatchThreads>,
-) -> impl IntoResponse {
-    Json(state.core.batch_threads(body.threads).await)
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.batch_threads(body.threads).await?))
 }
 
 /// The thread's worktree setup action and where it stands, or `null`.

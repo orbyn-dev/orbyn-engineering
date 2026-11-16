@@ -75,7 +75,7 @@ test("the header toggles the details card, terminal and surfaces", async ({ page
   await make("Header");
   await page.goto(service.page);
   await row(page, "Header").click();
-  const details = page.getByRole("complementary", { name: "Thread details" });
+  const details = page.getByRole("dialog", { name: "Thread details" });
   // With the side panel closed the card opens as a popover under the Details button.
   await expect(details).toBeHidden();
   await page.getByRole("button", { name: "Details" }).click();
@@ -223,7 +223,7 @@ test("appearance: presets, editor, typography, contrast and settings search", as
   await page.getByRole("radiogroup", { name: "Contrast", exact: true }).getByRole("radio", { name: "Higher", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-contrast", "more");
   await page.getByRole("button", { name: "Edit…", exact: true }).click();
-  const accent = page.getByLabel("Accent", { exact: true });
+  const accent = page.getByLabel("Button", { exact: true });
   await accent.fill("#ff0000");
   await accent.press("Enter");
   await expect.poll(() => color("--color-primary")).toBe("#ff0000");

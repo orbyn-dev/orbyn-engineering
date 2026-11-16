@@ -1,8 +1,6 @@
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
-import { useDrawnOrder } from "../../features/workspace/sidebar/drawnOrder";
-import { arrangeThreads, threadsFlat } from "../../features/workspace/sidebar/groups";
-import { copyReference, pinThreads, settleThreads, unpinThreads, unsettleThreads } from "../../features/workspace/sidebar/threadActions";
+import { arrangeThreads, copyReference, pinThreads, settleThreads, threadsFlat, unpinThreads, unsettleThreads, useDrawnOrder } from "../../features/workspace";
 import { toFailure } from "../../lib/useAsync";
 import { layoutForWidth } from "../../lib/useLayout";
 import { navigate, type Route } from "../../product/state/route";
@@ -140,7 +138,7 @@ export function runShellCommand(command: string, route: Route): boolean {
       ui.closePanel();
       return true;
     case "threadPanel.toggle":
-      ui.toggleDetails();
+      ui.setPanelOpen(ui.panelOpen !== true);
       return true;
     case "thread.stop":
       if (!thread?.active_run) return false;
@@ -168,7 +166,7 @@ const FOCUS_AREAS = [
   "nav[aria-label='Workspace'] .thread-row a, nav[aria-label='Workspace'] a",
   ".transcript, [aria-label='Thread messages']",
   ".composer textarea",
-  "[aria-label='Thread context'] button, .details button",
+  "[aria-label='Thread context'] button",
 ];
 
 function cycleFocus(step: number): boolean {

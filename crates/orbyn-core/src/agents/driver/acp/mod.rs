@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::pipes::{EngineProcess, exit_message, resolve_engine, spawn_engine_with};
+use super::pipes::{
+    EngineProcess, exit_message, resolve_engine, spawn_engine_confined, spawn_engine_with,
+};
 use super::rpc::{Inbound, RpcClient};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, MCP_SERVER_NAME,
@@ -190,7 +192,8 @@ impl EngineDriver for AcpDriver {
         let dir = ProbeDir::new()?;
         let process = spawn_engine_with(&command, &args, dir.path(), self.env)?;
         let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, true);
-        let (id, session, init) = open_raw(&rpc, dir.path(), None, &self.sign_in_slot()).await?;
+        let (id, session, init) =
+            open_raw(&rpc, dir.path(), None, dir.path(), &self.sign_in_slot()).await?;
         let options = parse_session_options(&session);
         let mut models = parse_models(&session);
         let probing = probe_model_options(&rpc, &id, &session, &options, &mut models);
@@ -211,7 +214,8 @@ impl EngineDriver for AcpDriver {
     ) -> Result<RunHandle> {
         let command = resolve_engine(&self.engine.target)?;
         let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
-        let process = spawn_engine_with(&command, &args, &spec.cwd, self.env)?;
+        let process =
+            spawn_engine_confined(&command, &args, &spec.cwd, self.env, spec.confine.as_ref())?;
         let cancel = CancellationToken::new();
         let slot = self.sign_in_slot();
         let task = tokio::spawn(run_protocol(process, spec, events, cancel.clone(), slot));
@@ -361,14 +365,14 @@ async fn open_session(
                 "This agent cannot resume its saved session.".into(),
             ));
         };
-        let params = json!({"sessionId":id,"cwd":spec.cwd,"additionalDirectories":[],"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref())});
+        let params = json!({"sessionId":id,"cwd":spec.cwd,"additionalDirectories":[],"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref(),&spec.run_dir)});
         let session = resume_without_replay(rpc, inbound, method, params, id).await?;
         (id.clone(), session)
     } else {
         let session = rpc
             .call(
                 "session/new",
-                json!({"cwd":spec.cwd,"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref())}),
+                json!({"cwd":spec.cwd,"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref(),&spec.run_dir)}),
                 CALL_TIMEOUT,
             )
             .await?;
@@ -413,11 +417,12 @@ async fn open_raw(
     rpc: &RpcClient,
     cwd: &std::path::Path,
     mcp_url: Option<&str>,
+    run_dir: &std::path::Path,
     slot: &SignInSlot,
 ) -> Result<(String, Value, Value)> {
     let init = initialize(rpc).await?;
     slot.record(&init);
-    let servers = mcp_servers(&init, mcp_url);
+    let servers = mcp_servers(&init, mcp_url, run_dir);
     let session = rpc
         .call(
             "session/new",
@@ -441,15 +446,23 @@ async fn initialize(rpc: &RpcClient) -> Result<Value> {
     Ok(init)
 }
 
-fn mcp_servers(init: &Value, url: Option<&str>) -> Value {
-    servers_for(init, url, crate::agents::acp_mcp_bridge::bridge_program)
+fn mcp_servers(init: &Value, url: Option<&str>, run_dir: &std::path::Path) -> Value {
+    servers_for(
+        init,
+        url,
+        run_dir,
+        crate::agents::acp_mcp_bridge::bridge_program,
+    )
 }
 
 /// HTTP when the agent says it supports it. Otherwise stdio, which ACP requires of
-/// every agent, through the sibling `orbyn` bridge; none when that program is absent.
+/// every agent, through the sibling `orbyn` bridge; none when that program is absent
+/// or the endpoint cannot be left in `run_dir`. The bridge is given that file's path,
+/// never the endpoint, so the token is in no process's arguments or environment.
 fn servers_for(
     init: &Value,
     url: Option<&str>,
+    run_dir: &std::path::Path,
     bridge: impl FnOnce() -> Option<std::path::PathBuf>,
 ) -> Value {
     let Some(url) = url else {
@@ -462,9 +475,15 @@ fn servers_for(
     if http {
         return json!([{"type":"http","name":MCP_SERVER_NAME,"url":url,"headers":[]}]);
     }
-    match bridge() {
-        Some(program) => json!([crate::agents::acp_mcp_bridge::stdio_server(&program, url)]),
-        None => json!([]),
+    let Some(program) = bridge() else {
+        return json!([]);
+    };
+    match crate::agents::acp_mcp_bridge::write_endpoint(run_dir, url) {
+        Ok(file) => json!([crate::agents::acp_mcp_bridge::stdio_server(&program, &file)]),
+        Err(error) => {
+            tracing::warn!(%error, "the MCP endpoint could not be left for the stdio bridge");
+            json!([])
+        }
     }
 }
 

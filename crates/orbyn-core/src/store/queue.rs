@@ -315,7 +315,7 @@ impl Store {
         });
         match outcome {
             Err(CoreError::ThreadBusy) => Ok(None),
-            other => other,
+            other => self.run_changed(other),
         }
     }
 

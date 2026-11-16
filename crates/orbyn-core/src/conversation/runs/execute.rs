@@ -140,6 +140,10 @@ impl RunManager {
         if wanted != json!(true) {
             return Ok(());
         }
+        // A crew worker's process is started under a restriction, which an early start lacks.
+        if self.store.crew_task_for_worker(thread_id)?.is_some() {
+            return Ok(());
+        }
         let thread = self.store.thread(thread_id)?;
         let driver = self.engines.driver(&thread.engine)?;
         let lifecycle = thread.lifecycle.as_ref();
@@ -210,7 +214,12 @@ impl RunManager {
             options: chosen.options,
             resume: self.store.engine_session(&thread.id)?,
             mcp_url: Some(url.clone()),
-            run_dir: PathBuf::new(),
+            // Under the runs folder, so a confined worker cannot read the token file the
+            // process writes there, and a start-up sweep removes it if the core dies.
+            run_dir: self
+                .runs_dir
+                .join(format!("warm-{}", crate::util::new_id())),
+            confine: None,
         };
         // No update may begin while this process starts and is parked: it would hold
         // the binary being replaced, which Windows refuses.

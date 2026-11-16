@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { startProject, threadIdOf, type PullFixture, type Service } from "./service";
 
 /** The pull request surface through the real service and a stand-in `gh` that keeps state. */
@@ -62,6 +64,7 @@ const fixtures: PullFixture[] = [
 
 let service: Service;
 let projectId = "";
+let ambientForgeCalls = "";
 
 const detail = (page: Page, title: string) => page.getByRole("article", { name: title });
 const openPull = async (page: Page, title: string) => {
@@ -82,10 +85,30 @@ const moreAction = async (page: Page, article: Locator, name: string) => {
 };
 
 test.beforeAll(async () => {
-  ({ service, projectId } = await startProject({ fakeEngines: true, forge: fixtures }));
+  const ambientBin = test.info().outputPath("ambient-forges");
+  mkdirSync(ambientBin, { recursive: true });
+  ambientForgeCalls = join(ambientBin, "calls.jsonl");
+  writeFileSync(ambientForgeCalls, "");
+  // Quick sentinels stand in for ambient tools, so the regression never probes an installed forge CLI.
+  for (const program of ["glab", "az", "tea"]) {
+    const script = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(ambientForgeCalls)}, JSON.stringify({ program: ${JSON.stringify(program)}, args: process.argv.slice(2) }) + "\\n");\nprocess.exit(1);\n`;
+    if (process.platform === "win32") {
+      writeFileSync(join(ambientBin, `${program}.mjs`), script);
+      writeFileSync(join(ambientBin, `${program}.cmd`), `@echo off\r\nnode "%~dp0${program}.mjs" %*\r\n`);
+    } else {
+      writeFileSync(join(ambientBin, program), `#!/usr/bin/env node\n${script}`, { mode: 0o755 });
+    }
+  }
+  ({ service, projectId } = await startProject({ fakeEngines: true, forge: fixtures, path: [ambientBin] }));
 });
 test.afterAll(() => service.stop());
 test.beforeEach(({ page }) => page.setViewportSize({ width: 1500, height: 1000 }));
+
+test("the GitHub fixture keeps unselected ambient forge CLIs out of discovery", async () => {
+  const forges = await service.api<{ id: string; signed_in: boolean; viewer: string | null }[]>("GET", "/api/forges");
+  expect(forges.find((forge) => forge.id === "github")).toMatchObject({ signed_in: true, viewer: "me" });
+  expect(readFileSync(ambientForgeCalls, "utf8")).toBe("");
+});
 
 test("the list filters by author, label, checks and draft, and by a label typed in the search", async ({ page }) => {
   await page.goto(`${service.page}#/pulls`);
@@ -364,26 +387,6 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   await expect(page.locator(".pull-rows > li").first()).toBeVisible();
 });
 
-/**
- * Waits until the forge calls go quiet. The page keeps an event stream open, so "idle" is read from the calls
- * stopping rather than from the network.
- */
-async function forgeQuiet(page: Page) {
-  let seen = -1;
-  await expect
-    .poll(
-      async () => {
-        const now = service.ghCalls().length;
-        const quiet = now === seen;
-        seen = now;
-        await page.waitForTimeout(600);
-        return quiet;
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(true);
-}
-
 test("a merge is refused when the branch moved after the page was read, and Reload reads it again", async ({ page }) => {
   const article = await openPull(page, "Unrelated fix");
   // The branch gets a commit after the page was read, for this test only.
@@ -395,17 +398,20 @@ test("a merge is refused when the branch moved after the page was read, and Relo
   await expect(dialog.getByRole("button", { name: "Reload" })).toBeFocused();
   await expect(dialog.getByRole("button", { name: "Merge", exact: true })).toHaveCount(0);
   expect(service.ghPull(3).state ?? "OPEN").toBe("OPEN");
-  // Whatever the page was still reading is finished first, so the count below moves only for the Reload.
-  await forgeQuiet(page);
-  const reads = service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length;
+  // A changed field proves the returned detail reached the screen, not merely that gh started.
+  const title = "Unrelated fix after the push";
+  service.ghEdit(3, { title, headRefOid: "ddddddd" });
+  const reloaded = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === `/api/projects/${projectId}/pulls/3`,
+  );
   await dialog.getByRole("button", { name: "Reload" }).click();
+  const response = await reloaded;
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toMatchObject({ head_sha: "ddddddd", pull: { title } });
   await expect(dialog).toBeHidden();
+  await expect(detail(page, title)).toBeVisible();
+  // Keep the changed head until the reload has finished reading it.
   service.ghEdit(3, { headNow: undefined });
-  await expect
-    .poll(() => service.ghCalls().filter((call) => call[0] === "pr" && call[1] === "view").length, { timeout: 30_000 })
-    .toBeGreaterThan(reads);
-  // The reload's own reads finish before the next test starts, so they do not queue behind it at the forge.
-  await forgeQuiet(page);
 });
 
 test("a merged pull request can be reverted", async ({ page }) => {
@@ -480,13 +486,84 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   await page.getByRole("button", { name: "Link by number" }).click();
   const link = page.getByRole("dialog", { name: "Link by number" });
   await link.getByRole("textbox", { name: "Pull request number" }).fill("9999");
-  await link.getByRole("button", { name: "Link", exact: true }).click();
+  const linkUrl = new URL(`/api/threads/${thread}/pulls`, page.url()).href;
+  const [response] = await Promise.all([
+    page.waitForResponse((response) =>
+      response.url() === linkUrl && response.request().method() === "POST" && response.request().postDataJSON()?.number === 9999,
+    ),
+    link.getByRole("button", { name: "Link", exact: true }).click(),
+  ]);
   // The forge's own "could not resolve" answer is a 404 from the service.
+  // Start the UI's error budget after the response body arrives; forge work has the remaining test budget.
+  expect(response.status()).toBe(404);
+  expect(await response.finished()).toBeNull();
   await expect(link.getByText("No pull request #9999 in this repository.")).toBeVisible();
+  await expect(link.getByRole("textbox", { name: "Pull request number" })).toHaveValue("9999");
   await link.getByRole("textbox", { name: "Pull request number" }).fill("1");
   await link.getByRole("button", { name: "Link", exact: true }).click();
   await expect(page.locator(".pr-chip")).toHaveText("#1");
   expect(projectId).not.toBe("");
+});
+
+test("a pending link keeps its input through a thread refresh and shows the service's 404", async ({ page }) => {
+  const thread = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Pending link" });
+  await page.goto(`${service.page}#/threads/${thread.id}`);
+  await expect(page.getByRole("heading", { name: "Pending link", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  await page.getByRole("button", { name: "Link by number" }).click();
+  const link = page.getByRole("dialog", { name: "Link by number" });
+  const input = link.getByRole("textbox", { name: "Pull request number" });
+  await input.fill("9999");
+  const originalInput = await input.elementHandle();
+  if (!originalInput) throw new Error("The link input is missing.");
+
+  const linkUrl = new URL(`/api/threads/${thread.id}/pulls`, page.url()).href;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let received!: (status: number) => void;
+  const upstreamStatus = new Promise<number>((resolve) => { received = resolve; });
+  await page.route(linkUrl, async (route) => {
+    if (route.request().method() !== "POST" || route.request().postDataJSON()?.number !== 9999) {
+      await route.continue();
+      return;
+    }
+    // Hold the real service's answer, rather than inventing an error or delaying by a fixed duration.
+    const response = await route.fetch();
+    received(response.status());
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    const [response] = await Promise.all([
+      page.waitForResponse((response) =>
+        response.url() === linkUrl && response.request().method() === "POST" && response.request().postDataJSON()?.number === 9999,
+      ),
+      (async () => {
+        await link.getByRole("button", { name: "Link", exact: true }).click();
+        expect(await upstreamStatus).toBe(404);
+        await expect(link.getByRole("button", { name: "Link", exact: true })).toBeDisabled();
+        // The real thread.updated event causes a GET and a new thread prop for DetailsCard while Link is pending.
+        const threadUrl = new URL(`/api/threads/${thread.id}`, page.url()).href;
+        const [refreshed] = await Promise.all([
+          page.waitForResponse((response) => response.url() === threadUrl && response.request().method() === "GET"),
+          service.api("PATCH", `/api/threads/${thread.id}`, { title: "Pending link, refreshed" }),
+        ]);
+        expect(refreshed.status()).toBe(200);
+        await expect(page.getByRole("heading", { name: "Pending link, refreshed", exact: true })).toBeVisible();
+        await expect(input).toHaveValue("9999");
+        expect(await originalInput.evaluate((node) => node.isConnected)).toBe(true);
+        await expect(link.getByRole("alert")).toHaveCount(0);
+        release();
+      })(),
+    ]);
+    expect(response.status()).toBe(404);
+    expect(await response.finished()).toBeNull();
+    await expect(link.getByText("No pull request #9999 in this repository.")).toBeVisible();
+    await expect(input).toHaveValue("9999");
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  }
 });
 
 test("a spent rate limit pauses the details filters: every row, a neutral banner, a paused chip", async ({ page }) => {

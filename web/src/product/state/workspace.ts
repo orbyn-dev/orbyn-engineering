@@ -2,6 +2,7 @@ import { forgetProjectImages, invalidateProjectImages } from "../projects/projec
 import { useMemo } from "react";
 import { create } from "zustand";
 import { ApiFailure, api } from "../../api/client";
+import { asBackground } from "../../api/lanes";
 import type {
   ApplyAllResult,
   Approval,
@@ -30,7 +31,38 @@ function projectRevision(project: Project): bigint | null {
   return revision <= 9223372036854775807n ? revision : null;
 }
 
+/** Deep equality over the plain JSON the API answers with: an unchanged poll compares equal at every key. */
+function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  for (const key of keys) if (!sameData(left[key], right[key])) return false;
+  return true;
+}
+
+/** Merges polled threads, keeping the objects whose content did not change, so their rows keep their props. */
+function reuseThreads(base: Record<string, Thread>, list: readonly Thread[]) {
+  let next: Record<string, Thread> | null = null;
+  for (const thread of list) {
+    const known = (next ?? base)[thread.id];
+    if (known !== undefined && sameData(known, thread)) continue;
+    next ??= { ...base };
+    next[thread.id] = thread;
+  }
+  return { changed: next !== null, threads: next ?? base };
+}
+
 const idle = <T>(): Loadable<T> => ({ data: null, error: null, loading: false });
+
+/** `force`: the person asked, so read now. `quiet`: an event asked, so show no loading state. */
+interface ReadOptions {
+  force?: boolean;
+  quiet?: boolean;
+}
 
 interface WorkspaceState {
   projects: Loadable<Project[]>;
@@ -51,8 +83,8 @@ interface WorkspaceState {
   updateRun: UpdateRun | null;
 
   runAllUpdates(): Promise<void>;
-  refreshManaged(): Promise<void>;
-  refreshUpdates(): Promise<void>;
+  refreshManaged(options?: ReadOptions): Promise<void>;
+  refreshUpdates(options?: ReadOptions): Promise<void>;
   putUpdates(status: UpdateStatus): void;
   putManaged(status: WorkspaceStatus): void;
   refreshProjects(): Promise<void>;
@@ -73,6 +105,10 @@ interface WorkspaceState {
   dropThread(thread: Thread): void;
   putReceipt(approval: Approval): void;
 }
+
+/** Reads running per resource, and the ones an event asked for meanwhile. */
+const running = { managed: 0, updates: 0 };
+const waiting = { managed: false, updates: false };
 
 /** Newest-request-wins per resource key. */
 const generations = new Map<string, number>();
@@ -204,18 +240,35 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  async refreshUpdates() {
+  async refreshUpdates(options) {
+    const quiet = options?.quiet === true;
+    // An event's read never takes over one that is running: it waits and reads once that one ends.
+    if (quiet && running.updates > 0) {
+      waiting.updates = true;
+      return;
+    }
     const current = claim("updates");
+    running.updates += 1;
+    let failed = false;
     try {
-      const data = await api.updates();
+      const data = await (quiet ? asBackground(() => api.updates(undefined, false)) : api.updates(undefined, options?.force === true));
       if (current()) set({ updates: { data, error: null, loading: false } });
     } catch (error) {
-      if (!current()) return;
+      if (!current() || options?.quiet === true) return;
+      failed = true;
       const failure = toFailure(error);
       set((state) => ({
         updates: { data: state.updates.data, error: failure, loading: false },
         updatesUnsupported: failure.status === 404,
       }));
+    } finally {
+      running.updates -= 1;
+      // After a failure the error stays on screen until the next ordinary read.
+      if (failed) waiting.updates = false;
+      if (running.updates === 0 && waiting.updates) {
+        waiting.updates = false;
+        void get().refreshUpdates({ quiet: true });
+      }
     }
   },
 
@@ -224,19 +277,35 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     set({ updates: { data: status, error: null, loading: false } });
   },
 
-  async refreshManaged() {
+  async refreshManaged(options) {
+    const quiet = options?.quiet === true;
+    if (quiet && running.managed > 0) {
+      waiting.managed = true;
+      return;
+    }
     const current = claim("managed");
-    set((state) => ({ managed: { ...state.managed, loading: true } }));
+    running.managed += 1;
+    let failed = false;
+    if (!quiet) set((state) => ({ managed: { ...state.managed, loading: true } }));
     try {
-      const data = await api.workspace();
+      const data = await (quiet ? asBackground(() => api.workspace(undefined, false)) : api.workspace(undefined, options?.force === true));
       if (current()) set({ managed: { data, error: null, loading: false } });
     } catch (error) {
-      if (!current()) return;
+      if (!current() || options?.quiet === true) return;
+      failed = true;
       const failure = toFailure(error);
       set((state) => ({
         managed: { data: state.managed.data, error: failure, loading: false },
         managedUnsupported: failure.status === 404,
       }));
+    } finally {
+      running.managed -= 1;
+      // After a failure the error stays on screen until the next ordinary read.
+      if (failed) waiting.managed = false;
+      if (running.managed === 0 && waiting.managed) {
+        waiting.managed = false;
+        void get().refreshManaged({ quiet: true });
+      }
     }
   },
 
@@ -247,18 +316,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async refreshProjects() {
     const current = claim("projects");
-    set((state) => ({ projects: { ...state.projects, loading: true } }));
+    // Loading means the first read. A poll over data already on screen must not replace the objects the
+    // sidebar holds, or every row re-renders for nothing.
+    if (!get().projects.data) set((state) => ({ projects: { ...state.projects, loading: true } }));
     try {
       const data = await api.projects();
-      if (current()) {
-        const previous = get().projects;
-        for (const project of previous.data ?? []) {
-          const next = data.find((entry) => entry.id === project.id);
-          if (!next || next.path !== project.path || projectImageChanged(project, next)) invalidateProjectImages(project.id);
-        }
-        set({ projects: { data, error: null, loading: false } });
-        if (previous.error) invalidateProjectImages();
+      if (!current()) return;
+      const previous = get().projects;
+      if (previous.data && sameData(previous.data, data)) {
+        if (previous.error || previous.loading) set({ projects: { data: previous.data, error: null, loading: false } });
+        return;
       }
+      for (const project of previous.data ?? []) {
+        const next = data.find((entry) => entry.id === project.id);
+        if (!next || next.path !== project.path || projectImageChanged(project, next)) invalidateProjectImages(project.id);
+      }
+      set({ projects: { data, error: null, loading: false } });
+      if (previous.error) invalidateProjectImages();
     } catch (error) {
       if (!current()) return;
       const failure = toFailure(error);
@@ -269,22 +343,36 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async refreshThreads(projectId) {
     const current = claim(`threads:${projectId}`);
-    set((state) => ({
-      threadIds: {
-        ...state.threadIds,
-        [projectId]: { ...(state.threadIds[projectId] ?? idle()), loading: true },
-      },
-    }));
-    try {
-      const list = await api.threads(projectId);
-      if (!current()) return;
+    if (!get().threadIds[projectId]?.data) {
       set((state) => ({
         threadIds: {
           ...state.threadIds,
-          [projectId]: { data: list.map((t) => t.id), error: null, loading: false },
+          [projectId]: { ...(state.threadIds[projectId] ?? idle()), loading: true },
         },
-        threads: { ...state.threads, ...Object.fromEntries(list.map((t) => [t.id, t])) },
       }));
+    }
+    try {
+      const list = await api.threads(projectId);
+      if (!current()) return;
+      const state = get();
+      const known = state.threadIds[projectId];
+      const ids = list.map((t) => t.id);
+      const orderChanged =
+        !known?.data || known.data.length !== ids.length || known.data.some((id, at) => id !== ids[at]);
+      const merged = reuseThreads(state.threads, list);
+      const entryChanged = orderChanged || !known || known.loading || known.error;
+      if (!merged.changed && !entryChanged) return;
+      set({
+        ...(merged.changed ? { threads: merged.threads } : {}),
+        ...(entryChanged
+          ? {
+              threadIds: {
+                ...state.threadIds,
+                [projectId]: { data: orderChanged ? ids : (known?.data ?? ids), error: null, loading: false },
+              },
+            }
+          : {}),
+      });
     } catch (error) {
       if (!current()) return;
       set((state) => ({
@@ -305,9 +393,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     try {
       const list = (await api.allThreads()).filter((thread) => thread.scratch);
       if (!current()) return;
-      set((state) => ({
-        threads: { ...state.threads, ...Object.fromEntries(list.map((t) => [t.id, t])) },
-      }));
+      const merged = reuseThreads(get().threads, list);
+      if (merged.changed) set({ threads: merged.threads });
     } catch {
       // Project threads still load; the next poll tries again.
     }
@@ -318,9 +405,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     try {
       const thread = await api.thread(id);
       if (!current()) return;
+      // A run's events ask for this often; writing an identical answer would replace the
+      // object every subscriber below it renders.
+      const unchanged = get().threads[id] !== undefined && sameData(get().threads[id], thread);
+      if (unchanged && get().missingThreads[id] === undefined) return;
       set((state) => {
         const { [id]: _gone, ...missing } = state.missingThreads;
-        return { threads: { ...state.threads, [id]: thread }, missingThreads: missing };
+        return {
+          threads: unchanged ? state.threads : { ...state.threads, [id]: thread },
+          missingThreads: missing,
+        };
       });
     } catch (error) {
       if (current()) {
@@ -333,10 +427,16 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   async refreshApprovals() {
     const current = claim("approvals");
-    set((state) => ({ approvals: { ...state.approvals, loading: true } }));
+    if (!get().approvals.data) set((state) => ({ approvals: { ...state.approvals, loading: true } }));
     try {
       const data = await api.pendingApprovals();
-      if (current()) set({ approvals: { data, error: null, loading: false } });
+      if (!current()) return;
+      const previous = get().approvals;
+      if (previous.data && sameData(previous.data, data)) {
+        if (previous.error || previous.loading) set({ approvals: { data: previous.data, error: null, loading: false } });
+        return;
+      }
+      set({ approvals: { data, error: null, loading: false } });
     } catch (error) {
       if (current()) {
         set((state) => ({

@@ -4,6 +4,8 @@ import type { ComposerChip } from "../composer/composerContext";
 interface ComposerChipState {
   /** Chips waiting above each thread's composer. */
   chips: Record<string, ComposerChip[]>;
+  /** Review comments whose message was sent: the diff keeps showing them, as sent to the agent. Kept for this session only. */
+  sent: Record<string, ComposerChip[]>;
   reviewDrafts: Record<string, { chipId: string; text: string } | undefined>;
   setReviewDraft(threadId: string, draft: { chipId: string; text: string } | undefined): void;
   add(threadId: string, chip: ComposerChip): void;
@@ -16,6 +18,7 @@ interface ComposerChipState {
 
 export const useComposerChips = create<ComposerChipState>((set) => ({
   chips: {},
+  sent: {},
   reviewDrafts: {},
   setReviewDraft(threadId, draft) {
     set((state) => ({ reviewDrafts: { ...state.reviewDrafts, [threadId]: draft } }));
@@ -44,11 +47,16 @@ export const useComposerChips = create<ComposerChipState>((set) => ({
   },
   consume(threadId, captured) {
     // An edit keeps its ID but replaces its value. A late success must retain it.
-    set((state) => ({ chips: { ...state.chips,
-      [threadId]: (state.chips[threadId] ?? []).filter((current) =>
+    set((state) => {
+      const remaining = (state.chips[threadId] ?? []).filter((current) =>
         (current.kind === "review" && state.reviewDrafts[threadId]?.chipId === current.id
           && state.reviewDrafts[threadId]?.text.trim() !== current.comment.trim())
-        || !captured.some((sent) => sent.id === current.id && JSON.stringify(sent) === JSON.stringify(current))),
-    } }));
+        || !captured.some((sent) => sent.id === current.id && JSON.stringify(sent) === JSON.stringify(current)));
+      const gone = captured.filter((sent) => sent.kind === "review" && !remaining.some((current) => current.id === sent.id));
+      return {
+        chips: { ...state.chips, [threadId]: remaining },
+        sent: gone.length ? { ...state.sent, [threadId]: [...(state.sent[threadId] ?? []), ...gone] } : state.sent,
+      };
+    });
   },
 }));

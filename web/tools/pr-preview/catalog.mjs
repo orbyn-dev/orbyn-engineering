@@ -5,26 +5,77 @@
 //   scenario  the mock API's scenario (web/mock/api.ts); "default" when omitted
 //   pre       network behaviour set up before the page opens: { route, delay } holds a request for `delay` ms, { route, status } answers it
 //   steps     what to do once it has loaded, in order:
-//               { do: "click", role, name, prefix?, exact? }   a button, tab, checkbox ... by its accessible name
-//               { do: "fill", label, value }                  a field by its label
+//               { do: "click", role, name, prefix?, exact?, within? }   a button, tab, checkbox ... by its accessible name (`within`: only inside the region of that name)
+//               { do: "fill", label, value, exact? }          a field by its label (exact when another label contains it)
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
 //               { do: "offline" }                             the device loses its network
+//               { do: "wait", ms }                            let time pass here, for a state that arrives after a step
+//   width     the window width in px when the screen is drawn narrow (default 1400)
 //   wait      ms to wait after load, for states that show only after a delay (default 1500)
 // Only data and a few verbs: nothing here imports the app. Add a screen by adding an entry, and its id to docs/match-kit.md.
 
+/** Settings › Crew › Autopilot by area, for the mock's first repository. */
+const AREAS = "#/settings/crew/areas?repo=p-app";
 const pull = (n) => `#/pulls/p-app/${n}`;
 const click = (role, name, more = {}) => ({ do: "click", role, name, ...more });
+const note = [{ do: "fill", label: "What needs to change?", value: "Should this reject //evil.com? The check also accepts //evil.com/x." }];
+const send = click("button", "Request changes", { within: "Request changes" });
 const filterNeedsMyReview = [
   click("button", "Filters", { prefix: true }),
   click("checkbox", "Needs my review"),
   { do: "press", key: "Escape" },
 ];
 
+/** Opens Cargo.toml from the left bar's Files view, which puts it in the editor. */
+const openFile = [click("tab", "Files"), click("treeitem", "Cargo.toml", { prefix: true })];
+
+/** Opens the side panel, then each named tab from the + launcher, the way a person does. */
+const openTabs = (names) => [
+  click("button", "Show side panel"),
+  ...names.flatMap((name) => [click("button", "Open a tab"), click("menuitem", name, { prefix: true })]),
+];
+
+/** Create account, driven as far as `step` ("details" is the email step, "password", "code"). */
+const signUpTo = (step, email = "sam@example.com") => {
+  const steps = [click("button", "Create account"), { do: "fill", label: "Invite code", value: "K7QM2XWH9QXA3C2D" }, click("button", "Continue")];
+  if (step === "details") return steps;
+  steps.push({ do: "fill", label: "Email", value: email }, click("button", "Continue"));
+  if (step === "password") return steps;
+  return [...steps, ...passwords("a throwaway phrase", "a throwaway phrase"), click("button", "Continue")];
+};
+const passwords = (password, confirm) => [
+  { do: "fill", label: "Password", value: password, exact: true },
+  { do: "fill", label: "Confirm password", value: confirm },
+];
+
+/** Six digits into the six boxes, one each, then Continue. */
+const typeDigits = (digits) => [...[...digits].map((digit, index) => ({ do: "fill", label: `Digit ${index + 1} of 6`, value: digit })), click("button", "Continue")];
+/** A new device whose trusted device allows it, with `digits` typed once. */
+const approveAndType = (digits) => [
+  click("button", "Sign in"),
+  { do: "fill", label: "Email", value: "approve@example.com" },
+  { do: "fill", label: "Password", value: "correct horse battery" },
+  click("button", "Sign in"),
+  { do: "wait", ms: 2600 },
+  ...typeDigits(digits),
+];
+
 export const FRAMES = {
   // The shell.
   "shell-home": { route: "#/" },
   "shell-new-thread": { route: "#/new" },
+  "shell-ledger": {
+    route: "#/threads/t-done",
+    steps: [
+      click("link", "Settings", { exact: true }),
+      click("link", "Appearance", { exact: true }),
+      click("radio", "Ledger", { prefix: true }),
+      click("link", "Chat", { exact: true }),
+      click("radio", "Full", { exact: true }),
+      { do: "press", key: "Escape" },
+    ],
+  },
 
   // Pull requests: the list and its states (mock scenarios "pulls*").
   "pr-row-variants": { route: "#/pulls", scenario: "pulls" },
@@ -34,6 +85,7 @@ export const FRAMES = {
   "pr-list-loading": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls?*", delay: 20000 }] },
   "pr-list-error": { route: "#/pulls", scenario: "pulls-unreachable" },
   "pr-list-signedout": { route: "#/pulls", scenario: "pulls-signed-out" },
+  "pr-list-draft": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Drafts", { prefix: true })] },
   "pr-list-offline": { route: "#/pulls", scenario: "pulls", steps: [{ do: "offline" }] },
   "pr-list-filtered": {
     route: "#/pulls",
@@ -77,6 +129,24 @@ export const FRAMES = {
     steps: [click("tab", "Files changed", { prefix: true }), { do: "fill", label: "Filter files", value: "migrations" }],
   },
   "pr-review-open": { route: pull(203), scenario: "pulls", steps: [click("button", "Request changes")] },
+  "pr-review-filled": { route: pull(203), scenario: "pulls", steps: [click("button", "Request changes"), ...note] },
+  // The answer is held back, so the card shows Requesting…
+  "pr-review-busy": {
+    route: pull(203),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/203/review", delay: 20000 }],
+    steps: [click("button", "Request changes"), ...note, send],
+    wait: 900,
+  },
+  "pr-review-done": { route: pull(203), scenario: "pulls", steps: [click("button", "Request changes"), ...note, send, { do: "wait", ms: 600 }] },
+  // The forge refuses it (a 409, so nothing was sent).
+  "pr-review-error": {
+    route: pull(203),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/203/review", status: 409 }],
+    steps: [click("button", "Request changes"), ...note, send],
+  },
+  "pr-review-own": { route: pull(210), scenario: "pulls", steps: [click("button", "Request changes")] },
 
   // Threads: run states, the tool call states, the details card.
   "thread-approval": { route: "#/threads/t-approval" },
@@ -87,6 +157,65 @@ export const FRAMES = {
   "thread-tools": { route: "#/threads/t-tools" },
   "thread-tools-live": { route: "#/threads/t-tools-live" },
   "thread-details": { route: "#/threads/t-done", steps: [click("button", "Details")] },
+  "details-popover": { route: "#/threads/t-done", steps: [click("button", "Details")] },
+
+  // The side panel: starts with no tab, the + launcher, the tab menu (Engineer Designs v98). panel-tabs-drag is a pointer drag and has no verb here.
+  "panel-empty": { route: "#/threads/t-done", steps: [click("button", "Show side panel")] },
+  "panel-launcher-menu": { route: "#/threads/t-done", steps: [...openTabs(["Changes"]), click("button", "Open a tab")] },
+  "panel-tab-menu": { route: "#/threads/t-done", steps: [...openTabs(["Changes", "Browser", "Tools"]), click("tab", "Changes"), click("button", "Tab menu")] },
+  "panel-tabs-single": { route: "#/threads/t-done", steps: openTabs(["Changes"]) },
+  "panel-browser": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser"]) },
+  "panel-activity": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity"]) },
+  "panel-side": { route: "#/threads/t-done", steps: openTabs(["Changes", "Browser", "Activity", "Side chat"]) },
+
+  // Changes (mock threads: t-approval has three changed files, t-done none). The conflict, binary, rename, huge, staged, Markdown, more-files,
+  // turn-picker, commit-picker and comment-pending frames need data the mock does not carry; they are drawn from fixtures in the unit tests.
+  "changes-default": { route: "#/threads/t-approval", steps: openTabs(["Changes"]) },
+  "changes-empty": { route: "#/threads/t-done", steps: openTabs(["Changes"]) },
+  "changes-error": { route: "#/threads/t-approval", pre: [{ route: "**/api/threads/*/diff*", status: 500 }], steps: openTabs(["Changes"]) },
+  "changes-loading": { route: "#/threads/t-approval", pre: [{ route: "**/api/threads/*/diff*", delay: 20000 }], steps: openTabs(["Changes"]), wait: 900 },
+  "changes-view-menu": { route: "#/threads/t-approval", steps: [...openTabs(["Changes"]), click("button", "View options")] },
+  "changes-compare-menu": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("button", "Scope:", { prefix: true }), click("menuitem", "Branch"), click("button", "Compare", { prefix: true })],
+  },
+  "changes-find": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("group", "Patch"), { do: "press", key: "Control+f" }, { do: "fill", label: "Find in diff", value: "expire" }],
+  },
+  "changes-file-menu": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("button", "Actions for", { prefix: true })],
+  },
+  "comment-select": {
+    route: "#/threads/t-approval",
+    steps: [...openTabs(["Changes"]), click("button", "Comment on line 87")],
+  },
+
+  // The file editor (Engineer Designs v106). A file of the mock thread's own worktree opens in it; binary, read-only (another worktree), large, comment,
+  // save-error, conflict and narrow need data or a failing write the mock does not carry, so they are drawn from fixtures in the unit tests.
+  "editor-default": { route: "#/threads/t-done", steps: openFile },
+  "editor-unsaved": { route: "#/threads/t-done", steps: [...openFile, click("textbox", "Edit Cargo.toml"), { do: "press", key: "End" }, { do: "press", key: "x" }] },
+  "editor-find": { route: "#/threads/t-done", steps: [...openFile, click("button", "Find ⌘F"), { do: "fill", label: "Find in file", value: "//" }] },
+  "editor-goto": { route: "#/threads/t-done", steps: [...openFile, click("button", "Go to line ⌘G")] },
+  "editor-tab-menu": { route: "#/threads/t-done", steps: [...openFile, click("button", "Tab menu")] },
+  "editor-close-confirm": {
+    route: "#/threads/t-done",
+    steps: [...openFile, click("textbox", "Edit Cargo.toml"), { do: "press", key: "x" }, click("button", "Tab menu"), click("menuitem", "Close tab")],
+  },
+  "editor-loading": { route: "#/threads/t-done", pre: [{ route: "**/api/threads/*/files/content*", delay: 20000 }], steps: openFile, wait: 900 },
+
+  // Usage, the Limits tab (mock scenarios "limits*"): only Codex reports a window; Claude Code and the others read Not reported.
+  "usage-claude-windows": { route: "#/usage", scenario: "limits-claude", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-unavailable": { route: "#/usage", scenario: "limits", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-loading": { route: "#/usage", scenario: "limits", pre: [{ route: "**/api/limits*", delay: 20000 }], steps: [click("tab", "Limits")], wait: 900 },
+  "usage-claude-windows-narrow": { route: "#/usage", scenario: "limits", width: 640, steps: [click("tab", "Limits")] },
+  "usage-claude-windows-near": { route: "#/usage", scenario: "limits-near", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-reached": { route: "#/usage", scenario: "limits-reached", steps: [click("tab", "Limits")] },
+  "usage-claude-windows-signedout": { route: "#/usage", scenario: "limits-signedout", steps: [click("tab", "Limits")] },
+  "usage-providers": { route: "#/usage", scenario: "limits-providers", steps: [click("tab", "Limits")] },
+  "usage-providers-error": { route: "#/usage", scenario: "limits-error", steps: [click("tab", "Limits")] },
+
 
   // Settings: one page for each section.
   "s-general": { route: "#/settings/general" },
@@ -104,4 +233,403 @@ export const FRAMES = {
   "s-labs": { route: "#/settings/labs" },
   "s-about": { route: "#/settings/about" },
   "s-archive": { route: "#/settings/archive" },
+
+  // Account and sync (mock scenario "account": the sign-in gate on, with the throwaway accounts in web/mock/account.ts).
+  "settings-account-gate-off": { route: "#/settings/general" },
+  "acct-settings-signed-out": { route: "#/settings/account", scenario: "account" },
+  "acct-signin": { route: "#/settings/account", scenario: "account", steps: [click("button", "Sign in")] },
+  "acct-signin-wrong-password": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "nope" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-signin-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "down@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-signup-invite": { route: "#/settings/account", scenario: "account", steps: [click("button", "Create account")] },
+  "acct-signup-details": { route: "#/settings/account", scenario: "account", steps: [...signUpTo("details")] },
+  "acct-signup-password": { route: "#/settings/account", scenario: "account", steps: [...signUpTo("password")] },
+  "acct-signup-password-weak": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("password"), ...passwords("short pw", "short pw"), click("button", "Continue")],
+  },
+  "acct-signup-password-mismatch": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("password"), ...passwords("a throwaway phrase", "another phrase here"), click("button", "Continue")],
+  },
+  "acct-signup-password-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      ...signUpTo("password"),
+      ...passwords("a throwaway phrase", "a throwaway phrase"),
+      { do: "route", route: "**/api/account/sign-up/start", status: 503, code: "account_offline" },
+      click("button", "Continue"),
+    ],
+  },
+  "acct-signup-check-failed": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("password", "hard@example.com"), ...passwords("a throwaway phrase", "a throwaway phrase"), click("button", "Continue")],
+  },
+  "acct-signup-email-code": { route: "#/settings/account", scenario: "account", steps: [...signUpTo("code")] },
+  "acct-signup-code-wrong": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("code"), { do: "fill", label: "8-character code", value: "K7QMR4TX" }, click("button", "Verify")],
+  },
+  "acct-signup-code-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      ...signUpTo("code"),
+      { do: "fill", label: "8-character code", value: "K7QMR4TW" },
+      { do: "route", route: "**/api/account/sign-up/code", status: 503, code: "account_offline" },
+      click("button", "Verify"),
+    ],
+  },
+  "acct-signup-done": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [...signUpTo("code"), { do: "fill", label: "8-character code", value: "ABCDEFGH" }, click("button", "Verify")],
+  },
+  "acct-2fa-code": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "two@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-settings-signed-in": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "sync-popover": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Account and sync", { prefix: true }),
+    ],
+  },
+  "devices-list": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+    ],
+  },
+  "devices-remove-confirm": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+      click("button", "Device menu", { first: true }),
+      click("menuitem", "Remove"),
+    ],
+  },
+  "signout-confirm": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Sign out", { exact: true }),
+    ],
+  },
+  "signout-everywhere": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Sign out everywhere…"),
+    ],
+  },
+  "acct-device-waiting": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "late@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "devices-waiting-approval": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+    ],
+  },
+  "acct-device-approve-prompt": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+      click("button", "Review"),
+    ],
+  },
+  "acct-device-approve-digits": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Manage devices"),
+      click("button", "Review"),
+      click("button", "Allow"),
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Confirm"),
+    ],
+  },
+  "acct-reauth-network": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "dev@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Sign out everywhere…"),
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      { do: "route", route: "**/api/account/confirm", status: 503, code: "account_offline" },
+      click("button", "Confirm"),
+    ],
+  },
+  "acct-device-approved": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "approve@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-denied": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 4200,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "deny@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-timeout": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 3200,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "expired@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-enter-digits": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "approve@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-device-codes-mismatch": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [...approveAndType("529318"), { do: "wait", ms: 600 }],
+  },
+  "acct-device-digits-locked": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 2600,
+    steps: [...approveAndType("529318"), ...typeDigits("529318"), ...typeDigits("529318"), { do: "wait", ms: 600 }],
+  },
+  "acct-device-check-failed": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "late@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      { do: "route", route: "**/api/account/sign-in/approval", status: 502 },
+      click("button", "Sign in"),
+      { do: "wait", ms: 7500 },
+    ],
+  },
+  "acct-settings-not-connected": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Not now"),
+    ],
+  },
+  "sync-popover-not-connected": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Not now"),
+      click("button", "Account and sync", { prefix: true }),
+    ],
+  },
+  "acct-connect-workspace": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+  "acct-connect-progress": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Connect", { exact: true }),
+    ],
+  },
+  "acct-connect-done": {
+    route: "#/settings/account",
+    scenario: "account",
+    wait: 5500,
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "connect@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+      click("button", "Connect", { exact: true }),
+    ],
+  },
+  "signout-other-device-removed": {
+    route: "#/settings/account",
+    scenario: "account",
+    steps: [
+      click("button", "Sign in"),
+      { do: "fill", label: "Email", value: "removed@example.com" },
+      { do: "fill", label: "Password", value: "correct horse battery" },
+      click("button", "Sign in"),
+    ],
+  },
+
+  // Live stage-list adaptations of the approved consent/badge frames.
+  "flow-offline": { route: "#/crew/flow", scenario: "crew-review-consent", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "security: Needs you")] },
+  "lane-same-engine": { route: "#/crew/flow", scenario: "crew-review-same", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
+  "lane-same-engine-full": { route: "#/crew/flow", scenario: "crew-review-full", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
+
+  // Approved two-control additions @ git:6e509d39c0486c2c51a119416d24c5443937acd5.
+  "lane-remove-reason": { route: "#/crew/flow", scenario: "crew-review-remove", steps: [click("button", "Review dependency licences", { prefix: true }), click("button", "Remove…"), { do: "fill", label: "Reason", value: "This change only updates documentation; the dependency licences are unchanged." }] },
+  "settings-acp-tier-editor": { route: "#/settings/crew", scenario: "crew", steps: [click("button", "Edit tiers"), click("region", "Engine tiers")] },
+
+  // Crew, Autopilot by area (Crew Designs v39). Settings › Crew only draws while the mock has Crew Preview on.
+  "autonomy-table": { route: AREAS, scenario: "crew-areas" },
+  "autonomy-tripped": { route: AREAS, scenario: "crew-areas-tripped" },
+  "autonomy-demoted-ceiling-lowered": { route: AREAS, scenario: "crew-areas-ceiling-off" },
+  "autonomy-recovering": { route: AREAS, scenario: "crew-areas-recovering" },
+  "autonomy-criteria-met": { route: AREAS, scenario: "crew-areas-criteria-met" },
+  "autonomy-restored": { route: AREAS, scenario: "crew-areas-restored" },
+  "autonomy-lowdata": { route: AREAS, scenario: "crew-areas-lowdata" },
+  "autonomy-empty": { route: AREAS, scenario: "crew-areas-empty" },
+  "autonomy-repos": { route: AREAS, scenario: "crew" },
+  "autonomy-entry": { route: "#/settings/crew", scenario: "crew-areas" },
+  "autonomy-override": { route: AREAS, scenario: "crew-areas-tripped", steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" })] },
+  "autonomy-override-warning": {
+    route: AREAS,
+    scenario: "crew-areas-tripped",
+    steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" }), click("menuitem", "Keep the ceiling"), click("checkbox", "I understand", { prefix: true })],
+  },
+  "autonomy-override-off-warning": {
+    route: AREAS,
+    scenario: "crew-areas-tripped",
+    steps: [click("button", "Override…", { within: "Why web/auth moved from Full to On" }), click("menuitem", "Off"), click("checkbox", "I understand", { prefix: true })],
+  },
+  "autonomy-thresholds": { route: "#/settings/crew/areas/thresholds?repo=p-app", scenario: "crew-areas" },
+  "autonomy-narrow": { route: AREAS, scenario: "crew-areas-tripped", width: 640 },
+  // Crew, the guard, the path classes and routing (Crew Designs frames `guard-*`, `classes-*`, `route-log*`). Crew shows only while the mock has Preview on.
+  // Not here: `guard-in-flow`, `guard-needsyou` and `route-class-*` are drawn inside Flow, Needs you and the Route card, which other work owns; `guard-approve-myself`
+  // is the desktop shell's own dialog over `guard-denied-no-second`; `guard-narrow-panel` is the side panel's card list, and `route-class-*-narrow` the Route card at 320 px.
+  "approval-one-vendor": { route: "#/crew/approvals", scenario: "crew-one-vendor", steps: [click("button", "Install zod", { prefix: true })] },
+  "guard-held": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM orders', { prefix: true })] },
+  "guard-denied-no-second": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "TRUNCATE audit_log', { prefix: true })] },
+  "guard-denied": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "ALTER TABLE users', { prefix: true })] },
+  "guard-approved": { route: "#/crew/approvals", scenario: "crew-guard-full", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM sessions', { prefix: true })] },
+  "guard-approved-person": { route: "#/crew/approvals", scenario: "crew-guard", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM audit_log', { prefix: true })] },
+  "guard-approved-person-unknown": { route: "#/crew/approvals", scenario: "crew-guard-unknown", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM audit_log', { prefix: true })] },
+  "guard-settings": { route: "#/settings/crew", scenario: "crew-guard" },
+  "classes-list": { route: "#/settings/crew", scenario: "crew-classes" },
+  "classes-error": { route: "#/settings/crew", scenario: "crew-classes-invalid" },
+  "classes-test": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "Test a path"), { do: "fill", label: "Paths to test, one per line", value: "auth/redirect.ts" }] },
+  "classes-edit": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "billing", { exact: true })] },
+  "classes-narrow": { route: "#/settings/crew", scenario: "crew-classes", width: 640 },
+  "route-log-none": { route: "#/crew/approvals", scenario: "crew-route-none", steps: [click("button", "Routing", { prefix: true })] },
+  "route-log": { route: "#/crew/approvals", scenario: "crew-route-blocked", steps: [click("button", "Routing", { prefix: true })] },
 };

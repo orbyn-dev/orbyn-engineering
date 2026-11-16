@@ -295,6 +295,71 @@ pub struct EngineStatus {
 }
 }
 
+wire_enum! {
+/// What a provider row says beside its ready, update or sign-in state: what Orbyn has
+/// not seen or cannot control. Each is a fact about the provider, never a promise.
+pub enum ProviderLabel {
+    /// Orbyn can start it, but launch, models or approvals were never seen on a real install.
+    NotVerified,
+    /// It can act without asking, so Orbyn cannot ask before it acts.
+    Unmanaged,
+    /// Runs, but the installed version leaves out some of what Orbyn offers.
+    LimitedSupport,
+    /// The program or app exists but Orbyn cannot start it as an agent.
+    CantStart,
+    /// Not built. Shown so the gap is visible.
+    Planned,
+    /// No program was found, or the program found is a different one with the same name.
+    NotFound,
+}
+}
+
+wire_enum! {
+/// The list's groups, in the order the Providers page shows them.
+pub enum ProviderGroup {
+    /// Seen working, or at least signed in or out: what threads can use.
+    InUse,
+    /// Found on this computer and startable, but not seen working on a real install.
+    Found,
+    /// The other engines that start over ACP and were only tried with a test agent.
+    More,
+    /// Found, and not startable as an agent.
+    CantStart,
+    /// Registered, but its program was not found. It stays so it can be edited or removed.
+    NotFound,
+    /// Not built.
+    Planned,
+}
+}
+
+wire! {
+/// One row of the grouped provider list.
+pub struct ProviderEntry {
+    /// The engine's id. For a planned or app-only row, the id it will have.
+    pub id: String,
+    /// The registry's display name.
+    pub name: String,
+    pub group: ProviderGroup,
+    /// The labels that apply, in the order they are drawn.
+    pub labels: Vec<ProviderLabel>,
+    /// The line under the name, when the labels need words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub note: Option<String>,
+    /// True when an engine of this id is registered: it has a switch and, for an instance, Edit.
+    pub registered: bool,
+    /// True when a detail page exists for it.
+    pub openable: bool,
+}
+}
+
+wire! {
+/// The provider list as the router reads it, grouped for the Providers page.
+pub struct ProviderList {
+    pub providers: Vec<ProviderEntry>,
+}
+}
+
 wire! {
 /// One reachability check: whether anything answered at a host, not whether it is signed in.
 pub struct DependencyCheck {

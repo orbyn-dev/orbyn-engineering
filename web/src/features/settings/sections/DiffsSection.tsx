@@ -3,7 +3,7 @@ import { useUi } from "../../../product/state/ui";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading } from "./parts";
+import { heading, Toggle } from "./parts";
 
 /** The same stored layout the diff panel's own switch uses. */
 function DiffViewRow() {
@@ -24,6 +24,13 @@ function DiffViewRow() {
   );
 }
 
+/** The same stored switch the Changes panel's menu has: whitespace-only changes leave the diff. */
+function IgnoreWhitespaceRow() {
+  const on = useUi((state) => state.diffIgnoreWhitespace);
+  const setPrefs = useUi((state) => state.setPrefs);
+  return <Toggle title={settingsLabel("diffs-ignore-whitespace-changes")} on={on} set={(next) => setPrefs({ diffIgnoreWhitespace: next })} />;
+}
+
 export function DiffsSection() {
   const inApp = useUi((state) => state.pullLinksInApp);
   const setPrefs = useUi((state) => state.setPrefs);
@@ -32,6 +39,7 @@ export function DiffsSection() {
       {heading("Diffs & pull requests")}
       <SettingGroup>
         <DiffViewRow />
+        <IgnoreWhitespaceRow />
       </SettingGroup>
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "pull_request_merge_method",

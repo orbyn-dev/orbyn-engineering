@@ -476,8 +476,16 @@ async fn an_acp_agent_without_http_mcp_reaches_tools_through_the_stdio_bridge() 
     let events = service.all_events(&thread).await;
     assert_eq!(
         text_of(&events),
-        "bridge true listed tools; call ok; token on command line no"
+        "bridge true listed tools; call ok; token in argv or env no; endpoint file private; live read ok"
     );
+    // The endpoint file lives in the run's folder, which goes with the run.
+    let runs = dir.path().join("data").join("runs");
+    let left: Vec<_> = std::fs::read_dir(&runs)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect();
+    assert!(left.is_empty(), "run folders left behind: {left:?}");
 }
 
 /// The fake AG-UI agent, stopped with its test.
@@ -667,6 +675,7 @@ async fn the_next_claude_turn_adopts_a_process_started_for_it_only_when_inputs_m
         ..Options::default()
     };
     let (service, thread) = setup(&dir, options, "claude").await;
+    let started = std::time::SystemTime::now();
     let response = service
         .client
         .put(format!("{}/api/preferences", service.url))
@@ -680,6 +689,34 @@ async fn the_next_claude_turn_adopts_a_process_started_for_it_only_when_inputs_m
     assert_eq!(service.finished(&thread).await, "completed");
     // The completed turn starts the next one's process, which waits unprompted.
     claude_launches_reach(&file, 2).await;
+    // The waiting process's token file is under the runs folder, where the confined
+    // worker profile denies other runs, and in no shared temporary folder.
+    let waiting: Vec<_> = std::fs::read_dir(dir.path().join("data").join("runs"))
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("warm-"))
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("mcp.json")).ok())
+        .collect();
+    assert!(
+        waiting.iter().any(|text| text.contains("/mcp/")),
+        "no warm token file under runs: {waiting:?}"
+    );
+    for entry in std::fs::read_dir(std::env::temp_dir()).unwrap().flatten() {
+        // Only folders made by this test: older ones are left by earlier builds.
+        let fresh = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .is_ok_and(|time| time >= started);
+        if fresh
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("orbyn-probe-")
+        {
+            let text = std::fs::read_to_string(entry.path().join("mcp.json")).unwrap_or_default();
+            assert!(!text.contains("/mcp/"), "token in {:?}", entry.path());
+        }
+    }
     service.admit(&thread, "say hi again").await;
     assert_eq!(service.finished(&thread).await, "completed");
     let events = events_through(&service, &thread, 2).await;

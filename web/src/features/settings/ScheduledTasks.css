@@ -8,7 +8,7 @@
   padding: 6px 28px 24px;
 }
 .task-table {
-  --task-cols: minmax(0, 1fr) minmax(0, 190px) minmax(0, 170px) 40px 150px;
+  --task-cols: minmax(0, 1fr) minmax(0, 150px) minmax(0, 140px) 40px 56px;
   display: flex;
   flex-direction: column;
 }
@@ -80,7 +80,7 @@
     padding-inline: 16px;
   }
   .task-table {
-    --task-cols: minmax(0, 1fr) 40px 150px;
+    --task-cols: minmax(0, 1fr) 40px 56px;
   }
   .task-row > :nth-child(2),
   .task-row > :nth-child(3) {

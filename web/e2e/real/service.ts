@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
+import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
+import { editForgeState, readForgeState } from "./forge-state";
 
 const WEB = resolve(import.meta.dirname, "../..");
 const BIN = process.env.ORBYN_BIN ?? resolve(WEB, "../target/debug/orbynd");
-const SCRIPTED = resolve(WEB, "e2e/real/scripted-engine.mjs");
-const USAGE_ENGINE = resolve(WEB, "e2e/real/usage-engine.mjs");
 
 /** The shell from `npm run test:e2e:install`, so the service's previews never open an installed browser. */
 function headlessShell(): string {
@@ -35,7 +35,8 @@ function previewBrowser(dir: string): string {
   const wrapper = join(dir, "preview-browser");
   // Linux runners restrict user namespaces, which the shell's sandbox needs; Playwright drops it the same way.
   const flags = process.platform === "linux" ? "--in-process-gpu --no-sandbox" : "--in-process-gpu";
-  writeFileSync(wrapper, `#!/bin/sh\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
+  // Kept only in a startup-failure diagnostic, so CI can verify the wrapper's actual flags.
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
   return wrapper;
 }
 
@@ -63,7 +64,7 @@ const pullRow = ({ number, ...rest }: PullFixture) => ({
 
 const STAND_IN_GH = resolve(WEB, "e2e/real/stand-in-gh.mjs");
 
-/** Puts the stand-in first on PATH as `gh`, with its pull requests in a file. */
+/** A GitHub-only fixture: `gh` keeps state, and discovery of other forges fails locally. */
 function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: string; state: string; log: string } {
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -76,6 +77,15 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
   } else {
     symlinkSync(STAND_IN_GH, join(bin, "gh"));
+  }
+  // /api/forges probes every forge. Never let this GitHub fixture reach an installed non-GitHub CLI.
+  for (const program of ["glab", "az", "tea"]) {
+    if (process.platform === "win32") {
+      writeFileSync(join(bin, `${program}.mjs`), "process.exit(1);\n");
+      writeFileSync(join(bin, `${program}.cmd`), `@echo off\r\nnode "%~dp0${program}.mjs" %*\r\n`);
+    } else {
+      writeFileSync(join(bin, program), "#!/usr/bin/env node\nprocess.exit(1);\n", { mode: 0o755 });
+    }
   }
   return { bin, state, log };
 }
@@ -138,12 +148,12 @@ export interface ServiceOptions {
   /** Fake engines, with this usage report added to each Claude turn's result. */
   claudeUsage?: Record<string, unknown>;
   scenes?: boolean;
-  /** Runs `gh` through the stand-in, with these pull requests on the forge. */
+  /** Selects the GitHub-only stand-in, with these pull requests on the forge. */
   forge?: boolean | PullFixture[];
   registry?: string;
   /** A folder holding the protocol double's saved ACP sessions (`sessions.json`). */
   nativeSessions?: string;
-  /** Folders put first on the service's PATH, for stand-in tools such as `jj`. */
+  /** Extra stand-in folders ahead of host PATH; the selected GitHub fixture takes precedence. */
   path?: string[];
 }
 
@@ -175,7 +185,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   const dir = mkdtempSync(join(tmpdir(), "orbyn-e2e-"));
   const fake = resolve(BIN, "../orbyn-fake-engine");
   const engines = options.scenes
-    ? { ORBYN_CLAUDE_BIN: join(dir, "no-claude"), ORBYN_CODEX_BIN: SCRIPTED, ORBYN_E2E_FAKE: fake }
+    ? { ORBYN_CLAUDE_BIN: join(dir, "no-claude"), ORBYN_CODEX_BIN: SCRIPTED_ENGINE, ORBYN_E2E_FAKE: fake }
     : options.claudeUsage
       ? { ORBYN_CLAUDE_BIN: USAGE_ENGINE, ORBYN_CODEX_BIN: fake, ORBYN_E2E_FAKE: fake, ORBYN_E2E_USAGE: JSON.stringify(options.claudeUsage) }
       : options.fakeEngines
@@ -202,7 +212,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${forge ? `${forge.bin}${delimiter}` : ""}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const ready = await new Promise<{ url: string; token: string }>((done, fail) => {
@@ -240,13 +250,9 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     repo,
     remote: join(dir, "github.com/o/r.git"),
     ghPull: (number) =>
-      (JSON.parse(readFileSync(forge?.state ?? "", "utf8")) as { pulls: PullFixture[] }).pulls.find((pull) => pull.number === number) ?? {},
+      readForgeState(forge?.state ?? "").pulls.find((pull) => pull.number === number) ?? {},
     ghEdit: (number, patch) => {
-      const path = forge?.state ?? "";
-      const state = JSON.parse(readFileSync(path, "utf8")) as { pulls: PullFixture[] } & Record<string, unknown>;
-      const target = number === 0 ? state : state.pulls.find((pull) => pull.number === number);
-      if (target) Object.assign(target, patch);
-      writeFileSync(path, JSON.stringify(state));
+      editForgeState(forge?.state ?? "", number, patch);
     },
     ghCalls: () =>
       forge
@@ -335,22 +341,36 @@ export async function projectSettingsUrl(service: Service, projectId: string, se
 }
 
 /**
- * Opens the thread's Details card and returns it. The card is a popover under the Details button while the side
- * panel is closed and sits at the top of the panel while it is open; either way the button shows whether it is on.
+ * Opens the thread's Details popover and returns it. It is a popover under the thread header's Details button, whether
+ * or not the side panel is open; the button shows whether it is on.
  */
 export async function openDetails(page: Page) {
   const toggle = page.getByRole("button", { name: "Details", exact: true });
   // A freshly started dev server compiles the page on its first load.
   await expect(toggle).toBeVisible({ timeout: 30_000 });
   if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-  const card = page.getByRole("complementary", { name: "Thread details" });
+  const card = page.getByRole("dialog", { name: "Thread details" });
   await expect(card).toBeVisible();
   return card;
 }
 
 /**
- * Opens the thread's side panel if it is closed and, when a tab is named ("Diff", "Files", "Browser", "Activity",
- * "Pull requests", "Side chat"), selects it. Returns the panel. The panel is closed on a narrower window until the
+ * Switches the left bar to Files, the explorer, and returns its tree. Files of the checkout open from it as tabs in the side
+ * panel; there is no Files tab in the panel itself.
+ */
+export async function openExplorer(page: Page) {
+  const switcher = page.getByRole("tablist", { name: "Left bar view" });
+  await expect(switcher).toBeVisible({ timeout: 30_000 });
+  const files = switcher.getByRole("tab", { name: "Files", exact: true });
+  if ((await files.getAttribute("aria-selected")) !== "true") await files.click();
+  const tree = page.getByRole("tree", { name: "Projects, worktrees and files" });
+  await expect(tree).toBeVisible();
+  return tree;
+}
+
+/**
+ * Opens the thread's side panel if it is closed and, when a tab is named ("Diff" for Changes, "Browser", "Activity",
+ * "Side chat", "Tools"), selects it. Returns the panel. The panel is closed on a narrower window until the
  * title bar's Show side panel button turns it on.
  */
 export async function openPanelTab(page: Page, name?: string) {
@@ -361,7 +381,13 @@ export async function openPanelTab(page: Page, name?: string) {
   const panel = page.getByRole("complementary", { name: "Thread context" });
   await expect(panel).toBeVisible();
   if (name === undefined) return panel;
-  const tab = panel.getByRole("tab", { name, exact: true });
+  // The panel starts with no tab: a tab that is not in the strip opens from the + launcher. The Diff tab is named Changes.
+  const label = name === "Diff" ? "Changes" : name;
+  const tab = panel.getByRole("tab", { name: label, exact: true });
+  if ((await tab.count()) === 0) {
+    await panel.getByRole("button", { name: "Open a tab", exact: true }).click();
+    await page.getByRole("menuitem", { name: label }).click();
+  }
   await expect(tab).toBeVisible();
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");

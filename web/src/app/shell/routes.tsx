@@ -1,13 +1,11 @@
-import { DraftView } from "../../features/onboarding/DraftView";
-import { EmptyProject } from "../../features/onboarding/EmptyProject";
-import { NoProjects } from "../../features/onboarding/NoProjects";
-import { TrustFolder } from "../../features/onboarding/TrustFolder";
-import { WelcomeHost } from "../../features/onboarding/WelcomeWizard";
-import { PullsPage } from "../../features/pulls/list/PullsPage";
-import { ScheduledTasksPage } from "../../features/settings/scheduled-tasks/ScheduledTasks";
-import { SkillsPage } from "../../features/skills/SkillsPage";
-import { ThreadView } from "../../features/thread/ThreadView";
-import { UsagePage } from "../../features/usage/UsagePage";
+import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from "../../features/onboarding";
+import { CrewSurface } from "../../features/crew";
+import { WithFilePanel } from "../../features/panels";
+import { PullsPage } from "../../features/pulls";
+import { ScheduledTasksPage } from "../../features/settings";
+import { SkillsPage } from "../../features/skills";
+import { ThreadView } from "../../features/thread";
+import { UsagePage } from "../../features/usage";
 import { useUi } from "../../product/state/ui";
 import type { Route } from "../../product/state/route";
 
@@ -27,7 +25,11 @@ function Home({ needsProject }: { needsProject: boolean }) {
 export function RouteView({ route, needsProject }: { route: PageRoute; needsProject: boolean }) {
   switch (route.name) {
     case "home":
-      return <Home needsProject={needsProject} />;
+      return (
+        <WithFilePanel>
+          <Home needsProject={needsProject} />
+        </WithFilePanel>
+      );
     case "pulls":
       return <PullsPage />;
     case "usage":
@@ -36,12 +38,22 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
       return <SkillsPage skill={route.skill} />;
     case "tasks":
       return <ScheduledTasksPage />;
+    case "crew":
+      return <CrewSurface key={`${route.tab}:${route.task ?? ""}`} tab={route.tab} task={route.task} />;
     case "thread":
       return <ThreadView key={route.id} id={route.id} />;
     case "new":
-      return <DraftView key={route.projectId ?? "draft"} projectId={route.projectId} />;
+      return (
+        <WithFilePanel>
+          <DraftView key={route.projectId ?? "draft"} projectId={route.projectId} />
+        </WithFilePanel>
+      );
     case "project":
-      return <EmptyProject key={route.projectId} projectId={route.projectId} />;
+      return (
+        <WithFilePanel>
+          <EmptyProject key={route.projectId} projectId={route.projectId} />
+        </WithFilePanel>
+      );
     case "trust":
       return <TrustFolder projectId={route.projectId} threadId={route.threadId} />;
   }

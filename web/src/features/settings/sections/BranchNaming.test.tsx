@@ -31,16 +31,14 @@ it("says what the chosen naming mode does, and shows the instructions only for C
   expect(screen.getByRole("textbox", { name: "Branch name instructions" })).toBeVisible();
 });
 
-it("keeps the prefix without a slash, previews the branch name, and saves it trimmed", async () => {
+it("keeps the prefix without a slash, says the branch name it makes, and saves it trimmed", async () => {
   serve("static", "orbyn");
   const user = userEvent.setup();
   render(<WorktreesSection />);
-  expect(await screen.findByText("A / is added after the prefix.")).toBeVisible();
+  expect(await screen.findByText("Added in front of every branch Orbyn creates. A / is added after the prefix, so orbyn gives orbyn/fix-login.")).toBeVisible();
   const field = screen.getByRole("textbox", { name: "Branch prefix" });
   await waitFor(() => expect(field).toBeEnabled());
-  expect(screen.getByText("orbyn/fix-login")).toBeVisible();
   fireEvent.change(field, { target: { value: "feat/" } });
-  expect(await screen.findByText("feat/fix-login")).toBeVisible();
   field.focus();
   await user.tab();
   await waitFor(() => expect(request).toHaveBeenCalledWith("PUT", "/api/settings/preferences", expect.objectContaining({

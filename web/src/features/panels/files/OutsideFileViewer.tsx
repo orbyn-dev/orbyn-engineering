@@ -37,7 +37,7 @@ export function IsolatedHtml({ text }: { text: string }) {
 }
 
 /** Shows a file outside the checkout that the person opened. It can't be edited or saved. */
-export function OutsideFileViewer({ threadId, path, onBack }: { threadId: string; path: string; onBack(): void }) {
+export function OutsideFileViewer({ threadId, path, onBack }: { threadId: string; path: string; onBack?(): void }) {
   const read = useAsync(`outside-file:${JSON.stringify([threadId, path])}`, (signal) => api.readOutsideFile(threadId, path, signal));
   const file = read.status === "ready" ? read.data : null;
   const kind = previewKind(path);
@@ -56,9 +56,11 @@ export function OutsideFileViewer({ threadId, path, onBack }: { threadId: string
   return (
     <div className="files-viewer outside-file" data-thread-id={threadId} data-read-only="true">
       <div className="panel-bar">
-        <Button small tone="quiet" onClick={onBack}>
-          Files
-        </Button>
+        {onBack ? (
+          <Button small tone="quiet" onClick={onBack}>
+            Files
+          </Button>
+        ) : null}
         <code title={file?.path ?? path}>{file?.path ?? path}</code>
         <span className="outside-badge" title="This file is outside the thread's checkout. Orbyn only shows it.">
           <Lock size={12} aria-hidden />

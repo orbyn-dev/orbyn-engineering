@@ -165,6 +165,7 @@ fn spec() -> RunSpec {
         resume: Some("sess".into()),
         mcp_url: Some("http://127.0.0.1:1/mcp/x".into()),
         run_dir: PathBuf::from("/run"),
+        confine: None,
     }
 }
 
@@ -431,6 +432,30 @@ fn a_closing_tag_in_a_plan_cannot_end_its_card() {
 }
 
 #[test]
+fn the_run_endpoint_reaches_claude_through_a_private_file_not_its_arguments() {
+    let dir = crate::testing::TempDir::new();
+    let mut run = spec();
+    run.mcp_url = Some("http://127.0.0.1:1/mcp/secret-token".into());
+    run.run_dir = dir.path().to_path_buf();
+    let mcp_config = dir.path().join("mcp.json");
+    let config =
+        json!({ "mcpServers": { MCP_SERVER_NAME: { "type": "http", "url": run.mcp_url } } });
+    crate::util::write_private(&mcp_config, config.to_string().as_bytes()).unwrap();
+    let args = run_args(&run, &mcp_config);
+    assert!(
+        args.iter()
+            .all(|arg| !arg.to_string_lossy().contains("secret-token"))
+    );
+    assert!(args.iter().any(|arg| *arg == mcp_config.as_os_str()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&mcp_config).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[test]
 fn command_line_matches_the_contract_and_never_uses_bare() {
     let args: Vec<String> = run_args(&spec(), Path::new("/run/mcp.json"))
         .into_iter()
@@ -578,7 +603,7 @@ fn a_recorded_reply_parses_as_the_live_one_will() {
 #[tokio::test]
 #[ignore = "needs a real Claude Code"]
 async fn live_catalog_is_the_engines_own() {
-    let catalog = ClaudeDriver::new("claude".into())
+    let catalog = ClaudeDriver::new("claude".into(), Duration::from_secs(1800))
         .models()
         .await
         .unwrap()
@@ -1172,5 +1197,81 @@ fn error_result_reports_its_reason() {
     assert_eq!(
         mapper.outcome,
         Some(EngineOutcome::Failed("Not logged in".into()))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
+    let dir = crate::testing::TempDir::new();
+    let data = dir.path().join("data");
+    let config = dir.path().join("claude");
+    std::fs::create_dir_all(data.join("runs/w")).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let rules =
+        crate::host::confine::Confinement::new(&data, &data.join("runs/w"), &[], &[]).unwrap();
+    let mut first = spec();
+    first.resume = None;
+    first.confine = Some(
+        rules
+            .clone()
+            .with_claude_transcripts(&config.join("projects"), None, dir.path())
+            .unwrap(),
+    );
+    let id = first
+        .confine
+        .as_ref()
+        .unwrap()
+        .fresh_session()
+        .unwrap()
+        .to_owned();
+    let args: Vec<String> = run_args(&first, Path::new("/m"))
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let at = args
+        .iter()
+        .position(|a| a == "--session-id")
+        .expect("named");
+    assert_eq!(args[at + 1], id);
+    assert!(!args.iter().any(|a| a == "--resume"));
+    let mut later = spec();
+    later.resume = Some("sess".into());
+    later.confine = Some(
+        rules
+            .with_claude_transcripts(&config.join("projects"), Some("sess"), dir.path())
+            .unwrap(),
+    );
+    let args: Vec<String> = run_args(&later, Path::new("/m"))
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(args.windows(2).any(|w| w == ["--resume", "sess"]));
+    assert!(!args.iter().any(|a| a == "--session-id"));
+    // An unconfined first turn is unchanged: Claude picks the id.
+    let mut free = spec();
+    free.resume = None;
+    let args = run_args(&free, Path::new("/m"));
+    assert!(!args.iter().any(|a| a == "--session-id"));
+}
+
+#[test]
+fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
+    use super::mcp_config;
+    let config = mcp_config(Some("http://127.0.0.1:1/mcp/t"), Duration::from_secs(1800));
+    let server = &config["mcpServers"][MCP_SERVER_NAME];
+    // Approval timeout plus a 60 s margin, in milliseconds.
+    assert_eq!(server["timeout"], json!(1_860_000));
+    assert_eq!(server["url"], json!("http://127.0.0.1:1/mcp/t"));
+    let short = mcp_config(None, Duration::from_secs(5));
+    assert_eq!(
+        short["mcpServers"][MCP_SERVER_NAME]["timeout"],
+        json!(65_000)
+    );
+    // A huge timeout neither overflows nor passes what a JavaScript timer can hold.
+    let huge = mcp_config(None, Duration::MAX);
+    assert_eq!(
+        huge["mcpServers"][MCP_SERVER_NAME]["timeout"],
+        json!(24u64 * 24 * 60 * 60 * 1000)
     );
 }

@@ -1,0 +1,14 @@
+{
+  "type": "claim",
+  "v": 0,
+  "id": "sha256:3d5c163c6997c9a525341bac189d814305aab3063a60b269b9c3967941ebb8b2",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "codex",
+    "member": "worker-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "statement": "The new function is easy to read."
+}

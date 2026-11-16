@@ -6,11 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use orbyn_contracts::ModelSelection;
 use orbyn_contracts::{
-    BatchThread, BatchThreadResult, CreateThread, DelegateTask, ScheduledTask, TaskRun,
-    TaskSchedule, Thread, UpsertTask, WebhookAddress, WebhookDelivery, WebhookEndpoint,
-    WebhookFilter, WebhookSignature,
+    BatchThread, BatchThreadResult, CreateThread, ScheduledTask, TaskRun, TaskSchedule, UpsertTask,
+    WebhookAddress, WebhookDelivery, WebhookEndpoint, WebhookFilter, WebhookSignature,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -18,10 +16,11 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::store::{AuditRecord, NewThread};
+use crate::store::AuditRecord;
 use crate::util::{hex, new_id, now, parse_time, random_bytes, random_token, sha256_hex, unix_now};
 
 const MAX_FILTERS: usize = 16;
+const MAX_BATCH_THREADS: usize = 100;
 /// A clock-fired task waits when its engine has used this much of any limit window.
 const NEAR_LIMIT_PERCENT: f64 = 90.0;
 const MAX_STORED_BODY: usize = 64 * 1024;
@@ -408,7 +407,7 @@ impl Core {
         self.save_task(request, actor)
     }
 
-    fn audit_task(&self, actor: &str, action: &str, id: &str) -> Result<()> {
+    pub(super) fn audit_task(&self, actor: &str, action: &str, id: &str) -> Result<()> {
         self.store.append_audit(&AuditRecord {
             actor: actor.to_owned(),
             action: action.to_owned(),
@@ -736,53 +735,14 @@ impl Core {
         "accepted"
     }
 
-    /// Hands work to a child thread in the same folder. It reports back through the
-    /// parent's queue when it ends.
-    pub fn delegate(&self, parent: &str, task: &DelegateTask, actor: &str) -> Result<Thread> {
-        let owner = self.store.thread(parent)?;
-        if !self.store.project(&owner.project_id)?.trusted {
-            return Err(CoreError::FolderUntrusted);
-        }
-        let engine = task.engine.clone().unwrap_or_else(|| owner.engine.clone());
-        self.engines.driver(&engine)?;
-        self.audit_task(actor, "thread.delegate", parent)?;
-        // A selection means nothing to another engine, so only the same one inherits.
-        let same_engine = engine == owner.engine;
-        let inherited = |own: &Option<String>| own.clone().filter(|_| same_engine);
-        let child = self.store.create_thread(NewThread {
-            project_id: owner.project_id.clone(),
-            title: task
-                .title
-                .clone()
-                .unwrap_or_else(|| "Delegated task".to_owned()),
-            engine,
-            model: task.model.clone().or(inherited(&owner.model)),
-            cwd: owner.cwd.clone(),
-            worktree: owner.worktree.clone(),
-            skill_profile: owner.skill_profile.clone(),
-            parent_thread_id: Some(owner.id.clone()),
-            relation: Some("subagent".to_owned()),
-            scratch: owner.scratch,
-        })?;
-        let mut options = if same_engine {
-            owner.options.clone()
-        } else {
-            std::collections::BTreeMap::new()
-        };
-        options.extend(task.options.clone());
-        let wanted = ModelSelection {
-            model: None,
-            effort: task.effort.clone().or(inherited(&owner.effort)),
-            options,
-        };
-        self.runs
-            .enqueue_with(&child.id, &task.prompt, &[], &wanted)?;
-        self.store.thread(&child.id)
-    }
-
     /// Creates each thread and sends its first message. One failure is reported in
     /// its place and does not stop the rest.
-    pub async fn batch_threads(&self, threads: Vec<BatchThread>) -> Vec<BatchThreadResult> {
+    pub async fn batch_threads(&self, threads: Vec<BatchThread>) -> Result<Vec<BatchThreadResult>> {
+        if threads.len() > MAX_BATCH_THREADS {
+            return Err(CoreError::Invalid(format!(
+                "Create at most {MAX_BATCH_THREADS} threads in one batch."
+            )));
+        }
         let mut results = Vec::with_capacity(threads.len());
         for item in threads {
             let made = async {
@@ -802,7 +762,7 @@ impl Core {
                 },
             });
         }
-        results
+        Ok(results)
     }
 }
 

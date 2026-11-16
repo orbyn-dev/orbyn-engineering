@@ -1,0 +1,63 @@
+{
+  "type": "answer_key",
+  "v": 0,
+  "id": "sha256:c6f37c35d19dee0256e2b6cedb1f06c7ceec1e7faba8345b219c9e9b4b4eefce",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "lead",
+    "engine": "claude",
+    "member": "lead-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "brief": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "checks": [
+    {
+      "id": "chk-tests",
+      "kind": "test",
+      "params": {
+        "run": "cargo test -p crew-demo",
+        "expect_exit": 0
+      },
+      "proves": "The crate's unit tests pass on this commit.",
+      "does_not_prove": "Behaviour outside the crate."
+    },
+    {
+      "id": "chk-scope",
+      "kind": "file_scope",
+      "params": {
+        "only": [
+          "crates/crew-demo/src/**"
+        ]
+      },
+      "proves": "Only leased paths changed."
+    },
+    {
+      "id": "chk-size",
+      "kind": "diff_size",
+      "params": {
+        "max_files": 5,
+        "max_lines": 300
+      },
+      "proves": "The diff stays small."
+    },
+    {
+      "id": "chk-probe",
+      "kind": "http_probe",
+      "params": {
+        "url": "http://example.com/health",
+        "expect_status": 200
+      },
+      "proves": "The service answers."
+    },
+    {
+      "id": "chk-secrets",
+      "kind": "secret_scan",
+      "params": {},
+      "proves": "No secret is in the diff."
+    }
+  ],
+  "protected_paths": [
+    "crates/crew-demo/tests/**",
+    "scripts/check.sh"
+  ]
+}

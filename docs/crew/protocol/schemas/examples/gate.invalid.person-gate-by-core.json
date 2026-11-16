@@ -1,0 +1,18 @@
+{
+  "type": "gate",
+  "v": 0,
+  "id": "sha256:eae36621947686338fa73d33231e5c25137d15f855ce6b6ab19b5d7cdf833c17",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "core",
+    "engine": "orbyn"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "stage": "merge",
+  "subject": "sha256:63cdc8855997f4c15a33d549c6f6c5598563947162d3116e9700ade8533ab4ec",
+  "decision": "pass",
+  "decided_by": "person",
+  "evidence": [],
+  "reason": "Reviewed the diff and the proof."
+}

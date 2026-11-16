@@ -79,6 +79,9 @@ pub enum CoreError {
     /// A write against a run that already reached a terminal state.
     #[error("run has ended")]
     RunClosed,
+    /// A Crew task is busy or in a state that refuses this request: another re-run of its checks, a verification, a worker.
+    #[error("{0}")]
+    CrewTaskBusy(String),
     #[error("run cannot move from {from} to {to}")]
     InvalidTransition { from: String, to: String },
     #[error("database schema {found} is newer than supported schema {supported}")]
@@ -97,6 +100,47 @@ pub enum CoreError {
     Io(#[from] std::io::Error),
     #[error("encoding error: {0}")]
     Json(#[from] serde_json::Error),
+    /// The sign-in gate is `Off`: no account route works and no request goes to any Engine.
+    #[error("Accounts are not available yet.")]
+    AccountDisabled,
+    /// An account action that needs the password typed again in the last 10 minutes.
+    #[error("Confirm it's you to do this.")]
+    ReauthRequired,
+    /// The Engine, or the development stand-in for it, refused. `code` is one of the
+    /// device client's error names; `retry_after_secs` says how long a rate limit lasts.
+    #[error("{message}")]
+    Account {
+        code: &'static str,
+        message: String,
+        retry_after_secs: Option<u64>,
+        /// Wrong two-factor codes left before the sign-in closes.
+        tries_left: Option<u8>,
+    },
+    /// A pattern for Settings › Secrets the service will not save: `code` is `invalid_pattern`
+    /// (it cannot be used) or `pattern_too_broad` (it would hide nearly everything; the
+    /// person can still save it). `detail` carries the position or the numbers.
+    #[error("{message}")]
+    PatternRefused {
+        code: &'static str,
+        message: String,
+        detail: serde_json::Value,
+    },
+    /// An action that only a person at the desktop app may give: the service has no desktop shell (it was started without one, or
+    /// as a remote service), so nothing can be approved.
+    #[error("Approving a command needs the Orbyn desktop app on this computer.")]
+    DesktopRequired,
+    /// The desktop app has not recorded a person's approval for this hold, or it is used, expired or for something else.
+    #[error("Approve this command in the Orbyn desktop app first.")]
+    PresenceRequired,
+    /// The thing existed and is over: a held command that expired or whose task ended.
+    #[error("{0}")]
+    Gone(String),
+    /// The person chose on a record that has since changed.
+    #[error("{0}")]
+    Stale(String),
+    /// A Crew task that already reached `passed` or `stopped` cannot be cancelled.
+    #[error("This task already ended.")]
+    TaskEnded,
     #[error("{0}")]
     Internal(String),
 }
@@ -134,10 +178,19 @@ impl CoreError {
             Self::PolicyDenied(_) => "policy_denied",
             Self::StaleOwner => "stale_owner",
             Self::RunClosed => "run_closed",
+            Self::CrewTaskBusy(_) => "task_busy",
             Self::InvalidTransition { .. } => "invalid_transition",
             Self::DatabaseTooNew { .. } => "database_too_new",
             Self::DataDirLocked => "data_dir_locked",
             Self::PackTampered(_) => "pack_tampered",
+            Self::AccountDisabled => "account_disabled",
+            Self::ReauthRequired => "reauth_required",
+            Self::DesktopRequired => "desktop_required",
+            Self::PresenceRequired => "presence_required",
+            Self::Gone(_) => "gone",
+            Self::Stale(_) => "stale",
+            Self::TaskEnded => "task_ended",
+            Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
@@ -152,8 +205,28 @@ impl CoreError {
             Self::Updating => 503,
             Self::Invalid(_) => 400,
             Self::FileTooLarge { .. } => 413,
-            Self::FolderUntrusted | Self::PolicyDenied(_) | Self::WorkspaceRefused(_) => 403,
-            Self::SettingsConflict
+            Self::FolderUntrusted
+            | Self::PolicyDenied(_)
+            | Self::WorkspaceRefused(_)
+            | Self::AccountDisabled
+            | Self::ReauthRequired
+            | Self::DesktopRequired
+            | Self::PresenceRequired => 403,
+            Self::Account { code, .. } => match *code {
+                "account_offline" => 503,
+                "rate_limited" => 429,
+                "wrong_password" | "invite_required" => 403,
+                "invalid_code" | "invalid_invite" | "sign_in_closed" | "weak_password"
+                | "invalid_digits" | "wrong_digits" => 422,
+                "deletion_scheduled"
+                | "session_ended"
+                | "account_gone"
+                | "request_not_allowed"
+                | "digits_locked" => 409,
+                _ => 502,
+            },
+            Self::CrewTaskBusy(_)
+            | Self::SettingsConflict
             | Self::SettingsScopeUnavailable
             | Self::ThreadBusy
             | Self::ConsoleOpen
@@ -174,10 +247,107 @@ impl CoreError {
             | Self::EngineBusy(_)
             | Self::StaleOwner
             | Self::RunClosed
+            | Self::TaskEnded
+            | Self::Stale(_)
             | Self::InvalidTransition { .. } => 409,
-            Self::UpdateUnavailable(_) | Self::Unsupported(_) | Self::UnsupportedOption(_) => 422,
+            Self::Gone(_) => 410,
+            Self::UpdateUnavailable(_)
+            | Self::Unsupported(_)
+            | Self::UnsupportedOption(_)
+            | Self::PatternRefused { .. } => 422,
             Self::EngineUnavailable(_) | Self::Computer(_) | Self::UpdateFailed(_) => 502,
             _ => 500,
+        }
+    }
+
+    /// A second copy of this error, for callers that shared one read. Variants that hold a
+    /// source error (storage, i/o, encoding) become `Internal` with the same text, which
+    /// clients see the same way.
+    pub(crate) fn duplicate(&self) -> Self {
+        match self {
+            Self::NotFound(s) => Self::NotFound(s.clone()),
+            Self::Gone(s) => Self::Gone(s.clone()),
+            Self::Stale(s) => Self::Stale(s.clone()),
+            Self::TaskEnded => Self::TaskEnded,
+            Self::Invalid(s) => Self::Invalid(s.clone()),
+            Self::SettingsConflict => Self::SettingsConflict,
+            Self::SettingsScopeUnavailable => Self::SettingsScopeUnavailable,
+            Self::ThreadBusy => Self::ThreadBusy,
+            Self::CrewTaskBusy(s) => Self::CrewTaskBusy(s.clone()),
+            Self::ConsoleOpen => Self::ConsoleOpen,
+            Self::FolderUntrusted => Self::FolderUntrusted,
+            Self::AlreadyDecided(a) => Self::AlreadyDecided(a.clone()),
+            Self::ProjectExists(p) => Self::ProjectExists(p.clone()),
+            Self::QuestionClosed(q) => Self::QuestionClosed(q.clone()),
+            Self::EngineBusy(s) => Self::EngineBusy(s.clone()),
+            Self::EngineUnavailable(s) => Self::EngineUnavailable(s.clone()),
+            Self::ThreadArchived => Self::ThreadArchived,
+            Self::ProjectRemoved(s) => Self::ProjectRemoved(s.clone()),
+            Self::WorkspaceRequired => Self::WorkspaceRequired,
+            Self::WorkspaceRefused(s) => Self::WorkspaceRefused(s.clone()),
+            Self::LibraryDirty(s) => Self::LibraryDirty(s.clone()),
+            Self::NotFastForward(s) => Self::NotFastForward(s.clone()),
+            Self::FileConflict { revision } => Self::FileConflict {
+                revision: revision.clone(),
+            },
+            Self::FileTooLarge { size, limit } => Self::FileTooLarge {
+                size: *size,
+                limit: *limit,
+            },
+            Self::SharedDirectory(n) => Self::SharedDirectory(*n),
+            Self::RunsActive => Self::RunsActive,
+            Self::Updating => Self::Updating,
+            Self::ProjectHasWork { message, detail } => Self::ProjectHasWork {
+                message: message.clone(),
+                detail: detail.clone(),
+            },
+            Self::PullHeadChanged => Self::PullHeadChanged,
+            Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::UnsupportedOption(s) => Self::UnsupportedOption(s.clone()),
+            Self::UpdateUnavailable(s) => Self::UpdateUnavailable(s.clone()),
+            Self::UpdateFailed(s) => Self::UpdateFailed(s.clone()),
+            Self::PolicyDenied(s) => Self::PolicyDenied(s.clone()),
+            Self::SessionLost => Self::SessionLost,
+            Self::StaleOwner => Self::StaleOwner,
+            Self::RunClosed => Self::RunClosed,
+            Self::InvalidTransition { from, to } => Self::InvalidTransition {
+                from: from.clone(),
+                to: to.clone(),
+            },
+            Self::DatabaseTooNew { found, supported } => Self::DatabaseTooNew {
+                found: *found,
+                supported: *supported,
+            },
+            Self::DataDirLocked => Self::DataDirLocked,
+            Self::AccountDisabled => Self::AccountDisabled,
+            Self::ReauthRequired => Self::ReauthRequired,
+            Self::DesktopRequired => Self::DesktopRequired,
+            Self::PresenceRequired => Self::PresenceRequired,
+            Self::Account {
+                code,
+                message,
+                retry_after_secs,
+                tries_left,
+            } => Self::Account {
+                code,
+                message: message.clone(),
+                retry_after_secs: *retry_after_secs,
+                tries_left: *tries_left,
+            },
+            Self::PatternRefused {
+                code,
+                message,
+                detail,
+            } => Self::PatternRefused {
+                code,
+                message: message.clone(),
+                detail: detail.clone(),
+            },
+            Self::PackTampered(s) => Self::PackTampered(s.clone()),
+            Self::Computer(s) => Self::Computer(s.clone()),
+            Self::Git(s) => Self::Git(s.clone()),
+            Self::Internal(s) => Self::Internal(s.clone()),
+            Self::Store(_) | Self::Io(_) | Self::Json(_) => Self::Internal(self.to_string()),
         }
     }
 

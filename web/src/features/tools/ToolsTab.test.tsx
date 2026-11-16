@@ -9,7 +9,7 @@ import { ToolsTab } from "./ToolsTab";
 
 beforeEach(() => {
   useWorkspace.setState({
-    engines: { data: [{ id: "claude", name: "Claude Code" }, { id: "codex", name: "Codex" }] as never, error: null, loading: false },
+    engines: { data: [{ id: "claude", name: "Claude Code" }, { id: "codex", name: "Codex" }, { id: "opencode", name: "OpenCode" }] as never, error: null, loading: false },
   });
 });
 afterEach(() => vi.restoreAllMocks());
@@ -53,8 +53,8 @@ it("says there is nothing yet before the first run, and still offers Skills", as
   const tools = { ...engineTools("claude"), reported: false, groups: [{ id: "skills", count: 39, items: [] }], not_reported: ["builtin", "orbyn", "mcp", "connectors", "plugins"] };
   vi.spyOn(api, "threadTools").mockResolvedValue(tools);
   render(<ToolsTab threadId="t" engine="claude" />);
-  expect(await screen.findByText("No tools reported yet")).toBeInTheDocument();
-  expect(screen.getByText(/Claude Code reports its tools when a run starts/)).toBeInTheDocument();
+  expect(await screen.findByText("No tools reported for this run")).toBeInTheDocument();
+  expect(screen.getByText("Claude Code reports its tools when a run starts. They appear here after the next message.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open Skills" })).toBeInTheDocument();
 });
 
@@ -80,7 +80,11 @@ it("offers Try again when the engine does not answer", async () => {
   const user = userEvent.setup();
   const read = vi.spyOn(api, "threadTools").mockRejectedValueOnce(new ApiFailure("engine_failed", "no", 500));
   render(<ToolsTab threadId="t" engine="claude" />);
-  expect(await screen.findByText("Couldn’t read the tools")).toBeInTheDocument();
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn’t read the tools.")).toBeInTheDocument();
+  // The reason is the service's own words; nothing is red-and-grey at once.
+  expect(within(alert).getByText("no")).toBeInTheDocument();
+  expect(screen.queryByText(/Not reported by/)).toBeNull();
   read.mockResolvedValue(engineTools("claude"));
   await user.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument());
@@ -96,11 +100,30 @@ it("Check again asks the engine itself, not a kept answer", async () => {
   await waitFor(() => expect(read).toHaveBeenLastCalledWith("t", true));
 });
 
-it("keeps the list and says why when the engine's check came back with an error", async () => {
-  vi.spyOn(api, "threadTools").mockResolvedValue({ ...engineTools("codex"), error: "Codex's list may be incomplete." });
+it("says why and keeps what was read last, dimmed with its time, when the check came back with an error", async () => {
+  vi.spyOn(api, "threadTools").mockResolvedValue({ ...engineTools("codex"), error: "Codex didn’t answer in 10 seconds." });
   render(<ToolsTab threadId="t" engine="codex" />);
-  expect(await screen.findByText(/Codex's list may be incomplete/)).toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "Connectors" })).toBeInTheDocument();
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn’t read the tools.")).toBeInTheDocument();
+  expect(within(alert).getByText("Codex didn’t answer in 10 seconds.")).toBeInTheDocument();
+  const last = screen.getByLabelText("Last read");
+  expect(last).toHaveTextContent("Last read");
+  expect(within(last).getByText("Orbyn tools")).toBeInTheDocument();
+  expect(within(last).getByText("MCP servers")).toBeInTheDocument();
+  // The list itself is not shown beside the error.
+  expect(screen.queryByRole("region", { name: "Connectors" })).toBeNull();
+});
+
+it("says Not reported by the engine, in plain words with no error, for one that lists no tools", async () => {
+  vi.spyOn(api, "threadTools").mockRejectedValue(new ApiFailure("unsupported", "This engine does not report its tools.", 422));
+  vi.spyOn(api, "skills").mockResolvedValue({ skills: new Array(39).fill({}) } as never);
+  render(<ToolsTab threadId="t" engine="opencode" />);
+  expect(await screen.findByRole("heading", { name: "Not reported by OpenCode" })).toBeInTheDocument();
+  expect(screen.getByText(/doesn’t list its tools to Orbyn, so there is nothing to show here\. Orbyn’s own skills are still available\./)).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(await screen.findByText("39")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open Skills" })).toBeInTheDocument();
 });
 
 it("says a list was reported at run start only when nothing was asked of the engine, and keeps Check again otherwise", async () => {

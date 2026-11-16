@@ -1,0 +1,30 @@
+{
+  "type": "evidence",
+  "v": 0,
+  "id": "sha256:2cde19f28cd4c6da70d33b2d6e4d13fa7963e45e2a078499915eb544b7d97cee",
+  "crew_id": "crew-01",
+  "author": {
+    "role": "worker",
+    "engine": "codex",
+    "member": "worker-01"
+  },
+  "created_at": "2026-11-12T09:00:00Z",
+  "run_id": "run-01",
+  "check": "chk-tests",
+  "command": "cargo test -p crew-demo",
+  "outcome": "pass",
+  "exit_code": 0,
+  "duration_ms": 8123,
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "log_hash": "sha256:abababababababababababababababababababababababababababababababab",
+  "excerpt": "test result: ok. 4 passed; 0 failed",
+  "artifacts": [
+    {
+      "kind": "log",
+      "hash": "sha256:abababababababababababababababababababababababababababababababab",
+      "name": "cargo-test.log"
+    }
+  ],
+  "proves": "The crate's unit tests pass on this commit.",
+  "does_not_prove": "Behaviour outside the crate."
+}

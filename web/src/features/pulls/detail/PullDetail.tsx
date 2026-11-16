@@ -5,6 +5,8 @@ import { tabKeys } from "../../../ui/tabKeys";
 import { usePageLabel } from "./pageLabel";
 import type { PullRequestDetail } from "../../../api/types";
 import { agoWords } from "../../../lib/format";
+import { topics } from "../../../lib/dataRefresh";
+import { pullChanged } from "../model/pullTopics";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
@@ -26,7 +28,7 @@ import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
-import { baseChangeAllowed, bodyOpensWith, mergeGate, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
+import { baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
 import { Stack } from "./PullStack";
@@ -50,15 +52,17 @@ export function PullDetail({
   /** Moves to another pull request in the same stack. */
   onOpen?(number: number): void;
 }) {
-  const detail = useAsync(`pull:${projectId}:${number}`, (signal) => pullsApi.detail(projectId, number, signal), { keep: true });
+  const changed = pullChanged(projectId, number);
+  const detail = useAsync(`pull:${projectId}:${number}`, (signal, how) => pullsApi.detail(projectId, number, signal, how.background ? undefined : { priority: "foreground" }, how.force), { keep: true, refreshOn: changed });
   const page = layout === "page";
   // What the page layout adds beside the detail: files, checks, the details the list also reads, and who is signed in.
-  const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])));
-  const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])));
+  const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
+  const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
   const extras = useAsync(`pull-extras:${projectId}:${number}:${page}`, (signal) =>
     page ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: null }], fresh: false }, signal) : Promise.resolve({ details: [], paused: [] }),
+    { refreshOn: changed },
   );
-  const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal));
+  const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
   const connection = useConnectionKind();
   const projects = useVisibleProjects();
   const pullUrl = detail.data?.pull.url;
@@ -220,6 +224,7 @@ export function PullDetail({
     <People
       title="Reviewers"
       chosen={current.reviewers}
+      refreshTopic={`pull-people:${projectId}`}
       load={(signal) => pullsApi.reviewerCandidates(projectId, signal)}
       save={(add, remove) => pullsApi.setReviewers(projectId, number, add, remove).then(detail.reload)}
     />
@@ -228,6 +233,7 @@ export function PullDetail({
     <People
       title="Labels"
       chosen={pull.labels}
+      refreshTopic={`pull-people:${projectId}`}
       load={(signal) => pullsApi.labelCandidates(projectId, signal)}
       save={(add, remove) => pullsApi.setLabels(projectId, number, add, remove).then(detail.reload)}
     />
@@ -371,7 +377,7 @@ export function PullDetail({
   const viewers = (forges.data ?? []).flatMap((one) => (one.signed_in && one.viewer ? [one.viewer] : []));
   const mine = extras.data?.details[0];
   const reviewAsked = reviewAskedOf(mine, viewers);
-  const own = Boolean(pull.author && viewers.some((login) => login.toLowerCase() === (pull.author ?? "").toLowerCase()));
+  const own = ownPull(pull, viewers);
   const state = pageState(pull, mergeable, reviewAsked);
   const failedCheck = (checkList.data ?? []).find((check) => check.state === "fail");
   const gate = mergeGate(pull, mergeable, { offline, auto, forge: forgeLabel });
@@ -512,12 +518,11 @@ export function PullDetail({
               {pull.head} {"\u2192"} {baseBranch}
             </span>
           </Row>
-          <Row name="Review" tone={state === "review" || state === "changes" ? "warn" : undefined}>
-            {reviewWords(pull, current.reviewers)}
+          {/* Amber only where the person is waited on; a conflict and changes the person asked for stay ink. */}
+          <Row name="Review" tone={requested === null && (state === "review" || (state === "changes" && changesNeedYou(pull, viewers))) ? "warn" : undefined}>
+            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested")}
           </Row>
-          <Row name="Conflicts" tone={mergeable === "conflicting" ? "warn" : undefined}>
-            {mergeable === "conflicting" ? "Has conflicts" : mergeable === "mergeable" ? "None" : "\u2014"}
-          </Row>
+          <Row name="Conflicts">{conflictWords(mergeable)}</Row>
           {threadTitle ? (
             <Row name="Thread">
               <a href={`#/threads/${linkedThread}`}>{threadTitle}</a>
@@ -558,6 +563,9 @@ export function PullDetail({
               setRequested(note);
               void detail.reload();
               void extras.reload();
+              // The review is an entry of the conversation: the tab counts it once the activity is read again.
+              if (activityWanted) void activity.reloadNow();
+              else setActivityWanted(true);
             }}
             onUnknown={() => {
               void detail.reload();

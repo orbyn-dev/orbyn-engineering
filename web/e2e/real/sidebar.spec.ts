@@ -161,7 +161,7 @@ test("usage reads the real report and limits", async ({ page }) => {
   await usage.getByRole("radio", { name: "7 days" }).click();
   await usage.getByRole("button", { name: "Refresh usage" }).click();
   await usage.getByRole("tab", { name: "Limits" }).click();
-  await expect(usage.getByText(/reports limits|left|:/).first()).toBeVisible({ timeout: 15_000 });
+  await expect(usage.getByText(/reports limits|Not reported|% used|signed out/).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test("the composer picks model and effort and sets access", async ({ page }) => {
@@ -200,7 +200,7 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   await expect
     .poll(async () => (await thread(id) as unknown as { lifecycle: { permission_mode: string } }).lifecycle.permission_mode)
     .toBe("full_access");
-  await expect(page.getByText("Allow commands and edits without prompts.")).toBeVisible();
+  await expect(page.getByText("Allow commands and edits without prompts in this thread. Crew mode decides for crew workers.")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Permissions: Full access", exact: true })).toBeVisible();
   await service.api("PATCH", `/api/threads/${id}`, { permission_mode: "supervised" });
@@ -270,8 +270,10 @@ test("the terminal drawer opens tabs, and files and diff sources read the checko
   await expect(drawer.getByRole("tab")).toHaveCount(2);
   await drawer.getByRole("button", { name: /^Close Terminal|^Close [^t]/ }).first().click();
 
-  const panel = await openPanelTab(page, "Files");
-  await expect(panel.locator(".file-tree button").first()).toBeVisible({ timeout: 10_000 });
+  // This thread is in the skills library, which is no project of the explorer's; files open from a thread's links and the
+  // palette, covered by the file specs.
+  // The terminal keeps the keys while it has focus; take focus back to the page first.
+  await page.mouse.click(860, 250);
   await page.keyboard.press("ControlOrMeta+f");
   await expect(page.getByRole("textbox", { name: "Find in thread" })).toBeFocused();
   await page.keyboard.press("Escape");
@@ -280,6 +282,8 @@ test("the terminal drawer opens tabs, and files and diff sources read the checko
 test("every settings section loads from the real service", async ({ page }) => {
   const failures: string[] = [];
   page.on("response", (response) => {
+    // Crew Preview answers 404 while it is off: that is how the app learns to draw nothing of Crew.
+    if (response.url().includes("/api/crew/preview") && response.status() === 404) return;
     if (response.url().includes("/api/") && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
   });
   await page.goto(`${service.page}#/settings/general`);

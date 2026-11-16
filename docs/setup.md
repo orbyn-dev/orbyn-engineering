@@ -5,7 +5,22 @@ Install Node.js 22.22.2 or later in the 22.x line (or 24.15.0 or later in
 Git and the [GitHub CLI](https://cli.github.com/). For native builds, install the
 platform tools in [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/)
 (Xcode Command Line Tools on macOS; MSVC build tools and WebView2 on Windows).
-Use Terminal on macOS or PowerShell on Windows. Check the tools in a new terminal:
+Use Terminal on macOS or PowerShell on Windows. Install the npm version pinned by
+`web/package.json`. On macOS:
+
+```bash
+npm install --global npm@11.4.0
+```
+
+In PowerShell on Windows:
+
+```powershell
+npm.cmd install --global npm@11.4.0
+```
+
+If PowerShell blocks `npm.ps1`, use `npm.cmd` in place of `npm` in every command
+below (and `npx.cmd` in place of `npx`). See [troubleshooting](#when-something-fails).
+Check the tools in a new terminal:
 
 ```text
 node --version
@@ -18,22 +33,15 @@ gh --version
 
 ## Clone and install
 
-On macOS:
+In either shell:
 
 ```bash
 git clone https://github.com/orbyn-dev/orbyn-engineering.git
 ```
 
-In PowerShell on Windows:
-
-```powershell
-git clone --config core.autocrlf=false https://github.com/orbyn-dev/orbyn-engineering.git
-```
-
-The Windows option preserves the repository's LF line endings: a stylesheet test
-currently fails with CRLF checkout conversion. [Git applies this setting](https://git-scm.com/docs/git-clone)
-to the new repository before its first checkout; it changes no global settings.
-Then, in either shell:
+The repository's `.gitattributes` keeps stylesheets at LF line endings, including
+on Windows with `core.autocrlf=true`; no clone option or Git configuration change
+is needed. Then:
 
 ```text
 cd orbyn-engineering
@@ -155,7 +163,7 @@ npm run prepare-bundle
 ```
 
 This builds the web UI and service and fetches the pinned skills library; it needs
-network access. `web/npm ci` must already have completed. Build an unsigned macOS
+network access. `npm ci` in `web` must already have completed. Build an unsigned macOS
 app bundle from `desktop`:
 
 ```bash
@@ -168,8 +176,43 @@ Or build an unsigned Windows installer from `desktop` in PowerShell:
 npx tauri build --bundles nsis
 ```
 
+Tauri's `beforeBuildCommand` checks the effective `build.frontendDist` before
+native compilation, including platform JSON configuration and `--config`
+overrides. It must be a relative directory containing a nonempty `index.html`.
+The repository default, `../../build/ui`, is already safe. In a separate local
+build configuration, keep the path relative to that build's `desktop/src-tauri`
+directory; an absolute Windows drive path such as `C:/work/orbyn/build/ui` can be
+parsed as a URL and embed no UI assets. Leave the preflight hook enabled.
+
+After preparing the bundle, run `node ../scripts/check-desktop-assets.mjs` from
+`desktop` to check the default configuration alone. For custom builds, use
+`npx tauri build --config <local-config.json> --bundles nsis` so Tauri passes the
+actual merged override to the hook. Direct Cargo builds do not run this CLI hook.
+Before sharing a test package, launch it with an isolated application identity
+and profile and confirm that the native window renders the product UI. Service
+readiness and the packaged smoke tests alone do not establish that the UI rendered.
+Do not change the installed app or its data, and do not start a provider run.
+
+## First run on an unsigned build
+
+Builds we distribute are not signed with a Developer ID or an Authenticode certificate yet, so the first run needs one
+approval. Copy these two lines into the release notes:
+
+- **macOS:** right-click the app and choose Open, or approve it under System Settings > Privacy & Security > Open Anyway.
+  If macOS says the app is damaged, run `xattr -dr com.apple.quarantine "/Applications/Orbyn Engineering.app"` once.
+- **Windows:** when "Windows protected your PC" appears, choose More info, then Run anyway.
+
+Crew runs on macOS in the beta; Windows later.
+
+Unsigned builds have no update channel yet, so install a newer build over the old one to update. Sign-in to an Orbyn
+account stays off in these builds (see the [account sign-in gate](account.md#sign-in-gate)).
+
 ## When something fails
 
+- **PowerShell blocks `npm.ps1`:** use `npm.cmd` (and `npx.cmd`) for the commands
+  above; these do not require changing the execution policy. Alternatively, if
+  your machine's policy permits it, run
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then retry `npm`.
 - **Port in use:** Vite can choose another port for development; use its printed
   URL. Playwright requires 5274 and refuses an existing server. Stop only a
   process you own, or free that port before rerunning.

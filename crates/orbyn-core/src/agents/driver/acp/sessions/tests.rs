@@ -75,6 +75,7 @@ impl Fixture {
             resume: resume.map(str::to_owned),
             mcp_url: None,
             run_dir: self.dir.path().join("run"),
+            confine: None,
         };
         let handle = self.driver.start_run(spec, tx).await.unwrap();
         let mut events = Vec::new();

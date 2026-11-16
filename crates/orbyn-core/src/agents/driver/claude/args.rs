@@ -58,6 +58,15 @@ pub fn run_args(spec: &RunSpec, mcp_config: &Path) -> Vec<OsString> {
     if let Some(session) = &spec.resume {
         args.push("--resume".into());
         args.push(session.into());
+    } else if let Some(session) = spec
+        .confine
+        .as_ref()
+        .and_then(|rules| rules.fresh_session())
+    {
+        // A confined worker's first turn names its session, so the rules can allow that one
+        // transcript before Claude has written it.
+        args.push("--session-id".into());
+        args.push(session.into());
     }
     args
 }

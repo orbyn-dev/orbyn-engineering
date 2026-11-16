@@ -89,8 +89,8 @@ export function PullStateBanner({
       );
     case "conflict":
       return (
-        <PullsBanner tone="warn" icon={<TriangleAlert size={14} aria-hidden />} actions={null}>
-          <b>Conflicts with {pull.base}</b>
+        <PullsBanner icon={<TriangleAlert size={14} aria-hidden />} actions={null}>
+          <b>Conflicts with {pull.base}</b> Merging is blocked.
         </PullsBanner>
       );
     case "failed":
@@ -112,7 +112,7 @@ export function PullStateBanner({
       );
     case "changes":
       return (
-        <PullsBanner tone="warn" icon={<TriangleAlert size={14} aria-hidden />} actions={null}>
+        <PullsBanner tone={own ? "warn" : undefined} icon={<TriangleAlert size={14} aria-hidden />} actions={null}>
           <b>Changes requested</b>
         </PullsBanner>
       );

@@ -14,6 +14,7 @@ import { useDraftStore } from "../../../product/state/draftStore";
 import { navigate, type Route } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
+import { useNow } from "../../../lib/useNow";
 import { IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
@@ -22,6 +23,7 @@ import {
   arrangeThreads,
   attentionRank,
   dropVerb,
+  emptyProjectsOf,
   foldersOf,
   projectDrop,
   sectionOf,
@@ -54,6 +56,7 @@ import { DeleteThreadsDialog } from "./DeleteThreadsDialog";
 import { SearchField } from "./ThreadSearchField";
 import { folderMenuItems } from "./folderMenu";
 import { handleTreeKey } from "./treeKeys";
+import { Explorer, LeftBarSwitch } from "../explorer";
 import { searchFields, useJumpHeld, useSelectionDismiss, useSidebarCatalog } from "./sidebarHooks";
 
 const SETTLED_PAGE = 10;
@@ -84,6 +87,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   const multilineRows = useUi((state) => state.multilineRows);
   const workingSection = useUi((state) => state.workingSection);
   const workspaceLayout = useUi((state) => state.workspaceLayout);
+  const files = useUi((state) => state.leftBarView === "files");
   const ledger = workspaceLayout === "ledger";
   // Ledger sorts by what needs the person, so it replaces the project folders.
   const threadSort = useUi((state) => state.threadSort);
@@ -126,8 +130,14 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
     return projectFilter.length === 0 ? all : all.filter((thread) => projectFilter.includes(thread.project_id));
   }, [threads, projectFilter]);
 
+  // Sectioning reads the clock, so an expired snooze returns on its own; memoized, a keystroke
+  // no longer sorts every thread again.
+  const sectionClock = useNow(true, 30_000);
   // Ledger lists running threads in its own Running section, not on the Working shelf.
-  const sections = arrangeThreads(scoped, Date.now(), workingSection && !ledger, ledger);
+  const sections = useMemo(
+    () => arrangeThreads(scoped, sectionClock, workingSection && !ledger, ledger),
+    [scoped, sectionClock, workingSection, ledger],
+  );
   const shown = drag?.target ? projectDrop(sections, drag.id, drag.target) : sections;
   // What the list draws, in order; set below, once the folders and groups are known.
   const orderedRef = useRef<Thread[]>([]);
@@ -148,11 +158,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
   }, [scoped, list, query]);
   const isSearching = query.trim() !== "";
 
-  const emptyProjects = list.filter(
-    (project) =>
-      (projectFilter.length === 0 || projectFilter.includes(project.id)) &&
-      !Object.values(threads).some((thread) => thread.project_id === project.id),
-  );
+  const emptyProjects = useMemo(() => emptyProjectsOf(list, projectFilter, threads), [list, projectFilter, threads]);
 
   useSelectionDismiss(selection, setSelection);
 
@@ -443,140 +449,142 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
         </button>
       </div>
       {ledger ? null : <SidebarNav route={route} ledger={false} />}
-      <div className="side-label">
-        <span>{ledger ? "Threads" : "Projects"}</span>
-        <span className="side-label-tools">
-          <IconButton
-            label={searching ? "Close thread search" : "Search threads"}
-            pressed={searching}
-            onClick={() => {
-              if (searching) setQuery("");
-              setSearching(!searching);
-            }}
-          >
-            <Search size={14} aria-hidden />
-          </IconButton>
-          <ProjectFilter projects={list} />
-          <IconButton label="Add project" onClick={() => setPalette("add-project")}>
-            <Plus size={14} aria-hidden />
-          </IconButton>
-        </span>
-      </div>
-      {searching ? (
-        <SearchField
-          query={query}
-          highlight={highlight}
-          results={results}
-          setQuery={setQuery}
-          setHighlight={setHighlight}
-          setSearching={setSearching}
-        />
-      ) : null}
-      <div className="sidebar-scroll" ref={tree} onKeyDown={onTreeKey} data-dragging={dragging || undefined}>
-        {projects.error && !projects.data ? (
-          <ErrorState compact title="Couldn't load projects" failure={projects.error} onRetry={() => void refreshAll()} />
-        ) : threadError && !threadsLoaded ? (
-          <ErrorState compact title="Couldn't load threads" failure={threadError} onRetry={() => void refreshAll()} />
-        ) : !projects.data || (list.length > 0 && !threadsLoaded) ? (
-          <Loading label="Loading threads" rows={5} />
-        ) : isSearching ? (
-          results.length === 0 ? (
-            <p className="sidebar-empty">No matching threads</p>
+      {files ? <Explorer route={route} /> : <>
+        <div className="side-label">
+          <LeftBarSwitch />
+          <span className="side-label-tools">
+            <IconButton
+              label={searching ? "Close thread search" : "Search threads"}
+              pressed={searching}
+              onClick={() => {
+                if (searching) setQuery("");
+                setSearching(!searching);
+              }}
+            >
+              <Search size={14} aria-hidden />
+            </IconButton>
+            <ProjectFilter projects={list} />
+            <IconButton label="Add project" onClick={() => setPalette("add-project")}>
+              <Plus size={14} aria-hidden />
+            </IconButton>
+          </span>
+        </div>
+        {searching ? (
+          <SearchField
+            query={query}
+            highlight={highlight}
+            results={results}
+            setQuery={setQuery}
+            setHighlight={setHighlight}
+            setSearching={setSearching}
+          />
+        ) : null}
+        <div className="sidebar-scroll" ref={tree} onKeyDown={onTreeKey} data-dragging={dragging || undefined}>
+          {projects.error && !projects.data ? (
+            <ErrorState compact title="Couldn't load projects" failure={projects.error} onRetry={() => void refreshAll()} />
+          ) : threadError && !threadsLoaded ? (
+            <ErrorState compact title="Couldn't load threads" failure={threadError} onRetry={() => void refreshAll()} />
+          ) : !projects.data || (list.length > 0 && !threadsLoaded) ? (
+            <Loading label="Loading threads" rows={5} />
+          ) : isSearching ? (
+            results.length === 0 ? (
+              <p className="sidebar-empty">No matching threads</p>
+            ) : (
+              <ul className="thread-list" role="list" aria-label="Thread search results">
+                {results.map((thread, at) =>
+                  row(thread, sectionOf(thread, Date.now()) ?? "active", false, at === highlight),
+                )}
+              </ul>
+            )
           ) : (
-            <ul className="thread-list" role="list" aria-label="Thread search results">
-              {results.map((thread, at) =>
-                row(thread, sectionOf(thread, Date.now()) ?? "active", false, at === highlight),
-              )}
-            </ul>
-          )
-        ) : (
-          <>
-            {shelfAbove ? <div className="sidebar-groups sidebar-shelf">{workingGroup}</div> : null}
-            <ul className="thread-list">
-              <DraftRow route={route} />
-              {dragging ? <DragBoundary label="Pinned" section="pinned" active={dragTarget === "pinned"} /> : null}
-              {shown.pinned.map((thread) => row(thread, "pinned", false))}
-              {dragging ? <DragBoundary label="Active" section="active" active={dragTarget === "active"} /> : null}
-              {ledger
-                ? ledgerGroups.map((group) =>
-                    group.rows.length === 0
-                      ? null
-                      : [
-                          <li key={`ledger:${group.key}`} className="ledger-head" data-tone={group.tone}>
-                            <span>{group.label}</span>
-                            <span className="group-count">{group.rows.length}</span>
-                          </li>,
-                          ...group.rows.map((thread) => row(thread, "active", false)),
-                        ],
-                  )
-                : foldersView
-                ? folders.map((folder) => {
-                    const key = `folder:${folder.key}`;
-                    const collapsed = closedGroups[key] === false;
-                    // A project with no threads keeps its own row: identity, trust state and a way in.
-                    const bare = folder.projects.filter((project) => emptyProjects.some((empty) => empty.id === project.id));
-                    if (folder.threads.length === 0 && bare.length > 0) {
-                      return bare.map((project) => <EmptyProjectRow key={project.id} project={project} />);
-                    }
-                    return [
-                      <FolderHeader
-                        key={key}
-                        project={folder.project}
-                        label={folder.label}
-                        collapsed={collapsed}
-                        count={folder.threads.length}
-                        needs={folder.threads.filter((thread) => attentionRank(thread) === 0).length}
-                        onToggle={() => toggleGroup(key, true)}
-                        onMenu={(event) => folderMenu(event, folder)}
-                      />,
-                      ...(collapsed ? [] : folder.threads.map((thread) => row(thread, "active", true, false, true))),
-                    ];
-                  })
-                : shown.active.map((thread) => row(thread, "active", false))}
-              {strays.map((thread) => row(thread, "active", false, false, false, true))}
-              {foldersView ? null : emptyProjects.map((project) => <EmptyProjectRow key={project.id} project={project} />)}
-              {dragging && noActiveRows ? (
-                <DropPlaceholder label="Active" section="active" active={dragTarget === "active"} />
+            <>
+              {shelfAbove ? <div className="sidebar-groups sidebar-shelf">{workingGroup}</div> : null}
+              <ul className="thread-list">
+                <DraftRow route={route} />
+                {dragging ? <DragBoundary label="Pinned" section="pinned" active={dragTarget === "pinned"} /> : null}
+                {shown.pinned.map((thread) => row(thread, "pinned", false))}
+                {dragging ? <DragBoundary label="Active" section="active" active={dragTarget === "active"} /> : null}
+                {ledger
+                  ? ledgerGroups.map((group) =>
+                      group.rows.length === 0
+                        ? null
+                        : [
+                            <li key={`ledger:${group.key}`} className="ledger-head" data-tone={group.tone}>
+                              <span>{group.label}</span>
+                              <span className="group-count">{group.rows.length}</span>
+                            </li>,
+                            ...group.rows.map((thread) => row(thread, "active", false)),
+                          ],
+                    )
+                  : foldersView
+                  ? folders.map((folder) => {
+                      const key = `folder:${folder.key}`;
+                      const collapsed = closedGroups[key] === false;
+                      // A project with no threads keeps its own row: identity, trust state and a way in.
+                      const bare = folder.projects.filter((project) => emptyProjects.some((empty) => empty.id === project.id));
+                      if (folder.threads.length === 0 && bare.length > 0) {
+                        return bare.map((project) => <EmptyProjectRow key={project.id} project={project} />);
+                      }
+                      return [
+                        <FolderHeader
+                          key={key}
+                          project={folder.project}
+                          label={folder.label}
+                          collapsed={collapsed}
+                          count={folder.threads.length}
+                          needs={folder.threads.filter((thread) => attentionRank(thread) === 0).length}
+                          onToggle={() => toggleGroup(key, true)}
+                          onMenu={(event) => folderMenu(event, folder)}
+                        />,
+                        ...(collapsed ? [] : folder.threads.map((thread) => row(thread, "active", true, false, true))),
+                      ];
+                    })
+                  : shown.active.map((thread) => row(thread, "active", false))}
+                {strays.map((thread) => row(thread, "active", false, false, false, true))}
+                {foldersView ? null : emptyProjects.map((project) => <EmptyProjectRow key={project.id} project={project} />)}
+                {dragging && noActiveRows ? (
+                  <DropPlaceholder label="Active" section="active" active={dragTarget === "active"} />
+                ) : null}
+              </ul>
+              {hasShelf ? (
+                <div className="sidebar-groups">
+                  {shown.snoozed.length > 0 ? (
+                    <Group id="snoozed" label="Snoozed" count={shown.snoozed.length} defaultOpen>
+                      {shown.snoozed.map((thread) => row(thread, "snoozed", true))}
+                    </Group>
+                  ) : null}
+                  {shown.settled.length > 0 || dragging ? (
+                    <Group
+                      id="settled"
+                      label="Settled"
+                      count={shown.settled.length}
+                      defaultOpen={false}
+                      dropSection="settled"
+                      forceOpen={dragging}
+                    >
+                      {settledRows.map((thread) => row(thread, "settled", true))}
+                      {shown.settled.length === 0 ? (
+                        <DropPlaceholder label="Settled" section="settled" active={dragTarget === "settled"} />
+                      ) : null}
+                      {shown.settled.length > settledRows.length ? (
+                        <li>
+                          <button
+                            type="button"
+                            className="show-more"
+                            onClick={() => setSettledVisible(settledVisible + SETTLED_PAGE)}
+                          >
+                            Show {Math.min(SETTLED_PAGE, shown.settled.length - settledRows.length)} more
+                          </button>
+                        </li>
+                      ) : null}
+                    </Group>
+                  ) : null}
+                </div>
               ) : null}
-            </ul>
-            {hasShelf ? (
-              <div className="sidebar-groups">
-                {shown.snoozed.length > 0 ? (
-                  <Group id="snoozed" label="Snoozed" count={shown.snoozed.length} defaultOpen>
-                    {shown.snoozed.map((thread) => row(thread, "snoozed", true))}
-                  </Group>
-                ) : null}
-                {shown.settled.length > 0 || dragging ? (
-                  <Group
-                    id="settled"
-                    label="Settled"
-                    count={shown.settled.length}
-                    defaultOpen={false}
-                    dropSection="settled"
-                    forceOpen={dragging}
-                  >
-                    {settledRows.map((thread) => row(thread, "settled", true))}
-                    {shown.settled.length === 0 ? (
-                      <DropPlaceholder label="Settled" section="settled" active={dragTarget === "settled"} />
-                    ) : null}
-                    {shown.settled.length > settledRows.length ? (
-                      <li>
-                        <button
-                          type="button"
-                          className="show-more"
-                          onClick={() => setSettledVisible(settledVisible + SETTLED_PAGE)}
-                        >
-                          Show {Math.min(SETTLED_PAGE, shown.settled.length - settledRows.length)} more
-                        </button>
-                      </li>
-                    ) : null}
-                  </Group>
-                ) : null}
-              </div>
-            ) : null}
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </div>
+      </>}
       <SidebarFoot route={route} ledger={ledger} />
       <SidebarRail />
       <Presence>{menu ? <Menu {...menu} onClose={() => setMenu(null)} /> : null}</Presence>
