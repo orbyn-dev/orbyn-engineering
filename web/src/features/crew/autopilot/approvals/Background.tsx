@@ -17,7 +17,7 @@ import { useBackground } from "./useBackground";
 const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.short ?? id;
 const hasMode = (rows: { mode: Mode | null }[]) => rows.length > 0 && rows.every((row) => row.mode !== null);
 
-function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void; busy?: string | null }) {
+function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void; busy?: ReadonlySet<string> }) {
   const mode = hasMode(crews);
   return (
     <div className={mode ? "ap-bg" : "ap-bg ap-bg-solo"} role="table" aria-label="Background crews">
@@ -29,10 +29,12 @@ function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle
           <span role="cell"><b>{crew.name}</b><small>Template: {templateName(crew.template)}</small></span>
           <span role="cell" className="ap-clip">{crew.startsWhen}</span>
           <span role="cell" className="ap-clip">{crew.lastRun ?? "Never run"}</span>
-          <span role="cell">
-            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} state`} className="ap-switch" disabled={!onToggle || busy === crew.id} onClick={() => onToggle?.(crew, !crew.enabled)}>
+          <span role="cell" className="ap-state">
+            {/* aria-disabled, not disabled: the switch keeps focus while its write is in flight. */}
+            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} state`} className="ap-switch" disabled={!onToggle} aria-disabled={busy?.has(crew.id) || undefined} onClick={() => { if (!busy?.has(crew.id)) onToggle?.(crew, !crew.enabled); }}>
               {crew.enabled ? "On" : "Off"}
             </button>
+            {crew.status ? <small>{crew.status}</small> : null}
           </span>
           {mode && crew.mode ? <span role="cell"><Chip tone="plain">{MODE_COPY[crew.mode].name}</Chip></span> : null}
         </div>
@@ -44,6 +46,8 @@ function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle
 /** The 320 px side panel: each background crew is a small card with its trigger and state. */
 export function BackgroundCards({ crews, onOpen }: { crews: BackgroundCrew[]; onOpen?(crew: BackgroundCrew): void }) {
   return (
+    <>
+    <Chip tone="plain">Planned</Chip>
     <ul className="ap-cards" aria-label="Background crews">
       {crews.map((crew) => (
         <li key={crew.id}>
@@ -54,6 +58,7 @@ export function BackgroundCards({ crews, onOpen }: { crews: BackgroundCrew[]; on
         </li>
       ))}
     </ul>
+    </>
   );
 }
 
@@ -71,7 +76,7 @@ function Runs({ runs }: { runs: BackgroundRun[] }) {
             <span role="cell"><b>{run.name}</b><small>Template: {templateName(run.template)}</small></span>
             <span role="cell" className="ap-clip">{run.startedBy}</span>
             <span role="cell" className="ap-clip">{run.result}</span>
-            <span role="cell">{run.state ? <Chip tone={run.state === "Stopped" ? "am" : run.state === "Failed" ? "no" : run.state === "Merged" ? "ok" : "dim"}>{run.state}</Chip> : null}</span>
+            <span role="cell">{run.state ? <Chip tone={run.state === "Stopped" ? "am" : run.state === "Failed" ? "no" : run.state === "Merged" ? "ok" : run.state === "Needs review" ? "plain" : "dim"}>{run.reason ? `${run.state} · ${run.reason}` : run.state}</Chip> : null}</span>
             {mode && run.mode ? <span role="cell"><Chip tone="plain">{MODE_COPY[run.mode].name}</Chip></span> : null}
           </div>
         ))}
@@ -121,19 +126,30 @@ function Triggers({ configured }: { configured?: Partial<Record<TriggerId, strin
 interface PageProps {
   view: BackgroundView;
   onToggle?(crew: BackgroundCrew, enabled: boolean): void;
-  /** The crew whose switch is being written. */
-  busy?: string | null;
+  /** The crews whose switch is being written. */
+  busy?: ReadonlySet<string>;
+  /** The repository the crews belong to, drawn as a plain label. */
+  repo?: string;
+  /** The page has no git project: nothing is listed, and Create and the templates say why they are off. */
+  noRepo?: boolean;
+  /** A line above the list, such as the read stopping before the end. */
+  notice?: string;
   /** Opens the create dialog; without it the page draws its button disabled. */
   onCreate?(): void;
   onUseTemplate?(template: TemplateId): void;
 }
 
-export function BackgroundPageView({ view, onToggle, busy, onCreate, onUseTemplate }: PageProps) {
+export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice, onCreate, onUseTemplate }: PageProps) {
   const templates = useRef<HTMLDivElement>(null);
   const none = view.crews.length === 0;
   return (
     <section className="ap-page" aria-label="Background crews">
-      {none ? (
+      {repo ? <p className="ap-muted ap-repo">Repo: {repo}</p> : null}
+      {noRepo ? (
+        <Empty title="No git project">
+          <p>Background crews belong to a git project, so Create and the templates are off until one is open.</p>
+        </Empty>
+      ) : none ? (
         <Empty title="No background crews yet">
           <p>A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and lands its change in your Review queue. Triggers are not built yet.</p>
           <Button small onClick={() => templates.current?.scrollIntoView?.({ block: "start" })}>See the templates</Button>
@@ -141,14 +157,16 @@ export function BackgroundPageView({ view, onToggle, busy, onCreate, onUseTempla
       ) : (
         <>
           <header className="ap-set-head">
-            <h2>Background crews<span className="ap-num"> {view.crews.length}</span></h2>
+            <h2>Background crews<span className="ap-num"> {view.total ?? view.crews.length}</span></h2>
             <Chip tone="plain">Preview</Chip>
             <Chip tone="plain">This device</Chip>
             <Chip tone="plain">Triggers not built yet</Chip>
             <span className="ap-spacer" />
             <Button small tone="primary" icon={<Plus size={14} aria-hidden />} disabled={!onCreate} onClick={onCreate}>New background crew</Button>
           </header>
+          {notice ? <p className="ap-muted" role="status">{notice}</p> : null}
           <CrewRows crews={view.crews} onToggle={onToggle} busy={busy} />
+          {hasMode(view.crews) ? null : <p className="ap-bg-note">Per-crew Autopilot is Planned.</p>}
           <section className="ap-box">
             <h4>Every run lands in the Review queue</h4>
             <p>A background crew never merges outside the flow: its changes are checked, reviewed and merged like any other, and you review them after the merge. Its budget is set when the crew is created.</p>
@@ -162,33 +180,46 @@ export function BackgroundPageView({ view, onToggle, busy, onCreate, onUseTempla
   );
 }
 
-/** Background crews of the repo the page is about, read from the Crew routes. */
+/** Background crews of the repo the page is about, read from the Crew routes. Without a git project nothing is read or listed. */
 export function BackgroundTab() {
   const repo = useRepo();
   if (repo === "loading") return <Loading label="Reading background crews" rows={4} />;
-  return <Background project={repo?.id} />;
+  if (!repo) return <BackgroundPageView view={{ crews: [], runs: [] }} noRepo />;
+  return <Background project={repo.id} repo={repo.name} />;
 }
 
-function Background({ project }: { project: string | undefined }) {
+function Background({ project, repo }: { project: string; repo: string }) {
   const read = useBackground(project);
   const [creating, setCreating] = useState<{ template?: TemplateId } | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [refused, setRefused] = useState<string | null>(null);
   if (read.status === "loading") return <Loading label="Reading background crews" rows={4} />;
   if (!read.data) return <ErrorState title="Can’t read background crews" failure={read.error!} onRetry={() => void read.reload()} />;
   const view = backgroundView(read.data, new Date());
   const toggle = (crew: BackgroundCrew, enabled: boolean) => {
-    setBusy(crew.id);
+    const mark = (on: boolean) => setBusy((now) => { const next = new Set(now); if (on) next.add(crew.id); else next.delete(crew.id); return next; });
+    mark(true);
     setRefused(null);
     void (enabled ? crewApi.backgroundEnable(crew.id) : crewApi.backgroundDisable(crew.id))
       .then(() => read.reload(), (failure: unknown) => setRefused(toFailure(failure).message))
-      .finally(() => setBusy(null));
+      .finally(() => mark(false));
   };
+  const more = read.data.total > read.data.crews.length;
   return (
     <>
       {refused ? <p className="ap-error" role="alert">{refused}</p> : null}
-      <BackgroundPageView view={view} onToggle={toggle} busy={busy} onCreate={project ? () => setCreating({}) : undefined} onUseTemplate={project ? (template) => setCreating({ template }) : undefined} />
-      {creating && project ? <BackgroundCreate project={project} template={creating.template} onClose={() => setCreating(null)} onCreated={() => void read.reload()} /> : null}
+      {/* A read that failed after one that worked keeps the crews on screen and says so. */}
+      {read.status === "error" ? <ErrorState compact title="Can’t refresh background crews" failure={read.error} onRetry={() => void read.reload()} /> : null}
+      <BackgroundPageView
+        view={view}
+        repo={repo}
+        notice={more ? `Showing ${read.data.crews.length} of ${read.data.total} background crews.` : undefined}
+        onToggle={toggle}
+        busy={busy}
+        onCreate={() => setCreating({})}
+        onUseTemplate={(template) => setCreating({ template })}
+      />
+      {creating ? <BackgroundCreate project={project} template={creating.template} onClose={() => setCreating(null)} onCreated={() => void read.reload()} /> : null}
     </>
   );
 }

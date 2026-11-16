@@ -87,7 +87,7 @@ export const crewApi = {
   },
   /** What the guard says about a command. Read-only: nothing runs. `thread` is optional on the service and not sent. */
   guardTest: (command: string, signal?: AbortSignal) => request<GuardTest>("GET", `/api/crew/guard/test?${new URLSearchParams({ command })}`, undefined, signal),
-  /** The background crews, one page, newest first; `project` limits them to one repository. */
+  /** The background crews, one page, ordered by name; `project` limits them to one repository. */
   backgroundCrews: (query: { project?: string; offset: number; limit: number }, signal?: AbortSignal) => {
     const params = new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) });
     if (query.project) params.set("project", query.project);

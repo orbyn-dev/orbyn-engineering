@@ -40,6 +40,24 @@ const page = <T,>(key: string, items: T[], params: URLSearchParams): MockRespons
   const next = offset + limit < items.length ? offset + limit : null;
   return { status: 200, body: { [key]: items.slice(offset, offset + limit), total: items.length, next_offset: next } };
 };
+const byName = (crews: BackgroundCrew[]) => [...crews].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id));
+const invalid = (message: string): MockResponse => ({ status: 400, body: { code: "invalid", message } });
+/** The route's checks of a create body, with its own messages, in its order. */
+function refusal(body: BackgroundCrewCreate): MockResponse | null {
+  const name = body.name.trim();
+  if (name.length < 1 || name.length > 80) return invalid("name is 1 to 80 characters");
+  if ([...name].some((char) => char.charCodeAt(0) < 32)) return invalid("name has a character that cannot be shown");
+  const { trigger, budget } = body;
+  for (const [setting, value] of [["branch", trigger.branch], ["workflow", trigger.workflow], ["label", trigger.label], ["ecosystem", trigger.ecosystem]] as const) {
+    if (value != null && (value.trim().length < 1 || value.trim().length > 100)) return invalid(`${setting} is 1 to 100 characters`);
+  }
+  if (trigger.every_hours != null && !(trigger.every_hours >= 1 && trigger.every_hours <= 720)) return invalid("every_hours is 1 to 720");
+  if (trigger.kind === "issue_label" && trigger.label == null) return invalid("a issue_label trigger needs label");
+  if (trigger.kind === "schedule" && trigger.every_hours == null) return invalid("a schedule trigger needs every_hours");
+  if (!(budget.turns >= 1 && budget.turns <= 1000)) return invalid("the budget is 1 to 1000 turns");
+  if (!(budget.minutes >= 1 && budget.minutes <= 1440)) return invalid("the budget is 1 to 1440 minutes");
+  return null;
+}
 const fail = (status: number, code: string, message: string): MockResponse => ({ status, body: { code, message } });
 
 export function createBackgroundMock() {
@@ -56,13 +74,15 @@ export function createBackgroundMock() {
     handle(method: string, path: string, params: URLSearchParams, body: unknown): MockResponse | null {
       if (!live || !path.startsWith("/api/crew/background")) return null;
       const parts = path.split("/").slice(4);
-      if (method === "GET" && parts.length === 0) return page("crews", state.crews, params);
+      if (method === "GET" && parts.length === 0) return page("crews", byName(state.crews), params);
       if (method === "GET" && parts.length === 2 && parts[1] === "runs") return page("runs", state.runs.filter((one) => one.crew_id === parts[0]), params);
       if (method === "POST" && parts[0] === "create") {
         const wanted = body as BackgroundCrewCreate;
-        if (state.crews.some((one) => one.name === wanted.name)) return fail(409, "conflict", "A background crew with that name already exists in this project.");
+        const refused = refusal(wanted);
+        if (refused) return refused;
+        if (state.crews.some((one) => one.name.toLowerCase() === wanted.name.trim().toLowerCase())) return invalid("this project already has a background crew with that name");
         ids += 1;
-        const made: BackgroundCrew = { ...crew(`bg-new-${ids}`, wanted.name, wanted.template, wanted.trigger, false, "idle", 0), project_id: wanted.project_id, budget: wanted.budget };
+        const made: BackgroundCrew = { ...crew(`bg-new-${ids}`, wanted.name.trim(), wanted.template, wanted.trigger, false, "idle", 0), project_id: wanted.project_id, budget: wanted.budget };
         state.crews = [made, ...state.crews];
         return { status: 200, body: made };
       }

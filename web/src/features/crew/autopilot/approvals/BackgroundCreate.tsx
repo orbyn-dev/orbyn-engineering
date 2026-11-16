@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { ConfirmDialog } from "../../../../ui/Dialog";
+import { toFailure } from "../../../../lib/useAsync";
+import { Button } from "../../../../ui/controls";
+import { Dialog } from "../../../../ui/Dialog";
 import { Segmented } from "../../../../ui/Segmented";
 import type { BackgroundTrigger } from "../../../../generated/BackgroundTrigger";
 import { crewApi } from "./api";
-import { DEFAULT_BUDGET, WIRE_TEMPLATE, WIRE_TRIGGER, budgetLine } from "./backgroundModel";
+import { DEFAULT_BUDGET, LIMITS, WIRE_TEMPLATE, WIRE_TRIGGER } from "./backgroundModel";
 import { TEMPLATES } from "./copy";
 import type { TemplateId, TriggerId } from "./model";
 import { Chip } from "./parts";
@@ -15,39 +17,101 @@ const STARTS: { id: TriggerId; label: string }[] = [
   { id: "schedule", label: "On a schedule" },
   { id: "dependency_update", label: "A dependency update opens" },
 ];
-/** The designs draw no field for the label of an issue trigger or for the hours of a schedule, and the route needs both: those two wait for the designer. */
-const NEEDS_FIELD: TriggerId[] = ["issue_label", "schedule"];
 
-/** "ci.yml on main", "ci.yml" or "on main" as the workflow and branch of the CI trigger; empty means any. */
-export function ciTrigger(line: string): BackgroundTrigger {
-  const text = line.trim();
-  const match = /^(?:(.*?)\s+)?on\s+(\S.*)$/.exec(text);
-  const workflow = (match ? match[1] ?? "" : text).trim();
-  return { kind: "ci_failure", workflow: workflow || null, branch: match?.[2]?.trim() || null };
+export type Field = "name" | "workflow" | "branch" | "label" | "hours" | "turns" | "minutes";
+
+/** The field a route refusal is about, from its message, or null when it is about none of them. */
+export function fieldOf(message: string): Field | null {
+  const text = message.toLowerCase();
+  if (/budget.*turns/.test(text)) return "turns";
+  if (/budget.*minutes/.test(text)) return "minutes";
+  if (/^name\b|that name/.test(text)) return "name";
+  if (/^label\b|needs label/.test(text)) return "label";
+  if (/every_hours/.test(text)) return "hours";
+  if (/^workflow\b/.test(text)) return "workflow";
+  if (/^branch\b/.test(text)) return "branch";
+  return null;
 }
 
-/** Crew designs `background-new`: a short form, saved on this device. The crew starts off; turning it on is its own step on the list. */
+const whole = (text: string, max: number): number | null => {
+  const value = Number(text);
+  return text.trim() !== "" && Number.isInteger(value) && value >= 1 && value <= max ? value : null;
+};
+
+function Entry({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: React.ReactNode }) {
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      {children}
+      {error ? <span className="field-error" id={`${id}-error`} role="alert">{error}</span> : hint ? <span className="field-hint" id={`${id}-hint`}>{hint}</span> : null}
+    </div>
+  );
+}
+
+/** Crew designs `background-new`, as ruled: a short form, saved on this device. The crew starts off; turning it on is its own step on the list. */
 export function BackgroundCreate({ project, template: first, onClose, onCreated }: { project: string; template?: TemplateId; onClose(): void; onCreated(): void }) {
   const [template, setTemplate] = useState<TemplateId>(first ?? "fix_ci");
-  const [starts, setStarts] = useState<TriggerId>(() => TEMPLATES.find((one) => one.id === (first ?? "fix_ci"))?.trigger ?? "ci_fails");
-  const [ci, setCi] = useState("");
+  const nameOf = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.name ?? id;
+  const triggerOf = (id: TemplateId): TriggerId => TEMPLATES.find((one) => one.id === id)?.trigger ?? "ci_fails";
+  const [starts, setStarts] = useState<TriggerId>(() => triggerOf(first ?? "fix_ci"));
+  const [name, setName] = useState(() => nameOf(first ?? "fix_ci"));
+  const [named, setNamed] = useState(false);
+  const [workflow, setWorkflow] = useState("");
+  const [branch, setBranch] = useState("");
+  const [label, setLabel] = useState("");
+  const [hours, setHours] = useState("24");
+  const [turns, setTurns] = useState(String(DEFAULT_BUDGET.turns));
+  const [minutes, setMinutes] = useState(String(DEFAULT_BUDGET.minutes));
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
+  const [general, setGeneral] = useState<string | null>(null);
+
   const choose = (next: TemplateId) => {
     setTemplate(next);
-    setStarts(TEMPLATES.find((one) => one.id === next)?.trigger ?? "ci_fails");
+    setStarts(triggerOf(next));
+    if (!named) setName(nameOf(next));
   };
-  const trigger: BackgroundTrigger = starts === "ci_fails" ? ciTrigger(ci) : { kind: WIRE_TRIGGER[starts] };
-  const name = TEMPLATES.find((one) => one.id === template)?.name ?? template;
+  const turnsN = whole(turns, LIMITS.turns);
+  const minutesN = whole(minutes, LIMITS.minutes);
+  const hoursN = whole(hours, LIMITS.hours);
+  const trigger = (): BackgroundTrigger => {
+    if (starts === "ci_fails") return { kind: "ci_failure", workflow: workflow.trim() || null, branch: branch.trim() || null };
+    if (starts === "issue_label") return { kind: "issue_label", label };
+    if (starts === "schedule") return { kind: "schedule", every_hours: hoursN };
+    return { kind: WIRE_TRIGGER[starts] };
+  };
+  const ready = name.trim() !== "" && turnsN !== null && minutesN !== null && (starts !== "issue_label" || label.trim() !== "") && (starts !== "schedule" || hoursN !== null);
+
+  const create = async () => {
+    if (!ready || turnsN === null || minutesN === null) return;
+    setBusy(true);
+    setErrors({});
+    setGeneral(null);
+    try {
+      await crewApi.backgroundCreate({ project_id: project, name, template: WIRE_TEMPLATE[template], trigger: trigger(), budget: { turns: turnsN, minutes: minutesN } });
+      onCreated();
+      onClose();
+    } catch (failure) {
+      const message = toFailure(failure).message;
+      const field = fieldOf(message);
+      if (field) setErrors({ [field]: message });
+      else setGeneral(message);
+      setBusy(false);
+    }
+  };
+
   return (
-    <ConfirmDialog
+    <Dialog
       title={<>New background crew <Chip tone="plain">Preview</Chip></>}
       className="ap-dialog ap-bg-new"
-      confirmLabel="Create background crew"
-      confirmDisabled={NEEDS_FIELD.includes(starts)}
       onClose={onClose}
-      onConfirm={async () => {
-        await crewApi.backgroundCreate({ project_id: project, name, template: WIRE_TEMPLATE[template], trigger, budget: DEFAULT_BUDGET });
-        onCreated();
-      }}
+      busy={busy}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button tone="primary" busy={busy} disabled={!ready} onClick={() => void create()}>Create background crew</Button>
+        </>
+      }
     >
       <div className="form">
         <p className="ap-muted">It starts when the trigger fires, runs the full flow and lands in your Review queue. It is kept on this device.</p>
@@ -55,21 +119,46 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
           <label>Template</label>
           <Segmented label="Template" value={template} onChange={choose} options={TEMPLATES.map((one) => ({ value: one.id, label: one.name }))} />
         </div>
+        <Entry id="bg-name" label="Name" hint={`1 to ${LIMITS.name} characters`} error={errors.name}>
+          <input id="bg-name" value={name} aria-invalid={errors.name ? true : undefined} onChange={(event) => { setName(event.target.value); setNamed(true); }} />
+        </Entry>
         <div className="field">
           <label>Starts when <Chip tone="plain">Not built yet</Chip></label>
-          <Segmented<TriggerId> label="Starts when" value={starts} onChange={setStarts} options={STARTS.map((one) => ({ value: one.id, label: one.label, disabled: NEEDS_FIELD.includes(one.id) }))} />
+          <Segmented<TriggerId> label="Starts when" value={starts} onChange={setStarts} options={STARTS.map((one) => ({ value: one.id, label: one.label }))} />
         </div>
         {starts === "ci_fails" ? (
-          <div className="field">
-            <label htmlFor="bg-ci">CI workflow and branch</label>
-            <input id="bg-ci" className="ap-mono" value={ci} placeholder="ci.yml on main" onChange={(event) => setCi(event.target.value)} />
+          <div className="ap-pair">
+            <Entry id="bg-workflow" label="CI workflow" error={errors.workflow}>
+              <input id="bg-workflow" className="ap-mono" value={workflow} placeholder="Any workflow" onChange={(event) => setWorkflow(event.target.value)} />
+            </Entry>
+            <Entry id="bg-branch" label="Branch" error={errors.branch}>
+              <input id="bg-branch" className="ap-mono" value={branch} placeholder="Any branch" onChange={(event) => setBranch(event.target.value)} />
+            </Entry>
           </div>
         ) : null}
+        {starts === "issue_label" ? (
+          <Entry id="bg-label" label="Label" hint={`1 to ${LIMITS.text} characters`} error={errors.label}>
+            <input id="bg-label" className="ap-mono" value={label} maxLength={LIMITS.text} onChange={(event) => setLabel(event.target.value)} />
+          </Entry>
+        ) : null}
+        {starts === "schedule" ? (
+          <Entry id="bg-hours" label="Hours between runs" hint={`1 to ${LIMITS.hours} hours`} error={errors.hours}>
+            <input id="bg-hours" type="number" min={1} max={LIMITS.hours} value={hours} onChange={(event) => setHours(event.target.value)} />
+          </Entry>
+        ) : null}
         <div className="field">
-          <label htmlFor="bg-budget">Budget for each run</label>
-          <input id="bg-budget" readOnly value={budgetLine(DEFAULT_BUDGET)} />
+          <label id="bg-budget">Budget for each run</label>
+          <div className="ap-pair" role="group" aria-labelledby="bg-budget">
+          <Entry id="bg-turns" label="Turns for each run" hint={`1 to ${LIMITS.turns}`} error={errors.turns}>
+            <input id="bg-turns" type="number" min={1} max={LIMITS.turns} value={turns} onChange={(event) => setTurns(event.target.value)} />
+          </Entry>
+          <Entry id="bg-minutes" label="Minutes for each run" hint={`1 to ${LIMITS.minutes}`} error={errors.minutes}>
+            <input id="bg-minutes" type="number" min={1} max={LIMITS.minutes} value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+          </Entry>
+          </div>
         </div>
+        {general ? <p className="field-error" role="alert">{general}</p> : null}
       </div>
-    </ConfirmDialog>
+    </Dialog>
   );
 }

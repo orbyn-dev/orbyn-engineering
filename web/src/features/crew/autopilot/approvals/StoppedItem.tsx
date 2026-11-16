@@ -19,7 +19,7 @@ export interface StoppedRun {
 export function StoppedBudgetItem({ run, onOpen, onRaise }: { run: StoppedRun; onOpen?(): void; onRaise?(): void }) {
   return (
     <article className="ap-box ap-box-am" aria-label={`${run.title} · Stopped · budget`}>
-      <div className="ap-chips"><Chip tone="plain">{RISK_LABEL[run.risk].replace(" risk", "")}</Chip></div>
+      <div className="ap-chips"><Chip tone="plain">{RISK_LABEL[run.risk].replace(" risk", "")}</Chip><Chip tone="plain">Planned</Chip></div>
       <h4>{run.title} · Stopped · budget</h4>
       <p className="ap-muted">{run.meta}</p>
       <p className="ap-muted">Checks {run.checks} · Not verified: {run.notVerified} · {run.budget}</p>
