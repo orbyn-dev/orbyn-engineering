@@ -1,6 +1,11 @@
 // The one door the Autopilot screens use: the Crew routes of `orbynd`, with the generated wire types.
 // Every Crew route answers 404 while Crew Preview is off.
 import { request } from "../../../../api/client";
+import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
+import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewCreate";
+import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
+import type { BackgroundCrewUpdate } from "../../../../generated/BackgroundCrewUpdate";
+import type { BackgroundRunList } from "../../../../generated/BackgroundRunList";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
 import type { AutopilotAreaFollowBody } from "../../../../generated/AutopilotAreaFollowBody";
@@ -82,6 +87,25 @@ export const crewApi = {
   },
   /** What the guard says about a command. Read-only: nothing runs. `thread` is optional on the service and not sent. */
   guardTest: (command: string, signal?: AbortSignal) => request<GuardTest>("GET", `/api/crew/guard/test?${new URLSearchParams({ command })}`, undefined, signal),
+  /** The background crews, one page, newest first; `project` limits them to one repository. */
+  backgroundCrews: (query: { project?: string; offset: number; limit: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) });
+    if (query.project) params.set("project", query.project);
+    return request<BackgroundCrewList>("GET", `/api/crew/background?${params}`, undefined, signal);
+  },
+  /** One crew's runs with what each spent against its budget, newest first. */
+  backgroundRuns: (id: string, query: { offset: number; limit: number }, signal?: AbortSignal) =>
+    request<BackgroundRunList>("GET", `/api/crew/background/${encodeURIComponent(id)}/runs?${new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) })}`, undefined, signal),
+  /** Creates a crew, off: turning it on is its own step. A name already used in the project answers 409. */
+  backgroundCreate: (body: BackgroundCrewCreate) => request<BackgroundCrew>("POST", "/api/crew/background/create", body),
+  /** The name and the trigger only: the repository, template and budget are fixed at creation. No screen draws editing yet. */
+  backgroundUpdate: (id: string, body: BackgroundCrewUpdate) => request<BackgroundCrew>("POST", `/api/crew/background/${encodeURIComponent(id)}/update`, body),
+  /** The person's switch. Nothing is started: no trigger fires yet. */
+  backgroundEnable: (id: string) => request<BackgroundCrew>("POST", `/api/crew/background/${encodeURIComponent(id)}/enable`, {}),
+  /** Turning a crew off stops a run in progress with the reason `disabled`. */
+  backgroundDisable: (id: string) => request<BackgroundCrew>("POST", `/api/crew/background/${encodeURIComponent(id)}/disable`, {}),
+  /** Refused while a run is in progress; the crew's runs and waiting reviews go with it. No screen draws deleting yet. */
+  backgroundDelete: (id: string) => request<{ deleted: boolean }>("POST", `/api/crew/background/${encodeURIComponent(id)}/delete`, {}),
   /** How one task was routed: the decision or the refusal, and the `route_class` rows. */
   route: (task: string, signal?: AbortSignal) => request<CrewRouteView>("GET", `/api/crew/route/${encodeURIComponent(task)}`, undefined, signal),
 };

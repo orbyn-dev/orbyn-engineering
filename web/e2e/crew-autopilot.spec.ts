@@ -41,7 +41,7 @@ test("moves between the Crew tabs with the arrow keys", async ({ page }) => {
   await expect(page.getByRole("table", { name: "By engine" })).toBeVisible();
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(/#\/crew\/background$/);
-  await expect(page.getByText("No background crews yet")).toBeVisible();
+  await expect(page.getByRole("table", { name: "Background crews" })).toBeVisible();
 });
 
 test("a long log filters the loaded requests and reads the next page on scroll", async ({ page }) => {
@@ -80,10 +80,11 @@ test("changes Autopilot in Settings with the keyboard and the setting sticks", a
   await expect(page.getByRole("radio", { name: /^Off/ })).toBeChecked();
 });
 
-test("background crews say Crew is not connected yet and offer nothing that does nothing", async ({ page }) => {
-  await open(page, "crew", "#/crew/background");
+test("background crews with none yet offer the templates, and a template opens the create dialog", async ({ page }) => {
+  await open(page, "crew-background-empty", "#/crew/background");
   await expect(page.getByText("No background crews yet")).toBeVisible();
-  await expect(page.getByRole("button", { name: "New background crew" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Use the Flaky test template" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "New background crew" })).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Triggers" })).toBeVisible();
+  await page.getByRole("button", { name: "Use the Dependency bump template" }).click();
+  await expect(page.getByRole("dialog", { name: /New background crew/ })).toBeVisible();
 });
