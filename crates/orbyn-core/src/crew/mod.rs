@@ -33,6 +33,7 @@ mod start;
 mod tier_settings;
 mod tiers;
 mod tool;
+pub mod triggers;
 mod verify;
 mod view;
 mod workers;
