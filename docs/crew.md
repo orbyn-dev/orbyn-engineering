@@ -910,12 +910,52 @@ background crew is per device and is not shared through git. A repository's own 
   `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
   There is no route that starts a run, spends, merges or reverts.
 
-What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; slice 4h
-will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
+What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; a later
+slice will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
 lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
 review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
 limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
 prompt and checks are not defined yet.
+
+**As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
+`background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
+
+```json
+{ "background": { "version": 1,
+  "templates": [{ "id": "nightly-deps", "description": "Bump one dependency a week." }],
+  "triggers": [
+    { "name": "fix-main-ci", "on": "ci_failed", "template": "fix_failing_ci",
+      "budget": { "turns": 30, "minutes": 20 }, "engines": ["claude", "codex"],
+      "description": "Fix a failing build on main.", "branch": "main", "workflow": "ci.yml" },
+    { "name": "weekly-deps", "on": "schedule", "template": "nightly-deps",
+      "budget": { "turns": 20, "minutes": 15 }, "engines": ["codex"],
+      "description": "Bump one dependency a week.", "every_minutes": 10080 }
+  ] } }
+```
+
+- **Kinds:** `ci_failed` (optional `branch` and `workflow`), `schedule` (needs `every_minutes`, 15 to 43200) and `manual` (only
+  when a person asks). A trigger takes the settings of its kind and no others.
+- **Strict:** at most 64 triggers and 16 templates; `version` must be 1; unknown fields, kinds and templates are refused rather than
+  ignored; a name is 1 to 80 characters and unique after trimming, lower-casing and collapsing runs of whitespace (not Unicode
+  normalised, so two spellings of one letter can still look alike); a description is 1 to 280 characters; the file is 64 KiB at most;
+  `branch`, `workflow` and a template id are 1 to 100 characters, and a template id is a token (1 to 64 characters, starting with a
+  lowercase letter or digit, then lowercase letters, digits, `.`, `_` or `-`). A declared template may not reuse a built-in id or another
+  declared id, and needs both an id and a description. `null` is refused where an array belongs, never read as absent.
+- **Budget:** `turns` 1 to 1000 and `minutes` 1 to 1440, written by a person. There is no default, and a missing or over-cap budget
+  refuses the trigger.
+- **Text is data:** hidden characters (zero-width, bidirectional, tag block) and text that reads as an instruction are refused by the
+  Autopilot tripwire; everything else is carried as written and is never expanded, followed or run.
+- **Templates grant nothing:** a template is an id and a sentence for the person. It cannot allow commands, because the always-denied
+  list is enforced in code and nothing in this file can widen it.
+- **Every problem at once:** `crew::triggers::parse_and_validate` returns all of them, each naming the field and the shape it wants, in
+  the form `crew_start` uses.
+- **Not wired to the stored crew:** this section is policy a later slice will read, not the record. The stored background crew above keeps
+  its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, with `every_hours`), and it stays the record of what a
+  crew is; the file uses the names this work starts with (`ci_failed`, `schedule`, `manual`, with `every_minutes`). A later slice maps a
+  file trigger to the stored crew when it starts one. Nothing here writes, starts or records anything.
+
+What is not built (Planned): **nothing reads this section yet.** The CI-failure listener, the schedule timer, the manual start, the
+templates' prompts and checks, the routes and the UI are later work; this parse starts no run, calls no model and spawns no process.
 
 **As built (slice 4i, routing):** a repository can say which engines may take which paths, in `classes` of `.orbyn/crew.json`. The router
 uses it as a hard filter. Preview only; Orbyn reads the file and never writes it (architecture rule 4).
