@@ -253,13 +253,12 @@ async fn a_checked_binary_installs_runs_a_turn_and_removes_cleanly() {
 /// test's own PATH is left as the platform needs it.
 fn link_git_into(folder: &std::path::Path) {
     #[cfg(unix)]
-    if let Some(path) = std::env::var_os("PATH") {
-        if let Some(found) = std::env::split_paths(&path)
+    if let Some(path) = std::env::var_os("PATH")
+        && let Some(found) = std::env::split_paths(&path)
             .map(|dir| dir.join("git"))
             .find(|candidate| candidate.is_file())
-        {
-            let _ = std::os::unix::fs::symlink(found, folder.join("git"));
-        }
+    {
+        let _ = std::os::unix::fs::symlink(found, folder.join("git"));
     }
     #[cfg(not(unix))]
     let _ = folder;
