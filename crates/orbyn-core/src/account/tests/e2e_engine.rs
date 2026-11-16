@@ -31,8 +31,8 @@ fn engine_url() -> String {
     std::env::var("ORBYN_E2E_ENGINE_URL").unwrap_or_else(|_| DEFAULT_URL.to_owned())
 }
 
-/// Whether something answers the Engine's health route. Any HTTP answer counts: what it says is
-/// the test's business, not the probe's.
+/// Whether something answers the Engine's health route with a success status, so an unrelated
+/// service on the port (a 404 or a refusal) does not make a plain `cargo test` fail.
 async fn answers(url: &str) -> bool {
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -45,7 +45,7 @@ async fn answers(url: &str) -> bool {
         .get(format!("{}/health", url.trim_end_matches('/')))
         .send()
         .await
-        .is_ok()
+        .is_ok_and(|answer| answer.status().is_success())
 }
 
 /// The Engine checkout with `scripts/local.sh`.
@@ -258,7 +258,7 @@ async fn two_devices_of_one_account_follow_each_other_and_merge_after_being_apar
     a.account.pause_sync().await.unwrap();
     b.account.pause_sync().await.unwrap();
     set(&a, KEY, json!("light"));
-    std::thread::sleep(Duration::from_millis(20));
+    tokio::time::sleep(Duration::from_millis(20)).await;
     set(&b, KEY, json!("system"));
     assert_eq!((waiting(&a), waiting(&b)), (1, 1));
     // Back online: B's edit reaches the account first; A then meets it with its own still queued.

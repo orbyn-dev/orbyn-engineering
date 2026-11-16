@@ -13,22 +13,28 @@ pub const INVITE_ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 pub const INVITE_LEN: usize = 16;
 pub const EMAIL_CODE_LEN: usize = 8;
 
-fn normalize(input: &str, len: usize, alphabet: &str) -> Option<String> {
+fn normalize(input: &str, len: usize, alphabet: &str, crockford: bool) -> Option<String> {
     let code: String = input
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '-')
         .flat_map(char::to_uppercase)
+        // Crockford reads `O` as `0` and `I` and `L` as `1`, as the Engine does for an invite; the emailed code has none of them.
+        .map(|c| match (crockford, c) {
+            (true, 'O') => '0',
+            (true, 'I' | 'L') => '1',
+            _ => c,
+        })
         .collect();
     (code.chars().count() == len && code.chars().all(|c| alphabet.contains(c))).then_some(code)
 }
 
 /// The invite without hyphens, in capitals, or `None` when it cannot be an invite.
 pub fn normalize_invite(input: &str) -> Option<String> {
-    normalize(input, INVITE_LEN, INVITE_ALPHABET)
+    normalize(input, INVITE_LEN, INVITE_ALPHABET, true)
 }
 
 pub fn normalize_email_code(input: &str) -> Option<String> {
-    normalize(input, EMAIL_CODE_LEN, ALPHABET)
+    normalize(input, EMAIL_CODE_LEN, ALPHABET, false)
 }
 
 #[cfg(test)]
@@ -39,6 +45,20 @@ mod tests {
     fn the_alphabet_has_thirty_symbols_and_none_that_look_alike() {
         assert_eq!(ALPHABET.chars().count(), 30);
         assert!(!ALPHABET.contains(['0', 'O', '1', 'I', 'L', 'U']));
+    }
+
+    #[test]
+    fn an_invite_reads_o_as_zero_and_i_and_l_as_one_like_the_engine() {
+        let want = Some("0123456789ABCDEF".to_owned());
+        assert_eq!(normalize_invite("O123-4567-89AB-CDEF"), want);
+        assert_eq!(
+            normalize_invite("o1l3-4567-89ab-cdef").as_deref(),
+            Some("0113456789ABCDEF")
+        );
+        assert_eq!(
+            normalize_invite("I123-4567-89AB-CDEF").as_deref(),
+            Some("1123456789ABCDEF")
+        );
     }
 
     #[test]
@@ -68,10 +88,8 @@ mod tests {
 
     #[test]
     fn letters_that_are_not_in_the_alphabet_are_refused() {
-        for bad in ["I", "L", "O", "U"] {
-            let invite = format!("{bad}{}", "ABCD".repeat(4).get(1..).unwrap());
-            assert_eq!(normalize_invite(&invite), None, "{bad}");
-        }
+        let invite = format!("U{}", "ABCD".repeat(4).get(1..).unwrap());
+        assert_eq!(normalize_invite(&invite), None);
         for bad in ["0", "1", "I", "L", "O", "U"] {
             assert_eq!(
                 normalize_email_code(&format!("{bad}ABCDEFG")),

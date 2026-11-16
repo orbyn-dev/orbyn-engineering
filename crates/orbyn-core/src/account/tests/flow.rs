@@ -85,7 +85,7 @@ async fn sign_up_runs_invite_email_password_and_code_in_that_order_then_signs_in
         "invite_required"
     );
     assert_eq!(
-        code(a.check_invite("OOOO-OOOO-OOOO-OOOO").await.unwrap_err()),
+        code(a.check_invite("UUUU-UUUU-UUUU-UUUU").await.unwrap_err()),
         "invalid_invite"
     );
     // A good code spends nothing, so it passes again; a limited check is the throttled state.
