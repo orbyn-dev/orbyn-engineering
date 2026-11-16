@@ -57,7 +57,7 @@ node scripts/sync-labels.mjs
 | Area | `area: core`, `area: contracts`, `area: service`, `area: web`, `area: desktop`, `area: library`, `area: ci`, `area: docs` |
 | Engine | `engine: claude`, `engine: codex`, `engine: acp` |
 | Platform | `platform: macos`, `platform: windows` |
-| Workflow | `needs triage`, `parity`, `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix` |
+| Workflow | `needs triage`, `full-ci`, `parity`, `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix` |
 
 ## Titles
 
@@ -201,27 +201,29 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 cd web && npm run check && npm test
 ```
 
-Seven checks are required on the current head before a merge: Rust on macOS and
-Windows, Web, E2E, the unsigned desktop build on macOS and Windows, and the AI
-usage section. Never
-weaken a check or merge red. Do not turn on auto-merge until E2E has passed on that
-exact commit.
+Three CI checks are required on the current head before a merge, besides the AI usage
+section, the commit trailers and the CLA: `Cheap checks`, `Rust (linux)` and `Web`. A pull
+request runs only that light set; the full suite (browser suite, Rust on macOS and Windows,
+the unsigned desktop builds, the packaged app) runs on every push to main, nightly and on
+manual runs. Add the `full-ci` label to a risky pull request to run the full suite on every
+OS for it. If a merge turns main red, the person who merged it fixes or reverts it in the
+same working session. Never weaken a check or merge red.
 
-On a pull request the unsigned desktop build uses the `ci-release` Cargo profile (no link-time
+With the `full-ci` label the unsigned desktop build on a pull request uses the `ci-release` Cargo profile (no link-time
 optimisation, so it builds faster). Main, the nightly run and releases build the real `release`
 profile. `ORBYN_CARGO_PROFILE` (empty or unset means `release`) is read by `scripts/prepare-bundle.mjs`,
 `scripts/smoke-app.mjs` and `ci.yml`; Tauri does not read it, so `ci.yml` passes `--profile` to `tauri build`.
 A job on pushes to main warms the `ci-release` cache, so a new pull request's first desktop build starts warm.
 
-The Windows Rust tests run on a pull request that changes `crates/`, any `.rs` file, the Cargo
+With the `full-ci` label, the Windows Rust tests run on a pull request that changes `crates/`, any `.rs` file, the Cargo
 manifests, the desktop shell, the scripts, the workflows or `docs/crew/protocol/` (the Crew Protocol
 schemas, examples and cases, which `crates/orbyn-contracts/tests/crew_protocol/main.rs` validates). They are split into three shards plus a
 lint job, and the required `Rust (windows-2022)` check is the job that passes only when all of them did (or when the change needs none of them).
-A heavy job a change cannot affect is skipped at the job level, so a docs-only or web-only pull
+On the light set, a heavy job a change cannot affect is skipped at the job level, so a docs-only or web-only pull
 request never starts the Rust, Windows or desktop jobs, and a docs-only one starts no browser job either. Each required check name
 belongs to a small job that always runs and passes when its heavy job succeeded or was skipped by that
-scope (`Rust (macos-15)`, `Web`, `E2E`, `Unsigned desktop build (macos-15)` and `(windows-2022)` follow
-`Rust (windows-2022)`); the heavy jobs have other names, such as `Rust build (macos-15)`. A skipped matrix
+scope (`Rust (linux)`, `Rust (macos-15)`, `Web`, `E2E`, `Unsigned desktop build (macos-15)` and `(windows-2022)` follow
+`Rust (windows-2022)`); the heavy jobs have other names, such as `Rust build (ubuntu-24.04)`. Only `Cheap checks`, `Rust (linux)` and `Web` are required on a pull request; the others pass there by design and main still waits for them. A skipped matrix
 job reports an unexpanded name, so never give a required name to a matrix job:
 `scripts/check_ci_required_names.py` fails the cheap checks when a required name is missing, duplicated
 or produced by a job that can skip.
