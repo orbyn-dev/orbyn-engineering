@@ -103,6 +103,9 @@ pub struct PinnedRef {
     pub name: String,
     /// The commit it pointed at when it was read.
     pub commit: String,
+    /// True for a remote-tracking ref (`refs/remotes/...`), false for a local branch. The short name alone cannot tell them
+    /// apart: a local branch may be called `origin/main`.
+    pub remote: bool,
 }
 
 /// The default branch tip as of the last fetch, or `None` when the repository has no default-branch ref to read. In order: the
@@ -148,12 +151,17 @@ pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
         };
         let commit = text(&out);
         if is_object_id(&commit) {
+            let remote = full.starts_with("refs/remotes/");
             let name = full
                 .strip_prefix("refs/remotes/")
                 .or_else(|| full.strip_prefix("refs/heads/"))
                 .unwrap_or(&full)
                 .to_owned();
-            return Some(PinnedRef { name, commit });
+            return Some(PinnedRef {
+                name,
+                commit,
+                remote,
+            });
         }
     }
     None
@@ -170,16 +178,6 @@ pub enum Pinned {
     /// `origin` is configured but its default branch cannot be read. The file blocks every engine; a local branch never
     /// stands in for a ref an agent could have deleted.
     Unreadable(PinnedRef, ClassFile),
-}
-
-impl Pinned {
-    /// The ref and the file, for a view that shows the default branch's copy whether or not it is readable.
-    pub fn parts(self) -> Option<(PinnedRef, ClassFile)> {
-        match self {
-            Self::Absent => None,
-            Self::Read(pin, file) | Self::Unreadable(pin, file) => Some((pin, file)),
-        }
-    }
 }
 
 /// The default branch and the file at it. When `origin` is a configured remote and none of its branches has been fetched, the
@@ -204,13 +202,14 @@ pub async fn read_pinned(root: &Path) -> Pinned {
         .unwrap_or(false);
     // A remote-tracking ref that resolved is the default branch. Anything else, with `origin` configured, is not readable: a
     // local branch would stand in for a ref an agent could have deleted.
-    if let Some(pin) = pin.filter(|p| fetched && p.name.starts_with("origin/")) {
+    if let Some(pin) = pin.filter(|p| fetched && p.remote) {
         let file = read_class_file(root, Some(&pin.commit)).await;
         return Pinned::Read(pin, file);
     }
     let pin = PinnedRef {
         name: "origin".to_owned(),
         commit: "none".to_owned(),
+        remote: true,
     };
     let why = if fetched {
         "the default branch of the remote origin cannot be told: it has branches here but none is main, master or trunk, and origin/HEAD is not set. Run `git remote set-head origin --auto` (or `git fetch origin <default>`) yourself; an agent is not allowed to"

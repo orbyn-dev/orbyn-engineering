@@ -316,6 +316,11 @@ impl PathClasses {
     /// Whether the checkout's rules and the default branch's are not the same file, in words. `None` when there is no default
     /// branch to compare, or the two are the same file.
     pub fn differs(&self) -> Option<String> {
+        // A moved or missing default branch already blocks every engine with its own reason; saying the two files differ
+        // would call the ref's absence "a file that cannot be trusted" and hide the person's choice.
+        if self.invalid_rule() == CHANGED_RULE {
+            return None;
+        }
         let pinned = self.pinned.as_deref()?;
         let (here, there) = (&self.file, &pinned.classes.file);
         if here.blob == there.blob && here.problems == there.problems {

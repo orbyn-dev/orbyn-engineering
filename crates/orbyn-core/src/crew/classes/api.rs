@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 
 use orbyn_contracts as wire;
 
+use super::classify::CHANGED_RULE;
+use super::pin::{self, Shown};
 use super::record::{ROUTE_CLASS, Stored};
 use super::{
     BUILT_IN, ClassFile, PathClasses, base_commit, classify_paths, path_problem, read_class_file,
-    read_pinned,
 };
 use crate::app::Core;
 use crate::crew::EngineView;
@@ -178,13 +179,28 @@ impl Core {
         let views = self.class_machine(&target.project_id).await;
         let differs = working_copy_differs(root, &file).await;
         let mut notes = file.notes.clone();
-        if let Some((pin, there)) = read_pinned(root).await.parts() {
-            let both = PathClasses::of_file(file.clone()).with_pinned(
-                pin.name,
-                pin.commit,
-                PathClasses::of_file(there),
-            );
-            notes.extend(both.differs());
+        match pin::show(&self.store, &target.project_id, root).await? {
+            Shown::None => {}
+            Shown::Side { pin, file: there } => {
+                let both = PathClasses::of_file(file.clone()).with_pinned(
+                    pin.name,
+                    pin.commit,
+                    PathClasses::of_file(there),
+                );
+                notes.extend(both.differs());
+            }
+            Shown::Blocked {
+                name,
+                commit,
+                reason,
+            } => {
+                let both =
+                    PathClasses::of_file(file.clone()).with_pinned_blocked(name, commit, reason);
+                notes.push(format!(
+                    "{CHANGED_RULE}: {}. Every engine is blocked until a person confirms or resets the remembered default branch.",
+                    both.problem_text()
+                ));
+            }
         }
         Ok(wire::CrewClassesView {
             thread: target.thread,
@@ -229,7 +245,7 @@ impl Core {
         let base = base_commit(root).await;
         let file = read_class_file(root, base.as_deref()).await;
         let views = self.class_machine(&target.project_id).await;
-        let pinned = read_pinned(root).await.parts();
+        let shown = pin::show(&self.store, &target.project_id, root).await?;
         let mut results = Vec::new();
         for path in paths {
             let problem = if path.chars().count() > PATH_MAX {
@@ -255,15 +271,26 @@ impl Core {
                 std::slice::from_ref(path),
             )
             .await;
-            if let Some((pin, there)) = &pinned {
-                let side = classify_paths(
-                    root,
-                    base.as_deref(),
-                    there.clone(),
-                    std::slice::from_ref(path),
-                )
-                .await;
-                classes = classes.with_pinned(pin.name.clone(), pin.commit.clone(), side);
+            match &shown {
+                Shown::None => {}
+                Shown::Side { pin, file: there } => {
+                    let side = classify_paths(
+                        root,
+                        base.as_deref(),
+                        there.clone(),
+                        std::slice::from_ref(path),
+                    )
+                    .await;
+                    classes = classes.with_pinned(pin.name.clone(), pin.commit.clone(), side);
+                }
+                Shown::Blocked {
+                    name,
+                    commit,
+                    reason,
+                } => {
+                    classes =
+                        classes.with_pinned_blocked(name.clone(), commit.clone(), reason.clone());
+                }
             }
             results.push(wire::CrewClassTestPath {
                 path: path.clone(),

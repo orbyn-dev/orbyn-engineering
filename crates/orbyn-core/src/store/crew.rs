@@ -21,6 +21,9 @@ use crate::util::now;
 pub struct CrewPinnedRef {
     pub reference: String,
     pub commit: String,
+    /// Whether the ref was remote-tracking (`refs/remotes/...`) or a local branch. A local branch may be named `origin/main`,
+    /// so the short name alone cannot say whether the remembered ref was the remote one.
+    pub remote: bool,
 }
 
 /// The preference key holding [`CrewPinnedRef`]. Not a settings key: the settings catalog does not read it.

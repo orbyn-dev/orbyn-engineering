@@ -12,12 +12,12 @@ use std::path::{Path, PathBuf};
 
 use orbyn_contracts as wire;
 
-use super::file::{Pinned, PinnedRef, read_pinned};
+use super::file::{ClassFile, Pinned, PinnedRef, read_pinned};
 use crate::app::Core;
 use crate::crew::valid_id;
 use crate::error::{CoreError, Result};
 use crate::source_control::git::git_hardened as git;
-use crate::store::CrewPinnedRef;
+use crate::store::{CrewPinnedRef, Store};
 
 /// How the checkout's default branch compares to the commit this project remembered.
 pub(super) enum Decision {
@@ -70,7 +70,7 @@ pub(super) async fn decide(root: &Path, stored: Option<&CrewPinnedRef>) -> Decis
             // A remote-tracking ref is what `git fetch` moves; a local branch is moved by a commit or `git branch -f`, which an
             // agent can do. Losing `origin/...` for a local branch is the weakening this memory exists to see, so the pin is
             // gone even when the local branch happens to sit on a descendant: a person confirms or resets it.
-            if stored.reference.starts_with("origin/") && !pin.name.starts_with("origin/") {
+            if stored.remote && !pin.remote {
                 return Decision::Blocked {
                     name: stored.reference.clone(),
                     commit: stored.commit.clone(),
@@ -106,6 +106,7 @@ fn remembered(pin: &PinnedRef) -> CrewPinnedRef {
     CrewPinnedRef {
         reference: pin.name.clone(),
         commit: pin.commit.clone(),
+        remote: pin.remote,
     }
 }
 
@@ -135,6 +136,41 @@ fn rewritten_reason(name: &str, older: &str, newer: &str) -> String {
         short(newer),
         short(older)
     )
+}
+
+/// What a read-only view shows of the default branch, decided against the project's memory but never written.
+pub(super) enum Shown {
+    /// No ref and nothing remembered: HEAD alone is read.
+    None,
+    /// The ref and the file at it, for the view to compare with the checkout's copy.
+    Side { pin: PinnedRef, file: ClassFile },
+    /// A remembered ref is gone or does not descend from the current one: a person must confirm or reset.
+    Blocked {
+        name: String,
+        commit: String,
+        reason: String,
+    },
+}
+
+/// The decision a view shows. A broken stored row is an error, never "nothing remembered".
+pub(super) async fn show(store: &Store, project_id: &str, root: &Path) -> Result<Shown> {
+    let stored = store.crew_pinned_ref(project_id)?;
+    Ok(match decide(root, stored.as_ref()).await {
+        Decision::None => Shown::None,
+        Decision::Read { pin, file, .. } | Decision::Unreadable { pin, file } => {
+            Shown::Side { pin, file }
+        }
+        Decision::Blocked {
+            name,
+            commit,
+            reason,
+            ..
+        } => Shown::Blocked {
+            name,
+            commit,
+            reason,
+        },
+    })
 }
 
 impl Core {
@@ -240,6 +276,7 @@ mod tests {
         let stored = CrewPinnedRef {
             reference: "origin/main".into(),
             commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            remote: true,
         };
         let missing = missing_reason(&stored);
         assert!(missing.contains("origin/main") && missing.contains("aaaaaaaaaaaa"));

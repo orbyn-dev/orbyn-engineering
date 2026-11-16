@@ -181,6 +181,124 @@ async fn deleting_the_ref_blocks_every_engine_and_a_reset_clears_the_memory() {
 }
 
 #[tokio::test]
+async fn a_local_branch_named_origin_main_does_not_stand_in_for_the_remote_ref() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    run_git(
+        &w.repo,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.test/repo.git",
+        ],
+    );
+    let project = project_of(&w);
+    routed(&w, 1).await;
+
+    // Remove the remote, then leave a local branch with the remote ref's own short name.
+    run_git(&w.repo, &["config", "--unset", "remote.origin.url"]);
+    run_git(
+        &w.repo,
+        &["update-ref", "--no-deref", "-d", "refs/remotes/origin/HEAD"],
+    );
+    run_git(&w.repo, &["update-ref", "-d", "refs/remotes/origin/main"]);
+    let main = git_out(&w.repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    run_git(&w.repo, &["branch", "-q", "-m", &main, "renamed"]);
+    run_git(&w.repo, &["branch", "-q", "-m", "renamed", "origin/main"]);
+    run_git(&w.repo, &["config", "init.defaultBranch", "origin/main"]);
+    assert_eq!(
+        git_out(&w.repo, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "origin/main"
+    );
+
+    let (answer, error) = w.start(brief_writing(2), key()).await;
+    assert!(!error, "{answer}");
+    let texts = refused(&answer);
+    says(&texts, "Orbyn remembered the default branch origin/main");
+    says(&texts, "It is gone now");
+    let view = w.core.crew_pinned_ref_view(&project).await.unwrap();
+    assert!(view.missing && !view.accepted);
+    assert_eq!(view.current_ref.as_deref(), Some("origin/main"));
+}
+
+#[tokio::test]
+async fn losing_the_local_default_branch_with_no_remote_blocks() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    let project = project_of(&w);
+    routed(&w, 1).await;
+    let branch = git_out(&w.repo, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    // A detached HEAD and no local default branch leaves nothing to read, but the project remembered one.
+    run_git(&w.repo, &["checkout", "-q", "--detach"]);
+    run_git(&w.repo, &["branch", "-q", "-D", &branch]);
+    let (answer, error) = w.start(brief_writing(2), key()).await;
+    assert!(!error, "{answer}");
+    let texts = refused(&answer);
+    says(&texts, "Orbyn remembered the default branch");
+    says(&texts, "It is gone now");
+    let view = w.core.crew_pinned_ref_view(&project).await.unwrap();
+    assert!(view.missing && !view.accepted);
+    assert_eq!(view.stored_ref.as_deref(), Some(branch.as_str()));
+    assert!(view.current_ref.is_none());
+}
+
+#[tokio::test]
+async fn a_broken_stored_row_and_a_failed_write_block_instead_of_opening() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let project = project_of(&w);
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO project_preferences (project_id, key, value) VALUES (?1, 'crew_pinned_ref', 'not json')",
+        rusqlite::params![project],
+    )
+    .unwrap();
+    assert!(w.core.crew_pinned_ref_view(&project).await.is_err());
+    let (answer, error) = w.start(brief_writing(1), key()).await;
+    assert!(!error, "{answer}");
+    let texts = refused(&answer);
+    says(&texts, "cannot be read");
+    says(&texts, "cannot tell whether a ref was weakened");
+
+    // A failed write is the same: the task does not start on a ref it could not remember.
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_pin BEFORE INSERT ON project_preferences WHEN NEW.key = 'crew_pinned_ref'
+         BEGIN SELECT RAISE(ABORT, 'fixture pin'); END;",
+    )
+    .unwrap();
+    let (answer, error) = w.start(brief_writing(1), key()).await;
+    assert!(!error, "{answer}");
+    let texts = refused(&answer);
+    says(&texts, "cannot be remembered");
+}
+
+#[tokio::test]
+async fn the_dry_run_reads_the_default_branch_but_never_remembers_it() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let project = project_of(&w);
+    let (answer, error) = w
+        .call(
+            &w.lead_token,
+            "crew_route",
+            json!({ "brief": brief_writing(1) }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["dry_run"], true, "{answer}");
+    assert!(w.core.store.crew_pinned_ref(&project).unwrap().is_none());
+    let view = w.core.crew_pinned_ref_view(&project).await.unwrap();
+    assert!(view.stored_ref.is_none() && view.stored_commit.is_none());
+}
+
+#[tokio::test]
 async fn a_rewritten_default_branch_blocks_until_a_person_confirms_that_commit() {
     let w = two().await;
     commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
@@ -204,6 +322,32 @@ async fn a_rewritten_default_branch_blocks_until_a_person_confirms_that_commit()
     let texts = refused(&answer);
     says(&texts, "default branch changed");
     says(&texts, "does not descend");
+    // The read-only views say the same as a start, instead of showing a clean card.
+    let classes = w
+        .core
+        .crew_classes_view(None, Some(&project))
+        .await
+        .unwrap();
+    assert!(
+        classes
+            .notes
+            .iter()
+            .any(|note| note.contains("default branch changed")),
+        "{:?}",
+        classes.notes
+    );
+    let test = w
+        .core
+        .crew_class_test(None, Some(&project), &["src/a.rs".to_owned()])
+        .await
+        .unwrap();
+    assert!(test.paths[0].route_card.contains("default branch changed"));
+    assert!(
+        test.paths[0]
+            .allowed_engines
+            .as_ref()
+            .is_some_and(Vec::is_empty)
+    );
 
     // The view showed the rewritten commit; confirming the old one, or anything else, is stale.
     let stale = w

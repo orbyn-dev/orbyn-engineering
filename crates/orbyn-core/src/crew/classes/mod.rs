@@ -11,11 +11,14 @@
 //! Linux workers are refused. A project with an `origin` remote and no resolvable remote-tracking default-branch ref blocks every
 //! engine under its own rule name, `default branch unreadable`: no local branch stands in, because an agent could have deleted the
 //! ref. A person fixes it with `git fetch origin` (a brand-new project with an empty remote is blocked until its first push, by
-//! design) or `git remote set-head origin --auto`. With no `origin` at all the local default branch, else HEAD alone, is read, and
-//! nothing remembers the earlier ref between tasks (issue #574). See the known limits in docs/crew.md.
+//! design) or `git remote set-head origin --auto`. With no `origin` at all the local default branch, else HEAD alone, is read.
+//! Each project remembers the default-branch ref and commit its last started task accepted (the existing `project_preferences`
+//! row `crew_pinned_ref`, no migration): the same commit or a descendant moves the memory forward, while a ref that is gone or a
+//! move that does not descend blocks every engine under `default branch changed` until a person confirms the new commit or resets
+//! the memory. A dry run never writes it. See the known limits in docs/crew.md.
 //! The router uses the result as a hard filter before scoring
-//! ([`class_screen`](super::filters::class_screen)); each routing writes one `route_class` row to the approval ledger; and
-//! three read-only views serve the routes. Orbyn never writes the file.
+//! ([`class_screen`](super::filters::screen)); each routing writes one `route_class` row to the approval ledger; and the read-only
+//! views serve the routes. Orbyn never writes the file.
 
 mod api;
 mod classify;
@@ -28,7 +31,7 @@ pub(in crate::crew) use api::engine_words;
 pub(in crate::crew) use record::Routed;
 
 pub use classify::{PathClasses, classify, classify_paths};
-pub use file::{BUILT_IN, ClassFile, FILE_MAX, base_commit, read_class_file, read_pinned};
+pub use file::{BUILT_IN, ClassFile, FILE_MAX, base_commit, read_class_file};
 pub use glob::{Glob, path_problem};
 
 #[cfg(test)]
