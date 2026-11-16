@@ -107,6 +107,12 @@ impl Core {
         now: i64,
     ) -> Result<Vec<MergeOutcome>> {
         self.crew_preview_only()?;
+        // The lead tool passes its crew; the local HTTP caller has none. Same names as the ledger's actor.
+        let actor = if crew_id.is_some() {
+            "lead"
+        } else {
+            "local_caller"
+        };
         let mut outcomes = Vec::new();
         {
             let _serial = self.crew_merges.lock().await;
@@ -129,7 +135,7 @@ impl Core {
                     break;
                 }
                 let outcome = self
-                    .process_forge_entry(&entry, target, &mut intent, now)
+                    .process_forge_entry(&entry, target, &mut intent, actor, now)
                     .await?;
                 let landed = matches!(outcome, MergeOutcome::Merged { .. });
                 outcomes.push(outcome);
@@ -149,6 +155,7 @@ impl Core {
         entry: &MergeEntry,
         target: &MergeTarget,
         intent: &mut ForgeMerge,
+        actor: &str,
         now: i64,
     ) -> Result<MergeOutcome> {
         let task = entry.task_id.as_str();
@@ -208,11 +215,17 @@ impl Core {
                 .check_forge_combination(&scratch, entry, intent, now)
                 .await;
             scratch.finish().await;
-            checked?;
+            match checked {
+                Ok(()) => {}
+                // A failed combined-state check is a verdict, not a fault: stop here so the slow checks
+                // do not run again on every call. A person or a new reviewed task decides what next.
+                Err(CoreError::Invalid(why)) => return self.forge_needs_person(intent, &why),
+                Err(error) => return Err(error),
+            }
             // Durable before either effect. An interruption here is reconciled, not retried.
             intent.phase = ForgePhase::Publishing;
             self.store.save_crew_forge_merge(intent)?;
-            self.merge_event(task, "merge_queued", &json!({"forge_publish_requested": true, "head": intent.candidate, "base": intent.base}));
+            self.merge_event(task, "merge_queued", &json!({"forge_publish_requested": true, "actor": actor, "head": intent.candidate, "base": intent.base}));
             if text(&git(&target.repo, &["remote", "get-url", "origin"]).await?) != intent.remote {
                 return self.forge_needs_person(intent, "origin changed before publication");
             }
@@ -306,7 +319,7 @@ impl Core {
         self.merge_gate_from_evidence(task, &intent.evidence, combined, &intent.candidate, now)?;
         intent.phase = ForgePhase::MergeRequested;
         self.store.save_crew_forge_merge(intent)?;
-        self.merge_event(task, "merge_queued", &json!({"forge_merge_requested": true, "pull": number, "head": intent.candidate, "base": intent.base}));
+        self.merge_event(task, "merge_queued", &json!({"forge_merge_requested": true, "actor": actor, "pull": number, "head": intent.candidate, "base": intent.base}));
         let options = MergePull {
             method: "merge".into(),
             auto: false,

@@ -542,6 +542,12 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**Forge CI rule.** On a forge merge, every check in the person's `ORBYN_CREW_REQUIRED_CHECKS` list must be present on the pull request's
+head and succeed; a required check that is missing, skipped, neutral or pending is not green. Any other check may succeed, be skipped
+or neutral (a repository's path-scoped jobs are often skipped), but never fail, be cancelled, time out or still be pending. A failed
+combined-state check blocks the entry for a person rather than re-running. The `forge_publish_requested` and `forge_merge_requested`
+events record the `actor`: `lead` for the lead's tool, `local_caller` for the local HTTP caller.
+
 **As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
 flag. With it off every route answers 404 for every method, like a path nothing serves, and `/api/info` omits `crew_preview`. The flag is
 read, never set, over HTTP. **The Preview flag stays for development only until [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)

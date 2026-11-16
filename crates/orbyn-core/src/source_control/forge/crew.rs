@@ -106,12 +106,64 @@ impl CrewRepository {
     }
 }
 
+/// What one check reported at the head. Skipped and neutral are not failures, but they never satisfy a required check.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CrewCheckState {
+    Success,
+    /// Skipped or neutral: fine for a check that is not required.
+    Neutral,
+    /// Not finished, or not run yet.
+    Pending,
+    /// Failed, cancelled, timed out or any other conclusion.
+    Failed,
+}
+
+impl CrewCheckState {
+    fn github_run(status: &serde_json::Value, conclusion: &serde_json::Value) -> Self {
+        if status != "completed" {
+            return Self::Pending;
+        }
+        match conclusion.as_str() {
+            Some("success") => Self::Success,
+            Some("skipped" | "neutral") => Self::Neutral,
+            _ => Self::Failed,
+        }
+    }
+
+    fn github_status(state: &serde_json::Value) -> Self {
+        match state.as_str() {
+            Some("success") => Self::Success,
+            Some("pending") => Self::Pending,
+            _ => Self::Failed,
+        }
+    }
+
+    fn gitlab(status: &serde_json::Value) -> Self {
+        match status.as_str() {
+            Some("success") => Self::Success,
+            Some("skipped") => Self::Neutral,
+            Some(
+                "created"
+                | "pending"
+                | "running"
+                | "waiting_for_resource"
+                | "preparing"
+                | "scheduled"
+                | "manual"
+                | "waiting_for_callback",
+            ) => Self::Pending,
+            _ => Self::Failed,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CrewCheckReceipt {
     pub name: String,
     pub head: String,
-    pub passed: bool,
+    pub state: CrewCheckState,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -343,7 +395,7 @@ pub async fn crew_pull(
                 checks.push(CrewCheckReceipt {
                     name: string(row, "name")?.to_owned(),
                     head: commit(row, "head_sha")?,
-                    passed: row["status"] == "completed" && row["conclusion"] == "success",
+                    state: CrewCheckState::github_run(&row["status"], &row["conclusion"]),
                 });
             }
         }
@@ -361,7 +413,7 @@ pub async fn crew_pull(
             checks.push(CrewCheckReceipt {
                 name: string(row, "context")?.to_owned(),
                 head: status_head.clone(),
-                passed: row["state"] == "success",
+                state: CrewCheckState::github_status(&row["state"]),
             });
         }
         checks
@@ -376,13 +428,13 @@ pub async fn crew_pull(
         let mut checks = vec![CrewCheckReceipt {
             name: "pipeline".into(),
             head: pipeline_head.clone(),
-            passed: pipeline["status"] == "success",
+            state: CrewCheckState::gitlab(&pipeline["status"]),
         }];
         for row in rows {
             checks.push(CrewCheckReceipt {
                 name: string(&row, "name")?.to_owned(),
                 head: pipeline_head.clone(),
-                passed: row["status"] == "success",
+                state: CrewCheckState::gitlab(&row["status"]),
             });
         }
         checks
@@ -402,6 +454,9 @@ pub async fn crew_pull(
 }
 
 /// Required names come from the person's service configuration, never the agent's arguments.
+///
+/// Every required check must be present and succeed. Any other check may succeed, be skipped or be neutral, but
+/// never fail, be cancelled or time out, or still be pending. A required check that is missing is not green.
 pub fn crew_ci_green(
     receipt: &CrewPullReceipt,
     required: &[String],
@@ -413,7 +468,14 @@ pub fn crew_ci_green(
         && receipt.base == base
         && !required.is_empty()
         && !receipt.checks.is_empty()
-        && receipt.checks.iter().all(|c| c.head == head && c.passed)
+        && receipt.checks.iter().all(|c| {
+            c.head == head
+                && if required.contains(&c.name) {
+                    c.state == CrewCheckState::Success
+                } else {
+                    matches!(c.state, CrewCheckState::Success | CrewCheckState::Neutral)
+                }
+        })
         && required
             .iter()
             .all(|name| receipt.checks.iter().any(|c| &c.name == name))
@@ -438,7 +500,7 @@ mod tests {
             checks: vec![CrewCheckReceipt {
                 name: "rust".into(),
                 head: "a".repeat(40),
-                passed: true,
+                state: CrewCheckState::Success,
             }],
         };
         let required = vec!["rust".into()];
@@ -467,14 +529,14 @@ mod tests {
             &receipt.head,
             &"c".repeat(40)
         ));
-        receipt.checks[0].passed = false;
+        receipt.checks[0].state = CrewCheckState::Failed;
         assert!(!crew_ci_green(
             &receipt,
             &required,
             &receipt.head,
             &receipt.base
         ));
-        receipt.checks[0].passed = true;
+        receipt.checks[0].state = CrewCheckState::Success;
         receipt.checks[0].head = "c".repeat(40);
         assert!(!crew_ci_green(
             &receipt,
@@ -489,6 +551,100 @@ mod tests {
             &receipt.head,
             &receipt.base
         ));
+    }
+
+    fn check(name: &str, state: CrewCheckState) -> CrewCheckReceipt {
+        CrewCheckReceipt {
+            name: name.into(),
+            head: "a".repeat(40),
+            state,
+        }
+    }
+
+    fn green(checks: Vec<CrewCheckReceipt>, required: &[&str]) -> bool {
+        let receipt = CrewPullReceipt {
+            host: "fixture.invalid".into(),
+            repository: "fixture/repo".into(),
+            number: 1,
+            source: "crew-task".into(),
+            target: "main".into(),
+            head: "a".repeat(40),
+            base: "b".repeat(40),
+            state: "open".into(),
+            merge_commit: None,
+            checks,
+        };
+        let required: Vec<String> = required.iter().map(|n| (*n).to_owned()).collect();
+        crew_ci_green(&receipt, &required, &"a".repeat(40), &"b".repeat(40))
+    }
+
+    #[test]
+    fn skipped_and_neutral_checks_do_not_block_when_required_ones_pass() {
+        use CrewCheckState::*;
+        assert!(green(
+            vec![
+                check("Rust", Success),
+                check("Web build", Neutral),
+                check("Desktop cache warm", Neutral),
+            ],
+            &["Rust"]
+        ));
+    }
+
+    #[test]
+    fn a_skipped_or_pending_required_check_or_a_missing_one_is_not_green() {
+        use CrewCheckState::*;
+        assert!(!green(vec![check("Rust", Neutral)], &["Rust"]));
+        assert!(!green(vec![check("Rust", Pending)], &["Rust"]));
+        assert!(!green(vec![check("Web build", Success)], &["Rust"]));
+    }
+
+    #[test]
+    fn another_failed_or_pending_check_is_not_green() {
+        use CrewCheckState::*;
+        assert!(!green(
+            vec![check("Rust", Success), check("Lint", Failed)],
+            &["Rust"]
+        ));
+        assert!(!green(
+            vec![check("Rust", Success), check("Lint", Pending)],
+            &["Rust"]
+        ));
+    }
+
+    #[test]
+    fn check_states_map_from_github_and_gitlab_words() {
+        use CrewCheckState::*;
+        use serde_json::json;
+        assert_eq!(
+            CrewCheckState::github_run(&json!("queued"), &json!(null)),
+            Pending
+        );
+        assert_eq!(
+            CrewCheckState::github_run(&json!("completed"), &json!("skipped")),
+            Neutral
+        );
+        assert_eq!(
+            CrewCheckState::github_run(&json!("completed"), &json!("neutral")),
+            Neutral
+        );
+        for bad in [
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "stale",
+        ] {
+            assert_eq!(
+                CrewCheckState::github_run(&json!("completed"), &json!(bad)),
+                Failed
+            );
+        }
+        assert_eq!(CrewCheckState::github_status(&json!("pending")), Pending);
+        assert_eq!(CrewCheckState::github_status(&json!("error")), Failed);
+        assert_eq!(CrewCheckState::gitlab(&json!("skipped")), Neutral);
+        assert_eq!(CrewCheckState::gitlab(&json!("running")), Pending);
+        assert_eq!(CrewCheckState::gitlab(&json!("canceled")), Failed);
     }
 
     #[tokio::test]

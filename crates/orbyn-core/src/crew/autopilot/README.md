@@ -92,8 +92,11 @@ the hard rules, the injection wire and the denial counts still apply.
 
 **Forge final writer.** The lead's `crew_queue_merge` and `crew_process_merges` request Core-owned GitHub/GitLab publication,
 CI observation and merge commits. Commands still pass through the existing forge process owner; no credential is read by Crew.
-Person-owned `CoreConfig::crew_merge_required_checks` must be nonempty. Missing, pending, skipped, neutral, failing or wrong-head
-checks refuse merging, including additional observed failures. Head and base are pinned, combined-state checks run in scratch,
+Person-owned `CoreConfig::crew_merge_required_checks` must be nonempty. CI is green only when every required check is present
+and succeeded at the pinned head. Any other check may succeed, be skipped or neutral, but a failed, cancelled, timed-out,
+pending or wrong-head one refuses merging, and so does a required check that is missing, skipped or neutral. A failed
+combined-state check blocks the entry for a person instead of re-running on every call. The `forge_publish_requested` and
+`forge_merge_requested` events record the `actor` (`lead` for the lead's tool, `local_caller` for the local HTTP caller). Head and base are pinned, combined-state checks run in scratch,
 and holds, lanes, actual PR identity and CI are read again before merging. Migration 45 persists intent before each effect;
 uncertain results reconcile identity/head/merge commit rather than repeating an effect. The actual merged tree/parents are checked.
 Canonical origin host/repository identity is selected explicitly for every API/create/merge call and checked against receipts;
