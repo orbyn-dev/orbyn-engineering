@@ -55,6 +55,11 @@ use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, QueryMap};
 #[cfg(test)]
 pub const GUARDS: &[(&str, &str, &str)] = &[
     (
+        "POST",
+        "/api/crew/approvals/second-engine/{id}/dismiss",
+        "core autopilot_dismiss_second_engine_notice: Preview, durable idempotent dismissal; never approves or retries; local only",
+    ),
+    (
         "PUT",
         "/api/crew/autopilot/mode",
         "core set_crew_autopilot_mode: a repository must be a project, a crew must have a task, the person's choice only; local only",
@@ -177,6 +182,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/approvals/{id}/approve-once", post(approve_once))
         .route("/api/crew/approvals/{id}/deny", post(deny_held))
         .route("/api/crew/approvals/{id}/dismiss", post(dismiss_held))
+        .route(
+            "/api/crew/approvals/second-engine/{id}/dismiss",
+            post(dismiss_second_engine_notice),
+        )
         .route("/api/crew/background/create", post(background_create))
         .route("/api/crew/background/{id}/update", post(background_update))
         .route("/api/crew/background/{id}/enable", post(background_enable))
@@ -217,6 +226,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/thresholds", get(thresholds))
         .route("/api/crew/approvals", get(approvals))
         .route("/api/crew/approvals/held", get(held))
+        .route(
+            "/api/crew/approvals/second-engine",
+            get(second_engine_notices),
+        )
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
         .route("/api/crew/background", get(background_list))
@@ -543,6 +556,35 @@ async fn stops(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
 /// The commands Autopilot holds for the person, newest first.
 async fn held(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_held()?))
+}
+
+async fn second_engine_notices(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let before = query
+        .0
+        .get("before")
+        .map(|value| {
+            value
+                .parse::<i64>()
+                .map_err(|_| CoreError::Invalid("that notice cursor is not valid".into()))
+        })
+        .transpose()?;
+    Ok(Json(
+        state
+            .core
+            .autopilot_second_engine_notices(before, number(&query, "limit")?)
+            .await?,
+    ))
+}
+
+async fn dismiss_second_engine_notice(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<impl IntoResponse> {
+    state.core.autopilot_dismiss_second_engine_notice(id)?;
+    Ok(Json(serde_json::json!({ "dismissed": true })))
 }
 
 /// The header the person's grant nonce comes in: what the desktop app handed the page after the person clicked Approve.

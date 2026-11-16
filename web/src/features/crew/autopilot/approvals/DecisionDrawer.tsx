@@ -18,6 +18,7 @@ export interface DrawerActions {
   openRequest?(row: ApprovalRow): void;
   seeHardDenied?(): void;
   signInSecondEngine?(): void;
+  dismissSecondEngineNotice?(row: ApprovalRow): void;
   /** "Approve it myself": the same flow as Approve once, handed the click. Only the desktop app offers it. */
   approveMyself(row: ApprovalRow, event: MouseEvent<HTMLButtonElement>): void;
   /** This window is the desktop app, so approving once can ask the shell. A browser tab says it needs the app. */
@@ -140,7 +141,7 @@ function Footer({ row, act, joined }: { row: ApprovalRow; act: DrawerActions; jo
         return [act.openRequest ? <Button2 key="req" onClick={() => act.openRequest?.(row)}>Open the request</Button2> : null, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "no_second_key":
         needsApp = isGuarded(row);
-        return isGuarded(row) ? [signIn, self, ...answers, close] : [signIn, <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
+        return isGuarded(row) ? [signIn, self, ...answers, close] : [signIn, act.dismissSecondEngineNotice ? <Button2 key="dismiss" tone="quiet" onClick={() => act.dismissSecondEngineNotice?.(row)}>Dismiss</Button2> : <Waiting key="dismiss" tone="quiet">Dismiss</Waiting>];
       case "denied_second_key":
         needsApp = true;
         return [self, ledger, close];
@@ -184,7 +185,7 @@ export function DecisionDrawer({ row, act, mode, hold, joined }: { row: Approval
       ref={ref}
       tabIndex={-1}
       className="ap-drawer"
-      data-frame={guarded ? guardFrame(row, act.asking === true) : undefined}
+      data-frame={guarded ? guardFrame(row, act.asking === true) : row.result === "no_second_key" ? "approval-one-vendor" : undefined}
       aria-label={row.title}
       onKeyDown={(event) => {
         if (event.key === "Escape") {

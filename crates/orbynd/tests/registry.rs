@@ -249,12 +249,29 @@ async fn a_checked_binary_installs_runs_a_turn_and_removes_cleanly() {
     service.stop().await;
 }
 
+/// Makes `git` reachable from `folder` alone: on unix a link to the one on this machine's PATH. Elsewhere the
+/// test's own PATH is left as the platform needs it.
+fn link_git_into(folder: &std::path::Path) {
+    #[cfg(unix)]
+    if let Some(path) = std::env::var_os("PATH")
+        && let Some(found) = std::env::split_paths(&path)
+            .map(|dir| dir.join("git"))
+            .find(|candidate| candidate.is_file())
+    {
+        let _ = std::os::unix::fs::symlink(found, folder.join("git"));
+    }
+    #[cfg(not(unix))]
+    let _ = folder;
+}
+
 #[tokio::test]
 async fn an_engine_that_is_not_installed_offers_the_vendors_page_and_nothing_else() {
     let dir = TempDir::new();
     // No program of this name is found on any path the service looks at.
     let empty = dir.path().join("empty");
     std::fs::create_dir_all(&empty).unwrap();
+    // The service still needs git (it checks its library folder), so only git is on that path.
+    link_git_into(&empty);
     let options = Options {
         env: vec![("PATH".into(), empty.to_string_lossy().into_owned())],
         ..Options::default()

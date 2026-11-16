@@ -2389,6 +2389,18 @@ After a run ends, member tools refuse (H7), but the core can verify again and ad
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
 
+Crew's Git scope and size checks retain Git's ignore rules and disable the untracked cache.
+Unchanged ignored caches do not require broader scope or data removal; ignored new files
+remain an accepted blind spot, pending isolated-checkout work (#436).
+Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
+checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
+other Git reads keep their settings.
+Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
+which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
+A fix's touched-file guard compares the file's exact byte digest with the digest the core
+recorded in its immutable key. Only a stored fix task can run that internal check; it writes
+normal Evidence and cannot clear a finding by itself. Missing or unreadable files decide nothing.
+
 `crew_review` (the lead only) runs finished work through any number of reviewer lanes, also after the task has passed and
 without reopening it. Each lane is a task of its own through the same start path as `crew_start`: a read-only reviewer, routed by
 role `review` and its lane at the lead tier to another vendor than the builder where one is configured, told the work's purpose
@@ -2415,6 +2427,27 @@ address spellings and wildcard IPs, and drop invalid entries individually. DNS l
 entry still includes its apex. Loopback and explicitly listed local/private/internal destinations
 remain supported. This checks syntax only, without DNS resolution or proof of destination ownership;
 the detector's heuristic and sandbox limits remain in the Autopilot group README.
+
+With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
+are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
+data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
+whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
+worker admissions; global worker-turn enforcement remains #438. Reported usage is recorded even when the answer is rejected, and
+missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
+no session persistence and one turn, with a 1,024-output-token cap and $0.05 estimated-spend stop. Reported usage above 16,384 tokens
+or estimated cost above $0.05 rejects the answer after spending. The provider stop can overshoot; neither is a hard pre-spend total-token
+or dollar guarantee. Unsupported drivers/options/versions fail closed, never fall back to ordinary runs. Core sends only the redacted
+Summary, no tools, MCP binding, session, transcript, raw page/tool detail or answer key. Strict reasoned JSON, task/attempt/mode liveness,
+deadline and cancellation govern acceptance. These are tool-admission guarantees, not OS isolation.
+Claude aliases bind only through the bounded effective model scalar from the exact active lead run, guarded by project/thread/run/engine
+identity; missing or conflicting init metadata refuses. The separate turn pins that full ID and requires exact receipt equality.
+Idle leads and second Claude instances require an explicit full Anthropic model ID; alias-only catalogs and provider-specific model
+IDs remain unavailable. No raw init payload or model transcript is copied into an approval.
+
+Ordinary Full-mode missing-second-key denials project into server-persistent Needs you notices. The lead's vendor is pinned; only
+an eligible different vendor or an explicit local dismissal writes an idempotent resolution row. Same-vendor instances never clear
+it. The read may record observed availability but grants no action. Stable ledger cursors include old pending notices independently
+of recent denials. Sign in opens Providers; Dismiss hides that notice. Neither blocks, approves nor retries the denied action.
 
 A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
 merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,

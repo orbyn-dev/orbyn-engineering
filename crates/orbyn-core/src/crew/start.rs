@@ -185,6 +185,29 @@ impl Core {
             prompt,
             links,
         } = launch;
+        // Only the core's recorded fix launch may install this internal byte check.
+        for check in &key.checks {
+            if check.id.as_str() == "chk-fix-touched" || check.params["name"] == "crew-fix-touched"
+            {
+                let Some(fix) = &links.fix else {
+                    return Err(invalid(
+                        "the internal byte check is reserved for a core fix task",
+                    ));
+                };
+                if fix.fix_task_id != brief.id.as_str()
+                    || !matches!(check.kind, orbyn_contracts::CheckKind::RepoRequired)
+                    || check.id.as_str() != "chk-fix-touched"
+                    || check.params["name"] != "crew-fix-touched"
+                    || check.params["note"].as_str().is_none_or(|digest| {
+                        digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+                {
+                    return Err(invalid(
+                        "the internal byte check does not match its fix task",
+                    ));
+                }
+            }
+        }
         // H2 on what the core wrote as well as what the lead sent.
         refuse_secret(&CrewObject::Brief(brief.clone()).to_value())?;
         refuse_secret(&CrewObject::AnswerKey(key.clone()).to_value())?;
@@ -235,15 +258,14 @@ impl Core {
                 .map_err(internal)?;
         }
 
-        // Which entries already hid a change from git, so one the worker adds can be told. If git cannot say, the task does not
-        // start: a check that cannot be made is never passed. The directory is recorded with them, and the verification
-        // reads the same one.
+        // No hidden entries are admitted, including pre-existing sparse-checkout flags.
+        // The verifier must be able to observe every tracked change.
         let flags = match super::index_flags::flagged(std::path::Path::new(&thread.cwd)).await {
-            Some(flags) => flags,
-            None => {
+            Some(flags) if flags.is_empty() => flags,
+            _ => {
                 let _ = self.store.move_crew_task(&task.id, "needs_person", None);
                 return Err(invalid(
-                    "the checkout's git index cannot be listed, so a hidden edit could not be told",
+                    "the checkout's git index cannot be listed or has flags that hide changes; remove assume-unchanged and skip-worktree flags before starting",
                 ));
             }
         };

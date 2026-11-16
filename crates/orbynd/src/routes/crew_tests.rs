@@ -100,6 +100,53 @@ fn concrete(path: &str) -> String {
         .replace("{id}", "task-1")
 }
 
+#[tokio::test]
+async fn second_engine_notices_are_persistent_preview_gated_and_dismissed_only_locally() {
+    let served = serve("second-engine", true, false).await;
+    let (task, _) = seed_task(&served.core, "second-engine");
+    let id = served.core.store.add_crew_autopilot_event(&task, "crew-1", "denied",
+        &json!({"mode":"full","needs_second_engine":true,"action":{"target":"install zod","lead_engine":"alpha","lead_family":"alpha"}})).unwrap();
+    let (status, first) = served
+        .call("GET", "/api/crew/approvals/second-engine?limit=1", None)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(first["items"][0]["id"], id);
+    assert_eq!(
+        served
+            .call("GET", "/api/crew/approvals/second-engine?limit=1", None)
+            .await
+            .1,
+        first
+    );
+    assert_eq!(
+        served
+            .call("GET", "/api/crew/approvals/second-engine?before=-1", None)
+            .await
+            .0,
+        400
+    );
+    let path = format!("/api/crew/approvals/second-engine/{id}/dismiss");
+    assert_eq!(served.call("POST", &path, Some(json!({}))).await.0, 200);
+    assert_eq!(served.call("POST", &path, Some(json!({}))).await.0, 200);
+    assert_eq!(
+        served
+            .call("GET", "/api/crew/approvals/second-engine", None)
+            .await
+            .1["items"],
+        json!([])
+    );
+    let remote = serve("second-engine-remote", true, true).await;
+    assert_eq!(remote.call("POST", &path, Some(json!({}))).await.0, 403);
+    let off = serve("second-engine-off", false, false).await;
+    assert_eq!(
+        off.call("GET", "/api/crew/approvals/second-engine", None)
+            .await
+            .0,
+        404
+    );
+    assert_eq!(off.call("POST", &path, Some(json!({}))).await.0, 404);
+}
+
 /// A task with a stored brief and key, and the text of one of the key's checks.
 fn seed_task(core: &Core, label: &str) -> (String, String) {
     let stamper = Stamper {

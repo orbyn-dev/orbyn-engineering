@@ -24,11 +24,14 @@ its own. Code, not a model, decides whether a finding is true.
   is a protected path of the reviewer's key, so the core's snapshot compares it, and a scope check fails any other changed file
   (a `diff_size` of 0 when nothing was changed). More than 256 changed files is refused: commit the work first. A run that fails the check
   stops, and its findings cannot be confirmed. A lane runs at most 5 rounds on one piece of work.
-- **Git cannot be told to look away.** `git update-index --assume-unchanged` or `--skip-worktree` hides an edit from every git-based check. The core
-  records the flagged entries (`git ls-files -v`: lowercase tag or `S`) when any task starts and fails the verification if one was added. The cost is one
-  `git ls-files` at the start and one per verification, with no file reads; the alternative, a byte snapshot of every tracked file, would cost a read of the whole
-  repository per task. Flags that were there at the start (a sparse checkout's) are not a failure. The checks' own git runs (`git_hardened`) switch off what a worker could set to hide an
-  edit or to run its own program: repository filters and diff converters (a clean filter can report the original bytes), attributes, and replace refs.
+- **Git checks.** `git update-index --assume-unchanged` or `--skip-worktree` hides an edit from Git. Admission refuses either flag, including flags
+  already present in a sparse checkout; verification fails if either appears. The cost is one `git ls-files` at admission and per verification,
+  with no file reads. Scope and size checks retain `--exclude-standard` and disable the untracked cache.
+  Pre-existing ignored caches do not require broader scope or data removal; ignored new files remain invisible to these checks.
+  No generic cache names are specially exempted, and the core does not widen leases or remove existing data.
+  `git_hardened` disables repository filters and diff converters, tree/global/system attributes and replace refs. The scope, size and changed-path checks use `git_byte_exact`, which also disables line-ending conversion and the untracked cache; no other caller carries those flags.
+  Git's `info/attributes` overrides are a separate source: scope and size checks refuse a nonempty, unreadable or nonregular override file
+  with an error; an absent or empty readable file is accepted. The preflight checks metadata without reading attribute contents.
   If git cannot list the index, or the flags were recorded for another directory than the one checked, nothing passes: the task goes to a person (a task whose index cannot be listed does not start).
 - **Findings** are the protocol's object. A finding has no state: it blocks nothing until a Gate at `finding_check` confirms it.
   `crew_finding` is a member tool, so it refuses once the reviewer's run has ended (H7); the Gate is a core write and does not.
@@ -40,7 +43,7 @@ its own. Code, not a model, decides whether a finding is true.
   out of the task's own verification Evidence. One Gate per finding, written in one transaction. A model's review is never a pass or fail gate.
 - **The fix loop.** A confirmed finding sends a fix brief to a builder, written by the core and started through the same function as
   `crew_start`. It is refused for a file the reviewed task could not write, a test or CI file, a protected path or a file that is not there.
-  Its key is the reviewed task's checks, the repro, a check that the file now differs from the copy the core kept (a cheap guard that it was touched), and a scope
+  Its key is the reviewed task's checks, the repro, a check that the file now differs from the byte digest in the core's immutable key (a cheap guard that it was touched), and a scope
   check (the files changed when the fix began, and the finding's file). The files already changed (the work under review), bar the finding's file, are held by
   their bytes, as a reviewer's are. A fix that changes nothing fails and stops. The lanes run again when a fix passes, after the last fix still running.
 - **When a finding stops blocking.** A place (lane and file) with a confirmed finding blocks until a fix that names it has passed **and** a repro has proved it:
@@ -54,15 +57,40 @@ its own. Code, not a model, decides whether a finding is true.
 ## Limits of Preview
 
 - A fingerprint (lane, file, claim) only labels a finding across rounds; the guard and the blocking keep to the lane and file.
-- Not closed (#451): a new file hidden through `.gitignore`, `.git/info/exclude` or `core.excludesFile`; `core.untrackedCache` with changed directory times; a crafted `.git/index` whose saved file times match an edited file; a `.git` file pointing to another git folder; and in general a writable `.git` in the checkout. A write outside the checkout is seen by none of the checks.
-- Check commands are run through `cmd /C` on Windows, which cannot be handed quotes, so the "file differs" guard names plain relative paths only: a finding path with a space or an unusual character is refused a fix, and the core's copy lives in the repository's git folder (`.git/orbyn-fix`). (The first version quoted its paths, which `cmd /C` mangled; `git diff --no-index` then exited 1 on a missing file and the guard passed on Windows.)
+- Accepted remaining Git limits (#451): a new file hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile`;
+  a crafted `.git/index` whose saved file times match an edited file; a `.git` file pointing to another git folder;
+  and in general a writable `.git` in the checkout. A write outside the checkout is seen by none of the checks. The `info/attributes`
+  preflight can race a metadata change. Refusing flags and disabling conversions do not establish filesystem isolation or immutable Git metadata.
+  Counting all ignored files would charge pre-existing caches and local data to a narrow task; this slice preserves compatibility instead.
+  Task-start byte baselines and stronger output/read bounds are future work, alongside #436 isolation. Git output remains buffered;
+  diff-size's existing 2 MiB per-untracked-file ceiling is not an aggregate work bound. The ignored-path gap is not closed here.
+- The touched-file guard uses the core's byte reader, with no shell command, Git attributes or mutable copy in `.git`.
+  Spaces and the existing path grammar's `@` and `+` need no shell quoting. Unicode and shell metacharacters remain refused by the wire path grammar;
+  this change does not widen that contract. A missing, unreadable or nonregular file cannot pass the guard.
+  Old in-flight fix keys containing the shell guard are refused on verification; restart those fixes under a new authorized task.
 - A fix is refused for a file that changes what checks run (`package.json`, `Makefile`, `justfile`, `conftest.py`, `pytest.ini`, `setup.cfg`, `Cargo.toml`, `jest.config.*`, `vitest.config.*`, `.cargo/config.toml`, ...) and for any file a check command of the reviewed task's key names.
-- The lead's clearing repro is the lead's responsibility: it must pass now and is not shown to have failed before the fix (the Gate says so). Every attempt, a failing one too, is recorded. Running it at the finding's commit in a throwaway worktree is #451.
+- The lead's clearing repro is the lead's responsibility: it must pass now and is not shown to have failed before the fix (the Gate says so). Every attempt, a failing one too, is recorded. Exact-commit repro and fail-before/pass-after evidence remain work for #451 with isolation/process ownership in #436.
 - A repro runs in the checkout as it is now, not at the finding's commit (its Evidence records the commit it ran on).
 - Reviewers share the lead's checkout. The lease rule, the protected-file comparison and the scope check keep them read-only; no sandbox does (#436).
 - A rule's `when.paths` are file or `dir/**` patterns, like a lease; `required` and `checks` in the rule file are not read yet. Removing a locked lane
   is a person's act and nothing builds it yet.
 - Not built: the same-engine badge and its question, PR review on the forge, a `review` Gate per lane, Autopilot and the merge queue.
+
+## Decisions for #451
+
+| Original criterion | Decision and remaining evidence |
+| --- | --- |
+| Reworded claims and fingerprints | Accepted: fingerprints label reports; blocking and the loop guard retain lane + file. A paraphrase or silent lane cannot clear a confirmed finding. Exact semantic claim identity is not implemented. |
+| Reviewer checkout at the commit | Deferred to #436: shared-checkout lease and byte checks provide no process or filesystem isolation. |
+| Second blind lane cost | Accepted whole-lane, cross-vendor blind confirmation. Anchoring it on the claim changes the independence rule. Cost remains unmeasured. |
+| Fix outside original scope | Accepted refusal requiring a person/new authorized task; the fix inherits the original checks. No automatic scope expansion. Check-defining manifests remain refused. |
+| Real Claude and Codex yield | Unqualified: only fake engines are tested here. Real provider runs and confirmed-finding yield remain outstanding. |
+| Hidden paths and index flags | Partially changed: all hiding flags refuse admission/fail checks; sparse checkouts with skip-worktree entries are intentionally unsupported. Ignored new files remain an accepted blind spot to preserve ordinary cached checkouts. Crafted index stat data remains a limit above; #436 isolation is still needed. |
+| Clearing repro at finding commit | Deferred: current-checkout repro is recorded as such; fail-before/pass-after at exact commits and isolated process lifetime remain outstanding with #436. |
+| Byte-exact Git | Changed: only Crew scope, size and changed-path checks run `git_byte_exact` (autocrlf, safecrlf and untracked cache off). `git_hardened` is unchanged. Repository metadata remains writable. |
+| Touched guard and plain HEAD reads | Changed: core digest comparison and hardened HEAD reads in `review/lanes` and the start path's `classes/file`. No generic shell rewriting. |
+
+This is partial hardening, not full #451 qualification. Exact-commit repro, isolated review and real-lane measurements stay visible.
 
 ## Tested
 

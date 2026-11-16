@@ -20,6 +20,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/approvals/{id}/approve-once"),
     ("POST", "/api/crew/approvals/{id}/deny"),
     ("POST", "/api/crew/approvals/{id}/dismiss"),
+    ("POST", "/api/crew/approvals/second-engine/{id}/dismiss"),
     ("POST", "/api/crew/background/create"),
     ("POST", "/api/crew/background/{id}/update"),
     ("POST", "/api/crew/background/{id}/enable"),
@@ -33,7 +34,8 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
 ];
 
-/// The reads: they change nothing.
+/// Reads confer no action authority. The notice projection may record observed
+/// second-engine availability, never approve or retry work.
 pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/preview"),
     ("GET", "/api/crew/autopilot"),
@@ -49,6 +51,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/autopilot/thresholds"),
     ("GET", "/api/crew/approvals"),
     ("GET", "/api/crew/approvals/held"),
+    ("GET", "/api/crew/approvals/second-engine"),
     ("GET", "/api/crew/stops"),
     ("GET", "/api/crew/trust"),
     ("GET", "/api/crew/background"),

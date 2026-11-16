@@ -34,6 +34,17 @@ const BYTE_EXACT: &[&str] = &[
     "core.attributesFile=",
 ];
 
+/// Crew's review checks compare bytes. Line-ending conversion and the untracked cache could
+/// normalize a change away or hide a new file, so only those checks add these on top of `git_hardened`.
+const CREW_BYTE_EXACT: &[&str] = &[
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "core.safecrlf=false",
+    "-c",
+    "core.untrackedCache=false",
+];
+
 /// The repository's own empty tree. Reading attributes from it hides `.gitattributes`.
 async fn no_attributes(cwd: &Path) -> Result<String> {
     Ok(text(
@@ -91,6 +102,16 @@ async fn converter_overrides(cwd: &Path) -> Vec<String> {
 /// make the core run a program of its choosing, is off: repository filters and diff converters, attributes (from the tree, the
 /// global file and the system), and replace refs. A caller that relies on a changed file showing in a diff uses this.
 pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    hardened(cwd, &[], args).await
+}
+
+/// `git_hardened` plus the settings Crew's byte-exact review checks need: no line-ending conversion and no untracked cache.
+/// Only those checks call this; every other caller keeps `git_hardened` as is.
+pub(crate) async fn git_byte_exact(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    hardened(cwd, CREW_BYTE_EXACT, args).await
+}
+
+async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> {
     let overrides = converter_overrides(cwd).await;
     let attributes = no_attributes(cwd).await?;
     let mut command = command(cwd);
@@ -100,6 +121,7 @@ pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .env("GIT_ATTR_SOURCE", &attributes)
         .args(SAFE_CONFIG)
         .args(["-c", "core.attributesFile="])
+        .args(extra)
         .args(&overrides)
         .args(args);
     let output = async {
@@ -705,6 +727,27 @@ fn parse_numstat(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)> 
 mod tests {
     use super::*;
     use crate::testing::TempDir;
+
+    #[tokio::test]
+    async fn only_the_byte_exact_helper_carries_the_crew_flags() {
+        let dir = TempDir::new();
+        crate::testing::run_git(dir.path(), &["init", "-q"]);
+        for (key, value) in [
+            ("core.autocrlf", "true"),
+            ("core.safecrlf", "true"),
+            ("core.untrackedCache", "true"),
+        ] {
+            crate::testing::run_git(dir.path(), &["config", key, value]);
+            let hardened = git_hardened(dir.path(), &["config", "--get", key])
+                .await
+                .unwrap();
+            assert_eq!(text(&hardened), "true", "{key} must stay as configured");
+            let exact = git_byte_exact(dir.path(), &["config", "--get", key])
+                .await
+                .unwrap();
+            assert_eq!(text(&exact), "false", "{key} is off for byte-exact checks");
+        }
+    }
 
     #[tokio::test]
     async fn a_finished_git_leader_does_not_leave_helpers_holding_output() {

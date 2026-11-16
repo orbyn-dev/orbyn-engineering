@@ -11,6 +11,7 @@ import type { AutopilotAreas } from "../../../../generated/AutopilotAreas";
 import type { AutopilotThresholds } from "../../../../generated/AutopilotThresholds";
 import type { AutopilotGuards } from "../../../../generated/AutopilotGuards";
 import type { AutopilotLog } from "../../../../generated/AutopilotLog";
+import type { AutopilotSecondEngineNotices } from "../../../../generated/AutopilotSecondEngineNotices";
 import type { AutopilotMode } from "../../../../generated/AutopilotMode";
 import type { AutopilotModes } from "../../../../generated/AutopilotModes";
 import type { AutopilotTripwires } from "../../../../generated/AutopilotTripwires";
@@ -29,6 +30,12 @@ export const NOT_CONNECTED = "Crew is not connected to this app yet";
 
 export const crewApi = {
   preview: (signal?: AbortSignal) => request<CrewPreviewState>("GET", "/api/crew/preview", undefined, signal),
+  secondEngineNotices: (before: number | null, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: "200" });
+    if (before !== null) query.set("before", String(before));
+    return request<AutopilotSecondEngineNotices>("GET", `/api/crew/approvals/second-engine?${query}`, undefined, signal);
+  },
+  dismissSecondEngineNotice: (id: number) => request<{ dismissed: boolean }>("POST", `/api/crew/approvals/second-engine/${id}/dismiss`, {}),
   /** The ledger, newest first. `kind` is the server's own filter; `task` limits it to one task. */
   approvals: (query: { kind?: string; task?: string; offset: number; limit?: number }, signal?: AbortSignal) => {
     const params = new URLSearchParams({ offset: String(query.offset), limit: String(query.limit ?? PAGE) });

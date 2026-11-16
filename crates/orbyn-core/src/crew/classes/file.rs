@@ -89,7 +89,7 @@ impl ClassFile {
 
 /// The commit the lead's checkout is at: the base a task starts from. `None` when git cannot say.
 pub async fn base_commit(root: &Path) -> Option<String> {
-    let out = crate::source_control::git::git(root, &["rev-parse", "HEAD"])
+    let out = crate::source_control::git::git_hardened(root, &["rev-parse", "HEAD"])
         .await
         .ok()?;
     let sha = text(&out);

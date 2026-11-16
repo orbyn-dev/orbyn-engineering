@@ -268,7 +268,7 @@ impl Core {
                 return Ok(verdict);
             }
         }
-        // A flag that hides a file from git blinds every git-based check, so one added since the start fails the attempt. If the
+        // A flag that hides a file from git blinds every git-based check, so any present flag fails the attempt. If the
         // flags cannot be read, or were recorded for another directory than the one checked, nothing is run: the task goes to a
         // person rather than passing a check that could not be made.
         if let Some(text) = run.index_flags.as_deref() {
@@ -278,8 +278,12 @@ impl Core {
                     "the index flags were not recorded",
                 )
             })?;
-            let before: Vec<String> =
-                serde_json::from_value(recorded["flags"].clone()).unwrap_or_default();
+            serde_json::from_value::<Vec<String>>(recorded["flags"].clone()).map_err(|_| {
+                CrewError::new(
+                    ErrorCode::InvalidObject,
+                    "the index flags were not recorded",
+                )
+            })?;
             if recorded["dir"].as_str().map(std::path::Path::new) != Some(worktree) {
                 return Err(CrewError::new(
                     ErrorCode::InvalidObject,
@@ -292,7 +296,7 @@ impl Core {
                     "the checkout's git index cannot be listed",
                 )
             })?;
-            let hidden = super::index_flags::added(&before, &now);
+            let hidden = now;
             if !hidden.is_empty() {
                 verdict.failures.push(Failed {
                     id: "index_flags".to_owned(),
@@ -324,7 +328,64 @@ impl Core {
             {
                 // A check the screen refused is never run. It counts as an error, so the Gate cannot pass on the rest.
                 Some((_, rule)) => refused_check(check, rule),
-                None => run_check(check, &site).await,
+                None => {
+                    if check.id.as_str() == "chk-fix-touched"
+                        || check.params["name"] == "crew-fix-touched"
+                    {
+                        if check.id.as_str() != "chk-fix-touched"
+                            || !matches!(check.kind, orbyn_contracts::CheckKind::RepoRequired)
+                            || check.params["name"] != "crew-fix-touched"
+                        {
+                            return Err(CrewError::new(
+                                ErrorCode::InvalidObject,
+                                "the byte check marker is invalid",
+                            ));
+                        }
+                        let fix = self
+                            .store
+                            .crew_fix_for_task(&task.id)
+                            .map_err(internal)?
+                            .ok_or_else(|| {
+                                CrewError::new(
+                                    ErrorCode::InvalidObject,
+                                    "the byte check has no fix task",
+                                )
+                            })?;
+                        let found = self
+                            .store
+                            .crew_finding(&fix.finding_id)
+                            .map_err(internal)?
+                            .ok_or_else(|| {
+                                CrewError::new(ErrorCode::InvalidObject, "the fix has no finding")
+                            })?;
+                        let stored = self
+                            .store
+                            .crew_answer_key(&task.id)
+                            .map_err(internal)?
+                            .ok_or_else(|| {
+                                CrewError::new(ErrorCode::InvalidObject, "the fix has no key")
+                            })?;
+                        if fix.fix_task_id != task.id
+                            || fix.subject_id != found.subject_id
+                            || run.task_id != task.id
+                            || run.worktree.as_deref().map(Path::new) != Some(worktree)
+                            || stored.id != key.id
+                            || stored.checks.iter().find(|c| c.id == check.id) != Some(check)
+                        {
+                            return Err(CrewError::new(
+                                ErrorCode::InvalidObject,
+                                "the byte check does not match the stored fix",
+                            ));
+                        }
+                        super::checks::fix_touched(
+                            found.finding.path.as_str(),
+                            check.params["note"].as_str().unwrap_or(""),
+                            &site,
+                        )
+                    } else {
+                        run_check(check, &site).await
+                    }
+                }
             };
             let mut evidence = Evidence {
                 v: 0,
