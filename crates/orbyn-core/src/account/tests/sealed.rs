@@ -19,10 +19,10 @@ use crate::account::engine::{
     SnapshotStore, VERSION, Vault, bound_for, parts_with,
 };
 
-const FIRST: &str = "0a0a0a0a-0000-4000-8000-0000000000a1";
-const SECOND: &str = "0a0a0a0a-0000-4000-8000-0000000000b2";
+pub(super) const FIRST: &str = "0a0a0a0a-0000-4000-8000-0000000000a1";
+pub(super) const SECOND: &str = "0a0a0a0a-0000-4000-8000-0000000000b2";
 
-fn label(what: &str) -> String {
+pub(super) fn label(what: &str) -> String {
     format!("{what}-{}", crate::util::new_id())
 }
 
@@ -48,11 +48,11 @@ fn identity(token: &str, device: &str) -> dc::StoredIdentity {
     }
 }
 
-struct Files {
-    keys: FileKeyStore,
-    snaps: Arc<SealedSnapshots>,
-    key_file: PathBuf,
-    snap_file: PathBuf,
+pub(super) struct Files {
+    pub(super) keys: FileKeyStore,
+    pub(super) snaps: Arc<SealedSnapshots>,
+    pub(super) key_file: PathBuf,
+    pub(super) snap_file: PathBuf,
 }
 
 fn files(dir: &Path, name: &str, profile: &str) -> Files {
@@ -368,13 +368,13 @@ use sha2::Digest as _;
 
 // ---- the adapter: sign-out, removing this device and a session the service ended ----
 
-type Account = EngineAccount<Wire, FileKeyStore, dc::SystemClock>;
-type Zones = EngineZones<Wire, FileKeyStore, dc::SystemClock>;
+pub(super) type Account = EngineAccount<Wire, FileKeyStore, dc::SystemClock>;
+pub(super) type Zones = EngineZones<Wire, FileKeyStore, dc::SystemClock>;
 
-struct Device {
-    account: Arc<Account>,
-    zones: Arc<Zones>,
-    files: Files,
+pub(super) struct Device {
+    pub(super) account: Arc<Account>,
+    pub(super) zones: Arc<Zones>,
+    pub(super) files: Files,
 }
 
 fn device(server: &Arc<Server>, dir: &Path, id: &str, name: &str) -> Device {
@@ -420,7 +420,7 @@ fn device(server: &Arc<Server>, dir: &Path, id: &str, name: &str) -> Device {
 }
 
 /// A device that has synced once, so its keys and its sealed snapshot both exist.
-async fn synced(server: &Arc<Server>, dir: &Path, id: &str, name: &str) -> Device {
+pub(super) async fn synced(server: &Arc<Server>, dir: &Path, id: &str, name: &str) -> Device {
     let d = device(server, dir, id, name);
     d.zones.pull(ZONE).await.unwrap();
     assert!(

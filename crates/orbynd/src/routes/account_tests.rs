@@ -22,10 +22,16 @@ pub(super) const SECRET: &str = "correct horse battery";
 pub(super) struct Served {
     pub(super) port: u16,
     routes: BTreeSet<(String, String)>,
-    _dir: std::path::PathBuf,
+    dir: std::path::PathBuf,
+    token: String,
 }
 
 pub(super) async fn serve(name: &str, gate: AccountGate, remote: bool) -> Served {
+    serve_as(name, gate, remote, "token").await
+}
+
+/// As [`serve`], with the service token a test chose, so the test can look for it.
+pub(super) async fn serve_as(name: &str, gate: AccountGate, remote: bool, token: &str) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-account-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
@@ -34,7 +40,7 @@ pub(super) async fn serve(name: &str, gate: AccountGate, remote: bool) -> Served
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
         core,
-        access: Arc::new(Access::new("token", vec![], None)),
+        access: Arc::new(Access::new(token, vec![], None)),
         remote,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
@@ -46,7 +52,8 @@ pub(super) async fn serve(name: &str, gate: AccountGate, remote: bool) -> Served
     Served {
         port,
         routes,
-        _dir: dir,
+        dir,
+        token: token.to_owned(),
     }
 }
 
@@ -67,7 +74,7 @@ impl Served {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
         let mut request = reqwest::Client::new()
             .request(method.parse().unwrap(), url)
-            .bearer_auth("token")
+            .bearer_auth(&self.token)
             .json(&body);
         if let Some(nonce) = nonce {
             request = request.header("x-orbyn-confirm", nonce);
@@ -78,8 +85,13 @@ impl Served {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
+    /// The data folder this service runs on.
+    pub(super) fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     /// Every route under `/api/account`, in sorted order.
-    fn account_routes(&self) -> Vec<(String, String)> {
+    pub(super) fn account_routes(&self) -> Vec<(String, String)> {
         self.routes
             .iter()
             .filter(|(_, path)| path.starts_with("/api/account"))

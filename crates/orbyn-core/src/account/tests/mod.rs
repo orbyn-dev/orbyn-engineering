@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 mod allowlist;
 mod approval;
 #[cfg(feature = "engine-client")]
+mod canaries;
+#[cfg(feature = "engine-client")]
 mod engine;
 #[cfg(feature = "engine-client")]
 mod engine_loopback;
