@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Checks that every required status check in ci.yml is produced by exactly one job.
 
-Branch protection waits for these names. A job that GitHub skips at the job level
+Branch protection waits for these names. Pull requests run a light set, so the required
+names are `Cheap checks`, `Rust (linux)` and `Web`; the AI usage section, commit trailers
+and CLA checks come from other workflows. The heavier aggregators (`KEPT` below) are no
+longer required on pull requests, but main still waits for them, so they keep the same
+rules. A job that GitHub skips at the job level
 reports its name unexpanded when it is a matrix job (`Rust (${{ matrix.os }})`), so
 the required name would never appear and the pull request could not merge. ci.yml
 therefore gives each required name to a small aggregator job that always runs, and
 this check keeps it that way:
 
 - each required name is the `name:` of exactly one job;
-- that job has no `${{` in its name and runs with `if: always()`;
+- that job has no `${{` in its name and runs with `if: always()` (`Cheap checks` is the
+  one exception: it runs after the scope job and is reported skipped only when that failed);
 - no other job's name, with its `${{ ... }}` parts read as any text, can expand to a
   required name.
 
@@ -23,15 +28,26 @@ import re
 import sys
 from pathlib import Path
 
-# The CI checks branch protection requires. The AI usage section, commit trailers and
-# CLA checks come from other workflows.
+# The CI checks branch protection requires on a pull request. The AI usage section,
+# commit trailers and CLA checks come from other workflows.
 REQUIRED = (
-    "Rust (windows-2022)",
+    "Cheap checks",
+    "Rust (linux)",
     "Web",
-    "Unsigned desktop build (windows-2022)",
+)
+
+# Required names that are the plain `name:` of an ordinary job rather than an always-running
+# aggregator: the cheap checks run after the scope job and need no aggregator.
+UNCONDITIONAL = ("Cheap checks",)
+
+# No longer required on a pull request (the light set skips their heavy jobs by design), but
+# main and the nightly run still produce them, so they keep the aggregator rules.
+KEPT = (
     "Rust (macos-15)",
-    "Unsigned desktop build (macos-15)",
+    "Rust (windows-2022)",
     "E2E",
+    "Unsigned desktop build (macos-15)",
+    "Unsigned desktop build (windows-2022)",
 )
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
@@ -74,16 +90,18 @@ def _can_expand_to(template: str, name: str) -> bool:
     return re.fullmatch(pattern, name) is not None
 
 
-def check(text: str, required: tuple[str, ...] = REQUIRED) -> list[str]:
+def check(text: str, required: tuple[str, ...] = REQUIRED, kept: tuple[str, ...] = KEPT) -> list[str]:
     jobs = read_jobs(text)
     problems: list[str] = []
-    for name in required:
+    for name in (*required, *kept):
         owners = [job for job, fields in jobs.items() if fields.get("name") == name]
         if len(owners) != 1:
             problems.append(f"required check {name!r} is produced by {len(owners)} jobs, not 1: {owners}")
         for job in owners:
             if "${{" in name:
                 problems.append(f"job {job!r}: the required name {name!r} must not be an expression")
+            if name in UNCONDITIONAL:
+                continue
             if jobs[job].get("if", "").strip() not in ("always()", "${{ always() }}"):
                 problems.append(f"job {job!r} produces required check {name!r} and must run with `if: always()`")
         for job, fields in jobs.items():
