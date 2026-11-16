@@ -576,10 +576,11 @@ impl World {
         let Some(text) = reply["result"]["content"][0]["text"].as_str() else {
             return (reply, true);
         };
-        (
-            serde_json::from_str(text).unwrap(),
-            reply["result"]["isError"] == json!(true),
-        )
+        // A tool that fails before it answers (its budget ran out) sends plain text, so show it.
+        let answer = serde_json::from_str(text).unwrap_or_else(|why| {
+            panic!("{tool} answered with text that is not JSON ({why}): {text}")
+        });
+        (answer, reply["result"]["isError"] == json!(true))
     }
 
     /// The lead starts a task.

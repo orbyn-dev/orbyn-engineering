@@ -414,7 +414,8 @@ pub(crate) fn acp_stdio_bridge(servers: &Value) -> String {
         .expect("start the bridge");
 
     // While the bridge waits on its input, read its command line and environment as
-    // another process would.
+    // another process would. The kernel publishes both only once the new program image
+    // is set up, which can be after `spawn` returns, so wait for them to appear.
     let live = live_process_text(bridge.id());
 
     {
@@ -505,6 +506,25 @@ pub(crate) fn acp_stdio_bridge(servers: &Value) -> String {
 /// A process's command line and environment as another process of its owner can read
 /// them; empty where this platform has no such reader here.
 fn live_process_text(pid: u32) -> String {
+    // `spawn` returns once the exec has passed its point of no return, but Linux fills in
+    // `/proc/<pid>/environ` and `cmdline` a little later, so an early read is empty and
+    // would hide a leak as well as the proof that the read works. The bridge blocks on
+    // its stdin, so the text stays readable; wait for the variable that names the
+    // endpoint file, and give up (reporting what was read) after a bound.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let text = read_live_process_text(pid);
+        if text.contains("ORBYN_ACP_MCP_ENDPOINT_FILE")
+            || !cfg!(any(target_os = "linux", target_os = "macos"))
+            || std::time::Instant::now() >= deadline
+        {
+            return text;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn read_live_process_text(pid: u32) -> String {
     #[cfg(target_os = "linux")]
     {
         let read = |name: &str| std::fs::read(format!("/proc/{pid}/{name}")).unwrap_or_default();
