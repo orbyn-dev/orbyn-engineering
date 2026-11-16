@@ -48,6 +48,8 @@ mod account_logging_tests;
 #[cfg(test)]
 mod account_tests;
 #[cfg(test)]
+mod classes;
+#[cfg(test)]
 mod crew_areas_tests;
 #[cfg(test)]
 mod crew_background_tests;

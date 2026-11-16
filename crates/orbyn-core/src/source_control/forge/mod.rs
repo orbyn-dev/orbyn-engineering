@@ -6,6 +6,7 @@
 
 pub(crate) mod cache;
 mod create;
+pub(crate) mod crew;
 mod details;
 mod github;
 mod gitlab;
@@ -20,16 +21,20 @@ use std::path::Path;
 
 use crate::error::{CoreError, Result};
 use crate::source_control::git::{git, text};
+pub(crate) use create::create_pull_in;
 pub use create::{create_pull, number_from_url, publish};
 pub use details::{
     DETAIL_FIELDS, DETAILS_ROW_LIMIT, DetailsOutcome, github_details, github_graphql_reset,
     graphql_reset,
 };
+pub(crate) use merge::merge_in;
 pub use merge::{
     check_head, current_head, head_changed, head_in, head_precheck_needed, merge, pull_action,
     strip_agent_credits, update_pull,
 };
 pub use parse::parse_pull;
+#[cfg(test)]
+pub(crate) use process::with_crew_fixture;
 pub use process::{call, no_such_pull};
 pub use pulls::{
     PullFilter, approve_workflow, conversation, fetch_pull, list_pulls, pull_checks, pull_detail,

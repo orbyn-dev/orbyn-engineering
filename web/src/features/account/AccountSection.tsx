@@ -95,7 +95,7 @@ export function AccountSection() {
           }
         >
           <p>This device may have been removed, or your sessions ended.</p>
-          <p className="ac-sub">Your threads, projects and settings are still on this computer. Orbyn keeps working without an account. Sign in again to sync your settings.</p>
+          <p className="ac-sub">Orbyn cleared this device’s keys and its sync copy from this computer. Your threads, projects and settings are still here, and Orbyn keeps working without an account. Sign in again to sync your settings.</p>
         </Dialog>
       ) : null}
       <h1 className="sr-only" tabIndex={-1} data-page-title>Account</h1>

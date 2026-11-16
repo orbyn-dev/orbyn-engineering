@@ -73,6 +73,29 @@ describe("autonomy-table", () => {
   });
 });
 
+describe("autonomy-repos", () => {
+  const project = (id: string, name: string): Project => ({ id, name, trusted: true, is_git: true, path: `/fixture/${id}` } as Project);
+
+  it("with more than one repo the Repo chip is the Planned selector, and the page reads the repo in the address", async () => {
+    useWorkspace.setState({ projects: { data: [project("p-app", "orbyn-engineering"), project("p-notes", "orbyn-notes")], loading: false, error: null } });
+    const spy = vi.spyOn(crewApi, "areas");
+    mock.reset("crew-areas");
+    window.location.hash = "#/settings/crew/areas?repo=p-notes";
+    render(<CrewSettingsSection />);
+    const chip = await screen.findByText("Repo: orbyn-notes");
+    expect(chip).toHaveClass("ar-mk-pick");
+    // The menu is not built: the chip and its Planned label are all the design's selector draws today.
+    expect(screen.getByTitle(/no repo selector/)).toHaveTextContent("Planned");
+    expect(spy).toHaveBeenCalledWith("p-notes", expect.anything());
+  });
+
+  it("with one repo the chip is plain, with no selector or Planned label", async () => {
+    await open("crew-areas");
+    expect(screen.getByText("Repo: orbyn-engineering")).not.toHaveClass("ar-mk-pick");
+    expect(screen.queryByTitle(/no repo selector/)).toBeNull();
+  });
+});
+
 describe("autonomy-tripped", () => {
   it("shows the demotion in the row and says what it changes, what returns it and what the ceiling is", async () => {
     await open("crew-areas-tripped");
@@ -159,6 +182,23 @@ describe("autonomy-lowdata", () => {
     }
     const panel = screen.getByRole("region", { name: "Not enough data: each area has fewer than 5 merges" });
     expect(panel).toHaveTextContent("A trip needs at least 5 merges in the window. Below that Crew shows the merges themselves and changes nothing");
+  });
+});
+
+describe("autonomy-empty", () => {
+  it("draws the header and the table's head row, with no area row and no Planned sentence", async () => {
+    await open("crew-areas-empty");
+    expect(frame()).toBe("autonomy-empty");
+    expect(within(table()).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Area", "Now", "Reverted", "Escaped", "Window"]);
+    expect(within(table()).getAllByRole("row")).toHaveLength(1);
+    // The design's sentence in the table is Planned; the app draws the head row alone, and nothing is changed.
+    expect(screen.queryByText(/No merges in the window yet/)).toBeNull();
+    expect(screen.getByText("Repo: orbyn-engineering")).toBeVisible();
+    expect(screen.getByText("Repo ceiling: Full · change it in Settings › Crew")).toBeVisible();
+    expect(screen.getByText("Window: 14 days")).toBeVisible();
+    expect(screen.getByText(/^As of /)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open the thresholds" })).toBeVisible();
+    expect(screen.getByText("Workers run as you, with your machine’s permissions.")).toBeVisible();
   });
 });
 
@@ -373,8 +413,17 @@ describe("autonomy-thresholds", () => {
     expect(screen.getByText("Proposed: Engineering sets the real values")).toBeVisible();
     expect(screen.getByRole("region", { name: "What counts" })).toHaveTextContent("An escapeNot measured");
     expect(screen.queryByText("Earn upward")).toBeNull();
-    expect(screen.queryByRole("button")).toBeNull();
+    // Read-only besides the way back to Autopilot by area; the design's Planned chip marked the missing link and is gone now it works.
+    expect(within(screen.getByRole("list", { name: "Thresholds" })).queryByRole("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Autopilot by area" })).toBeVisible();
+    expect(screen.queryByText("Planned")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("the back link returns to Autopilot by area for the repository in the address", async () => {
+    const { user } = await open("crew-areas", "thresholds");
+    await user.click(screen.getByRole("button", { name: "Autopilot by area" }));
+    expect(window.location.hash).toBe("#/settings/crew/areas?repo=p-app");
   });
 
   it("opens from the table, with the repository kept", async () => {
@@ -387,6 +436,22 @@ describe("autonomy-thresholds", () => {
     const { user } = await open("crew-areas");
     await user.click(screen.getByRole("button", { name: "Open the ledger" }));
     expect(window.location.hash).toBe("#/crew/approvals");
+  });
+});
+
+describe("autonomy-entry", () => {
+  it("Settings › Crew opens Autopilot by area from the row under Autopilot", async () => {
+    mock.reset("crew-areas");
+    window.location.hash = "#/settings/crew";
+    const user = userEvent.setup();
+    render(<CrewSettingsSection />);
+    const row = (await screen.findByText("Autopilot by area")).closest(".ar-set") as HTMLElement;
+    expect(row).toHaveAttribute("data-frame", "autonomy-entry");
+    expect(row).toHaveTextContent("Each area of the code with the mode it is on now and its record, why it moved, and your override. The Autopilot mode above is the ceiling for every area.");
+    expect(within(row).queryByText("Planned")).toBeNull();
+    await user.click(within(row).getByRole("button", { name: "Open" }));
+    expect(window.location.hash).toBe("#/settings/crew/areas");
+    expect(await screen.findByRole("heading", { name: "Crew › Autopilot by area" })).toBeVisible();
   });
 });
 

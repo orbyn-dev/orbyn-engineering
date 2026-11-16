@@ -14,6 +14,21 @@ use tokio::process::Command;
 
 pub(super) const FORGE_TIMEOUT: Duration = Duration::from_secs(120);
 
+#[cfg(test)]
+type Fixture = std::sync::Arc<dyn Fn(Forge, &Path, &[&str]) -> Result<String> + Send + Sync>;
+
+#[cfg(test)]
+tokio::task_local! { static CREW_FIXTURE: Fixture; }
+
+/// Scoped to one test future; never changes PATH or a process-wide credential/CLI setting.
+#[cfg(test)]
+pub(crate) async fn with_crew_fixture<T>(
+    fixture: Fixture,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    CREW_FIXTURE.scope(fixture, future).await
+}
+
 /// What one CLI call produced. Some commands report through their exit code.
 pub(super) struct Output {
     pub(super) success: bool,
@@ -27,6 +42,14 @@ pub(super) async fn spawn(
     args: &[&str],
     input: Option<&str>,
 ) -> Result<Output> {
+    #[cfg(test)]
+    if let Ok(answer) = CREW_FIXTURE.try_with(|fixture| fixture(forge, cwd, args)) {
+        return answer.map(|stdout| Output {
+            success: true,
+            stdout,
+            stderr: String::new(),
+        });
+    }
     let program = forge.program().ok_or_else(|| {
         CoreError::Unsupported(format!(
             "{} has no command line tool, and Orbyn does not hold forge tokens.",

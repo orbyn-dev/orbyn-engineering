@@ -25,7 +25,7 @@ Handlers parse, call `orbyn-core` and map the result. A rule a handler would nee
 belongs in core. `routes/tests.rs` builds the real router and compares every method
 and path, and which routes need a credential, with `tests/routes.json`. After an
 intended route change, regenerate it with
-`ORBYN_UPDATE_ROUTES=1 cargo test -p orbynd --bin orbynd route_table`.
+`ORBYN_UPDATE_ROUTES=1 cargo test -p orbynd --bin orbynd route_table`, then give each new route a class: `local`, or `person` with a reason in `src/routes/classes.rs`.
 
 ## Consumers
 

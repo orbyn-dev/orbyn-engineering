@@ -47,6 +47,9 @@ pub struct Block {
     pub allowed: Vec<String>,
 }
 
+/// The rule that blocks every engine when the default branch moved away from the commit a project remembered.
+pub const CHANGED_RULE: &str = "default branch changed";
+
 /// The same brief's files read against the rules at the default branch (see [`PinnedRef`](super::file::PinnedRef)).
 #[derive(Clone, Debug)]
 pub struct Pinned {
@@ -54,6 +57,8 @@ pub struct Pinned {
     pub name: String,
     pub commit: String,
     pub classes: PathClasses,
+    /// The rule to name when this side blocks every engine: the file's own problem, a git setup problem, or a moved ref.
+    pub rule: &'static str,
 }
 
 /// A class that applied, from either side.
@@ -101,6 +106,11 @@ fn side_names(side: &PathClasses) -> Vec<String> {
         .collect()
 }
 
+/// A ref name is repository data: it is redacted and kept short wherever it is shown.
+fn redacted_ref(name: &str) -> String {
+    crate::crew::redact(name).chars().take(80).collect()
+}
+
 fn file_words(file: &ClassFile) -> String {
     if file.invalid() {
         "a file that cannot be trusted".to_owned()
@@ -122,12 +132,28 @@ impl PathClasses {
 
     /// Adds the default branch's reading of the same files.
     pub fn with_pinned(mut self, name: String, commit: String, classes: PathClasses) -> Self {
-        // A ref name is repository data: it is redacted and kept short wherever it is shown.
-        let name: String = crate::crew::redact(&name).chars().take(80).collect();
+        let rule = if classes.file.setup {
+            UNREADABLE_RULE
+        } else {
+            INVALID_RULE
+        };
         self.pinned = Some(Box::new(Pinned {
-            name,
+            name: redacted_ref(&name),
             commit,
             classes,
+            rule,
+        }));
+        self
+    }
+
+    /// Blocks every engine because the default branch is not the commit this project remembered: it is gone, or it moved
+    /// somewhere that is not a descendant. A person confirms or resets it; nothing here reads HEAD alone instead.
+    pub fn with_pinned_blocked(mut self, name: String, commit: String, reason: String) -> Self {
+        self.pinned = Some(Box::new(Pinned {
+            name: redacted_ref(&name),
+            commit,
+            classes: PathClasses::of_file(ClassFile::refused(reason)),
+            rule: CHANGED_RULE,
         }));
         self
     }
@@ -157,17 +183,21 @@ impl PathClasses {
         &self.file.rules[hit.rule]
     }
 
-    /// The name of the rule that blocks every engine: the rules file's, or the default branch's setup.
+    /// The name of the rule that blocks every engine: the rules file's, or the default branch's own problem.
     pub fn invalid_rule(&self) -> &'static str {
+        if self.file.invalid() {
+            return INVALID_RULE;
+        }
         match &self.pinned {
-            Some(pinned) if !self.file.invalid() && pinned.classes.file.setup => UNREADABLE_RULE,
+            Some(pinned) if pinned.classes.file.invalid() => pinned.rule,
             _ => INVALID_RULE,
         }
     }
 
-    /// Whether the block is a git setup problem, which a fix to the rules file does not cure.
+    /// Whether the block is not a problem with the rules file's content: a git setup, or a default branch a person must
+    /// confirm or reset. A fix to the rules file does not cure any of them.
     pub fn setup_problem(&self) -> bool {
-        self.invalid_rule() == UNREADABLE_RULE
+        self.invalid_rule() != INVALID_RULE
     }
 
     /// The words that block every engine while a file is invalid, saying which one when it is the default branch's.
@@ -286,6 +316,11 @@ impl PathClasses {
     /// Whether the checkout's rules and the default branch's are not the same file, in words. `None` when there is no default
     /// branch to compare, or the two are the same file.
     pub fn differs(&self) -> Option<String> {
+        // A moved or missing default branch already blocks every engine with its own reason; saying the two files differ
+        // would call the ref's absence "a file that cannot be trusted" and hide the person's choice.
+        if self.invalid_rule() == CHANGED_RULE {
+            return None;
+        }
         let pinned = self.pinned.as_deref()?;
         let (here, there) = (&self.file, &pinned.classes.file);
         if here.blob == there.blob && here.problems == there.problems {

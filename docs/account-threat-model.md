@@ -54,6 +54,8 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
     names `orbynd`'s designated requirement (team ID plus identifier) and survives updates signed with the same
     Developer ID and identifier. It needs Developer ID signing with hardened runtime and the entitlements in control 6
     (the signing work is parity rows P34 and P35).
+  - *Built so far:* the keychain item and its wipe (`KeychainKeyStore`, generic-password items under a development service
+    name); not built: the access list and the release service name, which need the Developer ID.
   - *Development builds.* An unsigned or ad-hoc build has no stable identity, so the list protects nothing there. Such
     builds use a different service name or the in-memory `KeyStore`, and never create an item a release build would
     later trust.
@@ -86,6 +88,9 @@ design makes secrets **unreadable by position**, not by a rule an engine could s
 - **Sign-out destroys key material.** After sign-out, device removal or `Unauthorized`, the app deletes the device
   keys, the token and the vault key from the keychain and the sealed snapshot file; only settings stay. Without the
   vault key the old file cannot be read. Otherwise a removed device would keep every zone key (D10).
+  - *Decided for the beta:* an expired or ended session (the Engine's 401, which it also gives a removed device) wipes
+    the keys like the rest, and fails closed. The person signs in again and a trusted device lets this one in; the
+    sign-in screen says the local copy was cleared (docs/account.md, error table).
   - *Check:* after each of the three, the keychain has no item for the profile and the snapshot file is gone.
 
 ### 2. No account material in any process environment (built)

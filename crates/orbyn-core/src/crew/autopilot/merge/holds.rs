@@ -79,7 +79,11 @@ impl Core {
             .crew_answer_key(task_id)?
             .map(|k| k.protected_paths)
             .unwrap_or_default();
-        let tip = gitops::rev(&target.repo, &target.branch).await?;
+        let base = self
+            .store
+            .crew_forge_merge(task_id)?
+            .map_or_else(|| target.branch.clone(), |intent| intent.base);
+        let tip = gitops::rev(&target.repo, &base).await?;
         // The repository's checks and its files come from the branch's tip, a commit the crew did not write.
         let checks = self.merge_checks(task_id, &target.repo, &tip).await.ok();
         let mut held = sensitive(paths, &protected, checks.as_deref().unwrap_or(&[]));

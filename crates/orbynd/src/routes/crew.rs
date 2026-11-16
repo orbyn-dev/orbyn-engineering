@@ -10,10 +10,11 @@
 //!
 //! **Writes only through the core's guards.** The only routes that change anything are in `orbyn_core::crew::changes::STATE_CHANGING`
 //! (the marker Autopilot's N1 refuses by path), each with its guard in [`GUARDS`]. No route takes a command from the client or runs
-//! one, and no route pushes or merges. A revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
+//! one. The typed `/tasks/{id}/merge` route requests Core-owned forge queue/process/watch operations with stored targets and
+//! person-owned startup CI policy; it grants no agent direct merge authority. A local compatibility revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
 //! merge, a commit the crew did not write) in a scratch checkout under the data folder, which is always removed, and then moves the
 //! local branch by compare-and-swap; it is refused when a later merge needs the merge, when the branch is checked out anywhere or
-//! no longer holds the merge, and nothing reaches a remote. The repository and branch come from the stored merge, never from the
+//! no longer holds the merge. It refuses forge records, which need a corrective PR. The repository and branch come from the stored merge, never from the
 //! request, and the request must name the whole merge commit it was shown. Writes are refused for a remote viewer, as the account's
 //! are. The Preview flag is never settable from here.
 //!
@@ -58,6 +59,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/approvals/second-engine/{id}/dismiss",
         "core autopilot_dismiss_second_engine_notice: Preview, durable idempotent dismissal; never approves or retries; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/merge",
+        "core forge queue: stored task/project target, person-owned CI policy, pinned head/base, durable effect reconciliation; person release, local only",
     ),
     (
         "PUT",
@@ -154,6 +160,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/tasks/{id}/rerun-checks",
         "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/confirm",
+        "core crew_confirm_pinned_ref: the default branch must still be the whole commit the person saw, else stale; the pin and its audit row in one transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/reset",
+        "core crew_reset_pinned_ref: clears only this project's remembered default branch, audited in the same transaction; a later task reads the ref the checkout has then; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -185,10 +201,19 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
+        .route(
+            "/api/crew/projects/{id}/pinned-ref/confirm",
+            post(pinned_ref_confirm),
+        )
+        .route(
+            "/api/crew/projects/{id}/pinned-ref/reset",
+            post(pinned_ref_reset),
+        )
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
+        .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -219,6 +244,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background/{id}/runs", get(background_runs))
         .route("/api/crew/guard/targets", get(guard_targets))
         .route("/api/crew/guard/test", get(guard_test))
+        .route("/api/crew/projects/{id}/pinned-ref", get(pinned_ref))
         .route("/api/crew/classes", get(classes))
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
@@ -227,6 +253,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_board::routes())
         .merge(super::crew_map::routes())
         .layer(from_fn_with_state(state, preview_gate))
+}
+
+async fn merge_request(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<orbyn_core::crew::MergeRequest>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_merge_request(&id, &body).await?))
 }
 
 /// With the flag off the route is not there: the same answer as any other path nothing serves, for every method (a wrong one
@@ -341,6 +375,36 @@ async fn route_view(
     Path(task_id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_route_view(&task_id)?))
+}
+
+/// The default branch this project remembers, the one the checkout reads now, and whether a start would accept it. Read-only.
+async fn pinned_ref(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_pinned_ref_view(&project_id).await?))
+}
+
+/// A person accepts the default branch's new commit, naming the whole commit the view showed.
+async fn pinned_ref_confirm(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewPinnedRefConfirm>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .crew_confirm_pinned_ref(&project_id, &body.commit)
+            .await?,
+    ))
+}
+
+/// A person forgets the remembered default branch; the next start reads the ref the checkout has then.
+async fn pinned_ref_reset(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_reset_pinned_ref(&project_id).await?))
 }
 
 fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {

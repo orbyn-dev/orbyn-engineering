@@ -269,10 +269,10 @@ impl Store {
         self.commit(|tx, _| {
             tx.execute(
                 "INSERT INTO crew_merges (task_id, crew_id, repo, branch, before_commit, merge_commit, candidate, risk, reasons, areas, engine, mode,
-                     files, lines, proof, not_verified, merged_unix, due_unix)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                     files, lines, proof, not_verified, merged_unix, due_unix, needs_person)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                 params![record.task_id, record.crew_id, record.repo, record.branch, record.before_commit, record.merge_commit, record.candidate,
-                    record.risk, reasons, areas, record.engine, record.mode, record.files, record.lines, proof, not_verified, record.merged_unix, record.due_unix],
+                    record.risk, reasons, areas, record.engine, record.mode, record.files, record.lines, proof, not_verified, record.merged_unix, record.due_unix, record.needs_person],
             )?;
             let id = tx.last_insert_rowid();
             tx.execute("UPDATE crew_merge_queue SET state = 'merged', updated_unix = ?2 WHERE task_id = ?1", params![record.task_id, unix_now()])?;
