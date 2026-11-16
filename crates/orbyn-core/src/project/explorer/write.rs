@@ -257,6 +257,18 @@ fn movable_tree(guard: &Guard, root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether `inner` is strictly under `outer` when names are compared without regard to case,
+/// one path component at a time.
+pub(super) fn inside_ignoring_case(inner: &Path, outer: &Path) -> bool {
+    let parts = |path: &Path| -> Vec<String> {
+        path.components()
+            .map(|part| part.as_os_str().to_string_lossy().to_lowercase())
+            .collect()
+    };
+    let (inner, outer) = (parts(inner), parts(outer));
+    inner.len() > outer.len() && inner[..outer.len()] == outer[..]
+}
+
 fn apply(guard: &Guard, action: &ExplorerFileAction) -> Result<()> {
     let raw = match action {
         ExplorerFileAction::CreateFile { path }
@@ -270,27 +282,39 @@ fn apply(guard: &Guard, action: &ExplorerFileAction) -> Result<()> {
         ExplorerFileAction::CreateDirectory { .. } => platform::create_directory(&source),
         ExplorerFileAction::Move { destination, .. } => {
             no_link(&source.path)?;
+            // Before any handle on the destination's folders is held (Windows opens them
+            // without delete sharing, so one on the source itself would make the rename fail
+            // with a sharing violation): a destination whose folder is the source, or is
+            // under it, is the folder moving into itself, under whatever spelling. Real
+            // paths are compared by component, so `Dir` into `Dir2/x` is not inside `Dir`.
+            let wanted = guard.mutation_path(destination)?;
+            let parent = guard.root().join(&wanted.rel);
+            if let (Some(parent), Some(from)) = (
+                parent
+                    .parent()
+                    .and_then(|parent| crate::util::canonicalize(parent).ok()),
+                crate::util::canonicalize(&source.path).ok(),
+            ) && parent.starts_with(&from)
+            {
+                return Err(invalid("A folder cannot move inside itself."));
+            }
             let dest = Location::new(guard, destination)?;
             if dest.path.starts_with(&source.path) {
                 return Err(invalid("A folder cannot move inside itself."));
             }
-            // Where names fold case, `Dir` into `dir/x` is the same folder under another
-            // spelling; the rename refuses it and the answer must say why.
-            let inside_by_case = dest
-                .path
-                .to_string_lossy()
-                .to_lowercase()
-                .starts_with(&source.path.to_string_lossy().to_lowercase());
+            // Where names fold case and the real path could not tell (macOS), the rename
+            // itself refuses `Dir` into `dir/x`; the answer must say why. Component-wise,
+            // lowercased: `Dir` into `Dir2/x` is a different folder.
+            let inside_by_case = inside_ignoring_case(&dest.path, &source.path);
             movable_tree(guard, &source.path)?;
             source.confirm(guard)?;
             dest.confirm(guard)?;
-            platform::move_entry(&source, &dest).map_err(|error| {
-                if inside_by_case && error.kind() == std::io::ErrorKind::Unsupported {
-                    std::io::Error::from(std::io::ErrorKind::InvalidInput)
-                } else {
-                    error
+            match platform::move_entry(&source, &dest) {
+                Err(error) if inside_by_case && error.kind() == std::io::ErrorKind::Unsupported => {
+                    return Err(invalid("A folder cannot move inside itself."));
                 }
-            })
+                other => other,
+            }
         }
         ExplorerFileAction::Delete { .. } => {
             let directory = no_link(&source.path)?.is_dir();
@@ -302,7 +326,6 @@ fn apply(guard: &Guard, action: &ExplorerFileAction) -> Result<()> {
         std::io::ErrorKind::AlreadyExists => invalid("The destination already exists."),
         std::io::ErrorKind::NotFound => CoreError::NotFound("file or folder".into()),
         std::io::ErrorKind::DirectoryNotEmpty => invalid("Only empty folders can be deleted."),
-        std::io::ErrorKind::InvalidInput => invalid("A folder cannot move inside itself."),
         std::io::ErrorKind::Unsupported => {
             invalid("This folder's file system cannot move files safely.")
         }

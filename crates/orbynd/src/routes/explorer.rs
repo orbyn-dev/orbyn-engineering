@@ -16,7 +16,7 @@ use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 /// The file actions answer only while the Preview flag Crew uses is on (`ORBYN_CREW_PREVIEW`,
 /// off by default) and are not there otherwise (404). Until #441 is fixed, a worker that can read
 /// the data folder can read the service token and call any protected route, so a route that
-/// writes the person's files stays a development one. This gate switches off when #441 is
+/// writes the person's files stays a development one. This gate is removed when #441 is
 /// fixed and the route is meant for everyone; it is the same flag as Crew's, never settable here.
 pub fn routes(state: AppState) -> Router<AppState> {
     let writes = Router::new()

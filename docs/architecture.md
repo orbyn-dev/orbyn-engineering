@@ -1643,7 +1643,7 @@ a person's create, move (including rename), or delete request without a thread.
   `orbyn` CLI reads it, so an engine or crew worker that can read the data folder can call this
   route as the person. For that reason it is behind the Preview flag Crew uses
   (`ORBYN_CREW_PREVIEW`, off by default): with the flag off the route answers `404` like a path
-  that does not exist, and Core refuses too. The gate switches on when #441 is fixed.
+  that does not exist, and Core refuses too. The gate is removed when #441 is fixed.
 - **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
   really is before any check, for reads and writes alike, so a project registered under another
   spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside
