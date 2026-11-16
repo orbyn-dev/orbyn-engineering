@@ -433,7 +433,7 @@ merge).
   - Sparse checkouts are refused when a task starts. Admission and every verification read the Git index, and any
     `assume-unchanged` or `skip-worktree` entry, including the ones a sparse checkout sets, refuses the start or fails the
     check, because such an entry can hide an edit from the scope and size checks.
-  - The changed-file check errors when any index flag is set, whether or not the flag was there at the start. A fix task
+  - The changed-file check errors when any index flag is set, whether or not the flag was there at the start. A task
     that began under the old guard (which only failed flags added since the start) now fails verification on an existing
     flag. Re-run that task after clearing the flag.
   - The scope, size and changed-path checks read Git without line-ending conversion or the untracked cache, so those settings
