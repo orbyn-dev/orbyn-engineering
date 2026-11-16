@@ -1,4 +1,4 @@
-/** The invite and the emailed code share one 30-symbol alphabet: no 0, O, 1, I, L or U. */
+/** The emailed code: a 30-symbol alphabet with no 0, O, 1, I, L or U. The invite is the Engine's 32-symbol Crockford alphabet, which keeps 0 and 1. */
 export const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 export const INVITE_LENGTH = 16;

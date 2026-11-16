@@ -95,26 +95,6 @@ fn invite_in(text: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A fresh invite the app can type. KNOWN GAP: the Engine draws invites from 32 symbols that
-/// include `0` and `1`, but `account::codes` accepts only 30 (no `0`, `O`, `1`, `I`, `L`, `U`), so
-/// about two invites in three are refused as `invalid_invite` by the app before they reach the
-/// Engine. Until the app's alphabet is settled with the lead, the test draws another invite rather
-/// than hide the gap by editing the code; the extra invites are test data the stack's `reset` drops.
-fn usable_invite() -> String {
-    for _ in 0..25 {
-        let invite = invite_in(&local_sh(&[
-            "invite", "create", "--count", "1", "--label", "e2e",
-        ]))
-        .expect("the invite script printed no invite");
-        if !invite.contains(['0', '1']) {
-            return invite;
-        }
-    }
-    panic!(
-        "25 invites in a row held a 0 or a 1: the app's invite alphabet and the Engine's differ"
-    );
-}
-
 /// The newest `code XXXX-XXXX` the worker logged for `email`.
 fn email_code_in(log: &str, email: &str) -> Option<String> {
     let email = email.to_ascii_lowercase();
@@ -205,7 +185,10 @@ async fn two_devices_of_one_account_follow_each_other_and_merge_after_being_apar
     );
 
     // Sign up on A with a fresh invite, then the code the worker logged for the address.
-    let invite = usable_invite();
+    let invite = invite_in(&local_sh(&[
+        "invite", "create", "--count", "1", "--label", "e2e",
+    ]))
+    .expect("the invite script printed no invite");
     a.account.check_invite(&invite).await.unwrap();
     a.account
         .start_sign_up(&invite, &email, pw())

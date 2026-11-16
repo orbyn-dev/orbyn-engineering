@@ -534,8 +534,9 @@ The app records them here so the backend carries what the screens will need.
 - Turning two-factor on or off is not in Orbyn Engineering, and the account-site page for it will not exist in the beta
   (Planner work is paused); signing in with an authenticator or recovery code still works. **Password change and account
   recovery are Planned, not built.**
-- There are three code formats: the 8-character email code (a 30-symbol alphabet with no 0, O, 1, I, L or U), the
-  six-digit authenticator code, and the recovery code above.
+- There are four code formats: the 16-character invite (the Engine's 32-symbol alphabet: no I, L, O or U, but 0 and 1
+  are kept, so a typed invite is accepted whatever the Engine drew), the 8-character email code (a 30-symbol alphabet
+  with no 0, O, 1, I, L or U), the six-digit authenticator code, and the recovery code above.
 - An account has only an email address: no name field and no "Edit name". Devices have names the person chooses, 1 to
   100 characters.
 - The newer change wins automatically. A conflict shows only for the same setting changed on two devices while offline,
