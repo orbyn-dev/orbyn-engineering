@@ -1548,9 +1548,10 @@ the API or the network.
 ### Explorer
 
 The left explorer reads a project's worktrees and their files without a thread. It is a
-person's read-only view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
-and `.../worktrees/:worktree/file`, with no write, rename, delete or editor route; edits
-still go through a thread's file routes. `orbynd` only routes; Core
+person's view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
+and `.../worktrees/:worktree/file`. `POST .../worktrees/:worktree/file-actions` applies
+a person's create, move (including rename), or delete request without a thread.
+`orbynd` only routes; Core
 (`project::explorer`) decides. The project must be trusted like any file route
 (`403 folder_untrusted`).
 
@@ -1616,7 +1617,54 @@ still go through a thread's file routes. `orbynd` only routes; Core
   or Git calls it prunable; its tree is `404`), `locked` (`git worktree lock`) or `other_session`
   (the asking thread, `?thread=`, differs from a thread that has a run going in it). Each
   worktree lists its live threads by id and title.
-- **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
+- **File actions** take a tagged `ExplorerFileAction`: `create_file` creates an empty
+  file, `create_directory` creates one folder, `move` names a source `path` and a
+  `destination`, and `delete` removes a file or an empty folder. Success is `204`.
+  There is no overwrite, recursive delete, parent creation, cross-worktree move or
+  arbitrary absolute path. Existing destinations and nonempty deletion are `400`.
+  The root, links, reparse points and special files are refused. Moving a folder
+  inspects at most 20,000 entries and refuses links or protected entries anywhere
+  below it; larger trees are refused. Application data and the library's `repo/`
+  remain excluded even when absent, and their ancestors cannot be moved.
+  These deny checks fold case on Windows and macOS; worktree containment stays
+  strict after canonicalization.
+- **Write authority is fresh.** Every action reads membership directly, without the
+  read cache, and refuses missing, prunable, nonmember or locked targets. Any active
+  run whose folder overlaps the target refuses the action (`403 policy_denied`); no
+  thread id exempts a run. Core serializes actions, holds the workspace admission
+  fence across the run check and effect, and rechecks project trust there. An audit
+  attempt precedes effects, and the outcome records allow or deny. No file contents
+  or arbitrary request paths enter those audit rows. Reads retain their existing
+  thread-relative read-only display policy.
+- **Person only, and gated.** The route is protected like every token route, and its handler is the
+  only caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a
+  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. That is not enough on its
+  own: until #441 is fixed, `orbynd` writes the per-launch service token to the data folder and the
+  `orbyn` CLI reads it, so an engine or crew worker that can read the data folder can call this
+  route as the person. For that reason it is behind the Preview flag Crew uses
+  (`ORBYN_CREW_PREVIEW`, off by default): with the flag off the route answers `404` like a path
+  that does not exist, and Core refuses too. The gate is removed when #441 is fixed.
+- **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
+  really is before any check, for reads and writes alike, so a project registered under another
+  spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside
+  the real folder. The active-run fence compares both spellings.
+- **What counts as active.** A thread with a run going, or whose engine console is open (the console
+  runs an agent without a run record), blocks writes in any worktree that overlaps its folder. A
+  person's own terminal does not.
+- **File-system limits.** Moves use an exclusive rename (`RENAME_EXCL` on macOS, `RENAME_NOREPLACE`
+  on Linux, `MoveFileExW` without replace on Windows). A file system that cannot do that (an old
+  kernel, some network or FUSE mounts) answers `400` "cannot move files safely"; nothing falls back
+  to a rename that could overwrite. Where names fold case (macOS default, Windows), a rename that
+  changes only the case of a name either renames the entry or, on a volume whose exclusive rename
+  sees the same entry, is refused as an existing destination; the file is never lost or duplicated.
+- **Mutation handles** identify every existing parent without following a final link,
+  fail closed when handle identity is unavailable, and check parents again before
+  effects. Unix operations are relative to the held parent; Windows holds ancestors
+  without delete sharing. Moves use the platform's exclusive rename, never a
+  check-then-overwrite fallback. Concurrent external filesystem changes are not a
+  transaction: parent checks narrow the Unix ancestor-move window, and folder
+  inspection cannot freeze descendants against another process changing them.
+- **A file action drops what is kept** and announces `explorer:<project>`; a run that ends drops
   the project's and announces `explorer:<project>`.
 
 **The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
@@ -3051,7 +3099,8 @@ every method, path and which routes need a credential.
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
 | `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
-| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only, no write route exists |
+| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
+| `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
