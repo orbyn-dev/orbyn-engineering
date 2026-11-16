@@ -187,14 +187,10 @@ async fn no_account_route_answers_logs_exports_or_writes_a_service_secret() {
     }
     assert!(answers.len() > 2_000, "the routes answered almost nothing");
 
-    // The only secrets a caller is told are the ones it asked for: its own nonce comes back from
-    // `/confirm`, and no other value does.
-    let own_nonce_only: Vec<&str> = leaked(&values, &answers)
-        .into_iter()
-        .filter(|label| *label != "a confirmation nonce")
-        .collect();
+    // No response carries a value it was sent, the confirmation nonce included: the nonce goes
+    // out in a header and `/confirm` answers with a new one, never the one it was given.
     assert_eq!(
-        own_nonce_only,
+        leaked(&values, &answers),
         Vec::<&str>::new(),
         "a response carries a secret"
     );
@@ -299,14 +295,9 @@ fn the_secret_request_types_print_without_their_secrets() {
     }
 }
 
-/// KNOWN ISSUE, found by these canaries and reported, not fixed here (tests only): the invite
-/// and the email or second-factor code are plain `String`s in their request types, which derive
-/// `Debug`, so formatting one with `{:?}` prints the invite or the code. Nothing formats them
-/// today (the logging tests prove no log line carries them), so it is a trap rather than a leak,
-/// but the password, the digits and the nonce are `SecretText` and these are not. The test states
-/// the property that should hold and is ignored until the types are changed.
+/// The invite and the emailed or second-factor code are secrets in a request body like the
+/// password: formatting their request types prints `[redacted]`.
 #[test]
-#[ignore = "known issue: the invite and the codes print in Debug (reported, not fixed in this test-only change)"]
 fn the_invite_and_the_codes_print_as_redacted_too() {
     let secret = canary("secret");
     let printed = [
@@ -328,5 +319,6 @@ fn the_invite_and_the_codes_print_as_redacted_too() {
     ];
     for shown in printed {
         assert!(!shown.contains(&secret), "{shown}");
+        assert!(shown.contains("[redacted]"), "{shown}");
     }
 }

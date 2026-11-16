@@ -225,18 +225,6 @@ pub struct AccountSignInResult {
 }
 
 wire! {
-pub struct AccountInvite {
-    pub invite: String,
-}
-}
-
-wire! {
-pub struct AccountCode {
-    pub code: String,
-}
-}
-
-wire! {
 pub struct AccountDevice {
     pub id: String,
     pub name: String,
@@ -281,6 +269,20 @@ impl fmt::Debug for SecretText {
     }
 }
 
+/// The invite code, checked on its own. Like the password it is a secret in a request body: it prints
+/// as `[redacted]`, is cleared when dropped and is never serialised or exported to TypeScript.
+#[derive(Debug, Deserialize)]
+pub struct AccountInvite {
+    pub invite: SecretText,
+}
+
+/// The code the Engine emailed (sign-up) or asked for as a second factor (sign-in), typed once.
+/// A secret in a request body, held like the password.
+#[derive(Debug, Deserialize)]
+pub struct AccountCode {
+    pub code: SecretText,
+}
+
 /// Sign in. The password goes to the service once, on loopback.
 #[derive(Debug, Deserialize)]
 pub struct AccountSignIn {
@@ -292,7 +294,7 @@ pub struct AccountSignIn {
 /// email come with it because the earlier steps send nothing.
 #[derive(Debug, Deserialize)]
 pub struct AccountSignUp {
-    pub invite: String,
+    pub invite: SecretText,
     pub email: String,
     pub password: SecretText,
 }
