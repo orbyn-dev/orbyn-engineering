@@ -236,6 +236,7 @@ impl Core {
         let _one_at_a_time = self.crew_starts.lock().await;
         let now = crate::util::unix_now();
         self.refuse_lease_conflict(&brief, &member, now)?;
+        self.capacity_start_check(&thread.project_id, None)?;
         let task = self
             .store
             .create_crew_task(&brief, &key, run_id.as_str())
