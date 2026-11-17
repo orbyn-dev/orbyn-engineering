@@ -88,7 +88,10 @@ fn migration_47_follows_46_and_applies_on_a_database_with_old_rows() {
 
     let store = Store::open(&path, "capacity-upgrade").unwrap();
     let upgrade = store.upgrade().expect("an upgrade");
-    assert_eq!((upgrade.from, upgrade.to), (46, 47));
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (46, migrations::MIGRATIONS.last().unwrap().0)
+    );
     for n in [1, 2] {
         // An old task is Medium and was started by a person, so it can never be paused.
         assert_eq!(

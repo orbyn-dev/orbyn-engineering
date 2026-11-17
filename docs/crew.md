@@ -1046,6 +1046,23 @@ ids, chosen or not, the seed and the time, with no prompt or path. A task stored
 person-started, so it can never be paused. Nothing reads these in `crew_start` or the merge queue yet; those hooks are
 separate PRs.
 
+**As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
+merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
+and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps them in `crew_hunks` with the author: the
+task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
+commit, one blame per file, repository ignore-revs lists cleared) is in the positive `person_commits` list the caller
+passes. Anything not positively a person's is the agent's: an empty list, an unknown or rewritten id, a conflict
+resolution, a failed blame. An author email is never read, and a merged hunk is split into runs of one author. The merge
+hook must pass only positively identified person commits (for example commits the person made through the app or
+pressed Looks good on), never a guess. The first time provenance is recorded for a repository is kept once in
+`crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
+merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
+transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
+`person`, engine and model ids, counts) is written on the merge commit under `refs/notes/orbyn-agent-trace`. The ref is
+local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
+carries it, and a test keeps it so. A note that fails is returned for the caller to log; the merge is not failed.
+Nothing calls this from the merge queue yet; the hook is a separate PR.
+
 **As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run, and there is no migration, budget or replay yet.
 
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
