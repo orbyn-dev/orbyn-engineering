@@ -5,16 +5,24 @@
 //! are never added up, and no money appears anywhere. The lane picker may show these counts but never lets them
 //! change the router's choice.
 
-// Slice 4n PR 2 (the store and the replay) and PR 3 (the routes) call these; the PR that wires them removes this allow.
+// Nothing outside the tests calls this yet, by design: a person starts a backtest through the routes of slice 4n
+// PR 3, and that PR removes this allow. `replay::run` must stay without any other caller (see `replay_tests`).
 #![allow(dead_code, unused_imports)]
 
 mod history;
 mod outcomes;
+mod replay;
+#[cfg(test)]
+mod replay_tests;
 mod score;
 
 pub use history::{HISTORY_DAYS, OUTCOME_DAYS, PastPr, eligible_prs};
 pub use outcomes::{Escape, EscapeSource, FixtureEscapes, NoEscapeLog, NotMeasured, Window};
+pub use replay::{
+    BacktestReport, BacktestRequest, LaneKind, LaneReplay, LaneReport, LaneResult, LaneRunner,
+    LaneSpec, ReplayFailed, ReplayedFinding, report, run,
+};
 pub use score::{
-    LaneScore, Outcome, PRECISION_MIN_FINDINGS, PastFinding, RECALL_MIN_ESCAPES, Rate,
+    LaneScore, Outcome, PRECISION_MIN_FINDINGS, PastFinding, RECALL_MIN_ESCAPES, Rate, from_counts,
     match_escape, rates, score_lanes,
 };
