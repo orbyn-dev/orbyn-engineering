@@ -9,7 +9,7 @@ export function Segmented<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; disabled?: boolean }[];
   onChange(value: T): void;
 }) {
   const group = useRef<HTMLDivElement>(null);
@@ -24,8 +24,9 @@ export function Segmented<T extends string>({
         if (!step) return;
         event.preventDefault();
         const at = options.findIndex((option) => option.value === value);
-        const next = options[(at + step + options.length) % options.length];
-        if (!next) return;
+        // The next choice that is not disabled, in the direction asked.
+        const next = Array.from({ length: options.length }, (_, n) => options[(at + step * (n + 1) + options.length * options.length) % options.length]).find((option) => option && !option.disabled);
+        if (!next || next.value === value) return;
         onChange(next.value);
         requestAnimationFrame(() => group.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
       }}
@@ -36,6 +37,7 @@ export function Segmented<T extends string>({
           type="button"
           role="radio"
           aria-checked={option.value === value}
+          disabled={option.disabled}
           tabIndex={option.value === value || (at === 0 && !options.some((entry) => entry.value === value)) ? 0 : -1}
           onClick={() => onChange(option.value)}
         >

@@ -27,7 +27,7 @@ const HISTORY_ROWS = 12;
  * `several` is the workspace's count of visible git projects, for the Repo chip: with more than one the page is
  * about one repo at a time, and the design draws that chip as a selector (still Planned: there is no menu yet).
  */
-function useRepo(): { id: string; name: string; several: boolean } | "loading" | null {
+export function useRepo(): { id: string; name: string; several: boolean } | "loading" | null {
   const route = useRoute();
   const projects = useWorkspace((now) => now.projects.data);
   const visible = useVisibleProjects();

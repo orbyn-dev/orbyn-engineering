@@ -1043,7 +1043,14 @@ Proposed stay Proposed.
 (`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and
 `crew_started` (default 0, a person's start) on `crew_tasks`, and each sampled batch in `crew_review_samples`: task
 ids, chosen or not, the seed and the time, with no prompt or path. A task stored before 47 is Medium and
-person-started, so it can never be paused. Nothing reads these in `crew_start` yet; that hook is a separate PR.
+person-started, so it can never be paused. The start hook and the merge hook below read them; sampling is not wired yet.
+
+**As built (slice 4l, start hook):** `crew/capacity/hooks.rs` is called by one line in `start.rs`, after the lease conflict
+check and before the task is stored, and does nothing with the Crew Preview flag off. A start that Crew began itself at Low
+priority is refused with `not_authorized`, and the waiting count and limit in its message, when more High and Medium merges
+wait than the project's limit; at the limit, or for a person-started or Medium or High task, it goes. A new task has no stored
+priority or `crew_started` yet, so the start path passes none (Medium, person-started) and nothing pauses until a later change
+sets them. A failure reading the settings or the queue lets the start go.
 
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
