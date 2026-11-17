@@ -13,6 +13,8 @@ mod approval;
 #[cfg(feature = "engine-client")]
 mod canaries;
 #[cfg(feature = "engine-client")]
+mod e2e_engine;
+#[cfg(feature = "engine-client")]
 mod engine;
 #[cfg(feature = "engine-client")]
 mod engine_loopback;
