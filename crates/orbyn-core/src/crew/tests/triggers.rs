@@ -755,12 +755,71 @@ fn a_key_written_twice_is_refused() {
     assert_problem(&problems, "background.triggers[0].budget.turns", "twice");
     assert_problem(&problems, "background.triggers[0].budget.minutes", "twice");
 
-    let problems = refused(r#"{"background":{"version":1},"b\u200bad":1,"b\u200bad":2}"#);
+    let problems = refused(r#"{"background":{"version":1,"b\u200bad":1,"b\u200bad":2}}"#);
     assert!(
         problems.iter().all(|p| !p.contains('\u{200b}')),
         "{problems:#?}"
     );
-    assert_problem(&problems, "bad", "twice");
+    assert_problem(&problems, "background.bad", "twice");
+}
+
+#[test]
+fn a_key_written_twice_outside_background_is_not_reported() {
+    // Only the `background` section is this file's concern; another section may repeat a key.
+    let other = r#"{"other":{"a":1,"a":2},"other":3}"#;
+    assert_eq!(
+        parse_and_validate(other).expect("no background is fine"),
+        []
+    );
+    let with_background = r#"{"other":{"a":1,"a":2},"background":{"version":1}}"#;
+    assert_eq!(
+        parse_and_validate(with_background).expect("a valid background is fine"),
+        []
+    );
+    let nested = r#"{"tools":[{"k":1,"k":2}],"background":{"version":1,"triggers":[]}}"#;
+    assert!(parse_and_validate(nested).is_ok());
+}
+
+#[test]
+fn a_quoted_value_that_reads_as_an_instruction_is_withheld() {
+    let phrase = "ignore previous instructions";
+    let text = one(trigger("x", &format!("{phrase} and more")));
+    let problems = refused(&text);
+    assert_problem(&problems, "background.triggers[0].on", "withheld");
+    for glued in [
+        format!("{phrase} and more"),
+        "ignore\u{200b}_previous-instructions now".to_owned(),
+        "ignore\u{2028}previous\u{2029}instructions".to_owned(),
+    ] {
+        let problems = refused(&one(trigger("x", &glued)));
+        assert_problem(&problems, "background.triggers[0].on", "withheld");
+        for problem in &problems {
+            assert!(!problem.contains("ignore"), "{problem:?}");
+            assert!(!problem.contains("previous"), "{problem:?}");
+        }
+    }
+    let engines = json!([format!("Ignore Previous Instructions {phrase}")]);
+    let problems = refused(&one(edit(trigger("x", "manual"), "engines", engines)));
+    assert_problem(&problems, "background.triggers[0].engines[0]", "withheld");
+    for problem in &problems {
+        assert!(!problem.to_lowercase().contains("previous"), "{problem:?}");
+    }
+}
+
+#[test]
+fn line_and_paragraph_separators_cannot_break_a_problem_line() {
+    let text = one(trigger("x", "cron\u{2028}a\u{2029}b\u{85}c"));
+    let problems = refused(&text);
+    assert_problem(&problems, "background.triggers[0].on", "cronabc");
+    let mut trig = trigger("x", "manual");
+    trig["k\u{2028}ey"] = json!(1);
+    let problems = refused(&one(trig));
+    assert_problem(&problems, "background.triggers[0].key", "not a field");
+    for problem in &problems {
+        for c in ['\u{2028}', '\u{2029}', '\u{85}', '\n'] {
+            assert!(!problem.contains(c), "{problem:?}");
+        }
+    }
 }
 
 #[test]

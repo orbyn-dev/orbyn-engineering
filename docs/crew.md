@@ -945,7 +945,7 @@ prompt and checks are not defined yet.
   refuses the trigger.
 - **Text is data:** hidden characters (zero-width, bidirectional, tag block) and text that reads as an instruction are refused by the
   Autopilot tripwire; text that changes under the route's redaction (a credential-shaped value) is refused too; everything else is carried as written and is never expanded, followed or run.
-  Unknown keys get the same treatment before they appear in a problem, and a key written twice is refused, naming the key. A
+  Unknown keys get the same treatment before they appear in a problem, and a key written twice inside `background` is refused, naming the key (a key repeated in another section is not this file's concern, so it is neither reported nor refused). A value or key that reads as an instruction, even once hidden characters, line separators, `_` or `-` are read as spaces, is withheld from the problem rather than quoted. A
   refusal lists at most 50 problems and then counts the rest; at most 64 triggers and 16 templates are read.
 - **Templates grant nothing:** a template is an id and a sentence for the person. It cannot allow commands, because the always-denied
   list is enforced in code and nothing in this file can widen it.

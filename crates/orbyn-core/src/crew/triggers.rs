@@ -162,38 +162,62 @@ fn kind_of(value: &Value) -> &'static str {
     }
 }
 
+/// Characters that hide text from a person: the same set the Autopilot tripwire refuses (zero-width, bidirectional
+/// controls and the tag block). A character-only test, so quoting never runs the phrase check once per character.
+fn hidden(c: char) -> bool {
+    matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{e0000}'..='\u{e007f}')
+}
+
+/// Characters that cannot appear in a one-line problem: control, hidden, and the line and paragraph separators
+/// U+2028, U+2029 and U+0085.
+fn unshowable(c: char) -> bool {
+    c.is_control() || hidden(c) || matches!(c, '\u{2028}' | '\u{2029}' | '\u{85}')
+}
+
+/// How much of a quoted value is read for the phrase check, so a huge value costs a bounded scan.
+const SCAN_MAX: usize = 4096;
+
+/// The text with every unshowable character dropped, and the same text with each of them, `_` and `-` read as a space.
+/// Dropping can glue a phrase to the text before it, and a separator can hide one, so both are checked.
+fn flattened(text: &str) -> (String, String) {
+    let mut cleaned = String::new();
+    let mut spaced = String::new();
+    for c in text.chars().take(SCAN_MAX) {
+        if unshowable(c) {
+            spaced.push(' ');
+        } else {
+            cleaned.push(c);
+            spaced.push(if c == '_' || c == '-' { ' ' } else { c });
+        }
+    }
+    (cleaned, spaced)
+}
+
+/// Whether the text reads as an instruction once cleaned or once separators are read as spaces. The phrase check runs
+/// once per form, never per character.
+fn instruction_like(text: &str) -> bool {
+    let (cleaned, spaced) = flattened(text);
+    injection_in(&cleaned).is_some() || injection_in(&spaced).is_some()
+}
+
 /// Cuts and redacts a value quoted back in a problem, so a refusal never repeats a credential, a whole file, a control
-/// character or a hidden character that would break the one-line `field: reason` shape.
+/// character, a hidden character or a line separator that would break the one-line `field: reason` shape. A value that
+/// reads as an instruction is withheld whole, so a refusal never carries the phrase.
 fn quoted(text: &str) -> String {
-    let cut: String = redact(text)
-        .chars()
-        .filter(|c| !c.is_control() && injection_in(&c.to_string()).is_none())
-        .take(80)
-        .collect();
+    if instruction_like(text) {
+        return "(value withheld: instruction-like)".to_owned();
+    }
+    let cut: String = flattened(&redact(text)).0.chars().take(80).collect();
     cut.replace('`', "'")
 }
 
 /// A key of the file as it may appear in a problem's field: cut, redacted and free of control and hidden characters, or
 /// withheld when it reads as an instruction. A repository chooses its keys, so they get the treatment its values get.
 fn safe_key(key: &str) -> String {
-    let cleaned = quoted(key);
-    // Hidden and control characters can glue a phrase to the text before it once stripped, so the key is also read with
-    // each of them as a space, and with `_` and `-` read as spaces.
-    let spaced: String = key
-        .chars()
-        .take(4096)
-        .map(|c| {
-            if c.is_control() || injection_in(&c.to_string()).is_some() || c == '_' || c == '-' {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect();
-    if injection_in(&cleaned).is_some() || injection_in(&spaced).is_some() {
+    if instruction_like(key) {
         "(key withheld: instruction-like)".to_owned()
     } else {
-        cleaned
+        quoted(key)
     }
 }
 
@@ -795,6 +819,21 @@ enum Seg<'a> {
     Index(usize),
 }
 
+/// Whether a key written at `at` belongs to the `background` section (or is that section's own key). A key written twice
+/// anywhere else is not this file's concern, so it is neither reported nor a reason to refuse.
+fn in_background(at: Option<&Path<'_>>, key: &str) -> bool {
+    let mut root = None;
+    let mut next = at;
+    while let Some(path) = next {
+        root = Some(path);
+        next = path.parent;
+    }
+    match root {
+        Some(path) => matches!(path.seg, Seg::Key("background")),
+        None => key == "background",
+    }
+}
+
 fn render(at: Option<&Path<'_>>, key: &str) -> String {
     let mut segs = Vec::new();
     let mut next = at;
@@ -877,7 +916,10 @@ impl<'de> Visitor<'de> for Checked<'_> {
     fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Value, A::Error> {
         let mut map = Map::new();
         while let Some(key) = access.next_key::<String>()? {
-            if map.contains_key(&key) && self.dups.borrow().len() < DUPLICATES_MAX {
+            if map.contains_key(&key)
+                && in_background(self.at, &key)
+                && self.dups.borrow().len() < DUPLICATES_MAX
+            {
                 self.dups.borrow_mut().push(render(self.at, &key));
             }
             let value = {
