@@ -109,12 +109,18 @@ pub fn rates(findings: &[PastFinding], escapes: &[Escape]) -> LaneScore {
                 .any(|escape| finding_matches(finding, escape))
         })
         .count() as u32;
+    from_counts(escapes_n, caught, findings_n, matched)
+}
+
+/// A lane's score from its counts: `caught` escapes of `escapes_n`, and `matched` findings of `findings_n`. What a
+/// stored run keeps, so a re-read gives the score `rates` gave when the run was scored.
+pub fn from_counts(escapes_n: u32, caught: u32, findings_n: u32, matched: u32) -> LaneScore {
     LaneScore {
         recall: (escapes_n >= RECALL_MIN_ESCAPES).then(|| Rate::of(caught, escapes_n)),
         precision: (findings_n >= PRECISION_MIN_FINDINGS).then(|| Rate::of(matched, findings_n)),
         escapes_n,
         findings_n,
-        unmatched_n: findings_n - matched,
+        unmatched_n: findings_n.saturating_sub(matched),
     }
 }
 
