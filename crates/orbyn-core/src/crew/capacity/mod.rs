@@ -3,12 +3,12 @@
 //! process, no file and no model. The facts come in, a decision goes out. `provenance` is the exception: it runs git
 //! for a merged range and writes a local note.
 
-// The store (`store/crew_capacity.rs`, `store/crew_provenance.rs`) uses the settings, `Priority`, `Sampling` and the
-// provenance types. The start check, the sampling run and the merge hook (`provenance::record_at_merge`) still call
-// nothing here; the PRs that wire them remove this allow.
+// The start check (`hooks`) calls the settings, `Priority` and the backpressure decision. The merge hook
+// (`provenance::record_at_merge`) and the sampling run still call nothing here; the PRs that wire them narrow this allow.
 #![allow(dead_code, unused_imports)]
 
 mod backpressure;
+mod hooks;
 mod provenance;
 mod sampling;
 
