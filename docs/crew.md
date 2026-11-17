@@ -1022,7 +1022,7 @@ Settings › Crew page (v23, `settings-crew`, with its Review capacity, Independ
 display-only Preview screens in `web/src/features/crew/{escape,capacity,settings}`, opened by `#/preview/crew/<frame>` in
 dev builds only. They share one stage in `features/crew/shared`: the design's own markup, with its rules renamed `cx-*` in
 `shared/design.css` on the app's tokens. None of them has a backend, a client or a guessed route: every button is disabled
-with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices. Values the design
+with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices (escape design: [crew/escapes.md](crew/escapes.md)). Values the design
 marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
 stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
 show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads
@@ -1038,6 +1038,32 @@ each engine, in tokens and never added up; it replays the last 180 days of pull 
 shows a rate from 5 escapes and from 10 findings, and takes its outcomes from reverts, fixes and the escape log only.
 The lane picker's backtest counts are information and never change what Auto picks. All values the design marks
 Proposed stay Proposed.
+
+**As built (slice 4l, store, migration 47):** `store/crew_capacity.rs` keeps a project's review-capacity settings
+(`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and
+`crew_started` (default 0, a person's start) on `crew_tasks`, and each sampled batch in `crew_review_samples`: task
+ids, chosen or not, the seed and the time, with no prompt or path. A task stored before 47 is Medium and
+person-started, so it can never be paused. Nothing reads these in `crew_start` or the merge queue yet; those hooks are
+separate PRs.
+
+**As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
+merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
+and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps them in `crew_hunks` with the author: the
+task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
+commit, one blame per file, repository ignore-revs lists cleared) is in the positive `person_commits` list the caller
+passes. Anything not positively a person's is the agent's: an empty list, an unknown or rewritten id, a conflict
+resolution, a failed blame. An author email is never read, and a merged hunk is split into runs of one author. The merge
+hook must pass only positively identified person commits (for example commits the person made through the app or
+pressed Looks good on), never a guess. The first time provenance is recorded for a repository is kept once in
+`crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
+merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
+transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
+`person`, engine and model ids, counts) is written on the merge commit under `refs/notes/orbyn-agent-trace`. The ref is
+local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
+carries it, and a test keeps it so. A note that fails is returned for the caller to log; the merge is not failed.
+Nothing calls this from the merge queue yet; the hook is a separate PR.
+
+**As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run, and there is no migration, budget or replay yet.
 
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 

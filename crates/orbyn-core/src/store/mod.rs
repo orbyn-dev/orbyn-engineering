@@ -22,10 +22,16 @@ mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
 mod crew_cancel;
+mod crew_capacity;
+#[cfg(test)]
+mod crew_capacity_tests;
 mod crew_flow;
 mod crew_guard;
 mod crew_merge_forge;
 mod crew_merges;
+mod crew_provenance;
+#[cfg(test)]
+mod crew_provenance_tests;
 mod crew_rerun;
 mod crew_review;
 mod crew_review_controls;
@@ -66,12 +72,14 @@ pub use crew_background::{
 };
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
+pub use crew_capacity::{SampleBatch, SampledTask};
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
 pub use crew_merge_forge::{ForgeMerge, ForgePhase};
 pub use crew_merges::{MergeEntry, MergeRecord};
+pub use crew_provenance::StoredHunk;
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
 pub(crate) use crew_review_publications::{Publication, PublicationState};

@@ -4,8 +4,10 @@
 
 mod autopilot;
 mod background;
+mod backtest;
 mod bus;
 mod cancel;
+pub(crate) mod capacity;
 pub mod changes;
 mod checks;
 mod classes;
