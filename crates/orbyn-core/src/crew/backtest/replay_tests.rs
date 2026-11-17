@@ -1,12 +1,14 @@
 //! The backtest replay on a fake runner: per-engine budgets, lane isolation, stored results, Not measured, a
 //! re-read, the request's refusals and the guard that only a person's start can reach `run`. No engine runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::replay::FakeLaneRunner;
 use super::*;
-use crate::store::{BacktestState, LaneState, NewProject, ResultOutcome, Store};
+use crate::store::{
+    BacktestState, LaneState, MOST_BUDGET_TOKENS, NewProject, ResultOutcome, Store,
+};
 use crate::testing::TempDir;
 
 const NOW: i64 = 1_800_000_000;
@@ -183,6 +185,43 @@ fn lanes_of_one_engine_share_that_engines_budget() {
         lane_of(&report, "security", "engine-a").state,
         LaneState::Stopped
     );
+}
+
+#[test]
+fn a_lane_stopped_before_its_first_replay_is_not_scored_as_zero_escapes() {
+    let (_d, store, project) = open();
+    let fake = runner(&[("engine-a", 100)]);
+    let req = request(
+        &project,
+        vec![
+            spec("correctness", "engine-a"),
+            spec("security", "engine-a"),
+        ],
+        &[("engine-a", 100)],
+    );
+    let escapes = measured_for(
+        &project,
+        vec![Escape {
+            pr: 1,
+            changed_files: vec!["a.rs".into()],
+        }],
+    );
+    let report = run(&store, "run-1", &req, &prs(3), NOW, &fake, &escapes).unwrap();
+    let never = lane_of(&report, "security", "engine-a");
+    assert_eq!(never.state, LaneState::Stopped);
+    assert_eq!(never.result, LaneResult::NotMeasured { findings_n: 0 });
+    let stored = store
+        .crew_backtest_lanes("run-1")
+        .unwrap()
+        .into_iter()
+        .find(|l| l.lane == "security")
+        .unwrap();
+    assert_eq!((stored.escapes_n, stored.caught_n), (None, None));
+    // The lane that did replay is scored.
+    assert!(matches!(
+        lane_of(&report, "correctness", "engine-a").result,
+        LaneResult::Scored(_)
+    ));
 }
 
 #[test]
@@ -406,6 +445,119 @@ fn when_the_escape_log_cannot_say_the_run_finishes_with_counts_only() {
     );
     let stored = &store.crew_backtest_lanes("run-1").unwrap()[0];
     assert_eq!((stored.escapes_n, stored.caught_n), (None, None));
+    // No finding is stored as a miss: the log could not judge it.
+    let outcomes: BTreeSet<ResultOutcome> = store
+        .crew_backtest_results("run-1")
+        .unwrap()
+        .into_iter()
+        .map(|r| r.outcome)
+        .collect();
+    assert_eq!(outcomes, BTreeSet::from([ResultOutcome::NotMeasured]));
+    // Reading again turns nothing into an unmatched finding or a precision.
+    assert_eq!(
+        super::replay::report(&store, "run-1").unwrap().lanes[0].result,
+        LaneResult::NotMeasured { findings_n: 12 }
+    );
+}
+
+/// A runner that panics, as a broken live runner might.
+struct PanickingRunner;
+
+impl LaneRunner for PanickingRunner {
+    fn replay(&self, _: &LaneSpec, _: &PastPr) -> Result<LaneReplay, ReplayFailed> {
+        panic!("runner broke");
+    }
+}
+
+#[test]
+fn a_runner_panic_ends_the_run_as_failed_and_never_leaves_it_running() {
+    let (_d, store, project) = open();
+    let req = request(
+        &project,
+        vec![
+            spec("correctness", "engine-a"),
+            spec("security", "engine-b"),
+        ],
+        &[("engine-a", 10), ("engine-b", 10)],
+    );
+    assert!(
+        run(
+            &store,
+            "run-1",
+            &req,
+            &prs(2),
+            NOW,
+            &PanickingRunner,
+            &NoEscapeLog
+        )
+        .is_err()
+    );
+    let stored = store.crew_backtest_run("run-1").unwrap();
+    assert_eq!(stored.state, BacktestState::Failed);
+    assert!(stored.stop_reason.is_some() && stored.finished_unix == Some(NOW));
+    assert!(
+        store
+            .crew_backtest_lanes("run-1")
+            .unwrap()
+            .iter()
+            .all(|l| l.state == LaneState::Failed)
+    );
+}
+
+#[test]
+fn a_run_that_cannot_be_written_ends_failed() {
+    let (_d, store, project) = open();
+    let fake = runner(&[]);
+    let req = request(
+        &project,
+        vec![spec("correctness", "engine-a")],
+        &[("engine-a", 10)],
+    );
+    // An escape log that fails the store write: pull request numbers beyond what the database holds.
+    let mut fake = fake;
+    fake.findings.insert(
+        ("correctness".to_owned(), "engine-a".to_owned(), u64::MAX),
+        vec![found("sha256:f1", "a.rs")],
+    );
+    let huge = [PastPr {
+        number: u64::MAX,
+        merged_unix: NOW - 40 * DAY,
+    }];
+    assert!(run(&store, "run-1", &req, &huge, NOW, &fake, &NoEscapeLog).is_err());
+    let stored = store.crew_backtest_run("run-1").unwrap();
+    assert_eq!(stored.state, BacktestState::Failed);
+    assert!(
+        store
+            .crew_backtest_lanes("run-1")
+            .unwrap()
+            .iter()
+            .all(|l| l.state == LaneState::Failed)
+    );
+}
+
+#[test]
+fn budgets_outside_one_to_the_maximum_are_refused_up_front() {
+    for bad in [0, MOST_BUDGET_TOKENS + 1, u64::MAX, i64::MAX as u64] {
+        let req = request(
+            "p",
+            vec![spec("correctness", "engine-a")],
+            &[("engine-a", bad)],
+        );
+        assert!(req.validate().is_err(), "{bad}");
+        // An engine no lane uses is held to the same range.
+        let req = request(
+            "p",
+            vec![spec("correctness", "engine-a")],
+            &[("engine-a", 10), ("engine-b", bad)],
+        );
+        assert!(req.validate().is_err(), "unused {bad}");
+    }
+    let ok = request(
+        "p",
+        vec![spec("correctness", "engine-a")],
+        &[("engine-a", MOST_BUDGET_TOKENS)],
+    );
+    assert!(ok.validate().is_ok());
 }
 
 #[test]
@@ -601,27 +753,30 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
     rust_files(&crates, &mut files);
     assert!(files.len() > 100, "the scan found no sources");
 
-    // Built in parts so this file never matches itself.
-    let module = ["backtest", "::"].concat();
-    let creator = ["crew_backtest", "_create("].concat();
+    // Any mention of the backtest outside its own module and store, however it is imported (`backtest::run`,
+    // `use crate::crew::{backtest}`, a glob, a re-export), is a possible caller. The only mentions allowed are the
+    // module declaration and the store's own registration, each line by line. Built in parts so this file never
+    // matches itself.
+    let word = ["back", "test"].concat();
     for file in &files {
         let name = file.to_string_lossy().replace('\\', "/");
         let is_test = name.ends_with("_tests.rs") || name.contains("/tests/");
-        let inside = name.contains("/crew/backtest/") || name.contains("/store/crew_backtest")
-            // The store's own re-export of its row types.
-            || name.ends_with("/store/mod.rs");
-        let text = std::fs::read_to_string(file).unwrap();
-        if !is_test && !inside {
-            assert!(
-                !text.contains(&module),
-                "{name} reaches the backtest; only a person's start (the routes of PR 3) may"
-            );
+        let inside = name.contains("/crew/backtest/") || name.contains("/store/crew_backtest");
+        if is_test || inside {
+            continue;
         }
-        if !is_test
-            && !name.ends_with("/crew/backtest/replay.rs")
-            && !name.ends_with("/store/crew_backtest.rs")
-        {
-            assert!(!text.contains(&creator), "{name} creates a backtest run");
+        let text = std::fs::read_to_string(file).unwrap();
+        for line in text.lines().filter(|l| l.to_lowercase().contains(&word)) {
+            let line = line.trim();
+            let declaration = name.ends_with("/crew/mod.rs") && line == format!("mod {word};");
+            let registration = (name.ends_with("/store/mod.rs")
+                || name.ends_with("/store/migrations.rs"))
+                && (line.contains(&format!("crew_{word}")) || line.starts_with("Backtest"))
+                || (name.ends_with("/store/mod.rs") && line.contains("MOST_BUDGET_TOKENS"));
+            assert!(
+                declaration || registration,
+                "{name} mentions the backtest: `{line}`; only a person's start (the routes of PR 3) may reach it"
+            );
         }
     }
 

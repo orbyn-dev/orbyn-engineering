@@ -22,8 +22,8 @@ use super::outcomes::{Escape, EscapeSource, Window};
 use super::score::{LaneScore, Outcome, PastFinding, from_counts, match_escape};
 use crate::error::{CoreError, Result};
 use crate::store::{
-    BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState, ResultOutcome,
-    Store,
+    BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
+    MOST_BUDGET_TOKENS, ResultOutcome, Store,
 };
 
 const DAY_SECS: i64 = 86_400;
@@ -126,8 +126,13 @@ impl BacktestRequest {
                 }
             }
         }
-        for engine in self.budgets.keys() {
+        for (engine, tokens) in &self.budgets {
             check_name("a budget", engine)?;
+            if !(1..=MOST_BUDGET_TOKENS).contains(tokens) {
+                return Err(CoreError::Invalid(format!(
+                    "a token budget must be from 1 to {MOST_BUDGET_TOKENS}"
+                )));
+            }
         }
         Ok(())
     }
@@ -274,6 +279,29 @@ pub fn run(
         &lane_keys,
         now_unix,
     )?;
+    // From here a run exists. Whatever goes wrong (an error, a panic in the runner) ends it as failed, so it never
+    // stays `running`; the final write is best effort.
+    let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        execute(store, run_id, request, &eligible, now_unix, runner, escapes)
+    }));
+    let error = match ended {
+        Ok(Ok(())) => return report(store, run_id),
+        Ok(Err(error)) => error,
+        Err(_) => CoreError::Internal("a backtest lane runner panicked".into()),
+    };
+    let _ = store.crew_backtest_fail(run_id, "failed: the backtest could not finish", now_unix);
+    Err(error)
+}
+
+fn execute(
+    store: &Store,
+    run_id: &str,
+    request: &BacktestRequest,
+    eligible: &[&PastPr],
+    now_unix: i64,
+    runner: &dyn LaneRunner,
+    escapes: &dyn EscapeSource,
+) -> Result<()> {
     let window = Window {
         from_unix: now_unix - HISTORY_DAYS * DAY_SECS,
         until_unix: now_unix - OUTCOME_DAYS * DAY_SECS,
@@ -300,7 +328,7 @@ pub fn run(
         let mut seen = BTreeSet::new();
         let mut replayed = BTreeSet::new();
         let mut state = LaneState::Done;
-        for pr in &eligible {
+        for pr in eligible {
             // Only this engine's own spending is compared with this engine's own budget.
             if spent.get(spec.engine.as_str()).copied().unwrap_or(0) >= budget {
                 state = LaneState::Stopped;
@@ -331,7 +359,9 @@ pub fn run(
         row.state = state;
         let past: Vec<PastFinding> = found.iter().map(|(f, _)| f.clone()).collect();
         // A stopped lane is scored on the pull requests it did replay; a failed lane is not scored.
-        let scored = measured.is_some() && matches!(state, LaneState::Done | LaneState::Stopped);
+        // A lane stopped before its first replay saw no pull request: it is not scored, which is not zero escapes.
+        let scored = measured.is_some()
+            && (state == LaneState::Done || (state == LaneState::Stopped && !replayed.is_empty()));
         let scoped: Vec<Escape> = match (&measured, scored) {
             (Some(all), true) => all
                 .iter()
@@ -354,11 +384,11 @@ pub fn run(
                 engine: f.engine.clone(),
                 pr: f.pr,
                 finding_fp: fp.clone(),
-                // Without a measured log nothing is known about escapes, so nothing is "no escape".
+                // Without a measured log nothing is known about escapes: not a miss, so never `unmatched`.
                 outcome: if scored {
                     outcome_of(f, &scoped)
                 } else {
-                    ResultOutcome::Unmatched
+                    ResultOutcome::NotMeasured
                 },
             })
             .collect();
@@ -376,8 +406,7 @@ pub fn run(
     } else {
         (BacktestState::Finished, None)
     };
-    store.crew_backtest_set_state(run_id, state, reason.as_deref(), Some(now_unix))?;
-    report(store, run_id)
+    store.crew_backtest_set_state(run_id, state, reason.as_deref(), Some(now_unix))
 }
 
 /// A fake runner for tests only: what each (lane, engine) raises on each pull request, what each replay costs, and

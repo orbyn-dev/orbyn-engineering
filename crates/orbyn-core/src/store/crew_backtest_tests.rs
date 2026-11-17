@@ -423,3 +423,87 @@ fn runs_come_newest_first_and_a_removed_project_takes_its_runs_with_it() {
         assert_eq!(count, 0, "{table}");
     }
 }
+
+#[test]
+fn interrupted_runs_are_failed_with_their_open_lanes_and_finished_ones_are_left() {
+    let (_dir, store, project) = open();
+    create(&store, "estimated", &project);
+    store
+        .crew_backtest_create(
+            "running",
+            &project,
+            BacktestState::Running,
+            &budgets(),
+            &lanes(),
+            200,
+        )
+        .unwrap();
+    store
+        .crew_backtest_save_lane("running", &lane("engine-a", 5, LaneState::Done), &[])
+        .unwrap();
+    store
+        .crew_backtest_create(
+            "finished",
+            &project,
+            BacktestState::Running,
+            &budgets(),
+            &lanes(),
+            300,
+        )
+        .unwrap();
+    store
+        .crew_backtest_set_state("finished", BacktestState::Finished, None, Some(310))
+        .unwrap();
+
+    assert_eq!(store.crew_backtest_recover_interrupted(999).unwrap(), 1);
+    let run = store.crew_backtest_run("running").unwrap();
+    assert_eq!(run.state, BacktestState::Failed);
+    assert_eq!(run.stop_reason.as_deref(), Some("interrupted"));
+    assert_eq!(run.finished_unix, Some(999));
+    let states: Vec<LaneState> = store
+        .crew_backtest_lanes("running")
+        .unwrap()
+        .iter()
+        .map(|l| l.state)
+        .collect();
+    // The lane that was done stays done; the one that never ran is failed.
+    assert_eq!(states, vec![LaneState::Done, LaneState::Failed]);
+    assert_eq!(
+        store.crew_backtest_run("estimated").unwrap().state,
+        BacktestState::Estimated
+    );
+    assert_eq!(
+        store.crew_backtest_run("finished").unwrap().state,
+        BacktestState::Finished
+    );
+    // A second call finds nothing.
+    assert_eq!(store.crew_backtest_recover_interrupted(1000).unwrap(), 0);
+}
+
+#[test]
+fn a_budget_above_the_maximum_is_refused_and_a_not_measured_outcome_is_stored() {
+    let (_dir, store, project) = open();
+    let over = BTreeMap::from([("engine-a".to_owned(), MOST_BUDGET_TOKENS + 1)]);
+    assert!(
+        store
+            .crew_backtest_create("r", &project, BacktestState::Running, &over, &lanes(), 1)
+            .is_err()
+    );
+    create(&store, "run-1", &project);
+    store
+        .crew_backtest_save_lane(
+            "run-1",
+            &lane("engine-a", 1, LaneState::Done),
+            &[result(
+                "engine-a",
+                1,
+                "sha256:f1",
+                ResultOutcome::NotMeasured,
+            )],
+        )
+        .unwrap();
+    assert_eq!(
+        store.crew_backtest_results("run-1").unwrap()[0].outcome,
+        ResultOutcome::NotMeasured
+    );
+}

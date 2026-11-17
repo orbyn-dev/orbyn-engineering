@@ -79,12 +79,14 @@ impl LaneState {
     }
 }
 
-/// How one replayed finding fared. `NoEscape` is a finding on a pull request the escape log says had none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// How one replayed finding fared. `NoEscape` is a finding on a pull request the escape log says had none;
+/// `NotMeasured` is a finding the escape log could not judge, which is neither a catch nor a miss.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultOutcome {
     Caught,
     Unmatched,
     NoEscape,
+    NotMeasured,
 }
 
 impl ResultOutcome {
@@ -93,6 +95,7 @@ impl ResultOutcome {
             Self::Caught => "caught",
             Self::Unmatched => "unmatched",
             Self::NoEscape => "no_escape",
+            Self::NotMeasured => "not_measured",
         }
     }
 
@@ -101,6 +104,7 @@ impl ResultOutcome {
             "caught" => Ok(Self::Caught),
             "unmatched" => Ok(Self::Unmatched),
             "no_escape" => Ok(Self::NoEscape),
+            "not_measured" => Ok(Self::NotMeasured),
             other => Err(CoreError::Internal(format!(
                 "a stored backtest outcome is unknown: {other}"
             ))),
@@ -142,6 +146,9 @@ pub struct BacktestResultRow {
     pub finding_fp: String,
     pub outcome: ResultOutcome,
 }
+
+/// The most tokens one engine's budget may hold: far above any real run, far below what a database integer holds.
+pub const MOST_BUDGET_TOKENS: u64 = 1_000_000_000_000;
 
 fn db_int(value: u64, what: &str) -> Result<i64> {
     i64::try_from(value).map_err(|_| CoreError::Invalid(format!("{what} is too large")))
@@ -210,6 +217,20 @@ fn update_lane(tx: &Transaction<'_>, run_id: &str, lane: &BacktestLaneRow) -> Re
     Ok(())
 }
 
+fn fail_run(tx: &Transaction<'_>, id: &str, reason: &str, finished_unix: i64) -> Result<()> {
+    tx.execute(
+        "UPDATE crew_backtest_lanes SET state = 'failed'
+          WHERE run_id = ?1 AND state IN ('pending', 'running')",
+        [id],
+    )?;
+    tx.execute(
+        "UPDATE crew_backtest_runs SET state = 'failed', stop_reason = ?2, finished_unix = ?3
+          WHERE id = ?1 AND state IN ('estimated', 'running')",
+        params![id, reason, finished_unix],
+    )?;
+    Ok(())
+}
+
 impl Store {
     /// Records a new run of `project_id` with its lanes (as `(lane, engine, model)`), each pending with nothing
     /// used. The budgets are tokens per engine; an empty set, or a zero budget, is refused. An id already used, or a
@@ -223,13 +244,14 @@ impl Store {
         lanes: &[(String, String, String)],
         created_unix: i64,
     ) -> Result<()> {
-        if budgets.is_empty() || budgets.values().any(|tokens| *tokens == 0) {
-            return Err(CoreError::Invalid(
-                "every engine needs a token budget of at least 1".into(),
-            ));
-        }
-        for tokens in budgets.values() {
-            db_int(*tokens, "a token budget")?;
+        if budgets.is_empty()
+            || budgets
+                .values()
+                .any(|tokens| !(1..=MOST_BUDGET_TOKENS).contains(tokens))
+        {
+            return Err(CoreError::Invalid(format!(
+                "every engine needs a token budget from 1 to {MOST_BUDGET_TOKENS}"
+            )));
         }
         let budgets = serde_json::to_string(budgets)
             .map_err(|_| CoreError::Internal("the budgets cannot be written".into()))?;
@@ -306,6 +328,30 @@ impl Store {
                 )?;
             }
             Ok(())
+        })
+    }
+
+    /// Marks a run failed and its open lanes (pending or running) failed, with the reason, in one transaction. A run
+    /// that already ended is left as it is.
+    pub fn crew_backtest_fail(&self, id: &str, reason: &str, finished_unix: i64) -> Result<()> {
+        self.commit(|tx, _| {
+            fail_run(tx, id, reason, finished_unix)?;
+            Ok(())
+        })
+    }
+
+    /// Marks every run left `running` (the app stopped under it) failed with the reason "interrupted", and its open
+    /// lanes with it. Returns how many runs it changed. A later startup hook calls this; nothing does yet.
+    pub fn crew_backtest_recover_interrupted(&self, finished_unix: i64) -> Result<usize> {
+        self.commit(|tx, _| {
+            let ids: Vec<String> = tx
+                .prepare("SELECT id FROM crew_backtest_runs WHERE state = 'running'")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for id in &ids {
+                fail_run(tx, id, "interrupted", finished_unix)?;
+            }
+            Ok(ids.len())
         })
     }
 
