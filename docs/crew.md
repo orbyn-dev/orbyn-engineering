@@ -933,7 +933,7 @@ prompt and checks are not defined yet.
   ] } }
 ```
 
-- **Kinds:** `ci_failed` (optional `branch` and `workflow`), `schedule` (needs `every_minutes`, 15 to 43200) and `manual` (only
+- **Kinds:** `ci_failed` (optional `branch` and `workflow`), `schedule` (needs `every_minutes`: a whole number of hours in minutes, a multiple of 60 from 60 to 43200, so each maps to the stored crew's `every_hours` 1 to 720) and `manual` (only
   when a person asks). A trigger takes the settings of its kind and no others.
 - **Strict:** at most 64 triggers and 16 templates; `version` must be 1; unknown fields, kinds and templates are refused rather than
   ignored; a name is 1 to 80 characters and unique after trimming, lower-casing and collapsing runs of whitespace (not Unicode
@@ -944,7 +944,9 @@ prompt and checks are not defined yet.
 - **Budget:** `turns` 1 to 1000 and `minutes` 1 to 1440, written by a person. There is no default, and a missing or over-cap budget
   refuses the trigger.
 - **Text is data:** hidden characters (zero-width, bidirectional, tag block) and text that reads as an instruction are refused by the
-  Autopilot tripwire; everything else is carried as written and is never expanded, followed or run.
+  Autopilot tripwire; text that changes under the route's redaction (a credential-shaped value) is refused too; everything else is carried as written and is never expanded, followed or run.
+  Unknown keys get the same treatment before they appear in a problem, and a key written twice is refused, naming the key. A
+  refusal lists at most 50 problems and then counts the rest; at most 64 triggers and 16 templates are read.
 - **Templates grant nothing:** a template is an id and a sentence for the person. It cannot allow commands, because the always-denied
   list is enforced in code and nothing in this file can widen it.
 - **Every problem at once:** `crew::triggers::parse_and_validate` returns all of them, each naming the field and the shape it wants, in
@@ -953,6 +955,8 @@ prompt and checks are not defined yet.
   its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, with `every_hours`), and it stays the record of what a
   crew is; the file uses the names this work starts with (`ci_failed`, `schedule`, `manual`, with `every_minutes`). A later slice maps a
   file trigger to the stored crew when it starts one. Nothing here writes, starts or records anything.
+  Only `ci_failed` and `schedule` have a stored-crew match (`ci_failure`, and `schedule` with `every_hours`). **Planned:** `manual`
+  and declared templates have no stored-crew match yet, so the later mapping slice decides them.
 
 What is not built (Planned): **nothing reads this section yet.** The CI-failure listener, the schedule timer, the manual start, the
 templates' prompts and checks, the routes and the UI are later work; this parse starts no run, calls no model and spawns no process.

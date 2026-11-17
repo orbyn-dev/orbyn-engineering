@@ -14,13 +14,18 @@
 //! repository or an agent writes; the stored-crew validator keeps a wider one for input a person types, so the two
 //! differ on purpose.
 //!
-//! Limits: names are compared after trimming, lower-casing and collapsing spaces, not after Unicode normalisation, so
-//! two names built from different code points can still look alike. A schedule's minimum and the budget caps are
-//! constants here, not a project setting yet. The parse reads text only; it is not a sandbox for what a later slice
+//! Limits: a key written twice is refused with a problem naming it (at most 20 are named); problems past 50 are counted,
+//! not listed; at most 64 triggers and 16 templates are read. Names are compared after trimming, lower-casing and
+//! collapsing spaces, not after Unicode normalisation, so two names built from different code points can still look
+//! alike. A schedule's minimum and the budget caps are constants here, not a project setting yet. The parse reads text only; it is not a sandbox for what a later slice
 //! does with a trigger it accepts.
 
+use std::cell::RefCell;
+use std::fmt;
+
 use orbyn_contracts::CrewToken;
-use serde_json::{Map, Value};
+use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde_json::{Map, Number, Value};
 
 use super::background;
 use super::{injection_in, redact};
@@ -43,9 +48,13 @@ pub const SETTING_MAX: usize = background::SETTING_MAX;
 pub const TURNS_MAX: u32 = background::TURNS_MAX;
 /// The most minutes one run may be given.
 pub const MINUTES_MAX: u32 = background::MINUTES_MAX;
-/// The closest a schedule may run, in minutes.
-pub const SCHEDULE_MIN_MINUTES: u32 = 15;
-/// The widest gap of a schedule, in minutes: 30 days.
+/// The closest a schedule may run, in minutes: one hour, the stored crew's smallest `every_hours`.
+pub const SCHEDULE_MIN_MINUTES: u32 = 60;
+/// A schedule is a whole number of hours: its minutes are a multiple of this.
+pub const SCHEDULE_STEP_MINUTES: u32 = 60;
+/// The most problems one refusal lists; the rest are counted in a final line.
+pub const PROBLEMS_MAX: usize = 50;
+/// The widest gap of a schedule, in minutes: 30 days, the stored crew's largest `every_hours` (720).
 pub const SCHEDULE_MAX_MINUTES: u32 = 43_200;
 /// The names of the trigger kinds, in the order a refusal lists them.
 pub const KIND_NAMES: [&str; 3] = ["ci_failed", "manual", "schedule"];
@@ -113,7 +122,8 @@ pub struct TriggerDef {
     /// Engine ids allowed to take the run. Each is a token; none may be empty.
     pub engines: Vec<String>,
     pub description: String,
-    /// `schedule` only: the minutes between runs, at least [`SCHEDULE_MIN_MINUTES`].
+    /// `schedule` only: the minutes between runs, a multiple of 60 from [`SCHEDULE_MIN_MINUTES`] to
+    /// [`SCHEDULE_MAX_MINUTES`], so each maps to a stored `every_hours` of 1 to 720.
     pub every_minutes: Option<u32>,
     /// `ci_failed` only: the branch watched, when the file names one.
     pub branch: Option<String>,
@@ -163,6 +173,30 @@ fn quoted(text: &str) -> String {
     cut.replace('`', "'")
 }
 
+/// A key of the file as it may appear in a problem's field: cut, redacted and free of control and hidden characters, or
+/// withheld when it reads as an instruction. A repository chooses its keys, so they get the treatment its values get.
+fn safe_key(key: &str) -> String {
+    let cleaned = quoted(key);
+    // Hidden and control characters can glue a phrase to the text before it once stripped, so the key is also read with
+    // each of them as a space, and with `_` and `-` read as spaces.
+    let spaced: String = key
+        .chars()
+        .take(4096)
+        .map(|c| {
+            if c.is_control() || injection_in(&c.to_string()).is_some() || c == '_' || c == '-' {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    if injection_in(&cleaned).is_some() || injection_in(&spaced).is_some() {
+        "(key withheld: instruction-like)".to_owned()
+    } else {
+        cleaned
+    }
+}
+
 /// An object at `field`, with every key it carries other than `known` reported.
 fn object<'a>(
     out: &mut Vec<Problem>,
@@ -179,7 +213,7 @@ fn object<'a>(
         if !known.contains(&key.as_str()) {
             problem(
                 out,
-                &join(field, key),
+                &join(field, &safe_key(key)),
                 format!("not a field; allowed: {}", known.join(", ")),
             );
         }
@@ -210,6 +244,18 @@ fn text(out: &mut Vec<Problem>, field: &str, value: &Value, max: usize) -> Optio
         );
         return None;
     };
+    // Length first: an oversize value is refused before it is trimmed, scanned or redacted.
+    if raw.len() > max.saturating_mul(4) {
+        problem(
+            out,
+            field,
+            format!(
+                "{} bytes, expected a string 1 to {max} characters",
+                raw.len()
+            ),
+        );
+        return None;
+    }
     let value = raw.trim();
     let count = value.chars().count();
     if !(1..=max).contains(&count) {
@@ -244,6 +290,15 @@ fn text(out: &mut Vec<Problem>, field: &str, value: &Value, max: usize) -> Optio
             return None;
         }
         None => {}
+    }
+    // The route stores this text redacted (`background::text`), so text that changes under redaction is refused.
+    if redact(value) != value {
+        problem(
+            out,
+            field,
+            "looks like a credential; it would be redacted, so it is refused",
+        );
+        return None;
     }
     Some(value.to_owned())
 }
@@ -352,13 +407,13 @@ fn walk_template(out: &mut Vec<Problem>, declared: &mut Vec<String>, at: usize, 
         ) {
             problem(
                 out,
-                &join(&field, key),
+                &join(&field, &safe_key(key)),
                 "a template cannot allow commands: the always-denied list is enforced in code and nothing in this file can widen it",
             );
         } else if key != "id" && key != "description" {
             problem(
                 out,
-                &join(&field, key),
+                &join(&field, &safe_key(key)),
                 "not a field; allowed: id, description",
             );
         }
@@ -627,14 +682,26 @@ fn walk_trigger(
     let branch_value = map.get("branch").filter(|value| !value.is_null());
     let workflow_value = map.get("workflow").filter(|value| !value.is_null());
     let every = every_value.map(|value| {
-        whole(
+        let at = join(&field, "every_minutes");
+        let minutes = whole(
             out,
-            &join(&field, "every_minutes"),
+            &at,
             value,
             SCHEDULE_MIN_MINUTES,
             SCHEDULE_MAX_MINUTES,
             "minutes between runs",
-        )
+        )?;
+        if minutes % SCHEDULE_STEP_MINUTES != 0 {
+            problem(
+                out,
+                &at,
+                format!(
+                    "{minutes} is not a whole number of hours; use a multiple of {SCHEDULE_STEP_MINUTES} from {SCHEDULE_MIN_MINUTES} to {SCHEDULE_MAX_MINUTES}"
+                ),
+            );
+            return None;
+        }
+        Some(minutes)
     });
     let branch_checked =
         branch_value.map(|value| text(out, &join(&field, "branch"), value, SETTING_MAX));
@@ -664,7 +731,7 @@ fn walk_trigger(
                             out,
                             &join(&field, "every_minutes"),
                             format!(
-                                "missing, the minutes between runs, {SCHEDULE_MIN_MINUTES} to {SCHEDULE_MAX_MINUTES}"
+                                "missing, the minutes between runs, a multiple of {SCHEDULE_STEP_MINUTES} from {SCHEDULE_MIN_MINUTES} to {SCHEDULE_MAX_MINUTES}"
                             ),
                         );
                         None
@@ -700,17 +767,138 @@ fn walk_trigger(
 /// `Ok` with no triggers covers a file with no `background` section: another slice's sections are not this parser's to
 /// refuse. An empty or oversized file, invalid JSON, an unknown field, trigger kind or template, a missing or over-cap
 /// budget, a schedule closer than [`SCHEDULE_MIN_MINUTES`], a name that collides with an earlier one after
-/// [`normalized`], hidden or instruction-shaped text, and a template that tries to allow commands are all refused.
+/// [`normalized`], hidden, credential-shaped or instruction-shaped text, a key written twice and a template that tries to
+/// allow commands are all refused. At most [`PROBLEMS_MAX`] problems are listed, then one line counts the rest.
 pub fn parse_and_validate(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
-    let mut out = Vec::new();
-    if text.trim().is_empty() {
-        problem(
-            &mut out,
-            "background",
-            "the file is empty; it needs a JSON object with a `background` section",
-        );
-        return Err(out);
+    check(text).map_err(|mut problems| {
+        if problems.len() > PROBLEMS_MAX {
+            let more = problems.len() - PROBLEMS_MAX;
+            problems.truncate(PROBLEMS_MAX);
+            problem(
+                &mut problems,
+                "background",
+                format!("and {more} more problems, not shown"),
+            );
+        }
+        problems
+    })
+}
+
+/// Where a key was met, for naming a duplicate.
+struct Path<'a> {
+    parent: Option<&'a Path<'a>>,
+    seg: Seg<'a>,
+}
+
+enum Seg<'a> {
+    Key(&'a str),
+    Index(usize),
+}
+
+fn render(at: Option<&Path<'_>>, key: &str) -> String {
+    let mut segs = Vec::new();
+    let mut next = at;
+    while let Some(path) = next {
+        segs.push(&path.seg);
+        next = path.parent;
     }
+    let mut field = String::new();
+    for seg in segs.into_iter().rev() {
+        match seg {
+            Seg::Key(key) => field = join(&field, &safe_key(key)),
+            Seg::Index(at) => field.push_str(&format!("[{at}]")),
+        }
+    }
+    join(&field, &safe_key(key))
+}
+
+/// Parses JSON into a [`Value`] the way `serde_json` does, and notes each key an object writes twice (which a plain
+/// parse would silently resolve to the last one).
+#[derive(Clone, Copy)]
+struct Checked<'a> {
+    at: Option<&'a Path<'a>>,
+    dups: &'a RefCell<Vec<String>>,
+}
+
+const DUPLICATES_MAX: usize = 20;
+
+impl<'de> DeserializeSeed<'de> for Checked<'_> {
+    type Value = Value;
+    fn deserialize<D: serde::Deserializer<'de>>(self, de: D) -> Result<Value, D::Error> {
+        de.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Checked<'_> {
+    type Value = Value;
+    fn expecting(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("any JSON value")
+    }
+    fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
+        Ok(Value::Bool(value))
+    }
+    fn visit_i64<E>(self, value: i64) -> Result<Value, E> {
+        Ok(Value::Number(value.into()))
+    }
+    fn visit_u64<E>(self, value: u64) -> Result<Value, E> {
+        Ok(Value::Number(value.into()))
+    }
+    fn visit_f64<E>(self, value: f64) -> Result<Value, E> {
+        Ok(Number::from_f64(value).map_or(Value::Null, Value::Number))
+    }
+    fn visit_str<E>(self, value: &str) -> Result<Value, E> {
+        Ok(Value::String(value.to_owned()))
+    }
+    fn visit_string<E>(self, value: String) -> Result<Value, E> {
+        Ok(Value::String(value))
+    }
+    fn visit_none<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+    fn visit_unit<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+        let mut items = Vec::new();
+        while let Some(item) = {
+            let child = Path {
+                parent: self.at,
+                seg: Seg::Index(items.len()),
+            };
+            seq.next_element_seed(Checked {
+                at: Some(&child),
+                dups: self.dups,
+            })?
+        } {
+            items.push(item);
+        }
+        Ok(Value::Array(items))
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Value, A::Error> {
+        let mut map = Map::new();
+        while let Some(key) = access.next_key::<String>()? {
+            if map.contains_key(&key) && self.dups.borrow().len() < DUPLICATES_MAX {
+                self.dups.borrow_mut().push(render(self.at, &key));
+            }
+            let value = {
+                let child = Path {
+                    parent: self.at,
+                    seg: Seg::Key(&key),
+                };
+                access.next_value_seed(Checked {
+                    at: Some(&child),
+                    dups: self.dups,
+                })?
+            };
+            map.insert(key, value);
+        }
+        Ok(Value::Object(map))
+    }
+}
+
+fn check(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
+    let mut out = Vec::new();
+    // Length before trim: an oversize file is refused without being scanned.
     if text.len() > FILE_MAX {
         problem(
             &mut out,
@@ -722,7 +910,23 @@ pub fn parse_and_validate(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
         );
         return Err(out);
     }
-    let value: Value = match serde_json::from_str(text) {
+    if text.trim().is_empty() {
+        problem(
+            &mut out,
+            "background",
+            "the file is empty; it needs a JSON object with a `background` section",
+        );
+        return Err(out);
+    }
+    let dups = RefCell::new(Vec::new());
+    let mut de = serde_json::Deserializer::from_str(text);
+    let parsed = Checked {
+        at: None,
+        dups: &dups,
+    }
+    .deserialize(&mut de)
+    .and_then(|value| de.end().map(|()| value));
+    let value: Value = match parsed {
         Ok(value) => value,
         Err(error) => {
             problem(
@@ -737,6 +941,13 @@ pub fn parse_and_validate(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
             return Err(out);
         }
     };
+    for key in dups.into_inner() {
+        problem(
+            &mut out,
+            &key,
+            "is written twice; JSON keeps only the last, so the file is refused",
+        );
+    }
     let Value::Object(top) = value else {
         problem(
             &mut out,
@@ -783,7 +994,7 @@ pub fn parse_and_validate(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
                         format!("{} templates; the most is {TEMPLATES_MAX}", items.len()),
                     );
                 }
-                for (at_index, item) in items.iter().enumerate() {
+                for (at_index, item) in items.iter().enumerate().take(TEMPLATES_MAX) {
                     walk_template(&mut out, &mut declared, at_index, item);
                 }
             }
@@ -809,7 +1020,7 @@ pub fn parse_and_validate(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
                     format!("{} triggers; the most is {TRIGGERS_MAX}", items.len()),
                 );
             }
-            for (at_index, item) in items.iter().enumerate() {
+            for (at_index, item) in items.iter().enumerate().take(TRIGGERS_MAX) {
                 if let Some(def) = walk_trigger(&mut out, &declared, &mut names, at_index, item) {
                     defs.push(def);
                 }
