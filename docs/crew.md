@@ -1043,7 +1043,7 @@ Proposed stay Proposed.
 (`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and
 `crew_started` (default 0, a person's start) on `crew_tasks`, and each sampled batch in `crew_review_samples`: task
 ids, chosen or not, the seed and the time, with no prompt or path. A task stored before 47 is Medium and
-person-started, so it can never be paused. Nothing reads these in the merge queue yet; that hook is a separate PR.
+person-started, so it can never be paused. The start hook and the merge hook below read them; sampling is not wired yet.
 
 **As built (slice 4l, start hook):** `crew/capacity/hooks.rs` is called by one line in `start.rs`, after the lease conflict
 check and before the task is stored, and does nothing with the Crew Preview flag off. A start that Crew began itself at Low
@@ -1051,6 +1051,13 @@ priority is refused with `not_authorized`, and the waiting count and limit in it
 wait than the project's limit; at the limit, or for a person-started or Medium or High task, it goes. A new task has no stored
 priority or `crew_started` yet, so the start path passes none (Medium, person-started) and nothing pauses until a later change
 sets them. A failure reading the settings or the queue lets the start go.
+
+**As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
+breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
+note in a detached task (the merge path is synchronous, git is async), with an empty person-commit list, so every line reads
+as the agent until a later change passes positively identified person commits. A failure never fails or delays a merge: it is
+logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling's
+boundary would be one `crew_process_merges` pass; it is not wired.
 
 **As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
 merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
