@@ -57,4 +57,5 @@ mod scoring;
 mod stamp;
 mod starts;
 mod tier_settings;
+mod triggers;
 mod verify;
