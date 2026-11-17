@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 import { Button, IconButton, type ButtonTone } from "./controls";
 
 interface DialogProps {
-  title: string;
+  title: ReactNode;
   onClose(): void;
   /** Blocks Escape and Close while a write is in flight. */
   busy?: boolean;
@@ -72,7 +72,7 @@ export function Dialog({ title, onClose, busy, className, children, footer }: Di
 }
 
 interface ConfirmProps {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   confirmLabel: string;
   tone?: ButtonTone;

@@ -6,7 +6,7 @@ import { useConnection } from "../../../../product/state/connection";
 import { installMockFetch } from "../../../../test-support";
 import { SettingsPage } from "../../../settings/SettingsPage";
 import { AutopilotSettings } from "./AutopilotSettings";
-import { BackgroundCards, BackgroundPageView, BackgroundTab, type BackgroundCrew, type BackgroundView } from "./Background";
+import { BackgroundCards, BackgroundPageView, type BackgroundCrew, type BackgroundView } from "./Background";
 import { CrewSurface } from "./CrewSurface";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { StoppedBudgetItem } from "./StoppedItem";
@@ -213,7 +213,6 @@ describe("Background crews", () => {
   ];
   const view: BackgroundView = {
     crews,
-    defaultBudget: "Claude Code 300k tokens · Codex 250k tokens",
     runs: [
       { id: "r1", name: "Fix failing CI · f1a0c63", template: "fix_ci", startedBy: "CI failed on main · 15:11", result: "Landed in Review · 15:49 · Medium", state: "Merged", mode: "full" },
       { id: "r4", name: "Fix failing CI · e44b01d", template: "fix_ci", startedBy: "CI failed on main · Fri 6 Nov", result: "Stopped · budget", state: "Stopped", mode: "full" },
@@ -226,7 +225,8 @@ describe("Background crews", () => {
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Autopilot"]);
     expect(table).toHaveTextContent("Fix failing CITemplate: fix failing CIWhen CI fails on mainSat 7 Nov, 15:11 · landed in ReviewOnFull");
     expect(table).toHaveTextContent("Security advisoriesTemplate: security advisoryWhen a security advisory is publishedNever runOffOff");
-    expect(screen.getByText(".orbyn/crew.json")).toBeVisible();
+    expect(screen.getByText("This device")).toBeVisible();
+    expect(screen.getAllByText("Triggers not built yet").length).toBeGreaterThan(0);
   });
 
   it("lists recent runs, a budget stop as Stopped and not Failed", () => {
@@ -247,31 +247,37 @@ describe("Background crews", () => {
     expect(toggled).toHaveBeenCalledWith(crews[1], true);
   });
 
-  it("offers the four templates and the four triggers with how repeats are handled; creating one waits for the route", () => {
-    render(<BackgroundTab />);
+  it("offers the four templates and the four triggers with how repeats are handled", async () => {
+    const used = vi.fn();
+    const user = userEvent.setup();
+    render(<BackgroundPageView view={{ crews: [], runs: [] }} onUseTemplate={used} />);
     const templates = screen.getByRole("region", { name: "Templates" });
     for (const name of ["Fix failing CI", "Flaky test", "Dependency bump", "Security advisory"]) {
-      const card = within(templates).getByRole("article", { name });
-      expect(within(card).getByRole("button", { name: `Use the ${name} template` })).toBeDisabled();
+      expect(within(templates).getByRole("article", { name })).toBeVisible();
     }
+    await user.click(within(templates).getByRole("button", { name: "Use the Dependency bump template" }));
+    expect(used).toHaveBeenCalledWith("dependency_bump");
     expect(templates).toHaveTextContent("It is High risk by default.");
     const triggers = screen.getByRole("table", { name: "Triggers" });
     expect(triggers).toHaveTextContent("One run per failing commit; a new failure during a run is added to it.");
     expect(triggers).toHaveTextContent("The issue’s text is the brief. It is data, never instructions, and goes through the same checks.");
     expect(triggers).toHaveTextContent("Skipped if the previous run is still going.");
     expect(triggers).toHaveTextContent("One run per update; updates to the same package are grouped.");
-    const create = screen.getByRole("button", { name: "New background crew" });
-    expect(create).toBeDisabled();
-    expect(create).toHaveAttribute("title", "Crew is not connected to this app yet");
   });
 
   it("says what a background crew is, and offers the templates, when there are none", () => {
-    render(<BackgroundTab />);
+    render(<BackgroundPageView view={{ crews: [], runs: [] }} />);
     expect(screen.getByText("No background crews yet")).toBeVisible();
-    expect(screen.getByText(/A background crew starts when something happens in the repo/)).toBeVisible();
+    expect(screen.getByText(/A background crew starts when something happens in the repo/)).toHaveTextContent("Triggers are not built yet.");
     expect(screen.getByRole("button", { name: "See the templates" })).toBeVisible();
     expect(screen.queryByRole("table", { name: "Background crews" })).toBeNull();
-    expect(screen.getByRole("note")).toHaveTextContent("Crew is not connected to this app yet.");
+    expect(screen.queryByRole("button", { name: "New background crew" })).toBeNull();
+  });
+
+  it("draws the Autopilot column only when the route reports it", () => {
+    render(<BackgroundPageView view={{ crews: crews.map((crew) => ({ ...crew, mode: null })), runs: [] }} />);
+    const table = screen.getByRole("table", { name: "Background crews" });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State"]);
   });
 
   it("is a small card per crew in the 320 px panel", () => {
