@@ -1,6 +1,8 @@
 //! The class of every protected route: `Local` is opened by the service token alone, `Person` is a route where acting as
-//! the person matters (design: `docs/worker-token-isolation.md`, #441). Step 1 only: nothing is enforced, every route
-//! behaves as before. A later step makes a `Person` route need a key a worker cannot read.
+//! the person matters (design: `docs/worker-token-isolation.md`, #441). A `Person` route listed in [`ENFORCED`] also needs
+//! this launch's person key (`x-orbyn-person`), which only the desktop shell holds; every other `Person` route is still
+//! classified only and behaves as `Local` until a later step adds it to [`ENFORCED`]. Browser mode and the CLI cannot use
+//! an enforced route.
 //!
 //! The rule for `Person`: the route decides or grants something only the person may (an approval, a trust or policy
 //! grant, redaction), acts on the person's files or shell, replaces the app, or writes account or Crew state behind
@@ -9,12 +11,61 @@
 //!
 //! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push) and `POST /api/threads/{id}/runs`. `runs` takes
 //! `permission_mode` (and model, effort, options) in its body, so raising the mode there needs a field-level person
-//! check in step 2. Checked for the same field: `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`;
+//! check in a later step. Checked for the same field: `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`;
 //! `queue` and `steer` take model, effort and options but no `permission_mode`. `PATCH /api/threads/{id}` also takes it
 //! and is `Person` as a whole.
 //!
 //! `Person` routes are listed here with a reason each. Every other protected route is `"local"` in `tests/routes.json`,
 //! one line each, so a new route must be classified in a diff: the route-table test fails for a route with no class.
+//!
+//! `POST /agui/threads/{id}` is `Local` in the table because a plain run needs no key, but a non-empty `resume[]` on it
+//! answers an interrupt and is checked in the handler (`routes/stream.rs`), exactly like `decide`. A route that needs a key for
+//! only part of its body is checked in its handler, not listed in [`ENFORCED`].
+//!
+//! To enforce another `Person` route, add its `(method, path)` to [`ENFORCED`]: one line. A test fails for an entry
+//! that is not a `Person` route or not a registered route, and the web client's list of routes that send the key
+//! (`web/src/api/personKey.ts`) gets the same line.
+
+use axum::body::Body;
+use axum::extract::{MatchedPath, Request, State};
+use axum::middleware::Next;
+use axum::response::Response;
+use std::sync::Arc;
+
+use crate::http::ApiFailure;
+use crate::http::access::Access;
+
+/// The `Person` routes that need the person key today. Each must also be in [`PERSON`].
+pub const ENFORCED: &[(&str, &str)] = &[
+    (
+        "POST",
+        "/api/projects/{id}/worktrees/{worktree}/file-actions",
+    ),
+    ("POST", "/api/approvals/{id}/decide"),
+];
+
+/// Whether a request for this method and matched route pattern needs the person key.
+fn needs_key(method: &str, pattern: &str) -> bool {
+    ENFORCED.iter().any(|(m, p)| (*m, *p) == (method, pattern))
+        && PERSON.iter().any(|(m, p, _)| (*m, *p) == (method, pattern))
+}
+
+/// Refuses an enforced `Person` route without this launch's person key, with 403. Runs after `require_auth`, so a
+/// request with no credential still answers 401, and inside the route, so the matched pattern is known.
+pub async fn require_person(
+    State(access): State<Arc<Access>>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, ApiFailure> {
+    let enforced = request
+        .extensions()
+        .get::<MatchedPath>()
+        .is_some_and(|path| needs_key(request.method().as_str(), path.as_str()));
+    if enforced {
+        access.person_check(request.headers())?;
+    }
+    Ok(next.run(request).await)
+}
 
 /// `(method, path, why)` for each `Person` route.
 pub const PERSON: &[(&str, &str, &str)] = &[

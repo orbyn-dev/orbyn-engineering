@@ -24,7 +24,7 @@ use claude::claude;
 use codex::codex;
 use one_shot::one_shot;
 use pty::pty;
-use shared::{console, record_launch, record_pid};
+use shared::{console, probe_service, record_launch, record_pid};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -79,6 +79,7 @@ fn main() {
             {
                 record_launch("claude-settings", &[text]);
             }
+            probe_service(&args);
             claude(&args);
         }
         "acp" => {

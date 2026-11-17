@@ -2,7 +2,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const markers = ["__mock/", "mock-fixture", "createMockApi"];
+// "mock-person-key" is the fixed key a dev or test build sends where there is no desktop shell (src/api/personKey.ts).
+const markers = ["__mock/", "mock-fixture", "createMockApi", "mock-person-key"];
 const walk = (dir) =>
   readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);

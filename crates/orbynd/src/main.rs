@@ -351,8 +351,30 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         (None, None)
     };
+    // The person key exists only when a desktop shell owns this service, and it leaves this function once: on the
+    // ready line, to the pipe the shell spawned. Access keeps its digest; nothing writes the key to disk, env, argv,
+    // a URL or a log (docs/worker-token-isolation.md).
+    let person_key = if args.parent_stdin {
+        Some(random_token().map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    let access = Access::new(&token, args.allowed_hosts.clone(), key_digest)
+        .with_person_key(person_key.as_deref());
+    #[cfg(debug_assertions)]
+    let access = {
+        let open = env_flag("ORBYN_DEV_DISABLE_PERSON_KEY");
+        if open {
+            // Plain stderr, not a tracing event: a warning event is also exported to the logs endpoint a person
+            // configured, and a development flag is no record to send there.
+            eprintln!(
+                "ORBYN_DEV_DISABLE_PERSON_KEY is on: person routes need no key. Development builds only."
+            );
+        }
+        access.with_dev_person_override(open)
+    };
     let access = Arc::new(
-        Access::new(&token, args.allowed_hosts.clone(), key_digest)
+        access
             .with_desktop(args.parent_stdin)
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
@@ -384,6 +406,9 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let mut start = json!({ "url": base_url, "token": token });
     if let Some(key) = new_key {
         start["access_key"] = json!(key);
+    }
+    if let Some(key) = person_key {
+        start["person_key"] = json!(key);
     }
     let handle = core.config.data_dir.join(SERVICE_FILE);
     let found = json!({ "url": base_url, "token": token, "pid": std::process::id() });

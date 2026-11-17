@@ -27,7 +27,7 @@ use axum::Router;
 use orbyn_core::{Core, CoreConfig};
 use tokio::net::TcpListener;
 
-use super::classes::PERSON;
+use super::classes::{ENFORCED, PERSON};
 use super::router;
 use crate::http::AppState;
 use crate::http::access::Access;
@@ -243,4 +243,29 @@ fn every_route_has_a_class() {
         person, listed,
         "the person rows of tests/routes.json and routes/classes.rs PERSON must be the same routes"
     );
+}
+
+/// Enforcement is a one-line allowlist, and each line must name a `Person` route that exists: a typo, or a route that was
+/// renamed or reclassified `local`, would otherwise leave a route unguarded without a failure.
+#[test]
+fn every_enforced_route_is_a_person_route_in_the_table() {
+    let table = pinned();
+    let rows = table["protected"].as_array().unwrap();
+    assert!(!ENFORCED.is_empty());
+    let mut seen = BTreeSet::new();
+    for (method, path) in ENFORCED {
+        assert!(
+            seen.insert((method, path)),
+            "{method} {path} is listed twice"
+        );
+        assert!(
+            PERSON.iter().any(|(m, p, _)| (m, p) == (method, path)),
+            "{method} {path} is enforced but is not in PERSON"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row[0] == *method && row[1] == *path && row[2] == "person"),
+            "{method} {path} is enforced but is not a person row of tests/routes.json"
+        );
+    }
 }

@@ -19,6 +19,10 @@ use tauri::{AppHandle, Manager};
 struct Ready {
     url: String,
     token: String,
+    /// This launch's person key (docs/worker-token-isolation.md). It arrives on this line and nowhere else, so the
+    /// service's file, env, argv, URL and log never hold it. Absent from a service that predates it.
+    #[serde(default)]
+    person_key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +126,8 @@ pub struct CoreProcess {
     child: Arc<std::sync::Mutex<Child>>,
     stopping: Arc<AtomicBool>,
     app_url: url::Url,
+    /// Held in this process's memory only; the page gets it through the `person_key` command.
+    person_key: Option<String>,
 }
 
 fn sidecar_path() -> Result<PathBuf, String> {
@@ -263,7 +269,13 @@ impl CoreProcess {
             child,
             stopping,
             app_url,
+            person_key: ready.person_key,
         })
+    }
+
+    /// This launch's person key, for the bundled page's `person_key` command and nothing else.
+    pub fn person_key(&self) -> Option<String> {
+        self.person_key.clone()
     }
 
     pub fn app_url(&self) -> url::Url {
@@ -289,6 +301,18 @@ impl CoreProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ready_line_carries_the_person_key_only_for_a_shell() {
+        let ready: Ready =
+            serde_json::from_str(r#"{"url":"http://127.0.0.1:1","token":"t","person_key":"k"}"#)
+                .unwrap();
+        assert_eq!(ready.person_key.as_deref(), Some("k"));
+        // A service that predates the key still starts the shell; the page then has no key to send.
+        let older: Ready =
+            serde_json::from_str(r#"{"url":"http://127.0.0.1:1","token":"t"}"#).unwrap();
+        assert_eq!(older.person_key, None);
+    }
 
     #[test]
     fn a_failure_says_what_the_service_said() {
