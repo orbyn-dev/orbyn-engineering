@@ -4,15 +4,17 @@
 //! for a merged range and writes a local note.
 
 // The store (`store/crew_capacity.rs`, `store/crew_provenance.rs`) uses the settings, `Priority`, `Sampling` and the
-// provenance types. The start check, the sampling run and the merge hook (`provenance::record_at_merge`) still call
-// nothing here; the PRs that wire them remove this allow.
+// provenance types, and the merge hook (`hooks`) calls `record_at_merge`. The start check and the sampling run still
+// call nothing here; the PRs that wire them narrow this allow.
 #![allow(dead_code, unused_imports)]
 
 mod backpressure;
+mod hooks;
 mod provenance;
 mod sampling;
 
 pub use backpressure::{StartDecision, start_allowed, waiting_count};
+pub(crate) use hooks::record_provenance;
 pub(crate) use provenance::attribute_by_blame;
 pub use provenance::{
     Author, AuthoredHunk, Hunk, NOTE_REF, Recorded, hunks_of, parse_blame, parse_diff,

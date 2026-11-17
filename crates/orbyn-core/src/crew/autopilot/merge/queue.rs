@@ -538,6 +538,7 @@ impl Core {
         if let Err(error) = self.area_breaker_after_merge(&stored, now) {
             self.area_breaker_failed(task_id, "merge", None, &error);
         }
+        self.capacity_after_merge(&stored, now);
         // A merge a person released was reviewed by that act.
         if entry.released && record.needs_person.is_none() {
             self.store.set_merge_review(task_id, "looks_good", None)?;

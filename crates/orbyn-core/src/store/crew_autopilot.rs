@@ -21,7 +21,7 @@ pub struct AutopilotEvent {
 }
 
 /// The kinds a row may have.
-pub const EVENT_KINDS: [&str; 28] = [
+pub const EVENT_KINDS: [&str; 29] = [
     "approval_started",
     "approval_usage",
     "approval_ended",
@@ -50,6 +50,7 @@ pub const EVENT_KINDS: [&str; 28] = [
     "area_demoted",
     "area_read_failed",
     "area_breaker_failed",
+    "provenance_failed",
 ];
 
 impl Store {
