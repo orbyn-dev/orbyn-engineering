@@ -365,7 +365,9 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let access = {
         let open = env_flag("ORBYN_DEV_DISABLE_PERSON_KEY");
         if open {
-            tracing::warn!(
+            // Plain stderr, not a tracing event: a warning event is also exported to the logs endpoint a person
+            // configured, and a development flag is no record to send there.
+            eprintln!(
                 "ORBYN_DEV_DISABLE_PERSON_KEY is on: person routes need no key. Development builds only."
             );
         }
