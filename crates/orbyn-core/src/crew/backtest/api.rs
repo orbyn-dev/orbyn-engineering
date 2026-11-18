@@ -283,7 +283,8 @@ impl Core {
     }
 
     /// A person asks a running backtest to stop. It stops before its next replay and ends as `stopped`, scored on what
-    /// it replayed. A run that already ended is returned as it is.
+    /// it replayed. A run that already ended is returned as it is. A stop that arrives after the last replay has begun
+    /// is not seen by the replay: the run then ends `finished`, with no stop reason, having done all it was asked to.
     pub fn crew_backtest_stop(&self, id: &str) -> Result<wire::BacktestRun> {
         self.crew_preview_only()?;
         valid_id(id)?;

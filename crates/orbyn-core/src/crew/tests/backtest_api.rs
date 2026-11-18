@@ -11,7 +11,6 @@ use orbyn_contracts as wire;
 use serde_json::json;
 
 use super::autopilot_areas::{DAY, Rig, rig};
-use super::fake::{Ask, brief, engine, routed};
 use super::harness::{Turn, world};
 use crate::app::{Core, CoreConfig};
 use crate::crew::backtest::{
@@ -438,17 +437,65 @@ async fn a_run_left_running_by_a_crash_becomes_interrupted_when_the_core_opens()
     assert_eq!(core.store.crew_backtest_running().unwrap(), None);
 }
 
-#[test]
-fn the_routers_choice_is_the_same_whatever_a_backtest_found() {
-    // The router is pure: the brief, the engines and the seeded history are its only inputs, so a backtest's counts have no
-    // way in. The lane picker may show them; Auto never reads them.
-    let b = brief(json!({}));
-    let engines = [engine("claude"), engine("codex")];
-    let before = routed(&b, &engines, &Ask::default());
-    let after = routed(&b, &engines, &Ask::default());
-    assert_eq!(before, after);
+#[tokio::test]
+async fn a_finished_backtest_does_not_change_the_routers_choice() {
+    // The real dry run (`crew_route`, the path a start takes) before and after a run whose scores would be strongly in one
+    // engine's favour. The lane picker may show the counts; Auto never reads them.
+    let mut rig = rig().await;
+    seed(&mut rig, 2).await;
+    let core = rig.w.core.clone();
+    let ask = || async {
+        let (answer, error) = rig
+            .w
+            .call(
+                &rig.w.lead_token,
+                "crew_route",
+                json!({ "brief": brief_json() }),
+            )
+            .await;
+        assert!(!error, "{answer}");
+        (
+            answer["decision"]["engine"].clone(),
+            answer["decision"]["scores"].clone(),
+        )
+    };
+    let before = ask().await;
 
-    // And no source the routing reads names the backtest.
+    let mut runner = ScriptedRunner::default();
+    runner.findings.insert(
+        ("security".into(), "alpha".into(), 1),
+        vec![found("sha256:f1", "x.rs")],
+    );
+    let escapes = FixtureEscapes::default().with(
+        &rig.project,
+        vec![Escape {
+            pr: 1,
+            changed_files: vec!["x.rs".into()],
+        }],
+    );
+    core.crew_backtest_use(Arc::new(runner), Some(Arc::new(escapes)));
+    let started = core
+        .crew_backtest_start(&start_input(
+            &rig.project,
+            vec![lane("security", "alpha")],
+            &[("alpha", 100)],
+        ))
+        .await
+        .unwrap();
+    core.crew_backtest_join().await;
+    let run = core.crew_backtest_report(&started.id).unwrap();
+    assert_eq!(run.lanes[0].outcome, wire::BacktestLaneOutcome::Scored);
+
+    assert_eq!(ask().await, before);
+}
+
+fn brief_json() -> serde_json::Value {
+    super::harness::brief(json!({}))
+}
+
+#[test]
+fn no_source_the_routing_reads_names_the_backtest() {
+    // A source guard: the files that decide a route never mention the backtest.
     let word = ["back", "test"].concat();
     for file in [
         "router.rs",

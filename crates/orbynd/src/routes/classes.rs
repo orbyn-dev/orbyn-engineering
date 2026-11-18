@@ -286,6 +286,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/backtest/start",
+        "Crew write behind local_only: the person starts a reviewer backtest with a token budget per engine; one at a time",
+    ),
+    (
+        "POST",
+        "/api/crew/backtest/{id}/stop",
+        "Crew write behind local_only: the person asks a running reviewer backtest to stop",
+    ),
+    (
+        "POST",
         "/api/crew/guard/targets/add",
         "Crew write behind local_only: adds a protected target to the guard",
     ),

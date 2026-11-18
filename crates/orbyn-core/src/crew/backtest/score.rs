@@ -18,6 +18,9 @@ pub struct PastFinding {
     pub lane: String,
     pub engine: String,
     pub model: String,
+    /// What identifies the finding (`crew_findings`' fingerprint). One finding is one fingerprint on one pull request
+    /// from one lane, however often it was raised: the same rule in `rates` and in a stored run's report.
+    pub fingerprint: String,
     /// The files the finding is about.
     pub files: Vec<String>,
 }
@@ -140,8 +143,9 @@ pub fn match_escape(findings: &[PastFinding], escape: &Escape) -> Outcome {
 /// One lane's score. `findings` are that lane's findings on eligible pull requests and `escapes` those of the same
 /// pull requests.
 ///
-/// Identical findings count once: the same pull request, lane, engine, model and set of files (after normalising each
-/// path) is one finding however often it was raised, so a repeat can neither raise precision nor lower it.
+/// Repeats count once: the same fingerprint on the same pull request from the same lane, engine and model is one
+/// finding however often it was raised, so a repeat can neither raise precision nor lower it. Two findings with
+/// different fingerprints are two, even about the same files (a stored run keeps one row per fingerprint).
 pub fn rates(findings: &[PastFinding], escapes: &[Escape]) -> LaneScore {
     let findings = distinct(findings);
     let escapes_n = count(escapes.len());
@@ -165,20 +169,18 @@ pub fn rates(findings: &[PastFinding], escapes: &[Escape]) -> LaneScore {
     from_counts(escapes_n, caught, findings_n, matched)
 }
 
-/// The findings with identical ones (see `rates`) dropped, in the order first seen.
+/// The findings with repeats (see `rates`) dropped, in the order first seen.
 fn distinct(findings: &[PastFinding]) -> Vec<PastFinding> {
     let mut seen = BTreeSet::new();
     findings
         .iter()
         .filter(|finding| {
-            let files: BTreeSet<Option<String>> =
-                finding.files.iter().map(|file| normalise(file)).collect();
             seen.insert((
                 finding.pr,
                 finding.lane.clone(),
                 finding.engine.clone(),
                 finding.model.clone(),
-                files,
+                finding.fingerprint.clone(),
             ))
         })
         .cloned()
@@ -226,6 +228,7 @@ mod tests {
             lane: lane.to_owned(),
             engine: "engine-a".to_owned(),
             model: "model-a".to_owned(),
+            fingerprint: format!("fp:{lane}:{pr}:{file}"),
             files: vec![file.to_owned()],
         }
     }
@@ -259,6 +262,7 @@ mod tests {
             finding("correctness", 4, "d.rs"),
             // Another finding on the same escape, about d.rs and a second file: not a repeat of the one above.
             PastFinding {
+                fingerprint: "fp:d-and-d2".to_owned(),
                 files: vec!["d.rs".to_owned(), "d2.rs".to_owned()],
                 ..finding("correctness", 4, "d.rs")
             },
@@ -416,17 +420,28 @@ mod tests {
                 permille: 90
             })
         );
-        // The same finding spelled with another path form is the same finding.
+        // The same fingerprint with its path spelled another way is the same finding.
         let spelled = [
             finding("correctness", 1, "a.rs"),
-            finding("correctness", 1, "./a.rs"),
-            finding("correctness", 1, "src/../a.rs"),
+            PastFinding {
+                files: vec!["./a.rs".to_owned()],
+                ..finding("correctness", 1, "a.rs")
+            },
         ];
         assert_eq!(rates(&spelled, &five_escapes()).findings_n, 1);
+        // A different fingerprint about the same file is another finding.
+        let two = [
+            finding("correctness", 1, "a.rs"),
+            PastFinding {
+                fingerprint: "fp:other".to_owned(),
+                ..finding("correctness", 1, "a.rs")
+            },
+        ];
+        assert_eq!(rates(&two, &five_escapes()).findings_n, 2);
     }
 
     #[test]
-    fn findings_that_differ_in_pr_lane_or_files_are_not_duplicates() {
+    fn findings_that_differ_in_pr_lane_or_fingerprint_are_not_duplicates() {
         let findings = [
             finding("correctness", 1, "a.rs"),
             finding("correctness", 2, "a.rs"),

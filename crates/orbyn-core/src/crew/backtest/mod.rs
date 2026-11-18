@@ -8,8 +8,6 @@
 // A person starts a backtest through the routes (`api`), and `api::crew_backtest_start` is the only code that reaches
 // `replay::begin` and `replay::finish`; nothing calls them on a timer, at startup or from any scheduler (see
 // `replay_tests`). `replay::run` (begin and finish together) is for the tests.
-#![allow(dead_code, unused_imports)]
-
 mod api;
 mod history;
 mod outcomes;
@@ -23,9 +21,11 @@ pub use api::ScriptedRunner;
 pub(crate) use api::Slot;
 pub use history::{HISTORY_DAYS, OUTCOME_DAYS, PastPr, eligible_prs};
 pub use outcomes::{Escape, EscapeSource, FixtureEscapes, NoEscapeLog, NotMeasured, Window};
+#[cfg(test)]
+pub(crate) use replay::run;
 pub use replay::{
     BacktestReport, BacktestRequest, LaneKind, LaneReplay, LaneReport, LaneResult, LaneRunner,
-    LaneSpec, ReplayFailed, ReplayedFinding, STOPPED_BY_PERSON, begin, finish, report, run,
+    LaneSpec, ReplayFailed, ReplayedFinding, STOPPED_BY_PERSON, report,
 };
 pub use score::{
     LaneScore, Outcome, PRECISION_MIN_FINDINGS, PastFinding, RECALL_MIN_ESCAPES, Rate, from_counts,

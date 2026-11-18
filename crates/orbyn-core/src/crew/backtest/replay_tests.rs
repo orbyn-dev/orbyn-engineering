@@ -363,6 +363,7 @@ fn findings_are_stored_with_their_outcome_and_scored_with_the_pure_score() {
             lane: "correctness".into(),
             engine: "engine-a".into(),
             model: "engine-a-model".into(),
+            fingerprint: format!("sha256:{file}"),
             files: vec![(*file).into()],
         })
         .collect();
@@ -746,6 +747,57 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+#[test]
+fn a_duplicate_is_one_definition_in_the_scoring_and_in_the_stored_report() {
+    // Two fingerprints about the same file are two findings; one fingerprint raised twice is one.
+    let (_d, store, project) = open();
+    let mut fake = runner(&[]);
+    fake.findings.insert(
+        ("correctness".to_owned(), "engine-a".to_owned(), 1),
+        vec![
+            found("sha256:one", "a.rs"),
+            found("sha256:two", "a.rs"),
+            found("sha256:one", "a.rs"),
+        ],
+    );
+    let escapes = vec![Escape {
+        pr: 1,
+        changed_files: vec!["a.rs".into()],
+    }];
+    let req = request(
+        &project,
+        vec![spec("correctness", "engine-a")],
+        &[("engine-a", 100)],
+    );
+    let report = run(
+        &store,
+        "run-1",
+        &req,
+        &prs(1),
+        NOW,
+        &fake,
+        &measured_for(&project, escapes.clone()),
+    )
+    .unwrap();
+    let past = |fp: &str| PastFinding {
+        pr: 1,
+        lane: "correctness".into(),
+        engine: "engine-a".into(),
+        model: "engine-a-model".into(),
+        fingerprint: fp.into(),
+        files: vec!["a.rs".into()],
+    };
+    // The raw findings as a lane raised them, repeats included, through the pure scoring.
+    let raised = [past("sha256:one"), past("sha256:two"), past("sha256:one")];
+    let pure = rates(&raised, &escapes);
+    assert_eq!(pure.findings_n, 2);
+    assert_eq!(
+        lane_of(&report, "correctness", "engine-a").result,
+        LaneResult::Scored(pure)
+    );
+    assert_eq!(store.crew_backtest_results("run-1").unwrap().len(), 2);
+}
+
 fn read(path: &str) -> String {
     std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
 }
@@ -802,6 +854,9 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
                     || line.contains(&format!("crew_{word}::"))
                     || line.contains(&format!("core crew_{word}_")));
             let route_file = name.ends_with("/routes/crew_backtest.rs");
+            let route_classes = name.ends_with("/routes/classes.rs")
+                && (line.contains(&format!("/api/crew/{word}/"))
+                    || line.contains(&format!("reviewer {word}")));
             assert!(
                 declaration
                     || registration
@@ -809,7 +864,8 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
                     || core_slot
                     || markers
                     || route_table
-                    || route_file,
+                    || route_file
+                    || route_classes,
                 "{name} mentions the backtest: `{line}`; only a person's start (the routes) may reach it"
             );
         }
@@ -848,6 +904,16 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
     let after = &api[start..];
     let end = after.find("pub fn crew_backtest_stop").unwrap();
     assert!(after[..end].contains("begin(&") && after[..end].contains("finish("));
+    // The route file reaches the core only through its `crew_backtest_*` methods, never the replay itself.
+    let routes = code_of(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../orbynd/src/routes/crew_backtest.rs"),
+        )
+        .unwrap(),
+    );
+    for word in ["begin(", "finish(", "::run", "run(", "replay", "LaneRunner"] {
+        assert!(!routes.contains(word), "the route file mentions {word}");
+    }
     for other in ["history.rs", "outcomes.rs", "score.rs", "mod.rs"] {
         let text = code_of(&read(&format!("src/crew/backtest/{other}")));
         assert!(

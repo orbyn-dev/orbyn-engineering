@@ -255,7 +255,7 @@ pub const STOPPED_BY_PERSON: &str = "stopped by the person";
 
 /// Records a run a person chose to start, with each lane pending. With `alone` set, a run already in progress refuses
 /// it (`CrewTaskBusy`) and nothing is written: one backtest at a time. Nothing is replayed here.
-pub fn begin(
+pub(crate) fn begin(
     store: &Store,
     run_id: &str,
     request: &BacktestRequest,
@@ -288,8 +288,10 @@ pub fn begin(
     }
 }
 
-/// Runs a backtest a person chose to start. `begin` and `finish` together.
-pub fn run(
+/// Runs a backtest a person chose to start. `begin` and `finish` together. For the tests: the person's start (`api`)
+/// calls the two itself, because it records the run before it goes on in the background.
+#[cfg(test)]
+pub(crate) fn run(
     store: &Store,
     run_id: &str,
     request: &BacktestRequest,
@@ -314,12 +316,14 @@ pub fn run(
 /// Replays each lane on each eligible pull request of `prs` (merged 30 to 180 days before `now_unix`) for a run
 /// `begin` recorded, stops a lane once its engine's token budget is spent, records a lane whose replay broke as failed
 /// without stopping the others, stores every finding and returns the report read back from the store.
-/// `stop` is asked before every replay: once it says yes the run ends as stopped, scoring what was replayed.
+/// `stop` is asked before every replay: once it says yes the run ends as stopped, scoring what was replayed. A stop that
+/// arrives after the last replay has begun (or when no pull request is left to replay) is never seen: the run ends
+/// `finished` with no stop reason, because it did everything it was asked to.
 ///
 /// When `escapes` says Not measured the run still finishes: findings are counted and nothing is scored, because
 /// no recall or precision can be read from an escape log that cannot say.
 #[allow(clippy::too_many_arguments)]
-pub fn finish(
+pub(crate) fn finish(
     store: &Store,
     run_id: &str,
     request: &BacktestRequest,
@@ -413,6 +417,7 @@ fn execute(
                         lane: spec.lane.clone(),
                         engine: spec.engine.clone(),
                         model: spec.model.clone(),
+                        fingerprint: finding.fingerprint.clone(),
                         files: finding.files,
                     };
                     found.push((past, finding.fingerprint));
