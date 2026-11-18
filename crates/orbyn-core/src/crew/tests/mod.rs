@@ -26,6 +26,7 @@ mod cancel;
 mod capacity_api;
 mod capacity_hooks;
 mod capacity_paused_fix;
+mod capacity_sampling;
 mod classes;
 mod classes_pin;
 mod classes_project;

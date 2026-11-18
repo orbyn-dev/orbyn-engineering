@@ -49,6 +49,8 @@ pub struct CapacityState {
     #[ts(optional = nullable)]
     pub paused: Option<PausedStart>,
     pub plan: Vec<SamplePlan>,
+    /// Tasks picked for a closer look by sampling whose merge still waits for a person. Empty while sampling is off.
+    pub picked: Vec<String>,
 }
 }
 

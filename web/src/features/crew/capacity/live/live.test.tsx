@@ -17,6 +17,7 @@ const state = (over: Partial<CapacityState> = {}): CapacityState => ({
   sampling: "off",
   pause_enabled: false,
   settings_saved: true,
+  picked: [],
   plan: [
     { from: 1, to: 4, sampled: 1 },
     { from: 5, to: 8, sampled: 2 },

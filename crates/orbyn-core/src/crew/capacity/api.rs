@@ -79,6 +79,7 @@ impl Core {
             settings_saved: self.store.crew_capacity_settings_saved(project_id)?,
             paused,
             plan,
+            picked: self.store.crew_picked_for_review(project_id)?,
         })
     }
 
