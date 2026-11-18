@@ -1,6 +1,7 @@
 //! Codex through `codex app-server`: JSONL over stdio, without the `jsonrpc`
 //! header. Login stays Codex's own; this driver never calls `account/login/*`.
 
+mod background;
 mod catalog;
 mod events;
 mod limits;
