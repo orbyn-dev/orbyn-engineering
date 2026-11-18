@@ -38,3 +38,8 @@ it("calls a resultless call unknown only when its run was interrupted", () => {
   expect(callOutcome(tool("Bash", 0), true)).toBe("success");
   expect(callOutcome(tool("Bash", 1), true)).toBe("failed");
 });
+it("lists failed calls, then calls with no result reported, then calls with outcome unknown", () => {
+  expect(summarizeWork([tool("Write", 1), tool("Bash", null, false), tool("Edit", null)]).summary).toBe(
+    "1 tool call failed; 1 tool call with no result reported; 1 tool call with outcome unknown",
+  );
+});

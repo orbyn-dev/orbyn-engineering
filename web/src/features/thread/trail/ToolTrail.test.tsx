@@ -90,10 +90,26 @@ describe("the trail of tool calls", () => {
     render(<Trail items={[ok("ls"), failed("npm test")]} />);
     const group = screen.getByRole("button", { name: "Ran 2 commands · 1 failed 7.8s, failed" });
     expect(group).toHaveAttribute("aria-expanded", "false");
-    expect(group).toHaveClass("s-fail");
+    // The group keeps its kind icon and plain styling; only the failed count is danger.
+    expect(group).not.toHaveClass("s-fail");
+    expect(group.querySelector(".tic [aria-label='Tool call failed']")).toBeNull();
+    expect(group.querySelector(".tic svg")).not.toBeNull();
     expect(group.querySelector(".tla")).toHaveTextContent("Ran 2 commands · 1 failed");
     expect(group.querySelector(".tlb")).toBeNull();
     expect(group.querySelector(".du")).toHaveTextContent(/^7\.8s$/);
+  });
+
+  it("keeps a single failed call's own failed styling, and only the count is danger on a group", async () => {
+    const { unmount } = render(<Trail items={[failed("npm test")]} />);
+    expect(rows()[0]).toHaveClass("s-fail");
+    expect(rows()[0]!.querySelector("[aria-label='Tool call failed']")).not.toBeNull();
+    unmount();
+    render(<Trail items={[ok("ls"), failed("npm test")]} />);
+    await userEvent.click(rows()[0]!);
+    const call = screen.getByRole("button", { name: "npm test exit 1 · 3.9s, failed" });
+    expect(call).toHaveClass("s-fail");
+    expect(call.querySelector("[aria-label='Tool call failed']")).not.toBeNull();
+    expect(rows()[0]).not.toHaveClass("s-fail");
   });
 
   it("colours only the failed count, inside the verb, and still names the failed call in the opened list", async () => {

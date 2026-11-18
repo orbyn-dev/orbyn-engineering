@@ -60,14 +60,17 @@ function spokenDuration(ms: number | null, state: CallState, item: ToolItem): st
   return text;
 }
 
-function StateIcon({ state, Icon }: { state: CallState; Icon: LucideIcon }) {
+function StateIcon({ state, Icon, group = false }: { state: CallState; Icon: LucideIcon; group?: boolean }) {
   if (state === "running") return <Loader2 size={14} className="spin" role="img" aria-label="Working" />;
-  if (state === "failed") return <X size={14} role="img" aria-label="Tool call failed" />;
+  // A group keeps its kind icon; only a single failed call is marked with the cross.
+  if (state === "failed" && !group) return <X size={14} role="img" aria-label="Tool call failed" />;
   if (state === "stopped") return <Square size={14} role="img" aria-label="Stopped" />;
   return <Icon size={14} aria-hidden />;
 }
 
 const stateClass = (state: CallState) => (state === "running" ? "s-run" : state === "failed" ? "s-fail" : state === "stopped" ? "s-stop" : "");
+/** A group row is never drawn failed: its count says how many calls failed, and the failed call's own row is marked. */
+const groupClass = (state: CallState) => (state === "failed" ? "" : stateClass(state));
 
 /** Shows the full text under a row whose label was cut off, while the row has the pointer or focus. */
 function useTip() {
@@ -177,7 +180,7 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
       open={open}
       onOpenChange={setOpen}
       className="tcw"
-      summaryClassName={`tcr ${stateClass(state)}`.trim()}
+      summaryClassName={`tcr ${groupClass(state)}`.trim()}
       summaryProps={{
         "aria-label": withState(
           [lead, detail, outcomes ? `· ${outcomes.text}` : null, !detail && label.note ? `· ${label.note}` : null, duration].filter(Boolean).join(" "),
@@ -187,7 +190,7 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
       summary={
         <>
           <span className="tic">
-            <StateIcon state={state} Icon={Icon} />
+            <StateIcon state={state} Icon={Icon} group />
           </span>
           <span className="lb" data-command={command}>
             <span className="tla">

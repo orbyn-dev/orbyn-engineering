@@ -165,8 +165,8 @@ export function summarizeWork(items: readonly (ToolItem | ReasoningItem)[]): Wor
   const work =
     sentence.length < 3 ? sentence.join(" and ") : `${sentence.slice(0, -1).join(", ")}, and ${sentence.at(-1)}`;
   const summary = [work, failed ? `${failed} tool ${plural(failed, "call", "calls")} failed` : "",
-    unknown ? `${unknown} tool ${plural(unknown, "call", "calls")} with outcome unknown` : "",
-    pending ? `${pending} tool ${plural(pending, "call", "calls")} with no result reported` : ""].filter(Boolean).join("; ");
+    pending ? `${pending} tool ${plural(pending, "call", "calls")} with no result reported` : "",
+    unknown ? `${unknown} tool ${plural(unknown, "call", "calls")} with outcome unknown` : ""].filter(Boolean).join("; ");
   return {
     summary,
     action: groups.size === 0 ? traceTool(tools[0]!).action : groups.size === 1 ? (picked[0]?.[0] ?? "other") : "mixed",
