@@ -38,6 +38,7 @@ pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};
 pub(crate) use screen::Screened;
 pub use tier::{Grants, Need, tier_of};
+pub(crate) use tripwire::hidden;
 pub use tripwire::{IN_A_ROW, IN_A_RUN, injection_in};
 
 /// How much Autopilot does for a repository or crew. The person chooses; the default is `Full`.
