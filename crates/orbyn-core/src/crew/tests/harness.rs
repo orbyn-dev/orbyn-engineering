@@ -377,6 +377,7 @@ pub async fn world_confined(script: Script) -> World {
     .await
 }
 
+#[cfg(target_os = "macos")]
 /// `world_confined`, with these fake engines (an id ending in `codex` is of the Codex family).
 pub async fn world_confined_with(script: Script, engines: &[(&str, bool)]) -> World {
     world_full(true, script, engines, false, true, Vec::new(), None).await
