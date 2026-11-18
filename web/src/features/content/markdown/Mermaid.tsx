@@ -20,7 +20,7 @@ export function Mermaid({ code }: { code: string }) {
           if (code.length > MAX_DIAGRAM_CHARS) return;
           mermaid.initialize(mermaidConfig(dark(theme)));
           const { svg } = await mermaid.render(`mermaid${id}`, code);
-          const clean = sanitizeSvg(svg);
+          const clean = sanitizeSvg(svg, `mermaid${id}`);
           if (current && clean) setDrawn({ code, svg: clean });
         })
         .catch(() => {
