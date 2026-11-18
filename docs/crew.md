@@ -289,11 +289,13 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
      gathered and filters on it, after the checks above, with a plain reason per engine ("Codex can't run Crew workers. ...
      Choose another engine for this crew, or do the work in a normal chat."). A brief that pins such an engine is refused
      with that reason and never swapped. When no engine is left, `crew_start` refuses up front with the reason and stores
-     no task, lease, run or ledger row. Approver runs are not confined, so they do not use this filter. `crew_route`
+     no task, lease, run or ledger row. This covers engine and platform refusals only: the preflight routes with no data
+     classes, so a data-class rejection is still recorded after the task is stored, as before. A review lane whose engines
+     are all refused takes that same later path. Approver runs are not confined, so they do not use this filter. `crew_route`
      shows the same rejections.
 2. Provider, then score. With no engine named and a non-review role, the lead's own provider (engine family) comes
-   first (`RouterConfig::worker_provider`, default `same_as_lead`; a later Settings choice may set `any`, and nothing
-   sets it yet). Another provider takes the work only when the lead's is refused or not available, and the route says so
+   first (`RouterConfig::worker_provider`, default `WorkerProvider::SameAsLead`; a later Settings choice may set
+   `WorkerProvider::Any`, and nothing sets it yet; it has no serialized form yet). Another provider takes the work only when the lead's is refused or not available, and the route says so
    (`lead_provider_unavailable`: "Codex workers are not available here, so Claude takes this."); otherwise the route
    carries `lead_provider`. Review lanes, second keys and finding checks keep the other-vendor rule and ignore this.
    Inside the chosen provider: score. Pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from

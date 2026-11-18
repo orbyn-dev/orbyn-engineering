@@ -222,6 +222,43 @@ fn a_review_lane_still_goes_to_another_vendor_and_a_pin_is_honoured() {
     assert!(refused_pin.message.contains("can't run Crew workers"));
 }
 
+#[test]
+fn a_single_vendor_machine_keeps_the_lead_tier_when_the_other_vendor_is_refused() {
+    let ask = Ask {
+        role: Some(RouteRole::Review),
+        lane: Some("correctness"),
+        author: Some("claude"),
+        lead: Some("claude"),
+        ..Ask::default()
+    };
+    let engines = [engine("claude"), refusing(engine("codex"))];
+    let decision = routed(&reading(json!({ "kind": "review" })), &engines, &ask);
+    assert_eq!(decision.engine.as_str(), "claude");
+    assert_eq!(decision.tier, orbyn_contracts::RouteTier::Lead);
+    assert!(has(&decision, "same_engine_as_author"));
+}
+
+#[test]
+fn a_second_key_is_refused_when_its_only_other_vendor_is_refused() {
+    let ask = Ask {
+        role: Some(RouteRole::SecondKey),
+        author: Some("claude"),
+        lead: Some("claude"),
+        ..Ask::default()
+    };
+    let engines = [engine("claude"), refusing(engine("codex"))];
+    let refusal = refused(&reading(json!({ "kind": "review" })), &engines, &ask);
+    assert!(
+        refusal
+            .rejected
+            .iter()
+            .any(|r| r.engine.as_str() == "claude" && r.why == RejectionWhy::SameEngineRefused)
+    );
+    assert!(refusal.rejected.iter().any(
+        |r| r.engine.as_str() == "codex" && r.text.as_str().contains("can't run Crew workers")
+    ));
+}
+
 // The rest runs a real core with the restriction on, so it needs the macOS one to say yes to the other engine.
 #[cfg(target_os = "macos")]
 mod core {
