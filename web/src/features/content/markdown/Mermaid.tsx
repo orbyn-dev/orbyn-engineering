@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useUi } from "../../../product/state/ui";
 import { CodeBlock } from "../code/CodeBlock";
+import { MAX_DIAGRAM_CHARS, mermaidConfig, sanitizeSvg } from "./mermaidSafety";
 
 const dark = (theme: string) =>
   theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -16,15 +17,16 @@ export function Mermaid({ code }: { code: string }) {
     const timer = setTimeout(() => {
       void import("mermaid")
         .then(async ({ default: mermaid }) => {
-          mermaid.initialize({
-            startOnLoad: false,
-            securityLevel: "strict",
-            theme: dark(theme) ? "dark" : "neutral",
-          });
+          if (code.length > MAX_DIAGRAM_CHARS) return;
+          mermaid.initialize(mermaidConfig(dark(theme)));
           const { svg } = await mermaid.render(`mermaid${id}`, code);
-          if (current) setDrawn({ code, svg });
+          const clean = sanitizeSvg(svg);
+          if (current && clean) setDrawn({ code, svg: clean });
         })
-        .catch(() => undefined);
+        .catch(() => {
+          // Bad syntax or over a limit: Mermaid may leave a stray render node behind; drop it.
+          document.getElementById(`dmermaid${id}`)?.remove();
+        });
     }, 120);
     return () => {
       current = false;
