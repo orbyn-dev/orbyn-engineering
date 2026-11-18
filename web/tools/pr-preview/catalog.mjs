@@ -64,6 +64,7 @@ const approveAndType = (digits) => [
 export const FRAMES = {
   // The shell.
   "shell-home": { route: "#/" },
+  "update-sources": { route: "#/", scenario: "updates-unconfigured" },
   "shell-new-thread": { route: "#/new" },
   "shell-ledger": {
     route: "#/threads/t-done",
