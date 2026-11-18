@@ -1,7 +1,8 @@
 import type { EngineCoverage } from "../../../../generated/EngineCoverage";
 import type { SamplePlan } from "../../../../generated/SamplePlan";
 
-export const NOT_MEASURED = "Not measured";
+/** Joined by a no-break space, so a line never ends on "Not" with "measured." alone on the next. */
+export const NOT_MEASURED = "Not\u00a0measured";
 
 export const count = (n: number) => n.toLocaleString("en-US");
 const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;

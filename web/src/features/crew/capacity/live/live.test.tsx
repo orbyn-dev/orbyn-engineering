@@ -227,6 +227,8 @@ describe("the project list in front of both screens", () => {
     answers.projects = "never";
     render(<LiveCapacity view="coverage" />);
     expect(await screen.findByText("Reading projects")).toBeInTheDocument();
+    // The wait is drawn inside the page card with the frame's padding, never flush to the window corner.
+    expect(screen.getByText("Reading projects").closest(".cx-frame.cx-sheetpage")).not.toBeNull();
     expect(sent().filter((call) => call.includes("/api/crew/capacity"))).toHaveLength(0);
   });
 
@@ -270,9 +272,11 @@ describe("Review coverage on the real routes", () => {
     answers.coverage = { status: 200, body: coverage({ began_unix: null, merges: 0, agent_lines: 0, reviewed_lines: 0, in_queue_lines: 0, areas: [], engines: [], not_measured_merges: 4 }) };
     const { container } = render(<LiveCapacity view="coverage" />);
     expect(await screen.findByText("No agent-written lines are recorded yet")).toBeInTheDocument();
-    expect(container.textContent).toContain("every merge is Not measured");
-    expect(container.textContent).toContain("4 merges are Not measured");
+    expect(container.textContent).toContain("every merge is Not\u00a0measured");
+    expect(container.textContent).toContain("4 merges are Not\u00a0measured");
     expect(container.textContent).not.toContain("0 of 0");
+    // "Not measured" is one unbreakable phrase: a line never ends on "Not" with "measured." alone below it.
+    expect(container.textContent).not.toMatch(/Not measured/);
   });
 
   it("is empty when recording began but no merge has lines", async () => {
@@ -296,18 +300,18 @@ describe("Review coverage on the real routes", () => {
     };
     const { container } = render(<LiveCapacity view="coverage" />);
     expect(await screen.findByText("14 of 38 merges aren’t in the map.")).toBeInTheDocument();
-    expect(container.textContent).toContain("Their lines are Not measured, not counted as read or unread.");
+    expect(container.textContent).toContain("Their lines are Not\u00a0measured, not counted as read or unread.");
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
-    expect(container.textContent).toContain("codex · model not measured");
+    expect(container.textContent).toContain("codex · model not\u00a0measured");
     expect(container.textContent).toContain("had no stored hunks");
     // The area with no lines is Not measured in every cell and names its own Not measured merges, never zeros.
     const docs = [...container.querySelectorAll(".cx-t15tile")].find((tile) => tile.textContent?.includes("docs/"))!;
-    expect(docs.textContent).toContain("3 merges Not measured");
+    expect(docs.textContent).toContain("3 merges Not\u00a0measured");
     expect(docs.textContent).not.toMatch(/\b0\b(?! merges with lines)/);
-    expect(docs.textContent?.match(/Not measured/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(docs.textContent?.match(/Not\u00a0measured/g)?.length).toBeGreaterThanOrEqual(4);
     const row = [...container.querySelectorAll(".cx-aptb > div")].find((cell) => cell.textContent?.startsWith("docs/"))!;
-    expect(row.textContent).toContain("3 merges Not measured");
-    expect(row.nextElementSibling?.textContent).toBe("Not measured");
+    expect(row.textContent).toContain("3 merges Not\u00a0measured");
+    expect(row.nextElementSibling?.textContent).toBe("Not\u00a0measured");
   });
 
   it("shows the read error, and Try again reads once more", async () => {
@@ -446,8 +450,8 @@ describe("Review coverage states and the project picker", () => {
     answers.coverage = { status: 200, body: coverage({ began_unix: null, merges: 0, agent_lines: 0, reviewed_lines: 0, in_queue_lines: 0, areas: [], engines: [], not_measured_merges: 9 }) };
     const { container } = render(<LiveCapacity view="coverage" />);
     expect(await screen.findByText("No agent-written lines are recorded yet")).toBeInTheDocument();
-    expect(container.textContent).toContain("Recording has not begun for orbyn-engineering on this device, so every merge is Not measured.");
-    expect(container.textContent).toContain("9 merges are Not measured.");
+    expect(container.textContent).toContain("Recording has not begun for orbyn-engineering on this device, so every merge is Not\u00a0measured.");
+    expect(container.textContent).toContain("9 merges are Not\u00a0measured.");
     expect(container.querySelector("button")).toBeNull();
   });
 

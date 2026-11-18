@@ -23,7 +23,7 @@ export function Frame({
   live?: boolean;
   children: ReactNode;
 }) {
-  const className = ["cx-frame", panel ? "cx-panel" : "", sheet ? "cx-sheetpage" : ""].filter(Boolean).join(" ");
+  const className = ["cx-frame", panel ? "cx-panel" : "", sheet ? "cx-sheetpage" : "", live ? "cx-live" : ""].filter(Boolean).join(" ");
   return (
     <div className="cx-stage">
       {live ? null : (
