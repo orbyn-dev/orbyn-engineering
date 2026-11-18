@@ -2,7 +2,9 @@
 //! landed since the previous batch closed. It closes when it holds four, and one in four (rounded up) is picked at
 //! random with a seed that is recorded with the set. Nothing is risk-weighted, High and Medium merges are never in a
 //! batch, the choice is kept in `crew_review_samples` and is never given to the worker. With sampling off nothing is
-//! read from the batch and nothing is written. There is no digest in the app yet, so a batch that never reaches four
+//! read from the batch and nothing is written (two reads: the merge's project, then its sampling setting). The oldest
+//! four close first, so a merge is never skipped whatever order the hooks finish in. Low merges that landed before
+//! sampling was turned on are not left out: the first close takes them in batches of four too. There is no digest in the app yet, so a batch that never reaches four
 //! Low merges stays open until it does.
 
 use std::sync::Mutex;
@@ -70,13 +72,15 @@ pub(crate) fn sample_after_merge(
         return Ok(Vec::new());
     }
     let _one_at_a_time = CLOSING.lock().unwrap_or_else(|p| p.into_inner());
-    let open = store.crew_open_low_merges(&project, merge.id)?;
-    if open.len() < BATCH_SIZE {
-        return Ok(Vec::new());
+    // Oldest first, and again while four remain: hooks finish in any order, so whichever one runs first closes
+    // every full batch up to its own merge and no merge is skipped. Fewer than four stay open for a later merge.
+    let mut picked = Vec::new();
+    let mut open = store.crew_open_low_merges(&project, merge.id)?;
+    while open.len() >= BATCH_SIZE {
+        let rest = open.split_off(BATCH_SIZE);
+        let seed = u64::from_le_bytes(crate::util::random_bytes::<8>()?);
+        picked.extend(close_batch(store, &open, sampling, seed, now)?);
+        open = rest;
     }
-    // The newest four, ending with this merge. Anything older than them (low merges that landed before sampling
-    // was turned on) is left out for good.
-    let batch = &open[open.len() - BATCH_SIZE..];
-    let seed = u64::from_le_bytes(crate::util::random_bytes::<8>()?);
-    close_batch(store, batch, sampling, seed, now)
+    Ok(picked)
 }

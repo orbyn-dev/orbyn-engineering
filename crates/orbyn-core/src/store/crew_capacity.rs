@@ -284,8 +284,7 @@ impl Store {
             .optional()?)
     }
 
-    /// The Low-risk merges of a project up to merge `up_to` that no batch has taken yet and that landed after the
-    /// newest merge of any recorded batch, oldest first: the open sampling batch.
+    /// The Low-risk merges of a project up to merge `up_to` that no batch has taken yet, oldest first: the open sampling batch.
     pub fn crew_open_low_merges(&self, project_id: &str, up_to: i64) -> Result<Vec<MergeRecord>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
@@ -294,12 +293,6 @@ impl Store {
              JOIN threads t ON t.id = r.lead_thread_id
              WHERE t.project_id = ?1 AND m.risk = 'low' AND m.id <= ?2
                AND NOT EXISTS (SELECT 1 FROM crew_review_samples s WHERE s.task_id = m.task_id)
-               AND m.id > COALESCE((
-                   SELECT MAX(m2.id) FROM crew_merges m2
-                   JOIN crew_review_samples s2 ON s2.task_id = m2.task_id
-                   JOIN crew_runs r2 ON r2.task_id = m2.task_id
-                   JOIN threads t2 ON t2.id = r2.lead_thread_id
-                   WHERE t2.project_id = ?1), 0)
              ORDER BY m.id",
         )?;
         Ok(statement

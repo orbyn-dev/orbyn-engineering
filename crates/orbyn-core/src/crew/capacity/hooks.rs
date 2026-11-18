@@ -296,7 +296,7 @@ impl Core {
             // ledger inside.
             retry_provenance(&store).await;
             let _ = record_provenance(&store, &merge, agent, now).await;
-            // Off by default: with sampling off this reads one setting and writes nothing.
+            // Off by default: with sampling off this reads the merge's project and its setting and writes nothing.
             if let Err(error) = super::sample_after_merge(&store, &merge, now) {
                 tracing::warn!(%error, task = %merge.task_id, "the merge was not added to a review sample");
             }

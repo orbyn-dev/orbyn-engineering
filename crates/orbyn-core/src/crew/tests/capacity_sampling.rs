@@ -260,10 +260,113 @@ async fn the_merge_hook_samples_in_its_detached_task_and_logs_instead_of_failing
 }
 
 #[tokio::test]
-async fn with_the_preview_flag_off_the_hook_samples_nothing() {
+async fn hooks_finishing_out_of_order_drop_no_merge() {
+    let w = quiet().await;
+    set_sampling(&w, Sampling::OneInFour);
+    let mut merges = Vec::new();
+    for i in 0..5 {
+        merges.push(landed(&w, i, "low").await);
+    }
+    // Merge 5's hook finishes before merge 4's (and 1 to 3 never ran theirs).
+    let picked = sample_after_merge(&w.core.store, &merges[4], NOW).unwrap();
+    assert_eq!(picked.len(), 1);
+    assert!(
+        sample_after_merge(&w.core.store, &merges[3], NOW)
+            .unwrap()
+            .is_empty()
+    );
+    let recorded = |m: &MergeRecord| {
+        w.core
+            .store
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM crew_review_samples WHERE task_id = ?1",
+                [&m.task_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    // The oldest four are the batch; the fifth is still open. None is dropped.
+    assert!(merges[..4].iter().all(|m| recorded(m) == 1));
+    assert_eq!(recorded(&merges[4]), 0);
+    assert_eq!(
+        w.core
+            .store
+            .crew_open_low_merges(&project(&w), merges[4].id)
+            .unwrap()
+            .len(),
+        1
+    );
+    // The next three complete the next batch, with the fifth in it.
+    for i in 5..8 {
+        merges.push(landed(&w, i, "low").await);
+    }
+    assert_eq!(
+        sample_after_merge(&w.core.store, &merges[7], NOW)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(merges.iter().all(|m| recorded(m) == 1));
+}
+
+#[tokio::test]
+async fn a_backlog_from_before_sampling_was_on_is_batched_in_fours_oldest_first() {
+    let w = quiet().await;
+    let mut merges = Vec::new();
+    for i in 0..9 {
+        merges.push(landed(&w, i, "low").await);
+    }
+    set_sampling(&w, Sampling::OneInFour);
+    let picked = sample_after_merge(&w.core.store, &merges[8], NOW).unwrap();
+    assert_eq!(picked.len(), 2, "two full batches of four close");
+    assert_eq!(rows(&w), 8);
+    assert_eq!(
+        w.core
+            .store
+            .crew_open_low_merges(&project(&w), merges[8].id)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn with_the_preview_flag_off_the_hook_samples_nothing_though_the_same_merges_would_be() {
     let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
-    let merge = merge_record("t", "/repo", "main", "x");
-    w.core.capacity_after_merge(&merge, NOW);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    set_sampling(&w, Sampling::OneInFour);
+    // The flag is off, so no task can be started: store four tasks of the lead's project and four Low merges.
+    let mut merges = Vec::new();
+    for n in 0..4u32 {
+        let task = format!("sha256:{n:064x}");
+        w.core
+            .store
+            .reader()
+            .execute(
+                "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at) VALUES (?1, 'crew-1', ?2, 't', 't')",
+                rusqlite::params![task, format!("run-{n}")],
+            )
+            .unwrap();
+        w.core
+            .store
+            .add_crew_run(&task, &w.lead, "member-01")
+            .unwrap();
+        let mut merge = merge_record(&task, "/repo", "main", "x");
+        merge.risk = "low".into();
+        merge.id = w.core.store.add_crew_merge(&merge).unwrap();
+        merges.push(merge);
+    }
+    for merge in &merges {
+        w.core.capacity_after_merge(merge, NOW);
+    }
+    // With the flag off the hook returns before it spawns anything, so there is nothing to wait for.
     assert_eq!(rows(&w), 0);
+    // Not vacuous: the same four merges are sampled when the step runs.
+    assert_eq!(
+        sample_after_merge(&w.core.store, &merges[3], NOW)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(rows(&w), 4);
 }
