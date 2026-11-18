@@ -51,6 +51,7 @@ export type Scenario =
   | "empty"
   | "first-run"
   | "no-skills"
+  | "updates-unconfigured"
   | "remote"
   | "offline"
   | "reference"
@@ -182,6 +183,9 @@ export function createMockApi(options: MockOptions = {}) {
     managed = fixtures.workspaceStatus(projects);
     failNextSetup = false;
     updates = fixtures.updateStatus(2);
+    if (next === "updates-unconfigured") {
+      updates.app = { ...updates.app, latest: null, notes: null, can_apply: false, unconfigured: true };
+    }
     settings = fixtures.serverSettings();
     failStep = null;
     if (next === "no-skills") managed = fixtures.workspaceStatus([], false);
