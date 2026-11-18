@@ -36,6 +36,7 @@ impl Core {
         now: i64,
     ) -> Result<MergeEntry> {
         self.crew_preview_only()?;
+        self.refuse_unproven_escape_check(task_id, None)?;
         if self.config.crew_merge_required_checks.is_empty() {
             return Err(CoreError::Invalid(
                 "the person must configure the forge's required CI names before queueing".into(),
@@ -319,6 +320,18 @@ impl Core {
         self.merge_gate_from_evidence(task, &intent.evidence, combined, &intent.candidate, now)?;
         intent.phase = ForgePhase::MergeRequested;
         self.store.save_crew_forge_merge(intent)?;
+        // Re-read the escape check with the request saved: a withdraw either committed before this or sees the saved phase and is
+        // refused, so a withdrawn check never lands. `merge_requested` has no way back to `awaiting_ci`, so the intent goes to
+        // `needs_person` (nothing was sent to the forge) and the entry is blocked; this answers Blocked, never an error.
+        if let Err(error) = self.refuse_unproven_escape_check(task, Some(&intent.candidate)) {
+            let why = error.public_message();
+            intent.phase = ForgePhase::NeedsPerson;
+            intent.note = Some(why.clone());
+            self.store.save_crew_forge_merge(intent)?;
+            self.store
+                .set_merge_entry_state(&intent.task_id, "blocked", Some(&why))?;
+            return Ok(blocked(task, &why));
+        }
         self.merge_event(task, "merge_queued", &json!({"forge_merge_requested": true, "actor": actor, "pull": number, "head": intent.candidate, "base": intent.base}));
         let options = MergePull {
             method: "merge".into(),

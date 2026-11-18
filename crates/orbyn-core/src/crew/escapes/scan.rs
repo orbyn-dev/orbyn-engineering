@@ -677,6 +677,12 @@ impl Core {
                     if let Err(error) = result {
                         tracing::warn!(%error, "the escape scan needs another try");
                     }
+                    // The created checks ride the same tick: one whose worker ended unseen is finished, a merged one is recorded.
+                    tokio::select! {
+                        biased;
+                        _ = stop.cancelled() => return Ok(()),
+                        () = self.crew_escape_check_reconcile() => {}
+                    }
                 }
             }
             let Some(timer) = timer.as_mut() else {

@@ -12,3 +12,9 @@ pub fn wrap(_: &Confinement, _: &mut ResolvedCommand) -> Result<()> {
         UNSUPPORTED_PLATFORM.to_owned(),
     ))
 }
+
+pub fn wrap_proof(_: &Confinement, _: &mut ResolvedCommand) -> Result<()> {
+    Err(CoreError::EngineUnavailable(
+        UNSUPPORTED_PLATFORM.to_owned(),
+    ))
+}

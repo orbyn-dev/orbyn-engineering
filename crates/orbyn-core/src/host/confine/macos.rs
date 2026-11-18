@@ -86,6 +86,40 @@ pub(super) fn profile(confinement: &Confinement) -> String {
     text
 }
 
+/// What the escape-check proof adds to every worker rule (it runs after them, so later rules win): no network, no creating a job
+/// through launchd (`launchctl submit` runs a program from launchd, outside this profile), no writing of any application's preferences
+/// (`defaults write` goes through cfprefsd, and another app's settings can later start a program outside this profile), no clipboard,
+/// and file writes only in the
+/// proof's own folder (`RUN`) and the two device files a process needs. The data folder's denial is repeated last, with the proof's
+/// own folder and the folders on the way to it opened again after it.
+const PROOF_EXTRAS: &str = "(deny network*)\n\
+    (deny job-creation)\n\
+    (deny user-preference-write)\n\
+    (deny mach-lookup (global-name \"com.apple.pasteboard.1\"))\n\
+    (deny file-write* (subpath \"/\"))\n\
+    (allow file-write* (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))\n\
+    (deny file-read* file-write* (subpath (param \"DATA\")))\n\
+    (allow file-read* file-write* (subpath (param \"RUN\")))\n";
+
+/// The profile of the escape-check proof: the profile a crew worker would get for `confinement` (every worker rule, the transcripts'
+/// denial and `(deny process-info* (target others))` included), then [`PROOF_EXTRAS`], then the folders on the way to the proof's own
+/// folder opened for a look again, since the repeated data-folder denial would otherwise close them.
+pub(super) fn proof_profile(confinement: &Confinement) -> String {
+    let mut text = profile(confinement);
+    text.push_str(PROOF_EXTRAS);
+    for index in 0..proof_secrets().len() {
+        text.push_str(&format!(
+            "(deny file-read* (subpath (param \"S{index}\")))\n"
+        ));
+    }
+    for index in 0..route(confinement).len() {
+        text.push_str(&format!(
+            "(allow file-read-metadata (literal (param \"M{index}\")))\n"
+        ));
+    }
+    text
+}
+
 /// The data folder and every folder above it, up to and including `/`, then the same for the
 /// saved-conversations folder: renaming `~/.claude` would put the transcripts under a name
 /// the rules do not cover.
@@ -174,11 +208,20 @@ fn parameters(confinement: &Confinement) -> Vec<(String, PathBuf)> {
 }
 
 pub fn wrap(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<()> {
+    wrap_with(confinement, command, profile(confinement), Vec::new())
+}
+
+fn wrap_with(
+    confinement: &Confinement,
+    command: &mut ResolvedCommand,
+    profile: String,
+    extra: Vec<(String, PathBuf)>,
+) -> Result<()> {
     if let Some(reason) = unavailable() {
         return Err(CoreError::EngineUnavailable(reason));
     }
-    let mut prefix: Vec<OsString> = vec!["-p".into(), profile(confinement).into()];
-    for (name, path) in parameters(confinement) {
+    let mut prefix: Vec<OsString> = vec!["-p".into(), profile.into()];
+    for (name, path) in parameters(confinement).into_iter().chain(extra) {
         let mut pair = OsString::from(format!("{name}="));
         pair.push(path);
         prefix.push("-D".into());
@@ -189,6 +232,38 @@ pub fn wrap(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<
     command.program = TOOL.into();
     command.prefix = prefix;
     Ok(())
+}
+
+/// The person's folders that hold credentials, which the proof may not read. Toolchain folders (`~/.cargo`, `~/.rustup`, npm's) are not
+/// listed: a test needs them. Named by parameter `S0`, `S1`..., never in the profile text.
+fn proof_secrets() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    let home = std::fs::canonicalize(&home).unwrap_or(home);
+    [
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".config/gh",
+        ".netrc",
+        ".docker",
+        ".kube",
+        "Library/Keychains",
+    ]
+    .iter()
+    .map(|part| home.join(part))
+    .collect()
+}
+
+/// [`wrap`] with the proof's profile ([`proof_profile`]) and the credential folders as extra parameters.
+pub fn wrap_proof(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<()> {
+    let secrets = proof_secrets()
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| (format!("S{index}"), path))
+        .collect();
+    wrap_with(confinement, command, proof_profile(confinement), secrets)
 }
 
 pub fn unavailable() -> Option<String> {

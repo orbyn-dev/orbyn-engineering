@@ -142,6 +142,10 @@ impl Core {
             escape: row_wire(&record),
             events: events.iter().map(event_wire).collect(),
             truncated,
+            check: self
+                .store
+                .crew_escape_check(id)?
+                .map(|check| super::check::check_wire(&check)),
         })
     }
 }
