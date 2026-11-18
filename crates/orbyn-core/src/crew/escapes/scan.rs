@@ -611,7 +611,6 @@ impl Core {
             done.push((record, project));
         }
         // Rows first, then the cursor: a crash between them only rescans merges that already have a row.
-        let mut blocked: BTreeSet<&str> = BTreeSet::new();
         for (project, items) in found {
             match self.store.record_possible_escapes(&project, &items, now) {
                 Ok(added) => {
@@ -621,25 +620,18 @@ impl Core {
                 Err(CoreError::Invalid(why)) => {
                     tracing::warn!(project = %project, %why, "the escape scan wrote nothing for a project");
                     outcome.refused += u32::try_from(items.len()).unwrap_or(u32::MAX);
-                    if let Some((_, p)) = done.iter().find(|(_, p)| **p == project) {
-                        blocked.insert(p.as_str());
-                    }
                 }
                 Err(other) => return Err(other),
             }
         }
-        // Never past a merge of a project whose batch was refused: it is looked at again.
-        let reach = done
-            .iter()
-            .position(|(_, p)| blocked.contains(p.as_str()))
-            .unwrap_or(done.len());
-        let finished = !outcome.truncated && reach == done.len() && done.len() == candidates.len();
+        // A batch the writer refused is treated like a project that was full before git ran: counted as refused and passed over; the
+        // next wrap tries again. Holding the cursor there would repeat the same window for ever.
+        let finished = !outcome.truncated && done.len() == candidates.len();
         let next = if finished {
             Some(String::new())
         } else {
-            reach
-                .checked_sub(1)
-                .map(|i| format!("{}:{}", done[i].0.merged_unix, done[i].0.id))
+            done.last()
+                .map(|(record, _)| format!("{}:{}", record.merged_unix, record.id))
                 .or_else(|| damaged.then(String::new))
         };
         if let Some(next) = next

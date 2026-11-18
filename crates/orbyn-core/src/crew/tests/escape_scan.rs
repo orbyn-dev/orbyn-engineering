@@ -866,6 +866,81 @@ async fn a_full_log_refuses_the_scan_whole_with_nothing_written() {
 }
 
 #[tokio::test]
+async fn a_batch_the_writer_refuses_does_not_pin_the_cursor() {
+    let mut s = scan_rig().await;
+    let mut merges = Vec::new();
+    for (i, line) in [3, 8, 13].into_iter().enumerate() {
+        merges.push(
+            s.merge_with(line, 3 - i as i64, |m| m.watch = "broken".into())
+                .await,
+        );
+    }
+    // One short of the limit: not full before git runs, but a batch of two does not fit.
+    s.rig
+        .w
+        .core
+        .store
+        .fill_escape_log_for_test(&s.rig.project, 4999, 0)
+        .unwrap();
+    let two = Limits {
+        merges: 2,
+        ..Limits::default()
+    };
+    let before = s.counts();
+    let first = s
+        .rig
+        .w
+        .core
+        .crew_escape_scan_within(unix_now(), two)
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.scanned, first.found, first.refused),
+        (2, 0, 2),
+        "{first:?}"
+    );
+    assert_eq!(s.counts(), before, "a refused batch wrote");
+    let mid = s
+        .rig
+        .w
+        .core
+        .store
+        .crew_merge(&merges[1].0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        s.rig.w.core.store.setting(CURSOR_KEY).unwrap().as_deref(),
+        Some(format!("{}:{}", mid.merged_unix, mid.id).as_str())
+    );
+    // The cursor passed the refused merges, so the older one is reached and fits.
+    let one = Limits {
+        merges: 1,
+        ..Limits::default()
+    };
+    let second = s
+        .rig
+        .w
+        .core
+        .crew_escape_scan_within(unix_now(), one)
+        .await
+        .unwrap();
+    assert_eq!(
+        (second.scanned, second.found, second.refused),
+        (1, 1, 0),
+        "{second:?}"
+    );
+    assert!(
+        s.rig
+            .w
+            .core
+            .store
+            .crew_escape_of_merge(&merges[0].0)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn a_missing_or_rewritten_repository_is_skipped_not_guessed() {
     let mut s = scan_rig().await;
     s.merge_with(3, 3, |m| m.repo = "/definitely/not/a/repo".into())
