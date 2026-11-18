@@ -447,6 +447,17 @@ impl Core {
             );
             return Ok(MergeOutcome::NeedsPerson { task_id, why });
         }
+        // A candidate the branch already holds leaves nothing to merge: `git merge` would say "Already up to date", make no commit, and
+        // the old tip would be recorded as this task's merge.
+        if gitops::already_on(&target.repo, &target.branch, &entry.candidate).await? {
+            return reject(
+                &format!(
+                    "the change is already on {}; nothing to merge",
+                    target.branch
+                ),
+                false,
+            );
+        }
         let before = gitops::rev(&target.repo, &target.branch).await?;
         let scratch = Scratch::at(&target.repo, &self.scratch_root(), &before).await?;
         let merged = self
@@ -457,6 +468,16 @@ impl Core {
             Ok(done) => done,
             Err(why) => return reject(&why, false),
         };
+        // Whatever git did, the commit that moves the branch is a merge of exactly the tip and the candidate.
+        if !gitops::is_merge_of(&target.repo, &merge_commit, &before, &entry.candidate)
+            .await
+            .unwrap_or(false)
+        {
+            return reject(
+                "git did not make a merge of this change; nothing was moved",
+                false,
+            );
+        }
         if gitops::move_branch(&target.repo, &target.branch, &merge_commit, &before)
             .await
             .is_err()

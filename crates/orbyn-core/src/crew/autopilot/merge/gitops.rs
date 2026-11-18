@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::error::{CoreError, Result};
-use crate::source_control::git::{git, git_hardened, git_raw, text};
+use crate::source_control::git::{git, git_hardened, git_hardened_capped, git_raw, text};
 use crate::util::new_id;
 
 /// The identity of a merge or revert commit the crew makes.
@@ -111,6 +111,8 @@ pub async fn contains(repo: &Path, branch: &str, commit: &str) -> Result<bool> {
 
 /// How far back a crashed merge is looked for: the first-parent commits at the tip of the branch.
 pub const LANDED_WINDOW: usize = 256;
+/// The most output the search reads.
+const LOG_CAP: usize = 256 * 1024;
 
 /// The merge commit the queue made for `candidate`, if it is among the last [`LANDED_WINDOW`] first-parent commits of `branch`:
 /// a two-parent commit whose second parent is `candidate` and whose subject is `subject`. Returns `(merge commit, its first parent)`.
@@ -122,7 +124,7 @@ pub async fn landed_merge(
     subject: &str,
 ) -> Result<Option<(String, String)>> {
     let log = text(
-        &git(
+        &git_hardened_capped(
             repo,
             &[
                 "log",
@@ -132,6 +134,7 @@ pub async fn landed_merge(
                 "--format=%H %P%x1f%s",
                 &format!("refs/heads/{branch}"),
             ],
+            LOG_CAP,
         )
         .await?,
     );
@@ -145,6 +148,32 @@ pub async fn landed_merge(
         }
     }
     Ok(None)
+}
+
+/// Whether `candidate` is already part of `branch`'s history (nothing of it is left to merge). Hardened, output-capped read.
+pub async fn already_on(repo: &Path, branch: &str, candidate: &str) -> Result<bool> {
+    let out = git_hardened_capped(
+        repo,
+        &[
+            "rev-list",
+            "-n",
+            "1",
+            candidate,
+            "--not",
+            &format!("refs/heads/{branch}"),
+        ],
+        4096,
+    )
+    .await?;
+    Ok(text(&out).is_empty())
+}
+
+/// Whether `commit` is a merge of exactly `first` and `second`, in that order.
+pub async fn is_merge_of(repo: &Path, commit: &str, first: &str, second: &str) -> Result<bool> {
+    let out = text(
+        &git_hardened_capped(repo, &["rev-list", "--parents", "-n", "1", commit], 4096).await?,
+    );
+    Ok(out.split(' ').collect::<Vec<_>>() == [commit, first, second])
 }
 
 /// The folder that has `branch` checked out, if any.

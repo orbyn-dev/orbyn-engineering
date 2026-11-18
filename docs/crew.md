@@ -585,11 +585,12 @@ a revert is one command and a bisect walks first parents.
 **A local merge a crash interrupted.** A queue write names the state it expects (a compare-and-set), so a person's reject or a recovery is
 never overwritten: a changed row is left as it is and each caller decides (the lane skips the entry; a reject of an entry already
 `merging` is refused). A crash while a local entry is `merging` would leave it so for good, so the watch's first tick at startup, and each tick
-after it, settles such entries from git (at most 16 a pass, 30 seconds of git each, only while no merge is live in this process, which the
-merge lane's lock says). The branch moves by one atomic `update-ref`, so: the branch holds the queue's own merge commit for the candidate
+after it, settles such entries from git (passes of at most 16 entries, 30 seconds of git each, repeated until one moves nothing, at most 8 passes; the
+startup pass waits for the merge lane's lock, which a live merge holds, so it never touches one, and a pass can hold the lane for up to about
+8 minutes). The watch has no periodic tick unless its interval is set, so the startup pass is the one that counts by default. The branch moves by one atomic `update-ref`, so: the branch holds the queue's own merge commit for the candidate
 (the merge is recorded, flagged for a person to look at); or the branch lacks the candidate (nothing landed: the entry is `queued` again with a
-note, and only the lane's own pass runs it); or git cannot say (unreadable repository, a branch that holds the candidate without a merge the
-queue made in its last 256 commits, no answer in time): the entry is `waiting` with the reason, for a person. A forge entry is never read here;
+note, and only the lane's own pass runs it; a scratch checkout the crash left is left for git's `worktree prune`); or git cannot say (unreadable repository, a branch that holds the candidate without a merge the
+queue made in its last 256 commits, no answer in time): the entry is `waiting` with the reason, for a person. The lane rejects an entry whose candidate the branch already holds ("already on the branch"), and refuses to move the branch to any commit that is not a merge of exactly the tip and the candidate, so a released entry of that kind never records a merge. A forge entry is never read here;
 its intent has its own reconcile above.
 
 **Forge CI rule.** On a forge merge, every check in the person's `ORBYN_CREW_REQUIRED_CHECKS` list must be present on the pull request's

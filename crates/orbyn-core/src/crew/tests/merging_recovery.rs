@@ -124,6 +124,20 @@ async fn when_git_cannot_say_the_entry_waits_for_a_person_with_the_reason() {
     assert_eq!(entry.state, "waiting");
     assert!(entry.note.unwrap().contains("git cannot say"));
     assert!(m.w.core.store.crew_merge(&id).unwrap().is_none());
+    // Releasing it never records a merge: the change is already on the branch, so the queue rejects it and the tip stays the tip.
+    m.w.core.crew_release_merge(&id).unwrap();
+    let tip = m.tip().await;
+    let outcomes = m.process(NOW + 10).await;
+    assert!(
+        matches!(&outcomes[..], [MergeOutcome::Rejected { why, .. }] if why.contains("already on")),
+        "{outcomes:?}"
+    );
+    assert_eq!(m.tip().await, tip);
+    assert!(m.w.core.store.crew_merge(&id).unwrap().is_none());
+    assert_eq!(
+        m.w.core.store.merge_entry(&id).unwrap().unwrap().state,
+        "rejected"
+    );
 
     // A repository git cannot read is unknown too, never a guess.
     let (m, id) = queued().await;

@@ -701,7 +701,12 @@ async fn a_withdraw_works_once_a_crash_left_entry_is_recovered_and_stays_refused
         .expect_moved();
     {
         let _live = r.w.core.crew_merges.lock().await;
-        assert_eq!(r.w.core.recover_crew_merging(unix_now()).await.unwrap(), 0);
+        let waiting = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            r.w.core.recover_crew_merging(unix_now()),
+        )
+        .await;
+        assert!(waiting.is_err(), "recovery waits behind a live merge");
         let refused =
             r.w.core
                 .crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proven))

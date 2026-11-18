@@ -2,10 +2,10 @@
 //! the branch with one compare-and-swap `update-ref` and records the merge. A crash anywhere in that leaves the row `merging` for
 //! good, which the queue never reads again and which refuses a withdraw of an escape check. The only effect on the repository is the
 //! `update-ref`, so git tells which way it went: the branch holds the merge commit the queue makes (recorded now), or it does not
-//! (nothing landed, the scratch checkout is discarded and the entry is `queued` again), or git cannot say (a person decides).
+//! (nothing landed and the entry is `queued` again; a scratch checkout the crash left is only removed by git's own `worktree prune`), or git cannot say (a person decides).
 //!
 //! In flight is the merge lane's lock: `crew_process_merges` holds it from before it writes `merging` until the entry leaves it, so
-//! with the lock held here no `merging` row is live. A held lock skips the pass and the next tick tries again. A forge entry is
+//! with the lock held here no `merging` row is live. A pass waits for the lock (a live merge holds it, so a pass can wait for one merge and then hold the lane for up to 16 x 30 s), and passes repeat until one moves nothing, at most 8. A forge entry is
 //! never read: its own intent has its own reconcile (`recover_crew_forge_merges`).
 
 use std::sync::Arc;
@@ -20,6 +20,8 @@ use crate::store::MergeEntry;
 
 /// The entries one pass looks at; the rest wait for the next pass.
 const PER_PASS: u32 = 16;
+/// Passes in one recovery: up to 128 entries.
+const MAX_PASSES: usize = 8;
 /// The time git gets for one entry.
 const PER_ENTRY: Duration = Duration::from_secs(30);
 
@@ -31,12 +33,23 @@ enum Verdict {
 }
 
 impl Core {
-    /// Settles every local entry a crash left `merging`, at most [`PER_PASS`]. Returns how many it moved. Reads git only; never
+    /// Settles the local entries a crash left `merging`: passes of at most [`PER_PASS`] entries, at most [`MAX_PASSES`] of them, each
+    /// under the lane's lock and stopping at the first that moves nothing. Returns how many entries it moved. Reads git only; never
     /// touches a forge. A failure on one entry leaves it for a person and does not stop the rest.
     pub(crate) async fn recover_crew_merging(self: &Arc<Self>, now: i64) -> Result<usize> {
-        let Ok(_lane) = self.crew_merges.try_lock() else {
-            return Ok(0);
-        };
+        let mut total = 0;
+        for _ in 0..MAX_PASSES {
+            let moved = self.recover_merging_pass(now).await?;
+            total += moved;
+            if moved == 0 {
+                break;
+            }
+        }
+        Ok(total)
+    }
+
+    async fn recover_merging_pass(self: &Arc<Self>, now: i64) -> Result<usize> {
+        let _lane = self.crew_merges.lock().await;
         let mut moved = 0;
         for entry in self.store.merging_local_entries(PER_PASS)? {
             let verdict = match tokio::time::timeout(PER_ENTRY, self.merging_verdict(&entry)).await
@@ -60,7 +73,7 @@ impl Core {
         let repo = std::path::Path::new(&entry.repo);
         gitops::rev(repo, &entry.branch).await?;
         gitops::rev(repo, &entry.candidate).await?;
-        if !gitops::contains(repo, &entry.branch, &entry.candidate).await? {
+        if !gitops::already_on(repo, &entry.branch, &entry.candidate).await? {
             return Ok(Verdict::NotLanded);
         }
         let subject = Self::merge_subject(&entry.task_id);
