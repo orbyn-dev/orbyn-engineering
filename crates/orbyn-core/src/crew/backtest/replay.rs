@@ -19,7 +19,7 @@ use serde::Deserialize;
 
 use super::history::{HISTORY_DAYS, OUTCOME_DAYS, PastPr, eligible_prs};
 use super::outcomes::{Escape, EscapeSource, Window};
-use super::score::{LaneScore, Outcome, PastFinding, from_counts, match_escape};
+use super::score::{LaneScore, Outcome, PastFinding, count, from_counts, match_escape};
 use crate::error::{CoreError, Result};
 use crate::store::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
@@ -201,8 +201,8 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
             let own = results
                 .iter()
                 .filter(|r| r.lane == lane.lane && r.engine == lane.engine);
-            let findings_n = own.clone().count() as u32;
-            let matched = own.filter(|r| r.outcome == ResultOutcome::Caught).count() as u32;
+            let findings_n = count(own.clone().count());
+            let matched = count(own.filter(|r| r.outcome == ResultOutcome::Caught).count());
             let result = match (lane.state, lane.escapes_n, lane.caught_n) {
                 (LaneState::Stopped | LaneState::Done, Some(escapes), Some(caught)) => {
                     LaneResult::Scored(from_counts(escapes, caught, findings_n, matched))
@@ -227,10 +227,12 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
 
 /// How many of `escapes` the findings caught.
 fn rates_caught(findings: &[PastFinding], escapes: &[Escape]) -> u32 {
-    escapes
-        .iter()
-        .filter(|e| match_escape(findings, e) == Outcome::Caught)
-        .count() as u32
+    count(
+        escapes
+            .iter()
+            .filter(|e| match_escape(findings, e) == Outcome::Caught)
+            .count(),
+    )
 }
 
 fn outcome_of(finding: &PastFinding, escapes: &[Escape]) -> ResultOutcome {
@@ -371,7 +373,7 @@ fn execute(
             _ => Vec::new(),
         };
         if scored {
-            row.escapes_n = Some(scoped.len() as u32);
+            row.escapes_n = Some(count(scoped.len()));
             row.caught_n = Some(rates_caught(&past, &scoped));
         }
         if state == LaneState::Failed {
