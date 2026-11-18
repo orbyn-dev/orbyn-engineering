@@ -12,7 +12,7 @@ import { HtmlRender } from "../HtmlRender";
 import { McpApp } from "../McpApp";
 import { SurfacedWorkflows, WorkflowCards } from "../WorkflowControls";
 import { useThreadOfTimeline } from "../timelineThread";
-import { callKind, callLabel, callMs, callState, runLabel, type CallKind, type CallRun, type CallState } from "../toolCalls";
+import { callKind, callLabel, callMs, callState, runLabel, runOutcomes, type CallKind, type CallRun, type CallState } from "../toolCalls";
 import { Block } from "./blocks/Block";
 
 const KIND_ICONS: Record<CallKind, LucideIcon> = {
@@ -60,14 +60,17 @@ function spokenDuration(ms: number | null, state: CallState, item: ToolItem): st
   return text;
 }
 
-function StateIcon({ state, Icon }: { state: CallState; Icon: LucideIcon }) {
+function StateIcon({ state, Icon, group = false }: { state: CallState; Icon: LucideIcon; group?: boolean }) {
   if (state === "running") return <Loader2 size={14} className="spin" role="img" aria-label="Working" />;
-  if (state === "failed") return <X size={14} role="img" aria-label="Tool call failed" />;
+  // A group keeps its kind icon; only a single failed call is marked with the cross.
+  if (state === "failed" && !group) return <X size={14} role="img" aria-label="Tool call failed" />;
   if (state === "stopped") return <Square size={14} role="img" aria-label="Stopped" />;
   return <Icon size={14} aria-hidden />;
 }
 
 const stateClass = (state: CallState) => (state === "running" ? "s-run" : state === "failed" ? "s-fail" : state === "stopped" ? "s-stop" : "");
+/** A group row is never drawn failed: its count says how many calls failed, and the failed call's own row is marked. */
+const groupClass = (state: CallState) => (state === "failed" ? "" : stateClass(state));
 
 /** Shows the full text under a row whose label was cut off, while the row has the pointer or focus. */
 function useTip() {
@@ -165,11 +168,11 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
   const label = runLabel(run, running);
   const Icon = KIND_ICONS[run.kind];
   const current = run.items[states.lastIndexOf("running")];
-  const failing = failedAt >= 0 ? run.items[failedAt] : undefined;
   const lead = !open && running && current ? "Running" : label.verb;
-  const detail = !open ? (running && current ? callLabel(current, cwd).object : failing ? callLabel(failing, cwd).object : null) : null;
-  const exit = failing?.exitCode;
-  const exited = !open && failing && exit !== null && exit !== undefined && exit !== 0;
+  // Only a call still running is named on a collapsed row; a failed call never replaces the count,
+  // so the row keeps "Ran 6 commands" and says how many of them did not succeed. The open list names each.
+  const detail = !open && running && current ? callLabel(current, cwd).object : null;
+  const outcomes = detail ? null : runOutcomes(run, live, cancelled);
   const duration = total === null ? "" : callDuration(total);
   const command = detail && run.kind === "command" ? detail : undefined;
   return (
@@ -177,32 +180,32 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
       open={open}
       onOpenChange={setOpen}
       className="tcw"
-      summaryClassName={`tcr ${stateClass(state)}`.trim()}
+      summaryClassName={`tcr ${groupClass(state)}`.trim()}
       summaryProps={{
         "aria-label": withState(
-          [lead, detail, !detail && label.note ? `· ${label.note}` : null, exited ? `exit ${exit} ·` : null, duration].filter(Boolean).join(" "),
+          [lead, detail, outcomes ? `· ${outcomes.text}` : null, !detail && label.note ? `· ${label.note}` : null, duration].filter(Boolean).join(" "),
           state,
         ),
       }}
       summary={
         <>
           <span className="tic">
-            <StateIcon state={state} Icon={Icon} />
+            <StateIcon state={state} Icon={Icon} group />
           </span>
           <span className="lb" data-command={command}>
-            <span className="tla">{lead}</span>
+            <span className="tla">
+              {lead}
+              {outcomes ? (
+                <>
+                  {" · "}
+                  <span className={outcomes.failed ? "tla-fail" : undefined}>{outcomes.text}</span>
+                </>
+              ) : null}
+            </span>
             {detail ? <span className="tlb tlfill">{detail}</span> : null}
             {!detail && label.note ? <span className="tln">· {label.note}</span> : null}
           </span>
-          <span className="du">
-            {exited ? (
-              <>
-                <span className="er">exit {exit}</span> · {duration}
-              </>
-            ) : (
-              duration
-            )}
-          </span>
+          <span className="du">{duration}</span>
           <span className="tcv">
             <ChevronRight size={14} aria-hidden />
           </span>

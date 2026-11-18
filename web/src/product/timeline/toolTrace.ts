@@ -113,6 +113,21 @@ const callWeight = (item: ToolItem): number => {
 
 export const toolFailed = (item: ToolItem) => item.outcome === "failure" || (item.exitCode !== null && item.exitCode !== 0);
 
+/** What the engine reported for one call; only an exit 0 or a success outcome counts as success. */
+export type CallOutcome = "success" | "failed" | "no-result" | "unknown";
+
+/**
+ * Four outcomes, never mixed. A call with no result is "no result reported" when the engine ended
+ * normally without one, and "unknown" when its run was interrupted, since nobody can say what
+ * happened. A finished call that reported no outcome (an older log) is unknown too.
+ */
+export function callOutcome(item: ToolItem, interrupted = false): CallOutcome {
+  if (toolFailed(item)) return "failed";
+  const answered = item.done && item.result !== null;
+  if ((item.outcome === "success" || item.exitCode === 0) && answered) return "success";
+  return answered || interrupted ? "unknown" : "no-result";
+}
+
 export interface WorkSummary {
   summary: string;
   action: ToolAction | "mixed" | "reasoning";
@@ -130,9 +145,9 @@ export function summarizeWork(items: readonly (ToolItem | ReasoningItem)[]): Wor
     };
   }
   const groups = new Map<ToolAction, { calls: number; weight: number; order: number }>();
-  const failed = tools.filter(toolFailed).length;
-  const succeeded = tools.filter((tool) => !toolFailed(tool) && (tool.outcome === "success" || tool.exitCode === 0) && tool.done && tool.result !== null);
-  const unknown = tools.filter((tool) => !toolFailed(tool) && tool.outcome !== "success" && tool.exitCode === null && tool.done && tool.result !== null).length;
+  const failed = tools.filter((tool) => callOutcome(tool) === "failed").length;
+  const succeeded = tools.filter((tool) => callOutcome(tool) === "success");
+  const unknown = tools.filter((tool) => callOutcome(tool) === "unknown").length;
   const pending = tools.length - failed - succeeded.length - unknown;
   for (const tool of succeeded) {
     const { action } = traceTool(tool);
@@ -150,8 +165,8 @@ export function summarizeWork(items: readonly (ToolItem | ReasoningItem)[]): Wor
   const work =
     sentence.length < 3 ? sentence.join(" and ") : `${sentence.slice(0, -1).join(", ")}, and ${sentence.at(-1)}`;
   const summary = [work, failed ? `${failed} tool ${plural(failed, "call", "calls")} failed` : "",
-    unknown ? `${unknown} tool ${plural(unknown, "call", "calls")} finished without a reported outcome` : "",
-    pending ? `${pending} tool ${plural(pending, "call", "calls")} without a result` : ""].filter(Boolean).join("; ");
+    pending ? `${pending} tool ${plural(pending, "call", "calls")} with no result reported` : "",
+    unknown ? `${unknown} tool ${plural(unknown, "call", "calls")} with outcome unknown` : ""].filter(Boolean).join("; ");
   return {
     summary,
     action: groups.size === 0 ? traceTool(tools[0]!).action : groups.size === 1 ? (picked[0]?.[0] ?? "other") : "mixed",

@@ -10,6 +10,8 @@ import { callFindText } from "../toolCalls";
 import { forgetOpenState, OpenStateScope } from "../../../ui/openState";
 import { arrangeTimeline, groupWork } from "../../../product/timeline/timeline";
 import { useUi } from "../../../product/state/ui";
+import { useThreadLogs } from "../../../product/state/threadLogs";
+import { emptyLog } from "../../../product/timeline/projection";
 
 const make = (name: string, args: unknown, extra: Partial<ToolItem> = {}): ToolItem => ({
   kind: "tool",
@@ -76,14 +78,97 @@ describe("the trail of tool calls", () => {
     expect(rows()[0]).toHaveAccessibleName(/, stopped$/);
   });
 
-  it("groups two commands, and the collapsed group names the one that failed", () => {
+  const ok = (command: string) => make("Bash", { command }, { exitCode: 0 });
+  const failed = (command: string) => make("Bash", { command }, { exitCode: 1, result: "1 failed" });
+  const noResult = (name: string, args: unknown) => make(name, args, { result: null, done: false, endedAt: undefined });
+  const interrupt = () =>
+    useThreadLogs.setState((state) => ({
+      logs: { ...state.logs, t1: { ...emptyLog, runs: { r: { startedAt: "2026-11-08T10:00:00.000Z", endedAt: "2026-11-08T10:00:09.000Z", outcome: "cancelled" } } } },
+    }));
+
+  it("counts a collapsed group's failed calls apart and keeps its count, without naming the call or its exit code", () => {
+    render(<Trail items={[ok("ls"), failed("npm test")]} />);
+    const group = screen.getByRole("button", { name: "Ran 2 commands · 1 failed 7.8s, failed" });
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    // The group keeps its kind icon and plain styling; only the failed count is danger.
+    expect(group).not.toHaveClass("s-fail");
+    expect(group.querySelector(".tic [aria-label='Tool call failed']")).toBeNull();
+    expect(group.querySelector(".tic svg")).not.toBeNull();
+    expect(group.querySelector(".tla")).toHaveTextContent("Ran 2 commands · 1 failed");
+    expect(group.querySelector(".tlb")).toBeNull();
+    expect(group.querySelector(".du")).toHaveTextContent(/^7\.8s$/);
+  });
+
+  it("keeps a single failed call's own failed styling, and only the count is danger on a group", async () => {
+    const { unmount } = render(<Trail items={[failed("npm test")]} />);
+    expect(rows()[0]).toHaveClass("s-fail");
+    expect(rows()[0]!.querySelector("[aria-label='Tool call failed']")).not.toBeNull();
+    unmount();
+    render(<Trail items={[ok("ls"), failed("npm test")]} />);
+    await userEvent.click(rows()[0]!);
+    const call = screen.getByRole("button", { name: "npm test exit 1 · 3.9s, failed" });
+    expect(call).toHaveClass("s-fail");
+    expect(call.querySelector("[aria-label='Tool call failed']")).not.toBeNull();
+    expect(rows()[0]).not.toHaveClass("s-fail");
+  });
+
+  it("colours only the failed count, inside the verb, and still names the failed call in the opened list", async () => {
+    render(<Trail items={[ok("ls"), failed("npm test")]} />);
+    const group = rows()[0]!;
+    await userEvent.click(group);
+    const fail = group.querySelector(".tla .tla-fail");
+    expect(fail).toHaveTextContent(/^1 failed$/);
+    expect(group.querySelector(".tla")).toHaveTextContent(/^Ran 2 commands · 1 failed$/);
+    expect(group.querySelector(".tln")).toBeNull();
+    expect(screen.getByRole("button", { name: "npm test exit 1 · 3.9s, failed" })).toBeInTheDocument();
+  });
+
+  it("says in the group row that a fetch ended without a result, and does not mark the row failed", () => {
+    render(<Trail items={[make("WebFetch", { url: "https://example.com/a" }, { exitCode: 0 }), noResult("WebFetch", { url: "https://example.com/b" })]} />);
+    const group = rows()[0]!;
+    expect(group.querySelector(".tla")).toHaveTextContent("Fetched 2 pages · 1 no result reported");
+    expect(group.querySelector(".tla-fail")).toBeNull();
+    expect(group).not.toHaveClass("s-fail");
+    expect(group).toHaveAccessibleName(/^Fetched 2 pages · 1 no result reported/);
+  });
+
+  it("calls a resultless command outcome unknown when its run was interrupted, not no result reported", () => {
+    interrupt();
+    render(<Trail items={[ok("ls"), noResult("Bash", { command: "npm run build" })]} />);
+    expect(rows()[0]!.querySelector(".tla")).toHaveTextContent("Ran 2 commands · 1 outcome unknown");
+    expect(rows()[0]).not.toHaveTextContent("no result reported");
+  });
+
+  it("shows only the failure count for a group that mixes failed, no-result and unknown calls", () => {
     render(
       <Trail
-        items={[make("Bash", { command: "ls" }, { exitCode: 0 }), make("Bash", { command: "npm test" }, { exitCode: 1, result: "1 failed" })]}
+        items={[ok("npm test"), failed("npm run lint"), noResult("Bash", { command: "git fetch" }), make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" })]}
       />,
     );
-    const group = screen.getByRole("button", { name: "Ran 2 commands npm test exit 1 · 7.8s, failed" });
-    expect(group).toHaveClass("s-fail");
+    const group = rows()[0]!;
+    expect(group.querySelector(".tla")).toHaveTextContent(/^Ran 4 commands · 1 failed$/);
+    expect(group).not.toHaveTextContent("no result reported");
+    expect(group).not.toHaveTextContent("outcome unknown");
+  });
+
+  it("keeps an edit group's diff stat and appends the outcome note", () => {
+    const edit = (outcome?: "success") =>
+      make("Edit", { file_path: "/w/a.ts", old_string: "a\nb", new_string: "a\nc\nd" }, { exitCode: null, ...(outcome ? { outcome } : {}) });
+    const { unmount } = render(<Trail items={[edit("success"), edit("success")]} />);
+    const stat = rows()[0]!.querySelector(".tln")?.textContent;
+    expect(stat).toMatch(/^· \+\d+ [−-]\d+$/);
+    expect(rows()[0]!.querySelector(".tla")).toHaveTextContent(/^Edited 1 file$/);
+    unmount();
+    render(<Trail items={[edit(), edit()]} />);
+    expect(rows()[0]!.querySelector(".tla")).toHaveTextContent("Edited 1 file · 2 outcomes unknown");
+    expect(rows()[0]!.querySelector(".tln")?.textContent).toBe(stat);
+    expect(rows()[0]).toHaveAccessibleName(`Edited 1 file · 2 outcomes unknown ${stat} 7.8s`);
+  });
+
+  it("names the running call on a collapsed live group and says nothing about it as missing", () => {
+    render(<Trail items={[ok("ls"), noResult("Bash", { command: "npm test" })]} live />);
+    expect(rows()[0]!.querySelector(".tla")).toHaveTextContent(/^Running$/);
+    expect(rows()[0]!.querySelector(".tlb")).toHaveTextContent("npm test");
   });
 
   it("starts a capped output at its first line, not its end", async () => {
