@@ -121,7 +121,7 @@ Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later me
 - **The `revert` source** is written by the schema: the migration back-fills `crew_merges.review_state = 'reverted'` as **possible** (cause
   `revert:<commit>`), and a trigger on `crew_merges` does the same, in the revert's own transaction, for every later revert. Idempotent: the merge
   and the event are unique, so repeating a revert, or a dismissed escape, adds nothing. A merge whose lead thread is gone has no project and
-  drops out, as for 4j. A failure to log never undoes a revert (`INSERT OR IGNORE`).
+  drops out, as for 4j. A failure to log never undoes a revert (`ON CONFLICT DO NOTHING`; any other refusal still errors).
 - **Routes** (Preview-gated, class **Local**, in `READS`; writes are PR 2, as Person): `GET /api/crew/escapes?project=&state=&limit=&offset=`
   (counts for the report window by engine, possible, confirmed and dismissed apart, no rate, `low_sample`; one page of rows, newest found first),
   `GET /api/crew/escapes/{id}` (the escape and its trail, at most 100 rows) and `GET /api/crew/escapes/thresholds`. A damaged log is `500 unreadable`.
@@ -232,7 +232,7 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   approve, retry or withdraw. Each takes `project` and `seen` (`{state, gap, check}`: the escape's state and gap and the check's state); a mismatch is `409 stale`, checked before git is read.
   Each answers `{escape, check}` (`EscapeCheckAnswer`). The same act on a check already in that state answers with it and writes nothing; the opposite act is `400` in plain words.
 - **Audit first, one transaction** (rule 6): the ledger row (`crew.escape.check.propose`, `.accept`, `.approve`, `.retry`, `.withdraw`), then the state, then the event where the design lists a kind:
-  `check_proposed` (a retry writes it again, cause `retry:<audit id>`), `check_withdrawn` (person), and from the core `check_failed`, `check_proven`, `check_merged` (cause `core:<task id>`).
+  `check_proposed` (a retry writes it again, cause `retry:<audit id>`), `check_withdrawn` (person), and from the core `check_failed`, `check_proven`, `check_merged` (cause `core:<task id>:<round>`, the round being how many `check_proposed` events the trail holds). Every cause is its own round's, and an event that meets the same escape, kind and cause is already recorded (`ON CONFLICT DO NOTHING`; any other refusal still errors), never an error to the person.
   Accept and approve have no event kind of their own (migration 51 fixed the list), so their record is the audit row (the approval's names the task, commit, hash and paths) and `attempts`. A start
   refused before any task exists writes `crew.escape.check.start_failed` and puts the check back to `proposed` with the reason, so one more accept retries it.
 - **The brief** (`check_brief.rs`) is an ordinary crew task written on the lead's behalf and started through `launch_crew_task`, the entry `crew_start` and the review fixes use, so the router
