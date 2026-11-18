@@ -12,11 +12,22 @@ impl RunManager {
         stops: &Stops,
         retry: bool,
     ) -> EngineOutcome {
+        // A slash command or a goal may have nothing to say; an ordinary message must get an answer.
+        // A Crew lead or worker, or a delegated run is judged by what it leaves behind, not by what it says.
+        let expects_reply = RunKind::parse(&message.0) == RunKind::Turn
+            && thread
+                .lifecycle
+                .as_ref()
+                .is_none_or(|l| l.relation.as_deref() != Some("subagent"))
+            && !self.store.is_crew_thread(&thread.id).unwrap_or(false);
         match self
             .start(thread, scope, message, run_dir, token, &stops.cancel, retry)
             .await
         {
-            Ok(Some((handle, events))) => self.pump(thread, scope, handle, events, stops).await,
+            Ok(Some((handle, events))) => {
+                self.pump(thread, scope, handle, events, stops, expects_reply)
+                    .await
+            }
             Ok(None) => EngineOutcome::Cancelled,
             Err(CoreError::RunClosed | CoreError::StaleOwner) => EngineOutcome::Cancelled,
             Err(CoreError::SessionLost) => EngineOutcome::SessionLost,
@@ -314,8 +325,10 @@ impl RunManager {
         handle: RunHandle,
         mut events: mpsc::Receiver<EngineEvent>,
         stops: &Stops,
+        expects_reply: bool,
     ) -> EngineOutcome {
         let cancel = &stops.cancel;
+        let mut replied = false;
         let mut cancelling = false;
         let whole = crate::settings::preferences::stored_preference(
             &self.store,
@@ -400,6 +413,7 @@ impl RunManager {
                     {
                         break outcome;
                     }
+                    replied |= shows_work(&event);
                     match event {
                         EngineEvent::Agui(event) => {
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
@@ -467,6 +481,11 @@ impl RunManager {
                             {
                                 break outcome;
                             }
+                        }
+                        EngineEvent::Finished(EngineOutcome::Completed)
+                            if expects_reply && !replied =>
+                        {
+                            break EngineOutcome::Failed(NO_REPLY.into());
                         }
                         EngineEvent::Finished(outcome) => break outcome,
                     }
@@ -542,5 +561,25 @@ impl RunManager {
             let verdict = gate.request(&scope, ask).await;
             let _ = reply.send(verdict);
         });
+    }
+}
+
+/// How a run reads when the engine ended an ordinary turn without saying or doing anything.
+pub(super) const NO_REPLY: &str =
+    "No reply: the engine finished without answering. Send your message again.";
+
+/// Whether an engine event is the engine answering: words, a tool, a command, a plan, or a question
+/// for the person. Thinking alone is not.
+fn shows_work(event: &EngineEvent) -> bool {
+    match event {
+        EngineEvent::Agui(AgUiEvent::TextMessageContent { delta, .. }) => !delta.trim().is_empty(),
+        EngineEvent::Agui(AgUiEvent::ToolCallStart { .. } | AgUiEvent::ActivitySnapshot { .. }) => {
+            true
+        }
+        EngineEvent::Item(_)
+        | EngineEvent::Question(_)
+        | EngineEvent::Permission(_)
+        | EngineEvent::McpApp(_) => true,
+        _ => false,
     }
 }

@@ -278,6 +278,7 @@ async fn a_saved_mode_the_engine_lacks_runs_supervised() {
     let script: Script = Arc::new(move |spec: RunSpec, events, _| {
         record.lock().unwrap().push(spec.mode);
         tokio::spawn(async move {
+            let _ = events.send(text("done")).await;
             let _ = events
                 .send(EngineEvent::Finished(EngineOutcome::Completed))
                 .await;
@@ -608,6 +609,7 @@ async fn late_events_after_finish_change_nothing() {
         Arc::new(move |_, events, cancel| {
             let sent_late = sent_late.clone();
             tokio::spawn(async move {
+                let _ = events.send(text("done")).await;
                 let _ = events
                     .send(EngineEvent::Finished(EngineOutcome::Completed))
                     .await;
@@ -762,6 +764,7 @@ fn follow_up(project: &str, target: &str, on_success: bool) -> orbyn_contracts::
 fn finishing() -> Script {
     Arc::new(|_, events, _| {
         tokio::spawn(async move {
+            let _ = events.send(text("done")).await;
             let _ = events
                 .send(EngineEvent::Finished(EngineOutcome::Completed))
                 .await;

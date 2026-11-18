@@ -187,6 +187,15 @@ impl Store {
             .optional()?)
     }
 
+    /// Whether a thread is a Crew lead or worker: its runs are judged by what they leave behind.
+    pub fn is_crew_thread(&self, thread_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS(SELECT 1 FROM crew_runs WHERE worker_thread_id = ?1 OR lead_thread_id = ?1)",
+            [thread_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// The task a thread works on, if it is a Crew worker.
     pub fn crew_task_for_worker(&self, thread_id: &str) -> Result<Option<(CrewTask, CrewRun)>> {
         let Some(run) = self
