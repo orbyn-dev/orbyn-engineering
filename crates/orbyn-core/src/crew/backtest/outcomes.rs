@@ -20,6 +20,21 @@ pub struct Escape {
     pub changed_files: Vec<String>,
 }
 
+/// A confirmed escape inside the window whose changed files could not be read from git, so it cannot be matched. It is
+/// counted and reported, never dropped and never given a guessed file list. `pr` is `None` only when the merge's own
+/// record could not be found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unresolved {
+    pub pr: Option<u64>,
+}
+
+/// What a source read: the escapes it could match, and those it could not.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EscapeRead {
+    pub escapes: Vec<Escape>,
+    pub unresolved: Vec<Unresolved>,
+}
+
 /// The escape log has nothing to report, which is not the same as no escapes: the backtest shows "Not measured".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotMeasured;
@@ -28,10 +43,23 @@ pub struct NotMeasured;
 pub trait EscapeSource {
     /// The escapes of `project` among pull requests merged in `window`, or `NotMeasured` when the log cannot say.
     fn escapes(&self, project: &str, window: Window) -> Result<Vec<Escape>, NotMeasured>;
+
+    /// `escapes` and the escapes that could not be resolved. A source that cannot fail to resolve (a fixture) has none.
+    fn read(&self, project: &str, window: Window) -> Result<EscapeRead, NotMeasured> {
+        self.escapes(project, window).map(|escapes| EscapeRead {
+            escapes,
+            unresolved: Vec::new(),
+        })
+    }
+
+    /// Whether `read` would not say Not measured, decided without reading git, for a caller that must not block.
+    fn measurable(&self, project: &str, window: Window) -> bool {
+        self.escapes(project, window).is_ok()
+    }
 }
 
-/// The source used until the escape log (slice 4k) is merged and an implementation over it exists: it always
-/// reports `NotMeasured`. The real implementation comes with the escape log.
+/// A source that always reports `NotMeasured`: for tests, and for a core that has no escape log to read.
+/// The real source over the escape log is `EscapeLog`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoEscapeLog;
 

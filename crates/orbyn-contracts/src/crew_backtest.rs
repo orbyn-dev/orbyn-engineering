@@ -101,6 +101,9 @@ pub struct BacktestLaneRun {
     pub tokens_used: u64,
     pub outcome: BacktestLaneOutcome,
     pub findings_n: u32,
+    /// Confirmed escapes in the window that could not be matched because the files of their fix or revert could not be
+    /// read. Counted here beside the score and never inside it; 0 unless `outcome` is `scored`.
+    pub unresolved_n: u32,
     /// Present only when `outcome` is `scored`.
     pub score: Option<LaneScore>,
 }

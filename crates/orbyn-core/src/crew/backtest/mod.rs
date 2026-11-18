@@ -9,6 +9,7 @@
 // `replay::begin` and `replay::finish`; nothing calls them on a timer, at startup or from any scheduler (see
 // `replay_tests`). `replay::run` (begin and finish together) is for the tests.
 mod api;
+mod escape_log;
 mod history;
 mod outcomes;
 mod replay;
@@ -19,8 +20,11 @@ mod score;
 #[cfg(any(test, feature = "test-support"))]
 pub use api::ScriptedRunner;
 pub(crate) use api::Slot;
+pub use escape_log::{CommitFiles, EscapeLog, GitCommitFiles};
 pub use history::{HISTORY_DAYS, OUTCOME_DAYS, PastPr, eligible_prs};
-pub use outcomes::{Escape, EscapeSource, FixtureEscapes, NoEscapeLog, NotMeasured, Window};
+pub use outcomes::{
+    Escape, EscapeRead, EscapeSource, FixtureEscapes, NoEscapeLog, NotMeasured, Unresolved, Window,
+};
 #[cfg(test)]
 pub(crate) use replay::run;
 pub use replay::{

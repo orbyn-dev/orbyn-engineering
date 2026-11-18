@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 
 use super::history::{HISTORY_DAYS, OUTCOME_DAYS, PastPr, eligible_prs};
-use super::outcomes::{Escape, EscapeSource, Window};
+use super::outcomes::{Escape, EscapeRead, EscapeSource, Window};
 use super::score::{LaneScore, Outcome, PastFinding, count, from_counts, match_escape};
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -180,6 +180,9 @@ pub struct LaneReport {
     pub state: LaneState,
     pub tokens_used: u64,
     pub result: LaneResult,
+    /// Confirmed escapes in the window that could not be matched because their fix or revert files could not be read.
+    /// Reported beside the score and never counted in it; 0 when the lane was not scored.
+    pub unresolved_n: u32,
 }
 
 /// A run as a person reads it: the run and each lane. Built only from what the store holds.
@@ -218,6 +221,7 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
                 state: lane.state,
                 tokens_used: lane.tokens_used,
                 result,
+                unresolved_n: lane.unresolved_n.unwrap_or(0),
             }
         })
         .collect();
@@ -366,7 +370,7 @@ fn execute(
         from_unix: now_unix - HISTORY_DAYS * DAY_SECS,
         until_unix: now_unix - OUTCOME_DAYS * DAY_SECS,
     };
-    let measured = escapes.escapes(&request.project, window).ok();
+    let measured: Option<EscapeRead> = escapes.read(&request.project, window).ok();
     let mut spent: BTreeMap<&str, u64> = BTreeMap::new();
     let mut budget_spent_engines = BTreeSet::new();
     let mut failed = 0usize;
@@ -382,6 +386,7 @@ fn execute(
             state: LaneState::Running,
             escapes_n: None,
             caught_n: None,
+            unresolved_n: None,
         };
         store.crew_backtest_save_lane(run_id, &row, &[])?;
         // Each finding with its fingerprint; a fingerprint seen twice on one pull request is one finding.
@@ -432,6 +437,7 @@ fn execute(
             && (state == LaneState::Done || (state == LaneState::Stopped && !replayed.is_empty()));
         let scoped: Vec<Escape> = match (&measured, scored) {
             (Some(all), true) => all
+                .escapes
                 .iter()
                 .filter(|e| replayed.contains(&e.pr))
                 .cloned()
@@ -440,6 +446,15 @@ fn execute(
         };
         if scored {
             row.escapes_n = Some(count(scoped.len()));
+            if let Some(all) = &measured {
+                // An unresolved escape on a pull request this lane did not replay is not this lane's to report.
+                row.unresolved_n = Some(count(
+                    all.unresolved
+                        .iter()
+                        .filter(|u| u.pr.is_none_or(|pr| replayed.contains(&pr)))
+                        .count(),
+                ));
+            }
             row.caught_n = Some(rates_caught(&past, &scoped));
         }
         if state == LaneState::Failed {
