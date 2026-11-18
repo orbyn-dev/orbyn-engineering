@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{AuditRecord, Store, insert_audit};
 use crate::error::{CoreError, Result};
+use crate::source_control::forge::crew::is_commit;
 use crate::util::now;
 
 /// The default branch last accepted for a project: the ref's short name and the commit it pointed at. Kept in the existing
@@ -478,8 +479,10 @@ impl Store {
             .collect())
     }
 
-    /// The default branch last accepted for a project. A value that no longer parses is a broken row, never "nothing
-    /// remembered": the caller fails closed on the error.
+    /// The default branch last accepted for a project. The row is data a writer other than this code could have changed, so a
+    /// value that no longer parses, or whose commit is not a full object id, is a broken row (`StoredDataDamaged`), never
+    /// "nothing remembered" and never a commit to compare against: the caller fails closed on the error. Neither the text of
+    /// the row nor the parse error is carried, so the message cannot leak a stored ref or commit.
     pub fn crew_pinned_ref(&self, project_id: &str) -> Result<Option<CrewPinnedRef>> {
         let value: Option<String> = self
             .reader()
@@ -489,9 +492,19 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()?;
-        value
-            .map(|text| serde_json::from_str(&text).map_err(CoreError::from))
-            .transpose()
+        let Some(text) = value else {
+            return Ok(None);
+        };
+        serde_json::from_str::<CrewPinnedRef>(&text)
+            .ok()
+            .filter(|pin| is_commit(&pin.commit))
+            .map(Some)
+            .ok_or_else(|| {
+                CoreError::StoredDataDamaged(
+                    "the remembered default branch is damaged; reset it, then confirm the default branch again"
+                        .into(),
+                )
+            })
     }
 
     /// Moves the remembered pin to the commit a task just accepted. No audit row: every routing already records the

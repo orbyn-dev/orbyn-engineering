@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use super::glob::Glob;
 use crate::crew::{RULES_FILE, find_secret, redact};
+use crate::source_control::forge::crew::is_commit;
 use crate::source_control::git::{git_hardened as git, text};
 
 /// Larger than any sane file.
@@ -93,7 +94,7 @@ pub async fn base_commit(root: &Path) -> Option<String> {
         .await
         .ok()?;
     let sha = text(&out);
-    is_object_id(&sha).then_some(sha)
+    is_commit(&sha).then_some(sha)
 }
 
 /// A ref the rules are also read at: the project's default branch, which a checkout or a commit on the way does not move.
@@ -150,7 +151,7 @@ pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
             continue;
         };
         let commit = text(&out);
-        if is_object_id(&commit) {
+        if is_commit(&commit) {
             let remote = full.starts_with("refs/remotes/");
             let name = full
                 .strip_prefix("refs/remotes/")
@@ -219,10 +220,6 @@ pub async fn read_pinned(root: &Path) -> Pinned {
     Pinned::Unreadable(pin, ClassFile::refused(why.to_owned()))
 }
 
-pub(super) fn is_object_id(text: &str) -> bool {
-    matches!(text.len(), 40 | 64) && text.chars().all(|c| c.is_ascii_hexdigit())
-}
-
 /// One entry of `git ls-tree -z`.
 struct Entry {
     mode: String,
@@ -251,7 +248,7 @@ fn entries(raw: &[u8]) -> Option<Vec<Entry>> {
 /// Reads and parses the file at `base`. Anything but a plain, small, valid file is a problem, except that no `.orbyn` and no
 /// `crew.json` in it is no file.
 pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
-    let Some(base) = base.filter(|b| is_object_id(b)) else {
+    let Some(base) = base.filter(|b| is_commit(b)) else {
         return ClassFile::broken(
             None,
             None,
@@ -326,7 +323,7 @@ pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
             ..ClassFile::default()
         };
     };
-    if entry.mode != "100644" || entry.kind != "blob" || !is_object_id(&entry.sha) {
+    if entry.mode != "100644" || entry.kind != "blob" || !is_commit(&entry.sha) {
         return fail(
             None,
             format!(

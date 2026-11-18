@@ -255,11 +255,12 @@ async fn a_broken_stored_row_and_a_failed_write_block_instead_of_opening() {
         rusqlite::params![project],
     )
     .unwrap();
-    assert!(w.core.crew_pinned_ref_view(&project).await.is_err());
+    assert_damaged(&w.core.crew_pinned_ref_view(&project).await.unwrap_err());
     let (answer, error) = w.start(brief_writing(1), key()).await;
     assert!(!error, "{answer}");
     let texts = refused(&answer);
     says(&texts, "cannot be read");
+    says(&texts, "reset it, then confirm the default branch again");
     says(&texts, "cannot tell whether a ref was weakened");
 
     // A failed write is the same: the task does not start on a ref it could not remember.
@@ -293,10 +294,105 @@ async fn a_stored_commit_that_is_not_a_full_object_id_is_a_broken_row() {
         ],
     )
     .unwrap();
-    assert!(w.core.crew_pinned_ref_view(&project).await.is_err());
+    assert_damaged(&w.core.crew_pinned_ref_view(&project).await.unwrap_err());
     let (answer, error) = w.start(brief_writing(1), key()).await;
     assert!(!error, "{answer}");
-    says(&refused(&answer), "cannot be read");
+    let texts = refused(&answer);
+    says(&texts, "cannot be read");
+    says(&texts, "reset it, then confirm the default branch again");
+}
+
+/// Writes a raw `crew_pinned_ref` row, as a writer other than this code could.
+fn store_row(w: &World, project: &str, value: &str) {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO project_preferences (project_id, key, value) VALUES (?1, 'crew_pinned_ref', ?2)
+         ON CONFLICT (project_id, key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![project, value],
+    )
+    .unwrap();
+}
+
+/// A damaged row is a server-side data problem that names the next step and never echoes what was stored.
+fn assert_damaged(error: &CoreError) {
+    assert!(
+        matches!(error, CoreError::StoredDataDamaged(_)),
+        "{error:?}"
+    );
+    assert_eq!(error.code(), "internal");
+    assert_eq!(error.status(), 500);
+    let text = error.public_message();
+    assert!(
+        text.contains("damaged")
+            && text.contains("reset it, then confirm the default branch again"),
+        "{text}"
+    );
+    for leaked in ["upload-pack", "origin/secret", "not json"] {
+        assert!(!text.contains(leaked), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn the_store_itself_refuses_a_bad_commit_and_an_unparsable_row() {
+    let w = two().await;
+    let project = project_of(&w);
+    for row in [
+        r#"{"reference":"origin/secret","commit":"--upload-pack=x","remote":true}"#,
+        r#"{"reference":"origin/secret","commit":"abc123","remote":true}"#,
+        r#"{"reference":"origin/secret","commit":"","remote":true}"#,
+        "not json",
+    ] {
+        store_row(&w, &project, row);
+        assert_damaged(&w.core.store.crew_pinned_ref(&project).unwrap_err());
+    }
+    for id in ["a".repeat(40), "B".repeat(64)] {
+        store_row(
+            &w,
+            &project,
+            &format!(r#"{{"reference":"origin/main","commit":"{id}","remote":true}}"#),
+        );
+        let pin = w.core.store.crew_pinned_ref(&project).unwrap().unwrap();
+        assert_eq!(pin.commit, id);
+    }
+}
+
+#[tokio::test]
+async fn a_reset_recovers_from_a_damaged_row_and_a_fresh_start_remembers_again() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let project = project_of(&w);
+    store_row(
+        &w,
+        &project,
+        r#"{"reference":"origin/main","commit":"--upload-pack=x","remote":true}"#,
+    );
+    assert_damaged(&w.core.crew_pinned_ref_view(&project).await.unwrap_err());
+    // A confirm is not the way out: the damaged row is read first.
+    let (answer, _) = w.start(brief_writing(1), key()).await;
+    assert_eq!(answer["routed"], false, "{answer}");
+
+    let view = w.core.crew_reset_pinned_ref(&project).await.unwrap();
+    assert!(view.accepted && view.stored_commit.is_none());
+    routed(&w, 2).await;
+    let view = w.core.crew_pinned_ref_view(&project).await.unwrap();
+    assert_eq!(view.stored_commit.as_deref(), Some(head(&w.repo).as_str()));
+}
+
+#[tokio::test]
+async fn a_valid_sha256_commit_in_the_row_still_reads() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let project = project_of(&w);
+    let id = "c".repeat(64);
+    store_row(
+        &w,
+        &project,
+        &format!(r#"{{"reference":"origin/main","commit":"{id}","remote":true}}"#),
+    );
+    let view = w.core.crew_pinned_ref_view(&project).await.unwrap();
+    assert_eq!(view.stored_commit.as_deref(), Some(id.as_str()));
 }
 
 #[tokio::test]
