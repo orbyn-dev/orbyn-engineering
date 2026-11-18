@@ -76,6 +76,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/areas/override"),
     ("POST", "/api/crew/autopilot/confirm"),
     ("PUT", "/api/crew/autopilot/mode"),
+    ("POST", "/api/crew/autopilot/merge-queue/{task_id}/resolve"),
     ("POST", "/api/crew/autopilot/review/{task_id}/comment"),
     ("POST", "/api/crew/autopilot/review/{task_id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{task_id}/revert"),
@@ -406,6 +407,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "PUT",
         "/api/crew/autopilot/mode",
         "Crew write behind local_only: sets how far Autopilot may act",
+    ),
+    (
+        "POST",
+        "/api/crew/autopilot/merge-queue/{task_id}/resolve",
+        "Crew write behind local_only: the person rejects or retries a forge merge that needs one",
     ),
     (
         "POST",

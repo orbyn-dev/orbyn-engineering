@@ -126,6 +126,34 @@ impl Core {
                 let Some(mut intent) = self.store.crew_forge_merge(&entry.task_id)? else {
                     continue;
                 };
+                // Ordering rule: merges are ordered per repository, and a published or uncertain entry keeps the lane. An intent in
+                // `needs_person` is different: nothing of it is in flight, and each entry pins its own base and is checked against
+                // the forge's base, so no later entry depends on it. A later merge only moves the base, which that intent would
+                // have to rebuild on anyway. It waits for a person and the lane goes on past it, whichever crew owns it. If a person
+                // merged its PR by hand, the forge's receipt settles it here; an unreadable forge leaves it waiting.
+                if intent.phase == ForgePhase::NeedsPerson {
+                    match self
+                        .settle_hand_merged(&entry, &mut intent, "core", now)
+                        .await
+                    {
+                        Ok(Some(outcome)) => outcomes.push(outcome),
+                        Ok(None) => outcomes.push(MergeOutcome::NeedsPerson {
+                            task_id: entry.task_id.clone(),
+                            why: intent
+                                .note
+                                .clone()
+                                .unwrap_or_else(|| "reconcile the forge intent".into()),
+                        }),
+                        Err(error) => {
+                            tracing::warn!(task = %entry.task_id, %error, "a forge intent waiting on a person could not be read; the lane goes on");
+                            outcomes.push(MergeOutcome::NeedsPerson {
+                                task_id: entry.task_id.clone(),
+                                why: error.public_message(),
+                            });
+                        }
+                    }
+                    continue;
+                }
                 // The repository lane outlives one caller/turn. A scoped lead cannot overtake another
                 // crew's earlier intent, especially an effect whose remote result is still unknown.
                 if crew_id.is_some_and(|crew| entry.crew_id != crew) {
@@ -175,6 +203,7 @@ impl Core {
         {
             return Ok(outcome);
         }
+        // A `needs_person` intent never reaches here: the lane skips it and a person's answer is the only way out.
         if intent.phase == ForgePhase::NeedsPerson {
             return Ok(MergeOutcome::NeedsPerson {
                 task_id: task.into(),
@@ -603,7 +632,7 @@ impl Core {
         self.store.save_crew_forge_merge(intent)
     }
 
-    async fn finish_forge_merge(
+    pub(super) async fn finish_forge_merge(
         &self,
         entry: &MergeEntry,
         intent: &mut ForgeMerge,
@@ -665,7 +694,10 @@ impl Core {
     }
 }
 
-fn identity_matches(intent: &ForgeMerge, receipt: &forge::crew::CrewPullReceipt) -> bool {
+pub(super) fn identity_matches(
+    intent: &ForgeMerge,
+    receipt: &forge::crew::CrewPullReceipt,
+) -> bool {
     CrewRepository::from_remote(&intent.remote).is_ok_and(|context| {
         context.host == receipt.host && context.repository == receipt.repository
     }) && intent.pull == Some(receipt.number)

@@ -4,7 +4,7 @@ use orbyn_contracts::AgUiEvent;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::Store;
+use super::{AuditRecord, Store, insert_audit};
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::crew::is_commit;
 
@@ -31,6 +31,32 @@ pub enum ForgePhase {
     MergeRequested,
     Merged,
     NeedsPerson,
+    /// A person dropped the intent. Terminal: the entry left the lane and nothing was sent to the forge.
+    Rejected,
+}
+
+/// What a person (or the core, reading a merge a person made on the forge) does with a `needs_person` intent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForgeResolution {
+    /// Drop it. The entry becomes `rejected`; no forge effect is made.
+    Reject,
+    /// Back to the phase the pipeline re-evaluates from: `awaiting_ci` when the PR exists, `prepared` when nothing was published.
+    Retry,
+    /// The forge already has the merge (a person merged the PR by hand). The merge record follows from the receipt.
+    Merged { merge_commit: String },
+}
+
+/// The only way out of `needs_person`. Deliberately not part of [`Store::save_crew_forge_merge`]'s table: the pipeline can enter
+/// `needs_person` but can never leave it on its own, so a stuck intent changes only by a person's audited answer or a forge receipt.
+fn resolves(from: ForgePhase, to: ForgePhase) -> bool {
+    from == ForgePhase::NeedsPerson
+        && matches!(
+            to,
+            ForgePhase::Prepared
+                | ForgePhase::AwaitingCi
+                | ForgePhase::Merged
+                | ForgePhase::Rejected
+        )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -214,6 +240,116 @@ impl Store {
         })?;
         *intent = next;
         Ok(())
+    }
+
+    /// Leaves `needs_person`, audit row first, in one transaction with the intent and its queue entry, so a crash leaves either
+    /// the old state (still resolvable) or the whole new one. `seen_revision` is the intent as the caller saw it; a different
+    /// revision or phase is `stale`. `actor` is `user` for a person's answer and `core` for a merge read from the forge.
+    pub fn resolve_crew_forge_merge(
+        &self,
+        task_id: &str,
+        seen_revision: i64,
+        resolution: &ForgeResolution,
+        actor: &str,
+    ) -> Result<ForgeMerge> {
+        self.commit(|tx, _| {
+            let found: Option<(i64, String)> = tx
+                .query_row(
+                    "SELECT revision, body FROM crew_forge_merges WHERE task_id=?1",
+                    [task_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let (revision, body) =
+                found.ok_or_else(|| CoreError::NotFound(format!("forge intent {task_id}")))?;
+            let old: ForgeMerge = serde_json::from_str(&body)?;
+            if revision != seen_revision || old.phase != ForgePhase::NeedsPerson {
+                return Err(CoreError::Stale(
+                    "this merge changed since you saw it; look again".into(),
+                ));
+            }
+            let mut next = old.clone();
+            let (entry_state, entry_note): (Option<&str>, Option<&str>) = match resolution {
+                ForgeResolution::Reject => {
+                    next.phase = ForgePhase::Rejected;
+                    next.note = Some("rejected by a person; nothing was sent to the forge".into());
+                    (Some("rejected"), Some("rejected by a person"))
+                }
+                ForgeResolution::Retry => {
+                    next.phase = if old.pull.is_some() {
+                        ForgePhase::AwaitingCi
+                    } else if old.combined.is_none() {
+                        ForgePhase::Prepared
+                    } else {
+                        return Err(CoreError::Invalid(
+                            "publication may have happened without a PR number; reject it, or merge or close the PR on the forge".into(),
+                        ));
+                    };
+                    next.note = None;
+                    (Some("queued"), None)
+                }
+                ForgeResolution::Merged { merge_commit } => {
+                    next.phase = ForgePhase::Merged;
+                    next.merge_commit = Some(merge_commit.clone());
+                    (None, None)
+                }
+            };
+            if !resolves(old.phase, next.phase) {
+                return Err(CoreError::Invalid("invalid forge intent transition".into()));
+            }
+            next.validate()?;
+            if !old.same_identity(&next) || old.pull.is_some_and(|p| Some(p) != next.pull) {
+                return Err(CoreError::Invalid("a forge intent keeps its identity".into()));
+            }
+            let queued: Option<String> = tx
+                .query_row(
+                    "SELECT state FROM crew_merge_queue WHERE task_id=?1",
+                    [task_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let queued = queued.ok_or_else(|| CoreError::NotFound(format!("queued merge {task_id}")))?;
+            if queued == "merged" || queued == "rejected" {
+                return Err(CoreError::Invalid("this merge already ended".into()));
+            }
+            next.revision = revision
+                .checked_add(1)
+                .ok_or_else(|| CoreError::Invalid("forge revision exhausted".into()))?;
+            // Audit first: no state change without its row, and the row rolls back with a failed change.
+            insert_audit(
+                tx,
+                &AuditRecord {
+                    actor: actor.to_owned(),
+                    action: "crew.merge.forge.resolve".to_owned(),
+                    target: task_id.to_owned(),
+                    decision: None,
+                    source: if actor == "user" { "user" } else { "core" }.to_owned(),
+                    thread_id: None,
+                    run_id: None,
+                    detail: serde_json::json!({
+                        "from": "needs_person",
+                        "to": serde_json::to_value(next.phase)?,
+                        "revision": revision,
+                        "pull": old.pull,
+                        "reason": old.note,
+                    }),
+                },
+            )?;
+            let changed = tx.execute(
+                "UPDATE crew_forge_merges SET revision=?3,body=?4 WHERE task_id=?1 AND revision=?2",
+                params![task_id, revision, next.revision, serde_json::to_string(&next)?],
+            )?;
+            if changed != 1 {
+                return Err(CoreError::Invalid("forge intent changed".into()));
+            }
+            if let Some(state) = entry_state {
+                tx.execute(
+                    "UPDATE crew_merge_queue SET state=?2, note=?3, updated_unix=?4 WHERE task_id=?1 AND state NOT IN ('merged','rejected')",
+                    params![task_id, state, entry_note, crate::util::unix_now()],
+                )?;
+            }
+            Ok(next)
+        })
     }
 
     /// A completed identity is never dispatched twice. A crash permits only read-only watch reconciliation.

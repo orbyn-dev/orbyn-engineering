@@ -588,6 +588,14 @@ or neutral (a repository's path-scoped jobs are often skipped), but never fail, 
 combined-state check blocks the entry for a person rather than re-running. The `forge_publish_requested` and `forge_merge_requested`
 events record the `actor`: `lead` for the lead's tool, `local_caller` for the local HTTP caller.
 
+**A forge merge that needs a person.** The lane skips an intent in `needs_person` (nothing of it is in flight; each entry pins its own
+base, so no later entry depends on it) and goes on with the next. The pipeline never leaves `needs_person` itself. A PR merged by hand
+on the forge is read and recorded as merged. A person answers with `POST /api/crew/autopilot/merge-queue/{id}/resolve`
+(`{action: reject | retry, seen_revision}`; Person route, key enforced, local only, audit row first, `409 stale` for an intent that
+moved): `reject` drops it and sends nothing to the forge, `retry` sends it back to `awaiting_ci` (or `prepared` when nothing was
+published) so the guards run again. The queue view shows each entry's forge `phase` and `revision`. See the
+[Autopilot README](../crates/orbyn-core/src/crew/autopilot/README.md#merge-queue-review-queue-and-watch-on-main).
+
 **As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
 flag. With it off every route answers 404 for every method, like a path nothing serves, and `/api/info` omits `crew_preview`. The flag is
 read, never set, over HTTP. **The Preview flag stays while Crew is unfinished, not to keep a worker out:** every route that changes state needs the
