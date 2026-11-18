@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use super::{MOST_FIXES, RULES_FILE};
 use crate::app::Core;
-use crate::crew::capacity::{PausedKind, paused_by_capacity};
+use crate::crew::capacity::{PausedKind, PausedTrigger, paused_by_capacity};
 use crate::crew::checks::{Site, changed, covers};
 use crate::crew::guard::{key_needles, refuse_leak};
 use crate::crew::leases::internal;
@@ -255,6 +255,18 @@ impl Core {
             fix_task_id: brief.id.as_str().to_owned(),
             fingerprint: found.fingerprint.clone(),
         };
+        // The finding's fingerprint omits the task, so the key is taken over the task and the fingerprint together.
+        let held_key = {
+            use sha2::{Digest, Sha256};
+            let mut hash = Sha256::new();
+            hash.update(subject.id.as_bytes());
+            hash.update([0]);
+            hash.update(found.fingerprint.as_bytes());
+            hash.finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        };
         let started = self
             .launch_crew_task(Launch {
                 lead: thread,
@@ -271,7 +283,10 @@ impl Core {
                     review: None,
                     fix: Some(fix),
                     crew_started: true,
-                    trigger: Some(PausedKind::ReviewFix),
+                    trigger: Some(PausedTrigger {
+                        kind: PausedKind::ReviewFix,
+                        key: held_key,
+                    }),
                 },
             })
             .await;

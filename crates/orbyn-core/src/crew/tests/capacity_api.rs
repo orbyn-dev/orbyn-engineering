@@ -86,6 +86,10 @@ async fn crew_launch(
             prompt: None,
             links: Links {
                 crew_started,
+                trigger: crew_started.then(|| crate::crew::capacity::PausedTrigger {
+                    kind: crate::crew::capacity::PausedKind::CommentFix,
+                    key: path.to_owned(),
+                }),
                 ..Links::default()
             },
         })

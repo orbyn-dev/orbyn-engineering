@@ -108,7 +108,7 @@ fn rows_are_capped_per_project_and_the_oldest_go_first() {
 }
 
 #[test]
-fn the_table_refuses_values_outside_its_checks_and_a_project_delete_removes_its_rows() {
+fn the_table_refuses_values_outside_its_checks() {
     let (_dir, store, p) = open();
     store
         .record_paused_start(&p, PausedKind::Background, "b", 9, 8, 1)
@@ -123,6 +123,54 @@ fn the_table_refuses_values_outside_its_checks_and_a_project_delete_removes_its_
         assert!(conn.execute(sql, []).is_err(), "{sql}");
     }
     drop(conn);
+}
+
+#[test]
+fn the_cap_drops_started_rows_before_held_ones() {
+    let (_dir, store, p) = open();
+    for n in 0..PAUSED_STARTS_PER_PROJECT {
+        store
+            .record_paused_start(
+                &p,
+                PausedKind::ReviewFix,
+                &format!("h{n}"),
+                9,
+                8,
+                1000 + i64::from(n),
+            )
+            .unwrap();
+    }
+    // The oldest row has started; a new refusal pushes the project over the cap.
+    store
+        .mark_paused_start_started(&p, PausedKind::ReviewFix, "h0", 5000)
+        .unwrap();
+    store
+        .record_paused_start(&p, PausedKind::ReviewFix, "new", 9, 8, 6000)
+        .unwrap();
+    let rows = store.crew_paused_starts(&p).unwrap();
+    assert_eq!(rows.len(), PAUSED_STARTS_PER_PROJECT as usize);
+    assert!(
+        rows.iter().all(|r| r.key != "h0"),
+        "the started row went first"
+    );
+    assert!(rows.iter().any(|r| r.key == "h1" && !r.started));
+}
+
+#[test]
+fn a_project_delete_removes_its_rows() {
+    let (_dir, store, p) = open();
+    store
+        .record_paused_start(&p, PausedKind::Unknown, "u", 9, 8, 1)
+        .unwrap();
+    store
+        .writer()
+        .execute("DELETE FROM projects WHERE id = ?1", [&p])
+        .unwrap();
+    let left: i64 = store
+        .reader()
+        .query_row("SELECT COUNT(*) FROM crew_paused_starts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
 }
 
 #[test]

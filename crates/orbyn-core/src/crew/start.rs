@@ -29,9 +29,9 @@ pub(super) struct Links {
     pub fix: Option<crate::store::CrewFix>,
     /// Crew began this task itself (a review fix, a merge-comment fix), so it is Low priority and can be paused.
     pub crew_started: bool,
-    /// Which trigger that was, for the list of refused starts. Unset on a Crew-started launch means a merge-comment fix, the
-    /// one caller that leaves it out; a review fix and an escape check say theirs. A person's start has none.
-    pub trigger: Option<PausedKind>,
+    /// Which trigger started it, with its own stable key, for the list of refused starts. Every Crew-started launch must
+    /// set it; one that does not is recorded as `unknown` and logged. A person's start has none.
+    pub trigger: Option<PausedTrigger>,
 }
 
 /// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
@@ -264,14 +264,16 @@ impl Core {
             &thread.project_id,
         )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
-        // The trigger's stable key: a review fix's finding fingerprint, otherwise the brief's own hash (a retried
-        // admission carries the same one). Ids and hashes only, never task text.
-        let trigger = links.crew_started.then(|| PausedTrigger {
-            kind: links.trigger.unwrap_or(PausedKind::CommentFix),
-            key: links.fix.as_ref().map_or_else(
-                || brief.id.as_str().to_owned(),
-                |fix| fix.fingerprint.clone(),
-            ),
+        let trigger = links.crew_started.then(|| {
+            links.trigger.clone().unwrap_or_else(|| {
+                tracing::warn!(
+                    "a Crew-started launch named no trigger, so its held row is kind unknown"
+                );
+                PausedTrigger {
+                    kind: PausedKind::Unknown,
+                    key: brief.id.as_str().to_owned(),
+                }
+            })
         });
         self.capacity_start_check(
             &thread.project_id,

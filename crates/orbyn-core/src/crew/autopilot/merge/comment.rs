@@ -6,6 +6,7 @@ use orbyn_contracts::{CrewObject, Thread};
 use serde_json::{Value, json};
 
 use crate::app::Core;
+use crate::crew::capacity::{PausedKind, PausedTrigger};
 use crate::crew::leases::{internal, timestamp};
 use crate::crew::start::{Launch, Links};
 use crate::crew::tool::invalid;
@@ -122,6 +123,10 @@ impl Core {
                 prompt: None,
                 links: Links {
                     crew_started: true,
+                    trigger: Some(PausedTrigger {
+                        kind: PausedKind::CommentFix,
+                        key: task_id.to_owned(),
+                    }),
                     ..Links::default()
                 },
             })

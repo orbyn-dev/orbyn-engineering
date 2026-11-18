@@ -134,12 +134,12 @@ impl Store {
     }
 }
 
-/// Drops the project's oldest rows past the cap.
+/// Drops the project's rows past the cap: `started` rows first (oldest first), then the oldest `held` ones.
 fn trim(tx: &Transaction<'_>, project_id: &str) -> Result<()> {
     tx.execute(
         "DELETE FROM crew_paused_starts WHERE project_id = ?1 AND id NOT IN (
              SELECT id FROM crew_paused_starts WHERE project_id = ?1
-             ORDER BY last_seen_unix DESC, rowid DESC LIMIT ?2)",
+             ORDER BY (state = 'held') DESC, last_seen_unix DESC, rowid DESC LIMIT ?2)",
         params![project_id, PAUSED_STARTS_PER_PROJECT],
     )?;
     Ok(())

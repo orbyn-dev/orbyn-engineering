@@ -54,6 +54,7 @@ fn held_wire(row: crate::store::PausedStartRow) -> wire::HeldStart {
             PausedKind::ReviewFix => wire::HeldStartKind::ReviewFix,
             PausedKind::EscapeCheck => wire::HeldStartKind::EscapeCheck,
             PausedKind::Background => wire::HeldStartKind::Background,
+            PausedKind::Unknown => wire::HeldStartKind::Unknown,
         },
         key: row.key,
         state: if row.started {

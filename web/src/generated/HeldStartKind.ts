@@ -3,4 +3,4 @@
 /**
  * Which Crew trigger a refused start came from.
  */
-export type HeldStartKind = "comment_fix" | "review_fix" | "escape_check" | "background";
+export type HeldStartKind = "comment_fix" | "review_fix" | "escape_check" | "background" | "unknown";

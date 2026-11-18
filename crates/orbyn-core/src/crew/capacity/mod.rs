@@ -57,6 +57,8 @@ pub enum PausedKind {
     EscapeCheck,
     /// A background crew run. Reserved: no background trigger creates a crew task yet, so nothing stores this today.
     Background,
+    /// A Crew-started launch that named no trigger. A bug in the caller, kept visible rather than labelled as another kind.
+    Unknown,
 }
 
 impl PausedKind {
@@ -66,6 +68,7 @@ impl PausedKind {
             Self::ReviewFix => "review_fix",
             Self::EscapeCheck => "escape_check",
             Self::Background => "background",
+            Self::Unknown => "unknown",
         }
     }
 
@@ -75,6 +78,7 @@ impl PausedKind {
             "review_fix" => Self::ReviewFix,
             "escape_check" => Self::EscapeCheck,
             "background" => Self::Background,
+            "unknown" => Self::Unknown,
             _ => return None,
         })
     }

@@ -16,7 +16,7 @@ pub enum CapacityPriority { High, Medium, Low }
 
 wire_enum! {
 /// Which Crew trigger a refused start came from.
-pub enum HeldStartKind { CommentFix, ReviewFix, EscapeCheck, Background }
+pub enum HeldStartKind { CommentFix, ReviewFix, EscapeCheck, Background, Unknown }
 }
 
 wire_enum! {

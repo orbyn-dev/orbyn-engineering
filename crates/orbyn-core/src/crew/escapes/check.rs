@@ -472,7 +472,10 @@ impl Core {
                     review: None,
                     fix: None,
                     crew_started: true,
-                    trigger: Some(crate::crew::capacity::PausedKind::EscapeCheck),
+                    trigger: Some(crate::crew::capacity::PausedTrigger {
+                        kind: crate::crew::capacity::PausedKind::EscapeCheck,
+                        key: id.to_owned(),
+                    }),
                 },
             })
             .await;

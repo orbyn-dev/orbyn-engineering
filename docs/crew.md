@@ -1121,14 +1121,16 @@ sets them. A failure reading the settings or the queue lets the start go.
 
 **As built (slice 4l, held starts, migration 54):** with `pause_enabled` on, a refused Crew-started Low start is noted in
 `crew_paused_starts` (`store/crew_paused_starts.rs`): one row per project, kind (`comment_fix`, `review_fix`,
-`escape_check`; `background` is reserved) and stable key (a review fix's finding fingerprint, otherwise the brief's hash;
-ids and hashes only), with the waiting count and limit at the last refusal, `first_seen` and `last_seen`. The same
+`escape_check`; `background` is reserved; `unknown` marks a Crew-started launch that named no trigger) and a stable key
+the caller supplies through `Links::trigger`: the merge task id for a comment fix, a hash of the task id and finding
+fingerprint for a review fix, the check id for an escape check (ids and hashes only, never the brief's hash, which
+changes per attempt), with the waiting count and limit at the last refusal, `first_seen` and `last_seen`. The same
 trigger refused again updates its row; when the same trigger later starts, the row is marked `started`; it is held again
-if refused after that. At most 200 rows per project, the oldest by last sighting dropped. No task text and no engine
+if refused after that. At most 200 rows per project, `started` rows are dropped before `held` ones, then the oldest by last sighting. No task text and no engine
 output are stored. Nothing is retried on a timer, the refusal is still `not_authorized`, and with pausing off, for a
 person's start or for High and Medium work nothing is written. `GET /api/crew/capacity` returns them as `held`.
 Background crew runs still start no crew task (`crew_background_start_run` only records a run row), so they have no start
-path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_started` with `PausedKind::Background`.
+path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_started` with a `PausedTrigger` of kind `Background`.
 
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and

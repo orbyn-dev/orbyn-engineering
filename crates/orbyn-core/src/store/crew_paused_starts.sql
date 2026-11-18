@@ -4,7 +4,7 @@
 CREATE TABLE crew_paused_starts (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK(kind IN ('comment_fix', 'review_fix', 'escape_check', 'background')),
+    kind TEXT NOT NULL CHECK(kind IN ('comment_fix', 'review_fix', 'escape_check', 'background', 'unknown')),
     key TEXT NOT NULL CHECK(length(key) BETWEEN 1 AND 128),
     state TEXT NOT NULL CHECK(state IN ('held', 'started')),
     waiting INTEGER NOT NULL CHECK(waiting >= 0),
