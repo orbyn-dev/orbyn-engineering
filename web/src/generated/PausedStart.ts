@@ -2,6 +2,6 @@
 
 /**
  * What a new Low-priority start that Crew began itself would meet right now: the merges waiting for a person and the
- * limit. A refused start is not stored, so this is the current decision and not a list of held tasks.
+ * limit. This is the current decision; the refused starts themselves are listed in `CapacityState::held`.
  */
 export type PausedStart = { waiting: number, limit: number, };

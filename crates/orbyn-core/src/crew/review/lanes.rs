@@ -422,6 +422,7 @@ impl Core {
                 review: Some(review),
                 fix: None,
                 crew_started: false,
+                trigger: None,
             },
         })
         .await

@@ -11,7 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::capacity::Priority;
+use super::capacity::{PausedKind, PausedTrigger, Priority};
 use super::classes::Routed;
 use super::guard::{key_labeled, refuse_leak, refuse_leak_in, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
@@ -30,6 +30,9 @@ pub(super) struct Links {
     pub fix: Option<crate::store::CrewFix>,
     /// Crew began this task itself (a review fix, a merge-comment fix), so it is Low priority and can be paused.
     pub crew_started: bool,
+    /// Which trigger started it, with its own stable key, for the list of refused starts. Every Crew-started launch must
+    /// set it; one that does not is recorded as `unknown` and logged. A person's start has none.
+    pub trigger: Option<PausedTrigger>,
 }
 
 /// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
@@ -262,15 +265,28 @@ impl Core {
             &thread.project_id,
         )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
+        let trigger = links.crew_started.then(|| {
+            links.trigger.clone().unwrap_or_else(|| {
+                tracing::warn!(
+                    "a Crew-started launch named no trigger, so its held row is kind unknown"
+                );
+                PausedTrigger {
+                    kind: PausedKind::Unknown,
+                    key: brief.id.as_str().to_owned(),
+                }
+            })
+        });
         self.capacity_start_check(
             &thread.project_id,
             links.crew_started.then_some((Priority::Low, true)),
+            trigger.as_ref(),
         )?;
         let task = self
             .store
             .create_crew_task(&brief, &key, run_id.as_str())
             .map_err(internal)?;
         self.capacity_mark_started(&task.id, links.crew_started);
+        self.capacity_held_started(&thread.project_id, trigger.as_ref());
         self.store
             .add_crew_run(&task.id, &thread.id, member.as_str())
             .map_err(internal)?;

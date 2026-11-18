@@ -146,3 +146,58 @@ async fn a_person_saves_settings_and_reads_them_back() {
     assert_eq!((status, &cover["merges"]), (200, &json!(0)));
     assert!(cover["began_unix"].is_null());
 }
+
+#[tokio::test]
+async fn the_state_read_lists_the_held_starts_and_stays_a_read() {
+    let app = serve("held", true, false).await;
+    let project = fixtures::add_project(&app.core, app.dir.join("project").to_str().unwrap());
+    let path = format!("/api/crew/capacity?project={project}");
+    let (status, state) = app.call("GET", &path, None, true).await;
+    assert_eq!((status, &state["held"]), (200, &json!([])));
+    fixtures::held_start(
+        &app.core,
+        &project,
+        "review_fix",
+        "fp-1",
+        (9, 8, 100),
+        Some(150),
+    );
+    fixtures::held_start(
+        &app.core,
+        &project,
+        "comment_fix",
+        "h-2",
+        (11, 8, 200),
+        None,
+    );
+    let (status, state) = app.call("GET", &path, None, true).await;
+    assert_eq!(status, 200);
+    let held = state["held"].as_array().unwrap();
+    assert_eq!(held.len(), 2);
+    assert_eq!(
+        (
+            &held[0]["kind"],
+            &held[0]["state"],
+            &held[0]["waiting"],
+            &held[0]["started_unix"]
+        ),
+        (
+            &json!("comment_fix"),
+            &json!("held"),
+            &json!(11),
+            &Value::Null
+        )
+    );
+    assert_eq!(
+        (
+            &held[1]["kind"],
+            &held[1]["state"],
+            &held[1]["started_unix"]
+        ),
+        (&json!("review_fix"), &json!("started"), &json!(150))
+    );
+    assert!(
+        held.iter()
+            .all(|h| h.get("text").is_none() && h.get("prompt").is_none())
+    );
+}

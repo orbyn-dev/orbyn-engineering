@@ -1,4 +1,4 @@
--- Migration 54: the positive person signal for merge provenance (slice 4l). `crew_person_commits` lists the full
+-- Migration 55: the positive person signal for merge provenance (slice 4l). `crew_person_commits` lists the full
 -- commit ids the app itself made on a person's action, written in the same transaction as the audit row. Nothing is
 -- inferred from an author name or email. `crew_hunks` gains the author kind `unknown` (a line nobody confirmed:
 -- coverage counts it with the agent's lines), which a CHECK change needs a rebuild for; existing rows are copied as they

@@ -1,4 +1,4 @@
-//! The person signal at rest and at a real merge: migration 54, the `crew_person_commits` table and its audit row, the
+//! The person signal at rest and at a real merge: migration 55, the `crew_person_commits` table and its audit row, the
 //! read a merge is attributed against, and the three-valued attribution on temp git repositories built here (worker
 //! address, trailer, author against committer, forged addresses, a person's commit, the app's conflict resolution).
 //! No engine runs.
@@ -70,16 +70,16 @@ fn commit_id(n: u8) -> String {
 }
 
 #[test]
-fn migration_54_follows_53_keeps_old_hunks_and_adds_the_table() {
+fn migration_55_follows_54_keeps_old_hunks_and_adds_the_table() {
     let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
     assert!(versions.windows(2).all(|w| w[1] == w[0] + 1), "contiguous");
-    assert!(versions.contains(&54));
+    assert!(versions.contains(&55));
 
     let dir = TempDir::new();
     let path = dir.path().join("old.db");
     let conn = Connection::open(&path).unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
-    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v <= 53) {
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v <= 54) {
         conn.execute_batch(sql).unwrap();
         conn.execute(
             "INSERT INTO schema_migrations VALUES (?1,'fixture')",
@@ -110,8 +110,8 @@ fn migration_54_follows_53_keeps_old_hunks_and_adds_the_table() {
     drop(conn);
 
     let store = Store::open(&path, "upgrade").unwrap();
-    let upgrade = store.upgrade().expect("54 applies on an old database");
-    assert_eq!((upgrade.from, upgrade.to), (53, 54));
+    let upgrade = store.upgrade().expect("55 applies on an old database");
+    assert_eq!((upgrade.from, upgrade.to), (54, 55));
     let rows = store.crew_hunks_of_merge(1).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(

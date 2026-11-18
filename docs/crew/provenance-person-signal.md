@@ -1,6 +1,6 @@
 # Who wrote a line: a positive person signal for merge provenance (4l)
 
-Design note for issue #711. Status: built (slice 4l, migration 54), except the person path that records `crew_person_commits` rows, which does not exist yet: until one does, no line is `person`, and coverage stays merge-level.
+Design note for issue #711. Status: built (slice 4l, migration 55), except the person path that records `crew_person_commits` rows, which does not exist yet: until one does, no line is `person`, and coverage stays merge-level.
 
 ## The problem
 
