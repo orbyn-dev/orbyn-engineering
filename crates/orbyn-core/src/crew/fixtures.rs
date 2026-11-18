@@ -148,3 +148,24 @@ pub fn lower_area(core: &crate::Core, project: &str, area: &str, at: i64) {
         })
         .unwrap();
 }
+
+/// Stores a refused Crew-started start as the capacity hook would (`kind` is `comment_fix`, `review_fix`, `escape_check` or
+/// `background`), and marks it started at `started` when given. For route tests.
+pub fn held_start(
+    core: &crate::Core,
+    project: &str,
+    kind: &str,
+    key: &str,
+    (waiting, limit, seen): (u32, u32, i64),
+    started: Option<i64>,
+) {
+    let kind = super::capacity::PausedKind::parse(kind).expect("a known kind");
+    core.store
+        .record_paused_start(project, kind, key, waiting, limit, seen)
+        .unwrap();
+    if let Some(at) = started {
+        core.store
+            .mark_paused_start_started(project, kind, key, at)
+            .unwrap();
+    }
+}

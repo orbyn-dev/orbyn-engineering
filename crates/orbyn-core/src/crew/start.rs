@@ -11,7 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::capacity::Priority;
+use super::capacity::{PausedKind, PausedTrigger, Priority};
 use super::classes::Routed;
 use super::guard::{key_labeled, refuse_leak, refuse_leak_in, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
@@ -29,6 +29,9 @@ pub(super) struct Links {
     pub fix: Option<crate::store::CrewFix>,
     /// Crew began this task itself (a review fix, a merge-comment fix), so it is Low priority and can be paused.
     pub crew_started: bool,
+    /// Which trigger that was, for the list of refused starts. Unset on a Crew-started launch means a merge-comment fix, the
+    /// one caller that leaves it out; a review fix and an escape check say theirs. A person's start has none.
+    pub trigger: Option<PausedKind>,
 }
 
 /// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
@@ -261,15 +264,26 @@ impl Core {
             &thread.project_id,
         )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
+        // The trigger's stable key: a review fix's finding fingerprint, otherwise the brief's own hash (a retried
+        // admission carries the same one). Ids and hashes only, never task text.
+        let trigger = links.crew_started.then(|| PausedTrigger {
+            kind: links.trigger.unwrap_or(PausedKind::CommentFix),
+            key: links.fix.as_ref().map_or_else(
+                || brief.id.as_str().to_owned(),
+                |fix| fix.fingerprint.clone(),
+            ),
+        });
         self.capacity_start_check(
             &thread.project_id,
             links.crew_started.then_some((Priority::Low, true)),
+            trigger.as_ref(),
         )?;
         let task = self
             .store
             .create_crew_task(&brief, &key, run_id.as_str())
             .map_err(internal)?;
         self.capacity_mark_started(&task.id, links.crew_started);
+        self.capacity_held_started(&thread.project_id, trigger.as_ref());
         self.store
             .add_crew_run(&task.id, &thread.id, member.as_str())
             .map_err(internal)?;

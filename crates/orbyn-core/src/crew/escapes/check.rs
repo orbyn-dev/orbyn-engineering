@@ -467,6 +467,7 @@ impl Core {
                     review: None,
                     fix: None,
                     crew_started: true,
+                    trigger: Some(crate::crew::capacity::PausedKind::EscapeCheck),
                 },
             })
             .await;

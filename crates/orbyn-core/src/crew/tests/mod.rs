@@ -24,6 +24,7 @@ mod bus_review;
 mod bus_support;
 mod cancel;
 mod capacity_api;
+mod capacity_held;
 mod capacity_hooks;
 mod capacity_paused_fix;
 mod classes;

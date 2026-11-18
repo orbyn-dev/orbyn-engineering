@@ -66,7 +66,7 @@ async fn a_low_start_that_crew_began_is_refused_over_the_limit_with_the_waiting_
     waiting(&w, 3).await;
     let error = w
         .core
-        .capacity_start_check(&project(&w), Some((Priority::Low, true)))
+        .capacity_start_check(&project(&w), Some((Priority::Low, true)), None)
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::NotAuthorized);
     assert!(error.message.contains("3 merges wait"), "{}", error.message);
@@ -79,7 +79,7 @@ async fn at_the_limit_a_low_crew_start_goes() {
     limit(&w, 3);
     waiting(&w, 3).await;
     w.core
-        .capacity_start_check(&project(&w), Some((Priority::Low, true)))
+        .capacity_start_check(&project(&w), Some((Priority::Low, true)), None)
         .unwrap();
 }
 
@@ -94,7 +94,7 @@ async fn a_person_started_task_and_a_medium_or_high_task_go_over_the_limit() {
         (Priority::Medium, true),
         (Priority::High, true),
     ] {
-        w.core.capacity_start_check(&p, Some(stored)).unwrap();
+        w.core.capacity_start_check(&p, Some(stored), None).unwrap();
     }
 }
 
@@ -117,7 +117,7 @@ async fn with_the_preview_flag_off_the_start_check_does_nothing() {
     let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
     limit(&w, 1);
     w.core
-        .capacity_start_check(&project(&w), Some((Priority::Low, true)))
+        .capacity_start_check(&project(&w), Some((Priority::Low, true)), None)
         .unwrap();
 }
 

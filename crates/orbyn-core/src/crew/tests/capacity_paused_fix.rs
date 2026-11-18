@@ -7,7 +7,7 @@ use serde_json::json;
 use super::autopilot_merge::{merging, passed};
 use super::harness::World;
 use super::review_support::{arc, built, crew, finding, fixed, reviewed};
-use crate::crew::capacity::{CapacitySettings, Sampling};
+use crate::crew::capacity::{CapacitySettings, PausedKind, Sampling};
 use crate::crew::fixtures::merge_record;
 use crate::crew::{MergeOutcome, Mode, ReviewAnswer};
 use crate::testing::run_git;
@@ -98,6 +98,10 @@ async fn a_paused_comment_fix_says_it_is_waiting_for_capacity_and_a_later_commen
         "the Comment stays stored so a later trigger can use it"
     );
     assert_eq!(tasks(), before, "nothing was started");
+    let held = m.w.core.store.crew_paused_starts(&project(&m.w)).unwrap();
+    assert_eq!(held.len(), 1, "the refused fix is one held row: {held:?}");
+    assert_eq!(held[0].kind, PausedKind::CommentFix);
+    assert!(!held[0].started);
 
     // No timer retries it: nothing changes by itself.
     let events = || m.w.core.store.crew_autopilot_events(&id).unwrap().len();
@@ -125,6 +129,12 @@ async fn a_paused_comment_fix_says_it_is_waiting_for_capacity_and_a_later_commen
         .await;
     assert!(!error, "{answer}");
     assert_eq!(tasks(), before + 1, "the fix started");
+    let held = m.w.core.store.crew_paused_starts(&project(&m.w)).unwrap();
+    assert_eq!(held.len(), 1, "still one row, not a second: {held:?}");
+    assert!(
+        held[0].started,
+        "the same trigger started, so the row says so"
+    );
     assert_eq!(
         m.w.core
             .store
@@ -230,6 +240,10 @@ async fn a_paused_review_fix_tells_the_lead_it_is_waiting_for_capacity_and_a_lat
         .unwrap();
     assert!(told.contains("waiting"), "{told}");
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
+    let held = w.core.store.crew_paused_starts(&project(&w)).unwrap();
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert_eq!(held[0].kind, PausedKind::ReviewFix);
+    assert!(!held[0].started);
     let notices = || {
         w.sent_to(&w.lead)
             .iter()

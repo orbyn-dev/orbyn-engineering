@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use orbyn_contracts as wire;
 
 use super::{
-    CapacitySettings, MergeProvenance, Priority, Sampling, StartDecision, coverage, plan_size,
-    start_allowed, waiting_count,
+    CapacitySettings, MergeProvenance, PausedKind, Priority, Sampling, StartDecision, coverage,
+    plan_size, start_allowed, waiting_count,
 };
 use crate::app::Core;
 use crate::error::Result;
@@ -46,6 +46,29 @@ fn priority_of(priority: wire::CapacityPriority) -> Priority {
     }
 }
 
+fn held_wire(row: crate::store::PausedStartRow) -> wire::HeldStart {
+    wire::HeldStart {
+        id: row.id,
+        kind: match row.kind {
+            PausedKind::CommentFix => wire::HeldStartKind::CommentFix,
+            PausedKind::ReviewFix => wire::HeldStartKind::ReviewFix,
+            PausedKind::EscapeCheck => wire::HeldStartKind::EscapeCheck,
+            PausedKind::Background => wire::HeldStartKind::Background,
+        },
+        key: row.key,
+        state: if row.started {
+            wire::HeldStartState::Started
+        } else {
+            wire::HeldStartState::Held
+        },
+        waiting: row.waiting,
+        limit: row.limit,
+        first_seen_unix: row.first_seen_unix,
+        last_seen_unix: row.last_seen_unix,
+        started_unix: row.started_unix,
+    }
+}
+
 impl Core {
     /// A project's capacity settings and what the pause rule reads now. A new Low, Crew-started start is `paused`
     /// only when pausing is on and more merges wait than the limit.
@@ -79,6 +102,12 @@ impl Core {
             settings_saved: self.store.crew_capacity_settings_saved(project_id)?,
             paused,
             plan,
+            held: self
+                .store
+                .crew_paused_starts(project_id)?
+                .into_iter()
+                .map(held_wire)
+                .collect(),
         })
     }
 

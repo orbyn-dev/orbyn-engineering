@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use super::{MOST_FIXES, RULES_FILE};
 use crate::app::Core;
-use crate::crew::capacity::paused_by_capacity;
+use crate::crew::capacity::{PausedKind, paused_by_capacity};
 use crate::crew::checks::{Site, changed, covers};
 use crate::crew::guard::{key_needles, refuse_leak};
 use crate::crew::leases::internal;
@@ -271,6 +271,7 @@ impl Core {
                     review: None,
                     fix: Some(fix),
                     crew_started: true,
+                    trigger: Some(PausedKind::ReviewFix),
                 },
             })
             .await;

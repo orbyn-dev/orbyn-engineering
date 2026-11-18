@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::{Author, Priority, StartDecision, record_at_merge, start_allowed, waiting_count};
+use super::{
+    Author, PausedTrigger, Priority, StartDecision, record_at_merge, start_allowed, waiting_count,
+};
 use crate::app::Core;
 use crate::error::CoreError;
 use crate::store::{MergeRecord, Store};
@@ -196,7 +198,9 @@ pub(crate) fn paused_by_capacity(error: &CrewError) -> bool {
 impl Core {
     /// Before a worker is granted: refuses a NEW start that Crew began itself at Low priority while more merges wait
     /// for a person than the project's limit, and only when a person turned `pause_enabled` on (off by default).
-    /// Nothing is stored when it refuses.
+    /// No task is stored when it refuses. When the start has a `trigger`, the refusal is noted as one bounded row
+    /// (`crew_paused_starts`) that a repeat of the same trigger updates and that `capacity_held_started` later marks.
+    /// Nothing is retried on a timer, and a failure writing the row is logged and never changes the refusal.
     ///
     /// `stored` is the task's `(priority, crew_started)`. A task being created has no row yet, so the start path
     /// passes `Some((Low, true))` when its launch carries `Links::crew_started` (review fixes, merge-comment fixes)
@@ -206,6 +210,7 @@ impl Core {
         &self,
         project_id: &str,
         stored: Option<(Priority, bool)>,
+        trigger: Option<&PausedTrigger>,
     ) -> Result<(), CrewError> {
         if !self.crew_enabled() {
             return Ok(());
@@ -233,13 +238,43 @@ impl Core {
         }
         match start_allowed(settings, waiting, priority, crew_started) {
             StartDecision::Go => Ok(()),
-            StartDecision::Paused { waiting, limit } => Err(CrewError::new(
-                ErrorCode::NotAuthorized,
-                format!(
-                    "{PAUSED} {waiting} merges wait for a person and the limit is {limit}; \
-                     a new low-priority start from Crew is paused until some are reviewed"
-                ),
-            )),
+            StartDecision::Paused { waiting, limit } => {
+                if let Some(trigger) = trigger
+                    && let Err(error) = self.store.record_paused_start(
+                        project_id,
+                        trigger.kind,
+                        &trigger.key,
+                        waiting,
+                        limit,
+                        crate::util::unix_now(),
+                    )
+                {
+                    tracing::warn!(%error, "the refused start was not noted");
+                }
+                Err(CrewError::new(
+                    ErrorCode::NotAuthorized,
+                    format!(
+                        "{PAUSED} {waiting} merges wait for a person and the limit is {limit}; \
+                         a new low-priority start from Crew is paused until some are reviewed"
+                    ),
+                ))
+            }
+        }
+    }
+
+    /// After a Crew-started task was stored: the same trigger's held row, if one exists, becomes `started`. A store
+    /// failure is logged and never fails the start.
+    pub(crate) fn capacity_held_started(&self, project_id: &str, trigger: Option<&PausedTrigger>) {
+        let Some(trigger) = trigger.filter(|_| self.crew_enabled()) else {
+            return;
+        };
+        if let Err(error) = self.store.mark_paused_start_started(
+            project_id,
+            trigger.kind,
+            &trigger.key,
+            crate::util::unix_now(),
+        ) {
+            tracing::warn!(%error, "the held start was not marked started");
         }
     }
 
