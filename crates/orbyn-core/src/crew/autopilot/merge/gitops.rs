@@ -109,6 +109,44 @@ pub async fn contains(repo: &Path, branch: &str, commit: &str) -> Result<bool> {
     Ok(out.status.success())
 }
 
+/// How far back a crashed merge is looked for: the first-parent commits at the tip of the branch.
+pub const LANDED_WINDOW: usize = 256;
+
+/// The merge commit the queue made for `candidate`, if it is among the last [`LANDED_WINDOW`] first-parent commits of `branch`:
+/// a two-parent commit whose second parent is `candidate` and whose subject is `subject`. Returns `(merge commit, its first parent)`.
+/// `None` means no such commit in that window, which does not say the candidate is absent from the branch: see [`contains`].
+pub async fn landed_merge(
+    repo: &Path,
+    branch: &str,
+    candidate: &str,
+    subject: &str,
+) -> Result<Option<(String, String)>> {
+    let log = text(
+        &git(
+            repo,
+            &[
+                "log",
+                "--first-parent",
+                "-n",
+                &LANDED_WINDOW.to_string(),
+                "--format=%H %P%x1f%s",
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .await?,
+    );
+    for line in log.lines() {
+        let Some((ids, subj)) = line.split_once('\u{1f}') else {
+            continue;
+        };
+        let ids: Vec<&str> = ids.split(' ').collect();
+        if ids.len() == 3 && ids[2] == candidate && subj == subject {
+            return Ok(Some((ids[0].to_owned(), ids[1].to_owned())));
+        }
+    }
+    Ok(None)
+}
+
 /// The folder that has `branch` checked out, if any.
 pub async fn checked_out(repo: &Path, branch: &str) -> Result<Option<String>> {
     let listing = text(&git(repo, &["worktree", "list", "--porcelain"]).await?);

@@ -585,8 +585,9 @@ async fn processing_blocks_a_task_whose_check_stopped_being_proven_after_it_was_
         .unwrap();
     r.w.core
         .store
-        .set_merge_entry_state(&task, "queued", None)
-        .unwrap();
+        .set_merge_entry_state(&task, &crate::store::OPEN_MERGE_STATES, "queued", None)
+        .unwrap()
+        .expect_moved();
     // The check is withdrawn under the queue's feet (here straight in the store, so nothing turns the entry down first).
     r.w.core
         .store
@@ -631,8 +632,9 @@ async fn a_withdraw_is_refused_while_the_merge_is_landing_and_never_errors_after
     // The entry is `merging`: refused in words, nothing changed.
     r.w.core
         .store
-        .set_merge_entry_state(&task, "merging", None)
-        .unwrap();
+        .set_merge_entry_state(&task, &crate::store::OPEN_MERGE_STATES, "merging", None)
+        .unwrap()
+        .expect_moved();
     let refused =
         r.w.core
             .crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proven))
@@ -646,13 +648,20 @@ async fn a_withdraw_is_refused_while_the_merge_is_landing_and_never_errors_after
     // A forge intent already requested is just as far along.
     r.w.core
         .store
-        .set_merge_entry_state(&task, "queued", None)
-        .unwrap();
+        .set_merge_entry_state(&task, &crate::store::OPEN_MERGE_STATES, "queued", None)
+        .unwrap()
+        .expect_moved();
     // An entry that is already out of the queue: the withdraw succeeds and says so.
     r.w.core
         .store
-        .set_merge_entry_state(&task, "rejected", Some("x"))
-        .unwrap();
+        .set_merge_entry_state(
+            &task,
+            &crate::store::OPEN_MERGE_STATES,
+            "rejected",
+            Some("x"),
+        )
+        .unwrap()
+        .expect_moved();
     let done =
         r.w.core
             .crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proven))
@@ -666,6 +675,54 @@ async fn a_withdraw_is_refused_while_the_merge_is_landing_and_never_errors_after
             .contains("nothing to stop"),
         "the answer says the entry could not be stopped"
     );
+}
+
+/// Issue 703: a crash left the entry `merging`. While a merge is live in this process the withdraw stays refused (the lane's lock is
+/// held); once recovery has settled the stale entry the withdraw goes through.
+#[tokio::test]
+async fn a_withdraw_works_once_a_crash_left_entry_is_recovered_and_stays_refused_while_a_merge_is_live()
+ {
+    let r = rig().await;
+    r.propose().await;
+    let task = r.accept().await.check.task_id.unwrap();
+    assert_eq!(r.finish().await, EscapeCheckState::Proven);
+    r.w.core
+        .store
+        .add_merge_entry(&crate::crew::fixtures::merge_entry(
+            &task,
+            "/no/such/repo",
+            "x",
+        ))
+        .unwrap();
+    r.w.core
+        .store
+        .set_merge_entry_state(&task, &crate::store::OPEN_MERGE_STATES, "merging", None)
+        .unwrap()
+        .expect_moved();
+    {
+        let _live = r.w.core.crew_merges.lock().await;
+        assert_eq!(r.w.core.recover_crew_merging(unix_now()).await.unwrap(), 0);
+        let refused =
+            r.w.core
+                .crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proven))
+                .await;
+        let Err(CoreError::Invalid(why)) = refused else {
+            panic!("{refused:?}")
+        };
+        assert!(why.contains("landing"), "{why}");
+    }
+    // The repository cannot be read, so git cannot say: the entry waits for a person and no longer holds the withdraw.
+    assert_eq!(r.w.core.recover_crew_merging(unix_now()).await.unwrap(), 1);
+    assert_eq!(
+        r.w.core.store.merge_entry(&task).unwrap().unwrap().state,
+        "waiting"
+    );
+    let done =
+        r.w.core
+            .crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proven))
+            .await
+            .unwrap();
+    assert_eq!(done.check.state, EscapeCheckState::Withdrawn);
 }
 
 /// Every act of the check's life, each clicked twice, with no pause between them (so the briefs of two attempts share a clock second):

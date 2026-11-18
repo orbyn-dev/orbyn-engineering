@@ -50,8 +50,14 @@ async fn stuck_head(s: &Setup) -> (String, i64) {
     s.w.core.store.save_crew_forge_merge(&mut intent).unwrap();
     s.w.core
         .store
-        .set_merge_entry_state(&head, "blocked", Some("the target base moved"))
-        .unwrap();
+        .set_merge_entry_state(
+            &head,
+            &crate::store::OPEN_MERGE_STATES,
+            "blocked",
+            Some("the target base moved"),
+        )
+        .unwrap()
+        .expect_moved();
     (head, intent.revision)
 }
 

@@ -11,6 +11,7 @@ mod gitops;
 mod guard;
 mod holds;
 mod queue;
+mod recover;
 mod review_queue;
 mod risk;
 mod tool;

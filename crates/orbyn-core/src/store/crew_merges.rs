@@ -32,6 +32,31 @@ pub struct MergeEntry {
     pub queued_unix: i64,
 }
 
+/// What a guarded state write did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[must_use = "a lost race must be decided by the caller"]
+pub enum MergeStateMove {
+    Moved,
+    /// The row was not in an expected state; it is left untouched and this is the state it is in.
+    Changed(String),
+}
+
+impl MergeStateMove {
+    /// True when the write took effect.
+    pub fn moved(&self) -> bool {
+        matches!(self, Self::Moved)
+    }
+
+    /// Tests: a setup write that must take effect.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn expect_moved(self) {
+        assert_eq!(self, Self::Moved, "the setup write lost a race");
+    }
+}
+
+/// The states of an entry that is still in the queue.
+pub const OPEN_MERGE_STATES: [&str; 4] = ["queued", "blocked", "waiting", "merging"];
+
 /// One merge that reached the branch: an item of the Review queue.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergeRecord {
@@ -253,28 +278,58 @@ impl Store {
         })
     }
 
-    /// Moves an entry to a state, with a note. `merged` has its own writer; this refuses it.
+    /// Moves an entry to `state`, with a note, only while it is still in one of the `expected` states (a compare-and-set in one
+    /// statement). A row that is somewhere else (a person rejected it, a recovery moved it) is left as it is and the answer is
+    /// [`MergeStateMove::Changed`] with the state it is in: no caller can overwrite `rejected`, `withdrawn` or `merged`. `merged`
+    /// has its own writer; this refuses it. A task with no entry is `NotFound`.
     pub fn set_merge_entry_state(
         &self,
         task_id: &str,
+        expected: &[&str],
         state: &str,
         note: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<MergeStateMove> {
         if state == "merged" {
             return Err(CoreError::Invalid(
                 "a merge is recorded with add_crew_merge".into(),
             ));
         }
         self.commit(|tx, _| {
+            let marks = vec!["?"; expected.len()].join(",");
+            let mut args: Vec<rusqlite::types::Value> = vec![
+                task_id.to_owned().into(),
+                state.to_owned().into(),
+                note.map(str::to_owned).into(),
+                unix_now().into(),
+            ];
+            args.extend(expected.iter().map(|s| (*s).to_owned().into()));
             let changed = tx.execute(
-                "UPDATE crew_merge_queue SET state = ?2, note = ?3, updated_unix = ?4 WHERE task_id = ?1 AND state != 'merged'",
-                params![task_id, state, note, unix_now()],
+                &format!("UPDATE crew_merge_queue SET state = ?2, note = ?3, updated_unix = ?4 WHERE task_id = ?1 AND state IN ({marks})"),
+                rusqlite::params_from_iter(args.iter()),
             )?;
-            if changed == 0 {
-                return Err(CoreError::NotFound(format!("queued merge {task_id}")));
+            if changed == 1 {
+                return Ok(MergeStateMove::Moved);
             }
-            Ok(())
+            let now: Option<String> = tx
+                .query_row("SELECT state FROM crew_merge_queue WHERE task_id = ?1", [task_id], |r| r.get(0))
+                .optional()?;
+            now.map(MergeStateMove::Changed)
+                .ok_or_else(|| CoreError::NotFound(format!("queued merge {task_id}")))
         })
+    }
+
+    /// Entries a crash may have left `merging`, oldest first, at most `limit`: local ones only (a forge intent has its own
+    /// reconcile). Reads only; the caller holds the merge lane, so none of them is a live merge.
+    pub fn merging_local_entries(&self, limit: u32) -> Result<Vec<MergeEntry>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT q.* FROM crew_merge_queue q WHERE q.state = 'merging'
+               AND NOT EXISTS (SELECT 1 FROM crew_forge_merges f WHERE f.task_id = q.task_id)
+             ORDER BY q.updated_unix, q.rowid LIMIT ?1",
+        )?;
+        Ok(statement
+            .query_map([i64::from(limit)], entry_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Records a merge that reached the branch and marks its queue entry `merged`, in one transaction.
