@@ -667,3 +667,87 @@ async fn a_withdraw_is_refused_while_the_merge_is_landing_and_never_errors_after
         "the answer says the entry could not be stopped"
     );
 }
+
+/// Every act of the check's life, each clicked twice, with no pause between them (so the briefs of two attempts share a clock second):
+/// no error reaches the person, one worker starts per accept, `attempts` counts accepts and the trail is complete and in order.
+#[tokio::test]
+async fn a_check_that_is_proposed_accepted_failed_and_retried_in_one_tick_with_double_clicks_never_errors()
+ {
+    use EscapeEventKind::*;
+    let r = rig().await;
+    r.plan.lock().unwrap().pattern = "value".into();
+    let core = &r.w.core;
+    let tasks = r.tasks();
+
+    // Propose twice; withdraw twice; propose again twice.
+    r.propose().await;
+    r.propose().await;
+    core.crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proposed))
+        .await
+        .unwrap();
+    core.crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proposed))
+        .await
+        .unwrap();
+    let again = wire::EscapeCheckPropose {
+        seen: seen(Some(EscapeCheckState::Withdrawn)),
+        ..r.propose_body()
+    };
+    for _ in 0..2 {
+        core.crew_escape_check_propose(&r.escape, &again)
+            .await
+            .unwrap();
+    }
+    assert_eq!(r.tasks(), tasks, "a proposal starts nothing");
+
+    // Accept twice: one worker.
+    let first = r.accept().await.check.task_id.unwrap();
+    let twice = r.accept().await.check;
+    assert_eq!(twice.task_id.as_deref(), Some(first.as_str()));
+    assert_eq!(r.finish().await, EscapeCheckState::Failed);
+    assert_eq!(r.tasks(), tasks + 1);
+    assert_eq!(r.check().attempts, 1);
+
+    // Retry twice, and a new worker for the next accept, which is its own task even within the same second.
+    r.reset();
+    for _ in 0..2 {
+        core.crew_escape_check_retry(&r.escape, &r.act(EscapeCheckState::Failed))
+            .unwrap();
+    }
+    let second = r.accept().await.check.task_id.unwrap();
+    assert_ne!(first, second);
+    assert_eq!(r.finish().await, EscapeCheckState::Failed);
+    assert_eq!((r.tasks(), r.check().attempts), (tasks + 2, 2));
+
+    // And a third, after a withdraw and a new proposal that restart `attempts`.
+    r.reset();
+    core.crew_escape_check_retry(&r.escape, &r.act(EscapeCheckState::Failed))
+        .unwrap();
+    core.crew_escape_check_withdraw(&r.escape, &r.act(EscapeCheckState::Proposed))
+        .await
+        .unwrap();
+    core.crew_escape_check_propose(&r.escape, &again)
+        .await
+        .unwrap();
+    let third = r.accept().await.check.task_id.unwrap();
+    assert!(third != first && third != second);
+    assert_eq!(r.finish().await, EscapeCheckState::Failed);
+    assert_eq!((r.tasks(), r.check().attempts), (tasks + 3, 1));
+
+    assert_eq!(
+        r.kinds(),
+        [
+            Detected,
+            Confirmed,
+            CheckProposed,
+            CheckWithdrawn,
+            CheckProposed,
+            CheckFailed,
+            CheckProposed,
+            CheckFailed,
+            CheckProposed,
+            CheckWithdrawn,
+            CheckProposed,
+            CheckFailed
+        ]
+    );
+}

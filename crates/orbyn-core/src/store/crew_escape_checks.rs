@@ -10,7 +10,9 @@
 //! - **Only `accept` starts a worker**, and only after it has written `writing` and the task's id here. The other three never reach the
 //!   engines.
 //! - **The core's own steps** (`finish`, `merge`, `note`, `unwind`) record what the proof and the merge queue found. They write the
-//!   `check_failed`, `check_proven` and `check_merged` events (cause `core:<task id>`), never a confirmation of anything.
+//!   `check_failed`, `check_proven` and `check_merged` events (cause `core:<task id>:<round>`), never a confirmation of anything.
+//! - **Every event has a cause of its own attempt** (a person's own acts name their audit row, the core's name the task and the round
+//!   of proposing it is in), and an event insert that meets the same (escape, kind, cause) is `OR IGNORE`: already recorded, never a store error.
 //! - **Isolation.** Every act names a project; an escape of another project is `not found`.
 //! - **Bounds.** A person's act that would pass 20,000 events for the project is refused, as in PR 2.
 //!
@@ -164,12 +166,25 @@ fn event(
 ) -> Result<()> {
     let word = serde_json::to_value(kind)?;
     let state = state_word(escape.state);
+    // OR IGNORE: the trail is unique per (escape, kind, cause), so the same event again is "already recorded", never an error to the
+    // person. Each cause below names its own attempt, so a different attempt is never mistaken for a repeat.
     tx.execute(
-        "INSERT INTO crew_escape_events (escape_id, project_id, kind, from_state, to_state, decided_by, cause, at)
+        "INSERT OR IGNORE INTO crew_escape_events (escape_id, project_id, kind, from_state, to_state, decided_by, cause, at)
          VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
         params![escape.id, escape.project_id, word.as_str(), state, by, cause, at],
     )?;
     Ok(())
+}
+
+/// Which round of proposing the escape's check is in: how many `check_proposed` events its trail holds. The trail is append-only and
+/// every proposal, new or retried, adds one, so the number only grows, survives a withdraw and a new proposal (which replace the check
+/// row and its `attempts`) and is read inside the writing transaction. A cause that names it is its own round's.
+fn round(tx: &Transaction<'_>, escape_id: &str) -> Result<i64> {
+    Ok(tx.query_row(
+        "SELECT COUNT(*) FROM crew_escape_events WHERE escape_id = ?1 AND kind = 'check_proposed'",
+        [escape_id],
+        |row| row.get(0),
+    )?)
 }
 
 fn proof_json(proof: Option<&EscapeCheckProof>) -> Result<Option<String>> {
@@ -203,6 +218,18 @@ impl Store {
                 check_row,
             )
             .optional()
+            .map_err(unreadable)
+    }
+
+    /// The round the escape's check is in (see `round`): the brief of an accept names it, so a retry or a new proposal accepted inside
+    /// the same clock second is a task of its own, never the earlier attempt's task id again.
+    pub fn crew_escape_check_round(&self, escape_id: &str) -> Result<i64> {
+        self.reader()
+            .query_row(
+                "SELECT COUNT(*) FROM crew_escape_events WHERE escape_id = ?1 AND kind = 'check_proposed'",
+                [escape_id],
+                |row| row.get(0),
+            )
             .map_err(unreadable)
     }
 
@@ -591,7 +618,14 @@ impl Store {
                  WHERE escape_id = ?5 AND state = 'writing' AND task_id = ?6",
                 params![state, proof, note, at, escape_id, task_id],
             )?)?;
-            event(tx, &escape, kind, "core", &format!("core:{task_id}"), at)?;
+            event(
+                tx,
+                &escape,
+                kind,
+                "core",
+                &format!("core:{task_id}:{}", round(tx, escape_id)?),
+                at,
+            )?;
             Ok(true)
         })
     }
@@ -641,7 +675,7 @@ impl Store {
                 &escape,
                 EscapeEventKind::CheckMerged,
                 "core",
-                &format!("core:{task_id}"),
+                &format!("core:{task_id}:{}", round(tx, escape_id)?),
                 at,
             )?;
             Ok(true)
