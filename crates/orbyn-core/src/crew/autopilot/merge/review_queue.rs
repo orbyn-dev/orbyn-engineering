@@ -138,6 +138,8 @@ impl Core {
                     &json!({ "about": "comment", "recorded": true }),
                 );
                 drop(_one_at_a_time);
+                // Race: the locks are released here, so if a paused answer overlaps a successful start, the waiting note
+                // can land after the start cleared it. The generic note had the same exposure; the next answer fixes it.
                 let mut paused = false;
                 let admitted: crate::error::Result<_> = async {
                     let run = self.store.crew_run(task_id)?.ok_or_else(|| CoreError::NotFound("merge lead".into()))?;

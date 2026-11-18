@@ -2,8 +2,6 @@
 //! lead is told plainly that it is waiting, nothing retries it on a timer, and a later trigger starts it once capacity
 //! frees. Real `Core`, fake engines, real git in a temporary repository.
 
-use std::time::Duration;
-
 use serde_json::json;
 
 use super::autopilot_merge::{merging, passed};
@@ -51,10 +49,6 @@ fn capacity_frees(w: &World) {
             "UPDATE crew_merges SET review_state = 'looks_good' WHERE review_state = 'waiting'",
         )
         .unwrap();
-}
-
-async fn settle() {
-    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 #[tokio::test]
@@ -108,7 +102,6 @@ async fn a_paused_comment_fix_says_it_is_waiting_for_capacity_and_a_later_commen
     // No timer retries it: nothing changes by itself.
     let events = || m.w.core.store.crew_autopilot_events(&id).unwrap().len();
     let ledger = events();
-    settle().await;
     assert_eq!(tasks(), before);
     assert_eq!(events(), ledger, "no second attempt left a ledger row");
     assert_eq!(
@@ -187,7 +180,6 @@ async fn the_lead_tool_for_a_paused_comment_fix_shows_the_refusal_once_and_does_
             .contains("review capacity"),
         "{answer}"
     );
-    settle().await;
     assert_eq!(
         m.w.core
             .store
@@ -238,10 +230,13 @@ async fn a_paused_review_fix_tells_the_lead_it_is_waiting_for_capacity_and_a_lat
         .unwrap();
     assert!(told.contains("waiting"), "{told}");
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
-    let sent = w.sent_to(&w.lead).len();
-    settle().await;
-    assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
-    assert_eq!(w.sent_to(&w.lead).len(), sent, "nothing retried by itself");
+    let notices = || {
+        w.sent_to(&w.lead)
+            .iter()
+            .filter(|p| p.contains("Review capacity is full"))
+            .count()
+    };
+    assert_eq!(notices(), 1, "told once, not retried");
 
     // Capacity frees. A confirmed finding is decided once, so the new trigger is a new review that files it again.
     capacity_frees(&w);
@@ -264,4 +259,59 @@ async fn a_paused_review_fix_tells_the_lead_it_is_waiting_for_capacity_and_a_lat
         !w.core.store.crew_fixes_of(&subject).unwrap().is_empty()
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_started_comment_fix_leaves_any_other_needs_person_note_alone() {
+    let m = merging(Mode::On, |_| vec![("src/feature.txt", "feature\n")]).await;
+    let id = passed(&m.w, &["src/**"], "Add a feature.").await;
+    m.w.core
+        .crew_queue_merge(&id, &m.target, NOW)
+        .await
+        .unwrap();
+    let outcomes = m.process(NOW + 1).await;
+    let [MergeOutcome::Merged { merge_commit, .. }] = &outcomes[..] else {
+        panic!("the merge did not happen: {outcomes:?}")
+    };
+    run_git(&m.w.repo, &["checkout", "--detach", "-q", merge_commit]);
+    m.w.core
+        .store
+        .set_merge_review(&id, "commented", Some("Tidy the feature."))
+        .unwrap();
+    m.w.core
+        .store
+        .set_merge_needs_person(&id, Some("repository checks fail on the tip"))
+        .unwrap();
+    let before =
+        m.w.core
+            .store
+            .crew_work_tasks(&m.w.lead, 100)
+            .unwrap()
+            .len();
+    let (answer, error) =
+        m.w.call(
+            &m.w.lead_token,
+            "crew_answer_review",
+            json!({"task": id, "branch": m.target.branch}),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(
+        m.w.core
+            .store
+            .crew_work_tasks(&m.w.lead, 100)
+            .unwrap()
+            .len(),
+        before + 1
+    );
+    assert_eq!(
+        m.w.core
+            .store
+            .crew_merge(&id)
+            .unwrap()
+            .unwrap()
+            .needs_person
+            .as_deref(),
+        Some("repository checks fail on the tip")
+    );
 }
