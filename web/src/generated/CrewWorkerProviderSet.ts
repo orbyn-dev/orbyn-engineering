@@ -2,6 +2,6 @@
 import type { CrewWorkerProvider } from "./CrewWorkerProvider";
 
 /**
- * A person's choice for one project (`PUT /api/crew/projects/{id}/worker-provider`).
+ * A person's choice for one project (`POST /api/crew/projects/{id}/worker-provider/set`).
  */
 export type CrewWorkerProviderSet = { worker_provider: CrewWorkerProvider, };

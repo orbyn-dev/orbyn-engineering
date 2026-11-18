@@ -119,7 +119,7 @@ impl Core {
         })
     }
 
-    /// `PUT /api/crew/projects/{id}/worker-provider`: a person's choice for one project, audited. It changes where work
+    /// `POST /api/crew/projects/{id}/worker-provider/set`: a person's choice for one project, audited. It changes where work
     /// runs, so no model tool reaches it. The next start or dry run reads it; a task already routed keeps its engine.
     pub async fn crew_set_worker_provider(
         &self,

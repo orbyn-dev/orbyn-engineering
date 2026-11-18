@@ -80,7 +80,7 @@ pub struct CrewWorkerProviderView {
 
 wire! {
 #[serde(deny_unknown_fields)]
-/// A person's choice for one project (`PUT /api/crew/projects/{id}/worker-provider`).
+/// A person's choice for one project (`POST /api/crew/projects/{id}/worker-provider/set`).
 pub struct CrewWorkerProviderSet {
     pub worker_provider: CrewWorkerProvider,
 }
