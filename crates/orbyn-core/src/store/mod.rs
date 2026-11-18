@@ -28,6 +28,9 @@ mod crew_cancel;
 mod crew_capacity;
 #[cfg(test)]
 mod crew_capacity_tests;
+mod crew_escapes;
+#[cfg(test)]
+mod crew_escapes_tests;
 mod crew_flow;
 mod crew_guard;
 mod crew_merge_forge;
@@ -80,6 +83,9 @@ pub use crew_backtest::{
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
 pub use crew_capacity::{SampleBatch, SampledTask};
+pub use crew_escapes::{
+    ESCAPES_PER_PROJECT_MAX, EVENTS_PER_ESCAPE_MAX, EscapeEventRecord, EscapeRecord, EscapeTally,
+};
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};

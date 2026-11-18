@@ -14,6 +14,7 @@ mod crew_areas;
 mod crew_backtest;
 mod crew_board;
 mod crew_capacity;
+mod crew_escapes;
 mod crew_map;
 mod crew_tasks;
 mod engines;
@@ -64,6 +65,8 @@ mod crew_cancel_tests;
 mod crew_capacity_tests;
 #[cfg(test)]
 mod crew_classes_tests;
+#[cfg(test)]
+mod crew_escapes_tests;
 #[cfg(test)]
 mod crew_guard_tests;
 #[cfg(test)]

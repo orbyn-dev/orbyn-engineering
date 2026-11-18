@@ -110,6 +110,42 @@ Each write takes a `seen` token (a mismatch is `409 stale`, as areas do) and ans
 5. **Report and screens.** `/report`, `/counts`, web client, bindings, mock, the 17 frames on real data. Tests: week buckets,
    low-sample boundary, web tests per frame state. Counts into the 4j breaker or Router tie-break are **not** in this plan.
 
+## As built: PR 1, store and revert log
+
+Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later merge renumbers (rebase, bump, rerun). Read-only: no route writes.
+
+- **Tables.** `crew_escapes` as designed, less `crew_escape_checks` (PR 4). Table checks: `source`, `state`, `gap`, `gap_by`, `decided_by` are enums;
+  `reason` is at most 200 characters; a possible row has no decision and a confirmed row is decided by `person`; one row per merge.
+  `crew_escape_events` is append-only (UPDATE and DELETE refused by triggers, like `crew_area_events`), unique `(escape_id, kind, cause)`, no
+  foreign key to its escape so the trail outlives a removed merge. `model` and `lane` are NULL until PR 2 and the scan record them.
+- **The `revert` source** is written by the schema: the migration back-fills `crew_merges.review_state = 'reverted'` as **possible** (cause
+  `revert:<commit>`), and a trigger on `crew_merges` does the same, in the revert's own transaction, for every later revert. Idempotent: the merge
+  and the event are unique, so repeating a revert, or a dismissed escape, adds nothing. A merge whose lead thread is gone has no project and
+  drops out, as for 4j. A failure to log never undoes a revert (`INSERT OR IGNORE`).
+- **Routes** (Preview-gated, class **Local**, in `READS`; writes are PR 2, as Person): `GET /api/crew/escapes?project=&state=&limit=&offset=`
+  (counts for the report window by engine, possible, confirmed and dismissed apart, no rate, `low_sample`; one page of rows, newest found first),
+  `GET /api/crew/escapes/{id}` (the escape and its trail, at most 100 rows) and `GET /api/crew/escapes/thresholds`. A damaged log is `500 unreadable`.
+- **Thresholds** are one JSON document in the existing `settings` table under `crew_escape_thresholds` (not a `pref:` key, so the account sync never
+  carries it): `report_days` 60, `follow_up_days` 14, `min_merges` 10, `rate_multiple` 2; `stored` says whether a person's values are in force.
+  Absent means defaults; present but unparsable, unknown-field or out of range is `unreadable`, never the defaults.
+- **Display only.** Nothing reads the log for a decision: the breaker, the Router and every gate ignore it (decision 2). Test-covered for the breaker.
+
+### The stable read API (for the backtest's `EscapeSource`, slice 4n)
+
+On `Store` (`store/crew_escapes.rs`), over `EscapeRecord` and `EscapeEventRecord`; all read-only and all-or-nothing (`CoreError::Unreadable`):
+
+| Function | Returns |
+| --- | --- |
+| `crew_escapes_of_project(project_id, merged_since)` | every escape of a project whose merge reached the branch at or after `merged_since` (Unix s), oldest merge first, at most 5,000 |
+| `crew_escape_of_merge(task_id)` | the escape of one merge, if any |
+| `crew_escape(id)`, `crew_escape_events(id, limit)` | one escape; its trail, oldest first |
+| `crew_escape_page(project, state, limit, offset)` | one page, newest found first, and the total |
+| `crew_escape_tallies(project, merged_since)` | per engine: merges, possible, confirmed, dismissed |
+
+`EscapeRecord` carries `merge_task_id` and `merged_unix`, never a PR number or a file list (diffs are not stored): an `EscapeSource` resolves the
+PR from the merge's forge record and the files from git. **Count `state = confirmed` as an escape and keep `possible` apart** (decision 1); a rate
+needs at least `min_merges` merges (`crew::escapes::escape_thresholds`). Field and enum names are stable; new columns are additive.
+
 ## Decisions (owner)
 
 1. A revert is a possible escape at once, labelled so; confirmed only by a person. Counts are shown separately.
