@@ -19,7 +19,6 @@ import { ToolbarPopover, useThreadPullEntry, useThreadPulls } from "../pulls";
 import { GitActionDialog, useGitAvailable } from "../panels";
 import { createPullRequestPlan } from "../../product/git/plans";
 import { checksSummary, chipDot, chipLabel, forgeName, numberLabel, readyToMerge, stateWord, WATCH_TIP } from "../../product/pulls/labels";
-import "../pulls/pullsToolbar.css";
 import "./pullChip.css";
 import { agoWords } from "../../lib/format";
 

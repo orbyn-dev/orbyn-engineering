@@ -1,9 +1,11 @@
 //! Autopilot at the gate: every request of a Crew worker passes the always-denied list, the trip
 //! wires and the chain before a rule or a person is asked (see the [README](README.md)). The
 //! gate calls this through [`ActionReview`], bound by `McpService::bind_host` only when the Crew
-//! Preview flag is on. Outside a Crew task only N1, the account, is enforced.
+//! Preview flag is on. A saved lead-requested review-comment claim has a narrow
+//! Network admission branch; other requests outside a Crew task enforce N1 only.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
@@ -45,6 +47,7 @@ pub fn scope_key(scope: &ModeScope) -> String {
 #[derive(Default)]
 pub struct Autopilot {
     pub(crate) approvers: Mutex<Approvers>,
+    pub(super) engine_approvers: AtomicBool,
     /// Commands held for a person, in memory only ([`super::held`]).
     pub(crate) held: Mutex<super::HeldBook>,
     /// Guarded commands let through, waiting for their exit status ([`super::exit`]), in memory only.
@@ -103,11 +106,22 @@ impl Core {
     /// Sets who approves for the lead and who may be a second key. A second key is the first of
     /// `others` on another vendor than the lead.
     pub fn set_crew_approvers(&self, approvers: Approvers) {
+        self.crew_autopilot
+            .engine_approvers
+            .store(false, Ordering::Release);
         *self
             .crew_autopilot
             .approvers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = approvers;
+    }
+
+    /// Enables request-scoped engine resolution only in Crew Preview. No process
+    /// starts here. Unsupported drivers remain unavailable to the chain.
+    pub fn set_crew_engine_approvers(&self) {
+        self.crew_autopilot
+            .engine_approvers
+            .store(self.config.crew_preview, Ordering::Release);
     }
 
     /// The person's choice for a scope.
@@ -157,6 +171,9 @@ impl Core {
         scope: &RunScope,
         ask: &ActionAsk,
     ) -> Review {
+        if ask.detail.get("crew_review_comment").is_some() {
+            return self.review_comment_action(scope, ask).await;
+        }
         let found = self.store.crew_task_for_worker(&scope.thread_id);
         let Ok(found) = found else {
             return Review::Deny("Orbyn could not check this action.".to_owned());
@@ -207,7 +224,7 @@ impl Core {
         let ground = Ground::read(self, &worktree, run.base_commit.as_deref()).await;
         let scene = ground.scene(&key.protected_paths);
         let ctx = context(ask.kind, &ask.target, &ask.paths, &scene);
-        let action =
+        let mut action =
             json!({ "kind": wire_name(&ask.kind), "target": ask.target, "paths": ask.paths });
 
         // Trip wire: text that reads as injected instructions. A file's own content is not scanned.
@@ -315,13 +332,34 @@ impl Core {
             );
         }
         let guard_body = guard.as_ref().map(guard_body);
-        let approvers = self
-            .crew_autopilot
-            .approvers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let approvers = if self.crew_autopilot.engine_approvers.load(Ordering::Acquire)
+            && mode != Mode::Off
+            && tiered.need != Need::Nothing
+            && (tiered.need != Need::Guarded || mode == Mode::Full)
+        {
+            self.engine_approvers(task, run, &brief, mode).await
+        } else {
+            self.crew_autopilot
+                .approvers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        };
+        if let Some(lead) = &approvers.lead {
+            action["lead_engine"] = json!(lead.engine());
+            action["lead_family"] = json!(lead.family());
+        }
         let outcome = decide(mode, tiered.need, &summary, &approvers).await;
+        if !self.approval_task_live(task, run, mode) {
+            // An answer is never applied to a task that changed under it, and the refusal still leaves a ledger row.
+            let body = json!({ "action": action, "decided_by": "hard_rule", "rule": "approval_stale", "mode": mode.name() });
+            return self.autopilot_denied(
+                task,
+                &body,
+                "This task or its approval permission has changed.",
+                &needles,
+            );
+        }
         // A command the chain refused is held for a person, who may approve that one command once.
         if let Outcome::Deny { reason, .. } = &outcome {
             self.held_make_guarded(

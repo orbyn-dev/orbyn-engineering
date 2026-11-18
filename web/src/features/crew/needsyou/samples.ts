@@ -70,7 +70,7 @@ const AUTONOMY = item({
   id: "s-autonomy",
   kind: "autonomy",
   title: "web/auth moved from Full to On: 2 reverts in 14 days. Review or override.",
-  from: "Autonomy by area · circuit breaker · 9 merges in the window",
+  from: "Autopilot by area · circuit breaker · 9 merges in the window",
   cost: "Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.",
   actions: [{ key: "review", label: "Review", primary: true }, { key: "override", label: "Override…" }, { key: "dismiss", label: "Dismiss" }],
 });
@@ -111,7 +111,7 @@ export const STOP_ITEMS: NeedsItem[] = [STOP_DENIALS, STOP_INJECTED];
 
 /** needsyou-background: a background run waiting on the person, paused for its budget or needing approval. */
 export const BACKGROUND_ITEMS: NeedsItem[] = [
-  item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly", cost: "The run stopped at its budget. Raise the budget, or leave it paused.", actions: [{ key: "open", label: "Open", primary: true }] }),
+  item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly", cost: "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", actions: [{ key: "open", label: "Open", primary: true }] }),
   item({ id: "s-bg-approval", kind: "background", title: "Needs approval", from: "Background crew · Update the docs index", cost: "A command is held for your approval before the run can go on.", actions: [{ key: "open", label: "Open", primary: true }] }),
 ];
 

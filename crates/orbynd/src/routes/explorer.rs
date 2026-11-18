@@ -1,5 +1,5 @@
 //! The left explorer: a project's worktrees and a read-only look at their files. Core
-//! decides what may be shown; these handlers only route. There is no write route.
+//! decides what may be shown or changed; these handlers only route.
 
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
@@ -9,19 +9,37 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures_util::{Stream, stream};
-use orbyn_contracts::ShellEvent;
+use orbyn_contracts::{ExplorerFileAction, ShellEvent};
 use orbyn_core::CoreError;
 
-use crate::http::{ApiResult, AppState};
+use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 
+/// The file actions need the person key (`routes/classes.rs`, `docs/worker-token-isolation.md`): a process that holds only the
+/// service token cannot write the person's files, so the route needs no Preview flag.
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/explorer/events", get(events))
         .route("/api/projects/{id}/worktrees", get(worktrees))
         .route("/api/projects/{id}/worktrees/{worktree}/tree", get(tree))
         .route("/api/projects/{id}/worktrees/{worktree}/file", get(file))
+        .route(
+            "/api/projects/{id}/worktrees/{worktree}/file-actions",
+            post(file_action),
+        )
+}
+
+async fn file_action(
+    State(state): State<AppState>,
+    Path((id, worktree)): Path<(String, String)>,
+    ApiJson(action): ApiJson<ExplorerFileAction>,
+) -> ApiResult<impl IntoResponse> {
+    state
+        .core
+        .explorer_file_action(&id, &worktree, &action, LOCAL_USER)
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 type Params = Query<HashMap<String, String>>;

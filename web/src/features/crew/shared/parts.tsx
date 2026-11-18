@@ -92,9 +92,13 @@ export function Btn({
   children?: ReactNode;
   "aria-label"?: string;
   title?: string;
+  /** A live screen's own reason, in place of "Crew is not connected to this app yet". */
+  reason?: string;
 }) {
+  const { reason, ...props } = rest;
+  const why = reason ? { "aria-description": reason, title: reason } : {};
   return (
-    <button type="button" className={className} style={style} {...unavailable} {...rest}>
+    <button type="button" className={className} style={style} {...unavailable} {...why} {...props}>
       {children}
     </button>
   );

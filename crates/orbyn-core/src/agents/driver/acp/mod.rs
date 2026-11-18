@@ -288,7 +288,7 @@ async fn run_protocol(
             message = inbound.recv() => {
                 match message {
                     Some(Inbound::Notification { method, params }) => {
-                        if method == "session/update" {
+                        if method == "session/update" && about_session(&params, &session) {
                             for event in mapper.on_update(params.get("update").unwrap_or(&Value::Null)) {
                                 if events.send(event).await.is_err() {
                                     return;
@@ -314,6 +314,7 @@ async fn run_protocol(
                 while let Ok(message) = inbound.try_recv() {
                     if let Inbound::Notification { method, params } = message
                         && method == "session/update"
+                        && about_session(&params, &session)
                     {
                         for event in mapper.on_update(params.get("update").unwrap_or(&Value::Null)) {
                             let _ = events.send(event).await;
@@ -336,6 +337,16 @@ async fn run_protocol(
         outcome
     };
     let _ = events.send(EngineEvent::Finished(outcome)).await;
+}
+
+/// An update belongs to this run unless it names another session. An agent may
+/// speak for a session it keeps besides ours; that must not reach this run's log.
+/// An update with no `sessionId` is taken as ours.
+fn about_session(params: &Value, session: &str) -> bool {
+    params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .is_none_or(|id| id == session)
 }
 
 async fn open_session(

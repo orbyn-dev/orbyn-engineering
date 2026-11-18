@@ -1,9 +1,13 @@
 import { useMemo, useState } from "react";
 import { navigate } from "../../../product/state/route";
 import { ErrorState, Loading } from "../../../product/ui/states";
+import { Button } from "../../../ui/controls";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { HELD } from "../autopilot/approvals/copy";
 import { UNAVAILABLE_REASON } from "../autopilot/review/Parts";
+import { runWrite, useWrites } from "../writes/store";
+import { ConfirmWrite, WriteStatus, type Ask } from "../writes/TaskWrite";
+import { useConnection } from "../../../product/state/connection";
 import { viewOf, only } from "./assemble";
 import type { NeedsAction, NeedsItem, NeedsKind } from "./model";
 import { kindChips, NeedsBar, NeedsEmpty, NeedsList, CHIP_NOTE, useNarrow, type NeedsActions } from "./NeedsYou";
@@ -23,21 +27,34 @@ function Inbox() {
   const state = useNeedsYou();
   const [filter, setFilter] = useState<NeedsKind | "all">("all");
   const [ref, narrow] = useNarrow();
+  const [asking, setAsking] = useState<{ id: string; name: string; kind: Ask } | null>(null);
+  const ops = useWrites((writes) => writes.ops);
+  const remote = useConnection((connection) => connection.remote);
   const ready = state.status === "ready" ? state : null;
   const items = useMemo(() => ready?.items ?? [], [ready]);
   const view = useMemo(() => viewOf(items), [items]);
   const shown = only(items, view.filters.some((one) => one.kind === filter) ? filter : "all");
 
   if (state.status === "loading") return <Loading label="Reading what needs you" rows={4} />;
-  if (state.status === "error") return <ErrorState title="Can't read what needs you" failure={state.failure} onRetry={state.retry} />;
+  if (state.status === "error") return <ErrorState title="Can’t read what needs you" failure={state.failure} onRetry={state.retry} />;
 
   const handlers: NeedsActions = {
     act(item: NeedsItem, action: NeedsAction) {
-      if (action.key === "dismiss") state.dismiss(item.id);
+      if (item.kind === "could_not_start") setAsking({ id: item.ref, name: item.from, kind: action.key === "retry" ? "retry" : "dismiss" });
+      else if (action.key === "dismiss") state.dismiss(item.id);
+      else if (action.key === "sign-in") navigate({ name: "settings", section: "providers" });
       else if (action.key === "deny") state.hold(item.ref)?.deny();
       else if (action.key === "approve" || action.key === "open") navigate({ name: "crew", tab: item.kind === "background" ? "background" : "approvals" });
     },
     off(item, action) {
+      if (item.kind === "could_not_start") {
+        const op = ops[item.ref];
+        if (remote) return "Not available from another computer";
+        if (op?.phase === "busy") return "Waiting for the answer";
+        // The service said no other engine can take it: Retry stays off and says why; Dismiss still works.
+        if (action.key === "retry" && op?.kind === "retry" && op.phase === "failed" && op.code === "task_busy") return op.message;
+        return null;
+      }
       // A break on main has no screen in this app yet to open.
       if (action.key !== "deny") return item.kind === "main" ? UNAVAILABLE_REASON : null;
       const control = state.hold(item.ref);
@@ -55,14 +72,29 @@ function Inbox() {
   return (
     <section ref={ref} className="ny-root" aria-label="Needs you">
       {items.length === 0 && state.partial.length === 0 ? (
-        <NeedsEmpty title="Nothing needs you">When something needs you, it appears here.</NeedsEmpty>
+        <NeedsEmpty title="Nothing needs you" action={<Button small onClick={() => navigate({ name: "crew", tab: "flow" })}>Open the Flow view</Button>}>
+          When something needs you, it appears here.
+        </NeedsEmpty>
       ) : (
         <>
           <NeedsBar<NeedsKind | "all"> chips={kindChips(view, items.length)} active={view.filters.some((one) => one.kind === filter) ? filter : "all"} onPick={setFilter} rule={CHIP_NOTE} />
           <NeedsList items={shown} narrow={narrow} handlers={handlers} errors={state.partial} onRetry={state.retry} />
+          {items.filter((item) => item.kind === "could_not_start").map((item) => <WriteStatus key={item.id} id={item.ref} op={ops[item.ref]} />)}
           {errors.map((one) => <p key={one.id} className="ny-note" role="alert">{one.message}</p>)}
+          {state.noticeFailure ? <p className="ny-note" role="alert">{state.noticeFailure.message}</p> : null}
         </>
       )}
+      {asking ? (
+        <ConfirmWrite
+          kind={asking.kind}
+          name={asking.name}
+          onClose={() => setAsking(null)}
+          onConfirm={(reason) => {
+            setAsking(null);
+            void runWrite(asking.kind === "retry" ? "retry" : "cancel", asking.id, reason, state.retry);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

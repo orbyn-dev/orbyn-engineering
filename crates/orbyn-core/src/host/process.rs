@@ -1,6 +1,8 @@
 //! Child processes as owned resources. Each engine runs in its own process tree
 //! and the tree dies with its owner on every exit path. Unix uses a process
-//! group; Windows uses a job object with `taskkill /T` as the fallback.
+//! group plus a walk of the descendants, which also reaches a child that left the
+//! group with `setsid`; Windows uses a job object, which holds every descendant
+//! (no breakaway is allowed), with `taskkill /T` as the fallback.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -10,6 +12,11 @@ use tokio::process::{Child, Command};
 
 use crate::error::{CoreError, Result};
 
+#[cfg(all(test, unix))]
+#[path = "process/unix_tests.rs"]
+mod unix_tests;
+#[cfg(unix)]
+mod unix_tree;
 #[cfg(all(test, windows))]
 #[path = "process/windows_tests.rs"]
 mod windows_tests;
@@ -252,11 +259,26 @@ impl ManagedChild {
     /// Asks the tree to stop. Windows has no such signal, so callers use the
     /// engine's own protocol first and this is a forced stop there.
     pub fn terminate(&self) {
-        self.tree.terminate();
+        self.tree.terminate_owned(self.child.id().is_some());
     }
 
     pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
         self.child.wait().await
+    }
+
+    /// [`Self::wait`], and every `every` while it runs the descendants are recorded, so one that outlives a leader which exits
+    /// (a `setsid` child left running) is still reaped when this owner is dropped. A leader that exits between two records, or before
+    /// the first, leaves its descendants out of reach.
+    pub async fn wait_tracking(
+        &mut self,
+        every: std::time::Duration,
+    ) -> std::io::Result<std::process::ExitStatus> {
+        loop {
+            tokio::select! {
+                status = self.child.wait() => return status,
+                () = tokio::time::sleep(every) => self.tree.track_owned(self.child.id().is_some()),
+            }
+        }
     }
 
     /// Captures a helper's output without surrendering its process-tree owner.
@@ -281,7 +303,7 @@ impl ManagedChild {
             let status = self.child.wait().await?;
             // A descendant may retain an output pipe after the leader exits. End
             // the owned tree now so collecting that pipe cannot wait on it forever.
-            self.tree.kill();
+            self.tree.kill_owned(self.child.id().is_some());
             Ok::<_, std::io::Error>(status)
         };
         let (status, stdout, stderr) = tokio::try_join!(wait, read(stdout), read(stderr))?;
@@ -295,13 +317,18 @@ impl ManagedChild {
 
 impl Drop for ManagedChild {
     fn drop(&mut self) {
-        self.tree.kill();
+        // `id()` is `None` once the leader was waited for: its pid may be reused, so then nothing is walked.
+        self.tree.kill_owned(self.child.id().is_some());
     }
 }
 
+/// One process group. [`ProcessTree::terminate`] and [`ProcessTree::kill`] signal that group only, which is what a person's terminal
+/// tab needs (a `nohup make &` or a disowned job outlives the tab, as it always did). A [`ManagedChild`] also reaps descendants that
+/// left the group (`unix_tree`), through the owned variants below.
 #[cfg(unix)]
 pub struct ProcessTree {
     leader: i32,
+    seen: std::sync::Mutex<std::collections::HashSet<unix_tree::Member>>,
 }
 
 #[cfg(unix)]
@@ -312,15 +339,50 @@ impl ProcessTree {
 
     /// `leader` must lead its own process group.
     pub fn from_group(leader: i32) -> Self {
-        Self { leader }
+        Self {
+            leader,
+            seen: std::sync::Mutex::new(std::collections::HashSet::new()),
+        }
     }
 
+    /// SIGTERM to the group only.
     pub fn terminate(&self) {
         self.signal(libc::SIGTERM);
     }
 
+    /// SIGKILL to the group only.
     pub fn kill(&self) {
         self.signal(libc::SIGKILL);
+    }
+
+    /// SIGTERM to the group and to the descendants found now, which are recorded so a later [`Self::kill_owned`] still finishes them
+    /// after the leader is gone. `leader_unreaped` is whether the leader has not been waited for: only then is the pid certainly its own.
+    fn terminate_owned(&self, leader_unreaped: bool) {
+        if self.leader <= 1 {
+            return;
+        }
+        if leader_unreaped {
+            let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+            unix_tree::terminate(self.leader, &mut seen);
+        }
+        self.signal(libc::SIGTERM);
+    }
+
+    /// Records the descendants found now (no signal), for a kill that comes after the leader has exited.
+    fn track_owned(&self, leader_unreaped: bool) {
+        if leader_unreaped && self.leader > 1 {
+            let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+            unix_tree::track(self.leader, &mut seen);
+        }
+    }
+
+    /// Kills the group, and every descendant ever recorded or found now (while the leader is unreaped), `setsid` children included.
+    fn kill_owned(&self, leader_unreaped: bool) {
+        if self.leader <= 1 {
+            return;
+        }
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        unix_tree::kill(self.leader, leader_unreaped, &mut seen);
     }
 
     fn signal(&self, signal: i32) {
@@ -350,6 +412,16 @@ impl ProcessTree {
 
     pub fn from_pid(pid: u32) -> Self {
         Self { pid, job: None }
+    }
+
+    fn terminate_owned(&self, _leader_unreaped: bool) {
+        self.terminate();
+    }
+
+    fn track_owned(&self, _leader_unreaped: bool) {}
+
+    fn kill_owned(&self, _leader_unreaped: bool) {
+        self.kill();
     }
 
     pub fn terminate(&self) {

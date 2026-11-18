@@ -12,7 +12,7 @@ import {
 } from "./codes";
 
 describe("typed codes", () => {
-  it("the alphabet has 30 symbols and never I, L, O, U, 0 or 1", () => {
+  it("the emailed code alphabet has 30 symbols and never I, L, O, U, 0 or 1", () => {
     expect(CODE_ALPHABET).toHaveLength(30);
     for (const bad of "ILOU01") expect(CODE_ALPHABET).not.toContain(bad);
   });

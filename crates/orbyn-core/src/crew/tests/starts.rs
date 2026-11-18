@@ -12,6 +12,17 @@ async fn quiet() -> World {
     world(true, Arc::new(|_, _| Turn::Hang)).await
 }
 
+#[tokio::test]
+async fn an_ordinary_task_cannot_install_a_core_fix_byte_check() {
+    let w = quiet().await;
+    let mut forged = key();
+    forged["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-fix-touched", "kind": "repo_required", "proves": "p",
+        "params": { "name": "crew-fix-touched", "note": "a".repeat(64) },
+    }));
+    refused(&w, brief(json!({})), forged).await;
+}
+
 fn count(w: &World, table: &str) -> i64 {
     w.core
         .store

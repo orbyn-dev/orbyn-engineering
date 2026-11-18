@@ -2,10 +2,11 @@ import { act, render, renderHook, screen, waitFor, within } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
-import { MOCK_CREW } from "../../../../mock/flow";
+import { MOCK_CREW, MOCK_CREW_TWO } from "../../../../mock/flow";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { BoardView } from "./BoardView";
+import { useBoardFocus } from "./focus";
 import { useBoard } from "./useBoard";
 
 let mock: MockApi;
@@ -76,6 +77,20 @@ describe("the Taskboard on the board route", () => {
     expect(within(column(/^Passed/)).getByText("GPT-5.5")).toBeVisible();
     await user.click(within(column(/^Passed/)).getByRole("button", { name: /Passed/ }));
     expect(within(column(/^Passed/)).queryByText("Fix the typo in the README")).toBeNull();
+  });
+
+  it("draws a task refused at its start as Could not start, not as one that waits for a decision", async () => {
+    await open("crew-could-not-start");
+    const needs = within(column(/^Needs you/));
+    const refused = needs.getByText("Rename returnTo to next in the session code").closest("li")!;
+    expect(refused).not.toHaveAttribute("data-needs");
+    expect(refused).toHaveTextContent("Could not start · Crew workers on Codex are not available yet.");
+    expect(refused.querySelector(".bd-amber")).toBeNull();
+    // The task that really waits keeps its amber reason.
+    const waiting = needs.getByText("Which target wins when both next and returnTo are set?").closest("li")!;
+    expect(waiting).toHaveAttribute("data-needs");
+    expect(waiting.querySelector(".bd-amber")).toHaveTextContent("a person decides");
+    expect(waiting).not.toHaveTextContent("Could not start");
   });
 
   it("shows a needs_person card's reason read-only, as plain text, with no Answer button", async () => {
@@ -203,5 +218,37 @@ describe("useBoard, the next page of a column", () => {
     });
     await waitFor(() => expect(result.current.cardsOf("running")).toHaveLength(12));
     expect(calls("column=running")).toHaveLength(1);
+  });
+});
+
+describe("a card asked for by a map node", () => {
+  beforeEach(() => useBoardFocus.getState().clear());
+
+  it("is dropped when the Board unmounts before it was shown, so a later visit does not re-apply it", async () => {
+    mock.reset("crew");
+    useBoardFocus.getState().ask(MOCK_CREW, "b-running");
+    render(<BoardView />).unmount();
+    await waitFor(() => expect(useBoardFocus.getState().task).toBeNull());
+    render(<BoardView />);
+    await screen.findByRole("region", { name: /^Queued/ });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.activeElement?.hasAttribute("data-task")).toBe(false);
+  });
+
+  it("is dropped when another crew is chosen, and does not come back on return", async () => {
+    const user = await open("crew");
+    // Asked for the other crew while this one is shown: choosing that crew is a fresh visit, not the old request.
+    act(() => void useBoardFocus.getState().ask(MOCK_CREW_TWO, "b-running"));
+    await user.selectOptions(screen.getByLabelText("Crew"), MOCK_CREW_TWO);
+    expect(useBoardFocus.getState().task).toBeNull();
+    // That crew's board (it holds no task) must not say a card was missing: nothing asked for one.
+    await screen.findByText("No tasks yet");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(/isn’t on the current page/)).toBeNull();
+    await user.selectOptions(screen.getByLabelText("Crew"), MOCK_CREW);
+    await screen.findByRole("region", { name: /^Queued/ });
+    expect(screen.queryByText(/isn’t on the current page/)).toBeNull();
+    expect(document.activeElement?.hasAttribute("data-task")).toBe(false);
+    expect(useBoardFocus.getState().task).toBeNull();
   });
 });

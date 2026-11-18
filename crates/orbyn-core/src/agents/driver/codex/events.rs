@@ -25,6 +25,7 @@ pub(super) struct Step {
 
 /// Maps turn notifications to events. It tolerates a `completed` without a
 /// `started`, and ignores other threads: Codex sub-agents share this stdio.
+/// The run ends only on `turn/completed` for its own turn id.
 pub(super) struct TurnMapper {
     session: String,
     pub(super) open: HashMap<String, ItemKind>,
@@ -33,6 +34,8 @@ pub(super) struct TurnMapper {
     last_error: Option<String>,
     /// When the window that has run out resets, from the last limits update.
     limit_reset: Option<i64>,
+    /// The turn started for the person's prompt, once known.
+    turn: Option<String>,
 }
 
 impl TurnMapper {
@@ -44,7 +47,13 @@ impl TurnMapper {
             file_paths: HashMap::new(),
             last_error: None,
             limit_reset: None,
+            turn: None,
         }
+    }
+
+    /// Records the turn started for the person's prompt.
+    pub(super) fn set_turn(&mut self, id: &str) {
+        self.turn = Some(id.to_owned());
     }
 
     pub(super) fn on_notification(&mut self, method: &str, params: &Value) -> Step {
@@ -191,6 +200,21 @@ impl TurnMapper {
             }
             "turn/completed" => {
                 let turn = params.get("turn").cloned().unwrap_or(Value::Null);
+                // Only the turn started for the person's prompt ends the run. A
+                // previous or engine-started turn on this thread is not ours, so
+                // a frame with a different id is ignored. A frame with no id
+                // cannot be told apart and counts as ours, so a protocol that
+                // omits it never hangs the run.
+                let theirs = turn
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .or_else(|| params.get("turnId").and_then(Value::as_str));
+                if let (Some(ours), Some(theirs)) = (self.turn.as_deref(), theirs)
+                    && theirs != ours
+                {
+                    tracing::debug!(theirs, "ignored a completed turn that is not this run's");
+                    return step;
+                }
                 step.outcome = Some(match turn.get("status").and_then(Value::as_str) {
                     Some("completed") => EngineOutcome::Completed,
                     Some("interrupted") => EngineOutcome::Cancelled,

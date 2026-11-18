@@ -1,12 +1,14 @@
 // The three reads Flow has: the crews that have work, a crew's tasks with the ten cells of each, and one task zoomed.
-// Reads only: no write path is added here (Cancel and Re-run checks are a later PR). Every Crew route answers 404 while
-// Crew Preview is off.
-import { request } from "../../../../api/client";
+// Review consent is an explicit local-person write; every Crew route is hidden with Preview off.
+import { ApiFailure, request } from "../../../../api/client";
 import type { FlowCrewList } from "../../../../generated/FlowCrewList";
 import type { FlowCrewRow } from "../../../../generated/FlowCrewRow";
 import type { FlowFilter } from "../../../../generated/FlowFilter";
 import type { FlowTaskDetail } from "../../../../generated/FlowTaskDetail";
 import type { FlowTaskList } from "../../../../generated/FlowTaskList";
+import type { CrewReviewConsentInput } from "../../../../generated/CrewReviewConsentInput";
+import type { CrewReviewConsentAnswer } from "../../../../generated/CrewReviewConsentAnswer";
+import { validTaskId } from "../../writes/api";
 
 /** The route's own cap on one page. */
 export const CREW_PAGE = 200;
@@ -35,6 +37,10 @@ export function tasksPath(query: TaskQuery): string {
 }
 
 export const flowApi = {
+  consent: (task: string, input: CrewReviewConsentInput): Promise<CrewReviewConsentAnswer> => {
+    if (!validTaskId(task)) throw new ApiFailure("invalid", "That task’s id is not valid.", 0);
+    return request<CrewReviewConsentAnswer>("POST", `/api/crew/review/${encodeURIComponent(task)}/consent`, input);
+  },
   /** The crews that have work, newest first, following `next_offset` for a few pages. */
   async crews(signal?: AbortSignal): Promise<FlowCrewRow[]> {
     const all: FlowCrewRow[] = [];

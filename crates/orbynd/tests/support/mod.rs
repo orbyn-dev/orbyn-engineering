@@ -48,6 +48,8 @@ pub struct Service {
     pub url: String,
     pub token: String,
     pub access_key: Option<String>,
+    /// The person key from the ready line, which only a service started with `--parent-stdin` prints.
+    pub person_key: Option<String>,
     pub client: reqwest::Client,
     pub child: Child,
     /// Everything after the ready line, for tests of the shell channel.
@@ -68,10 +70,22 @@ impl Service {
             .env("ORBYN_CLAUDE_BIN", FAKE)
             .env("ORBYN_CODEX_BIN", FAKE)
             .env("ORBYN_OFFLINE", "1")
+            // Person routes need the desktop shell's key. Most tests have no shell, so the development
+            // override (debug builds only) is on; a test of the key itself sets it to "0".
+            .env("ORBYN_DEV_DISABLE_PERSON_KEY", "1")
             .current_dir(data.parent().unwrap_or(data))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // The runner's own Claude session or task-tool switches must not decide a test: a
+        // test that needs one asks for it through `options.env`.
+        for name in [
+            "CLAUDECODE",
+            "ORBYN_CLAUDE_TASK_TOOLS",
+            "CLAUDE_CODE_ENABLE_TODO_TOOLS",
+        ] {
+            command.env_remove(name);
+        }
         for (key, value) in &options.env {
             command.env(key, value);
         }
@@ -91,6 +105,7 @@ impl Service {
             url: start["url"].as_str().unwrap().to_owned(),
             token: start["token"].as_str().unwrap().to_owned(),
             access_key: start["access_key"].as_str().map(str::to_owned),
+            person_key: start["person_key"].as_str().map(str::to_owned),
             client: reqwest::Client::new(),
             child,
             stdout,
@@ -133,7 +148,12 @@ impl Service {
     }
 
     pub async fn send(&self, path: &str, body: Value) -> (u16, Value) {
-        let response = self.post(path).json(&body).send().await.unwrap();
+        // The test acts as the person: with a desktop shell it also presents the shell's key.
+        let mut request = self.post(path).json(&body);
+        if let Some(key) = &self.person_key {
+            request = request.header("x-orbyn-person", key);
+        }
+        let response = request.send().await.unwrap();
         let status = response.status().as_u16();
         let text = response.text().await.unwrap();
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))

@@ -4,7 +4,7 @@ import type { FlowTaskRow } from "../../../../generated/FlowTaskRow";
 import { tasksPath } from "./api";
 import { cellOf, cellView, countOf, decidedBy, laneWord, roundView, shown, stageWord, STAGES, when } from "./model";
 
-const row = (over: Partial<FlowTaskRow>): FlowTaskRow => ({ id: "t", name: "n", kind: "implement", owner: "Lead", state: "running", round: 1, cells: [], created_at: "", updated_at: "", ...over });
+const row = (over: Partial<FlowTaskRow>): FlowTaskRow => ({ id: "t", name: "n", kind: "implement", owner: "Lead", state: "running", could_not_start: false, round: 1, cells: [], created_at: "", updated_at: "", ...over });
 
 describe("the cells of a task's line", () => {
   it("writes checks as passed over run and lanes as a count, and names the state for a screen reader", () => {
@@ -36,6 +36,11 @@ describe("the Round column", () => {
     expect(roundView(row({ state: "failed", round: 3 }))).toEqual({ tone: "fail", text: "Round 3" });
     expect(roundView(row({ state: "stopped" })).tone).toBe("fail");
     expect(roundView(row({ state: "passed" })).tone).toBe("plain");
+  });
+
+  it("says Could not start for a task refused at its start, and keeps the amber for one that waits on a decision", () => {
+    expect(roundView(row({ state: "needs_person", could_not_start: true }))).toEqual({ tone: "fail", text: "Could not start" });
+    expect(roundView(row({ state: "needs_person", round: 2 }))).toEqual({ tone: "need", text: "Round 2" });
   });
 });
 

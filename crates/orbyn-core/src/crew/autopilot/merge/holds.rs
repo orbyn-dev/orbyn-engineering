@@ -6,7 +6,7 @@ use serde_json::json;
 use super::gitops;
 use super::guard::{owed_lanes, sensitive};
 use super::queue::MergeTarget;
-use super::risk::{RECENT_MERGES, Rate, RecentTotals, Risk, WINDOW_DAYS};
+use super::risk::{RECENT_MERGES, Rate, RecentTotals, WINDOW_DAYS};
 use crate::app::Core;
 use crate::crew::lifecycle::is_final;
 use crate::error::{CoreError, Result};
@@ -79,7 +79,11 @@ impl Core {
             .crew_answer_key(task_id)?
             .map(|k| k.protected_paths)
             .unwrap_or_default();
-        let tip = gitops::rev(&target.repo, &target.branch).await?;
+        let base = self
+            .store
+            .crew_forge_merge(task_id)?
+            .map_or_else(|| target.branch.clone(), |intent| intent.base);
+        let tip = gitops::rev(&target.repo, &base).await?;
         // The repository's checks and its files come from the branch's tip, a commit the crew did not write.
         let checks = self.merge_checks(task_id, &target.repo, &tip).await.ok();
         let mut held = sensitive(paths, &protected, checks.as_deref().unwrap_or(&[]));
@@ -96,6 +100,11 @@ impl Core {
         target: &MergeTarget,
     ) -> Result<Option<String>> {
         let task_id = entry.task_id.as_str();
+        // A task written for an escape check merges only while that check is proven for it (the shared, fail-closed guard).
+        if let Err(error) = self.refuse_unproven_escape_check(task_id, Some(&entry.candidate)) {
+            return Ok(Some(error.public_message()));
+        }
+        let risk = self.refresh_merge_review_risk(entry)?;
         let task = self
             .store
             .crew_task(task_id)?
@@ -126,14 +135,21 @@ impl Core {
         if entry.released {
             return Ok(None);
         }
-        let owed = target
-            .owed
-            .clone()
-            .unwrap_or_else(|| owed_lanes(Risk::parse(&entry.risk).unwrap_or(Risk::High)));
-        let ran = |lane: &str| lane_ran(&status, lane);
-        Ok(owed.iter().find(|lane| !ran(lane)).map(|lane| {
-            format!("the {lane} review has not run: the merge queue waits for a lane named {lane}")
-        }))
+        let owed = target.owed.clone().unwrap_or_else(|| owed_lanes(risk));
+        for lane in &owed {
+            if self.review_lane_removed(task_id, lane)? {
+                continue;
+            }
+            let gate = self
+                .review_lane_gate(task_id, lane, &entry.candidate)
+                .map_err(|e| CoreError::Invalid(e.message))?;
+            if gate.is_none_or(|g| g.decision != orbyn_contracts::GateDecision::Pass) {
+                return Ok(Some(format!(
+                    "the {lane} review has no passing current-candidate lane Gate"
+                )));
+            }
+        }
+        Ok(None)
     }
 
     /// The reason a queued entry must wait for a person now: the mode as it is now (the person may have turned Autopilot off since),
@@ -147,7 +163,7 @@ impl Core {
         if entry.released {
             return Ok(None);
         }
-        let risk = Risk::parse(&entry.risk).unwrap_or(Risk::High);
+        let risk = self.refresh_merge_review_risk(entry)?;
         // Read again at the merge: the mode, and the areas the diff touches, as they are now.
         let effect = self.merge_effect(&entry.task_id, &entry.areas, now)?;
         if let Some(why) = effect.wait_note(risk) {

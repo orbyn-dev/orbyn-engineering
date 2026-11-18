@@ -387,6 +387,8 @@ run on an engine that does not offer it runs Supervised, never the nearest loose
 and the composer shows and offers the same. Every run launches its own engine process
 with the mode stated, so a mode change takes effect from the next turn's process.
 
+How a run ends, for every engine, is in [engine-run-contract.md](engine-run-contract.md).
+
 Parsers are tested against recorded real frames in `driver/fixtures`, named by version.
 `cargo test -p orbyn-core live_ -- --ignored` reads each installed CLI's real catalog,
 with no prompt.
@@ -1548,9 +1550,10 @@ the API or the network.
 ### Explorer
 
 The left explorer reads a project's worktrees and their files without a thread. It is a
-person's read-only view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
-and `.../worktrees/:worktree/file`, with no write, rename, delete or editor route; edits
-still go through a thread's file routes. `orbynd` only routes; Core
+person's view: `GET /api/projects/:id/worktrees`, `.../worktrees/:worktree/tree`
+and `.../worktrees/:worktree/file`. `POST .../worktrees/:worktree/file-actions` applies
+a person's create, move (including rename), or delete request without a thread.
+`orbynd` only routes; Core
 (`project::explorer`) decides. The project must be trusted like any file route
 (`403 folder_untrusted`).
 
@@ -1616,7 +1619,55 @@ still go through a thread's file routes. `orbynd` only routes; Core
   or Git calls it prunable; its tree is `404`), `locked` (`git worktree lock`) or `other_session`
   (the asking thread, `?thread=`, differs from a thread that has a run going in it). Each
   worktree lists its live threads by id and title.
-- **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
+- **File actions** take a tagged `ExplorerFileAction`: `create_file` creates an empty
+  file, `create_directory` creates one folder, `move` names a source `path` and a
+  `destination`, and `delete` removes a file or an empty folder. Success is `204`.
+  There is no overwrite, recursive delete, parent creation, cross-worktree move or
+  arbitrary absolute path. Existing destinations and nonempty deletion are `400`.
+  The root, links, reparse points and special files are refused. Moving a folder
+  inspects at most 20,000 entries and refuses links or protected entries anywhere
+  below it; larger trees are refused. Application data and the library's `repo/`
+  remain excluded even when absent, and their ancestors cannot be moved.
+  These deny checks fold case on Windows and macOS; worktree containment stays
+  strict after canonicalization.
+- **Write authority is fresh.** Every action reads membership directly, without the
+  read cache, and refuses missing, prunable, nonmember or locked targets. Any active
+  run whose folder overlaps the target refuses the action (`403 policy_denied`); no
+  thread id exempts a run. Core serializes actions, holds the workspace admission
+  fence across the run check and effect, and rechecks project trust there. An audit
+  attempt precedes effects, and the outcome records allow or deny. No file contents
+  or arbitrary request paths enter those audit rows. Reads retain their existing
+  thread-relative read-only display policy.
+- **Person only.** The route is protected like every token route, and its handler is the
+  only caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a
+  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. A process that read the
+  per-launch service token from the data folder (an engine or crew worker running as the person)
+  must not reach it either, so the route needs the per-launch person key (`x-orbyn-person`) that
+  only the desktop shell holds (`docs/worker-token-isolation.md`): a token-only caller gets
+  `403 person_required`, and a service with no shell (browser mode) answers
+  `403 desktop_required`. There is no Preview flag on this route and Core has no flag check; the key
+  is the gate.
+- **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
+  really is before any check, for reads and writes alike, so a project registered under another
+  spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside
+  the real folder. The active-run fence compares both spellings.
+- **What counts as active.** A thread with a run going, or whose engine console is open (the console
+  runs an agent without a run record), blocks writes in any worktree that overlaps its folder. A
+  person's own terminal does not.
+- **File-system limits.** Moves use an exclusive rename (`RENAME_EXCL` on macOS, `RENAME_NOREPLACE`
+  on Linux, `MoveFileExW` without replace on Windows). A file system that cannot do that (an old
+  kernel, some network or FUSE mounts) answers `400` "cannot move files safely"; nothing falls back
+  to a rename that could overwrite. Where names fold case (macOS default, Windows), a rename that
+  changes only the case of a name either renames the entry or, on a volume whose exclusive rename
+  sees the same entry, is refused as an existing destination; the file is never lost or duplicated.
+- **Mutation handles** identify every existing parent without following a final link,
+  fail closed when handle identity is unavailable, and check parents again before
+  effects. Unix operations are relative to the held parent; Windows holds ancestors
+  without delete sharing. Moves use the platform's exclusive rename, never a
+  check-then-overwrite fallback. Concurrent external filesystem changes are not a
+  transaction: parent checks narrow the Unix ancestor-move window, and folder
+  inspection cannot freeze descendants against another process changing them.
+- **A file action drops what is kept** and announces `explorer:<project>`; a run that ends drops
   the project's and announces `explorer:<project>`.
 - **External edits push changes.** A focused Files view holds one
   `GET /api/explorer/events?worktrees=<JSON pairs of project and worktree ids>` stream,
@@ -1804,9 +1855,10 @@ Delivery to clients is a projection of the log; a client that reconnects loses
 nothing.
 
 A plan has two forms. Steps are a `plan` activity, from Codex's `turn/plan/updated` and
-Claude's `TodoWrite`. A proposed plan is an assistant message holding
-`<proposed_plan>...</proposed_plan>`, from Codex's finished `plan` item and Claude's
-`ExitPlanMode`, so it also reaches a handoff and search. A subagent's stay out.
+Claude's `TodoWrite`, `TaskCreate`, `TaskUpdate` and `TaskList`. A proposed plan is an
+assistant message holding `<proposed_plan>...</proposed_plan>`, from Codex's finished
+`plan` item and Claude's `ExitPlanMode`, so it also reaches a handoff and search. A
+subagent's stay out.
 
 Activity types are `approval` (content is the `Approval`), `plan`
 (`{steps: [{title, status}]}`), `diff` (`{files: [{path, additions, deletions}]}`)
@@ -2276,9 +2328,18 @@ refused, so pages cannot start arbitrary registered programs.
 
 `orbyn://` links come from outside the app, so they only move a window, and only to a
 place spelled as a route: `thread/<id>`, `new[/<project>]`, `settings[/<section>]`,
-`usage`, `pulls`, or nothing for home. The service turns one into a route and drops
+`usage`, `pulls`, `crew/task/<encoded-task-id>`, or nothing for home. The service turns one into a route and drops
 anything else, and a link that started the app waits in the shell until the service
 runs. A second launch hands its links to the first and exits.
+
+The Crew task locator maps to `#/crew/flow/task/<encoded-task-id>` and only reads the existing Flow task.
+Its ID has the Flow API's grammar: 1–96 ASCII letters, digits, underscore, hyphen, dot or colon, never starting with a dot.
+The locator decodes one segment once and refuses separators, double encoding, query/fragment parameters and extra components.
+Preview off makes no task read; a missing or non-work task uses Flow's existing missing state. The task need not occur in the
+bounded crew list or current task page. Async reads remain scoped to the requested task; the stored task detail supplies its crew.
+Navigation grants no action. This is a copyable installation-local locator for a device holding the task, not a hosted report;
+forge renderers' support for clicking the custom scheme and native macOS/Windows delivery have not been qualified here.
+Generic Markdown safe links and external-open policies retain their own scheme rules.
 
 On macOS the bundle also declares `http` and `https`, and HTML pages at Alternate rank
 (`desktop/src-tauri/Info.plist`), so a person can pick the app as their default browser in
@@ -2410,6 +2471,18 @@ After a run ends, member tools refuse (H7), but the core can verify again and ad
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
 
+Crew's Git scope and size checks retain Git's ignore rules and disable the untracked cache.
+Unchanged ignored caches do not require broader scope or data removal; ignored new files
+remain an accepted blind spot, pending isolated-checkout work (#436).
+Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
+checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
+other Git reads keep their settings.
+Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
+which Git still reads independently of the tree attribute source; absent/empty readable files are accepted.
+A fix's touched-file guard compares the file's exact byte digest with the digest the core
+recorded in its immutable key. Only a stored fix task can run that internal check; it writes
+normal Evidence and cannot clear a finding by itself. Missing or unreadable files decide nothing.
+
 `crew_review` (the lead only) runs finished work through any number of reviewer lanes, also after the task has passed and
 without reopening it. Each lane is a task of its own through the same start path as `crew_start`: a read-only reviewer, routed by
 role `review` and its lane at the lead tier to another vendor than the builder where one is configured, told the work's purpose
@@ -2420,6 +2493,64 @@ A confirmed finding sends the core's own fix brief to a builder, checked like `c
 finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
 ([review group](../crates/orbyn-core/src/crew/review/README.md)).
 
+Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
+subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch
+rechecks the head and atomically consumes the consent under the start lock. A new head or round needs another
+answer; a finished or cancelled run never reopens. A finding-check run always needs another vendor. The exception
+is Security under Full when no other vendor is signed in: a separate lead-tier run, persistent "Same engine as author"
+badge and High risk. The owner reaffirmed the High-risk rule on 16 November 2026; conflicting design copy does not
+lower it. On and Off still ask. A route proposal is not consent, and a failed launch is not a launched reviewer badge.
+
+Each lane has a code-authored `review` Gate with its `lane`, derived from the latest round's completed read-only
+verification Evidence at the expected commit and the unresolved findings. Unchecked or pending findings hold that
+lane's Gate; the existing review `blocked` field remains confirmed-only. Missing Evidence is no pass. A reround or
+different expected head invalidates an older pass. Lifecycle transitions store append-only content-addressed snapshots;
+reads do not write, and merge admission recomputes rather than trusting a historical snapshot. A passing lane Gate
+proves workflow completion, never that a model's review proved correctness.
+
+`crew_publish_review` is a Preview-only lead request to export one advisory lane summary to its same-repository PR.
+The core requires a completed clean-baseline read-only review at the subject's verified Result head and pinned PR base,
+and resolves immutable repository ID and current authenticated author without using CLI defaults. Dirty-baseline reviews
+remain local. Findings retain their adjudication state; publication never approves a PR, changes a Gate or follows reviewer
+completion automatically. The body includes a copyable installation-local task locator, not a public task report.
+An immutable migration-46 intent and private live-run claim bind destination, snapshot, lane/round, exact body digest and mode.
+The real lead binding's Network request enters the hard/host rules and existing two-key chain before ordinary gate policy.
+Off reaches the existing person approval path even with Full Access; an explicit policy deny still wins. No account-only
+or unbound-gate fallback can mint publication authority. Mode, identity, run liveness and head are checked again before sending.
+Publication-specific claim and Sending transactions also reject a persisted Stop while the run is still nonterminal;
+the generic run/event guard is unchanged. Receipt recovery remains possible from a new live lead run after cancellation.
+A CAS commits sending before the single POST; crash/timeout/unknown effects only read-reconcile full comment pages and an
+exact author/body/target receipt. Empty visibility never authorizes retry. A known receipt with head drift needs a person;
+no automatic delete, edit or correction comment follows. Top-level comments do not offer an atomic head CAS.
+Closed/merged PRs remain ineligible for new sends, but immutable destination/auth reads can still recover an existing exact
+receipt and retain it as needing a person. A deliberate `renew` request may supersede only a stale or expired pre-send
+intent proven never to have reached Sending. It creates a fresh immutable intent and admission, links the old record and
+audits the replacement; old bytes remain intact. A partial unique active-scope index and monotonic ever-Sending fence
+prevent renewal from bypassing Sending, Unknown, Published or ambiguous NeedsPerson records.
+
+A local person's review endpoint can remove an unlocked required lane for one subject, with a nonempty reason and
+an audit record. Locked lanes cannot be removed, by anyone. The core reads rules at the subject's pinned base and
+never rewrites the rule file. Removal waives the lane requirement, never a confirmed finding. No model tool exposes
+consent or removal; their HTTP paths are state-changing Crew routes refused by N1. This is the app's local-person
+boundary, not an OS sandbox against another process running as the same user.
+
+ACP tier Settings use a separate device-local exact-engine-id assignment map. Native `CoreConfig::crew_tiers`
+family/model words retain their existing behavior; they do not guess ACP tiers. An unmapped ACP engine is builder-only.
+A local-person save replaces the map with a revision compare-and-swap and audit record, rejecting duplicate,
+unknown, native, unconfigured or unavailable engines. The core pins each assignment to the current configured
+visible explicitly marked default model, refusing no default or multiple defaults. Each submitted assignment names
+`expected_default_model` as a precondition only; the core resolves the default independently and refuses a mismatch
+before any map change. The editor retains saved model pins on untouched rows until the person explicitly resolves
+default drift; a save cannot silently repin those rows. Only the pinned model gains the assigned tier; another engine instance, a hidden model or a changed
+default cannot inherit it. Registry health and model visibility are rechecked on use. Clearing the map restores
+builder-only admission and overrides any initial CoreConfig seed. No model tool edits these settings. The missing
+Settings editor states remain a separate UI criterion.
+
+The map revision guards saved settings, not engine discovery. The saved response's model pins are authoritative
+receipts and stay separate from current discovery facts. If discovery changes after validation, use-time admission
+still requires that exact pin to remain the unique visible default. Builder baseline selection keeps its existing
+fallback; absent or ambiguous defaults never grant an assigned non-builder tier. No registry epoch is introduced.
+
 Autopilot (slice 4f, behind the same flag) puts every request of a Crew worker through the gate's `ActionReview` before any
 rule or person: the always-denied list of the protocol (N1 to N10) first, which no lead, second key, mode or saved allow rule
 can undo, then the lead's approval with a reason, and a second approver on another vendor for network, installs, generated
@@ -2429,13 +2560,72 @@ an append-only ledger with no secret and no answer-key text. The mode is `full` 
 crew or repository. N1 also applies to threads outside Crew: an agent's command or request that names a state-changing account
 route, or a Crew route that changes state (`crew::changes`: the person's answers under `/api/crew`), is refused ([Autopilot group](../crates/orbyn-core/src/crew/autopilot/README.md)).
 
+N3 reads `allowed_hosts` at the task's base commit (at most 64 KiB). Admission and matching
+canonicalize ASCII DNS names and IP literals, reject malformed labels, ports, ambiguous numeric
+address spellings and wildcard IPs, and drop invalid entries individually. DNS labels are at most
+63 bytes and entries at most 253 bytes; case and one terminal DNS dot are normalized. A `*.` DNS
+entry still includes its apex. Loopback and explicitly listed local/private/internal destinations
+remain supported. This checks syntax only, without DNS resolution or proof of destination ownership;
+the detector's heuristic and sandbox limits remain in the Autopilot group README.
+
+With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
+are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
+data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
+whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
+worker admissions; global worker-turn enforcement remains #438. Reported usage is recorded even when the answer is rejected, and
+missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
+no session persistence and one turn, with a 1,024-output-token cap and $0.05 estimated-spend stop. Reported usage above 16,384 tokens
+or estimated cost above $0.05 rejects the answer after spending. The provider stop can overshoot; neither is a hard pre-spend total-token
+or dollar guarantee. Unsupported drivers/options/versions fail closed, never fall back to ordinary runs. Core sends only the redacted
+Summary, no tools, MCP binding, session, transcript, raw page/tool detail or answer key. Strict reasoned JSON, task/attempt/mode liveness,
+deadline and cancellation govern acceptance. These are tool-admission guarantees, not OS isolation.
+Claude aliases bind only through the bounded effective model scalar from the exact active lead run, guarded by project/thread/run/engine
+identity; missing or conflicting init metadata refuses. The separate turn pins that full ID and requires exact receipt equality.
+Idle leads and second Claude instances require an explicit full Anthropic model ID; alias-only catalogs and provider-specific model
+IDs remain unavailable. No raw init payload or model transcript is copied into an approval.
+
+Ordinary Full-mode missing-second-key denials project into server-persistent Needs you notices. The lead's vendor is pinned; only
+an eligible different vendor or an explicit local dismissal writes an idempotent resolution row. Same-vendor instances never clear
+it. The read may record observed availability but grants no action. Stable ledger cursors include old pending notices independently
+of recent denials. Sign in opens Providers; Dismiss hides that notice. Neither blocks, approves nor retries the denied action.
+
 A passed task's diff is scored low, medium or high from its paths, its size and the 60-day revert rate of its areas and engine. The
-merge queue merges one task at a time onto a local branch that no one has checked out: a `--no-ff` merge in a scratch checkout,
-the task's and the repository's checks again on that combined state, then a compare-and-swap of the branch. Under `off` every merge
-waits for a person and under `on` a high-risk one does; under `full` it merges and tops the after-merge Review queue. After merges the
-watch runs the repository's own checks and, if they fail, bisects the first-parent commits and reverts the crew's merge it finds only
-when the failure reproduces with it, passes without it and the later merges pass after the revert; otherwise it asks the person.
-Nothing is pushed.
+merge queue serializes one task at a time. Its lead tools use the forge as final writer (GitHub or GitLab), retaining a `--no-ff`
+scratch merge and the task's and repository's checks on the combined state. The service's person-owned required CI names must be
+nonempty; every named check must succeed at the actual candidate head, every observed check must succeed, and the target base
+must still match the checked base. Missing, skipped, neutral, pending and wrong-head evidence cannot pass. Agents cannot supply
+CI policy, remove owed lanes, release holds or answer the person's Review queue. Ordinary agent main-push/forge-merge commands
+remain denied. A merge Gate is code-authored from stored combined-state and current-head CI Evidence, never a model's approval.
+
+Migration 45 stores immutable repository/remote/source/head/base intent and revision checks before publication and merge effects.
+An interrupted create is reconciled by its deterministic source/target and same-repository PR identity; an interrupted merge is
+reconciled by PR identity, head and merge commit. An absent or uncertain receipt never causes a duplicate effect or local fallback.
+Origin supplies the canonical host/repository, with explicit API hostname and PR repository selectors; CLI default repositories
+and host overrides cannot select the destination. Credential-bearing or unsupported origin URLs refuse admission. The actual
+merge tree and parents are compared to the checked combination; a mismatch commits with the Review record as needing a person.
+A forge intent in `needs_person` is skipped by the lane (it is not progressing and each entry pins its own base), is never left by the
+pipeline itself, and never gets a second merge request. One that got there after a merge request may still have it on the forge: it can only
+be rejected, and a reject stays reconcilable so a later merge is recorded. It ends by a PR merged by hand (read from the forge) or a person's
+audited `reject` or `retry` (Person route, key enforced, local only, intent as seen else `stale`); a retry runs every guard again.
+The existing local branch API is explicit compatibility behavior: compare-and-swap only when no checkout holds the branch, and it
+refuses forge intents. Under `off` every merge waits for a person; under `on` high risk waits; mode, area ceilings, holds, findings
+and owed lanes are rechecked before the forge writer. Same-vendor Security needs a persisted once-consent or Full exception
+receipt, a separate lead-tier run and High risk, or a person's explicit merge release. Risk refreshes on completion and merge
+admission only raise the queued risk; reads do not write and the after-merge Review window uses that effective risk.
+Every applicable pinned-base rule and default owed lane needs its latest passing code-owned lane Gate at the candidate; a person's release may
+stand in for a nonlocked lane but never a locked lane. Reviewer commit and verification counts come from the last passed Result
+and its exact check/Evidence citations, so later merge or finding Gates/Evidence cannot change what work the reviewer reads.
+
+Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base,
+records `NoChecks` as unverified, and asks a person when checks break; it never uses a local branch revert as a forge repair.
+Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
+without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
+24 hours, observes at most 32 confirmed forge targets and never schedules publication or merging. With Preview enabled, startup
+first reconciles up to 128 unfinished effects/confirmed receipts and watches the resulting merges even when periodic work is off;
+only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local
+JSON list, never a tool or HTTP setting. A stored person's Comment becomes a deterministic ordinary task with the
+original write grants, effects and protected checks plus a scope check; a stale checkout or failed admission asks the person.
 
 An `orbyn_*` tool reaches only the caller's project, its thread's preview tabs and, for
 an attachment, its own checkout; anything else reads as not found. A preference a tool
@@ -2812,7 +3002,11 @@ to the claude and acp drivers; a driver that cannot apply them does not start th
 started ahead of a turn (warm) is not used for a worker.
 
 Hard rule 7 applies: where the restriction cannot be applied, the worker is refused before it exists,
-with a plain line in the task's "refused by the app" item. That covers Windows and Linux ("Crew runs on
+with a plain line in the task's "refused by the app" item. That item is "Could not start", not an approval: a task in
+`needs_person` whose worker never reported (`crew_runs.last_report_run` empty, no evidence) derives as could-not-start from stored
+data, so tasks stored before this derive the same way. It offers Retry on another engine (`POST /api/crew/tasks/{id}/retry-elsewhere`:
+person only; another engine must be allowed, then the person's cancel and a message to the lead to start it again) and Dismiss (the
+person's cancel). That covers Windows and Linux ("Crew runs on
 macOS in the beta; Windows later."), a missing `sandbox-exec`, a core that itself runs under a macOS
 restriction (`sandbox-exec` cannot nest), Codex (it starts its own profile per command, so the core
 refuses it until that is checked; one constant, `CODEX_WORKERS_ALLOWED`) and terminal engines (not
@@ -2999,7 +3193,7 @@ unverified; the shared storage correction is not a substitute for that walkthrou
 `{url, token}` on stdout once it can serve, after registering stop handlers and writing
 the CLI's service handle. A stop immediately after that line still cleans up the handle.
 `--skills-dir` is accepted and ignored
-for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBYN_LIBRARY_BUNDLE`, `ORBYN_WORKSPACE_URL`, `ORBYN_UPDATE_MANIFEST`, `ORBYN_CLAUDE_BIN`, `ORBYN_CODEX_BIN`, `ORBYN_CODEX_SANDBOX` (default
+for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBYN_LIBRARY_BUNDLE`, `ORBYN_WORKSPACE_URL`, `ORBYN_UPDATE_MANIFEST`, `ORBYN_CLAUDE_BIN`, `ORBYN_CLAUDE_TASK_TOOLS` (`1` lets unconfined Claude runs carry `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`; off by default), `ORBYN_CODEX_BIN`, `ORBYN_CODEX_SANDBOX` (default
 `workspace-write`), `ORBYN_APPROVAL_TIMEOUT_SECS` (default 1800),
 `ORBYN_AGENT_DESKTOP`, `ORBYN_BROWSER`, `ORBYN_BROWSER_HEADLESS`,
 `ORBYN_BROWSER_IN_PROCESS_GPU`, `ORBYN_OFFLINE`
@@ -3031,7 +3225,8 @@ every method, path and which routes need a credential.
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
 | `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
-| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only, no write route exists |
+| `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
+| `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |

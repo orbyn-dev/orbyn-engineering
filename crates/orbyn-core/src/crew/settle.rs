@@ -208,6 +208,8 @@ impl Core {
         if state != ResultState::Passed {
             self.spawn_review_unpassed(&task.id);
         }
+        // A created escape check's worker ended: its proof runs, or the check fails (docs/crew/escapes.md, PR 4).
+        self.spawn_escape_check_ended(&task.id);
     }
 
     /// Moves a task one step and swallows an invalid move: someone else (a cancel) got there.

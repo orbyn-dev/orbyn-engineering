@@ -13,7 +13,8 @@
  *
  * Autopilot by area (slice 4j): `crew-areas` (every area follows its ceiling, one is held at On by its own ceiling, one has too few merges),
  * `crew-areas-tripped`, `crew-areas-ceiling-off` (web/auth demoted, then its ceiling lowered to Off), `crew-areas-recovering`,
- * `crew-areas-criteria-met`, `crew-areas-restored` (web/auth came back, with the trail's `restored` row) and `crew-areas-lowdata`. The override
+ * `crew-areas-criteria-met`, `crew-areas-restored` (web/auth came back, with the trail's `restored` row), `crew-areas-lowdata` and
+ * `crew-areas-empty` (the service sends no area). The override
  * and follow routes change the area as the service does and answer 409 `stale` when the record the person saw is not the current one;
  * `crew-areas-stale` makes the first choice stale. The ceiling is per repository, as in the service: no area has its own.
  * The guard (slice 4i): `crew-guard` (Autopilot On: a hold for the person, and the person's one approval with an exit status), `crew-guard-unknown` (the same, and no exit status came: `unknown`),
@@ -206,6 +207,8 @@ function areaScenario(scenario: string): { ceiling: AutopilotAreas["ceiling"]; a
       return { ceiling: full, asOf: at(21, 16, 10), rows: web(areaRow("web/auth", 6, 0)), trail: [restored] };
     case "crew-areas-lowdata":
       return { ceiling: full, asOf: at(2, 9, 0), rows: [areaRow("web/auth", 3, 0), areaRow("crates/orbyn-core", 4, 0), areaRow("web/app", 2, 0), areaRow(".github/workflows", 3, 0)], trail: [] };
+    case "crew-areas-empty":
+      return { ceiling: full, asOf: at(2, 9, 0), rows: [], trail: [] };
     default:
       return { ceiling: full, asOf: at(6, 17, 0), rows: web(areaRow("web/auth", 8, 1)), trail: [] };
   }
@@ -415,6 +418,7 @@ export function createCrewMock() {
   let entries: AutopilotModeEntry[] = [];
   let all: AutopilotLogRow[] = [];
   let tripwire: AutopilotLogRow[] = [];
+  let secondNotices: AutopilotLogRow[] = [];
   let young = false;
   let areas = areaScenario("crew-areas");
   let staleOnce = false;
@@ -441,6 +445,7 @@ export function createCrewMock() {
     if (scenario === "crew-guard" || scenario === "crew-guard-unknown") mode = "on";
     failPaging = scenario === "crew-many-fails";
     all = scenario === "crew-empty" ? [] : scenario === "crew-many" || scenario === "crew-many-fails" ? many() : scenario === "crew-one-vendor" ? sample().map((one) => (one.id === 2 ? { ...one, kind: "denied", decided_by: "two_keys", second: null, needs_second_engine: true } : one)) : sample();
+    secondNotices = scenario === "crew-one-vendor" ? all.filter((one) => one.needs_second_engine) : [];
     if (scenario === "crew-guard" || scenario === "crew-guard-unknown") all = [...guardRowsOn(scenario === "crew-guard-unknown"), ...all];
     if (scenario === "crew-guard-full") all = [...guardRowsFull(), ...all];
     if (route) all = [row(7001, "14:20", "route_class", { body: routeRow(route) as unknown as AutopilotLogRow["body"] }), ...all];
@@ -505,6 +510,13 @@ export function createCrewMock() {
     if (!on) return { status: 404, body: { code: "not_found", message: "Crew is not on." } };
     const seg = path.split("/").filter(Boolean); // api crew ...
     const [, , head, id] = seg;
+    if (head === "approvals" && id === "second-engine") {
+      if (method === "POST" && seg[5] === "dismiss") {
+        secondNotices = secondNotices.filter((one) => one.id !== Number(seg[4]));
+        return { status: 200, body: { dismissed: true } };
+      }
+      if (method === "GET") return { status: 200, body: { items: secondNotices.map((one) => ({ id: one.id, task_id: one.task_id, at: one.at, target: one.target ?? "this action", lead_engine: "claude", lead_family: "claude" })), next_before: null } };
+    }
     if (method === "GET" && head === "preview") return { status: 200, body: { enabled: true } };
     if (head === "approvals" && id === "held" && method === "GET") {
       const out: AutopilotHeldList = { items: held, hold_secs: 600, approval_secs: 600 };

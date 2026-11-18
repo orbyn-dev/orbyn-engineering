@@ -18,19 +18,50 @@ mod crew_autopilot;
 mod crew_background;
 #[cfg(test)]
 mod crew_background_tests;
+mod crew_backtest;
+#[cfg(test)]
+mod crew_backtest_tests;
 mod crew_bus;
 #[cfg(test)]
 mod crew_bus_tests;
 mod crew_cancel;
+mod crew_capacity;
+#[cfg(test)]
+mod crew_capacity_tests;
+mod crew_escape_checks;
+#[cfg(test)]
+mod crew_escape_checks_tests;
+mod crew_escape_person;
+#[cfg(test)]
+mod crew_escape_person_tests;
+mod crew_escape_scan;
+#[cfg(test)]
+mod crew_escape_scan_tests;
+mod crew_escapes;
+#[cfg(test)]
+mod crew_escapes_tests;
 mod crew_flow;
 mod crew_guard;
+mod crew_merge_forge;
 mod crew_merges;
+mod crew_paused_starts;
+#[cfg(test)]
+mod crew_paused_starts_tests;
+mod crew_provenance;
+#[cfg(test)]
+mod crew_provenance_tests;
 mod crew_rerun;
 mod crew_review;
+mod crew_review_controls;
+#[cfg(test)]
+mod crew_review_migration_tests;
+mod crew_review_publications;
 mod crew_runs;
 mod crew_schema;
 #[cfg(test)]
 mod crew_tests;
+mod crew_tier_settings;
+mod crew_worker_provider;
 mod hub;
 mod installs;
 mod migrations;
@@ -51,7 +82,7 @@ mod tests;
 mod threads;
 
 pub use changes::{KeptChange, Snapshot};
-pub use crew::CrewTask;
+pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
@@ -59,14 +90,30 @@ pub use crew_background::{
     BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
     RunEnd,
 };
+pub use crew_backtest::{
+    BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
+    MOST_BUDGET_TOKENS, ResultOutcome,
+};
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
+pub use crew_capacity::{SampleBatch, SampledTask};
+pub use crew_escape_checks::{CheckFinish, CheckProposal, EscapeCheckRecord};
+pub use crew_escape_person::{EVENTS_PER_PROJECT_MAX, EscapeDecision};
+pub use crew_escape_scan::{EscapesAdded, PossibleEscape};
+pub use crew_escapes::{
+    ESCAPES_PER_PROJECT_MAX, EVENTS_PER_ESCAPE_MAX, EscapeEventRecord, EscapeRecord, EscapeTally,
+};
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
+pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord};
+pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
+pub use crew_provenance::StoredHunk;
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
+pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
+pub(crate) use crew_review_publications::{Publication, PublicationState};
 pub use crew_runs::CrewRun;
 
 use std::path::Path;

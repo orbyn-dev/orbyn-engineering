@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use super::glob::Glob;
 use crate::crew::{RULES_FILE, find_secret, redact};
+use crate::source_control::forge::crew::is_commit;
 use crate::source_control::git::{git_hardened as git, text};
 
 /// Larger than any sane file.
@@ -89,11 +90,11 @@ impl ClassFile {
 
 /// The commit the lead's checkout is at: the base a task starts from. `None` when git cannot say.
 pub async fn base_commit(root: &Path) -> Option<String> {
-    let out = crate::source_control::git::git(root, &["rev-parse", "HEAD"])
+    let out = crate::source_control::git::git_hardened(root, &["rev-parse", "HEAD"])
         .await
         .ok()?;
     let sha = text(&out);
-    is_object_id(&sha).then_some(sha)
+    is_commit(&sha).then_some(sha)
 }
 
 /// A ref the rules are also read at: the project's default branch, which a checkout or a commit on the way does not move.
@@ -103,6 +104,9 @@ pub struct PinnedRef {
     pub name: String,
     /// The commit it pointed at when it was read.
     pub commit: String,
+    /// True for a remote-tracking ref (`refs/remotes/...`), false for a local branch. The short name alone cannot tell them
+    /// apart: a local branch may be called `origin/main`.
+    pub remote: bool,
 }
 
 /// The default branch tip as of the last fetch, or `None` when the repository has no default-branch ref to read. In order: the
@@ -147,31 +151,51 @@ pub async fn pinned_ref(root: &Path) -> Option<PinnedRef> {
             continue;
         };
         let commit = text(&out);
-        if is_object_id(&commit) {
+        if is_commit(&commit) {
+            let remote = full.starts_with("refs/remotes/");
             let name = full
                 .strip_prefix("refs/remotes/")
                 .or_else(|| full.strip_prefix("refs/heads/"))
                 .unwrap_or(&full)
                 .to_owned();
-            return Some(PinnedRef { name, commit });
+            return Some(PinnedRef {
+                name,
+                commit,
+                remote,
+            });
         }
     }
     None
 }
 
+/// What a checkout's default branch looks like: the ref and the file at it, a git setup that makes it unreadable, or nothing
+/// to read at all.
+#[derive(Clone, Debug)]
+pub enum Pinned {
+    /// No default-branch ref, and no `origin` remote: HEAD alone is read, as before.
+    Absent,
+    /// The default branch and the file at it.
+    Read(PinnedRef, ClassFile),
+    /// `origin` is configured but its default branch cannot be read. The file blocks every engine; a local branch never
+    /// stands in for a ref an agent could have deleted.
+    Unreadable(PinnedRef, ClassFile),
+}
+
 /// The default branch and the file at it. When `origin` is a configured remote and none of its branches has been fetched, the
 /// default branch cannot be read: that is a file that cannot be trusted, never a repository with no default branch. With no
 /// `origin` remote and no default-branch ref there is nothing to read, and `None` leaves HEAD alone.
-pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
+pub async fn read_pinned(root: &Path) -> Pinned {
     let url = git(root, &["config", "--get", "remote.origin.url"])
         .await
         .map(|out| text(&out))
         .unwrap_or_default();
     let pin = pinned_ref(root).await;
     if url.is_empty() {
-        let pin = pin?;
+        let Some(pin) = pin else {
+            return Pinned::Absent;
+        };
         let file = read_class_file(root, Some(&pin.commit)).await;
-        return Some((pin, file));
+        return Pinned::Read(pin, file);
     }
     let fetched = git(root, &["for-each-ref", "--count=1", "refs/remotes/origin/"])
         .await
@@ -179,24 +203,21 @@ pub async fn read_pinned(root: &Path) -> Option<(PinnedRef, ClassFile)> {
         .unwrap_or(false);
     // A remote-tracking ref that resolved is the default branch. Anything else, with `origin` configured, is not readable: a
     // local branch would stand in for a ref an agent could have deleted.
-    if let Some(pin) = pin.filter(|p| fetched && p.name.starts_with("origin/")) {
+    if let Some(pin) = pin.filter(|p| fetched && p.remote) {
         let file = read_class_file(root, Some(&pin.commit)).await;
-        return Some((pin, file));
+        return Pinned::Read(pin, file);
     }
     let pin = PinnedRef {
         name: "origin".to_owned(),
         commit: "none".to_owned(),
+        remote: true,
     };
     let why = if fetched {
         "the default branch of the remote origin cannot be told: it has branches here but none is main, master or trunk, and origin/HEAD is not set. Run `git remote set-head origin --auto` (or `git fetch origin <default>`) yourself; an agent is not allowed to"
     } else {
         "the project has a remote named origin but none of its branches has been fetched, so the default branch cannot be read. Run `git fetch origin`; for a new remote with no branches yet, push the default branch first"
     };
-    Some((pin, ClassFile::refused(why.to_owned())))
-}
-
-fn is_object_id(text: &str) -> bool {
-    matches!(text.len(), 40 | 64) && text.chars().all(|c| c.is_ascii_hexdigit())
+    Pinned::Unreadable(pin, ClassFile::refused(why.to_owned()))
 }
 
 /// One entry of `git ls-tree -z`.
@@ -227,7 +248,7 @@ fn entries(raw: &[u8]) -> Option<Vec<Entry>> {
 /// Reads and parses the file at `base`. Anything but a plain, small, valid file is a problem, except that no `.orbyn` and no
 /// `crew.json` in it is no file.
 pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
-    let Some(base) = base.filter(|b| is_object_id(b)) else {
+    let Some(base) = base.filter(|b| is_commit(b)) else {
         return ClassFile::broken(
             None,
             None,
@@ -302,7 +323,7 @@ pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
             ..ClassFile::default()
         };
     };
-    if entry.mode != "100644" || entry.kind != "blob" || !is_object_id(&entry.sha) {
+    if entry.mode != "100644" || entry.kind != "blob" || !is_commit(&entry.sha) {
         return fail(
             None,
             format!(

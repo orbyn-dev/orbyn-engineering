@@ -15,6 +15,9 @@ Frames built: pr-list-failed, pr-detail-running @ v56
 The ids are screens from the list below; `@ v56` is the version of the designs they were built to. A pull request that draws nothing says
 `Frames built: none` and gets no comment. A missing or empty line gets a comment asking for it. Nothing is blocked either way.
 
+An exact artifact source revision is also accepted: `Frames built: flow-offline @ git:a582a9ba4fb950d4024ac50541a63e9c01f7669a`.
+Use the actual full Git object id; no numbered published version is implied and no private source URL is needed.
+
 ## What it does
 
 `.github/workflows/ui-preview.yml` runs for a same-repository pull request that changes `web/` (a fork's is skipped: no `pull_request_target`, no
@@ -44,7 +47,7 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Pull requests, one page and its states.** `pr-detail-running`, `pr-detail-failed`, `pr-detail-review`, `pr-detail-changes`, `pr-detail-approved`, `pr-detail-conflict`, `pr-detail-merged`, `pr-detail-closed`, `pr-detail-draft`, `pr-detail-conversation`, `pr-detail-files`, `pr-detail-checks`, `pr-detail-merge-menu`, `pr-detail-loading`, `pr-detail-error`, `pr-detail-signedout`, `pr-detail-offline`, `pr-detail-filtered`, `pr-review-open`, `pr-review-filled`, `pr-review-busy`, `pr-review-done`, `pr-review-error`, `pr-review-own`
 
-**Threads.** `thread-approval`, `thread-done`, `thread-failed`, `thread-interrupted`, `thread-empty`, `thread-tools`, `thread-tools-live`, `thread-details`, `details-popover`
+**Threads.** `thread-approval`, `thread-done`, `thread-failed`, `thread-interrupted`, `thread-empty`, `thread-tools`, `thread-tools-live`, `summary-work-group`, `summary-outcomes`, `thread-details`, `details-popover`
 
 **The side panel.** `panel-empty`, `panel-launcher-menu`, `panel-tab-menu`, `panel-tabs-single`, `panel-browser`, `panel-activity`, `panel-side`
 
@@ -56,13 +59,20 @@ or fail on the network, and what to click first. Use the design's frame id for a
 
 **Usage, the Limits tab.** `usage-claude-windows`, `usage-claude-windows-unavailable`, `usage-claude-windows-loading`, `usage-claude-windows-narrow`, `usage-claude-windows-near`, `usage-claude-windows-reached`, `usage-claude-windows-signedout`, `usage-providers`, `usage-providers-error`
 
-**Crew, Autopilot by area** (Crew Designs v39). `autonomy-table`, `autonomy-tripped`, `autonomy-demoted-ceiling-lowered`, `autonomy-recovering`, `autonomy-criteria-met`, `autonomy-restored`, `autonomy-lowdata`, `autonomy-override`, `autonomy-override-warning`, `autonomy-override-off-warning`, `autonomy-thresholds`, `autonomy-narrow`
+**Crew, Autopilot by area** (Crew Designs v39). `autonomy-table`, `autonomy-tripped`, `autonomy-demoted-ceiling-lowered`, `autonomy-recovering`, `autonomy-criteria-met`, `autonomy-restored`, `autonomy-lowdata`, `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, `autonomy-override`, `autonomy-override-warning`, `autonomy-override-off-warning`, `autonomy-thresholds`, `autonomy-narrow`
 
 **Crew, the guard, path classes and routing** (Crew Designs v39). `guard-held`, `guard-denied-no-second`, `guard-denied`, `guard-approved`, `guard-approved-person`, `guard-approved-person-unknown`, `guard-settings`, `classes-list`, `classes-error`, `classes-test`, `classes-edit`, `classes-narrow`, `route-log-none`, `route-log`
 
 **Account and sync.** `settings-account-gate-off`, `acct-settings-signed-out`, `acct-signin`, `acct-signin-wrong-password`, `acct-signin-network`, `acct-signup-invite`, `acct-signup-details`, `acct-signup-password`, `acct-signup-password-weak`, `acct-signup-password-mismatch`, `acct-signup-password-network`, `acct-signup-check-failed`, `acct-signup-email-code`, `acct-signup-code-wrong`, `acct-signup-code-network`, `acct-signup-done`, `acct-2fa-code`, `acct-settings-signed-in`, `acct-settings-paused`, `acct-settings-loading`, `acct-settings-error`, `acct-settings-offline`, `acct-signup-check`, `acct-2fa-closed`, `acct-reauth`, `acct-reauth-network`, `sync-line`, `acct-device-waiting`, `acct-device-approved`, `acct-device-denied`, `acct-device-timeout`, `acct-device-enter-digits`, `acct-device-codes-mismatch`, `acct-device-digits-locked`, `acct-device-approve-digits`, `acct-device-check-failed`, `acct-settings-not-connected`, `sync-popover-not-connected`, `acct-connect-workspace`, `acct-connect-progress`, `acct-connect-done`, `signout-other-device-removed`, `devices-waiting-approval`, `acct-device-approve-prompt`, `devices-list`, `devices-remove-confirm`, `signout-confirm`, `signout-everywhere`, `sync-popover`, `sync-popover-offline`, `sync-popover-failed`
 
+The existing ordinary Full-mode missing-second-engine drawer is `approval-one-vendor` (live mock scenario `crew-one-vendor`).
+It offers Sign in and Dismiss and grants no action.
+
 ## Add a screen
+
+Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`.
+Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`. Crew, Settings › Worker provider (Crew Designs v75): `settings-crew-worker-provider`, `settings-crew-worker-provider-any`, `settings-crew-worker-provider-narrow`.
+These retain the beta stage list; the planned graph and PR cards are not drawn.
 
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
 2. Add an entry to `catalog.mjs`: `route`, `scenario`, `pre` (requests to hold or fail before the page opens), `steps` (click, fill, press, route, offline) and `wait` for states that show only after a delay.

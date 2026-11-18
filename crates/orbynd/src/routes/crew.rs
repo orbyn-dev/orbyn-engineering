@@ -10,10 +10,11 @@
 //!
 //! **Writes only through the core's guards.** The only routes that change anything are in `orbyn_core::crew::changes::STATE_CHANGING`
 //! (the marker Autopilot's N1 refuses by path), each with its guard in [`GUARDS`]. No route takes a command from the client or runs
-//! one, and no route pushes or merges. A revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
+//! one. The typed `/tasks/{id}/merge` route requests Core-owned forge queue/process/watch operations with stored targets and
+//! person-owned startup CI policy; it grants no agent direct merge authority. A local compatibility revert runs only the repository's own checks (`.orbyn/crew.json` at the commit before the
 //! merge, a commit the crew did not write) in a scratch checkout under the data folder, which is always removed, and then moves the
 //! local branch by compare-and-swap; it is refused when a later merge needs the merge, when the branch is checked out anywhere or
-//! no longer holds the merge, and nothing reaches a remote. The repository and branch come from the stored merge, never from the
+//! no longer holds the merge. It refuses forge records, which need a corrective PR. The repository and branch come from the stored merge, never from the
 //! request, and the request must name the whole merge commit it was shown. Writes are refused for a remote viewer, as the account's
 //! are. The Preview flag is never settable from here.
 //!
@@ -32,8 +33,9 @@
 //! the grant up. No caller that only speaks HTTP to the service can approve once, with or without the service token. This is not
 //! OS-level presence (docs/crew.md, "Approving once: local presence"). Deny and dismiss need no grant (they only refuse), so a
 //! token holder can deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers
-//! are refused for all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays
-//! for development only.
+//! are refused for all three. Every Crew route that changes state also needs the person key (`routes/classes.rs`), so a worker that
+//! read the service token gets `403 person_required`; the Preview flag is for readiness, not for worker-proofing. What #441 still
+//! holds is the Windows sandbox and the store read.
 
 use axum::Json;
 use axum::Router;
@@ -55,6 +57,41 @@ use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, QueryMap};
 #[cfg(test)]
 pub const GUARDS: &[(&str, &str, &str)] = &[
     (
+        "POST",
+        "/api/crew/approvals/second-engine/{id}/dismiss",
+        "core autopilot_dismiss_second_engine_notice: Preview, durable idempotent dismissal; never approves or retries; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/settings/engine-tiers/save",
+        "core crew_set_engine_tiers: local only, person transport, revision compare-and-swap, exact configured ACP engine ids, unique entries, exactly one visible marked default, expected_default_model precondition independently checked by core, native and unavailable engines refused; clear restores builder-only; no agent tool",
+    ),
+    (
+        "POST",
+        "/api/crew/capacity/settings",
+        "core crew_set_capacity_settings: Preview, limit of at least 1, sampling, pause_enabled (off by default); audit row in the same transaction; no agent tool; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/capacity/tasks/{id}",
+        "core crew_set_task_capacity: Preview, an existing task, priority and/or crew_started, nothing else; no agent tool; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/review/{id}/consent",
+        "core crew_review_consent: local only, person transport, exact pending request id with pinned head and round, once or wait, ten-minute expiry, atomic single consumption; no client actor or grant flag; no model tool",
+    ),
+    (
+        "POST",
+        "/api/crew/review/{id}/remove-lane",
+        "core crew_remove_review_lane: local only, person transport, nonempty bounded reason, required lane from pinned base or default risk lanes, locked lane refused, durable waiver and audit, never clears findings; no model tool",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/merge",
+        "core forge queue: stored task/project target, person-owned CI policy, pinned head/base, durable effect reconciliation; person release, local only",
+    ),
+    (
         "PUT",
         "/api/crew/autopilot/mode",
         "core set_crew_autopilot_mode: a repository must be a project, a crew must have a task, the person's choice only; local only",
@@ -63,6 +100,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/autopilot/confirm",
         "core set_crew_autopilot_mode keeping the default as it is; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/autopilot/merge-queue/{id}/resolve",
+        "core crew_forge_resolve: a person's answer for a forge merge that needs one, reject or retry, the intent as seen (else stale); the forge is read first and a PR already merged by hand is recorded as merged instead; the audit row first, in one transaction with the intent and its queue entry; no write is ever sent to the forge; retry is refused after a merge request, and a reject then stays reconcilable; no agent tool can reject or retry (the lead's merge tool only records a merge the forge already shows); local only",
     ),
     (
         "POST",
@@ -146,15 +188,103 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/tasks/{id}/retry-elsewhere",
+        "core crew_retry_elsewhere: the person's retry of a task whose worker never ran (a start refusal); the task must derive as could-not-start (no report, no evidence) and another engine must be on and allowed to run workers (409 task_busy otherwise), then the person's cancel with its audit rows and a message to the lead to start it again; no body; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/backtest/start",
+        "core crew_backtest_start: a person's choice only; a request with a lane, an engine and a model each, a token budget for every engine (tokens per engine, never summed) and no other field, a review or check lane and never a builder, no money field; one run at a time (a second start while one runs is refused, check and insert in one transaction); refused while no replay engine is connected; no scheduler or tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/backtest/{id}/stop",
+        "core crew_backtest_stop: a person's request; only records the ask, the run ends as stopped before its next replay and keeps what it replayed; a run that already ended is returned unchanged; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/confirm",
+        "core crew_confirm_pinned_ref: the default branch must still be the whole commit the person saw, else stale; the pin and its audit row in one transaction; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/pinned-ref/reset",
+        "core crew_reset_pinned_ref: clears only this project's remembered default branch, audited in the same transaction; a later task reads the ref the checkout has then; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/mark",
+        "core crew_escape_mark: a person's mark of a merge of the named project as an escape, confirmed at once (the mark is the confirm); an existing possible escape is confirmed, a confirmed one returned unchanged, a dismissed one refused; the escape, its events and the audit row (first) in one transaction; bounded at 5,000 escapes; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/confirm",
+        "core crew_escape_confirm: the only way an escape becomes confirmed; possible to confirmed only, the escape as seen (else stale), the same act twice writes nothing, the audit row first in the same transaction as the state and its event; confirmed escapes feed no breaker or router; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/dismiss",
+        "core crew_escape_dismiss: possible to dismissed only, the escape as seen (else stale), the same act twice writes nothing, the audit row first in the same transaction as the state and its event; a dismissed escape is not offered again; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/gap",
+        "core crew_escape_set_gap: a test gap or a tooling gap on a possible or confirmed escape, the escape as seen (else stale), the same gap twice writes nothing, a reclassified event and the audit row in one transaction; changes no count and starts nothing; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check",
+        "core crew_escape_check_propose: a proposal of one new test file for a confirmed escape with a test gap (never a tooling gap), the escape and check as seen (else stale), the audit row first in the same transaction as the row and its check_proposed event; it writes no task and starts no worker; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/accept",
+        "core crew_escape_check_accept: the only route that starts a worker; the audit row and writing first, then the crew task through the router like crew_start; the worker may add test files only (its diff is judged against the test globs) and the proof must fail on the escaped merge and pass on the fix before the merge queue sees it; no lane is removed; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/retry",
+        "core crew_escape_check_retry: a failed check goes back to proposed, the audit row first in the same transaction; it starts nothing, only accept starts a worker; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/withdraw",
+        "core crew_escape_check_withdraw: withdraws a check that is not merged, the audit row first, then a worker still writing it is cancelled and a queued merge of it is turned down; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/approve",
+        "core crew_escape_check_approve: a person approves exactly the commit and the hash over the paths and bytes the core read from the worker's change, audit row first; only then does a proof that cannot be restricted run it; a different change needs a new approval; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/worker-provider/set",
+        "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
     let writes = Router::new()
+        .route(
+            "/api/crew/settings/engine-tiers/save",
+            post(set_engine_tiers),
+        )
+        .route("/api/crew/review/{task_id}/consent", post(review_consent))
+        .route(
+            "/api/crew/review/{task_id}/remove-lane",
+            post(remove_review_lane),
+        )
         .route("/api/crew/autopilot/mode", put(set_mode))
         .route("/api/crew/autopilot/confirm", post(confirm))
+        .route(
+            "/api/crew/autopilot/merge-queue/{task_id}/resolve",
+            post(forge_resolve),
+        )
         .route(
             "/api/crew/autopilot/review/{task_id}/looks-good",
             post(looks_good),
@@ -167,6 +297,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/approvals/{id}/approve-once", post(approve_once))
         .route("/api/crew/approvals/{id}/deny", post(deny_held))
         .route("/api/crew/approvals/{id}/dismiss", post(dismiss_held))
+        .route(
+            "/api/crew/approvals/second-engine/{id}/dismiss",
+            post(dismiss_second_engine_notice),
+        )
         .route("/api/crew/background/create", post(background_create))
         .route("/api/crew/background/{id}/update", post(background_update))
         .route("/api/crew/background/{id}/enable", post(background_enable))
@@ -176,10 +310,30 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
+        .route(
+            "/api/crew/projects/{id}/pinned-ref/confirm",
+            post(pinned_ref_confirm),
+        )
+        .route(
+            "/api/crew/projects/{id}/pinned-ref/reset",
+            post(pinned_ref_reset),
+        )
+        .route(
+            "/api/crew/projects/{id}/worker-provider/set",
+            post(worker_provider_set),
+        )
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
+        .merge(super::crew_backtest::writes())
+        .merge(super::crew_capacity::writes())
+        .merge(super::crew_escapes::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
+        .route(
+            "/api/crew/tasks/{id}/retry-elsewhere",
+            post(retry_elsewhere),
+        )
+        .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
         .route("/api/crew/preview", get(preview))
@@ -199,6 +353,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/thresholds", get(thresholds))
         .route("/api/crew/approvals", get(approvals))
         .route("/api/crew/approvals/held", get(held))
+        .route(
+            "/api/crew/approvals/second-engine",
+            get(second_engine_notices),
+        )
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
         .route("/api/crew/background", get(background_list))
@@ -206,19 +364,37 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/background/{id}/runs", get(background_runs))
         .route("/api/crew/guard/targets", get(guard_targets))
         .route("/api/crew/guard/test", get(guard_test))
+        .route("/api/crew/projects/{id}/pinned-ref", get(pinned_ref))
+        .route(
+            "/api/crew/projects/{id}/worker-provider",
+            get(worker_provider),
+        )
         .route("/api/crew/classes", get(classes))
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
+        .route("/api/crew/review/{task_id}/controls", get(review_controls))
+        .route("/api/crew/settings/engine-tiers", get(engine_tiers))
+        .merge(super::crew_capacity::reads())
         .merge(writes)
+        .merge(super::crew_backtest::reads())
         .merge(super::crew_tasks::routes())
         .merge(super::crew_board::routes())
+        .merge(super::crew_escapes::routes())
         .merge(super::crew_map::routes())
         .layer(from_fn_with_state(state, preview_gate))
 }
 
+async fn merge_request(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<orbyn_core::crew::MergeRequest>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_merge_request(&id, &body).await?))
+}
+
 /// With the flag off the route is not there: the same answer as any other path nothing serves, for every method (a wrong one
 /// included, which is why this is a `layer` and not a `route_layer`).
-async fn preview_gate(
+pub(super) async fn preview_gate(
     State(state): State<AppState>,
     request: Request,
     next: Next,
@@ -330,6 +506,102 @@ async fn route_view(
     Ok(Json(state.core.crew_route_view(&task_id)?))
 }
 
+async fn review_controls(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let mut view = state.core.crew_review_control_view(&task_id).await?;
+    if state.remote {
+        for lane in &mut view.lanes {
+            lane.can_remove = false;
+        }
+    }
+    Ok(Json(view))
+}
+
+async fn engine_tiers(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let mut view = state.core.crew_engine_tier_view().await?;
+    view.writable = !state.remote;
+    Ok(Json(view))
+}
+
+async fn set_engine_tiers(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<serde_json::Value>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_set_engine_tiers(&body).await?))
+}
+
+async fn review_consent(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    ApiJson(body): ApiJson<serde_json::Value>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_review_consent(&task_id, &body).await?))
+}
+
+async fn remove_review_lane(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    ApiJson(body): ApiJson<serde_json::Value>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.crew_remove_review_lane(&task_id, &body).await?,
+    ))
+}
+
+/// The default branch this project remembers, the one the checkout reads now, and whether a start would accept it. Read-only.
+async fn pinned_ref(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_pinned_ref_view(&project_id).await?))
+}
+
+/// A person accepts the default branch's new commit, naming the whole commit the view showed.
+async fn pinned_ref_confirm(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewPinnedRefConfirm>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .crew_confirm_pinned_ref(&project_id, &body.commit)
+            .await?,
+    ))
+}
+
+/// A person forgets the remembered default branch; the next start reads the ref the checkout has then.
+async fn pinned_ref_reset(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_reset_pinned_ref(&project_id).await?))
+}
+
+/// The project's stored worker-provider choice; `same_as_lead` when none. Read-only.
+async fn worker_provider(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_worker_provider_view(&project_id)?))
+}
+
+/// A person chooses where this project's workers are routed when a brief names no engine.
+async fn worker_provider_set(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewWorkerProviderSet>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .crew_set_worker_provider(&project_id, &body)
+            .await?,
+    ))
+}
+
 fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {
     query
         .0
@@ -435,6 +707,15 @@ async fn answer(
     ))
 }
 
+/// A person's answer for a forge merge that needs one: `{ "action": "reject" | "retry", "seen_revision": n }`.
+async fn forge_resolve(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewForgeResolve>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_forge_resolve(&task_id, &body).await?))
+}
+
 async fn looks_good(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
@@ -494,6 +775,35 @@ async fn stops(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
 /// The commands Autopilot holds for the person, newest first.
 async fn held(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.autopilot_held()?))
+}
+
+async fn second_engine_notices(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let before = query
+        .0
+        .get("before")
+        .map(|value| {
+            value
+                .parse::<i64>()
+                .map_err(|_| CoreError::Invalid("that notice cursor is not valid".into()))
+        })
+        .transpose()?;
+    Ok(Json(
+        state
+            .core
+            .autopilot_second_engine_notices(before, number(&query, "limit")?)
+            .await?,
+    ))
+}
+
+async fn dismiss_second_engine_notice(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<impl IntoResponse> {
+    state.core.autopilot_dismiss_second_engine_notice(id)?;
+    Ok(Json(serde_json::json!({ "dismissed": true })))
 }
 
 /// The header the person's grant nonce comes in: what the desktop app handed the page after the person clicked Approve.
@@ -654,6 +964,18 @@ async fn guard_remove(
         .get(CONFIRM_HEADER)
         .and_then(|value| value.to_str().ok());
     Ok(Json(state.core.guard_target_remove(&id, nonce)?))
+}
+
+/// The person's retry of a task that could not start: cancels it and asks its lead to start it again. No body.
+async fn retry_elsewhere(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off nothing here exists.
+    if !state.core.config.crew_preview {
+        return Err(CoreError::NotFound("route".into()).into());
+    }
+    Ok(Json(state.core.crew_retry_elsewhere(&id, "user").await?))
 }
 
 /// The person's re-run of a task's key checks. The body may be empty, or `{ "reason": "..." }`. The answer is counts and outcomes.

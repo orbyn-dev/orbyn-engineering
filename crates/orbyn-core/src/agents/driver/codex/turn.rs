@@ -1,9 +1,11 @@
 use std::time::Duration;
 
+use orbyn_contracts::AgUiEvent;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::background::{Background, FOLLOW_UP_GRACE, idle_limit, limit};
 use super::events::{TurnMapper, parse_goal};
 use super::protocol::{answer_request, is_missing_thread, read_app};
 use super::sandbox::{
@@ -54,12 +56,27 @@ pub(super) async fn run_protocol(
         let _ = events.send(EngineEvent::Turn(turn.clone())).await;
     }
     let mut mapper = TurnMapper::new(session.clone());
+    if let Some(turn) = &turn_id {
+        mapper.set_turn(turn);
+    }
     let mut interrupted_at: Option<tokio::time::Instant> = None;
+    // The parent's completed turn is held while a sub-agent it started still runs.
+    let mut background = Background::new(&session);
+    let mut held: Option<EngineOutcome> = None;
+    let mut limit_at: Option<tokio::time::Instant> = None;
+    let mut idle_at: Option<tokio::time::Instant> = None;
+    let mut settle_at: Option<tokio::time::Instant> = None;
+    let mut reason = "run ended";
     let outcome = loop {
         let deadline = interrupted_at.map(|at| at + INTERRUPT_GRACE);
         tokio::select! {
             biased;
             () = cancel.cancelled(), if interrupted_at.is_none() => {
+                if held.is_some() {
+                    // The parent's turn is over; there is nothing left to interrupt.
+                    reason = "cancelled";
+                    break EngineOutcome::Cancelled;
+                }
                 interrupted_at = Some(tokio::time::Instant::now());
                 if let Some(turn) = &turn_id {
                     let rpc = rpc.clone();
@@ -70,7 +87,25 @@ pub(super) async fn run_protocol(
                 }
             }
             () = sleep_until(deadline), if deadline.is_some() => break EngineOutcome::Cancelled,
+            () = sleep_until(limit_at), if limit_at.is_some() => {
+                reason = "limit";
+                break held.take().unwrap_or(EngineOutcome::Completed);
+            }
+            () = sleep_until(idle_at), if idle_at.is_some() => {
+                reason = "idle";
+                break held.take().unwrap_or(EngineOutcome::Completed);
+            }
+            () = sleep_until(settle_at), if settle_at.is_some() => {
+                break held.take().unwrap_or(EngineOutcome::Completed);
+            }
             Some(text) = steering.recv() => {
+                if held.is_some() {
+                    // The parent's turn is over, so there is none to steer. The
+                    // message ends the hold and is requeued as the next turn.
+                    reason = "new message";
+                    let _ = events.send(EngineEvent::SteerFailed(text)).await;
+                    break held.take().unwrap_or(EngineOutcome::Completed);
+                }
                 if let Some(turn) = &turn_id {
                     let rpc = rpc.clone();
                     let params = json!({
@@ -94,18 +129,29 @@ pub(super) async fn run_protocol(
                     }
                     let status = tokio::time::timeout(EXIT_WAIT, process.child.wait()).await;
                     let status = status.ok().and_then(Result::ok);
+                    reason = "engine exited";
+                    // The parent had answered; only its background work went with the
+                    // process, whatever the exit status.
+                    if let Some(outcome) = held.take() {
+                        break outcome;
+                    }
                     break EngineOutcome::Failed(exit_message(status, &process.stderr).await);
                 };
                 match message {
                     Inbound::Notification { method, params } => {
                         if method == "turn/started"
                             && turn_id.is_none()
-                            && let Some(id) = params.pointer("/turn/id").and_then(Value::as_str)
+                            && let Some(id) = started_turn(&session, &params)
                         {
-                            turn_id = Some(id.to_owned());
-                            if events.send(EngineEvent::Turn(id.to_owned())).await.is_err() {
+                            turn_id = Some(id.clone());
+                            mapper.set_turn(&id);
+                            if events.send(EngineEvent::Turn(id)).await.is_err() {
                                 return;
                             }
+                        }
+                        background.observe(&method, &params, turn_id.as_deref());
+                        if held.is_some() && background.involves(&params) {
+                            idle_at = Some(tokio::time::Instant::now() + idle_limit());
                         }
                         let step = mapper.on_notification(&method, &params);
                         for event in step.events {
@@ -120,7 +166,27 @@ pub(super) async fn run_protocol(
                             return;
                         }
                         if let Some(outcome) = step.outcome {
-                            break outcome;
+                            if held.is_none()
+                                && matches!(outcome, EngineOutcome::Completed)
+                                && background.running()
+                            {
+                                held = Some(outcome);
+                                limit_at = Some(tokio::time::Instant::now() + limit());
+                                idle_at = Some(tokio::time::Instant::now() + idle_limit());
+                            } else {
+                                reason = "turn ended";
+                                break outcome;
+                            }
+                        }
+                        if held.is_some() {
+                            if background.running() || background.follow_up_open() {
+                                settle_at = None;
+                            } else if background.followed() {
+                                break held.take().unwrap_or(EngineOutcome::Completed);
+                            } else if settle_at.is_none() {
+                                // The agent's result usually starts a turn of its own.
+                                settle_at = Some(tokio::time::Instant::now() + FOLLOW_UP_GRACE);
+                            }
                         }
                     }
                     Inbound::Request { id, method, params } => {
@@ -130,6 +196,24 @@ pub(super) async fn run_protocol(
             }
         }
     };
+    let why = if cancel.is_cancelled() {
+        "cancelled"
+    } else {
+        reason
+    };
+    // Sub-agents die with the engine process: say so rather than drop them silently.
+    for agent in background.stopped() {
+        let stopped = AgUiEvent::Custom {
+            name: "background.stopped".into(),
+            value: json!({
+                "taskId": agent.id,
+                "taskType": "codex_subagent",
+                "description": agent.label,
+                "reason": why,
+            }),
+        };
+        let _ = events.send(stopped.into()).await;
+    }
     for event in mapper.close_open() {
         let _ = events.send(event).await;
     }
@@ -139,6 +223,19 @@ pub(super) async fn run_protocol(
         outcome
     };
     let _ = events.send(EngineEvent::Finished(outcome)).await;
+}
+
+/// The turn id of a `turn/started` on this thread. Another thread's turn
+/// (a sub-agent's) is never this run's.
+pub(super) fn started_turn(session: &str, params: &Value) -> Option<String> {
+    let theirs = params.get("threadId").and_then(Value::as_str);
+    if theirs.is_some_and(|thread| thread != session) {
+        return None;
+    }
+    params
+        .pointer("/turn/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 const EXIT_WAIT: Duration = Duration::from_secs(2);

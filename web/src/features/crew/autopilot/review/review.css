@@ -51,6 +51,11 @@
   font-size: var(--text-caption);
   font-weight: 500;
 }
+/* The forecast header's Planned chip is drawn 16 px high, level with the heading's middle. */
+.crew-pv-planned {
+  height: 16px;
+  vertical-align: middle;
+}
 .crew-sub {
   flex: 1 1 0;
   min-width: 0;
@@ -543,6 +548,9 @@ button.crew-risk {
   box-shadow: 0 0 0 1px var(--color-warnBorder);
 }
 .crew-tk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   color: var(--color-muted);
   font-size: var(--text-label);
 }
@@ -583,18 +591,6 @@ button.crew-risk {
   gap: 7px;
   color: var(--color-muted);
   font-size: var(--text-label);
-}
-.crew-bar {
-  flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-borderStrong);
-  overflow: hidden;
-}
-.crew-bar i {
-  display: block;
-  height: 100%;
-  background: var(--color-success);
 }
 
 /* Review queue */

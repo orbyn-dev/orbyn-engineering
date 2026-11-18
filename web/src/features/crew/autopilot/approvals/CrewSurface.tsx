@@ -22,22 +22,23 @@ export const CREW_TABS: { id: CrewTab; label: string }[] = TABS.map((id) => ({ i
  * The Crew screens this slice owns: the approval log, trust and background crews. Nothing is drawn while
  * Crew Preview is off. The other Crew tabs (Flow, Review and the rest) are built elsewhere and join this list.
  */
-export function CrewSurface({ tab: opened }: { tab: CrewTab }) {
+export function CrewSurface({ tab: opened, task }: { tab: CrewTab; task?: string }) {
   const on = useCrewPreview();
   // The tab is the screen's own state: the address follows it without a route change, so the tab list keeps focus.
   const [tab, setTab] = useState(opened);
+  const [locatedTask, setLocatedTask] = useState(task);
   const select = (next: CrewTab) => {
     setTab(next);
+    setLocatedTask(undefined);
     window.history.replaceState(window.history.state, "", routeHref({ name: "crew", tab: next }));
   };
   const id = useId();
   // A map node asked for its Board card: the Board tab opens (a click on its own link, never a load).
   const wantsBoard = useBoardFocus((state) => state.task !== null);
   useEffect(() => {
-    if (wantsBoard) select("board");
+    if (wantsBoard && task === undefined) select("board");
     // `select` is rebuilt every render and only sets this screen's own tab.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantsBoard]);
+  }, [wantsBoard, task]);
   if (!on) return null;
   return (
     <div className="ap-surface">
@@ -48,7 +49,7 @@ export function CrewSurface({ tab: opened }: { tab: CrewTab }) {
       <FirstRunBanner />
       <CrewTabs tabs={CREW_TABS} active={tab} onSelect={select} base={id} />
       <div className="ap-panel" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${tab}`}>
-        {tab === "approvals" ? <ApprovalsTab /> : tab === "trust" ? <TrustTab /> : tab === "inbox" ? <NeedsYouInbox /> : tab === "flow" ? <FlowView /> : tab === "board" ? <BoardView /> : tab === "map" ? <MapView /> : tab === "lanes" ? <LanesView /> : <BackgroundTab />}
+        {tab === "approvals" ? <ApprovalsTab /> : tab === "trust" ? <TrustTab /> : tab === "inbox" ? <NeedsYouInbox /> : tab === "flow" ? <FlowView key={locatedTask ?? "list"} task={locatedTask} /> : tab === "board" ? <BoardView /> : tab === "map" ? <MapView /> : tab === "lanes" ? <LanesView /> : <BackgroundTab />}
       </div>
     </div>
   );

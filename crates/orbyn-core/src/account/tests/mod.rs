@@ -11,6 +11,10 @@ use serde_json::{Value, json};
 mod allowlist;
 mod approval;
 #[cfg(feature = "engine-client")]
+mod canaries;
+#[cfg(feature = "engine-client")]
+mod e2e_engine;
+#[cfg(feature = "engine-client")]
 mod engine;
 #[cfg(feature = "engine-client")]
 mod engine_loopback;
@@ -18,6 +22,8 @@ mod engine_scan;
 #[cfg(feature = "engine-client")]
 mod engine_server;
 mod flow;
+#[cfg(feature = "engine-client")]
+mod keychain;
 mod limits;
 #[cfg(feature = "engine-client")]
 mod never_sync;

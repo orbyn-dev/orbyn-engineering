@@ -130,6 +130,12 @@ impl PermissionMode {
         PermissionMode::Auto,
         PermissionMode::FullAccess,
     ];
+
+    /// Whether `self` accepts more than `other` without asking.
+    pub fn looser_than(self, other: PermissionMode) -> bool {
+        let rank = |mode| Self::ALL.iter().position(|one| *one == mode);
+        rank(self) > rank(other)
+    }
 }
 
 wire! {

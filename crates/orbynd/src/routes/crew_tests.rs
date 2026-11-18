@@ -32,12 +32,18 @@ async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
+    let absent = dir.join("absent-native");
+    assert!(absent.is_absolute() && absent.starts_with(&dir) && !absent.exists());
+    config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
+    config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
     config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new("token", vec![], None)),
+        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
         remote,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
@@ -98,6 +104,53 @@ impl Drop for Served {
 fn concrete(path: &str) -> String {
     path.replace("{task_id}", "task-1")
         .replace("{id}", "task-1")
+}
+
+#[tokio::test]
+async fn second_engine_notices_are_persistent_preview_gated_and_dismissed_only_locally() {
+    let served = serve("second-engine", true, false).await;
+    let (task, _) = seed_task(&served.core, "second-engine");
+    let id = served.core.store.add_crew_autopilot_event(&task, "crew-1", "denied",
+        &json!({"mode":"full","needs_second_engine":true,"action":{"target":"install zod","lead_engine":"alpha","lead_family":"alpha"}})).unwrap();
+    let (status, first) = served
+        .call("GET", "/api/crew/approvals/second-engine?limit=1", None)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(first["items"][0]["id"], id);
+    assert_eq!(
+        served
+            .call("GET", "/api/crew/approvals/second-engine?limit=1", None)
+            .await
+            .1,
+        first
+    );
+    assert_eq!(
+        served
+            .call("GET", "/api/crew/approvals/second-engine?before=-1", None)
+            .await
+            .0,
+        400
+    );
+    let path = format!("/api/crew/approvals/second-engine/{id}/dismiss");
+    assert_eq!(served.call("POST", &path, Some(json!({}))).await.0, 200);
+    assert_eq!(served.call("POST", &path, Some(json!({}))).await.0, 200);
+    assert_eq!(
+        served
+            .call("GET", "/api/crew/approvals/second-engine", None)
+            .await
+            .1["items"],
+        json!([])
+    );
+    let remote = serve("second-engine-remote", true, true).await;
+    assert_eq!(remote.call("POST", &path, Some(json!({}))).await.0, 403);
+    let off = serve("second-engine-off", false, false).await;
+    assert_eq!(
+        off.call("GET", "/api/crew/approvals/second-engine", None)
+            .await
+            .0,
+        404
+    );
+    assert_eq!(off.call("POST", &path, Some(json!({}))).await.0, 404);
 }
 
 /// A task with a stored brief and key, and the text of one of the key's checks.
@@ -541,6 +594,13 @@ async fn an_answer_to_a_merge_refuses_what_it_should_before_the_core_acts() {
     assert_eq!(status, 200);
     assert_eq!(body["review_state"], "commented");
     let stored = app.core.store.crew_merge(&task).unwrap().unwrap();
+    assert!(
+        stored
+            .needs_person
+            .as_deref()
+            .unwrap()
+            .contains("merge lead")
+    );
     assert!(!stored.comment.unwrap().contains(&secret_label));
     // A short prefix of the commit the person saw is enough; the answer is recorded.
     let (status, _) = app

@@ -141,8 +141,15 @@ pub enum CoreError {
     /// A Crew task that already reached `passed` or `stopped` cannot be cancelled.
     #[error("This task already ended.")]
     TaskEnded,
+    /// A stored record that fails its own checks, or a read that cannot finish: the answer is an error, never a guess (rule 7).
+    #[error("{0}")]
+    Unreadable(String),
     #[error("{0}")]
     Internal(String),
+    /// A stored row a person can repair (reset it, then enter it again). Server-side data, so `internal` and 500, but unlike
+    /// `Internal` the text is public and names the next step; it never carries the row's content.
+    #[error("{0}")]
+    StoredDataDamaged(String),
 }
 
 impl CoreError {
@@ -195,7 +202,12 @@ impl CoreError {
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
             Self::Git(_) => "git_failed",
-            Self::Store(_) | Self::Io(_) | Self::Json(_) | Self::Internal(_) => "internal",
+            Self::Unreadable(_) => "unreadable",
+            Self::Store(_)
+            | Self::Io(_)
+            | Self::Json(_)
+            | Self::Internal(_)
+            | Self::StoredDataDamaged(_) => "internal",
         }
     }
 
@@ -267,6 +279,7 @@ impl CoreError {
         match self {
             Self::NotFound(s) => Self::NotFound(s.clone()),
             Self::Gone(s) => Self::Gone(s.clone()),
+            Self::Unreadable(s) => Self::Unreadable(s.clone()),
             Self::Stale(s) => Self::Stale(s.clone()),
             Self::TaskEnded => Self::TaskEnded,
             Self::Invalid(s) => Self::Invalid(s.clone()),
@@ -347,6 +360,7 @@ impl CoreError {
             Self::Computer(s) => Self::Computer(s.clone()),
             Self::Git(s) => Self::Git(s.clone()),
             Self::Internal(s) => Self::Internal(s.clone()),
+            Self::StoredDataDamaged(s) => Self::StoredDataDamaged(s.clone()),
             Self::Store(_) | Self::Io(_) | Self::Json(_) => Self::Internal(self.to_string()),
         }
     }

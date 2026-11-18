@@ -1,24 +1,32 @@
 # Timeline rendering limits
 
-Issue #128 includes C10 so its engine boundary is explicit, even though this
-rendering batch does not enable modern Claude task tools.
+Issue #128 includes C10 so its engine boundary is explicit, even though that
+rendering batch did not enable modern Claude task tools; a later batch adds a
+person's opt-in, recorded under C10 below.
 
-The existing Claude driver recognizes `TodoWrite` and emits a replacing `plan`
-activity. The web projection and checklist render that activity. It does not
-recognize `TaskCreate`, `TaskUpdate`, `TaskGet` or `TaskList` as task-state updates.
-These tools can still appear as ordinary tool traces.
+The Claude driver translates `TodoWrite` and projects `TaskCreate`, `TaskUpdate`
+and `TaskList` results into the same replacing `plan` activity, which the web
+projection and checklist render. `TaskGet` is not recognized as task state and can
+still appear as an ordinary tool trace.
 
 The [official tools reference](https://code.claude.com/docs/en/tools-reference#task-tool-availability)
 and [environment reference](https://code.claude.com/docs/en/env-vars) distinguish
-opting into checklist tools from selecting legacy `TodoWrite`. Availability also
-depends on the model. Enabling a flag without projecting returned task identities,
-updates and deletion would not produce an honest Tasks row. This batch refuses
-that change and leaves C10 partial. It does not change the user's environment.
+opting into checklist tools from selecting legacy `TodoWrite`. Anthropic lists those
+tools as on by default on older models (Opus 4.7, Sonnet 4.6, Haiku 4.5 and earlier)
+and left out on newer and unrecognized models, where
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` provides them on every model and provider. Orbyn sets that variable only when a person asks for it, and by default it
+sets no flag.
 
-Completing C10 needs a captured CLI protocol contract for successful task results,
-failed calls, updates and deletion, followed by driver and real-service rendering
-coverage. The T3 provider document named in parity was not found in the local
-reference locations checked. No live Claude turn was run for this batch.
+The #128 batch refused the change because a flag without projected task identities,
+updates and deletion would not produce an honest Tasks row. That projection landed in
+#159 and the opt-in in this batch, so C10 stays partial for live evidence only: a
+signed-in CLI turn that actually calls the tools, a nested subagent's parent ID, and a
+hands-on packaged run. The T3 provider document named in parity was not found in the
+local reference locations checked.
+
+A confined crew worker writes only its own session transcript and run directory. No
+live confined run has shown where the CLI keeps task state, so a confined
+`TaskCreate` may be refused; that is unchecked rather than known to work.
 
 ## C40 checkout-image qualification
 
@@ -147,16 +155,39 @@ arrives and then replaces the plan activity's steps with the reported list. A
 `TaskUpdate` that sets `status: "deleted"` removes the row, and a subagent's
 text-only `Task #7 created successfully: …` still becomes a step.
 
-The tools are opt-in on the engine side. Orbyn does not set
-`CLAUDE_CODE_ENABLE_TODO_TOOLS`, because enabling a tool whose output was not
-projected would put task state in the transcript without rendering it. A turn
-that forces the tools was attempted on installed Claude Code 2.1.318 and was
-refused with `Failed to authenticate: OAuth session expired and could not be
-refreshed`, so the live frames remain unobserved. The driver tests use recorded
-result shapes from the documented protocol, not a captured session. C10 stays
-partial on that live observation; the projection itself is covered by tests.
-This follow-up did not log in, set a flag or fabricate frames, so the refusal
-stands and was not retried.
+The tools are opt-in on the engine side, and the opt-in is a person's, off by
+default. A person who starts the service with `ORBYN_CLAUDE_TASK_TOOLS=1` (read
+once at start, like the other `ORBYN_*` service variables) makes its runs carry
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` in their own environment
+(`crates/orbyn-core/src/agents/driver/claude/args.rs`, `run_env`). Rules:
+
+- Nothing else turns it on: not repository files, worker output or an agent's
+  request. With the opt-in off Orbyn sets no flag.
+- A value the person already set for `CLAUDE_CODE_ENABLE_TODO_TOOLS`, `0` included,
+  is inherited untouched and wins.
+- A confined run (`spec.confine`) gets no flag from Orbyn, because no confined run has been
+  observed working with the task tools; the confinement profile lets a worker write
+  only its own transcript and run directory, so its task state is unchecked.
+  That refers to Orbyn's flag only: a person's own `CLAUDE_CODE_ENABLE_TODO_TOOLS` is inherited by a
+  confined run like any other.
+- `CLAUDE_CODE_ENABLE_TASKS` is never set or changed by Orbyn. Anthropic documents
+  that it still selects between the Task tools and `TodoWrite` whatever
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS` says, so a person's `CLAUDE_CODE_ENABLE_TASKS=0`
+  wins and the run uses `TodoWrite`, which the driver also projects. This follows the
+  documentation; it was not run against a live CLI.
+- The capability probe and the title call never carry the flag.
+
+The projection is what makes the resulting task frames honest. A turn that forces the tools was attempted on
+installed Claude Code 2.1.318 and was refused with `Failed to authenticate: OAuth
+session expired and could not be refreshed`, so the live frames remain
+unobserved. The driver tests use recorded result shapes from the documented
+protocol, not a captured session. C10 stays partial on that live observation; the
+projection is covered by tests, and the opt-in rules above by a unit test and by
+service tests that read the flag from the fake engine's own child environment (default
+off, opt-in on, the person's own `0` respected). The confined case is covered by the
+unit test only, not by a confined run.
+The follow-up that recorded the refusal did not log in or fabricate frames, so the
+refusal stands and was not retried.
 
 The follow-up regression sends an explicit failed `TaskUpdate` result with no
 content. It could complete or delete the task despite the failure. The

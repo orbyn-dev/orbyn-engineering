@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { HOSTILE_MARKERS } from "../../../../../mock/hostile";
 import { CrewNavRow } from "./CrewNavRow";
 import { FlowView } from "./FlowView";
 import { FlowZoom } from "./FlowZoom";
+import { FLOW_REFRESH_MS } from "./useFlow";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -191,9 +192,61 @@ describe("Flow on the real routes", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("says it cannot read a task for any other failure, and Retry reads it again", async () => {
+    mock.reset("crew");
+    mock.fail("/api/crew/flow/tasks/", 1, 503, "unavailable", "The Flow service is busy.");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-redirect" onBack={() => undefined} />);
+    expect(await screen.findByText("Can’t read this task")).toBeVisible();
+    expect(screen.getByText("The Flow service is busy.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "All tasks" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("list", { name: "Stages" })).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
   it("says there are no crews, and a crew with no tasks", async () => {
     await open("crew-empty");
     expect(await screen.findByText("No crews running")).toBeVisible();
+  });
+
+  it("says no task matches a search, and counts 0 of 0 shown", async () => {
+    const { user } = await open("crew");
+    await table();
+    await user.type(screen.getByRole("searchbox"), "zzzz-no-such-task");
+    expect(await screen.findByText("No tasks match")).toBeVisible();
+    expect(screen.getByText("0 of 0 shown")).toBeVisible();
+  });
+
+  const failFlow = () => {
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input).includes("/api/crew/flow/") ? new Response(JSON.stringify({ code: "unavailable", message: "The Flow service is busy." }), { status: 503 }) : real(input, init),
+    );
+  };
+  const tickAndSettle = async () => {
+    const before = calls("/api/crew/flow/").length;
+    await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+    await waitFor(() => expect(calls("/api/crew/flow/").length).toBeGreaterThan(before));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  };
+
+  it("keeps the list, shows no error and keeps polling after a periodic read fails", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await open("crew");
+      await rowsOf();
+      failFlow();
+      await tickAndSettle();
+      expect(await rowsOf()).toHaveLength(6);
+      expect(screen.queryByText("The Flow service is busy.")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      // The status stayed ready, so the next tick reads again (a failed read used to stop the polling for good).
+      await tickAndSettle();
+      expect(await rowsOf()).toHaveLength(6);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says a crew has no tasks yet", async () => {
@@ -259,6 +312,52 @@ describe("Flow on the real routes", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await table()).toBeVisible();
     expect(writes()).toHaveLength(0);
+  });
+
+  it("says the service is not running when the crews cannot be reached", async () => {
+    mock.reset("crew");
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/crew/flow")) throw new TypeError("Failed to fetch");
+      return real(input, init);
+    });
+    render(<FlowView />);
+    expect(await screen.findByText("Can’t read Flow")).toBeVisible();
+    expect(screen.getByText("Check that the Orbyn service is running.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(screen.queryByText("Details")).toBeNull();
+  });
+
+  it("shows the service's own message and a Details disclosure with its code for any other failure", async () => {
+    mock.reset("crew");
+    mock.fail("/api/crew/flow/crews", 1, 503, "unavailable", "The Flow service is busy.");
+    render(<FlowView />);
+    expect(await screen.findByText("Can’t read Flow")).toBeVisible();
+    expect(screen.getByText("The Flow service is busy.")).toBeVisible();
+    expect(screen.getByText("Details")).toBeVisible();
+    expect(screen.getByText("unavailable")).toBeInTheDocument();
+  });
+
+  it("announces the wait while the crews and the tasks are read", async () => {
+    mock.reset("crew");
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/crew/flow/tasks?")) return new Promise<Response>(() => undefined);
+      return real(input, init);
+    });
+    render(<FlowView />);
+    expect(await screen.findByRole("combobox", { name: "Crew" })).toBeVisible();
+    expect(await screen.findByRole("status")).toHaveTextContent("Reading tasks");
+  });
+
+  it("says no task matches a search, and the chips keep the counts of the whole crew", async () => {
+    const { user } = await open("crew");
+    await table();
+    await user.type(screen.getByRole("searchbox"), "zzzz-nothing");
+    expect(await screen.findByText("No tasks match")).toBeVisible();
+    const bar = screen.getByRole("group", { name: "Filter tasks" });
+    expect(within(bar).getAllByRole("button").map((one) => one.textContent)).toEqual(["All 6", "Needs you 1", "Reviewing 1", "Failed 2", "Passed 1"]);
+    expect(screen.queryByText("No tasks yet")).toBeNull();
   });
 
   it("names a task list that cannot be read and retries it", async () => {

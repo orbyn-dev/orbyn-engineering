@@ -3,11 +3,11 @@
 import type { Risk } from "../autopilot/approvals/model";
 
 /** The kinds the designs name, in the order their filters are drawn. The first four live kinds have a route behind them. */
-export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped", "background"] as const;
+export const NEEDS_KINDS = ["autonomy", "approval", "denied", "questions", "review", "main", "conflict", "stopped", "could_not_start", "background"] as const;
 export type NeedsKind = (typeof NEEDS_KINDS)[number];
 
 /** The kinds `assemble.ts` builds from a route today. The rest are drawn by the frames only. */
-export const LIVE_KINDS = ["approval", "stopped", "main", "background"] as const satisfies readonly NeedsKind[];
+export const LIVE_KINDS = ["approval", "denied", "stopped", "could_not_start", "main", "background"] as const satisfies readonly NeedsKind[];
 
 /** A filter chip's word, from the designs: Approvals, Denied, Questions, Main, Conflicts, Reviews, Autonomy. */
 export const KIND_FILTER: Record<NeedsKind, string> = {
@@ -19,6 +19,7 @@ export const KIND_FILTER: Record<NeedsKind, string> = {
   main: "Main",
   conflict: "Conflicts",
   stopped: "Stops",
+  could_not_start: "Could not start",
   background: "Background",
 };
 
@@ -32,12 +33,13 @@ export const KIND_ONE: Record<NeedsKind, string> = {
   main: "Main",
   conflict: "Conflict",
   stopped: "Stopped",
+  could_not_start: "Could not start",
   background: "Background",
 };
 
 /** An answer an item offers. `key` names what the screen's owner does; none is a merge, a revert or an approval of its own. */
 export interface NeedsAction {
-  key: "approve" | "deny" | "dismiss" | "open" | "decide" | "open-both" | "answer" | "rerun" | "review" | "override" | "later" | "open-review" | "open-thread";
+  key: "approve" | "deny" | "dismiss" | "sign-in" | "open" | "decide" | "open-both" | "answer" | "rerun" | "review" | "override" | "later" | "open-review" | "open-thread" | "retry";
   label: string;
   primary?: boolean;
 }

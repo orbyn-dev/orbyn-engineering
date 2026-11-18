@@ -1,7 +1,7 @@
 import { prettyJson } from "../../lib/format";
 import { outputSpans } from "../../lib/ansi";
 import type { ReasoningItem, ToolItem } from "../../product/timeline/types";
-import { baseName, parsed, paths, toolFailed, traceTool } from "../../product/timeline/toolTrace";
+import { baseName, callOutcome, parsed, paths, toolFailed, traceTool } from "../../product/timeline/toolTrace";
 
 /** The kind of row a tool call is drawn as; each has its own icon, words and block. */
 export type CallKind =
@@ -427,6 +427,36 @@ export function runLabel(run: CallRun, running: boolean): RunLabel {
     default:
       return { verb: String(n), note: null };
   }
+}
+
+/** What a group row says about the calls its count does not vouch for. */
+export interface RunOutcomes {
+  failed: number;
+  text: string;
+}
+
+/**
+ * The unmet outcomes in a group, for the row that names the group rather than its calls. The row
+ * shows one count, the most serious kind: failed calls first, then calls with no result reported,
+ * then calls with an unknown outcome. A mixed group never lists them all; the open list shows each
+ * call's own outcome. A call still running is not missing yet, so a live group says nothing of it.
+ * `cancelled` is a run that was interrupted: its calls with no result are unknown, not unanswered.
+ */
+export function runOutcomes(run: CallRun, live: boolean, cancelled: boolean): RunOutcomes | null {
+  let failed = 0;
+  let noResult = 0;
+  let unknown = 0;
+  for (const item of run.items) {
+    if (callState(item, live, cancelled) === "running") continue;
+    const outcome = callOutcome(item, cancelled);
+    if (outcome === "failed") failed += 1;
+    else if (outcome === "no-result") noResult += 1;
+    else if (outcome === "unknown") unknown += 1;
+  }
+  if (failed) return { failed, text: `${failed} failed` };
+  if (noResult) return { failed: 0, text: noResult === 1 ? "1 no result reported" : `${noResult} no results reported` };
+  if (unknown) return { failed: 0, text: unknown === 1 ? "1 outcome unknown" : `${unknown} outcomes unknown` };
+  return null;
 }
 
 /** Only http and https pages open in the Browser panel; an agent can name any address. */

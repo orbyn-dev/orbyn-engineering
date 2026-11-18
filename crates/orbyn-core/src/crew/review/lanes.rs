@@ -1,7 +1,7 @@
 //! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. A lane named after the
 //! work has passed runs like any other, and a lane the repo's rules ask for runs without being named. A lane
-//! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the lead
-//! tier, to another vendor than the builder where one is configured, and its key holds one check: the review
+//! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
+//! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
 //! and how many checks passed, never a check, its command or the builder's transcript.
 
@@ -28,6 +28,44 @@ const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
 /// The most changed files a review can hold read-only: the key protects each by its bytes, and a key lists at most 256.
 const MOST_PATHS: usize = 256;
 
+/// Whether a repository rule locks `lane` at `base`, the commit the work started from. A locked lane keeps the lead tier. When the
+/// rules cannot be read, or there is no base to read them at, the lane counts as locked: not knowing never lowers a review.
+pub(in crate::crew) async fn lane_locked(
+    root: &Path,
+    base: Option<&str>,
+    lane: &CrewToken,
+) -> bool {
+    let Some(base) = base else { return true };
+    match read_rules_at(root, base).await {
+        Ok(rules) => rules.iter().any(|r| r.lane == *lane && r.locked),
+        Err(_) => true,
+    }
+}
+
+impl Core {
+    /// Whether `lane` keeps the lead tier: a repository rule locks it, or it is the `correctness` lane (`CODE_LANE`) that a
+    /// medium or high risk merge is owed. Risk is only known once a merge entry exists, so with no entry (or no task) the code
+    /// lane is treated as owed: not knowing never lowers a review. Only a merge entry that says `low` frees the lane.
+    pub(in crate::crew) async fn lane_keeps_lead(
+        &self,
+        root: &Path,
+        base: Option<&str>,
+        subject: Option<&str>,
+        lane: &CrewToken,
+    ) -> bool {
+        if lane_locked(root, base, lane).await {
+            return true;
+        }
+        if lane.as_str() != super::CODE_LANE {
+            return false;
+        }
+        match subject.map(|id| self.store.merge_entry(id)) {
+            Some(Ok(Some(entry))) => entry.risk != "low",
+            _ => true,
+        }
+    }
+}
+
 /// What a review run is for.
 pub(super) enum Run<'a> {
     /// A lane of the review.
@@ -37,60 +75,66 @@ pub(super) enum Run<'a> {
 }
 
 impl Core {
-    /// The commit the finished work was checked at, else the checkout's HEAD.
-    pub(super) async fn review_commit(
+    /// Passed work is pinned by its Result, never later finding/merge Evidence or a mutable checkout.
+    pub(in crate::crew) async fn review_commit(
         &self,
         task: &CrewTask,
         cwd: &Path,
     ) -> Result<String, CrewError> {
-        let at = self
-            .verification_evidence(task)?
-            .last()
-            .map(|e| e.commit.as_str().to_owned())
-            .filter(|c| c != ZERO_COMMIT);
-        if let Some(commit) = at {
-            return Ok(commit);
+        let passed = self
+            .store
+            .crew_results(&task.id)
+            .map_err(internal)?
+            .into_iter()
+            .rfind(|result| result.state == orbyn_contracts::ResultState::Passed);
+        if let Some(result) = passed {
+            self.verification_evidence(task)?;
+            return result
+                .commit
+                .map(|commit| commit.as_str().to_owned())
+                .filter(|commit| commit != ZERO_COMMIT)
+                .ok_or_else(|| invalid("the passed result has no verified commit to review"));
         }
-        let out = crate::source_control::git::git(cwd, &["rev-parse", "HEAD"])
+        if task.state == "passed" {
+            return Err(invalid("the passed task has no Result to pin its review"));
+        }
+        // A pre-pass caller may inspect HEAD, but it is not represented as verification evidence.
+        let out = crate::source_control::git::git_hardened(cwd, &["rev-parse", "--verify", "HEAD"])
             .await
             .map_err(|e| invalid(e.public_message()))?;
         Ok(crate::source_control::git::text(&out))
     }
 
-    /// The task's own verification Evidence: what the finding checks the core added later are left out, so they change
-    /// neither the count a reviewer is told nor the commit a later lane reads.
-    pub(super) fn verification_evidence(
+    /// Only the last passed Result's check citations are verification of the passed candidate.
+    pub(in crate::crew) fn verification_evidence(
         &self,
         task: &CrewTask,
     ) -> Result<Vec<orbyn_contracts::Evidence>, CrewError> {
-        let cited: std::collections::BTreeSet<String> = self
+        let Some(result) = self
             .store
-            .crew_gates(&task.id)
-            .map_err(internal)?
-            .iter()
-            // A Gate about a finding (its check, or a repro that cleared it), as opposed to one about the task.
-            .filter(|g| {
-                g.stage == orbyn_contracts::GateStage::FindingCheck
-                    || self
-                        .store
-                        .crew_finding(g.subject.as_str())
-                        .ok()
-                        .flatten()
-                        .is_some()
-            })
-            .flat_map(|g| g.evidence.iter().map(|e| e.as_str().to_owned()))
-            .collect();
-        Ok(self
-            .store
-            .crew_evidence(&task.id)
+            .crew_results(&task.id)
             .map_err(internal)?
             .into_iter()
-            .filter(|e| !cited.contains(e.id.as_str()))
-            .collect())
+            .rfind(|result| result.state == orbyn_contracts::ResultState::Passed)
+        else {
+            return Ok(Vec::new());
+        };
+        let commit = result
+            .commit
+            .ok_or_else(|| invalid("the passed result has no verified commit"))?;
+        let all = self.store.crew_evidence(&task.id).map_err(internal)?;
+        if result.checks.is_empty() {
+            return Err(invalid("the passed result cites no verification evidence"));
+        }
+        result.checks.iter().map(|check| {
+            all.iter().find(|evidence| evidence.id == check.evidence && evidence.check == check.check
+                && evidence.outcome == check.outcome && evidence.commit == commit)
+                .cloned().ok_or_else(|| invalid("a passed Result citation is missing or belongs to another commit/check"))
+        }).collect()
     }
 
     /// The paths the work changed since it started (committed or not), or `None` when that cannot be known.
-    async fn review_changed(&self, run: &CrewRun, cwd: &Path) -> Option<Vec<String>> {
+    pub(super) async fn review_changed(&self, run: &CrewRun, cwd: &Path) -> Option<Vec<String>> {
         let base = run.base_commit.as_deref()?;
         changed(&Site {
             worktree: cwd,
@@ -156,6 +200,15 @@ impl Core {
         for rule in &from_rules {
             lanes.push(rule.lane.clone());
         }
+        let controls = self
+            .store
+            .crew_review_controls(&task.id)
+            .map_err(internal)?;
+        lanes.retain(|lane| {
+            !controls
+                .iter()
+                .any(|c| c.kind == "remove_lane" && c.state == "removed" && c.lane == lane.as_str())
+        });
         let mut seen = std::collections::BTreeSet::new();
         lanes.retain(|lane| seen.insert(lane.as_str().to_owned()));
         if lanes.is_empty() {
@@ -232,7 +285,19 @@ impl Core {
             base: None,
         })
         .await
-        .unwrap_or_default();
+        .map_err(internal)?;
+        let lane_keeps_lead = match kind {
+            Run::Lane => {
+                self.lane_keeps_lead(
+                    &cwd,
+                    subject_run.base_commit.as_deref(),
+                    Some(&subject.id),
+                    lane,
+                )
+                .await
+            }
+            Run::Second { .. } => false,
+        };
         let judge = match kind {
             Run::Lane => format!("Review round {round} of the {lane} lane"),
             Run::Second { finding } => format!(
@@ -328,6 +393,16 @@ impl Core {
                 Run::Lane => None,
             },
         };
+        if let Some(consent) = self
+            .review_consent_needed(thread, &brief, &review, author_engine.clone())
+            .await?
+        {
+            return Ok(json!({
+                "started": false,
+                "state": "needs_person",
+                "same_engine_consent": consent,
+            }));
+        }
         self.launch_crew_task(Launch {
             lead: thread,
             now: stamper.now.clone(),
@@ -339,12 +414,15 @@ impl Core {
                 RouteRole::Review
             }),
             lane: (!second).then(|| lane.clone()),
+            lane_keeps_lead,
             author_engine,
             prefix: "reviewer",
             prompt: Some(prompt),
             links: Links {
                 review: Some(review),
                 fix: None,
+                crew_started: false,
+                trigger: None,
             },
         })
         .await

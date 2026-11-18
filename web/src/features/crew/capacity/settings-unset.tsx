@@ -1,7 +1,8 @@
 import { Frame } from "../shared/Frame";
 import { Btn, Ic } from "../shared/parts";
+import { Planned, WHY } from "./Planned";
 
-/** Crew Designs v21, frame `capacity-settings-unset`. */
+/** Crew Designs v77, frame `capacity-settings-unset`. */
 export function CapacitySettingsUnset() {
   return (
     <Frame sheet>
@@ -11,12 +12,12 @@ export function CapacitySettingsUnset() {
           <span className="cx-cwpv">Preview</span>
         </h3>
         <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "12.5px", lineHeight: 1.5 }}>
-          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you.
+          Agents can merge faster than a person can read. Say how many changes you can review, and Crew slows the work it starts on its own before the queue gets ahead of you. It never stops a merge, and nothing here changes what you can review.
         </p>
         <div className="cx-cwbn" style={{ margin: "0" }}>
           <Ic n="info" sm />
           <span><b>No limit is set.</b>{" 3 High and Medium changes are waiting for your review now. Crew keeps starting work whatever the queue holds."}</span>
-          <span className="cx-acts"><Btn className="cx-btn">Set a limit</Btn></span>
+          <span className="cx-acts"><Planned why={WHY.editor} /><Btn className="cx-btn">Set a limit</Btn></span>
         </div>
         <div>
           <div className="cx-setrow">
@@ -56,7 +57,6 @@ export function CapacitySettingsUnset() {
         </div>
         <div className="cx-t13row">
           <span className="cx-t13mk">Sample data</span>
-          <span className="cx-t13mk">Proposed: Engineering sets the real values</span>
         </div>
         <p style={{ margin: "2px 0 0", display: "flex", gap: "6px", alignItems: "flex-start", color: "var(--color-muted)", fontSize: "12px", lineHeight: 1.45 }}>
           <Ic n="info" sm />

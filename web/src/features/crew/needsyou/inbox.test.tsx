@@ -1,12 +1,19 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
+import { NEEDS_REFRESH_MS } from "./useNeedsYou";
 
 let mock: MockApi;
+// App's cold module graph is fixture setup, not part of the live-frame assertion deadline.
+// Install the owned mock first; importing does not render App or start its effects.
+beforeAll(async () => {
+  installMockFetch();
+  await import("../../../app/App");
+});
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
@@ -50,7 +57,7 @@ describe("the Needs you inbox on live data", () => {
     expect(items[0]).toHaveTextContent("Watch on main · 9be4410");
     expect(items[0]).toHaveTextContent("Nothing has been reverted. Main stays as it is until you choose.");
     expect(items[1]).toHaveTextContent("Paused: budget reached");
-    expect(items[1]).toHaveTextContent("The run stopped at its budget. Raise the budget, or leave it paused.");
+    expect(items[1]).toHaveTextContent("The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.");
     expect(items[1]).toHaveTextContent("Background crew · Fix failing CI");
     expect(items[2]).toHaveTextContent("DELETE FROM sessions");
     expect(items[3]).toHaveTextContent("aws s3 rb");
@@ -147,6 +154,37 @@ describe("the Needs you inbox on live data", () => {
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull();
   });
 
+  it("offers Open the Flow view when nothing needs you, and it only changes the tab", async () => {
+    const { user } = await open("crew-empty");
+    await user.click(await screen.findByRole("button", { name: "Open the Flow view" }));
+    expect(window.location.hash).toBe("#/crew/flow");
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("says the service is not running when no source can be reached, with Retry", async () => {
+    mock.reset("crew");
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/crew/preview")) return real(input, init);
+      throw new TypeError("Failed to fetch");
+    });
+    render(<NeedsYouInbox />);
+    expect(await screen.findByText("Can’t read what needs you")).toBeVisible();
+    expect(screen.getByText("Check that the Orbyn service is running.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("announces the wait while the sources are read", async () => {
+    mock.reset("crew");
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/crew/preview")) return real(input, init);
+      return new Promise<Response>(() => undefined);
+    });
+    render(<NeedsYouInbox />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Reading what needs you");
+  });
+
   it("names the source it could not read, keeps the rest, and Try again reads again", async () => {
     mock.reset("crew");
     mock.fail("/api/crew/stops", 1, 503, "unavailable");
@@ -162,10 +200,10 @@ describe("the Needs you inbox on live data", () => {
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
     mock.reset("crew");
-    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held"]) mock.fail(path, 1, 503, "unavailable");
+    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine", "/api/crew/flow/crews"]) mock.fail(path, 1, 503, "unavailable");
     const user = userEvent.setup();
     render(<NeedsYouInbox />);
-    expect(await screen.findByText("Can't read what needs you")).toBeVisible();
+    expect(await screen.findByText("Can’t read what needs you")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /retry/i }));
     expect(await list()).toBeVisible();
   });
@@ -268,5 +306,29 @@ describe("the Inbox tab of the Crew page", () => {
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps the list and shows no error when a periodic read fails after it was shown", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await open("crew-held-account");
+      const before = within(await list()).getAllByRole("listitem").length;
+      expect(before).toBeGreaterThan(0);
+      const real = vi.mocked(fetch).getMockImplementation()!;
+      vi.mocked(fetch).mockImplementation(async (input, init) =>
+        String(input).includes("/api/crew/") && !String(input).includes("/api/crew/preview")
+          ? new Response(JSON.stringify({ code: "unavailable", message: "The service is busy." }), { status: 503 })
+          : real(input, init),
+      );
+      const reads = calls("/api/crew/").length;
+      await act(async () => { vi.advanceTimersByTime(NEEDS_REFRESH_MS); });
+      await waitFor(() => expect(calls("/api/crew/").length).toBeGreaterThan(reads));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      expect(within(await list()).getAllByRole("listitem")).toHaveLength(before);
+      expect(screen.queryByText("The service is busy.")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -40,13 +40,105 @@ pub(super) struct StreamMapper {
     pub(super) held: Option<EngineOutcome>,
     /// A follow-up turn started after the outcome was held.
     pub(super) resumed: bool,
+    /// Background work the CLI runs for this session, by task id, with its type.
+    pub(super) background: HashMap<String, BackgroundTask>,
+    /// The id the prompt went in with, until the CLI echoes it back as it takes the prompt up.
+    pub(super) awaiting: Option<String>,
+    /// A turn the CLI started for its own leftovers is running, before the prompt's turn.
+    pub(super) leftover: bool,
+}
+
+/// Task types whose work dies with the CLI and finishes with a notification turn, so the run
+/// stays open for them. Other background work (a shell, a dev server) may never end.
+const HELD_TASKS: &[&str] = &["local_agent"];
+
+#[derive(Clone, Debug)]
+pub(super) struct BackgroundTask {
+    kind: String,
+    description: Option<String>,
 }
 
 impl StreamMapper {
-    /// The turn is done and its workflows have ended, and no follow-up turn has
+    /// A mapper for a run whose prompt went in with `uuid`. The CLI folds queued work (the turn for a
+    /// finished background agent) in ahead of the prompt, and echoes the prompt when it reaches it, so
+    /// a result that arrives before the echo answers something else.
+    pub(super) fn answering(uuid: &str) -> Self {
+        Self {
+            awaiting: Some(uuid.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// Work that would die with the CLI and that the CLI reports back on.
+    fn holding(&self) -> bool {
+        !self.workflows.is_empty()
+            || self
+                .background
+                .values()
+                .any(|task| HELD_TASKS.contains(&task.kind.as_str()))
+    }
+
+    /// The turn is done and its background work has ended, and no follow-up turn has
     /// started yet.
     pub(super) fn waiting_on_hold(&self) -> bool {
-        self.held.is_some() && self.workflows.is_empty() && !self.resumed
+        self.held.is_some() && !self.holding() && !self.resumed
+    }
+
+    /// Background work still running as the run ends goes with the CLI; each is said to have stopped.
+    pub(super) fn end_background(&mut self) -> Vec<EngineEvent> {
+        let mut ended: Vec<_> = self.background.drain().collect();
+        ended.sort_by(|a, b| a.0.cmp(&b.0));
+        ended
+            .into_iter()
+            .map(|(id, task)| {
+                AgUiEvent::Custom {
+                    name: "background.stopped".into(),
+                    value: json!({
+                        "taskId": id,
+                        "taskType": task.kind,
+                        "description": task.description,
+                    }),
+                }
+                .into()
+            })
+            .collect()
+    }
+
+    /// `task_started` for work other than a workflow, which has its own item.
+    fn background_started(&mut self, frame: &Value) {
+        let (Some(id), Some(kind)) = (text_of(frame, "task_id"), text_of(frame, "task_type"))
+        else {
+            return;
+        };
+        if kind == "local_workflow" {
+            return;
+        }
+        // A subagent the model waits on ends with its tool result, not with a notification.
+        if frame.get("is_backgrounded").and_then(Value::as_bool) == Some(false) {
+            return;
+        }
+        let description = text_of(frame, "description");
+        self.background
+            .insert(id, BackgroundTask { kind, description });
+    }
+
+    /// A task that ended, by `task_notification` or by `task_updated`.
+    fn background_ended(&mut self, frame: &Value) {
+        let status = match frame.get("subtype").and_then(Value::as_str) {
+            Some("task_notification") => text_of(frame, "status"),
+            Some("task_updated") => frame
+                .pointer("/patch/status")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            _ => None,
+        };
+        if matches!(
+            status.as_deref(),
+            Some("completed" | "failed" | "stopped" | "killed")
+        ) && let Some(id) = text_of(frame, "task_id")
+        {
+            self.background.remove(&id);
+        }
     }
 
     pub(super) fn on_frame(&mut self, frame: &Value) -> Vec<EngineEvent> {
@@ -63,6 +155,24 @@ impl StreamMapper {
         {
             self.resumed = true;
         }
+        if self.awaiting.is_some() && !nested {
+            if kind == Some("user")
+                && frame.get("uuid").and_then(Value::as_str) == self.awaiting.as_deref()
+            {
+                self.awaiting = None;
+                // The echo proves the prompt's turn has begun, so a held leftover result must not end the run.
+                if self.held.is_some() {
+                    self.resumed = true;
+                }
+            } else if matches!(kind, Some("assistant" | "stream_event"))
+                || (kind == Some("system")
+                    && frame.get("subtype").and_then(Value::as_str) == Some("task_notification"))
+            {
+                // A notification ahead of the prompt starts a turn of its own, which may fail before
+                // it streams anything.
+                self.leftover = true;
+            }
+        }
         match kind {
             Some("control_response") => Workflows::control_response(frame),
             Some("system")
@@ -71,10 +181,32 @@ impl StreamMapper {
                     Some("task_notification" | "task_updated")
                 ) =>
             {
+                self.background_ended(frame);
                 self.workflows.system(frame)
+            }
+            Some("system")
+                if frame.get("subtype").and_then(Value::as_str) == Some("task_started") =>
+            {
+                self.background_started(frame);
+                Vec::new()
             }
             Some("system") if frame.get("subtype").and_then(Value::as_str) == Some("init") => {
                 let mut events = session(frame);
+                if !nested {
+                    // Only a bounded effective model scalar is retained. Missing or
+                    // noncanonical metadata is explicit, so an older init cannot win.
+                    let model = frame
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .and_then(|model| super::approval::pinned_model(model, None));
+                    events.push(
+                        AgUiEvent::Custom {
+                            name: "engine.model".into(),
+                            value: json!({ "engine": "claude", "model": model }),
+                        }
+                        .into(),
+                    );
+                }
                 events.extend(init_commands(frame));
                 events.extend(init_tools(frame));
                 events
@@ -109,11 +241,20 @@ impl StreamMapper {
                     .into(),
                 ]
             }
+            Some("result") if self.awaiting.is_some() && self.leftover => {
+                // The turn the CLI ran for its own leftovers, ahead of the prompt. If the prompt's own
+                // turn never follows (a CLI that does not echo as expected), the run ends on this
+                // result after the hold grace instead of waiting forever.
+                self.leftover = false;
+                self.held = Some(result_outcome(frame));
+                self.resumed = false;
+                session(frame)
+            }
             Some("result") => {
                 let outcome = result_outcome(frame);
-                // The CLI keeps a workflow running past the turn that launched it, and
-                // closing its input would end the workflow with it.
-                if outcome == EngineOutcome::Completed && !self.workflows.is_empty() {
+                // The CLI keeps background work running past the turn that launched it, and
+                // closing its input would end that work with it.
+                if outcome == EngineOutcome::Completed && self.holding() {
                     self.held = Some(outcome);
                     self.resumed = false;
                 } else {

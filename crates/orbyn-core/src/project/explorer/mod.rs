@@ -1,13 +1,15 @@
 //! The left explorer's backend: a project's worktrees and a read-only look at their
-//! files. A client names a project and a worktree by id, never by path, and a path
+//! files and guarded user file actions. A client names a project and a worktree by id,
+//! never by path, and a path
 //! inside a worktree passes [`guard`]. Reads that cost a process answer from the last
-//! known value and refresh in the background ([`ExplorerReads`]); nothing here writes.
+//! known value and refresh in the background ([`ExplorerReads`]); writes recheck authority.
 
 mod guard;
 mod member;
 mod status;
 mod tree;
 mod watch;
+mod write;
 
 pub use watch::ExplorerWatch;
 
@@ -59,6 +61,8 @@ const ANNOUNCE_GAP: Duration = Duration::from_millis(200);
 /// The kept answers: each project's worktree list and each worktree's status.
 pub struct ExplorerReads {
     watches: watch::Watches,
+    /// Serializes user file actions, including their authorization and audit.
+    writer: Arc<tokio::sync::Mutex<()>>,
     lists: Swr<Vec<WorktreeRecord>>,
     statuses: Swr<Arc<Snapshot>>,
     gates: Mutex<HashMap<String, Arc<Semaphore>>>,
@@ -69,6 +73,7 @@ impl Default for ExplorerReads {
     fn default() -> Self {
         Self {
             watches: watch::Watches::default(),
+            writer: Arc::default(),
             lists: Swr::new(LIST_FRESH, LIST_MAX_AGE, 32),
             statuses: Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 128),
             gates: Mutex::default(),
@@ -326,15 +331,11 @@ impl Core {
         }
         // The library's `repo/` holds other projects and is never shown through a folder that
         // holds the library, whether that folder is the library or sits above it.
-        let library_repo = self
-            .workspace
-            .root()
-            .ok()
-            .filter(|root| {
-                crate::util::canonicalize(root).is_ok_and(|root| root.starts_with(&target.path))
-            })
-            .map(|root| root.join("repo"));
-        Guard::new(&target.path, &self.config.data_dir, library_repo)
+        Guard::with_library(
+            &target.path,
+            &self.config.data_dir,
+            self.workspace.root().ok(),
+        )
     }
 
     /// The status of a worktree, waiting for Git only when nothing is kept and only

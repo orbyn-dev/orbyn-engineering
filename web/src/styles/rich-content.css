@@ -16,6 +16,8 @@
 .md-diagram {
   margin-block: 10px;
   overflow-x: auto;
+  /* Clips and contains the drawing, so a diagram rule such as position:fixed cannot cover the page. */
+  contain: paint;
 }
 .md-diagram svg {
   max-width: 100%;

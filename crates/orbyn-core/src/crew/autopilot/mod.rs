@@ -4,6 +4,8 @@
 mod areas;
 mod blast;
 mod chain;
+mod comment;
+mod engine;
 mod exit;
 mod hard;
 mod hard_tools;
@@ -11,6 +13,7 @@ mod held;
 mod hosts;
 pub(super) mod ledger;
 mod merge;
+mod notices;
 mod presence;
 mod review;
 mod screen;
@@ -24,16 +27,18 @@ pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
 pub use held::{APPROVAL_LIFETIME_SECS, HELD_LIFETIME_SECS, HeldBook, SHOWN_MAX};
 pub use hosts::read_allowed_hosts;
+pub(crate) use merge::merge_tool_specs;
 pub use merge::{
-    Answering, COMMENT_MAX, DIGEST_HOURS_MAX, DiffFacts, MergeOutcome, MergeTarget, OFFSET_MAX,
-    PAGE_DEFAULT, PAGE_MAX, Page, Rate, RecentTotals, ReviewAnswer, ReviewItem, Risk, Scored,
-    WatchOutcome, area_of, areas_of, check_words, lane_ran, owed_lanes, review_window, score,
-    sensitive, valid_id,
+    Answering, COMMENT_MAX, DIGEST_HOURS_MAX, DiffFacts, MERGE_TOOLS, MergeOperation, MergeOutcome,
+    MergeRequest, MergeTarget, OFFSET_MAX, PAGE_DEFAULT, PAGE_MAX, Page, Rate, RecentTotals,
+    ReviewAnswer, ReviewItem, Risk, Scored, WatchOutcome, area_of, areas_of, check_words, lane_ran,
+    owed_lanes, review_window, score, sensitive, valid_id,
 };
 pub(crate) use review::GateReview;
 pub use review::{Autopilot, ModeScope};
 pub(crate) use screen::Screened;
 pub use tier::{Grants, Need, tier_of};
+pub(crate) use tripwire::hidden;
 pub use tripwire::{IN_A_ROW, IN_A_RUN, injection_in};
 
 /// How much Autopilot does for a repository or crew. The person chooses; the default is `Full`.

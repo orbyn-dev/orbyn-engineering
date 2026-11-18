@@ -251,7 +251,8 @@ the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium
 | Lead (briefs, approves in Autopilot, merges) | Opus | Sol | The engine the person picks for the lead thread |
 | Router, verifier, merge queue, watch on main | No model | No model | Code |
 | Builder | Sonnet | Terra | Complex work on Codex goes to Sol (harness `engineer_complex`) |
-| Code review | Opus | Sol | Lead tier, on the other vendor from the builder by default |
+| Review lane (`crew_review`) | Sonnet | Terra | Worker tier by default, on the other vendor from the builder. The `security` lane, locked lanes, the `correctness` lane a merge is owed (until a merge entry says low risk) and any lane only the builder's own vendor can take stay on the lead tier |
+| Code review (a review brief) | Opus | Sol | Lead tier, on the other vendor from the builder by default |
 | Security review and finding check | Opus | Sol | Lead tier always; never lower |
 | Second key (Autopilot) | Opus | Sol | Must be the other vendor from the lead |
 | Scout (search, mechanical checks, cheap drafts) | Haiku | Luna | Escalates to the builder tier on failure |
@@ -261,7 +262,15 @@ The route card shows the tier, model and effort chosen, and why. A repository's 
 raise a tier. Only the person can change a lead tier.
 
 To pin a worker's model (for example a Haiku-only run), the lead sets `engine: { id, model, assigned_by }` in the brief
-(`"model": "haiku"`). Reviewers and finding checks stay on the lead tier by rule, so a review lane runs on Opus or Sol;
+(`"model": "haiku"`). A review lane defaults to the worker tier (Sonnet or Terra), so it costs less than the lead. The `security` lane,
+any lane a repository rule locks (`"locked": true`), the finding check and a second key stay on the lead tier, and a pinned model that is
+below the lead tier is refused for them, never swapped. The `correctness` lane (`CODE_LANE`), which a medium or high risk merge is owed,
+stays on the lead tier too: risk is only known once a merge entry exists, so only an entry that says low frees it, and with no entry it stays
+lead. When the rules cannot be read, or the work has no base commit, a lane counts as locked. When every reviewer the router admits is the
+author's own vendor (a single-vendor machine), the lane keeps the lead tier instead of lowering the only review available. A model pinned in the brief's
+`engine` wins over the lane default in either direction. An engine with no tier mapping (OpenCode before Settings maps it) is a builder only,
+so it never takes a lane. The reviewer is still another vendor than the builder where one is configured. The route card of a lane carries
+a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` answer reports its `tier`, `model`, `reasons` and `rejected` (the engines left out, each with its reason).
 `crew_route` (dry run) shows the engine, model, tier and role before anything runs; the `route` in a start answer reports what has already started.
 
 **Router v0**
@@ -274,7 +283,28 @@ To pin a worker's model (for example a Haiku-only run), the lead sets `engine: {
      A test runs every combination of those facts through the router and the list and fails if they disagree.
      A sign-in that could not be confirmed has no designed label, so the list shows none for it while the router
      still refuses. Limited support (an `Unsupported` or `Graceful` version) is list-only and never keeps an engine out.
-2. Score: pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from
+   - **A worker run that would be refused is never routed to.** The run start refuses an engine that cannot take a crew
+     task (a terminal engine, Codex while `CODEX_WORKERS_ALLOWED` is off) and any machine with no restriction to apply
+     (`host::confine::worker_refusal`, the one function both read). The router reads its answer when the machine is
+     gathered and filters on it, after the checks above, with a plain reason per engine ("Codex can't run Crew workers. ...
+     Choose another engine for this crew, or do the work in a normal chat."). A brief that pins such an engine is refused
+     with that reason and never swapped. When no engine is left, `crew_start` refuses up front with the reason and stores
+     no task, lease, run or ledger row. This covers engine and platform refusals only: the preflight routes with no data
+     classes, so a data-class rejection is still recorded after the task is stored, as before. A review lane whose engines
+     are all refused takes that same later path. Approver runs are not confined, so they do not use this filter. `crew_route`
+     shows the same rejections.
+2. Provider, then score. With no engine named and a non-review role, the lead's own provider (engine family) comes
+   first (`RouterConfig::worker_provider`, the per-project **Worker provider** setting: `same_as_lead` (default) or `any`, where `any`
+   lets every allowed provider compete on score, still after the refusal and platform filters). It is stored per project in the existing
+   `project_preferences` table, key `crew_worker_provider` (no migration); absent, damaged or unknown text reads as `same_as_lead`, and
+   saving `same_as_lead` clears the row. `GET /api/crew/projects/{id}/worker-provider` reads it; `POST .../worker-provider/set` with
+   `{"worker_provider": "same_as_lead" | "any"}` saves it. The write is a Person route behind the Crew Preview gate and `local_only`: it needs the
+   person key (desktop only, so browser mode and the CLI get `403 desktop_required`), writes a `crew.worker_provider.set` audit row in the same
+   transaction, and no MCP tool reaches it. `crew_start`, `crew_route` and review routing read it for the project of the lead's thread; a task
+   already routed keeps its engine. Settings > Crew has the row (frames `settings-crew-worker-provider`, `-any`, `-narrow`): a Same as lead / Any provider choice for the project of the checkout Settings shows, saved through the route above. Under `same_as_lead` another provider takes the work only when the lead's is refused or not available, and the route says so
+   (`lead_provider_unavailable`: "Codex workers are not available here, so Claude takes this."); otherwise the route
+   carries `lead_provider`. Review lanes, second keys and finding checks keep the other-vendor rule and ignore this.
+   Inside the chosen provider: score. Pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from
    `usage`, then the person's default engine to break ties.
    - **As built (slice 2, differs from the plan):** a full quota window is also a hard filter (`quota_exhausted`), not
      only a score input. The score is a weighted sum, 70% pass rate and 30% headroom, in integer permille, rather than
@@ -318,7 +348,9 @@ retries with the reason. The same failure twice means one change of approach, an
   - The failure fingerprint is the failing checks, how each ended and the names of what failed; the output is
     left out, since it changes between runs. The checks run after the worker's turn has ended. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
   - A turn that ends with no `crew_report` is a failed attempt with its own fingerprint. An engine that fails ends the
-    task (`engine_error`). `budget.minutes` ends a task even mid-turn; `budget.turns` is not enforced yet.
+    task (`engine_error`). `budget.minutes` ends a task even mid-turn. `budget.turns` is not enforced for worker turns yet, but with
+    Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`): with the default 30
+    turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
   - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
     `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report
@@ -392,7 +424,7 @@ merge).
 - **Different eyes by default.**
   - The router prefers a different engine or vendor from the author: a Codex review of Claude's work, and the reverse.
   - Security review and finding checks run at the lead tier (the harness's `security` and `security_verifier` routes),
-    never on a cheaper tier.
+    never on a cheaper tier. So do locked lanes. Every other lane runs on the worker tier unless the brief pins a model.
 - **No limit on reviewers.** A stage holds any number of reviewer lanes running side by side, for example:
   - Correctness
   - Security
@@ -429,7 +461,26 @@ merge).
   the fix, and a finding shows as fixed only after such a fix passed and a repro has proved it: a finding confirmed by agreement has no repro, so it keeps
   blocking until the lead supplies one that passes after the fix (or a person clears it). A reviewer's silence clears nothing. One fix per lane and file,
   at most three per task. Reviewers are read-only by bytes, and the second review needs another vendor than the first.
-- Not yet: PR review on the forge, the same-engine badge, a per-lane `review` Gate, locked-lane removal by a person.
+- **Review integrity** (behaviour changes to know about):
+  - Sparse checkouts are refused when a task starts. Admission and every verification read the Git index, and any
+    `assume-unchanged` or `skip-worktree` entry, including the ones a sparse checkout sets, refuses the start or fails the
+    check, because such an entry can hide an edit from the scope and size checks.
+  - The changed-file check errors when any index flag is set, whether or not the flag was there at the start. A task
+    that began under the old guard (which only failed flags added since the start) now fails verification on an existing
+    flag. Re-run that task after clearing the flag.
+  - The scope, size and changed-path checks read Git without line-ending conversion or the untracked cache, so those settings
+    cannot hide a byte change. Other Git reads keep their normal settings.
+- #450 adds source contracts for person once consent, a persistent same-engine route badge, per-lane code-owned
+  `review` Gates and reasoned unlocked-lane removal. Migration 46 follows forge migration 45; launch and merge admission
+  are covered by focused fake-engine, store and HTTP tests. The live Flow task includes the reasoned removal dialog;
+  Settings, Crew includes an explicit device-local ACP tier editor with whole-map revision checks and default-model pins.
+  Both controls reconcile uncertain writes before a retry; locked lanes cannot be removed by anyone.
+  A copyable installation-local task locator, `orbyn://crew/task/<encoded-task-id>`, opens the existing read-only Flow task
+  when Preview is on. It conveys no consent or action and needs that installation's task data. It is not a public report;
+  forge clickability and native delivery remain unqualified. Lead-requested advisory PR-comment publication is integrated
+  through existing Network policy and two-key admission, covered by fake-protocol, recovery and gate tests.
+  Mock-backed Chromium checks cover the controls, native-select Escape behavior, dirty navigation and narrow Light, Dark and Dim layouts;
+  real engines and actual forge publication remain unqualified.
   `crew_finding` refuses after the reviewer's run has ended (H7); the Gates are core writes and do not.
 
 **Review decisions** (2026-11-11, Designer part 2, frames in `crew-designs.html`):
@@ -508,8 +559,8 @@ engine. It is shown with its reasons.
 
 **Merge queue for agents.** Nobody ships this yet.
 
-- Parallel branches are merged in order. Each candidate is rebased on the queue and its required checks run again on the
-  combined state before main moves.
+- Parallel branches are merged in order. Each candidate is merged onto the branch tip in a scratch checkout, one at a time, and
+  its required checks run again on that combined state before main moves.
 - Conflicts are forecast from the dependency graph before work starts, and the router orders tasks to avoid them.
 
 **After-merge Review queue (the person's stage):**
@@ -531,10 +582,29 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**Forge CI rule.** On a forge merge, every check in the person's `ORBYN_CREW_REQUIRED_CHECKS` list must be present on the pull request's
+head and succeed; a required check that is missing, skipped, neutral or pending is not green. Any other check may succeed, be skipped
+or neutral (a repository's path-scoped jobs are often skipped), but never fail, be cancelled, time out or still be pending. A failed
+combined-state check blocks the entry for a person rather than re-running. The `forge_publish_requested` and `forge_merge_requested`
+events record the `actor`: `lead` for the lead's tool, `local_caller` for the local HTTP caller.
+
+**A forge merge that needs a person.** The lane skips an intent in `needs_person` and goes on with the next (each entry pins its own
+base, so no later entry depends on it). The pipeline never leaves `needs_person` itself and never sends a merge request twice. An
+intent that got there before any merge request was sent has nothing in flight. One that got there after a request may still have it
+on the forge (a merge queue); it cannot be retried, and a reject keeps it reconcilable so a later merge is still recorded. A PR merged
+by hand is read from the forge and recorded (audit `via` "lane reconcile"; for the lead's own crew only). A person answers with
+`POST /api/crew/autopilot/merge-queue/{id}/resolve` (`{action: reject | retry, seen_revision}`; Person route, key enforced, local only,
+audit row first, `409 stale` for an intent that moved): `reject` drops it, `retry` sends it back to `awaiting_ci` (or `prepared` when
+nothing was published) so the guards run again, and is refused after a merge request, after an unclear publication and after the base
+moved. The forge is read first, with a search for the PR when none is recorded. The queue view shows each entry's forge `phase` and
+`revision`. See the [Autopilot README](../crates/orbyn-core/src/crew/autopilot/README.md#merge-queue-review-queue-and-watch-on-main).
+
 **As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
 flag. With it off every route answers 404 for every method, like a path nothing serves, and `/api/info` omits `crew_preview`. The flag is
-read, never set, over HTTP. **The Preview flag stays for development only until [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)
-is fixed:** a worker runs as the person and can read the service token and the data folder, so it could reach these routes.
+read, never set, over HTTP. **The Preview flag stays while Crew is unfinished, not to keep a worker out:** every route that changes state needs the
+person key only the desktop shell holds (`docs/worker-token-isolation.md`, step 3), so a worker that read the service token
+gets `403 person_required`. What [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441) still holds is the Windows
+sandbox and the store read.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
 `/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
@@ -827,14 +897,16 @@ says `user`, not which process. A lowered area returns at the next merge or queu
 ledger itself is unreadable: the log then holds the only trace, though the gate still treats an unreadable area as Off. An `off` posted while merge checks are running does not stop the merge already in flight (the same as `set_mode`).
 
 **As built (slice 4j, screens):** Settings › Crew › Autopilot by area and its Thresholds, from the Crew Designs v39 frames `autonomy-table`, `-tripped`,
-`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-override`, `-override-warning`, `-thresholds` and `-narrow`, plus
-`autonomy-override-off-warning` (Designer ruling on #573). Code: `web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas}.ts*`, routes
+`-demoted-ceiling-lowered`, `-recovering`, `-criteria-met`, `-restored`, `-lowdata`, `-empty`, `-repos`, `-entry`, `-override`, `-override-warning`,
+`-thresholds` and `-narrow`, plus `autonomy-override-off-warning` (Designer ruling on #573). Code:
+`web/src/features/crew/autopilot/approvals/{AutonomyAreas,AutonomyThresholds,areas,AutopilotSettings}.ts*`, routes
 `#/settings/crew/areas[/thresholds]?repo=<project id>` (the first visible repository when `repo` is absent). One component, driven by the areas read; the page's
 `data-frame` names the frame its data is in. **Ceiling:** the header says "Repo ceiling: X" (the project's) once and the table has no ceiling column; rows show the mode the area is on now, and
 a row whose own ceiling (the service sets one per area) differs from the repo's says so in its state text. Both Keep the ceiling and Off ask first in the same dialog and send `acknowledged: true` only after the box is ticked;
 Override… is on the tripped, recovering, criteria-met, ceiling-wins and restored panels and in every overridden row; Keep the ceiling is offered only when the area is below a Full ceiling; Follow the record undoes a choice (sent without `seen` when the row has no `since`, as the service stores the trip time through an override). A `stale` answer closes the warning and shows the service's words on the page. The words are the design's,
 written from the served fields. No date is drawn that the service does not serve (recovery clock, who reverted, when a ceiling was lowered).
-Not built (the Designer draws them later): `autonomy-empty`, `autonomy-repos`, `autonomy-entry`, a back link on Thresholds, `autonomy-promoted`, `autonomy-by-area`.
+**Empty:** with no area in the window the page keeps its header, chips, as-of line and, above 560 px, the table's head row; it draws no row. At 560 px and below the head row is the whole table, so the empty table is not drawn. The design's sentence in the table is Planned and is not drawn. **Several repos:** the page is about one repo at a time (`?repo=`, else the first visible project); with more than one the Repo chip is drawn as the design's selector (bordered, with the Planned label) from the workspace's project list, and its menu is not built. **Entry:** the Settings › Crew › Autopilot section has a row under it that opens Autopilot by area, and Thresholds has the back link that returns to it with the repository kept; both are drawn without the design's Planned chip because they now work.
+Not built: the repo selector's menu, `autonomy-promoted`, `autonomy-by-area`.
 
 **As built (slice 4h, state):** background crews and their runs, stored on this device in the service's data folder (tables
 `crew_background` and `crew_background_runs`, schema 41, 42), behind the Preview flag. **Decision: the state is not a file in the repository.**
@@ -872,12 +944,56 @@ background crew is per device and is not shared through git. A repository's own 
   `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
   There is no route that starts a run, spends, merges or reverts.
 
-What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; slice 4h
-will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
+What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; a later
+slice will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
 lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
 review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
 limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
 prompt and checks are not defined yet.
+
+**As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
+`background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
+
+```json
+{ "background": { "version": 1,
+  "templates": [{ "id": "nightly-deps", "description": "Bump one dependency a week." }],
+  "triggers": [
+    { "name": "fix-main-ci", "on": "ci_failed", "template": "fix_failing_ci",
+      "budget": { "turns": 30, "minutes": 20 }, "engines": ["claude", "codex"],
+      "description": "Fix a failing build on main.", "branch": "main", "workflow": "ci.yml" },
+    { "name": "weekly-deps", "on": "schedule", "template": "nightly-deps",
+      "budget": { "turns": 20, "minutes": 15 }, "engines": ["codex"],
+      "description": "Bump one dependency a week.", "every_minutes": 10080 }
+  ] } }
+```
+
+- **Kinds:** `ci_failed` (optional `branch` and `workflow`), `schedule` (needs `every_minutes`: a whole number of hours in minutes, a multiple of 60 from 60 to 43200, so each maps to the stored crew's `every_hours` 1 to 720) and `manual` (only
+  when a person asks). A trigger takes the settings of its kind and no others.
+- **Strict:** at most 64 triggers and 16 templates; `version` must be 1; unknown fields, kinds and templates are refused rather than
+  ignored; a name is 1 to 80 characters and unique after trimming, lower-casing and collapsing runs of whitespace (not Unicode
+  normalised, so two spellings of one letter can still look alike); a description is 1 to 280 characters; the file is 64 KiB at most;
+  `branch`, `workflow` and a template id are 1 to 100 characters, and a template id is a token (1 to 64 characters, starting with a
+  lowercase letter or digit, then lowercase letters, digits, `.`, `_` or `-`). A declared template may not reuse a built-in id or another
+  declared id, and needs both an id and a description. `null` is refused where an array belongs, never read as absent.
+- **Budget:** `turns` 1 to 1000 and `minutes` 1 to 1440, written by a person. There is no default, and a missing or over-cap budget
+  refuses the trigger.
+- **Text is data:** hidden characters (zero-width, bidirectional, tag block) and text that reads as an instruction are refused by the
+  Autopilot tripwire; text that changes under the route's redaction (a credential-shaped value) is refused too; everything else is carried as written and is never expanded, followed or run.
+  Unknown keys get the same treatment before they appear in a problem, and a key written twice inside `background` is refused, naming the key (a key repeated in another section is not this file's concern, so it is neither reported nor refused). A value or key that reads as an instruction, even once hidden characters, line separators, `_` or `-` are read as spaces, is withheld from the problem rather than quoted. A
+  refusal lists at most 50 problems and then counts the rest; at most 64 triggers and 16 templates are read.
+- **Templates grant nothing:** a template is an id and a sentence for the person. It cannot allow commands, because the always-denied
+  list is enforced in code and nothing in this file can widen it.
+- **Every problem at once:** `crew::triggers::parse_and_validate` returns all of them, each naming the field and the shape it wants, in
+  the form `crew_start` uses.
+- **Not wired to the stored crew:** this section is policy a later slice will read, not the record. The stored background crew above keeps
+  its own vocabulary (`ci_failure`, `issue_label`, `schedule`, `dependency_update`, with `every_hours`), and it stays the record of what a
+  crew is; the file uses the names this work starts with (`ci_failed`, `schedule`, `manual`, with `every_minutes`). A later slice maps a
+  file trigger to the stored crew when it starts one. Nothing here writes, starts or records anything.
+  Only `ci_failed` and `schedule` have a stored-crew match (`ci_failure`, and `schedule` with `every_hours`). **Planned:** `manual`
+  and declared templates have no stored-crew match yet, so the later mapping slice decides them.
+
+What is not built (Planned): **nothing reads this section yet.** The CI-failure listener, the schedule timer, the manual start, the
+templates' prompts and checks, the routes and the UI are later work; this parse starts no run, calls no model and spawns no process.
 
 **As built (slice 4i, routing):** a repository can say which engines may take which paths, in `classes` of `.orbyn/crew.json`. The router
 uses it as a hard filter. Preview only; Orbyn reads the file and never writes it (architecture rule 4).
@@ -952,8 +1068,16 @@ recognise is not seen; a bare `git checkout <rev>` names no path and is not held
 default-branch ref resolves.** A local branch no longer stands in once `origin` is configured, because an agent could have deleted the ref and left the local branch to read. Two cases, with their fixes, which a person
 runs (N7 holds them for an agent): nothing of `origin` is fetched, so run `git fetch origin` (for a new remote with no branches yet, push the default branch first); or `origin` has branches but none is
 `main`, `master`, `trunk` or the one `origin/HEAD` names, so run `git remote set-head origin --auto` (or `git fetch origin <default>`). **A brand-new project whose remote is empty is blocked until its first push (fail closed, by
-design).** With no `origin` remote at all, the local default branch is the ref read, and with none of those either HEAD alone is read, as before; Orbyn does not remember the last pinned commit between tasks, so a repository
-with no `origin` that loses its local default branch is read at HEAD alone again (follow-up #574). **A person or an agent that can push to the
+design).** **Each project remembers the default-branch ref and commit its last started task read** (in the existing
+`project_preferences` table, key `crew_pinned_ref`; no migration). A start that reads the same commit or a descendant is accepted and moves the memory
+to the new tip, so a later rewind is compared with the newest accepted commit, never an older one. A remembered ref that is gone (the remote removed, the
+ref deleted, or only a local branch left where a remote-tracking ref was) and any move that does not descend from it (a rewritten branch) block every engine
+under the rule name `default branch changed`, with the ref and both commits in plain words, until a person decides. `GET /api/crew/projects/{id}/pinned-ref` shows what the checkout reads now, what the project
+remembered and whether a start would accept it; `POST .../pinned-ref/confirm` names the whole commit the view showed (a ref that moved again is refused as
+stale) and `POST .../pinned-ref/reset` forgets it, after which the next start reads the ref the checkout has then. Both writes are local-only, need no
+agent tool, refuse a remote viewer, and write `crew.pinned_ref.confirm` / `crew.pinned_ref.reset` audit rows in the same transaction; every `route_class` row
+already records the pinned ref and commit it read. With no `origin` remote at all, the local default branch is the ref read, and with none of those either HEAD alone is read, as before; a remembered
+pin from an earlier remote still blocks until a person confirms the local branch or resets it. **A person or an agent that can push to the
 base branch can still change the rules for later tasks.** A rule that is tighter at HEAD applies at once, because an engine must be allowed by both; a loosening takes effect only once it is on the default branch's tip. `review` lanes, `checks`, `required` and `allowed_hosts` are still read at the base commit only. A path or lease spelled in a different case from what is tracked (`DOCS/key`, `Docs/**`) lists nothing, so it
 counts as every class. The work is bounded per brief (100,000 paths and 2,000,000 glob tests, charged at every pattern for every path, and a tenth of
 that for the tester): over it the brief is unknown, which means every class, so a huge tree is slow-but-closed, never open. The matching runs off the
@@ -976,7 +1100,7 @@ Settings › Crew page (v23, `settings-crew`, with its Review capacity, Independ
 display-only Preview screens in `web/src/features/crew/{escape,capacity,settings}`, opened by `#/preview/crew/<frame>` in
 dev builds only. They share one stage in `features/crew/shared`: the design's own markup, with its rules renamed `cx-*` in
 `shared/design.css` on the app's tokens. None of them has a backend, a client or a guessed route: every button is disabled
-with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices. Values the design
+with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices (escape design: [crew/escapes.md](crew/escapes.md)). Values the design
 marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
 stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
 show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads
@@ -992,6 +1116,64 @@ each engine, in tokens and never added up; it replays the last 180 days of pull 
 shows a rate from 5 escapes and from 10 findings, and takes its outcomes from reverts, fixes and the escape log only.
 The lane picker's backtest counts are information and never change what Auto picks. All values the design marks
 Proposed stay Proposed.
+
+**As built (slice 4l, store, migration 47):** `store/crew_capacity.rs` keeps a project's review-capacity settings
+(`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and
+`crew_started` (default 0, a person's start) on `crew_tasks`, and each sampled batch in `crew_review_samples`: task
+ids, chosen or not, the seed and the time, with no prompt or path. A task stored before 47 is Medium and
+person-started, so it can never be paused. The start hook and the merge hook below read them; the merge hook also runs sampling (below).
+
+**As built (slice 4l, start hook):** `crew/capacity/hooks.rs` is called by one line in `start.rs`, after the lease conflict
+check and before the task is stored, and does nothing with the Crew Preview flag off. A start that Crew began itself at Low
+priority is refused with `not_authorized`, and the waiting count and limit in its message, when more High and Medium merges
+wait than the project's limit; at the limit, or for a person-started or Medium or High task, it goes. A new task has no stored
+priority or `crew_started` yet, so the start path passes none (Medium, person-started) and nothing pauses until a later change
+sets them. A failure reading the settings or the queue lets the start go.
+
+**As built (slice 4l, held starts, migration 54):** with `pause_enabled` on, a refused Crew-started Low start is noted in
+`crew_paused_starts` (`store/crew_paused_starts.rs`): one row per project, kind (`comment_fix`, `review_fix`,
+`escape_check`; `background` is reserved; `unknown` marks a Crew-started launch that named no trigger) and a stable key
+the caller supplies through `Links::trigger`: the merge task id for a comment fix, a hash of the task id and finding
+fingerprint for a review fix, the check id for an escape check (ids and hashes only, never the brief's hash, which
+changes per attempt), with the waiting count and limit at the last refusal, `first_seen` and `last_seen`. The same
+trigger refused again updates its row; when the same trigger later starts, the row is marked `started`; it is held again
+if refused after that. At most 200 rows per project, `started` rows are dropped before `held` ones, then the oldest by last sighting. No task text and no engine
+output are stored. Nothing is retried on a timer, the refusal is still `not_authorized`, and with pausing off, for a
+person's start or for High and Medium work nothing is written. `GET /api/crew/capacity` returns them as `held`.
+Background crew runs still start no crew task (`crew_background_start_run` only records a run row), so they have no start
+path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_started` with a `PausedTrigger` of kind `Background`.
+
+**As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
+breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
+note in a detached task (the merge path is synchronous, git is async), with an empty person-commit list, so every line reads
+as the agent until a later change passes positively identified person commits. A failure never fails or delays a merge: it is
+logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling runs in the same
+detached task, off by default: see `crew/README.md`, `capacity`.
+
+**As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
+merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
+and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps them in `crew_hunks` with the author: the
+task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
+commit, one blame per file, repository ignore-revs lists cleared) is in the positive `person_commits` list the caller
+passes. Anything not positively a person's is the agent's: an empty list, an unknown or rewritten id, a conflict
+resolution, a failed blame. An author email is never read, and a merged hunk is split into runs of one author. The merge
+hook must pass only positively identified person commits (for example commits the person made through the app or
+pressed Looks good on), never a guess. The first time provenance is recorded for a repository is kept once in
+`crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
+merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
+transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
+`person`, engine and model ids, counts) is written on the merge commit under `refs/notes/orbyn-agent-trace`. The ref is
+local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
+carries it, and a test keeps it so. A note that fails is returned for the caller to log; the merge is not failed.
+Nothing calls this from the merge queue yet; the hook is a separate PR.
+
+**As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run; the store and replay follow below.
+
+**As built (slice 4n, store and replay, migration 49):** `store/crew_backtest.rs` keeps a run (`crew_backtest_runs`: state, the person's per-engine token budgets as JSON, why it stopped), each lane's progress (`crew_backtest_lanes`: engine, model, tokens used, state, and the escapes it faced and caught once scored; empty means the escape log could not say, never zero) and each finding's outcome (`crew_backtest_results`: pull request, fingerprint, `caught`, `unmatched` or `no_escape`). Ids, counts and fingerprints only: no prompt, diff, file text, secret or money. `crew/backtest/replay.rs` replays review lanes and checks on the eligible pull requests through a `LaneRunner`; only a fake exists, so nothing live runs. The budget is tokens per engine and is never summed: a lane stops, and is recorded as stopped, when its own engine's budget is spent (lanes of one engine share it), while other engines go on. A lane whose replay breaks is recorded as failed and the others go on. A stopped lane is scored on the pull requests it replayed. With the escape source saying Not measured the run finishes and shows finding counts only. A request with a builder lane, a money-like field or name, an unknown field, or an engine without a budget is refused. A backtest starts only when a person chooses it: nothing schedules it or calls it at startup, and a test fails if code outside the backtest and its store calls the replay. The routes and the estimate are described next; the live runner is not built.
+
+**As built (slice 4n, real escape source):** `crew/backtest/escape_log.rs` is the default `EscapeSource`, read-only over the escape log (4k's `crew_escape_page`, `crew_escapes_of_project`, `crew_escape_events`, `crew_merge`). Only `confirmed` escapes count (`possible` and `dismissed` do not), for merges in the 30 to 180 day window and found within 30 days of their merge. The pull request is the merge's record id, the same number the history uses. The files are what the escape's fix or revert commit changed, from `git diff-tree` through the hardened helper on the merge's checkout; the commit is the one the escape's `detected` event names (`revert:` or `follow_up_fix:`), and a revert falls back to the merge's `reverted_commit`. An escape with no such commit (post-merge check, a person's mark), no checkout or an unreadable commit is **unresolved**: counted per lane as `unresolved_n` (migration 53, additive, NULL when not scored) beside the score, never scored as a miss and never given a guessed file list; a finding on a pull request whose only escape is unresolved is stored `not_measured` and left out of that lane's precision. A fix that changed more than 2,000 files, or a non-UTF-8 file name, also makes an escape unresolved rather than shortening it. A log over its 5,000 cap, one damaged row or a store error is Not measured for the whole project, never a shortened list; a project with no escape row at all is Not measured too, because an empty log is not proof of no escapes. The estimate reads the store only (`measurable`); git runs only in the replay's blocking task. `NoEscapeLog` stays for tests. Nothing here writes the escape store.
+
+**As built (slice 4n, routes, Preview):** four routes under `/api/crew/backtest`, behind the Preview flag. `GET estimate` (a project, and optionally lanes as repeated `lane`, `engine` and `model`) and `GET {id}/report` only read, and a remote viewer may use them. `POST start` and `POST {id}/stop` are a person's: local only, listed in `crew::changes::STATE_CHANGING` so Autopilot refuses an agent's request to them, and no tool, timer or scheduler reaches them. The estimate says how many merges (the project's own Crew merges, 30 to 180 days old) each lane would replay, whether outcomes can be measured, and which run is in progress; the counts are information and never change which engine the router picks (a test reads the routing sources and runs the pure router for that). A start names lanes (review or check, never a builder) and a token budget for each engine, as one entry per engine that is never summed; it carries no money field and any other field is refused. Only one run goes at a time: a second start while one runs is refused with a clear error, decided in the same store transaction that records the run. A stop only asks; the run stays running until its last replay is over, then ends as stopped and keeps what it replayed. No live replay engine is connected, so a start is refused until one is; tests use a scripted runner. The report shows each lane's state, tokens, finding count and, only when the escape log can say, its score; when the escape log cannot say (no escape logged, unreadable or over its cap) every lane reads Not measured and never a zero; a scored lane also shows `unresolved_n`, null when not scored. When the core opens, a run a crash left running becomes failed with the reason interrupted. Scoring now counts identical findings once, matches a path spelled with `./`, doubled or backslash separators or `..` segments to the same file (an absolute path matches only itself) and saturates a count past the integer range instead of wrapping.
 
 **Autopilot decisions** (2026-11-11, Designer part 5, `crew-designs.html`, orbyn-designs pull requests #139 and #140):
 
@@ -1121,6 +1303,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
   - With On or Off, always ask.
   - With Full, when no other vendor is signed in: it runs at the lead tier, badged "Same engine as author", and the task
     is raised to High risk.
+  - Owner reaffirmed on 2026-11-16: keep the High-risk rule. Conflicting design copy does not lower task risk.
 
 **Device, welcome and access decisions** (2026-11-11, Engineer Designs after pull requests #150 and #151, frames
 `device-*`, `welcome-*`, `scopes-*`, `update-tracks*`; from parity rows H21, H31, K35, L27, P6):
@@ -1494,3 +1677,7 @@ The row tables are in [crew/beta-rows.md](crew/beta-rows.md):
 - [Appendix A](crew/beta-rows.md#appendix-a-every-unfinished-beta-row-app-parity): every unfinished beta row (app parity), 137 rows.
 - [Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built): designed screens not yet built, 160 screens.
 - [Appendix C](crew/beta-rows.md#appendix-c-unfinished-rows-that-have-no-design-yet): unfinished rows that have no design yet.
+
+**As built (slice 4l, coverage, contracts and routes, migration 50):** `crew/capacity/coverage.rs` counts the lines agents wrote in merges, reviewed when the merge is Looks good or Commented (merge-level, never line-level), in the queue when it waits with High or Medium risk. A merge before its repository's provenance start, with no hunk or no note, is Not measured and adds no line. Migration 50 adds `pause_enabled` (default off): `capacity_start_check` lets every start go until a person turns it on. Review fix tasks and merge-comment fixes set `Links::crew_started`, stored as Low and Crew-started; a person's start and review lanes stay Medium and person-started (background crews have no start path yet). Routes: `GET /api/crew/capacity` and `GET /api/crew/capacity/coverage` are Local reads; `POST /api/crew/capacity/settings` and `POST /api/crew/capacity/tasks/{id}` are Person writes behind `local_only`. The refused starts are listed since migration 54 (below). The screens are not wired yet.
+
+**As built (slice 4l, web wiring, matched to Crew Designs v77):** `web/src/features/crew/capacity/live/` draws two screens from the two Local reads, at `#/preview/crew/capacity-live-settings` and `capacity-live-coverage` in a Preview build, only while the service's Crew Preview is on. The screens read the project list themselves, because a Preview hash opens before the app shell loads the workspace: "Reading projects" while it is out, "Can't read the projects" with Retry when it fails and "No project to show" (nothing else) when it is empty; no capacity route is read until a project is known. The settings sheet is `capacity-settings` (its "What the limit does and doesn't do" box only once a limit is saved), with its `-unset`, `-saved-off`, `-paused-banner`, `-loading`, `-error` and `-no-plan` states; the paused banner is on that sheet, and `capacity-over` is not built (the Review queue is not in the beta). A saved limit with pausing off reads `Off` and `Review every batch` (the `· default` suffix and the shorter pause and low-risk help text are only for the page before a limit is saved). The coverage map is `capacity-coverage`, with `-empty`, `-not-begun`, `-gaps` (partial: the banner only, no button, no lists and no split by reason, because the service sends one Not measured total), `-gaps-narrow` (partial: the banner wraps; the stacked lists are Planned), `-low`, `-error`, `-loading`, `-picker` and `-picker-narrow` (partial: the chip and menu are built; the chip on its own row and the map as cards are not). Coverage shows the exact counts and, whenever any merge is Not measured, the gaps banner; there is no low-sample cutoff and no "thin" or "rests on" wording (the cutoff is an open product question). A failed read draws the red banner, the raw error line and one dash tile. A person with several projects picks one from the chip: choosing reads that project's coverage and sends nothing else; with one project the chip is plain text. Engine labels are the service's own, `claude · Sonnet 5.5`. Planned, drawn as a Planned pill beside a disabled control or as a heading with no rows, never with invented data: the editor for the limit, sampling and pause switch (`Change the limit`, `Set a limit`; frames `capacity-settings-editor`, `-editor-narrow` and `-editor-error` are not built), the lists of Not measured merges and "Try the 2 again" (the live banner has neither; the sample gaps frame draws them), the link from an area to its files and `Open the Review queue`. No screen sends the two Person writes (the client is in `live/api.ts`). Missing data reads "Not measured" (provenance never began; an area with no lines, in every cell; an engine with no model); coverage stays merge-level. Not drawn: the page head, tabs and breadcrumb the frames put around the coverage page (the app draws the page alone), and the narrow-window and panel layouts of the map as cards. The paused-board, paused-card, resumed, sampling and digest frames have no real data and stay sample-only; the sample frames `capacity-settings`, `-settings-unset`, `-coverage`, `-coverage-gaps`, `-coverage-empty`, `-coverage-low` and `-coverage-error` follow v77 wording.

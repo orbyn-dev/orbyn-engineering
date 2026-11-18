@@ -4,14 +4,14 @@
 //! `needs`, a model for the tier, and quota left.
 
 use orbyn_contracts::{
-    Brief, BriefEffect, CrewShortText, EngineCapabilities, LeaseMode, ModelInfo, RejectionWhy,
-    RouteRejection, RouteTier,
+    Brief, BriefEffect, CrewShortText, EngineCapabilities, EngineTier, LeaseMode, ModelInfo,
+    RejectionWhy, RouteRejection, RouteTier,
 };
 
 use crate::agents::provider_facts::{Unavailable, WriteBlock};
 
 use super::classes::{PathClasses, engine_words};
-use super::tiers::{RouterConfig, Unfit, model_for_tier, model_named, tier_of_model};
+use super::tiers::{RouterConfig, Unfit, acp_model, model_for_tier, model_named, tier_of_model};
 use super::view::EngineView;
 
 /// What the brief asks of an engine, read once.
@@ -20,10 +20,16 @@ pub struct Want {
     pub needs: Vec<String>,
     pub image: bool,
     pub tier: RouteTier,
+    /// The role checks someone else's work, so the engine's model must fill a mapped tier: an engine with no mapping is a
+    /// builder only, even when the role's tier is the worker tier.
+    pub reviewer: bool,
+    /// The engine would run a crew worker or reviewer, which is confined: one that the run start would refuse is out. An
+    /// approver run is not confined, so it keeps this false.
+    pub crew_worker: bool,
 }
 
 impl Want {
-    pub fn of(brief: &Brief, tier: RouteTier) -> Self {
+    pub fn of(brief: &Brief, tier: RouteTier, reviewer: bool) -> Self {
         let needs: Vec<String> = brief
             .needs
             .iter()
@@ -36,6 +42,8 @@ impl Want {
             image: needs.iter().any(|need| need == "image"),
             needs,
             tier,
+            reviewer,
+            crew_worker: true,
         }
     }
 }
@@ -62,6 +70,17 @@ pub fn rejection(view: &EngineView, why: RejectionWhy, text: impl Into<String>) 
         why,
         text: short(text),
     }
+}
+
+/// An engine whose worker run would be refused at its start is never routed to: this is the same answer the run start gives
+/// (`host::confine::worker_refusal`), read once when the machine was gathered. It names the engine and the plain reason.
+pub fn crew_refusal(view: &EngineView) -> Option<RouteRejection> {
+    let refusal = view.crew_refusal.as_ref()?;
+    Some(rejection(
+        view,
+        RejectionWhy::MissingCapability,
+        refusal.plain(&view.name),
+    ))
 }
 
 /// A need the engine itself meets, or `None` for one the router does not know.
@@ -242,22 +261,42 @@ pub fn screen<'a>(
             }
         }
     }
-    let models: &[ModelInfo] = view.models.as_deref().unwrap_or(&[]);
-    let model = match named {
-        Some(asked) => model_named(models, asked, want.image),
-        None => model_for_tier(config, &view.family, models, want.tier, want.image),
+    // Once the engine is otherwise usable, the refusal the run start would give is the one thing left to keep it out.
+    if want.crew_worker
+        && let Some(why) = crew_refusal(view)
+    {
+        return Err(why);
     }
-    .map_err(|unfit| {
+    let models: &[ModelInfo] = view.models.as_deref().unwrap_or(&[]);
+    let selected = if view.tier == EngineTier::Acp {
+        acp_model(config, view, models, want.tier, named, want.image)
+    } else {
+        match named {
+            Some(asked) => model_named(models, asked, want.image),
+            None => model_for_tier(config, &view.family, models, want.tier, want.image),
+        }
+        .map(|m| (m, tier_of_model(config, &view.family, m)))
+    };
+    let (model, tier) = selected.map_err(|unfit| {
         let (why, text) = unfit_text(view, want.tier, &unfit, named);
         rejection(view, why, text)
     })?;
-    let tier = tier_of_model(config, &view.family, model);
     if want.tier == RouteTier::Lead && tier != Some(RouteTier::Lead) {
         return Err(rejection(
             view,
             RejectionWhy::TierBelowLead,
             format!(
                 "{} is below the lead tier, which this role needs.",
+                model.id
+            ),
+        ));
+    }
+    if want.reviewer && tier.is_none() {
+        return Err(rejection(
+            view,
+            RejectionWhy::MissingCapability,
+            format!(
+                "{name} has no tier mapped for {}, so it is offered only as a builder.",
                 model.id
             ),
         ));

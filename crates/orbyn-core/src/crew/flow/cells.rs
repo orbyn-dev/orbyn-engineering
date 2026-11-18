@@ -50,6 +50,10 @@ pub(super) fn build_state(facts: &Facts) -> &str {
 }
 
 fn build(facts: &Facts) -> FlowCellState {
+    // A task refused at its start asks nothing of the person but a retry or a dismiss: its build failed, it is not waiting on one.
+    if facts.could_not_start() {
+        return FlowCellState::Failed;
+    }
     let fixing = !facts.fixes.is_empty();
     match build_state(facts) {
         "briefed" | "routed" if fixing => FlowCellState::Running,
@@ -179,8 +183,21 @@ fn lanes(facts: &Facts, security: bool) -> FlowCell {
         .into_iter()
         .filter(|(lane, ..)| is_security(lane) == security)
         .collect();
-    let count = u32::try_from(mine.len()).ok();
-    let state = if mine.is_empty() {
+    let pending = super::review_controls::pending_controls(facts);
+    let pending: Vec<&str> = pending
+        .iter()
+        .filter_map(|c| c["lane"].as_str())
+        .filter(|lane| is_security(lane) == security)
+        .collect();
+    let added = pending
+        .iter()
+        .filter(|name| !mine.iter().any(|(lane, ..)| lane == *name))
+        .count();
+    let count = u32::try_from(mine.len() + added).ok();
+    let waiting_consent = !pending.is_empty();
+    let state = if waiting_consent {
+        FlowCellState::NeedsYou
+    } else if mine.is_empty() {
         FlowCellState::Pending
     } else if mine.iter().any(|(_, _, s, _)| s == "needs_person") {
         FlowCellState::NeedsYou
@@ -260,6 +277,8 @@ fn you(facts: &Facts) -> FlowCellState {
 pub(super) fn cells(facts: &Facts) -> Vec<FlowCell> {
     let route = if facts.route.is_some() {
         FlowCellState::Done
+    } else if facts.could_not_start() {
+        FlowCellState::Failed
     } else if facts.task.state == "needs_person" {
         FlowCellState::NeedsYou
     } else {

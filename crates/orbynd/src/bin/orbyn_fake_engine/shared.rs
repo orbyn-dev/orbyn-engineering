@@ -34,6 +34,10 @@ pub(crate) fn record_launch(mode: &str, args: &[String]) {
 
             "cwd": std::env::current_dir().expect("cwd"),
 
+            // The one engine variable a test reads by value: the run's opt-in to the
+            // task tools. Every other name is recorded without its value.
+            "task_tools": std::env::var("CLAUDE_CODE_ENABLE_TODO_TOOLS").ok(),
+
             "env": std::env::vars_os()
 
                 .map(|(name, _)| name.to_string_lossy().into_owned())
@@ -149,6 +153,77 @@ pub(crate) fn http_post(url: &str, body: &Value) -> (u16, Value) {
         .expect("status");
 
     (status, serde_json::from_str(text).unwrap_or(Value::Null))
+}
+
+/// What a worker that runs as the person can do (#441): read `<data>/service.json` and call the routes that need the
+/// person key, with the service token alone. The routes come from `ORBYN_FAKE_PROBE_ROUTES`, a JSON array of
+/// `[method, path, body]` (the test fills the path parameters in); without it the probe calls the file-action, approval and
+/// AG-UI resume routes.
+/// Writes each status and error code, and this process's own argv and env, to `ORBYN_FAKE_PROBE_FILE`. Does nothing
+/// unless a test sets `ORBYN_FAKE_PROBE_FILE` and `ORBYN_FAKE_PROBE_DATA`.
+pub(crate) fn probe_service(args: &[String]) {
+    let (Ok(out), Ok(data)) = (
+        std::env::var("ORBYN_FAKE_PROBE_FILE"),
+        std::env::var("ORBYN_FAKE_PROBE_DATA"),
+    ) else {
+        return;
+    };
+    let found: Value = serde_json::from_str(
+        &std::fs::read_to_string(std::path::Path::new(&data).join("service.json"))
+            .expect("service.json"),
+    )
+    .expect("service.json is JSON");
+    let url = found["url"].as_str().expect("url");
+    let token = found["token"].as_str().expect("token");
+    let routes: Vec<(String, String, String)> = match std::env::var("ORBYN_FAKE_PROBE_ROUTES") {
+        Ok(text) => serde_json::from_str(&text).expect("probe routes"),
+        Err(_) => {
+            // The AG-UI resume answers an interrupt, so it is the third way to approve and needs the key too.
+            let resume = json!({
+                "threadId": "t", "runId": "r",
+                "resume": [{ "interruptId": "a", "status": "resolved", "payload": { "approved": true } }],
+            })
+            .to_string();
+            vec![
+                (
+                    "POST".into(),
+                    "/api/projects/p/worktrees/w/file-actions".into(),
+                    "{}".into(),
+                ),
+                ("POST".into(), "/api/approvals/a/decide".into(), "{}".into()),
+                ("POST".into(), "/agui/threads/t".into(), resume),
+            ]
+        }
+    };
+    let calls: Vec<Value> = routes
+        .iter()
+        .map(|(method, path, body)| {
+            let host = url.strip_prefix("http://").expect("http url");
+            let mut stream = TcpStream::connect(host).expect("connect");
+            write!(
+                stream,
+                "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write");
+            let mut response = String::new();
+            stream.read_to_string(&mut response).expect("read");
+            let (head, text) = response.split_once("\r\n\r\n").expect("response");
+            let status: u16 = head
+                .split_whitespace()
+                .nth(1)
+                .expect("status")
+                .parse()
+                .expect("status");
+            let body: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+            json!({ "method": method, "path": path, "status": status, "code": body["code"] })
+        })
+        .collect();
+    let env: Vec<String> = std::env::vars_os()
+        .map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy()))
+        .collect();
+    let report = json!({ "calls": calls, "argv": args, "env": env });
+    std::fs::write(&out, serde_json::to_vec(&report).expect("probe JSON")).expect("probe file");
 }
 
 pub(crate) fn mcp_call(url: &str, id: u64, method: &str, params: Value) -> (u16, Value) {

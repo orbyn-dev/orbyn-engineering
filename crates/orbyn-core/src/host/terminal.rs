@@ -467,7 +467,8 @@ fn take_cursor_query(chunk: &mut Vec<u8>) -> bool {
 
 #[cfg(unix)]
 fn tree_for(pid: u32) -> ProcessTree {
-    // portable-pty runs the child through setsid, so it leads its own group.
+    // portable-pty runs the child through setsid, so it leads its own group. A terminal keeps the group-only kill (`ProcessTree::kill`):
+    // closing a tab must not reap a `nohup make &` or a disowned job that has always outlived it.
     ProcessTree::from_group(pid as i32)
 }
 

@@ -340,6 +340,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
     assert_eq!(
         tables(&store.reader()),
         [
+            "crew_acp_tier_revision",
+            "crew_acp_tiers",
             "crew_answer_keys",
             "crew_area_events",
             "crew_area_modes",
@@ -347,22 +349,38 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_autopilot_modes",
             "crew_background",
             "crew_background_runs",
+            "crew_backtest_lanes",
+            "crew_backtest_results",
+            "crew_backtest_runs",
             "crew_briefs",
             "crew_bus_events",
+            "crew_capacity_settings",
             "crew_deliveries",
+            "crew_escape_check_tasks",
+            "crew_escape_checks",
+            "crew_escape_events",
+            "crew_escapes",
             "crew_evidence",
             "crew_facts",
             "crew_finding_repros",
             "crew_findings",
             "crew_fixes",
+            "crew_forge_merges",
             "crew_gates",
             "crew_guard_targets",
+            "crew_hunks",
             "crew_leases",
             "crew_merge_queue",
+            "crew_merge_work",
             "crew_merges",
             "crew_messages",
+            "crew_paused_starts",
+            "crew_provenance_start",
             "crew_reports",
             "crew_results",
+            "crew_review_controls",
+            "crew_review_publications",
+            "crew_review_samples",
             "crew_reviews",
             "crew_route_decisions",
             "crew_runs",
@@ -401,6 +419,315 @@ fn migration_30_is_the_crew_migration_and_numbering_has_no_gap() {
         .unwrap()
         .1;
     assert!(sql.contains("CREATE TABLE crew_answer_keys"));
+}
+
+fn forge_intent(task_id: &str) -> ForgeMerge {
+    ForgeMerge {
+        task_id: task_id.into(),
+        repo: "owned-fixture".into(),
+        remote: "owned-bare-fixture".into(),
+        branch: "main".into(),
+        source: "crew/task".into(),
+        candidate: "a".repeat(40),
+        base: "b".repeat(40),
+        combined: None,
+        pull: None,
+        phase: ForgePhase::Prepared,
+        merge_commit: None,
+        evidence: Vec::new(),
+        note: None,
+        merge_sent: false,
+        revision: 0,
+    }
+}
+
+#[test]
+fn forge_intent_keeps_identity_and_rejects_stale_or_backward_writers() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let mut intent = forge_intent(&id);
+    store.add_crew_forge_merge(&intent).unwrap();
+    let mut stale = intent.clone();
+    intent.combined = Some("c".repeat(40));
+    intent.evidence = vec![format!("sha256:{}", "d".repeat(64))];
+    intent.phase = ForgePhase::Publishing;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    assert!(store.save_crew_forge_merge(&mut stale).is_err());
+    let mut wrong = intent.clone();
+    wrong.candidate = "e".repeat(40);
+    assert!(store.save_crew_forge_merge(&mut wrong).is_err());
+    wrong = intent.clone();
+    wrong.phase = ForgePhase::Prepared;
+    assert!(store.save_crew_forge_merge(&mut wrong).is_err());
+    assert_eq!(store.crew_forge_merge(&id).unwrap(), Some(intent));
+    assert!(store.add_crew_forge_merge(&forge_intent(&id)).is_err());
+}
+
+fn queued_forge(store: &Store, id: &str, phase: ForgePhase) -> ForgeMerge {
+    let mut entry = crate::crew::fixtures::merge_entry(id, "owned-fixture", "queued");
+    entry.state = "blocked".into();
+    store.add_merge_entry(&entry).unwrap();
+    let mut intent = forge_intent(id);
+    store.add_crew_forge_merge(&intent).unwrap();
+    intent.combined = Some("c".repeat(40));
+    intent.evidence = vec![format!("sha256:{}", "d".repeat(64))];
+    for next in [ForgePhase::Publishing, ForgePhase::AwaitingCi] {
+        intent.phase = next;
+        intent.pull = (next == ForgePhase::AwaitingCi).then_some(7);
+        store.save_crew_forge_merge(&mut intent).unwrap();
+    }
+    intent.phase = phase;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    intent
+}
+
+fn resolve_audits(store: &Store) -> usize {
+    store
+        .list_audit(None, 100)
+        .unwrap()
+        .iter()
+        .filter(|row| row.action == "crew.merge.forge.resolve")
+        .count()
+}
+
+#[test]
+fn needs_person_has_no_way_out_for_the_pipeline_but_a_person_can_resolve_it() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let intent = queued_forge(&store, &id, ForgePhase::NeedsPerson);
+    // The ordinary writer can still never leave needs_person, whatever it asks for.
+    for next in [
+        ForgePhase::Prepared,
+        ForgePhase::Publishing,
+        ForgePhase::AwaitingCi,
+        ForgePhase::MergeRequested,
+        ForgePhase::Merged,
+        ForgePhase::Rejected,
+    ] {
+        let mut attempt = intent.clone();
+        attempt.phase = next;
+        attempt.merge_commit = (next == ForgePhase::Merged).then(|| "e".repeat(40));
+        assert!(
+            store.save_crew_forge_merge(&mut attempt).is_err(),
+            "{next:?}"
+        );
+    }
+    // A person's answer is the only way out, and it needs the revision that was seen.
+    assert!(matches!(
+        store.resolve_crew_forge_merge(
+            &id,
+            intent.revision - 1,
+            &ForgeResolution::Reject,
+            "user",
+            "test"
+        ),
+        Err(CoreError::Stale(_))
+    ));
+    assert_eq!(resolve_audits(&store), 0);
+    let retried = store
+        .resolve_crew_forge_merge(
+            &id,
+            intent.revision,
+            &ForgeResolution::Retry,
+            "user",
+            "test",
+        )
+        .unwrap();
+    assert_eq!(retried.phase, ForgePhase::AwaitingCi);
+    assert_eq!(store.merge_entry(&id).unwrap().unwrap().state, "queued");
+    assert_eq!(resolve_audits(&store), 1);
+    // It is no longer waiting: the same answer is stale, and a pipeline state is not resolvable.
+    assert!(matches!(
+        store.resolve_crew_forge_merge(
+            &id,
+            retried.revision,
+            &ForgeResolution::Reject,
+            "user",
+            "test"
+        ),
+        Err(CoreError::Stale(_))
+    ));
+    assert_eq!(resolve_audits(&store), 1);
+}
+
+#[test]
+fn the_pipeline_can_set_merge_sent_but_never_clear_it() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let mut intent = queued_forge(&store, &id, ForgePhase::MergeRequested);
+    assert!(!intent.merge_sent);
+    intent.merge_sent = true;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    let mut clearing = intent.clone();
+    clearing.merge_sent = false;
+    store.save_crew_forge_merge(&mut clearing).unwrap();
+    assert!(clearing.merge_sent, "the saved intent keeps it");
+    assert!(store.crew_forge_merge(&id).unwrap().unwrap().merge_sent);
+    // Into needs_person and on: still set, and a reject keeps the intent in the rejected-pending set.
+    clearing.phase = ForgePhase::NeedsPerson;
+    store.save_crew_forge_merge(&mut clearing).unwrap();
+    let rejected = store
+        .resolve_crew_forge_merge(
+            &id,
+            clearing.revision,
+            &ForgeResolution::Reject,
+            "user",
+            "test",
+        )
+        .unwrap();
+    assert!(rejected.merge_sent);
+    assert_eq!(store.crew_forge_rejected_pending().unwrap().len(), 1);
+    assert!(
+        store.crew_forge_unfinished().unwrap().is_empty(),
+        "never starves the other recovery"
+    );
+    // Only a settle clears it, and only for a rejected intent.
+    let settled = store
+        .resolve_crew_forge_merge(
+            &id,
+            rejected.revision,
+            &ForgeResolution::Settle,
+            "core",
+            "test",
+        )
+        .unwrap();
+    assert!(!settled.merge_sent);
+    assert!(store.crew_forge_rejected_pending().unwrap().is_empty());
+}
+
+#[test]
+fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let intent = queued_forge(&store, &id, ForgePhase::NeedsPerson);
+    // A queue entry that already ended makes the whole answer fail: no audit row, the intent unchanged and still resolvable.
+    store
+        .set_merge_entry_state(&id, "rejected", Some("by someone"))
+        .unwrap();
+    assert!(
+        store
+            .resolve_crew_forge_merge(
+                &id,
+                intent.revision,
+                &ForgeResolution::Retry,
+                "user",
+                "test"
+            )
+            .is_err()
+    );
+    assert_eq!(
+        (
+            resolve_audits(&store),
+            store.crew_forge_merge(&id).unwrap().unwrap().phase
+        ),
+        (0, ForgePhase::NeedsPerson)
+    );
+    store.set_merge_entry_state(&id, "blocked", None).unwrap();
+    let rejected = store
+        .resolve_crew_forge_merge(
+            &id,
+            intent.revision,
+            &ForgeResolution::Reject,
+            "user",
+            "test",
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            rejected.phase,
+            store.merge_entry(&id).unwrap().unwrap().state.as_str()
+        ),
+        (ForgePhase::Rejected, "rejected")
+    );
+    // Terminal for both writers, and it is not unfinished work for recovery.
+    let mut again = rejected.clone();
+    again.phase = ForgePhase::AwaitingCi;
+    assert!(store.save_crew_forge_merge(&mut again).is_err());
+    assert!(matches!(
+        store.resolve_crew_forge_merge(
+            &id,
+            rejected.revision,
+            &ForgeResolution::Retry,
+            "user",
+            "test"
+        ),
+        Err(CoreError::Stale(_))
+    ));
+    assert!(store.crew_forge_unfinished().unwrap().is_empty());
+}
+
+#[test]
+fn a_retry_is_refused_when_publication_may_have_happened_and_a_merge_needs_its_pr() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let mut intent = forge_intent(&id);
+    let mut entry = crate::crew::fixtures::merge_entry(&id, "owned-fixture", "queued");
+    entry.state = "blocked".into();
+    store.add_merge_entry(&entry).unwrap();
+    store.add_crew_forge_merge(&intent).unwrap();
+    intent.combined = Some("c".repeat(40));
+    intent.evidence = vec![format!("sha256:{}", "d".repeat(64))];
+    intent.phase = ForgePhase::Publishing;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    intent.phase = ForgePhase::NeedsPerson;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    // Published without a PR number: running it again could publish twice, so only reject or the forge itself can end it.
+    for resolution in [
+        ForgeResolution::Retry,
+        ForgeResolution::Merged {
+            merge_commit: "e".repeat(40),
+        },
+    ] {
+        assert!(matches!(
+            store.resolve_crew_forge_merge(&id, intent.revision, &resolution, "user", "test"),
+            Err(CoreError::Invalid(_))
+        ));
+    }
+    assert_eq!(resolve_audits(&store), 0);
+    assert!(
+        store
+            .resolve_crew_forge_merge(
+                &id,
+                intent.revision,
+                &ForgeResolution::Reject,
+                "user",
+                "test"
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn watch_claim_recovers_on_restart_but_completed_work_never_dispatches_twice() {
+    let (dir, store) = open();
+    let id = task(&store);
+    assert!(
+        store
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
+    drop(store);
+    let restarted = Store::open(&dir.path().join("orbyn.sqlite3"), "epoch-b").unwrap();
+    assert!(
+        restarted
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
+    restarted
+        .finish_crew_merge_watch("watch:fixture:main:commit")
+        .unwrap();
+    drop(restarted);
+    let restarted = Store::open(&dir.path().join("orbyn.sqlite3"), "epoch-c").unwrap();
+    assert!(
+        !restarted
+            .claim_crew_merge_watch("watch:fixture:main:commit", &id)
+            .unwrap()
+    );
 }
 
 #[test]

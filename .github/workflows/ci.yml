@@ -1,18 +1,25 @@
 name: CI
 
-# Time budget: a pull request should turn green within 10 minutes. A run over it is a
-# defect to fix at its slowest step, not drift to accept.
+# Time budget: a pull request runs a light set and should turn green within about 8
+# minutes (Cheap checks about 1, Web about 3, Linux Rust about 6 warm, in parallel). A run
+# over it is a defect to fix at its slowest step, not drift to accept.
 #
-# Pull requests run one lane: macOS, the platform the desktop app is used on most, and
-# Linux for the browser suite. Windows runs on main, nightly and on a pull request that
-# touches the desktop shell, the scripts, the workflows or the Cargo manifests, where Windows-only breakage
-# lives. The Windows Rust tests also run on a pull request that changes Rust source
-# (crates/, any .rs file), split across runners to stay under the macOS lane. Main and nightly
-# run every lane and every check.
+# On a pull request: Cheap checks, Web and Rust on Linux (clippy and tests), each scoped by
+# the changes job to what the diff can affect. Nothing else builds: no browser suite, no
+# Windows or macOS Rust, no desktop build, no packaged app.
+# On push to main, the nightly schedule and manual runs: the full suite on every OS, as
+# release gates need. A pull request that risks more than the light set (desktop shell,
+# packaging, Windows or macOS only code) gets the same full run on demand: add the
+# `full-ci` label, or run this workflow by hand on the branch. The label runs everything
+# on every OS on each push while it stays on the pull request.
+# Branch protection requires only Cheap checks, Rust (linux) and Web. The other check names
+# below still run on every event and pass when their heavy job was left out by design;
+# main needs them. If a merge turns main red, the person who merged it fixes or reverts it.
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -22,7 +29,8 @@ permissions:
 
 # A new push to a pull request cancels its older run. Runs on main never cancel.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  # A label other than full-ci gets a group of its own, so labelling a pull request never cancels its running checks.
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}{1}', github.event.pull_request.number, (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && format('-label-{0}', github.run_id) || '') || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -33,8 +41,9 @@ jobs:
   # below) that passes when the heavy job succeeded or was skipped by the scope, and fails
   # when it failed, was cancelled, or was skipped although the scope asked for it.
   # scripts/check_ci_required_names.py keeps every required name produced exactly once.
-  # Pushes to main, nightly, manual runs and any path this does not recognise run
-  # everything on every OS.
+  # Pushes to main, nightly, manual runs, a pull request with the `full-ci` label and any
+  # path this does not recognise run everything on every OS. Any other pull request runs the
+  # light set: only the Rust (Linux) and Web scopes below can be true.
   changes:
     name: Changes
     # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
@@ -46,6 +55,8 @@ jobs:
       desktop: ${{ steps.scope.outputs.desktop }}
       windows: ${{ steps.scope.outputs.windows }}
       windows_rust: ${{ steps.scope.outputs.windows_rust }}
+      rust_macos: ${{ steps.scope.outputs.rust_macos }}
+      full: ${{ steps.scope.outputs.full }}
       desktop_matrix: ${{ steps.scope.outputs.desktop_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,11 +68,13 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
+          FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: |
           mac='{"os":"macos-15","bundles":"app","codex":"codex"}'
           win='{"os":"windows-2022","bundles":"nsis","codex":"codex.cmd"}'
-          all() { for k in rust web e2e desktop windows windows_rust; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; echo "desktop_matrix={\"include\":[$mac,$win]}" >> "$GITHUB_OUTPUT"; echo "Running every check: $1"; }
+          all() { for k in rust web e2e desktop windows windows_rust rust_macos full; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; echo "desktop_matrix={\"include\":[$mac,$win]}" >> "$GITHUB_OUTPUT"; echo "Running every check: $1"; }
           if [ "$EVENT" != "pull_request" ]; then all "not a pull request"; exit 0; fi
+          if [ "$FULL_LABEL" = true ]; then all "the full-ci label"; exit 0; fi
           if ! files=$(git diff --no-renames --name-only "$BASE"...HEAD); then all "could not compare with the base"; exit 0; fi
           docs='^(docs/|[^/]+\.md$|\.github/ISSUE_TEMPLATE/|\.github/pull_request_template\.md$|\.github/(CODEOWNERS|labeler\.yml|labels\.json|dependabot\.yml)$)'
           rust='^(crates/|Cargo\.(toml|lock)$|desktop/src-tauri/|scripts/|web/src/generated/|\.github/workflows/|docs/crew/protocol/)'
@@ -75,21 +88,14 @@ jobs:
           unknown=$(printf '%s\n' "$code" | grep -Ev "$rust|$web|$desktop" | grep -v '^$' || true)
           if [ -n "$unknown" ]; then all "unrecognised paths: $(echo $unknown)"; exit 0; fi
           has() { printf '%s\n' "$code" | grep -Eq "$1" && echo true || echo false; }
-          r=$(has "$rust"); w=$(has "$web"); d=$(has "$desktop")
-          e=false; [ "$r" = true ] || [ "$w" = true ] && e=true
-          # The bundle holds the Rust service and the shell; a web-only change is covered
-          # by the Web job's build and the browser suite.
-          k=false; [ "$r" = true ] || [ "$d" = true ] && k=true
-          # Windows-only breakage lives in the shell, the scripts and the workflows.
-          # A rename lists both paths (--no-renames), so moving code into docs still counts.
-          x=$(has '^(desktop/|scripts/|\.github/workflows/|Cargo\.(toml|lock)$)')
-          # The Windows Rust tests also cover Rust source and the Rust toolchain files, which
-          # the desktop build above does not need Windows for.
-          y=$x; [ "$x" = true ] || y=$(has '^(crates/|\.cargo/|rust-toolchain|.*\.rs$|(.*/)?Cargo\.(toml|lock)$|docs/crew/protocol/)')
-          # The desktop build matrix: macOS always, Windows when Windows has something to do.
-          m="[$mac]"; [ "$k" = true ] && [ "$x" = true ] && m="[$mac,$win]"
-          printf 'rust=%s\nweb=%s\ne2e=%s\ndesktop=%s\nwindows=%s\nwindows_rust=%s\ndesktop_matrix={"include":%s}\n' "$r" "$w" "$e" "$k" "$x" "$y" "$m" >> "$GITHUB_OUTPUT"
-          echo "rust=$r web=$w e2e=$e desktop=$k windows=$x windows_rust=$y"
+          r=$(has "$rust"); w=$(has "$web")
+          # A pull request without the full-ci label runs the light set only: Cheap checks, Web
+          # and Rust on Linux. The browser suite, the desktop build, Windows and macOS Rust are
+          # left to main, the nightly run, manual runs and the label. The matrix keeps its macOS
+          # leg so it stays a valid matrix; its job is skipped.
+          e=false; k=false; x=false; y=false; m="[$mac]"
+          printf 'rust=%s\nweb=%s\ne2e=%s\ndesktop=%s\nwindows=%s\nwindows_rust=%s\nrust_macos=false\nfull=false\ndesktop_matrix={"include":%s}\n' "$r" "$w" "$e" "$k" "$x" "$y" "$m" >> "$GITHUB_OUTPUT"
+          echo "light pull request: rust=$r web=$w (add the full-ci label for the full suite)"
           printf '%s\n' "$files"
 
   # Format, types and lint, in about a minute, before anything builds. The heavy jobs
@@ -130,12 +136,68 @@ jobs:
         run: npm run check
         working-directory: web
 
+  # Rust on Linux: the light pull request's Rust check (clippy and every test), and it also
+  # runs on main and with the full-ci label. The wire-types check is platform-independent, so
+  # it lives here, where every pull request runs it.
+  rust-linux-build:
+    name: Rust build (ubuntu-24.04)
+    needs: [changes, lint]
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 30
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: rust-linux
+      # The scripted-engine regressions launch the browser suite's Node fixtures.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --workspace --no-fail-fast
+      - run: cargo test --workspace --doc
+      - name: Generated wire types are committed
+        shell: bash
+        run: |
+          git add --intent-to-add web/src/generated
+          git diff --exit-code --stat -- web/src/generated
+
+  # The required "Rust (linux)" check; see the note on the changes job.
+  rust-linux:
+    name: Rust (linux)
+    needs: [changes, lint, rust-linux-build]
+    if: always()
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    steps:
+      - shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+          SCOPE: ${{ needs.changes.outputs.rust }}
+          BUILD: ${{ needs.rust-linux-build.result }}
+        run: |
+          echo "changes=$CHANGES lint=$LINT scope=$SCOPE build=$BUILD"
+          # A job the scope skipped is fine; a job the scope asked for must have succeeded.
+          need() { if [ "$2" = true ]; then [ "$1" = success ]; else [ "$1" = success ] || [ "$1" = skipped ]; fi; }
+          [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$BUILD" "$SCOPE"
+
   # macOS runs the whole Rust lane in one job. Windows is split below, because its tests are
   # slow to start processes (about 20 minutes in one job against 6 on macOS).
   rust-macos-build:
     name: Rust build (macos-15)
     needs: [changes, lint]
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust_macos == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -150,7 +212,7 @@ jobs:
         with:
           node-version: 22
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest
       # nextest runs the 61 test binaries in parallel; cargo test ran them one at
@@ -175,7 +237,7 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           LINT: ${{ needs.lint.result }}
-          SCOPE: ${{ needs.changes.outputs.rust }}
+          SCOPE: ${{ needs.changes.outputs.rust_macos }}
           BUILD: ${{ needs.rust-macos-build.result }}
         run: |
           echo "changes=$CHANGES lint=$LINT scope=$SCOPE build=$BUILD"
@@ -219,7 +281,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest
       - run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.shard }}/3

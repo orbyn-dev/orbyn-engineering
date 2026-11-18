@@ -266,8 +266,56 @@ pub struct AutopilotQueueEntry {
     pub released: bool,
     #[ts(type = "number")]
     pub queued_unix: i64,
-    /// Entries ahead of it that are queued or blocked on the same branch.
+    /// Entries ahead of it that are queued or blocked on the same branch. A forge entry waiting on a person is not counted: the
+    /// lane skips it.
     pub ahead: u32,
+    /// The forge merge intent of this entry, when it has one: where it stands and the revision a person's answer must name.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub forge: Option<AutopilotForgeIntent>,
+}
+}
+
+wire! {
+/// Where a forge merge intent stands. `phase` is `prepared`, `publishing`, `awaiting_ci`, `merge_requested`, `merged`,
+/// `needs_person` or `rejected`. A `needs_person` intent is answered with its `revision`.
+pub struct AutopilotForgeIntent {
+    pub phase: String,
+    #[ts(type = "number")]
+    pub revision: i64,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub pull: Option<u64>,
+}
+}
+
+wire_enum! {
+/// What a person does with a forge merge that needs one. `reject` drops it; `retry` sends it back to be checked again.
+pub enum CrewForgeAction {
+    Reject,
+    Retry,
+}
+}
+
+wire! {
+/// A person's answer for a forge merge that needs one (`POST /api/crew/autopilot/merge-queue/{id}/resolve`). `seen_revision` is the
+/// intent's revision the person saw; an intent that has moved on is refused with `stale`.
+pub struct CrewForgeResolve {
+    pub action: CrewForgeAction,
+    #[ts(type = "number")]
+    pub seen_revision: i64,
+}
+}
+
+wire! {
+/// What the answer did. `outcome` is `rejected`, `retry` (the intent is back in the pipeline) or `merged` (the forge already had the
+/// merge, so the intent is recorded as merged and the answer asked for is not applied).
+pub struct CrewForgeResolved {
+    pub task_id: String,
+    pub outcome: String,
+    pub phase: String,
+    #[ts(type = "number")]
+    pub revision: i64,
 }
 }
 
@@ -399,6 +447,27 @@ pub struct AutopilotLogRow {
     pub needs_second_engine: bool,
     /// The row as stored, cleaned.
     pub body: Value,
+}
+}
+
+wire! {
+pub struct AutopilotSecondEngineNotice {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub task_id: String,
+    pub at: String,
+    pub target: String,
+    pub lead_engine: Option<String>,
+    pub lead_family: Option<String>,
+}
+}
+
+wire! {
+/// Pending notices; continue before next_before's immutable ledger id, even if this page resolved items.
+pub struct AutopilotSecondEngineNotices {
+    pub items: Vec<AutopilotSecondEngineNotice>,
+    #[ts(type = "number | null")]
+    pub next_before: Option<i64>,
 }
 }
 

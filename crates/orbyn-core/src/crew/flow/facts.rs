@@ -2,13 +2,13 @@
 //! write, a process or a file. The answer key is not read into it; only its text, to withhold it from what is shown.
 
 use orbyn_contracts::{Brief, Evidence, Gate, RouteDecision};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::store::{CrewFix, CrewRun, CrewTask, MergeEntry, MergeRecord};
 
-pub(super) struct Facts {
+pub(in crate::crew) struct Facts {
     pub task: CrewTask,
     pub run: Option<CrewRun>,
     pub brief: Option<Brief>,
@@ -29,8 +29,26 @@ pub(super) struct Facts {
     pub record: Option<MergeRecord>,
 }
 
+impl Facts {
+    /// The worker never ran: the task waits for a person (`needs_person`), no report of its worker was ever taken and nothing
+    /// was checked. Only a start can end that way: the router refused, a worker that cannot be restricted was refused, or a
+    /// setting blocked the launch. A task the checks could not decide has a report, so it is never this. It reads stored data
+    /// only (`crew_runs.last_report_run`, which `begin_crew_verification` sets on the first report or missed report, the
+    /// evidence and the fixes), so a task stored before this was written derives the same way, with no migration.
+    pub(crate) fn could_not_start(&self) -> bool {
+        self.task.state == "needs_person"
+            && self
+                .run
+                .as_ref()
+                .is_some_and(|run| run.last_report_run.is_none() && run.attempts == 0)
+            && self.evidence.is_empty()
+            && self.gates.is_empty()
+            && self.fixes.is_empty()
+    }
+}
+
 impl Core {
-    pub(super) fn flow_facts(&self, task: CrewTask) -> Result<Facts> {
+    pub(in crate::crew) fn flow_facts(&self, task: CrewTask) -> Result<Facts> {
         let store = &self.store;
         let id = task.id.clone();
         let mut fixes = Vec::new();
@@ -62,12 +80,9 @@ impl Core {
                         .is_some_and(|brief| *brief == g.subject)
             })
             .collect();
-        let review = if store.crew_reviews_of(&id)?.is_empty() {
-            json!({ "lanes": [], "findings": [], "blocked": false })
-        } else {
-            self.review_status(&id)
-                .map_err(|_| CoreError::Internal("the review could not be read".into()))?
-        };
+        let review = self
+            .review_status(&id)
+            .map_err(|_| CoreError::Internal("the review could not be read".into()))?;
         Ok(Facts {
             run: store.crew_run(&id)?,
             brief: store.crew_brief(&id)?,

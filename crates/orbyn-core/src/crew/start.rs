@@ -11,6 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
+use super::capacity::{PausedKind, PausedTrigger, Priority};
 use super::classes::Routed;
 use super::guard::{key_labeled, refuse_leak, refuse_leak_in, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
@@ -26,6 +27,11 @@ use crate::tools::mcp::McpBinding;
 pub(super) struct Links {
     pub review: Option<crate::store::CrewReview>,
     pub fix: Option<crate::store::CrewFix>,
+    /// Crew began this task itself (a review fix, a merge-comment fix), so it is Low priority and can be paused.
+    pub crew_started: bool,
+    /// Which trigger started it, with its own stable key, for the list of refused starts. Every Crew-started launch must
+    /// set it; one that does not is recorded as `unknown` and logged. A person's start has none.
+    pub trigger: Option<PausedTrigger>,
 }
 
 /// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
@@ -37,6 +43,8 @@ pub(super) struct Launch<'a> {
     pub key: orbyn_contracts::AnswerKey,
     pub role: Option<orbyn_contracts::RouteRole>,
     pub lane: Option<CrewToken>,
+    /// The lane keeps the lead tier (locked by a repository rule, or owed to a merge). Only a review lane reads it.
+    pub lane_keeps_lead: bool,
     pub author_engine: Option<CrewToken>,
     pub prefix: &'static str,
     pub prompt: Option<String>,
@@ -128,6 +136,7 @@ impl Core {
             key,
             role: None,
             lane: None,
+            lane_keeps_lead: false,
             author_engine: None,
             prefix: "worker",
             prompt: None,
@@ -180,11 +189,35 @@ impl Core {
             key,
             role,
             lane,
+            lane_keeps_lead,
             author_engine,
             prefix,
             prompt,
             links,
         } = launch;
+        // Only the core's recorded fix launch may install this internal byte check.
+        for check in &key.checks {
+            if check.id.as_str() == "chk-fix-touched" || check.params["name"] == "crew-fix-touched"
+            {
+                let Some(fix) = &links.fix else {
+                    return Err(invalid(
+                        "the internal byte check is reserved for a core fix task",
+                    ));
+                };
+                if fix.fix_task_id != brief.id.as_str()
+                    || !matches!(check.kind, orbyn_contracts::CheckKind::RepoRequired)
+                    || check.id.as_str() != "chk-fix-touched"
+                    || check.params["name"] != "crew-fix-touched"
+                    || check.params["note"].as_str().is_none_or(|digest| {
+                        digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+                {
+                    return Err(invalid(
+                        "the internal byte check does not match its fix task",
+                    ));
+                }
+            }
+        }
         // H2 on what the core wrote as well as what the lead sent.
         refuse_secret(&CrewObject::Brief(brief.clone()).to_value())?;
         refuse_secret(&CrewObject::AnswerKey(key.clone()).to_value())?;
@@ -208,11 +241,51 @@ impl Core {
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
         let now = crate::util::unix_now();
+        // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
+        // start is refused here with the reason, and no task, lease, run or ledger row exists.
+        let machine = self
+            .crew_machine(Some(&thread.project_id))
+            .await
+            .map_err(|e| invalid(e.public_message()))?;
+        self.refuse_unrunnable_route(
+            &RouteInput {
+                brief: &brief,
+                run_id: run_id.clone(),
+                created_at: created_at.clone(),
+                role,
+                lane: lane.clone(),
+                lane_keeps_lead,
+                author_engine: author_engine.clone(),
+                lead_engine: CrewToken::new(thread.engine.clone()).ok(),
+                default_engine: machine.default_engine.clone(),
+                classes: None,
+            },
+            &machine.views,
+            &thread.project_id,
+        )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
+        let trigger = links.crew_started.then(|| {
+            links.trigger.clone().unwrap_or_else(|| {
+                tracing::warn!(
+                    "a Crew-started launch named no trigger, so its held row is kind unknown"
+                );
+                PausedTrigger {
+                    kind: PausedKind::Unknown,
+                    key: brief.id.as_str().to_owned(),
+                }
+            })
+        });
+        self.capacity_start_check(
+            &thread.project_id,
+            links.crew_started.then_some((Priority::Low, true)),
+            trigger.as_ref(),
+        )?;
         let task = self
             .store
             .create_crew_task(&brief, &key, run_id.as_str())
             .map_err(internal)?;
+        self.capacity_mark_started(&task.id, links.crew_started);
+        self.capacity_held_started(&thread.project_id, trigger.as_ref());
         self.store
             .add_crew_run(&task.id, &thread.id, member.as_str())
             .map_err(internal)?;
@@ -235,15 +308,14 @@ impl Core {
                 .map_err(internal)?;
         }
 
-        // Which entries already hid a change from git, so one the worker adds can be told. If git cannot say, the task does not
-        // start: a check that cannot be made is never passed. The directory is recorded with them, and the verification
-        // reads the same one.
+        // No hidden entries are admitted, including pre-existing sparse-checkout flags.
+        // The verifier must be able to observe every tracked change.
         let flags = match super::index_flags::flagged(std::path::Path::new(&thread.cwd)).await {
-            Some(flags) => flags,
-            None => {
+            Some(flags) if flags.is_empty() => flags,
+            _ => {
                 let _ = self.store.move_crew_task(&task.id, "needs_person", None);
                 return Err(invalid(
-                    "the checkout's git index cannot be listed, so a hidden edit could not be told",
+                    "the checkout's git index cannot be listed or has flags that hide changes; remove assume-unchanged and skip-worktree flags before starting",
                 ));
             }
         };
@@ -255,25 +327,30 @@ impl Core {
 
         // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
         // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
-        let (base, classes) = self.crew_path_classes(thread, &brief).await;
-        let machine = self
-            .crew_machine(Some(&thread.project_id))
-            .await
-            .map_err(|e| invalid(e.public_message()))?;
+        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let input = RouteInput {
             brief: &brief,
             run_id: run_id.clone(),
             created_at,
             role,
             lane,
+            lane_keeps_lead,
             author_engine,
+            lead_engine: CrewToken::new(thread.engine.clone()).ok(),
             default_engine: machine.default_engine.clone(),
             classes: Some(&classes),
         };
-        let decision = match route(
+        let router_config = match self.crew_router_config_with_mappings(&thread.project_id) {
+            Ok(config) => config,
+            Err(error) => {
+                self.crew_needs_person(&task.id, &error.message, false);
+                return Err(error);
+            }
+        };
+        let mut decision = match route(
             &input,
             &machine.views,
-            &self.crew_router_config(),
+            &router_config,
             &EvalHistory::default(),
         ) {
             Ok(decision) => decision,
@@ -306,6 +383,19 @@ impl Core {
                 }));
             }
         };
+        if let Err(error) = self
+            .admit_review_route(
+                thread,
+                links.review.as_ref(),
+                &mut decision,
+                &machine.views,
+                now,
+            )
+            .await
+        {
+            self.crew_needs_person(&task.id, &error.message, false);
+            return Err(error);
+        }
         self.route_crew_task(&task.id, &decision)?;
         // The row names the engine only once the decision is stored, so a failed route leaves no row that says one was chosen. A
         // decision with no record is not one: if the row cannot be written, the task waits for a person.
@@ -359,6 +449,7 @@ impl Core {
                     "lane": decision.lane,
                     "effort": decision.effort,
                     "reasons": decision.reasons,
+                    "rejected": decision.rejected,
                 },
                 }))
             }
@@ -370,6 +461,36 @@ impl Core {
                 self.crew_needs_person(&task.id, &error.message, false);
                 Err(error)
             }
+        }
+    }
+
+    /// Routes the brief on the machine's engines before any task exists. The router leaves out an engine whose worker run would
+    /// be refused at its start; when that leaves nothing, or the brief pins such an engine, the start ends here with the one
+    /// plain reason. Any other refusal is left to the routing after the task is stored, as before.
+    fn refuse_unrunnable_route(
+        &self,
+        input: &RouteInput<'_>,
+        views: &[super::view::EngineView],
+        project_id: &str,
+    ) -> Result<(), CrewError> {
+        let Ok(config) = self.crew_router_config_with_mappings(project_id) else {
+            return Ok(());
+        };
+        let Err(RouteFailure::Refused(refusal)) =
+            route(input, views, &config, &EvalHistory::default())
+        else {
+            return Ok(());
+        };
+        let refused = refusal.rejected.iter().find(|why| {
+            views.iter().any(|view| {
+                view.id == why.engine
+                    && super::filters::crew_refusal(view)
+                        .is_some_and(|own| own.text.as_str() == why.text.as_str())
+            })
+        });
+        match refused {
+            Some(why) => Err(CrewError::new(ErrorCode::NotAuthorized, why.text.as_str())),
+            None => Ok(()),
         }
     }
 
@@ -490,19 +611,18 @@ impl Core {
         if !self.config.crew_confine_workers {
             return Ok(());
         }
-        let refuse = |reason: String| CrewError::new(ErrorCode::NotAuthorized, reason);
-        if let Some(reason) = tokio::task::spawn_blocking(crate::host::confine::unavailable)
-            .await
-            .map_err(|error| invalid(error.to_string()))?
-        {
-            return Err(refuse(reason));
-        }
         let driver = self
             .engines
             .driver(engine.as_str())
             .map_err(|error| invalid(error.public_message()))?;
-        match crate::host::confine::engine_refusal(driver.descriptor().tier, &driver.family()) {
-            Some(reason) => Err(refuse(reason.to_owned())),
+        let (tier, family) = (driver.descriptor().tier, driver.family());
+        match tokio::task::spawn_blocking(move || {
+            crate::host::confine::worker_refusal(tier, &family)
+        })
+        .await
+        .map_err(|error| invalid(error.to_string()))?
+        {
+            Some(refusal) => Err(CrewError::new(ErrorCode::NotAuthorized, refusal.reason)),
             None => Ok(()),
         }
     }

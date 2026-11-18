@@ -188,6 +188,12 @@ impl Confinement {
         platform::wrap(self, command)
     }
 
+    /// Puts the escape-check proof's restriction in front of `command`: every rule a worker gets, and in addition no network, no
+    /// launchd job, no clipboard and writes only in the run folder (`docs/crew/escapes.md`). Refused where nothing can restrict.
+    pub fn wrap_proof(&self, command: &mut ResolvedCommand) -> Result<()> {
+        platform::wrap_proof(self, command)
+    }
+
     /// What a restricted child must not inherit: the service's data folder variable would
     /// point its `orbyn` command at the folder it cannot read.
     pub fn scrub_env(&self, command: &mut Command) {
@@ -384,12 +390,68 @@ pub fn unavailable() -> Option<String> {
     platform::unavailable()
 }
 
+/// Why the escape-check proof cannot be confined here, or `None` when it can: [`unavailable`], and on macOS also a `HOME` that
+/// resolves, since the proof's credential-folder denials are built from it and must never be dropped.
+pub fn proof_unavailable() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        unavailable().or_else(platform::proof_unavailable)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        unavailable()
+    }
+}
+
 /// A reason the engine itself cannot take a crew task, whatever the machine.
 pub fn engine_refusal(tier: EngineTier, family: &str) -> Option<&'static str> {
     if tier == EngineTier::Terminal {
         return Some(TERMINAL_REFUSED);
     }
     (family == "codex" && !CODEX_WORKERS_ALLOWED).then_some(CODEX_REFUSED)
+}
+
+/// Why a crew worker cannot run, whichever check said so.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerRefusal {
+    pub reason: String,
+    /// The whole machine cannot restrict a worker, so no engine would do.
+    pub machine: bool,
+}
+
+impl WorkerRefusal {
+    /// One plain answer for a person: which engine cannot run Crew workers (or that none can),
+    /// why, and what to do instead.
+    pub fn plain(&self, engine: &str) -> String {
+        if self.machine {
+            format!(
+                "Crew can't run workers on this machine. {} Do this work in a normal chat for now.",
+                self.reason
+            )
+        } else {
+            format!(
+                "{engine} can't run Crew workers. {} Choose another engine for this crew, or do the work in a normal chat.",
+                self.reason
+            )
+        }
+    }
+}
+
+/// The single check that decides whether this engine may run a crew worker on this machine:
+/// the machine's restriction first, then the engine itself. The run start and the router both
+/// ask it, so they cannot disagree. Starts a harmless process once (see [`unavailable`]), so
+/// call it off the async threads.
+pub fn worker_refusal(tier: EngineTier, family: &str) -> Option<WorkerRefusal> {
+    if let Some(reason) = unavailable() {
+        return Some(WorkerRefusal {
+            reason,
+            machine: true,
+        });
+    }
+    engine_refusal(tier, family).map(|reason| WorkerRefusal {
+        reason: reason.to_owned(),
+        machine: false,
+    })
 }
 
 #[cfg(test)]

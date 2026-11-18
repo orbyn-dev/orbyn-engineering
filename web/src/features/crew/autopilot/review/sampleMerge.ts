@@ -65,15 +65,15 @@ export const mergeQueue: MergeQueueData = {
   summary: "3 candidates · 1 merged today",
   rows: [
     { n: 1, title: "Rotate the signing key", detail: "crew/keys-rotate · Low conflict risk · checks passed on its own branch", state: "merged", status: "Merged 15:02", tier: "high" },
-    { n: 2, title: "Use next in the auth redirect", detail: "Rebased on 1 · re-running 2 of 3 checks on the combined state", state: "running", status: "Re-checking combined", tier: "medium" },
-    { n: 3, title: "Update the login docs", detail: "Waiting for 2 · will be rebased on the result", state: "waiting", status: "Waiting", tier: "low" },
+    { n: 2, title: "Use next in the auth redirect", detail: "Merged onto 1 · re-running 2 of 3 checks on the combined state", state: "running", status: "Re-checking combined", tier: "medium" },
+    { n: 3, title: "Update the login docs", detail: "Waiting for 2 · will be merged onto the result", state: "waiting", status: "Waiting", tier: "low" },
   ],
   notes: [
     {
       heading: "How the queue works",
       items: [
         "Verified work joins the queue in order.",
-        "Each candidate is rebased on the queue ahead of it, and its required checks run again on the combined state before main moves.",
+        "Each candidate is merged onto the branch tip in a scratch checkout, one at a time, and its required checks run again on that combined state before main moves.",
         "If the combined checks fail, the candidate leaves the queue with its reason and goes back to Build.",
       ],
     },
@@ -130,21 +130,21 @@ export const board: BoardColumn[] = [
   {
     label: "Low · Full",
     tone: "ok",
-    cards: [{ title: "Update the login docs", engine: "Codex", model: "GPT-5.5 · Low", checks: "2/2 checks", paths: "docs/login.md", tier: "low", line: "Merged by itself · 14:12" }],
+    cards: [{ title: "Update the login docs", engine: "Codex", model: "GPT-5.5 · Low", checks: "2 of 2 checks passed", paths: "docs/login.md", tier: "low", line: "Merged by itself · 14:12" }],
   },
   {
     label: "Medium · Full",
     tone: "ok",
-    cards: [{ title: "Use next in the auth redirect", engine: "Claude Code", model: "Sonnet 5.5 · Medium", checks: "3/3 checks", paths: "auth/redirect.ts", tier: "medium", line: "Merged by itself · 14:32" }],
+    cards: [{ title: "Use next in the auth redirect", engine: "Claude Code", model: "Sonnet 5.5 · Medium", checks: "3 of 3 checks passed", paths: "auth/redirect.ts", tier: "medium", line: "Merged by itself · 14:32" }],
   },
   {
     label: "High · Full",
     tone: "ok",
-    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · High", checks: "5/5 checks", paths: "keys/rotate.ts", tier: "high", line: "Merged · top of your queue" }],
+    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · Medium", checks: "5 of 5 checks passed", paths: "keys/rotate.ts", tier: "high", line: "Merged · top of your queue" }],
   },
   {
     label: "High · On",
     tone: "warn",
-    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · High", checks: "5/5 checks", paths: "keys/rotate.ts", tier: "high", line: "Waiting for you before the merge (On)", needs: true }],
+    cards: [{ title: "Rotate the signing key", engine: "Claude Code", model: "Opus 5.5 · Medium", checks: "5 of 5 checks passed", paths: "keys/rotate.ts", tier: "high", line: "Waiting for you before the merge (On)", needs: true }],
   },
 ];

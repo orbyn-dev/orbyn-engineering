@@ -1,29 +1,42 @@
 //! The two typed code formats: the invite `XXXX-XXXX-XXXX-XXXX` and the emailed
-//! `XXXX-XXXX`. Both use one 30-symbol alphabet with no `0`, `O`, `1`, `I`, `L` or `U`.
+//! `XXXX-XXXX`. The emailed code uses a 30-symbol alphabet with no `0`, `O`, `1`, `I`, `L` or `U`; the invite uses the Engine's 32 symbols, which keep `0` and `1`.
 //! Input ignores case, hyphens and spaces, and anything else is refused.
 
-/// Digits 2 to 9 and the letters without I, L, O and U: 8 + 22 = 30 symbols.
+/// The emailed code: digits 2 to 9 and the letters without I, L, O and U, 8 + 22 = 30 symbols (the Engine's `email_code`).
 pub const ALPHABET: &str = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// The invite: Crockford base32, the digits 0 to 9 and the letters without I, L, O and U, 32 symbols. The Engine draws invites from
+/// this alphabet (`accounts/invites.rs`), so an invite it issued can hold a 0 or a 1; refusing them here made about two real invites
+/// in three fail as `invalid_invite` before the Engine saw them.
+pub const INVITE_ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 pub const INVITE_LEN: usize = 16;
 pub const EMAIL_CODE_LEN: usize = 8;
 
-fn normalize(input: &str, len: usize) -> Option<String> {
+fn normalize(input: &str, len: usize, alphabet: &str, crockford: bool) -> Option<String> {
+    // ASCII only: Unicode uppercasing turns `ß` into `SS`, a dotless `ı` into `I` and `ſ` into `S`, symbols the person
+    // never typed, so any other character is refused before it can be mapped into the alphabet.
     let code: String = input
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '-')
-        .flat_map(char::to_uppercase)
+        .map(|c| c.to_ascii_uppercase())
+        // Crockford reads `O` as `0` and `I` and `L` as `1`, as the Engine does for an invite; the emailed code has none of them.
+        .map(|c| match (crockford, c) {
+            (true, 'O') => '0',
+            (true, 'I' | 'L') => '1',
+            _ => c,
+        })
         .collect();
-    (code.chars().count() == len && code.chars().all(|c| ALPHABET.contains(c))).then_some(code)
+    (code.chars().count() == len && code.chars().all(|c| alphabet.contains(c))).then_some(code)
 }
 
 /// The invite without hyphens, in capitals, or `None` when it cannot be an invite.
 pub fn normalize_invite(input: &str) -> Option<String> {
-    normalize(input, INVITE_LEN)
+    normalize(input, INVITE_LEN, INVITE_ALPHABET, true)
 }
 
 pub fn normalize_email_code(input: &str) -> Option<String> {
-    normalize(input, EMAIL_CODE_LEN)
+    normalize(input, EMAIL_CODE_LEN, ALPHABET, false)
 }
 
 #[cfg(test)]
@@ -34,6 +47,30 @@ mod tests {
     fn the_alphabet_has_thirty_symbols_and_none_that_look_alike() {
         assert_eq!(ALPHABET.chars().count(), 30);
         assert!(!ALPHABET.contains(['0', 'O', '1', 'I', 'L', 'U']));
+    }
+
+    #[test]
+    fn an_invite_reads_o_as_zero_and_i_and_l_as_one_like_the_engine() {
+        let want = Some("0123456789ABCDEF".to_owned());
+        assert_eq!(normalize_invite("O123-4567-89AB-CDEF"), want);
+        assert_eq!(
+            normalize_invite("o1l3-4567-89ab-cdef").as_deref(),
+            Some("0113456789ABCDEF")
+        );
+        assert_eq!(
+            normalize_invite("I123-4567-89AB-CDEF").as_deref(),
+            Some("1123456789ABCDEF")
+        );
+    }
+
+    #[test]
+    fn the_invite_alphabet_is_the_engines_thirty_two_symbols() {
+        assert_eq!(INVITE_ALPHABET.chars().count(), 32);
+        assert!(!INVITE_ALPHABET.contains(['O', 'I', 'L', 'U']));
+        assert_eq!(
+            normalize_invite("0123-4567-89AB-CDEF").as_deref(),
+            Some("0123456789ABCDEF")
+        );
     }
 
     #[test]
@@ -53,12 +90,29 @@ mod tests {
 
     #[test]
     fn letters_that_are_not_in_the_alphabet_are_refused() {
-        for bad in ["I", "L", "O", "U", "0", "1"] {
-            let invite = format!("{bad}{}", "ABCD".repeat(4).get(1..).unwrap());
-            assert_eq!(normalize_invite(&invite), None, "{bad}");
+        let invite = format!("U{}", "ABCD".repeat(4).get(1..).unwrap());
+        assert_eq!(normalize_invite(&invite), None);
+        for bad in ["0", "1", "I", "L", "O", "U"] {
+            assert_eq!(
+                normalize_email_code(&format!("{bad}ABCDEFG")),
+                None,
+                "{bad}"
+            );
         }
         assert_eq!(normalize_invite("ABCD-EFGH-JKMN"), None);
         assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRST"), None);
         assert_eq!(normalize_email_code("ABCD-EFG"), None);
+    }
+
+    #[test]
+    fn non_ascii_letters_are_never_uppercased_into_symbols() {
+        // `ß` uppercases to `SS`, the Turkish dotless `ı` to `I` (then `1`), the long `ſ` to `S`, the `ﬀ` ligature to `FF`. Each case below has the right length, or the right length once uppercased, so only the ASCII rule refuses it.
+        assert_eq!(normalize_email_code("ßABCDEF"), None);
+        assert_eq!(normalize_email_code("ABCDEFß"), None);
+        assert_eq!(normalize_email_code("ſABCDEFG"), None);
+        assert_eq!(normalize_email_code("ﬀABCDEF"), None);
+        assert_eq!(normalize_invite("ıBCD-EFGH-JKMN-PQRS"), None);
+        assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQß"), None);
+        assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRſ"), None);
     }
 }

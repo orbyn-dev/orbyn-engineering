@@ -205,7 +205,7 @@ How the client's errors become app behaviour:
 | `Server { retryable: false }`, `InvalidKey` | Zone paused with a reason; other zones continue |
 | `Conflict` | Merge and upload again; surface only a lost offline edit |
 | `TooLarge` | The record is not uploaded; the setting stays local and the status says so |
-| `Unauthorized` | Signed out with the reason "session ended". **Key material is destroyed** (device keys, token, vault key and the sealed snapshot are deleted); settings and the outbox stay. Sign in again to resume |
+| `Unauthorized` | Signed out with the reason "session ended". **Key material is destroyed** (device keys, token, vault key and the sealed snapshot are deleted); settings and the outbox stay. Sign in again to resume. **This fails closed, and it is intended for the beta, not a bug:** the Engine answers an expired session, an ended one and a removed device with the same 401 (`NotSignedIn` or `SessionExpired`), and the app cannot tell them apart, so every 401 is treated as the worst case and the keys go. The cost is that a session that merely expires (30 days unused, one year at most) makes this computer a new device that a trusted one has to let in again. The sign-in screen says the local copy was cleared |
 | `RateLimited { retry_after }` | Shown with the wait; no retry before it |
 | `ProtectionAdvanced`, `DeletionScheduled` | Paused with that reason |
 | `AccountGone` | Signed out locally, data kept, the reason stated |
@@ -329,12 +329,22 @@ provider keys, join tokens and any secret (D5).
   surfaced conflict. Test devices use an in-memory `KeyStore`, never the real keychain. A separate macOS-only manual
   check covers the real keychain item ([threat model](account-threat-model.md#checks)).
 - **Skips cleanly.** The test probes `ORBYN_E2E_ENGINE_URL` (default `http://127.0.0.1:8080`) and, when nothing answers,
-  prints why and passes. With `ORBYN_E2E_REQUIRE_ENGINE=1` (set in CI) a missing Engine fails instead, so a broken
-  job cannot hide behind a skip.
-- It runs first on the owner's Mac, then as a path-filtered CI job. Whether that job becomes a required check is a
-  decision for the lead; adding it removes no existing check.
-- **Local stack hygiene.** The test leaves no Docker volume or image behind. Nobody runs a global Docker cleanup
-  without asking Products Research first.
+  prints why and passes. With `ORBYN_E2E_REQUIRE_ENGINE=1` a missing Engine fails instead, so a broken job cannot hide
+  behind a skip. The CI job below sets it, and only that job does.
+- **Where it is.** The two-device test is merged (#635): `crates/orbyn-core/src/account/tests/e2e_engine.rs`, behind the
+  cargo feature `engine-client`. It runs against the Engine's `scripts/local.sh` stack at `http://127.0.0.1:8080`;
+  `ORBYN_E2E_ENGINE_URL` overrides the address and `ORBYN_E2E_ENGINE_REPO` names the Engine checkout.
+- **CI job.** `.github/workflows/account-e2e.yml` runs it with `ORBYN_E2E_REQUIRE_ENGINE=1` on an `ubuntu-24.04` runner: it
+  checks out the public `orbyn-dev/orbyn-engine` at the tag `crates/orbyn-core/Cargo.toml` pins (`engine-v0.2.4`), runs
+  `scripts/local.sh setup` and `up` (Docker only, no secrets), then
+  `cargo test -p orbyn-core --features engine-client account::tests::e2e_engine`. It runs only on a pull request that
+  changes `crates/orbyn-core/src/account/**`, that manifest (the pin) or the workflow, and by hand. It is not a required
+  check and reuses no existing check's name. It has run green on a GitHub-hosted `ubuntu-24.04` runner in about 6 minutes
+  (workflow run 44217028818, 2026-11-18), and the Engine image builds there. Whether it becomes a required check is a
+  decision for the lead.
+- **Local stack hygiene.** The test leaves no Docker volume or image behind, but it does leave its throwaway invite and
+  account in the Engine stack's own database (`orbyn_local`); `scripts/local.sh reset` drops that database and clears
+  them. Nobody runs a global Docker cleanup without asking Products Research first.
 
 ## No escalation across devices
 
@@ -433,9 +443,22 @@ now and does not wait for them.
    release check shows hardened runtime without `get-task-allow` or `disable-library-validation`.
 6. Windows: the Account page says any program you run can act as this device, and the Designer's frames for that note
    and for "Confirm it's you" are merged.
+   - *Status: the note is built; the frames are drawn but marked "After the beta"; placement is unchecked.* `DevicesNote`
+     (`web/src/features/account/DeviceRows.tsx`) adds "On Windows, any program you run can act as this device. Keep this
+     account protected." under the all-devices note when the platform is `windows`, and the Devices page and the signed-in
+     Account page both render it. A web test (`devices.test.tsx`, "adds the Windows note only on Windows") checks that
+     macOS has no such note. The frames `devices-list-windows` and `acct-settings-signed-in-windows` exist in
+     `engineer-designs.html` and carry the label "After the beta". **Not checked:** that the note sits where those frames
+     put it on screen, and the state of the "Confirm it's you" frames, which this status does not cover.
 7. Every engine on the receiving machine runs under that machine's own permission mode, whatever engine the synced
    `default_engine` picks.
+   - *Status: covered by the pull request #615 test* `a_synced_permission_mode_never_becomes_this_devices_default_or_a_new_threads_mode`
+     (`crates/orbyn-core/src/account/tests/engine.rs`). A peer record carrying `default_permission_mode: full_access` and
+     `default_engine` is received and not applied, nothing is stored or queued for either key, and a thread started
+     afterwards opens in this device's own mode. **Unverified:** the test uses one stand-in engine; it does not start each
+     real engine to check the mode it runs under.
 8. The Engine reviewer approves these documents once more, this time against the built code.
+   - *Status: pending.* The Engine reviewer's second approval has not been given.
 
 **Distributed builds are unsigned for now, so the gate stays `Off`.** There is no Apple Developer account, so no build we
 distribute is signed with a Developer ID or notarized. Item 5 is therefore not met and stays a hard condition: real
@@ -534,8 +557,9 @@ The app records them here so the backend carries what the screens will need.
 - Turning two-factor on or off is not in Orbyn Engineering, and the account-site page for it will not exist in the beta
   (Planner work is paused); signing in with an authenticator or recovery code still works. **Password change and account
   recovery are Planned, not built.**
-- There are three code formats: the 8-character email code (a 30-symbol alphabet with no 0, O, 1, I, L or U), the
-  six-digit authenticator code, and the recovery code above.
+- There are four code formats: the 16-character invite (the Engine's 32-symbol alphabet, which keeps 0 and 1; as in the
+  Engine, a typed O reads as 0 and I or L as 1), the 8-character email code (a 30-symbol alphabet
+  with no 0, O, 1, I, L or U), the six-digit authenticator code, and the recovery code above.
 - An account has only an email address: no name field and no "Edit name". Devices have names the person chooses, 1 to
   100 characters.
 - The newer change wins automatically. A conflict shows only for the same setting changed on two devices while offline,
@@ -632,9 +656,13 @@ Where the Engine's API differs from the traits the screens and the worker were w
 - **Snapshot.** The client does no IO. `SealedSnapshots` (`account/engine/sealed.rs`) seals it with XChaCha20-Poly1305
   under the vault key, binding the purpose, the profile id, the format version and a counter; the key store keeps the
   counter and the hash of the newest file and an older or different file is refused. The keys live behind the `KeyStore`
-  trait. The only implementation in the app is `FileKeyStore` (`account/engine/keystore.rs`), a development store that
-  exists in debug builds and tests only, so a release has no file key store and the OS keychain implementation
-  (`account::keystore`, condition 5) is still to come. `connect` keeps the keys and the snapshot in memory;
+  trait. `KeychainKeyStore` (`account/engine/keychain.rs`) keeps the identity and the snapshot's anchor as one macOS
+  login-keychain item per profile, over the `security-framework` crate (MIT or Apache-2.0, already in the desktop
+  lock); it uses plain generic-password items, so it works unsigned, under the development service name
+  `app.orbyn.engineering.account.dev`. A failed delete blanks the item and returns the failure, and the next load,
+  save or clear finishes it. What waits for a Developer ID (condition 5) is the access list that trusts only `orbynd`
+  and the release service name. `FileKeyStore` (`account/engine/keystore.rs`) is the development fallback and the test
+  store; it exists in debug builds and tests only, so a release has no file key store. which store a profile uses is decided once and recorded in a marker in its data folder (`account-keys-<profile>.store`). With no marker the file store is chosen only when there is no keychain to ask (so no item can exist) or the profile already has a file store; a keychain that is locked, refused or failing is "unavailable, retry", never a reason to fall back, because a fallback would make a second identity and leave the keychain's to return on the next run. With a marker the choice is final. A wipe clears both stores, and the failure of the one in use is returned. `connect_local` does this in debug builds only; nothing selects it while sign-in is off. `connect` keeps the keys and the snapshot in memory;
   `connect_sealed` uses the file pair. Sign-out, removing this device, `Unauthorized` and `AccountGone` call one wipe
   (`Shared::forget`): snapshot file, then keys, token, vault key and anchor.
 - **Invite.** The invite step calls `check_invite` (`POST /v1/invites/check`): a good code spends nothing, an unknown, used

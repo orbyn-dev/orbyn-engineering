@@ -553,7 +553,7 @@ pub fn deliver(app: &AppHandle, request_id: &str, answer: Answer) {
 }
 
 /// Only the bundled app's main window may ask.
-fn require_caller(window: &WebviewWindow) -> Result<(), PresenceError> {
+pub(crate) fn require_caller(window: &WebviewWindow) -> Result<(), PresenceError> {
     let url = window.url().map_err(|_| PresenceError::Forbidden)?;
     if window.label() == "main" && crate::desktop_origin::is_application(&url) {
         Ok(())

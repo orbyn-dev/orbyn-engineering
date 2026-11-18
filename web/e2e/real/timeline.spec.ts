@@ -18,7 +18,7 @@ test("a finished turn folds, groups its tools and shows command output", async (
   await expect(page).toHaveURL(/#\/threads\//);
   await settled(service, threadIdOf(page));
 
-  const fold = page.locator("button.work-summary").filter({ hasText: /^Ran 1 command and changed 2 files; 1 tool call failed; 1 tool call finished without a reported outcome ·/ });
+  const fold = page.locator("button.work-summary").filter({ hasText: /^Ran 1 command and changed 2 files; 1 tool call failed; 1 tool call with outcome unknown ·/ });
   await expect(fold).toBeVisible();
   await expect(page.locator(".msg-assistant").getByText("done")).toBeVisible();
   await expect(page.getByText("I'll look around first.")).toBeHidden();
@@ -26,8 +26,8 @@ test("a finished turn folds, groups its tools and shows command output", async (
 
   await fold.click();
   await expect(page.getByText("I'll look around first.")).toBeVisible();
-  // The two commands are one group; collapsed, it names the one that failed.
-  const group = page.locator(".steps.tc").getByRole("button", { name: /^Ran 2 commands cat missing\.txt exit 1/ });
+  // The two commands are one group; collapsed, it counts the failed call apart.
+  const group = page.locator(".steps.tc").getByRole("button", { name: /^Ran 2 commands · 1 failed/ });
   await group.click();
   await page.getByRole("button", { name: /^cat missing\.txt/ }).click();
   await expect(page.getByText("cat: missing.txt: No such file")).toBeVisible();

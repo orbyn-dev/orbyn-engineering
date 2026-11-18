@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { deferNavigation, navigationSnapshot } from "./navigationGuard";
 import type { ProjectSettingsSelection } from "../../generated/ProjectSettingsSelection";
 
 export const SETTINGS_SECTIONS = [
@@ -54,11 +55,13 @@ export type Route =
   | { name: "skills"; skill?: string }
   | { name: "tasks" }
   /** Crew Preview: drawn only while the service says Crew is on. */
-  | { name: "crew"; tab: CrewTab }
+  | { name: "crew"; tab: CrewTab; task?: string }
   /** The list, or one pull request of one project. */
   | { name: "pulls"; project?: string; number?: number };
 
 const enc = encodeURIComponent;
+// Same grammar as Core Flow valid_id. A locator identifies a read, never an action.
+export const isCrewTaskId = (id: string): boolean => /^[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,95}$/.test(id);
 
 export function routeHref(route: Route): string {
   switch (route.name) {
@@ -79,6 +82,7 @@ export function routeHref(route: Route): string {
     case "tasks":
       return "#/tasks";
     case "crew":
+      if (route.task !== undefined) return route.tab === "flow" && isCrewTaskId(route.task) ? `#/crew/flow/task/${enc(route.task)}` : "#/";
       return `#/crew/${route.tab}`;
     case "pulls":
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
@@ -98,6 +102,14 @@ export function routeHref(route: Route): string {
 }
 
 export function parseRoute(hash: string): Route {
+  if (hash.startsWith("#/crew/flow/task")) {
+    const segment = /^#\/crew\/flow\/task\/([^/?#]+)$/.exec(hash)?.[1];
+    if (!segment) return { name: "home" };
+    try {
+      const task = decodeURIComponent(segment);
+      return isCrewTaskId(task) ? { name: "crew", tab: "flow", task } : { name: "home" };
+    } catch { return { name: "home" }; }
+  }
   const separator = hash.indexOf("?");
   const path = separator < 0 ? hash : hash.slice(0, separator);
   const search = separator < 0 ? "" : hash.slice(separator + 1);
@@ -167,6 +179,7 @@ export function navigate(route: Route): void {
  * [list, list + sheet] becomes [list, destination]. Typed addresses and links out can't be seen.
  */
 export function goToHash(hash: string): void {
+  if (deferNavigation(() => goToHash(hash))) return;
   if ((window.history.state as { sheet?: boolean } | null)?.sheet === true) {
     window.history.replaceState(null, "", `#${hash}`);
     // replaceState says nothing, so tell the router and the sheet.
@@ -188,6 +201,6 @@ const subscribe = (notify: () => void) => {
 };
 
 export function useRoute(): Route {
-  const hash = useSyncExternalStore(subscribe, () => window.location.hash);
+  const hash = useSyncExternalStore(subscribe, () => navigationSnapshot(window.location.hash));
   return parseRoute(hash);
 }

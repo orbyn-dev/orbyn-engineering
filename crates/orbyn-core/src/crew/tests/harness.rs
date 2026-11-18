@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 
 use super::fake::{caps, model};
 use crate::agents::driver::{
-    EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, ModelCatalog,
-    RunHandle, RunSpec,
+    ApprovalSpec, EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe,
+    ModelCatalog, RunHandle, RunSpec,
 };
 use crate::app::Core;
 use crate::error::Result;
@@ -49,8 +49,25 @@ pub enum Turn {
 /// happens next.
 pub type Script = Arc<dyn Fn(usize, &std::path::Path) -> Turn + Send + Sync>;
 
+#[derive(Clone)]
+pub enum ApprovalTurn {
+    Reply(String),
+    Hang,
+    Permission,
+    Session,
+    OverBudget,
+    Fail,
+}
+
+pub type ApprovalTurns = Arc<Mutex<BTreeMap<String, ApprovalTurn>>>;
+pub type ApprovalSpecs = Arc<Mutex<Vec<(String, ApprovalSpec)>>>;
+
+#[derive(Clone)]
 pub struct Fake {
+    approval_turns: ApprovalTurns,
+    approval_specs: ApprovalSpecs,
     id: String,
+    family: String,
     /// Takes input while a turn runs, as Claude and Codex do; false is an engine that does not.
     steerable: bool,
     /// Lists a lead-tier model as well, so a review role can be routed to it.
@@ -70,6 +87,97 @@ pub struct Fake {
 
 #[async_trait]
 impl EngineDriver for Fake {
+    fn family(&self) -> String {
+        self.family.clone()
+    }
+
+    fn instance(
+        &self,
+        instance: &orbyn_contracts::ProviderInstance,
+    ) -> Option<Arc<dyn EngineDriver>> {
+        let mut driver = self.clone();
+        driver.id.clone_from(&instance.id);
+        Some(Arc::new(driver))
+    }
+    fn supports_approval(&self) -> bool {
+        true
+    }
+
+    async fn start_approval(
+        &self,
+        spec: ApprovalSpec,
+        events: mpsc::Sender<EngineEvent>,
+    ) -> Result<RunHandle> {
+        self.approval_specs
+            .lock()
+            .unwrap()
+            .push((self.id.clone(), spec.clone()));
+        let turn = self
+            .approval_turns
+            .lock()
+            .unwrap()
+            .get(&self.id)
+            .cloned()
+            .unwrap_or(ApprovalTurn::Fail);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let stop = cancel.clone();
+        let task = tokio::spawn(async move {
+            let event = match turn {
+                ApprovalTurn::Reply(text) => {
+                    if events.send(EngineEvent::Usage(orbyn_contracts::ThreadUsage { total_tokens: Some(20), context_window: None, raw: json!({ "input_tokens": 10, "output_tokens": 10, "estimated_cost_usd": 0.001 }) })).await.is_err() { return; }
+                    for event in [
+                        orbyn_contracts::AgUiEvent::TextMessageStart {
+                            message_id: "approval".into(),
+                            role: "assistant".into(),
+                        },
+                        orbyn_contracts::AgUiEvent::TextMessageContent {
+                            message_id: "approval".into(),
+                            delta: text,
+                        },
+                        orbyn_contracts::AgUiEvent::TextMessageEnd {
+                            message_id: "approval".into(),
+                        },
+                    ] {
+                        if events.send(event.into()).await.is_err() {
+                            return;
+                        }
+                    }
+                    EngineEvent::Finished(EngineOutcome::Completed)
+                }
+                ApprovalTurn::Hang => {
+                    stop.cancelled().await;
+                    EngineEvent::Finished(EngineOutcome::Cancelled)
+                }
+                ApprovalTurn::Session => EngineEvent::Session("forbidden-session".into()),
+                ApprovalTurn::OverBudget => EngineEvent::Usage(orbyn_contracts::ThreadUsage {
+                    total_tokens: Some(spec.max_reported_tokens + 1),
+                    context_window: None,
+                    raw: json!({}),
+                }),
+                ApprovalTurn::Permission => {
+                    let (reply, _answer) = tokio::sync::oneshot::channel();
+                    EngineEvent::Permission(crate::agents::driver::PermissionRequest {
+                        kind: orbyn_contracts::ActionKind::Command,
+                        target: "must-not-execute".into(),
+                        summary: "forbidden".into(),
+                        detail: json!({}),
+                        paths: vec![],
+                        reply,
+                    })
+                }
+                ApprovalTurn::Fail => {
+                    EngineEvent::Finished(EngineOutcome::Failed("unavailable".into()))
+                }
+            };
+            let _ = events.send(event).await;
+        });
+        Ok(RunHandle {
+            cancel,
+            task,
+            input: None,
+            control: None,
+        })
+    }
     fn descriptor(&self) -> EngineDescriptor {
         EngineDescriptor {
             id: self.id.clone(),
@@ -91,8 +199,19 @@ impl EngineDriver for Fake {
     async fn models(&self) -> Result<Option<ModelCatalog>> {
         let mut models: Vec<ModelInfo> = vec![model(&format!("{}-model", self.id), &self.id, true)];
         if self.tiered {
-            // The review tests map each fake's `-lead` model to the lead tier (see `world_tiered`).
-            models.push(model(&format!("{}-lead", self.id), &self.id, false));
+            // The review tests assign each fake's default `-model` to the lead tier (see `world_tiered`); a nondefault `-lead`
+            // model stays listed to show that an assignment does not promote it. A lead-tier approver run asks for
+            // `medium` effort, so both models offer it.
+            let mut lead = model(&format!("{}-lead", self.id), &self.id, false);
+            lead.options.push(crate::agents::driver::effort_option(
+                ["medium"],
+                Some("medium"),
+            ));
+            models.push(lead);
+            models[0].options.push(crate::agents::driver::effort_option(
+                ["medium"],
+                Some("medium"),
+            ));
         }
         Ok(Some(ModelCatalog::engine(models)))
     }
@@ -190,6 +309,8 @@ async fn send_tool(
 }
 
 pub struct World {
+    pub approval_turns: ApprovalTurns,
+    pub approval_specs: ApprovalSpecs,
     pub _dir: TempDir,
     pub core: Arc<Core>,
     pub repo: std::path::PathBuf,
@@ -217,21 +338,62 @@ pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)])
     world_tiered(preview, script, engines, false).await
 }
 
-/// `world_with`, and with `tiered` every fake also lists a lead-tier model and the router maps it: `-lead` is the
-/// lead tier and `-model` the worker tier, so a review role (lead tier) can be routed to any of them.
+/// `world_with`, with an explicit ACP lead assignment pinned to each fake's default
+/// model. Builder admission remains; a nondefault model is not promoted by that assignment.
 pub async fn world_tiered(
     preview: bool,
     script: Script,
     engines: &[(&str, bool)],
     tiered: bool,
 ) -> World {
-    world_full(preview, script, engines, tiered, false).await
+    world_full(preview, script, engines, tiered, false, Vec::new(), None).await
+}
+
+pub async fn world_publication(script: Script, timeout: Option<std::time::Duration>) -> World {
+    world_full(
+        true,
+        script,
+        &[("alpha", false), ("beta", false)],
+        true,
+        false,
+        Vec::new(),
+        timeout,
+    )
+    .await
 }
 
 /// `world`, with the restriction on workers left on, as it ships: a start is refused where
 /// none can be applied, and a worker run is handed its rules.
 pub async fn world_confined(script: Script) -> World {
-    world_full(true, script, &[("alpha", false)], false, true).await
+    world_full(
+        true,
+        script,
+        &[("alpha", false)],
+        false,
+        true,
+        Vec::new(),
+        None,
+    )
+    .await
+}
+
+#[cfg(target_os = "macos")]
+/// `world_confined`, with these fake engines (an id ending in `codex` is of the Codex family).
+pub async fn world_confined_with(script: Script, engines: &[(&str, bool)]) -> World {
+    world_full(true, script, engines, false, true, Vec::new(), None).await
+}
+
+pub async fn world_forge(script: Script) -> World {
+    world_full(
+        true,
+        script,
+        &[("alpha", false)],
+        false,
+        false,
+        vec!["ci".into()],
+        None,
+    )
+    .await
 }
 
 async fn world_full(
@@ -240,15 +402,23 @@ async fn world_full(
     engines: &[(&str, bool)],
     tiered: bool,
     confine: bool,
+    merge_checks: Vec<String>,
+    approval_timeout: Option<std::time::Duration>,
 ) -> World {
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
-    config.engines.claude_program = "orbyn-test-no-such-claude".into();
-    config.engines.codex_program = "orbyn-test-no-such-codex".into();
+    let absent = dir.path().join("absent-native");
+    assert!(absent.is_absolute() && absent.starts_with(dir.path()) && !absent.exists());
+    config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
+    config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    if let Some(timeout) = approval_timeout {
+        config.approval_timeout = timeout;
+    }
+    config.crew_merge_required_checks = merge_checks;
     config.crew_confine_workers = confine;
     if tiered {
         let words = crate::crew::TierWords {
@@ -257,9 +427,22 @@ async fn world_full(
             scout: Some("scout".into()),
         };
         config.crew_tiers = Some(crate::crew::RouterConfig {
+            worker_provider: Default::default(),
             tiers: engines
                 .iter()
                 .map(|(id, _)| ((*id).to_owned(), words.clone()))
+                .collect(),
+            acp_tiers: engines
+                .iter()
+                .map(|(id, _)| {
+                    (
+                        (*id).to_owned(),
+                        crate::crew::AcpTierAssignment {
+                            tier: orbyn_contracts::RouteTier::Lead,
+                            model: format!("{id}-model"),
+                        },
+                    )
+                })
                 .collect(),
         });
     }
@@ -271,9 +454,15 @@ async fn world_full(
     let steered = Arc::new(Mutex::new(Vec::new()));
     let confines = Arc::new(Mutex::new(Vec::new()));
     let turns: Arc<AtomicUsize> = Arc::default();
+    let approval_turns = Arc::new(Mutex::new(BTreeMap::new()));
+    let approval_specs = Arc::new(Mutex::new(Vec::new()));
     for (id, steerable) in engines {
         core.engines.register(Arc::new(Fake {
+            approval_turns: approval_turns.clone(),
+            approval_specs: approval_specs.clone(),
             id: (*id).to_owned(),
+            // An id that ends in `codex` is a Codex engine, so the run-start refusal for that family applies to it.
+            family: if id.ends_with("codex") { "codex" } else { id }.to_owned(),
             steerable: *steerable,
             tiered,
             steered: steered.clone(),
@@ -328,6 +517,8 @@ async fn world_full(
         .unwrap();
     let lead_token = bind(&core, &lead.id, "run-lead");
     World {
+        approval_turns,
+        approval_specs,
         _dir: dir,
         core,
         repo,
@@ -393,10 +584,11 @@ impl World {
         let Some(text) = reply["result"]["content"][0]["text"].as_str() else {
             return (reply, true);
         };
-        (
-            serde_json::from_str(text).unwrap(),
-            reply["result"]["isError"] == json!(true),
-        )
+        // A tool that fails before it answers (its budget ran out) sends plain text, so show it.
+        let answer = serde_json::from_str(text).unwrap_or_else(|why| {
+            panic!("{tool} answered with text that is not JSON ({why}): {text}")
+        });
+        (answer, reply["result"]["isError"] == json!(true))
     }
 
     /// The lead starts a task.

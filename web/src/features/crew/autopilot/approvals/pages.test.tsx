@@ -6,7 +6,7 @@ import { useConnection } from "../../../../product/state/connection";
 import { installMockFetch } from "../../../../test-support";
 import { SettingsPage } from "../../../settings/SettingsPage";
 import { AutopilotSettings } from "./AutopilotSettings";
-import { BackgroundCards, BackgroundPageView, BackgroundTab, type BackgroundCrew, type BackgroundView } from "./Background";
+import { BackgroundCards, BackgroundPageView, type BackgroundCrew, type BackgroundView } from "./Background";
 import { CrewSurface } from "./CrewSurface";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { StoppedBudgetItem } from "./StoppedItem";
@@ -208,31 +208,31 @@ describe("Trust", () => {
 
 describe("Background crews", () => {
   const crews: BackgroundCrew[] = [
-    { id: "ci", name: "Fix failing CI", template: "fix_ci", startsWhen: "When CI fails on main", lastRun: "Sat 7 Nov, 15:11 · landed in Review", enabled: true, mode: "full" },
-    { id: "sec", name: "Security advisories", template: "security_advisory", startsWhen: "When a security advisory is published", lastRun: null, enabled: false, mode: "off" },
+    { id: "ci", name: "Fix failing CI", template: "fix_ci", startsWhen: "When CI fails on main", lastRun: "Sat 7 Nov, 15:11 · 12 turns, 9 min", enabled: true, status: "Needs review", mode: "full" },
+    { id: "sec", name: "Security advisories", template: "security_advisory", startsWhen: "When a dependency update opens", lastRun: null, enabled: false, status: "Idle", mode: "off" },
   ];
   const view: BackgroundView = {
     crews,
-    defaultBudget: "Claude Code 300k tokens · Codex 250k tokens",
     runs: [
-      { id: "r1", name: "Fix failing CI · f1a0c63", template: "fix_ci", startedBy: "CI failed on main · 15:11", result: "Landed in Review · 15:49 · Medium", state: "Merged", mode: "full" },
-      { id: "r4", name: "Fix failing CI · e44b01d", template: "fix_ci", startedBy: "CI failed on main · Fri 6 Nov", result: "Stopped · budget", state: "Stopped", mode: "full" },
+      { id: "r1", name: "Fix failing CI · f1a0c63", template: "fix_ci", startedBy: "CI failed on main · 15:11", result: "Finished 15:49 · 12 turns, 9 min", state: "Merged", mode: "full" },
+      { id: "r4", name: "Fix failing CI · e44b01d", template: "fix_ci", startedBy: "CI failed on main · Fri 6 Nov", result: "40 of 40 turns · 31 of 60 min", state: "Stopped", reason: "Budget", mode: "full" },
     ],
   };
 
   it("lists each crew with its trigger, last run, state and Autopilot setting", () => {
     render(<BackgroundPageView view={view} />);
     const table = screen.getByRole("table", { name: "Background crews" });
-    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Autopilot"]);
-    expect(table).toHaveTextContent("Fix failing CITemplate: fix failing CIWhen CI fails on mainSat 7 Nov, 15:11 · landed in ReviewOnFull");
-    expect(table).toHaveTextContent("Security advisoriesTemplate: security advisoryWhen a security advisory is publishedNever runOffOff");
-    expect(screen.getByText(".orbyn/crew.json")).toBeVisible();
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Switch", "Autopilot"]);
+    expect(table).toHaveTextContent("Fix failing CITemplate: fix failing CIWhen CI fails on mainSat 7 Nov, 15:11 · 12 turns, 9 minNeeds reviewOnFull");
+    expect(table).toHaveTextContent("Security advisoriesTemplate: security advisoryWhen a dependency update opensNever runIdleOffOff");
+    expect(screen.getByText("This device")).toBeVisible();
+    expect(screen.getAllByText("Triggers not built yet").length).toBeGreaterThan(0);
   });
 
   it("lists recent runs, a budget stop as Stopped and not Failed", () => {
     render(<BackgroundPageView view={view} />);
     const runs = screen.getByRole("table", { name: "Recent runs" });
-    expect(runs).toHaveTextContent("Fix failing CI · e44b01dTemplate: fix failing CICI failed on main · Fri 6 NovStopped · budgetStoppedFull");
+    expect(runs).toHaveTextContent("Fix failing CI · e44b01dTemplate: fix failing CICI failed on main · Fri 6 Nov40 of 40 turns · 31 of 60 minStopped · BudgetFull");
     expect(within(runs).queryByText("Failed")).toBeNull();
   });
 
@@ -240,57 +240,69 @@ describe("Background crews", () => {
     const toggled = vi.fn();
     const user = userEvent.setup();
     const { unmount } = render(<BackgroundPageView view={view} />);
-    expect(screen.getByRole("switch", { name: "Security advisories state" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Security advisories on" })).toBeDisabled();
     unmount();
     render(<BackgroundPageView view={view} onToggle={toggled} />);
-    await user.click(screen.getByRole("switch", { name: "Security advisories state" }));
+    await user.click(screen.getByRole("switch", { name: "Security advisories on" }));
     expect(toggled).toHaveBeenCalledWith(crews[1], true);
   });
 
-  it("offers the four templates and the four triggers with how repeats are handled; creating one waits for the route", () => {
-    render(<BackgroundTab />);
+  it("offers the four templates and the four triggers with how repeats are handled", async () => {
+    const used = vi.fn();
+    const user = userEvent.setup();
+    render(<BackgroundPageView view={{ crews: [], runs: [] }} onUseTemplate={used} />);
     const templates = screen.getByRole("region", { name: "Templates" });
     for (const name of ["Fix failing CI", "Flaky test", "Dependency bump", "Security advisory"]) {
-      const card = within(templates).getByRole("article", { name });
-      expect(within(card).getByRole("button", { name: `Use the ${name} template` })).toBeDisabled();
+      expect(within(templates).getByRole("article", { name })).toBeVisible();
     }
+    await user.click(within(templates).getByRole("button", { name: "Use the Dependency bump template" }));
+    expect(used).toHaveBeenCalledWith("dependency_bump");
     expect(templates).toHaveTextContent("It is High risk by default.");
+    expect(templates).toHaveTextContent("Starts when: CI fails on main");
+    expect(templates).toHaveTextContent("Starts when: an issue gets a label, or every N hours");
+    expect(templates).toHaveTextContent("Starts when: a dependency update opens");
+    expect(templates).toHaveTextContent("Starts when: a dependency update opens, or an issue gets a label");
+    expect(templates).not.toHaveTextContent(/A test fails and passes|advisory is published/);
     const triggers = screen.getByRole("table", { name: "Triggers" });
     expect(triggers).toHaveTextContent("One run per failing commit; a new failure during a run is added to it.");
     expect(triggers).toHaveTextContent("The issue’s text is the brief. It is data, never instructions, and goes through the same checks.");
     expect(triggers).toHaveTextContent("Skipped if the previous run is still going.");
     expect(triggers).toHaveTextContent("One run per update; updates to the same package are grouped.");
-    const create = screen.getByRole("button", { name: "New background crew" });
-    expect(create).toBeDisabled();
-    expect(create).toHaveAttribute("title", "Crew is not connected to this app yet");
   });
 
   it("says what a background crew is, and offers the templates, when there are none", () => {
-    render(<BackgroundTab />);
+    render(<BackgroundPageView view={{ crews: [], runs: [] }} />);
     expect(screen.getByText("No background crews yet")).toBeVisible();
-    expect(screen.getByText(/A background crew starts when something happens in the repo/)).toBeVisible();
+    expect(screen.getByText(/A background crew starts when something happens in the repo/)).toHaveTextContent("A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and waits for your review. Triggers are not built yet.");
     expect(screen.getByRole("button", { name: "See the templates" })).toBeVisible();
     expect(screen.queryByRole("table", { name: "Background crews" })).toBeNull();
-    expect(screen.getByRole("note")).toHaveTextContent("Crew is not connected to this app yet.");
+    expect(screen.queryByRole("button", { name: "New background crew" })).toBeNull();
+  });
+
+  it("draws the Autopilot column only when the route reports it", () => {
+    render(<BackgroundPageView view={{ crews: crews.map((crew) => ({ ...crew, mode: null })), runs: [] }} />);
+    const table = screen.getByRole("table", { name: "Background crews" });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Switch"]);
   });
 
   it("is a small card per crew in the 320 px panel", () => {
     render(<BackgroundCards crews={crews} />);
     const cards = screen.getAllByRole("listitem");
     expect(cards).toHaveLength(2);
-    expect(cards[0]).toHaveTextContent("Fix failing CIOnWhen CI fails on main");
-    expect(cards[1]).toHaveTextContent("Security advisoriesOffWhen a security advisory is published");
+    expect(cards[0]).toHaveTextContent("Fix failing CINeeds reviewWhen CI fails on main");
+    expect(cards[1]).toHaveTextContent("Security advisoriesIdleWhen a dependency update opens");
   });
 
-  it("shows a run that reached its budget as Stopped, with what it finished, in tokens", () => {
+  it("shows a run that reached its budget as Stopped, with what it finished and no way to raise the budget", () => {
     const open = vi.fn();
-    render(<StoppedBudgetItem onOpen={open} onRaise={() => undefined} run={{ title: "Fix failing CI · e44b01d", risk: "medium", meta: "Background crew · Fri 6 Nov · Claude Code · Sonnet 5.5 · crew/ci-fix · 2 of 3 changes finished", checks: "2 of 3", notVerified: 3, budget: "300k of 300k tokens" }} />);
-    const item = screen.getByRole("article", { name: "Fix failing CI · e44b01d · Stopped · budget" });
+    render(<StoppedBudgetItem onOpen={open} run={{ title: "Fix failing CI · e44b01d", risk: "medium", meta: "Background crew · Fri 6 Nov · claude · Sonnet 5.5 · crew/ci-fix · 2 of 3 changes finished", checks: "2 of 3", notVerified: 3, budget: "40 of 40 turns · 31 of 60 min" }} />);
+    const item = screen.getByRole("article", { name: "Fix failing CI · e44b01d · Stopped · Budget" });
     expect(item).toHaveClass("ap-box-am");
     expect(item).toHaveTextContent("It reached its budget. What it finished is merged or ready; the rest is listed.");
-    expect(item).toHaveTextContent("Checks 2 of 3 · Not verified: 3 · 300k of 300k tokens");
+    expect(item).toHaveTextContent("Checks 2 of 3 · Not verified: 3 · 40 of 40 turns · 31 of 60 min");
+    expect(item).toHaveTextContent("Stopped · Budget");
     expect(item).not.toHaveTextContent("$");
-    expect(within(item).getByRole("button", { name: "Raise the budget and continue" })).toBeVisible();
+    expect(within(item).queryByRole("button", { name: /Raise the budget/ })).toBeNull();
     screen.getByRole("button", { name: "Open what it finished" }).click();
     expect(open).toHaveBeenCalled();
   });

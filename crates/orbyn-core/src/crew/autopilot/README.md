@@ -13,6 +13,9 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `hosts` | `allowed_hosts` of `.orbyn/crew.json`, read at the commit the work started from |
 | `tier` | What an action needs: nobody, the lead, or the lead and a second key |
 | `chain` | The approval chain over the `Approver` trait: the lead, then a second key on another vendor |
+| `notices` | Server-persistent missing-second-key notices, cursor paging and idempotent dismissal or sign-in resolution |
+| `engine` | Per-request lead selection and a lead-tier second vendor through the registry, filters and data classes; strict JSON answers from bounded tool-free runs |
+| `comment` | Saved lead-requested advisory review-comment claims through the same hard/host rules and two-key chain, before ordinary gate policy; no worker resurrection or held-command grant |
 | `tripwire` | 3 denials in a row, 20 in a run, and the injection detector |
 | `ledger` | Writes the approval ledger rows: redacted, the key's text withheld, scanned |
 | `held` | A command the chain denied, held in memory for a person: approve once, deny, dismiss. No agent approves; a person may approve once |
@@ -22,6 +25,9 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/risk` | The risk tier of a diff, with its reasons. Pure |
 | `merge/holds`, `merge/guard` | What holds a merge: the person-only diffs, the owed lanes, the mode now |
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
+| `merge/forge`, `merge/evidence` | Durable forge intent, current-head CI receipts and the code-written merge Gate |
+| `merge/tool`, `merge/comment` | Lead requests and the person's Comment through ordinary scoped task admission |
+| `merge/forge_watch` | Remote-tip checks, an optional owned watch future, and durable digest/overdue/break messages |
 | `merge/review_queue` | The after-merge Review queue and the person's answers |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
 | `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
@@ -85,10 +91,52 @@ the hard rules, the injection wire and the denial counts still apply.
 
 ## Merge queue, Review queue and watch on main
 
-**Local only.** A merge moves a *local* branch in a repository where no worktree has that branch checked out, by a
-compare-and-swap `update-ref`. A branch that is checked out is never moved: the entry waits for a person. Nothing is pushed,
-no pull request is opened or merged, no forge CI is read, and nothing reaches a remote. Every merge, check and revert runs in a
-scratch checkout under the data folder (`crew-merge/`), never in a person's checkout.
+**Forge final writer.** The lead's `crew_queue_merge` and `crew_process_merges` request Core-owned GitHub/GitLab publication,
+CI observation and merge commits. Commands still pass through the existing forge process owner; no credential is read by Crew.
+Person-owned `CoreConfig::crew_merge_required_checks` must be nonempty. CI is green only when every required check is present
+and succeeded at the pinned head. Any other check may succeed, be skipped or neutral, but a failed, cancelled, timed-out,
+pending or wrong-head one refuses merging, and so does a required check that is missing, skipped or neutral. A failed
+combined-state check blocks the entry for a person instead of re-running on every call. The `forge_publish_requested` and
+`forge_merge_requested` events record the `actor` (`lead` for the lead's tool, `local_caller` for the local HTTP caller). Head and base are pinned, combined-state checks run in scratch,
+and holds, lanes, actual PR identity and CI are read again before merging. Migration 45 persists intent before each effect;
+uncertain results reconcile identity/head/merge commit rather than repeating an effect. The actual merged tree/parents are checked.
+Canonical origin host/repository identity is selected explicitly for every API/create/merge call and checked against receipts;
+CLI repository/host defaults cannot redirect it. Startup reconciles unfinished effects and confirmed receipts before watching.
+The separate local compatibility API keeps its no-checked-out-branch and compare-and-swap rules and refuses forge intents;
+authentication failure never selects it. Ordinary agent main-push and forge-merge commands remain N5 denied.
+
+**A forge merge that needs a person.** A forge intent reaches `needs_person` when the pipeline cannot go on safely (the target or PR
+changed, publication is unknown, the combined-state check failed, a withdrawn escape check was found late). The lane **skips** it
+and goes on with later entries. Ordering rule: merges are ordered per repository, a published or uncertain entry keeps the lane, an
+entry waiting on a person does not. Skipping is safe because each entry pins its own base and is checked against the forge's base,
+so no later entry depends on it; a later merge only moves the base, which the stuck entry would have to rebuild on anyway. Entries
+waiting on CI, a hold or a Gate keep their place. **What is and is not guaranteed.** The pipeline never leaves `needs_person`
+by itself and never sends a second merge request. An intent that reached it with no request sent (`merge_sent` false) has nothing
+of it in flight. One that reached it after a merge request (`merge_sent`, saved just before the request) may still have that request
+on the forge (a GitHub merge queue; `merge_in` never passes `--auto`/`--auto-merge`, but whether `glab` queues a merge while a
+pipeline runs is not verified here, so it is treated as possible). Such an intent can only be rejected, never retried, and a reject
+keeps it in the reconcile set (`rejected` with `merge_sent`): a merge that lands later is read from the forge and recorded, and a
+PR seen closed without a merge settles it. With a publication attempt but no PR number the forge is searched first (found and
+merged: recorded as merged; found open: kept; none: the reject note says the branch may have been pushed).
+
+Ways out of `needs_person`: a PR merged by hand (read-only from the forge, audit `actor` `core`, `via` "lane reconcile", for the
+lane's own crew scope only; the lead's `crew_process_merges` can therefore record a merge the forge already shows, nothing else),
+and a person's `POST /api/crew/autopilot/merge-queue/{id}/resolve` with `{action, seen_revision}`: `reject` (intent and entry
+`rejected`; an open PR is the person's to close) or `retry` (back to `awaiting_ci` for a PR still open with the pinned identity and
+the pinned base still the forge's, or `prepared` when nothing was published; the guards, `merge_blocker` and the escape-check guard,
+run again; refused after a merge request, after a publication that may have happened without a PR number, and after the base moved:
+reject and queue again). The route reads the forge first: a PR already merged is recorded and the asked-for answer is not applied;
+an unreadable PR refuses the answer. It is a Person route (key enforced), local only, behind the Preview flag, in `STATE_CHANGING`;
+no tool, CLI command or browser path can reject or retry. The audit row `crew.merge.forge.resolve` (with `via`) is written first,
+in the same transaction as the intent and the queue entry; a crash leaves the old, still resolvable state or the whole new one, and a
+crash after the `merged` write is finished by recovery. The queue's own `crew_reject_merge` (used by the escape-check guard) sends
+a waiting intent through the same audited reject (`via` "queue reject"), so one with a merge request stays reconcilable too; for an
+intent in any other phase it only turns the entry down and writes an audit row naming that path (`merge_requested` is already in
+recovery). A rejected intent with `merge_sent` is read each lane pass and at startup (kept apart from the unfinished-effects list, so
+a long list of them never stops other recovery, and bounded at 128): a merge that landed is recorded; a PR closed without a merge, or
+no longer the pinned one (the request named the pinned head), settles it; a PR that stays open is read again each pass until a person
+closes it on the forge. The queue view lists each entry's `forge` phase and `revision`. The transition table of `save_crew_forge_merge` is unchanged:
+the way out lives in `resolve_crew_forge_merge` alone.
 
 - **Risk.** `merge::score` reads paths (CI, migrations, dependency files, and auth, keys or crypto as whole words in a path),
   size (over 20 files or 400 lines is large) and the 60-day revert rate of each area and of the engine, which counts from 10
@@ -117,16 +165,34 @@ scratch checkout under the data folder (`crew-merge/`), never in a person's chec
   finding or a running review lane blocks it until it clears. A merge commit makes a revert one `git revert -m 1`.
 - **Review queue.** Every merge is one item: the diff size, the proof (checks, reviewers by engine, findings), what was not
   verified and the cost the result recorded. Ranked: a break that needs a decision, then high, medium, low, then oldest.
-  Windows: high 4 hours, medium 24, low none. Answers: looks good, comment (kept; the fix brief is not built), revert (made in a
+  Windows: high 4 hours, medium 24, low none. Answers: looks good, comment (a normal scoped fix using the original grants, effects,
+  protected checks and a scope check; a stale checkout asks a person), revert in local compatibility mode (made in a
   scratch checkout, the checks run on the result, then the branch moves, and it is refused if a later merge needs the one reverted).
 - **Watch.** `crew_watch_main` runs the repository's checks, read at the last commit known good (or where the first watched
   merge began), so a merge cannot remove its own check. If they fail it bisects the first-parent commits to the first that fails.
   It reverts only when the culprit is a merge the crew made, the checks fail with it twice and pass without it, and they pass
   after the revert (so no later merge needs it). Otherwise it records the break, flags the item to the top of the Review queue
   and tells the person (a `person_told` row). Under `off` it only asks. A revert in a repository that defines no checks runs none and is recorded `verified: false`. A repository with no checks is reported `NoChecks`,
-  never healthy. Nothing schedules the watch yet: a caller runs it after merges.
+  never healthy. Forge merges trigger a remote-tip scratch watch after a confirmed receipt; a break asks for a reviewed corrective
+  PR instead of moving local main. A repository/commit claim is durable across restart. Digest, overdue and break messages are
+  visible chat messages with atomic dedupe receipts, without provider turns. The optional owned `run_crew_merge_watch` future
+  is off by default, bounded to 60s..24h and 32 targets, and cancellation-owned; it never schedules publication or merging.
 
 ## The always-denied list: what it reads, and what it cannot
+
+`allowed_hosts` is read only at the task's base commit, with the existing 64 KiB file limit.
+Each entry must be an ASCII DNS name (nonempty labels of at most 63 bytes, no leading or trailing
+hyphens, at most 253 bytes), an IP literal, or `*.` followed by a DNS name within the same total
+limit. Case and one terminal DNS dot are normalized; IPv6 literals may have one bracket pair.
+Wildcards keep matching the apex and its subdomains, but never an IP literal. Malformed entries
+are dropped individually; valid entries in the same file remain usable. Ports, URLs, ambiguous
+numeric address spellings and malformed JSON grant nothing. Matching validates entries again,
+including those supplied directly to the detector. Loopback remains allowed, and explicitly
+listed private addresses, local collectors and internal names remain supported. These are syntax
+checks: they do not resolve DNS, prove destination ownership or prevent rebinding, redirects or tunnels.
+They apply only to hosts the text reader extracts: bare single-label, numeric shorthand and IPv6
+arguments of connecting programs are not consistently extracted. The synthetic N3 controls use
+explicit URL authorities; this admission change does not qualify those other command forms.
 
 It reads the kind, target and paths the gate is given, and for a command the simple commands inside it. It cannot see
 what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It follows a `cd` (so `cd .. && rm x` is outside), `git -C`, `git worktree add`, `find -delete`, `tar -C` and `unzip -d`, and counts a
@@ -148,7 +214,7 @@ sit inside the data folder, which a worker running as the same user can read: th
 ## Ledger
 
 `crew_autopilot_events` (migration 38) is append-only: `allowed`, `denied`, `person`, `disagreement`, `tripwire`, and the rows of a held command (`held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used`, `hold_ended`) and, one per routing, `route_class` (the data classes a brief was in and the engines they blocked),
-each with the action, who decided and the rule or reasons. Counters are read from the rows. This is not the hash-chained
+`approval_started`, `approval_usage`, `approval_ended`, `second_engine_dismissed` and `second_engine_resolved` also retain approval turn reservations, redacted usage and notice resolution. Each decision has the action, who decided and the rule or reasons. Counters are read from the rows. This is not the hash-chained
 ledger of slice 4c; when that lands these rows move into it.
 
 ## Seams for later slices
@@ -160,12 +226,52 @@ ledger of slice 4c; when that lands these rows move into it.
   per area in [`areas/effective`](areas/effective.rs): the lower of the ceiling and every touched area, where a lowered area is On only
   under a Full ceiling. The chain and the tier do not read an area.
 
+## Engine approval runs
+
+The service enables request-scoped engine approvers only with Preview. An approval is a separate delegated turn on the lead's
+engine and selected model, with its effort/options captured for the request. A busy lead is never steered. The only prompt data
+is the redacted `Summary`. A second key must pass the registry, quota, data-class and lead-tier filters on another vendor.
+
+The chain shares a 30-second deadline, shortened by the task's remaining minute budget. Each admitted approval atomically reserves
+one of the brief's existing turns, counting prior approval reservations and known worker admissions. Missing or ended budgets refuse.
+This does not complete global worker-turn enforcement (#438). Redacted `approval_usage` rows keep reported tokens and estimated cost,
+even for rejected answers; an interrupted or malformed response with no usage receipt is explicitly unknown, never zero.
+
+Claude Code 2.1.295+ has a dedicated CLI adapter: no builtin tools, strict empty MCP, customizations/hooks disabled, no saved/resumed
+session and one turn. It sets a 1,024-output-token limit and a $0.05 estimated-spend stop. Total reported usage above 16,384 tokens,
+or reported estimated cost above $0.05, rejects the answer **after** that usage was spent. These are not hard pre-spend limits on
+input/reasoning tokens or billed dollars; the provider's spend stop can overshoot. Unsupported options, older/unknown versions,
+missing usage and invalid responses fail closed. See the [CLI reference](https://code.claude.com/docs/en/cli-reference) and
+[output-token environment contract](https://code.claude.com/docs/en/env-vars.md).
+
+Claude model aliases require the bounded effective model reported by the exact active lead run. The approval passes that full
+model ID and accepts only an exact matching receipt. Missing or ambiguous metadata refuses before an approval launch. An idle
+lead or second Claude instance needs an explicitly pinned full Anthropic model ID; a catalog containing only aliases is unavailable
+for that role. Provider-specific model IDs are not yet qualified. See [model aliases](https://code.claude.com/docs/en/model-config#model-aliases).
+
+Core denies permission/question/tool/session events, bounds reply text to 4 KiB, and accepts only strict `{approve, reason}` with a
+nonempty reason of at most 300 characters. Cancellation intent, task end, changed attempt or mode invalidate late answers. Dropping
+the requester stops its owned driver task and closes admission. No MCP binding, inherited transcript, raw page/tool text or answer
+key enters the turn. This is a tool-admission contract, not an OS sandbox claim.
+
+Ordinary Full-mode missing-second-key denials project to a server-persistent Needs you notice. It blocks nothing and offers only
+Sign in and Dismiss. The ledger pins the lead's vendor. An eligible signed-in other vendor or a local caller's explicit dismissal
+writes one durable resolution row; another instance of the same vendor cannot clear it. Cursor pages enumerate all pending notices,
+including old ones; neither action approves or retries work. Guarded commands retain their separate person-approval flow.
+
 ## Limits of Preview
 
-- No engine-backed approver exists yet: `Approver` is the seam, and tests script it. Until one is wired, a lead that is
-  not set means `full` denies and `on` asks a person.
-- The lead's thread is not asked mid-turn; wiring an approver to a live lead thread and a second engine is [#456](https://github.com/orbyn-dev/orbyn-engineering/issues/456).
-- The queue and the watch are called by whoever drives them: no tool exposes them to the lead, and nothing runs them on a
-  schedule or after a merge yet. The merge Gate (stage `merge`) is not written, since it needs Evidence objects.
-  See [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
-- The detector and the list are heuristics (above); real runs will show what they miss ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)).
+- Codex and other native/ACP drivers have no bounded tool-free adapter yet and remain `Unsupported`; they are never substituted
+  with ordinary one-shot or read-only turns. Claude backing and the notice are covered by synthetic tests in
+  [#456](https://github.com/orbyn-dev/orbyn-engineering/issues/456). Real-provider and installed-platform qualification remains pending.
+- Forge merging needs the person's nonempty `ORBYN_CREW_REQUIRED_CHECKS` JSON list. Only GitHub and GitLab have guarded Crew
+  receipts. Idle delivery is off unless Preview and `ORBYN_CREW_WATCH_INTERVAL_SECS` (60..86400) are explicitly enabled; the
+  service still makes one read-only startup reconciliation/watch pass with Preview on, and cancels/awaits its single owner on
+  shutdown. Forge breaks and requested reverts require a reviewed corrective
+  PR; automatic forge revert publication is not implemented. Same-vendor
+  Security review awaits the review owner's consent/risk receipt integration and is conservatively held for a person's release.
+  Coverage remains unmeasured. These remaining items stay with [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
+- The detector and the list are heuristics (above). Host-admission regressions use synthetic inputs,
+  including malformed configuration and legitimate local/private destinations; they are not captured
+  engine runs. The three-engine real-run replay campaign and its observed misses remain outstanding
+  ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)); no real-run findings are claimed here.

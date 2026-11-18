@@ -69,18 +69,19 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
     foreground.current = false;
     if (eventWaiting.current) {
       eventWaiting.current = false;
-      void runRef.current({ background: true, force: false });
+      // The follow-up holds the lane like a person's read: a tick during it waits for it instead of cutting it short.
+      void runRef.current({ background: true, force: false }, true);
     }
   };
-  const runRef = useRef<(context: LoadContext) => Promise<void>>(() => Promise.resolve());
-  const run = useCallback((context: LoadContext) => {
+  const runRef = useRef<(context: LoadContext, holdsLane?: boolean) => Promise<void>>(() => Promise.resolve());
+  const run = useCallback((context: LoadContext, holdsLane = false) => {
     // A person's read is on its way and will show its own result; an event must not cut it short,
     // but it may mean that result is already old, so one read follows it.
     if (context.background && foreground.current) {
       eventWaiting.current = true;
       return Promise.resolve();
     }
-    foreground.current = !context.background;
+    foreground.current = holdsLane || !context.background;
     const id = ++generation.current;
     const asked = keyRef.current;
     controller.current?.abort();
@@ -120,6 +121,8 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
   const reload = useCallback(() => run({ background: false, force: false }), [run]);
   /** The person asked for a real read. */
   const reloadNow = useCallback(() => run({ background: false, force: true }), [run]);
+  /** Reads again the way an event does: no loading state, never an error over data on screen, and behind a person's read. */
+  const refreshQuietly = useCallback(() => run({ background: true, force: false }), [run]);
   useRefreshOn(options.refreshOn, () => run({ background: true, force: false }));
 
   const firstKey = useRef(key);
@@ -144,10 +147,16 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
       if (keep) writeKept(key, data);
       if (key !== keyRef.current) return;
       generation.current += 1;
+      // A read in flight is now stale and will never settle, so release the lane as settled() does and run the one parked read.
+      foreground.current = false;
+      if (eventWaiting.current) {
+        eventWaiting.current = false;
+        void runRef.current({ background: true, force: false }, true);
+      }
       setState({ status: "ready", data, error: null, refreshing: false });
     },
     [key, keep],
   );
 
-  return { ...state, reload, reloadNow, setData };
+  return { ...state, reload, reloadNow, refreshQuietly, setData };
 }

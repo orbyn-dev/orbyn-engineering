@@ -94,6 +94,47 @@ fn known_engine_ids(raw: Option<&std::ffi::OsStr>) -> Result<Option<Vec<String>>
     .transpose()
 }
 
+/// Local startup policy only. Neither HTTP nor a tool can change these values.
+fn crew_merge_config(
+    preview: bool,
+    checks: Option<&std::ffi::OsStr>,
+    interval: Option<&std::ffi::OsStr>,
+) -> Result<(Vec<String>, Option<Duration>), String> {
+    if !preview {
+        return Ok((Vec::new(), None));
+    }
+    let required: Vec<String> = match checks {
+        None => Vec::new(),
+        Some(raw) => serde_json::from_str(
+            raw.to_str()
+                .ok_or("ORBYN_CREW_REQUIRED_CHECKS must be UTF-8 JSON.")?,
+        )
+        .map_err(|_| "ORBYN_CREW_REQUIRED_CHECKS must be a JSON array of check names.")?,
+    };
+    let unique: std::collections::BTreeSet<_> = required.iter().collect();
+    if required.len() > 128
+        || unique.len() != required.len()
+        || required.iter().any(|s| {
+            s.is_empty() || s.len() > 200 || s.trim() != s || s.chars().any(char::is_control)
+        })
+    {
+        return Err("ORBYN_CREW_REQUIRED_CHECKS accepts at most 128 unique nonempty check names of at most 200 bytes.".into());
+    }
+    let every = interval
+        .map(|raw| {
+            let seconds = raw
+                .to_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|n| (60..=86400).contains(n))
+                .ok_or(
+                    "ORBYN_CREW_WATCH_INTERVAL_SECS must be 60 to 86400, or unset to disable.",
+                )?;
+            Ok::<_, String>(Duration::from_secs(seconds))
+        })
+        .transpose()?;
+    Ok((required, every))
+}
+
 fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String> {
     let data_dir = args
         .data_dir
@@ -120,6 +161,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         claude_program: std::env::var("ORBYN_CLAUDE_BIN").unwrap_or(defaults.claude_program),
         codex_program: std::env::var("ORBYN_CODEX_BIN").unwrap_or(defaults.codex_program),
         codex_sandbox: sandbox,
+        claude_task_tools: env_flag("ORBYN_CLAUDE_TASK_TOOLS"),
         lookup_latest: !env_flag("ORBYN_OFFLINE"),
         update_timeout: defaults.update_timeout,
         known_engine_ids: known_engine_ids(std::env::var_os("ORBYN_KNOWN_ENGINE_IDS").as_deref())?,
@@ -142,6 +184,14 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     development_account(&mut config);
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
+    (
+        config.crew_merge_required_checks,
+        config.crew_merge_watch_interval,
+    ) = crew_merge_config(
+        config.crew_preview,
+        std::env::var_os("ORBYN_CREW_REQUIRED_CHECKS").as_deref(),
+        std::env::var_os("ORBYN_CREW_WATCH_INTERVAL_SECS").as_deref(),
+    )?;
     Ok(config)
 }
 
@@ -262,6 +312,7 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
     );
     core.mcp.bind_host(&core);
+    core.set_crew_engine_approvers();
     orbyn_core::operations::diagnostics::start_sampling();
     core.start_telemetry_export(telemetry_interval()?)
         .map_err(|error| error.to_string())?;
@@ -301,8 +352,30 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         (None, None)
     };
+    // The person key exists only when a desktop shell owns this service, and it leaves this function once: on the
+    // ready line, to the pipe the shell spawned. Access keeps its digest; nothing writes the key to disk, env, argv,
+    // a URL or a log (docs/worker-token-isolation.md).
+    let person_key = if args.parent_stdin {
+        Some(random_token().map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    let access = Access::new(&token, args.allowed_hosts.clone(), key_digest)
+        .with_person_key(person_key.as_deref());
+    #[cfg(debug_assertions)]
+    let access = {
+        let open = env_flag("ORBYN_DEV_DISABLE_PERSON_KEY");
+        if open {
+            // Plain stderr, not a tracing event: a warning event is also exported to the logs endpoint a person
+            // configured, and a development flag is no record to send there.
+            eprintln!(
+                "ORBYN_DEV_DISABLE_PERSON_KEY is on: person routes need no key. Development builds only."
+            );
+        }
+        access.with_dev_person_override(open)
+    };
     let access = Arc::new(
-        Access::new(&token, args.allowed_hosts.clone(), key_digest)
+        access
             .with_desktop(args.parent_stdin)
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
@@ -335,6 +408,9 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     if let Some(key) = new_key {
         start["access_key"] = json!(key);
     }
+    if let Some(key) = person_key {
+        start["person_key"] = json!(key);
+    }
     let handle = core.config.data_dir.join(SERVICE_FILE);
     let found = json!({ "url": base_url, "token": token, "pid": std::process::id() });
     if let Err(error) =
@@ -363,6 +439,22 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let lifecycle = {
         let (core, stop) = (core.clone(), stop.clone());
         tokio::spawn(async move { core.run_lifecycle(stop).await })
+    };
+    let crew_watch = if core.config.crew_preview {
+        let (core, watch_stop) = (core.clone(), stop.child_token());
+        Some(tokio::spawn(async move {
+            core.run_crew_merge_watch(watch_stop).await
+        }))
+    } else {
+        None
+    };
+    let crew_escape_scan = if core.config.crew_preview {
+        let (core, scan_stop) = (core.clone(), stop.child_token());
+        Some(tokio::spawn(async move {
+            core.run_crew_escape_scan(scan_stop).await
+        }))
+    } else {
+        None
     };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
@@ -398,6 +490,20 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     stop.cancelled().await;
     tracing::info!("stopping");
     let _ = lifecycle.await;
+    if let Some(watch) = crew_watch {
+        match watch.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "Crew watch stopped with an error"),
+            Err(error) => tracing::warn!(%error, "Crew watch task did not complete"),
+        }
+    }
+    if let Some(scan) = crew_escape_scan {
+        match scan.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "Crew escape scan stopped with an error"),
+            Err(error) => tracing::warn!(%error, "Crew escape scan task did not complete"),
+        }
+    }
     checks.abort();
     let _ = checks.await;
     let _ = library_upgrades.await;
@@ -462,6 +568,38 @@ mod known_engine_config_tests {
                 known_engine_ids(Some(std::ffi::OsStr::new(value))).is_err(),
                 "{value}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod crew_merge_config_tests {
+    use super::crew_merge_config;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn merge_policy_is_local_bounded_and_off_without_preview() {
+        assert_eq!(
+            crew_merge_config(false, Some(OsStr::new("bad")), Some(OsStr::new("1"))).unwrap(),
+            (Vec::new(), None)
+        );
+        assert_eq!(
+            crew_merge_config(true, None, None).unwrap(),
+            (Vec::new(), None)
+        );
+        let (checks, interval) = crew_merge_config(
+            true,
+            Some(OsStr::new(r#"["Rust (windows-2022)","Web"]"#)),
+            Some(OsStr::new("60")),
+        )
+        .unwrap();
+        assert_eq!(checks, ["Rust (windows-2022)", "Web"]);
+        assert_eq!(interval, Some(std::time::Duration::from_secs(60)));
+        for bad in ["null", "{}", r#"[""]"#, r#"["ci","ci"]"#, r#"[" ci"]"#] {
+            assert!(crew_merge_config(true, Some(OsStr::new(bad)), None).is_err());
+        }
+        for bad in ["0", "59", "86401", "invalid", "-1"] {
+            assert!(crew_merge_config(true, None, Some(OsStr::new(bad))).is_err());
         }
     }
 }

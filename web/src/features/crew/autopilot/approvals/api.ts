@@ -1,6 +1,11 @@
 // The one door the Autopilot screens use: the Crew routes of `orbynd`, with the generated wire types.
 // Every Crew route answers 404 while Crew Preview is off.
 import { request } from "../../../../api/client";
+import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
+import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewCreate";
+import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
+import type { BackgroundCrewUpdate } from "../../../../generated/BackgroundCrewUpdate";
+import type { BackgroundRunList } from "../../../../generated/BackgroundRunList";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
 import type { AutopilotAreaFollowBody } from "../../../../generated/AutopilotAreaFollowBody";
@@ -11,6 +16,7 @@ import type { AutopilotAreas } from "../../../../generated/AutopilotAreas";
 import type { AutopilotThresholds } from "../../../../generated/AutopilotThresholds";
 import type { AutopilotGuards } from "../../../../generated/AutopilotGuards";
 import type { AutopilotLog } from "../../../../generated/AutopilotLog";
+import type { AutopilotSecondEngineNotices } from "../../../../generated/AutopilotSecondEngineNotices";
 import type { AutopilotMode } from "../../../../generated/AutopilotMode";
 import type { AutopilotModes } from "../../../../generated/AutopilotModes";
 import type { AutopilotTripwires } from "../../../../generated/AutopilotTripwires";
@@ -21,6 +27,8 @@ import type { CrewPreviewState } from "../../../../generated/CrewPreviewState";
 import type { CrewRouteView } from "../../../../generated/CrewRouteView";
 import type { GuardTest } from "../../../../generated/GuardTest";
 import type { GuardTargets } from "../../../../generated/GuardTargets";
+import type { CrewWorkerProvider } from "../../../../generated/CrewWorkerProvider";
+import type { CrewWorkerProviderView } from "../../../../generated/CrewWorkerProviderView";
 
 export const PAGE = 18;
 
@@ -28,7 +36,17 @@ export const PAGE = 18;
 export const NOT_CONNECTED = "Crew is not connected to this app yet";
 
 export const crewApi = {
+  /** The project's stored Worker provider choice; `same_as_lead` when none was saved. */
+  workerProvider: (project: string, signal?: AbortSignal) => request<CrewWorkerProviderView>("GET", `/api/crew/projects/${encodeURIComponent(project)}/worker-provider`, undefined, signal),
+  /** A Person write: the client sends the person key on it. */
+  setWorkerProvider: (project: string, worker_provider: CrewWorkerProvider) => request<CrewWorkerProviderView>("POST", `/api/crew/projects/${encodeURIComponent(project)}/worker-provider/set`, { worker_provider }),
   preview: (signal?: AbortSignal) => request<CrewPreviewState>("GET", "/api/crew/preview", undefined, signal),
+  secondEngineNotices: (before: number | null, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: "200" });
+    if (before !== null) query.set("before", String(before));
+    return request<AutopilotSecondEngineNotices>("GET", `/api/crew/approvals/second-engine?${query}`, undefined, signal);
+  },
+  dismissSecondEngineNotice: (id: number) => request<{ dismissed: boolean }>("POST", `/api/crew/approvals/second-engine/${id}/dismiss`, {}),
   /** The ledger, newest first. `kind` is the server's own filter; `task` limits it to one task. */
   approvals: (query: { kind?: string; task?: string; offset: number; limit?: number }, signal?: AbortSignal) => {
     const params = new URLSearchParams({ offset: String(query.offset), limit: String(query.limit ?? PAGE) });
@@ -75,6 +93,25 @@ export const crewApi = {
   },
   /** What the guard says about a command. Read-only: nothing runs. `thread` is optional on the service and not sent. */
   guardTest: (command: string, signal?: AbortSignal) => request<GuardTest>("GET", `/api/crew/guard/test?${new URLSearchParams({ command })}`, undefined, signal),
+  /** The background crews, one page, ordered by name; `project` limits them to one repository. */
+  backgroundCrews: (query: { project?: string; offset: number; limit: number }, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) });
+    if (query.project) params.set("project", query.project);
+    return request<BackgroundCrewList>("GET", `/api/crew/background?${params}`, undefined, signal);
+  },
+  /** One crew's runs with what each spent against its budget, newest first. */
+  backgroundRuns: (id: string, query: { offset: number; limit: number }, signal?: AbortSignal) =>
+    request<BackgroundRunList>("GET", `/api/crew/background/${encodeURIComponent(id)}/runs?${new URLSearchParams({ offset: String(query.offset), limit: String(query.limit) })}`, undefined, signal),
+  /** Creates a crew, off: turning it on is its own step. A name already used in the project answers 409. */
+  backgroundCreate: (body: BackgroundCrewCreate) => request<BackgroundCrew>("POST", "/api/crew/background/create", body),
+  /** The name and the trigger only: the repository, template and budget are fixed at creation. No screen draws editing yet. */
+  backgroundUpdate: (id: string, body: BackgroundCrewUpdate) => request<BackgroundCrew>("POST", `/api/crew/background/${encodeURIComponent(id)}/update`, body),
+  /** The person's switch. Nothing is started: no trigger fires yet. */
+  backgroundEnable: (id: string) => request<BackgroundCrew>("POST", `/api/crew/background/${encodeURIComponent(id)}/enable`, {}),
+  /** Turning a crew off stops a run in progress with the reason `disabled`. */
+  backgroundDisable: (id: string) => request<BackgroundCrew>("POST", `/api/crew/background/${encodeURIComponent(id)}/disable`, {}),
+  /** Refused while a run is in progress; the crew's runs and waiting reviews go with it. No screen draws deleting yet. */
+  backgroundDelete: (id: string) => request<{ deleted: boolean }>("POST", `/api/crew/background/${encodeURIComponent(id)}/delete`, {}),
   /** How one task was routed: the decision or the refusal, and the `route_class` rows. */
   route: (task: string, signal?: AbortSignal) => request<CrewRouteView>("GET", `/api/crew/route/${encodeURIComponent(task)}`, undefined, signal),
 };

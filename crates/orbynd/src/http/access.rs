@@ -32,6 +32,46 @@ pub struct Access {
     /// `None` until the service hands core's check in, and then no frame token opens
     /// anything.
     frames: Option<FrameCheck>,
+    /// SHA-256 of this launch's person key. `None` unless a desktop shell owns the service, and then no
+    /// request can present a valid key. The key itself is never stored here.
+    person_key_sha256: Option<String>,
+    /// Development builds only: a `Person` route needs no key (`ORBYN_DEV_DISABLE_PERSON_KEY`).
+    #[cfg(debug_assertions)]
+    dev_person_open: bool,
+}
+
+/// The request header that carries the person key. Only a `Person` route reads it.
+pub const PERSON_HEADER: &str = "x-orbyn-person";
+
+/// A browser cannot set a header on a WebSocket, and the key must not go in the URL, so a socket offers it as a
+/// subprotocol: `orbyn.person.<key>`, beside [`SOCKET_PROTOCOL`]. The offer is read only on an upgrade request.
+pub const PERSON_PROTOCOL_PREFIX: &str = "orbyn.person.";
+
+/// The one subprotocol a terminal socket selects. A browser fails a socket that offered protocols and was answered with
+/// none, and the answer must never echo the key.
+pub const SOCKET_PROTOCOL: &str = "orbyn.v1";
+
+/// The key a request presents: the header, or on a WebSocket upgrade the `orbyn.person.` subprotocol.
+fn person_candidate(headers: &HeaderMap) -> Option<&str> {
+    if let Some(value) = headers
+        .get(PERSON_HEADER)
+        .and_then(|value| value.to_str().ok())
+    {
+        return Some(value);
+    }
+    let upgrade = headers
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    if !upgrade {
+        return None;
+    }
+    headers
+        .get_all(header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .find_map(|protocol| protocol.trim().strip_prefix(PERSON_PROTOCOL_PREFIX))
 }
 
 struct Remote {
@@ -53,6 +93,47 @@ impl Access {
                 sessions: Mutex::new(HashMap::new()),
             }),
             frames: None,
+            person_key_sha256: None,
+            #[cfg(debug_assertions)]
+            dev_person_open: false,
+        }
+    }
+
+    /// Records this launch's person key, as a digest only. The caller hands the key itself to the desktop
+    /// shell on the ready line and keeps it nowhere else.
+    pub fn with_person_key(mut self, key: Option<&str>) -> Self {
+        self.person_key_sha256 = key.map(|key| sha256_hex(key.as_bytes()));
+        self
+    }
+
+    /// Development builds only, and off unless asked for: lets a `Person` route through with no key, so
+    /// web tests and local development work without a desktop shell. Not compiled into a release build.
+    #[cfg(debug_assertions)]
+    pub fn with_dev_person_override(mut self, open: bool) -> Self {
+        self.dev_person_open = open;
+        self
+    }
+
+    /// Whether this request may use a `Person` route: it carries this launch's person key. A service with
+    /// no desktop shell has no key, and answers `desktop_required`.
+    pub fn person_check(&self, headers: &HeaderMap) -> Result<(), ApiFailure> {
+        #[cfg(debug_assertions)]
+        if self.dev_person_open {
+            return Ok(());
+        }
+        let Some(digest) = &self.person_key_sha256 else {
+            return Err(ApiFailure::forbidden(
+                "desktop_required",
+                "This action is only available in the desktop app.",
+            ));
+        };
+        if person_candidate(headers).is_some_and(|candidate| secrets_match(candidate, digest)) {
+            Ok(())
+        } else {
+            Err(ApiFailure::forbidden(
+                "person_required",
+                "This action needs the person at the desktop app.",
+            ))
         }
     }
 
@@ -217,8 +298,9 @@ pub async fn guard_origin(
 
 /// The headers a desktop page may send across origins. `x-orbyn-confirm` carries the nonce a
 /// confirmed account action, or a held command the person approved in the desktop app, sends back; allowing the header grants
-/// nothing alone, the nonce is still checked by the account guard or the core's presence grant.
-const NATIVE_HEADERS: &str = "authorization, content-type, accept, last-event-id, range, if-range, if-none-match, x-orbyn-confirm";
+/// nothing alone, the nonce is still checked by the account guard or the core's presence grant. `x-orbyn-person` carries the
+/// person key a `Person` route checks (`routes/classes.rs`); the key is checked there, not by being allowed here.
+const NATIVE_HEADERS: &str = "authorization, content-type, accept, last-event-id, range, if-range, if-none-match, x-orbyn-confirm, x-orbyn-person";
 
 fn native_preflight(request: &Request<Body>) -> bool {
     let path = request.uri().path();
@@ -613,6 +695,97 @@ mod tests {
         assert!(access.cookie_valid(&headers));
         headers.insert(header::COOKIE, "orbyn_session=forged".parse().unwrap());
         assert!(!access.cookie_valid(&headers));
+    }
+
+    fn with_person(value: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = value {
+            headers.insert(PERSON_HEADER, value.parse().unwrap());
+        }
+        headers
+    }
+
+    fn code(result: Result<(), ApiFailure>) -> Option<String> {
+        use axum::response::IntoResponse;
+        let failure = result.err()?;
+        let body = futures_util::FutureExt::now_or_never(axum::body::to_bytes(
+            failure.into_response().into_body(),
+            4096,
+        ))?
+        .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&body).ok()?["code"]
+            .as_str()
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn a_person_route_needs_this_launchs_key() {
+        let access = access().with_person_key(Some("the-key"));
+        assert!(access.person_check(&with_person(Some("the-key"))).is_ok());
+        for wrong in [
+            None,
+            Some(""),
+            Some("the-ke"),
+            Some("the-keyy"),
+            Some("secret"),
+        ] {
+            assert_eq!(
+                code(access.person_check(&with_person(wrong))).as_deref(),
+                Some("person_required"),
+                "{wrong:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_socket_upgrade_may_offer_the_key_as_a_subprotocol_and_nothing_else_may() {
+        let access = access().with_person_key(Some("the-key"));
+        let socket = |protocols: &str, upgrade: bool| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::SEC_WEBSOCKET_PROTOCOL, protocols.parse().unwrap());
+            if upgrade {
+                headers.insert(header::UPGRADE, "websocket".parse().unwrap());
+            }
+            headers
+        };
+        assert!(
+            access
+                .person_check(&socket("orbyn.v1, orbyn.person.the-key", true))
+                .is_ok()
+        );
+        for refused in [
+            socket("orbyn.v1, orbyn.person.the-ke", true),
+            socket("orbyn.v1", true),
+            // The offer counts on an upgrade only, so a plain request cannot use it.
+            socket("orbyn.v1, orbyn.person.the-key", false),
+        ] {
+            assert_eq!(
+                code(access.person_check(&refused)).as_deref(),
+                Some("person_required")
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_shell_there_is_no_key_to_match() {
+        let access = access();
+        for sent in [None, Some("the-key"), Some("")] {
+            assert_eq!(
+                code(access.person_check(&with_person(sent))).as_deref(),
+                Some("desktop_required"),
+                "{sent:?}"
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_development_override_is_the_only_way_through_without_a_key() {
+        assert!(access().person_check(&with_person(None)).is_err());
+        let open = access().with_dev_person_override(true);
+        assert!(open.person_check(&with_person(None)).is_ok());
+        let off = access().with_dev_person_override(false);
+        assert!(off.person_check(&with_person(None)).is_err());
     }
 
     #[test]

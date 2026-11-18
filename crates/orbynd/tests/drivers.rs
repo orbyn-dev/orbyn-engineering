@@ -78,6 +78,16 @@ async fn codex_turn_maps_to_events_and_ignores_subagents() {
 }
 
 #[tokio::test]
+async fn codex_run_ignores_a_completed_turn_that_is_not_its_own() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "[stale-turn]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+}
+
+#[tokio::test]
 async fn a_codex_turn_waits_for_its_tools_to_start() {
     let dir = TempDir::new();
     let options = Options {
@@ -285,6 +295,206 @@ async fn codex_failed_turn_reports_its_error_and_late_frames_are_dropped() {
     assert!(!text_of(&events).contains("too late"));
 }
 
+/// The `background.stopped` events a run reported, with their reasons.
+fn stopped_reasons(events: &[Value]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|event| event["event"]["name"] == "background.stopped")
+        .filter_map(|event| {
+            event["event"]["value"]["reason"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+/// Waits for the engine's word, said after its turn completed with an agent
+/// running. A run that ended at the completion never delivers it, so seeing it
+/// means the run is held; the stream is read, not slept on.
+async fn codex_held(service: &Service, thread: &str) {
+    service
+        .events_until(thread, None, |event| {
+            event["event"]["name"] == "engine.warning"
+        })
+        .await;
+    let body = service.json(&format!("/api/threads/{thread}")).await;
+    assert!(!body["active_run"].is_null(), "the run ended: {body}");
+}
+
+fn codex_options(env: &[(&str, &str)]) -> Options {
+    Options {
+        env: env
+            .iter()
+            .map(|(key, value)| ((*key).into(), (*value).into()))
+            .collect(),
+        ..Options::default()
+    }
+}
+
+#[tokio::test]
+async fn a_codex_sub_agent_keeps_the_run_open_until_it_ends() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-finish]").await;
+    // The parent's turn completed with its sub-agent running; the agent's result
+    // starts a turn of its own, and closing the engine at the first completion
+    // would lose it.
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex and the agent finished");
+    assert!(stopped_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn a_codex_run_ends_when_its_sub_agent_does_and_no_turn_follows() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-quiet]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+    assert!(stopped_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn cancelling_a_codex_run_with_a_sub_agent_running_says_it_was_stopped() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let run = service.admit(&thread, "go [bg-agent-hang]").await;
+    codex_held(&service, &thread).await;
+    let (status, _) = service
+        .send(&format!("/api/runs/{run}/cancel"), json!({}))
+        .await;
+    assert_eq!(status, 202);
+    assert_eq!(service.finished(&thread).await, "cancelled");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["cancelled"]);
+}
+
+#[tokio::test]
+async fn a_codex_run_gives_up_on_a_sub_agent_that_never_ends_and_says_so() {
+    let dir = TempDir::new();
+    let options = codex_options(&[("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "800")]);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    // The parent answered, so the run is complete; the agent that was still
+    // running is reported, not silently dropped.
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+    assert_eq!(stopped_reasons(&events), ["limit"]);
+}
+
+#[tokio::test]
+async fn a_codex_engine_that_exits_with_a_sub_agent_running_says_it_was_stopped() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-exit]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["engine exited"]);
+}
+
+#[tokio::test]
+async fn a_codex_hold_ends_when_nothing_is_heard_from_the_agent() {
+    let dir = TempDir::new();
+    let options = codex_options(&[
+        ("ORBYN_CODEX_BACKGROUND_IDLE_MS", "600"),
+        ("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "60000"),
+    ]);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["idle"]);
+}
+
+#[tokio::test]
+async fn a_codex_hold_ends_when_the_agent_fails_or_closes_even_if_a_state_comes_late() {
+    for tag in ["bg-agent-error", "bg-agent-closed", "bg-agent-stale"] {
+        let dir = TempDir::new();
+        // No limit would end these in time: only the agent's own end does.
+        let options = codex_options(&[
+            ("ORBYN_CODEX_BACKGROUND_IDLE_MS", "60000"),
+            ("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "60000"),
+        ]);
+        let (service, thread) = setup(&dir, options, "codex").await;
+        service.admit(&thread, &format!("go [{tag}]")).await;
+        assert_eq!(service.finished(&thread).await, "completed", "{tag}");
+        let events = service.all_events(&thread).await;
+        assert_eq!(text_of(&events), "hello from codex", "{tag}");
+        assert!(stopped_reasons(&events).is_empty(), "{tag}");
+    }
+}
+
+#[tokio::test]
+async fn a_failed_codex_turn_with_a_sub_agent_running_says_it_was_stopped() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-hang][fail]").await;
+    assert_eq!(service.finished(&thread).await, "failed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["turn ended"]);
+}
+
+#[tokio::test]
+async fn a_codex_engine_that_crashes_after_answering_still_completes_the_run() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-crash]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+    assert_eq!(stopped_reasons(&events), ["engine exited"]);
+}
+
+#[tokio::test]
+async fn the_engines_own_sub_agent_does_not_hold_the_run() {
+    let dir = TempDir::new();
+    let options = codex_options(&[("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "60000")]);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "go [bg-internal]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert!(stopped_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn a_message_sent_during_a_codex_hold_ends_it_and_runs_as_the_next_turn() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    codex_held(&service, &thread).await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/steer"),
+            json!({ "prompt": "next please" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    // The held turn ended with its agent stopped, and the message became a run.
+    for _ in 0..2000 {
+        let audit = service.audit(&thread).await;
+        let admitted = audit.iter().filter(|row| row["action"] == "run.admit");
+        let thread_body = service.json(&format!("/api/threads/{thread}")).await;
+        if admitted.count() >= 2 && thread_body["active_run"].is_null() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let audit = service.audit(&thread).await;
+    assert!(
+        audit
+            .iter()
+            .filter(|row| row["action"] == "run.admit")
+            .count()
+            >= 2,
+        "the message never ran as a turn"
+    );
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["new message"]);
+}
+
 #[tokio::test]
 async fn codex_gets_the_mcp_server_without_approve() {
     let dir = TempDir::new();
@@ -459,6 +669,48 @@ async fn acp_cancel_reaches_the_agent() {
 }
 
 #[tokio::test]
+async fn an_acp_run_ignores_another_sessions_updates_and_unknown_replies() {
+    let dir = TempDir::new();
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "acp", FAKE, json!(["acp"])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    // The run stayed open past the stray frames and kept only its own answer.
+    assert_eq!(text_of(&events), "hello from acp");
+}
+
+#[tokio::test]
+async fn an_acp_turn_that_stopped_early_or_unexplained_is_not_success() {
+    for (tag, expected) in [
+        ("refusal", "it refused to continue"),
+        ("max_tokens", "it ran out of tokens"),
+        ("no-stop-reason", "it did not say why"),
+    ] {
+        let dir = TempDir::new();
+        let (service, _) = setup(&dir, Options::default(), "codex").await;
+        custom_engine(&service, "acp", FAKE, json!(["acp"])).await;
+        let projects = service.json("/api/projects").await;
+        let thread = service
+            .thread(projects[0]["id"].as_str().unwrap(), "custom")
+            .await;
+        service.admit(&thread, &format!("[{tag}]")).await;
+        assert_eq!(service.finished(&thread).await, "failed", "{tag}");
+        let events = service.all_events(&thread).await;
+        assert!(
+            events
+                .iter()
+                .any(|event| event.to_string().contains(expected)),
+            "{tag}: {events:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_acp_agent_without_http_mcp_reaches_tools_through_the_stdio_bridge() {
     let dir = TempDir::new();
     let options = Options {
@@ -556,6 +808,22 @@ async fn agui_interrupt_becomes_an_approval_and_resumes() {
 }
 
 #[tokio::test]
+async fn an_agui_run_ignores_another_runs_end_frames() {
+    let dir = TempDir::new();
+    let (_agent, url) = spawn_agui(&dir);
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "agui", &url, json!([])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from agui");
+}
+
+#[tokio::test]
 async fn agui_run_error_fails_the_run() {
     let dir = TempDir::new();
     let (_agent, url) = spawn_agui(&dir);
@@ -638,6 +906,75 @@ async fn claude_launches_reach(file: &std::path::Path, wanted: usize) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     panic!("{} launches, wanted {wanted}", claude_run_launches(file));
+}
+
+/// What the run's own child saw as `CLAUDE_CODE_ENABLE_TODO_TOOLS`, for a service started
+/// with `extra` in its environment. The capability probe and the one-shot title call are
+/// Claude launches too; the opt-in belongs to runs alone, so they are checked as well.
+async fn task_tools_seen_by_a_run(extra: &[(&str, &str)]) -> Value {
+    let dir = TempDir::new();
+    let file = dir.path().join("launches");
+    let mut env = vec![(
+        "ORBYN_FAKE_LAUNCH_FILE".to_owned(),
+        file.to_string_lossy().into_owned(),
+    )];
+    env.extend(
+        extra
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
+    );
+    let options = Options {
+        env,
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options, "claude").await;
+    service.admit(&thread, "say hi").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let launches: Vec<Value> = std::fs::read_to_string(&file)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|entry| entry["mode"] == "claude")
+        .collect();
+    let (runs, others): (Vec<&Value>, Vec<&Value>) = launches.iter().partition(|entry| {
+        entry["args"]
+            .as_array()
+            .is_some_and(|args| args.iter().any(|arg| arg == "--permission-prompt-tool"))
+    });
+    assert_eq!(runs.len(), 1, "{launches:?}");
+    assert!(!others.is_empty(), "{launches:?}");
+    for entry in others {
+        assert_ne!(
+            entry["task_tools"], "1",
+            "a non-run launch took the driver's opt-in: {entry}"
+        );
+    }
+    runs[0]["task_tools"].clone()
+}
+
+/// Off unless a person turns it on: Orbyn sets no task-tool flag by default.
+#[tokio::test]
+async fn a_claude_run_sets_no_task_tools_flag_by_default() {
+    assert_eq!(task_tools_seen_by_a_run(&[]).await, Value::Null);
+}
+
+/// A person's `ORBYN_CLAUDE_TASK_TOOLS=1` on the service makes its unconfined runs ask
+/// the CLI for the modern task tools the plan row projects.
+#[tokio::test]
+async fn a_persons_opt_in_makes_a_claude_run_carry_the_task_tools_flag() {
+    let seen = task_tools_seen_by_a_run(&[("ORBYN_CLAUDE_TASK_TOOLS", "1")]).await;
+    assert_eq!(seen, "1");
+}
+
+/// A value the person already set for the CLI wins, `0` included, even with the opt-in.
+#[tokio::test]
+async fn a_persons_own_task_tools_value_is_never_overridden() {
+    let seen = task_tools_seen_by_a_run(&[
+        ("ORBYN_CLAUDE_TASK_TOOLS", "1"),
+        ("CLAUDE_CODE_ENABLE_TODO_TOOLS", "0"),
+    ])
+    .await;
+    assert_eq!(seen, "0");
 }
 
 /// The thread's events through the end of its `runs`th run.

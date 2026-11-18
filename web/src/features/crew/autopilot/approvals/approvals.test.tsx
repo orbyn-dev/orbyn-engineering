@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../../mock/api";
 import { installMockFetch } from "../../../../test-support";
 import { ApprovalsTab } from "./ApprovalsTab";
@@ -12,6 +12,8 @@ let mock: MockApi;
 beforeEach(() => {
   mock = installMockFetch();
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 async function open(scenario: "crew" | `crew-${string}`) {
   mock.reset(scenario);
@@ -194,6 +196,39 @@ describe("the decision chain", () => {
     expect(d).toHaveTextContent("Denied under Full, not asked");
     expect(d).toHaveTextContent("“Sign in to a second engine to allow: install zod@3.24.1”");
     expect(within(d).getByRole("button", { name: "Sign in to a second engine" })).toBeVisible();
+  });
+
+  it("returns focus to the original request after dismissing its notice", async () => {
+    const user = await open("crew-one-vendor");
+    const trigger = screen.getByRole("button", { name: /Install zod/ });
+    await user.click(trigger);
+    await user.click(within(drawer("Install zod@3.24.1")).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByRole("complementary")).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
+  it.each(["success", "failure"] as const)("keeps a delayed notice %s bound to its original row", async (outcome) => {
+    let resolve!: (value: { dismissed: boolean }) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<{ dismissed: boolean }>((yes, no) => { resolve = yes; reject = no; });
+    const dismiss = vi.spyOn(crewApi, "dismissSecondEngineNotice")
+      .mockReturnValueOnce(pending).mockResolvedValue({ dismissed: true });
+    const user = await open("crew-one-vendor");
+    await user.click(screen.getByRole("button", { name: /Install zod/ }));
+    await user.click(within(drawer("Install zod@3.24.1")).getByRole("button", { name: "Dismiss" }));
+    await user.click(screen.getByRole("button", { name: /gen-migration/ }));
+    await act(async () => {
+      if (outcome === "success") resolve({ dismissed: true });
+      else reject(new Error("Temporary failure"));
+      await pending.catch(() => undefined);
+    });
+    expect(screen.getByRole("complementary")).toHaveTextContent("gen-migration");
+    if (outcome === "failure") {
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(dismiss).toHaveBeenCalledTimes(2));
+      expect(dismiss.mock.calls).toEqual([[2], [2]]);
+      expect(screen.getByRole("complementary")).toHaveTextContent("gen-migration");
+    } else expect(dismiss.mock.calls).toEqual([[2]]);
   });
 
   it("closes with Escape", async () => {

@@ -21,7 +21,12 @@ pub struct AutopilotEvent {
 }
 
 /// The kinds a row may have.
-pub const EVENT_KINDS: [&str; 23] = [
+pub const EVENT_KINDS: [&str; 29] = [
+    "approval_started",
+    "approval_usage",
+    "approval_ended",
+    "second_engine_dismissed",
+    "second_engine_resolved",
     "allowed",
     "denied",
     "person",
@@ -45,9 +50,167 @@ pub const EVENT_KINDS: [&str; 23] = [
     "area_demoted",
     "area_read_failed",
     "area_breaker_failed",
+    "provenance_failed",
 ];
 
 impl Store {
+    /// Effective model of this exact active lead run, selecting only the scalar.
+    /// Missing metadata never falls back to a different or older run.
+    pub(crate) fn crew_lead_effective_model(
+        &self,
+        thread: &str,
+        run: &str,
+        project: &str,
+        engine: &str,
+    ) -> Result<Option<String>> {
+        // Multiple different init models, or an invalid one, are ambiguous.
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT MIN(json_extract(e.event, '$.value.model')) FROM thread_events e
+             JOIN runs r ON r.id=e.run_id AND r.thread_id=e.thread_id
+             JOIN threads t ON t.id=r.thread_id
+             WHERE e.thread_id=?1 AND e.run_id=?2 AND t.project_id=?3 AND r.engine=?4
+               AND json_extract(e.event, '$.type')='CUSTOM'
+               AND json_extract(e.event, '$.name')='engine.model'
+               AND json_extract(e.event, '$.value.engine')='claude'
+             HAVING COUNT(DISTINCT json_extract(e.event, '$.value.model'))=1
+               AND COUNT(json_extract(e.event, '$.value.model'))=COUNT(*)",
+                params![thread, run, project, engine],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Approval execution also observes ordinary run-stop intent, including a
+    /// parent-family stop, even though its no-tool pump owns its own handle.
+    pub(crate) fn crew_approval_live(&self, run: &str) -> Result<bool> {
+        Ok(self.reader().query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE id=?1 AND owner_epoch=?2 AND stop_requested=0 AND state IN ('admitted','starting','running'))", params![run,self.epoch()], |row| row.get(0))?)
+    }
+
+    /// Pending ordinary second-engine notices, by immutable ledger cursor.
+    /// Resolution rows are excluded before the bound, so old pending items
+    /// cannot be crowded out by recent denials or resolved notices.
+    pub(crate) fn crew_second_notices(
+        &self,
+        before: Option<i64>,
+        limit: u32,
+    ) -> Result<Vec<AutopilotEvent>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare("SELECT e.id,e.crew_id,e.task_id,e.kind,e.body,e.at FROM crew_autopilot_events e
+            WHERE e.kind='denied' AND json_extract(e.body,'$.needs_second_engine')=1
+            AND json_extract(e.body,'$.mode')='full' AND json_extract(e.body,'$.guard') IS NULL
+            AND (?1 IS NULL OR e.id < ?1)
+            AND NOT EXISTS(SELECT 1 FROM crew_autopilot_events r
+                WHERE r.kind IN ('second_engine_dismissed','second_engine_resolved') AND json_extract(r.body,'$.notice')=e.id)
+            ORDER BY e.id DESC LIMIT ?2")?;
+        let rows = statement
+            .query_map(params![before, limit], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, crew_id, task_id, kind, body, at)| {
+                Ok(AutopilotEvent {
+                    id,
+                    crew_id,
+                    task_id,
+                    kind,
+                    body: serde_json::from_str(&body)?,
+                    at,
+                })
+            })
+            .collect()
+    }
+
+    /// Idempotently ends one notice; dismissal and sign-in resolution compete
+    /// in this transaction and neither grants or retries the denied action.
+    pub(crate) fn settle_crew_second_notice(
+        &self,
+        id: i64,
+        resolution: Option<(&str, &str)>,
+    ) -> Result<()> {
+        if id <= 0 {
+            return Err(CoreError::Invalid("that notice id is not valid".into()));
+        }
+        self.commit(|tx, _| {
+            let (crew, task, original): (String, String, String) = tx.query_row(
+                "SELECT crew_id,task_id,body FROM crew_autopilot_events WHERE id=?1 AND kind='denied'
+                 AND json_extract(body,'$.needs_second_engine')=1 AND json_extract(body,'$.mode')='full'
+                 AND json_extract(body,'$.guard') IS NULL", [id],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+            ).optional()?.ok_or_else(|| CoreError::NotFound("second-engine notice".into()))?;
+            let done: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM crew_autopilot_events WHERE kind IN ('second_engine_dismissed','second_engine_resolved') AND json_extract(body,'$.notice')=?1)",
+                [id], |row| row.get(0),
+            )?;
+            if done { return Ok(()); }
+            let mut body = serde_json::json!({ "notice": id });
+            if let Some((engine, family)) = resolution {
+                let original: Value = serde_json::from_str(&original)?;
+                let first = original.pointer("/action/lead_family").and_then(Value::as_str).ok_or(CoreError::RunClosed)?;
+                if first == family || engine.is_empty() || family.is_empty() { return Err(CoreError::RunClosed); }
+                body["engine"] = Value::String(engine.to_owned());
+                body["family"] = Value::String(family.to_owned());
+            }
+            let signed_in = resolution.is_some();
+            let kind = if signed_in { "second_engine_resolved" } else { "second_engine_dismissed" };
+            super::insert_audit(tx, &super::AuditRecord {
+                actor: if signed_in { "core" } else { "local_caller" }.into(),
+                action: format!("crew.{kind}"), target: id.to_string(), decision: None,
+                source: if signed_in { "core" } else { "local" }.into(),
+                thread_id: None, run_id: None, detail: body.clone(),
+            })?;
+            tx.execute("INSERT INTO crew_autopilot_events(crew_id,task_id,kind,body,at) VALUES(?1,?2,?3,?4,?5)", params![crew,task,kind,body.to_string(),now()])?;
+            Ok(())
+        })
+    }
+
+    /// Reserves one of the brief's existing turns before an approval is launched.
+    /// Counts actual worker admissions plus prior reservations, atomically with
+    /// the new reservation. Missing budgets, liveness or usage never grant time.
+    pub(crate) fn reserve_crew_approval(
+        &self,
+        task_id: &str,
+        attempt: u32,
+        approval: &str,
+        engine: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            let task = super::crew::find_task(tx, task_id)?;
+            let run = super::crew_runs::find_run(tx, task_id)?;
+            let body: String = tx.query_row("SELECT body FROM crew_briefs WHERE id = ?1", [task_id], |row| row.get(0))?;
+            let orbyn_contracts::CrewObject::Brief(brief) = super::crew::read_object(&body)? else { return Err(CoreError::RunClosed); };
+            let cancelling: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM audit_events WHERE action = 'crew.task.cancel' AND target = ?1)", [task_id], |row| row.get(0))?;
+            let start = crate::util::parse_time(&task.created_at).ok_or(CoreError::RunClosed)?;
+            if !matches!(task.state.as_str(), "running" | "changed_approach") || cancelling || run.attempts != attempt
+                || crate::util::unix_now() >= start.saturating_add(i64::from(brief.budget.minutes) * 60) {
+                return Err(CoreError::RunClosed);
+            }
+            let reserved: Option<String> = tx.query_row("SELECT body FROM crew_autopilot_events WHERE task_id=?1 AND kind='approval_started' AND json_extract(body,'$.approval')=?2", params![task_id, approval], |row| row.get(0)).optional()?;
+            if let Some(body) = reserved {
+                let body: Value = serde_json::from_str(&body)?;
+                return if body["engine"] == engine && body["attempt"] == attempt { Ok(()) } else { Err(CoreError::RunClosed) };
+            }
+            let worker: i64 = tx.query_row("SELECT COUNT(*) FROM runs WHERE thread_id = ?1", [run.worker_thread_id.as_deref()], |row| row.get(0))?;
+            let approvals: i64 = tx.query_row("SELECT COUNT(*) FROM crew_autopilot_events WHERE task_id=?1 AND kind='approval_started'", [task_id], |row| row.get(0))?;
+            if worker.max(i64::from(run.attempts)).saturating_add(approvals) >= i64::from(brief.budget.turns) {
+                return Err(CoreError::EngineUnavailable("The task has no turn left for an approval.".into()));
+            }
+            let body = serde_json::json!({ "approval": approval, "engine": engine, "attempt": attempt, "turns": 1 });
+            tx.execute("INSERT INTO crew_autopilot_events(crew_id,task_id,kind,body,at) VALUES(?1,?2,'approval_started',?3,?4)", params![task.crew_id, task_id, body.to_string(), now()])?;
+            Ok(())
+        })
+    }
+
     /// Sets the person's mode for a scope (`default`, `repo:<id>` or `crew:<id>`).
     pub fn set_crew_autopilot_mode(&self, scope: &str, mode: &str) -> Result<()> {
         self.commit(|tx, _| {

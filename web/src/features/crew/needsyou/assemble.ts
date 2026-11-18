@@ -1,9 +1,11 @@
 // Assembles the Needs you inbox from the routes that exist: held commands, stops, the after-merge Review queue and the
 // background runs waiting for review. Pure: the same reads give the same rows, in the same order.
 import type { AutopilotLogRow } from "../../../generated/AutopilotLogRow";
+import type { AutopilotSecondEngineNotice } from "../../../generated/AutopilotSecondEngineNotice";
 import type { AutopilotReviewItem } from "../../../generated/AutopilotReviewItem";
 import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
+import type { FlowCard } from "../../../generated/FlowCard";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
@@ -12,6 +14,18 @@ const time = (text: string | null | undefined) => {
   const at = text ? Date.parse(text) : Number.NaN;
   return Number.isNaN(at) ? null : at;
 };
+
+/** Existing approval-one-vendor frame, pinned to design Git a582a9ba4fb9.
+ * Ordinary notices have Sign in and Dismiss; guarded-command authority is separate. */
+export function secondEngineItems(notices: AutopilotSecondEngineNotice[]): NeedsItem[] {
+  return notices.map((notice) => ({
+    id: `second-engine:${notice.id}`, kind: "denied", title: `Sign in to a second engine to allow: ${notice.target}`,
+    risk: null, undo: null, from: `Task ${notice.task_id}`, since: time(notice.at),
+    cost: "The worker is told to take another approach, and the rest of the crew carries on.",
+    actions: [{ key: "sign-in", label: "Sign in to a second engine", primary: true }, { key: "dismiss", label: "Dismiss" }],
+    ref: String(notice.id),
+  }));
+}
 
 /** A held command that still waits for the person. A decided, expired or dismissed one is not an item. */
 export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
@@ -36,6 +50,33 @@ export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
       },
     ];
   });
+}
+
+/** What the card says when the service gave no reason. */
+export const NEVER_RAN = "The worker never ran.";
+
+/**
+ * Tasks refused at their start, from the Needs you column of each crew's board. Not an approval: nothing is asked of the person but
+ * to retry the task on another engine or dismiss it, so the item has no Approve or Deny. The reason is the service's own redacted
+ * text, drawn as text.
+ */
+export function couldNotStartItems(cards: FlowCard[]): NeedsItem[] {
+  return cards
+    .filter((card) => card.could_not_start)
+    .map((card) => ({
+      id: `task:${card.id}`,
+      kind: "could_not_start" as const,
+      // The task's name: the narrow card's title (its kind label says "Could not start"). The wide row keeps the drawn frame's "Could not start" in bold (NeedsRow).
+      title: card.name?.trim() || card.id,
+      risk: null,
+      undo: null,
+      from: `Task ${card.name?.trim() || card.id}${card.engine ? ` · ${card.engine}` : ""}`,
+      cost: card.reason?.trim() || NEVER_RAN,
+      since: time(card.updated_at),
+      engine: card.engine ?? undefined,
+      actions: [{ key: "retry" as const, label: "Retry on another engine", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
+      ref: card.id,
+    }));
 }
 
 /** Dismissing a stop is local to this device: nothing is sent to the service. */
@@ -100,7 +141,7 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
         risk: null,
         undo: null,
         from: `Background crew · ${crew.name}`,
-        cost: run.stop_reason === "budget" ? "The run stopped at its budget. Raise the budget, or leave it paused." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
+        cost: run.stop_reason === "budget" ? "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
         since: time(run.ended_at ?? run.updated_at),
         actions: [{ key: "open" as const, label: "Open", primary: true }],
         ref: crew.id,

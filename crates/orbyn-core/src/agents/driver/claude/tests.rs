@@ -1,4 +1,4 @@
-use super::args::{CAPABILITY_ENV, session_cwd_in};
+use super::args::{CAPABILITY_ENV, run_env, session_cwd_in};
 use super::catalog::{documented_catalog, read_control};
 use super::events::{StreamMapper, on_user, rejected_limit};
 use super::mcp::{claude_tools, init_tools, parse_mcp_list};
@@ -46,6 +46,120 @@ fn a_workflow_holds_a_completed_turn_but_not_a_failed_one() {
         "is_error": true, "errors": ["boom"] }),
     );
     assert_eq!(failed.outcome, Some(EngineOutcome::Failed("boom".into())));
+}
+
+fn started(task: &str, kind: &str) -> Value {
+    json!({ "type": "system", "subtype": "task_started", "task_id": task,
+        "task_type": kind, "description": "probe" })
+}
+
+fn echo(uuid: &str) -> Value {
+    json!({ "type": "user", "uuid": uuid, "isReplay": true,
+        "message": { "role": "user", "content": "hello" } })
+}
+
+fn said(text: &str) -> Value {
+    json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": text }] } })
+}
+
+fn done() -> Value {
+    json!({ "type": "result", "subtype": "success", "is_error": false })
+}
+
+#[test]
+fn a_background_agent_holds_a_completed_turn_until_it_ends() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(&started("a1", "local_agent"));
+    mapper.on_frame(&done());
+    assert!(
+        mapper.outcome.is_none(),
+        "the CLI would kill the agent on exit"
+    );
+    assert!(!mapper.waiting_on_hold());
+    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
+        "task_id": "a1", "status": "completed" }));
+    assert!(mapper.waiting_on_hold());
+    // The follow-up turn the CLI starts for the notification ends the run.
+    mapper.on_frame(&said("the agent found it"));
+    mapper.on_frame(&done());
+    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+}
+
+#[test]
+fn a_background_shell_does_not_hold_the_run_and_is_reported_stopped() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(&started("b1", "local_bash"));
+    mapper.on_frame(&done());
+    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+    let ended = mapper.end_background();
+    assert!(
+        matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
+            if name == "background.stopped" && value["taskId"] == "b1")
+    );
+    assert!(mapper.end_background().is_empty());
+}
+
+#[test]
+fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
+    let mut mapper = StreamMapper::answering("mine");
+    // The CLI ran a turn for a task notification before reaching the prompt.
+    mapper.on_frame(&said("the old agent finished"));
+    mapper.on_frame(&done());
+    assert!(mapper.outcome.is_none());
+    // The prompt's turn has not begun: after the grace the run ends on this result, not never.
+    assert!(mapper.waiting_on_hold());
+    mapper.on_frame(&echo("someone-else"));
+    mapper.on_frame(&said("a second leftover"));
+    mapper.on_frame(&done());
+    assert!(
+        mapper.outcome.is_none(),
+        "another message's echo is not ours"
+    );
+    mapper.on_frame(&echo("mine"));
+    assert!(
+        !mapper.waiting_on_hold(),
+        "the echo means the prompt's turn began; a slow first token must not end the run"
+    );
+    mapper.on_frame(&said("here is your answer"));
+    mapper.on_frame(&done());
+    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+}
+
+#[test]
+fn a_leftover_turn_that_fails_before_streaming_does_not_fail_the_prompt() {
+    let mut mapper = StreamMapper::answering("mine");
+    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
+        "task_id": "a1", "status": "completed" }));
+    mapper.on_frame(
+        &json!({ "type": "result", "subtype": "error_during_execution",
+        "is_error": true, "errors": ["overloaded"] }),
+    );
+    assert!(mapper.outcome.is_none());
+}
+
+#[test]
+fn a_foreground_agent_does_not_hold_the_run() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(
+        &json!({ "type": "system", "subtype": "task_started", "task_id": "f1",
+        "task_type": "local_agent", "is_backgrounded": false }),
+    );
+    mapper.on_frame(&done());
+    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+}
+
+#[test]
+fn a_failed_leftover_turn_does_not_fail_the_prompt() {
+    let failure = json!({ "type": "result", "subtype": "error_during_execution",
+        "is_error": true, "errors": ["leftover failed"] });
+    let mut mapper = StreamMapper::answering("mine");
+    mapper.on_frame(&said("working on the old notification"));
+    mapper.on_frame(&failure);
+    assert!(mapper.outcome.is_none());
+    // A failure before any turn began (a lost session, a missing login) is the run's.
+    let mut early = StreamMapper::answering("mine");
+    early.on_frame(&failure);
+    assert!(matches!(early.outcome, Some(EngineOutcome::Failed(_))));
 }
 
 #[test]
@@ -476,6 +590,7 @@ fn command_line_matches_the_contract_and_never_uses_bare() {
             "stream-json",
             "--verbose",
             "--include-partial-messages",
+            "--replay-user-messages",
             "--permission-mode",
             "default",
             "--mcp-config",
@@ -1274,4 +1389,17 @@ fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
         huge["mcpServers"][MCP_SERVER_NAME]["timeout"],
         json!(24u64 * 24 * 60 * 60 * 1000)
     );
+}
+
+/// The task-tool flag is a person's opt-in: off sets nothing, a confined run gets
+/// nothing, and a value the person already set is left alone, `0` included.
+#[test]
+fn the_task_tools_flag_is_set_only_for_an_opted_in_unconfined_run() {
+    use std::ffi::OsStr;
+    let on = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")];
+    assert!(run_env(false, false, None).is_empty());
+    assert_eq!(run_env(true, false, None), on);
+    assert!(run_env(true, true, None).is_empty());
+    assert!(run_env(true, false, Some(OsStr::new("0"))).is_empty());
+    assert!(run_env(true, false, Some(OsStr::new("1"))).is_empty());
 }

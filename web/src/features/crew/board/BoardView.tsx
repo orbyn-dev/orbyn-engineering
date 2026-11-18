@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FlowCard } from "../../../generated/FlowCard";
 import type { FlowColumnId } from "../../../generated/FlowColumnId";
 import { ErrorState, Empty, Loading } from "../../../product/ui/states";
@@ -19,6 +19,18 @@ import "./board.css";
  * reassigns or moves a card (Crew moves cards, never the person). The service's own text is drawn as plain text.
  */
 export function BoardView() {
+  // A request the Board never consumed must not wait for a later visit. React's dev double-mount runs this cleanup too, so
+  // the clear waits a tick and is skipped when the Board is already back.
+  const live = useRef(false);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      setTimeout(() => {
+        if (!live.current) useBoardFocus.getState().clear();
+      }, 0);
+    };
+  }, []);
   return useCrewPreview() ? <Board /> : null;
 }
 
@@ -26,6 +38,11 @@ function Board() {
   const crews = useFlowCrews();
   // A map node may have asked for one of its crew's cards: that crew is the one shown first.
   const [picked, setPicked] = useState<string | null>(() => useBoardFocus.getState().crew);
+  const pick = (id: string) => {
+    // Choosing another crew drops any card still asked for.
+    useBoardFocus.getState().clear();
+    setPicked(id);
+  };
   if (crews.status === "loading") return <Loading label="Reading the board" rows={4} />;
   if (crews.status === "error" && !crews.data) return <ErrorState title="Can’t read the board" failure={crews.error} onRetry={() => void crews.reload()} />;
   const list = crews.data ?? [];
@@ -35,7 +52,7 @@ function Board() {
     <section className="bd-root" aria-label="Taskboard">
       <div className="bd-crew">
         <label htmlFor="bd-crew-pick">Crew</label>
-        <select id="bd-crew-pick" value={crew.id} onChange={(event) => setPicked(event.target.value)}>
+        <select id="bd-crew-pick" value={crew.id} onChange={(event) => pick(event.target.value)}>
           {list.map((one) => (
             <option key={one.id} value={one.id}>
               {one.label} · {one.tasks} {one.tasks === 1 ? "task" : "tasks"}, {one.finished} finished
@@ -159,7 +176,8 @@ function CrewBoard({ crew }: { crew: string }) {
 
 function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
   const write = useTaskWrite({ id: card.id, name: card.name, allowCancel: card.can_cancel, allowRerun: card.can_rerun, onDone: onChanged });
-  const needs = card.state === "needs_person";
+  // A task refused at its start waits for no decision: it says so, and is not drawn as one that does.
+  const needs = card.state === "needs_person" && !card.could_not_start;
   const checks = checksLine(card);
   const model = modelLine(card);
   return (
@@ -176,6 +194,7 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
       </div>
       {card.owner ? <div className="bd-ln">owner {card.owner}</div> : null}
       {checks ? <div className="bd-ln">{checks}</div> : null}
+      {card.could_not_start ? <div className="bd-ln"><b>Could not start</b> · {card.reason ?? "The worker never ran."}</div> : null}
       {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
       <WriteStatus id={card.id} op={write.op} />
       {write.dialog}

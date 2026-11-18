@@ -4,6 +4,7 @@ import type { FlowFilter } from "../../../../generated/FlowFilter";
 import type { FlowTaskRow } from "../../../../generated/FlowTaskRow";
 import { ErrorState, Empty, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
+import { routeHref } from "../../../../product/state/route";
 import { useCrewPreview } from "../../autopilot/approvals/useCrew";
 import { CellGlyph, SearchIcon } from "./glyphs";
 import { cellOf, cellView, countOf, FILTERS, roundView, shown, STAGES } from "./model";
@@ -18,15 +19,29 @@ const AFTER_THE_BETA = "After the beta: no route yet. The beta has a Cancel on e
  * answers 404, and so does one with no Crew routes: both read as off, and no other route is read). Reads only: nothing here
  * cancels, re-runs, approves or merges. The service's own text is drawn as plain text.
  */
-export function FlowView() {
-  return useCrewPreview() ? <Flow /> : null;
+export function FlowView({ task }: { task?: string } = {}) {
+  const on = useCrewPreview();
+  const [dismissed, setDismissed] = useState<string>();
+  const [locatedCrew, setLocatedCrew] = useState<string | null>(null);
+  if (!on) return null;
+  // A locator reads the exact task before any crew-list early exit. It need not
+  // appear on the current page or in the bounded crew inventory.
+  if (task !== undefined && task !== dismissed) return (
+    <section className="fv-root" aria-label="Flow">
+      <FlowZoom key={task} id={task} onCrew={setLocatedCrew} onBack={() => {
+        setDismissed(task);
+        window.history.replaceState(window.history.state, "", routeHref({ name: "crew", tab: "flow" }));
+      }} />
+    </section>
+  );
+  return <Flow initialCrew={locatedCrew} />;
 }
 
-function Flow() {
+function Flow({ initialCrew }: { initialCrew: string | null }) {
   const crews = useFlowCrews();
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(initialCrew);
   const [task, setTask] = useState<string | null>(null);
-  useRefresh(crews.reload, crews.status !== "ready");
+  useRefresh(crews.refreshQuietly, crews.status !== "ready");
 
   if (crews.status === "loading") return <Loading label="Reading Flow" rows={4} />;
   if (crews.status === "error" && !crews.data) return <ErrorState title="Can’t read Flow" failure={crews.error} onRetry={() => void crews.reload()} />;
@@ -79,7 +94,7 @@ function CrewTasks({ crew, onOpen }: { crew: string; onOpen(id: string): void })
   }, [draft]);
 
   const { first, rows, next, showMore, busy, failure } = useFlowTasks({ crew, filter, q, engine });
-  useRefresh(first.reload, first.status !== "ready" || rows.length > first.data!.tasks.length);
+  useRefresh(first.refreshQuietly, first.status !== "ready" || rows.length > first.data!.tasks.length);
   const page = first.data;
   if (page) counts.current = page.counts;
   // The engines to pick from are the ones seen on any list read for this crew, so choosing one does not empty the choice.
