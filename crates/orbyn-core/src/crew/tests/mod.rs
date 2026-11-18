@@ -30,6 +30,7 @@ mod classes_project;
 mod confined;
 mod core;
 mod draft;
+mod escapes;
 mod fake;
 mod filters;
 mod flow;

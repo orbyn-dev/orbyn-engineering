@@ -12,6 +12,7 @@ pub mod changes;
 mod checks;
 mod classes;
 mod draft;
+pub mod escapes;
 mod filters;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
