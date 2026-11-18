@@ -20,6 +20,10 @@ fn lead() -> Want {
     }
 }
 
+fn project(w: &super::harness::World) -> String {
+    w.core.store.thread(&w.lead).unwrap().project_id
+}
+
 #[test]
 fn acp_tiers_never_come_from_names_or_promote_sibling_engines_or_models() {
     let view = engine("opencode");
@@ -201,7 +205,7 @@ async fn person_tier_save_is_cas_rejects_duplicates_and_clears_to_builder_defaul
     assert_eq!(cleared["assignments"], json!({}));
     assert!(
         w.core
-            .crew_router_config_with_mappings()
+            .crew_router_config_with_mappings(&project(&w))
             .unwrap()
             .acp_tiers
             .is_empty()
@@ -246,7 +250,7 @@ async fn an_initial_clear_overrides_config_seed_and_persists_a_revision() {
     let w = world_tiered(true, arc(|_, _| Turn::Hang), &[("alpha", false)], true).await;
     assert!(
         !w.core
-            .crew_router_config_with_mappings()
+            .crew_router_config_with_mappings(&project(&w))
             .unwrap()
             .acp_tiers
             .is_empty()
@@ -259,7 +263,7 @@ async fn an_initial_clear_overrides_config_seed_and_persists_a_revision() {
     assert_eq!(cleared["revision"], 1);
     assert!(
         w.core
-            .crew_router_config_with_mappings()
+            .crew_router_config_with_mappings(&project(&w))
             .unwrap()
             .acp_tiers
             .is_empty()

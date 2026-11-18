@@ -525,3 +525,176 @@ fn a_decision_is_stored_with_its_task_and_shown_later() {
     let stray = decide(&other, "mini-1");
     assert!(core.store_route_decision(&task.id, &stray).is_err());
 }
+
+/// Alpha leads and is busy; bravo is idle. Their limits are read once so the router sees the headroom.
+fn headroom_fixture() -> Fixture {
+    fixture(true, |starts| {
+        let mut alpha = scripted("alpha", starts);
+        alpha.used_percent = Some(80.0);
+        let mut bravo = scripted("bravo", starts);
+        bravo.used_percent = Some(0.0);
+        vec![alpha, bravo]
+    })
+}
+
+async fn warmed(f: Fixture) -> Fixture {
+    for id in ["alpha", "bravo"] {
+        f.core.engine_limits(id, true).await.unwrap();
+    }
+    f
+}
+
+async fn routed_engine(f: &Fixture, extra: Value) -> String {
+    let mut args = json!({ "brief": draft(json!({})) });
+    for (key, value) in extra.as_object().cloned().unwrap_or_default() {
+        args[key] = value;
+    }
+    let (answer, error) = f.route(args).await;
+    assert!(!error, "{answer}");
+    answer["decision"]["engine"].as_str().unwrap().to_owned()
+}
+
+fn set(f: &Fixture, project: &str, value: orbyn_contracts::CrewWorkerProvider) {
+    f.core
+        .store
+        .set_crew_worker_provider(project, value, "user")
+        .unwrap();
+}
+
+fn put_raw(f: &Fixture, project: &str, text: &str) {
+    rusqlite::Connection::open(f._dir.path().join("data/orbyn.sqlite3"))
+        .unwrap()
+        .execute(
+            "INSERT INTO project_preferences (project_id, key, value) VALUES (?1, 'crew_worker_provider', ?2)
+             ON CONFLICT (project_id, key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![project, text],
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_default_keeps_a_worker_on_the_leads_provider_despite_more_headroom_elsewhere() {
+    let f = warmed(headroom_fixture()).await;
+    assert_eq!(routed_engine(&f, json!({})).await, "alpha");
+    let view = f.core.crew_worker_provider_view(&f.project).unwrap();
+    assert_eq!(
+        view.worker_provider,
+        orbyn_contracts::CrewWorkerProvider::SameAsLead
+    );
+}
+
+#[tokio::test]
+async fn a_stored_any_lets_the_idle_provider_win_and_saving_the_default_clears_it() {
+    use orbyn_contracts::CrewWorkerProvider::{Any, SameAsLead};
+    let f = warmed(headroom_fixture()).await;
+    set(&f, &f.project, Any);
+    assert_eq!(routed_engine(&f, json!({})).await, "bravo");
+    assert_eq!(
+        f.core
+            .crew_worker_provider_view(&f.project)
+            .unwrap()
+            .worker_provider,
+        Any
+    );
+    set(&f, &f.project, SameAsLead);
+    assert_eq!(routed_engine(&f, json!({})).await, "alpha");
+    let rows: i64 = f
+        .core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM project_preferences WHERE key = 'crew_worker_provider'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn an_unknown_or_damaged_stored_value_reads_as_same_as_lead() {
+    let f = warmed(headroom_fixture()).await;
+    for text in ["everyone", "", "ANY", "\"any\"", "{\"any\":true}", "null"] {
+        put_raw(&f, &f.project, text);
+        assert_eq!(routed_engine(&f, json!({})).await, "alpha", "{text:?}");
+        assert_eq!(
+            f.core
+                .crew_worker_provider_view(&f.project)
+                .unwrap()
+                .worker_provider,
+            orbyn_contracts::CrewWorkerProvider::SameAsLead,
+            "{text:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_setting_is_per_project() {
+    use orbyn_contracts::CrewWorkerProvider::Any;
+    let f = warmed(headroom_fixture()).await;
+    let other = f
+        .core
+        .store
+        .add_project(NewProject {
+            path: "/other",
+            name: "other",
+            is_git: false,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    // Another project's `any` does not widen this project's lead.
+    set(&f, &other.id, Any);
+    assert_eq!(routed_engine(&f, json!({})).await, "alpha");
+    assert_eq!(
+        f.core
+            .crew_worker_provider_view(&other.id)
+            .unwrap()
+            .worker_provider,
+        Any
+    );
+    // And this project's `any` is its own.
+    set(&f, &f.project, Any);
+    assert_eq!(routed_engine(&f, json!({})).await, "bravo");
+}
+
+#[tokio::test]
+async fn setting_and_reading_check_the_preview_flag_and_the_project() {
+    let f = headroom_fixture();
+    let change = orbyn_contracts::CrewWorkerProviderSet {
+        worker_provider: orbyn_contracts::CrewWorkerProvider::Any,
+    };
+    assert!(
+        f.core
+            .crew_set_worker_provider("nope", &change)
+            .await
+            .is_err()
+    );
+    assert!(f.core.crew_worker_provider_view("nope").is_err());
+    let saved = f
+        .core
+        .crew_set_worker_provider(&f.project, &change)
+        .await
+        .unwrap();
+    assert_eq!(saved.project, f.project);
+    assert_eq!(saved.worker_provider, change.worker_provider);
+    let audited: i64 = f
+        .core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.worker_provider.set' AND target = ?1",
+            [&f.project],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(audited, 1);
+    let off = fixture(false, |_| Vec::new());
+    assert!(off.core.crew_worker_provider_view(&off.project).is_err());
+    assert!(
+        off.core
+            .crew_set_worker_provider(&off.project, &change)
+            .await
+            .is_err()
+    );
+}

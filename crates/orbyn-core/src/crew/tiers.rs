@@ -44,20 +44,14 @@ pub struct RouterConfig {
     /// Explicit exact ACP engine id assignments. The model pin is resolved by
     /// core when the person saves, never guessed from its name.
     pub acp_tiers: BTreeMap<String, AcpTierAssignment>,
-    /// Which provider a worker is routed to when the brief names no engine. A later Settings choice fills it; nothing sets it yet.
+    /// Which provider a worker is routed to when the brief names no engine. The project's stored choice fills it
+    /// (`Core::crew_router_config_with_mappings`); the default is the lead's provider.
     pub worker_provider: WorkerProvider,
 }
 
-/// Where the router looks for a worker's engine when nothing is pinned.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum WorkerProvider {
-    /// The lead's own provider first; another one only when that one is refused or not available. Pass rate and headroom
-    /// choose only inside the provider.
-    #[default]
-    SameAsLead,
-    /// Every allowed provider competes on score.
-    Any,
-}
+/// Where the router looks for a worker's engine when nothing is pinned. Stored per project as `same_as_lead` or `any`
+/// (`project_preferences`, key `crew_worker_provider`); absent or unknown means `same_as_lead`.
+pub use orbyn_contracts::CrewWorkerProvider as WorkerProvider;
 
 pub use orbyn_contracts::CrewAcpTierAssignment as AcpTierAssignment;
 

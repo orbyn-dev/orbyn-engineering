@@ -260,7 +260,7 @@ impl Core {
         let answer = match route(
             &input,
             &machine.views,
-            &self.crew_router_config_with_mappings()?,
+            &self.crew_router_config_with_mappings(&thread.project_id)?,
             &EvalHistory::default(),
         ) {
             Ok(decision) => {

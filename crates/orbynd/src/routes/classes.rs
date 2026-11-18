@@ -88,6 +88,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/guard/targets/{id}/remove"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
+    ("POST", "/api/crew/projects/{id}/worker-provider/set"),
     ("POST", "/api/crew/review/{task_id}/consent"),
     ("POST", "/api/crew/review/{task_id}/remove-lane"),
     ("POST", "/api/crew/settings/engine-tiers/save"),
@@ -466,6 +467,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/projects/{id}/pinned-ref/reset",
         "Crew write behind local_only: the person clears the project's remembered default-branch commit",
+    ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/worker-provider/set",
+        "Crew write behind local_only: the person chooses whether a project's workers stay on the lead's provider or may go to any allowed one",
     ),
     (
         "POST",
