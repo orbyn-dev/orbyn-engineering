@@ -145,7 +145,10 @@ fn migration_52_follows_51_and_leaves_older_tables_alone() {
 
     let store = Store::open(&path, "checks-upgrade").unwrap();
     let upgrade = store.upgrade().expect("an upgrade");
-    assert_eq!((upgrade.from, upgrade.to), (51, 52));
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (51, migrations::MIGRATIONS.last().unwrap().0)
+    );
     let reader = store.reader();
     let after: (i64, i64, i64) = reader
         .query_row(

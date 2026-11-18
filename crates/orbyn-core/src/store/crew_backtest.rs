@@ -135,6 +135,9 @@ pub struct BacktestLaneRow {
     pub state: LaneState,
     pub escapes_n: Option<u32>,
     pub caught_n: Option<u32>,
+    /// Confirmed escapes in the window whose fix or revert files could not be read, so they could not be matched. `None`
+    /// when not scored; never read as zero.
+    pub unresolved_n: Option<u32>,
 }
 
 /// One finding fingerprint on one past pull request.
@@ -195,7 +198,7 @@ const RUN_COLUMNS: &str =
 fn update_lane(tx: &Transaction<'_>, run_id: &str, lane: &BacktestLaneRow) -> Result<()> {
     let changed = tx.execute(
         "UPDATE crew_backtest_lanes
-            SET model = ?4, tokens_used = ?5, state = ?6, escapes_n = ?7, caught_n = ?8
+            SET model = ?4, tokens_used = ?5, state = ?6, escapes_n = ?7, caught_n = ?8, unresolved_n = ?9
           WHERE run_id = ?1 AND lane = ?2 AND engine = ?3",
         params![
             run_id,
@@ -206,6 +209,7 @@ fn update_lane(tx: &Transaction<'_>, run_id: &str, lane: &BacktestLaneRow) -> Re
             lane.state.name(),
             lane.escapes_n,
             lane.caught_n,
+            lane.unresolved_n,
         ],
     )?;
     if changed == 0 {
@@ -471,7 +475,7 @@ impl Store {
     pub fn crew_backtest_lanes(&self, run_id: &str) -> Result<Vec<BacktestLaneRow>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
-            "SELECT lane, engine, model, tokens_used, state, escapes_n, caught_n
+            "SELECT lane, engine, model, tokens_used, state, escapes_n, caught_n, unresolved_n
                FROM crew_backtest_lanes WHERE run_id = ?1 ORDER BY lane, engine",
         )?;
         let rows = statement
@@ -484,23 +488,27 @@ impl Store {
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<i64>>(5)?,
                     row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
-            .map(|(lane, engine, model, tokens, state, escapes, caught)| {
-                Ok(BacktestLaneRow {
-                    lane,
-                    engine,
-                    model,
-                    tokens_used: u64::try_from(tokens).map_err(|_| {
-                        CoreError::Internal("stored backtest tokens are invalid".into())
-                    })?,
-                    state: LaneState::of(&state)?,
-                    escapes_n: count_of(escapes)?,
-                    caught_n: count_of(caught)?,
-                })
-            })
+            .map(
+                |(lane, engine, model, tokens, state, escapes, caught, unresolved)| {
+                    Ok(BacktestLaneRow {
+                        lane,
+                        engine,
+                        model,
+                        tokens_used: u64::try_from(tokens).map_err(|_| {
+                            CoreError::Internal("stored backtest tokens are invalid".into())
+                        })?,
+                        state: LaneState::of(&state)?,
+                        escapes_n: count_of(escapes)?,
+                        caught_n: count_of(caught)?,
+                        unresolved_n: count_of(unresolved)?,
+                    })
+                },
+            )
             .collect()
     }
 

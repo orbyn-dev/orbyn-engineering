@@ -5,6 +5,11 @@ import type { LaneScore } from "./LaneScore";
 
 export type BacktestLaneRun = { lane: string, engine: string, model: string, state: BacktestLaneState, tokens_used: number, outcome: BacktestLaneOutcome, findings_n: number, 
 /**
+ * Confirmed escapes in the window that could not be matched because the files of their fix or revert could not be
+ * read. Counted here beside the score and never inside it; null unless `outcome` is `scored`.
+ */
+unresolved_n: number | null, 
+/**
  * Present only when `outcome` is `scored`.
  */
 score: LaneScore | null, };

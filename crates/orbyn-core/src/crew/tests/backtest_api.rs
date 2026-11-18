@@ -380,6 +380,7 @@ async fn a_run_left_running_by_a_crash_becomes_interrupted_when_the_core_opens()
             state: LaneState::Running,
             escapes_n: None,
             caught_n: None,
+            unresolved_n: None,
         };
         store.crew_backtest_save_lane("crashed", &row, &[]).unwrap();
         store
