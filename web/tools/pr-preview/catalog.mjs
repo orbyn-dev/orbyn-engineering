@@ -155,7 +155,9 @@ export const FRAMES = {
   "thread-interrupted": { route: "#/threads/t-interrupted" },
   "thread-empty": { route: "#/threads/t-empty" },
   "thread-tools": { route: "#/threads/t-tools" },
-  "thread-tools-open": { route: "#/threads/t-tools", steps: [click("button", "Ran", { prefix: true }), click("button", "Ran 3", { prefix: true })] },
+  // Design frames `summary-work-group` and `summary-outcomes`: a turn's groups, with the failed and unanswered calls counted apart.
+  "summary-work-group": { route: "#/threads/t-summary-work", steps: [click("button", "Changed 2 files", { prefix: true })] },
+  "summary-outcomes": { route: "#/threads/t-summary-outcomes", steps: [click("button", "Ran 1 command", { prefix: true }), click("button", "Ran 4 commands", { prefix: true })] },
   "thread-tools-live": { route: "#/threads/t-tools-live" },
   "thread-details": { route: "#/threads/t-done", steps: [click("button", "Details")] },
   "details-popover": { route: "#/threads/t-done", steps: [click("button", "Details")] },
