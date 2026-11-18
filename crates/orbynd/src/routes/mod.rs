@@ -12,6 +12,7 @@ mod composer;
 mod crew;
 mod crew_areas;
 mod crew_board;
+mod crew_capacity;
 mod crew_map;
 mod crew_tasks;
 mod engines;

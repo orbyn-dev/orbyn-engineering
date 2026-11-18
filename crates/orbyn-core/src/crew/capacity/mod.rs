@@ -8,12 +8,15 @@
 // calls nothing here; the PR that wires it narrows this allow.
 #![allow(dead_code, unused_imports)]
 
+mod api;
 mod backpressure;
+mod coverage;
 mod hooks;
 mod provenance;
 mod sampling;
 
 pub use backpressure::{StartDecision, start_allowed, waiting_count};
+pub use coverage::{AreaCoverage, CoverageMap, EngineCoverage, MergeProvenance, coverage};
 pub(crate) use hooks::record_provenance;
 pub(crate) use provenance::attribute_by_blame;
 pub use provenance::{
@@ -49,6 +52,8 @@ pub struct CapacitySettings {
     /// Waiting High and Medium merges allowed before a new low-priority Crew start pauses.
     pub limit: u32,
     pub sampling: Sampling,
+    /// Whether a new low-priority Crew start may pause at all. Off by default; only a person turns it on.
+    pub pause_enabled: bool,
 }
 
 impl Default for CapacitySettings {
@@ -56,6 +61,7 @@ impl Default for CapacitySettings {
         Self {
             limit: DEFAULT_LIMIT,
             sampling: Sampling::Off,
+            pause_enabled: false,
         }
     }
 }

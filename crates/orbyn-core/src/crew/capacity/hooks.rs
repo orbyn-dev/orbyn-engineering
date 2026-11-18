@@ -72,6 +72,10 @@ impl Core {
                 return Ok(());
             }
         };
+        // Off until a person turns it on: the default never holds a start back.
+        if !settings.pause_enabled {
+            return Ok(());
+        }
         match start_allowed(settings, waiting, priority, crew_started) {
             StartDecision::Go => Ok(()),
             StartDecision::Paused { waiting, limit } => Err(CrewError::new(
@@ -81,6 +85,22 @@ impl Core {
                      a new low-priority start from Crew is paused until some are reviewed"
                 ),
             )),
+        }
+    }
+
+    /// After the task is stored: when Crew began it itself, records it as Low priority and Crew-started so a later
+    /// start can be paused against it. A person's start stores nothing (the defaults are Medium and person-started).
+    /// A store failure is logged and never fails the start.
+    pub(crate) fn capacity_mark_started(&self, task_id: &str, crew_started: bool) {
+        if !self.crew_enabled() || !crew_started {
+            return;
+        }
+        let marked = self
+            .store
+            .set_crew_task_priority(task_id, Priority::Low)
+            .and_then(|()| self.store.set_crew_task_crew_started(task_id, true));
+        if let Err(error) = marked {
+            tracing::warn!(%error, task = task_id, "the task's capacity mark was not stored");
         }
     }
 

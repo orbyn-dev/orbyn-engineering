@@ -269,6 +269,7 @@ impl Core {
                 links: Links {
                     review: None,
                     fix: Some(fix),
+                    crew_started: true,
                 },
             })
             .await;

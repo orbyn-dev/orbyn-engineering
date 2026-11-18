@@ -206,6 +206,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/capacity/settings",
+        "Crew write behind local_only: a project's review limit, sampling and whether new low-priority starts may pause",
+    ),
+    (
+        "POST",
+        "/api/crew/capacity/tasks/{id}",
+        "Crew write behind local_only: a task's priority and whether Crew began it, which decides if a start can pause",
+    ),
+    (
+        "POST",
         "/api/crew/approvals/second-engine/{id}/dismiss",
         "Crew write behind local_only: dismisses a second-engine notice",
     ),

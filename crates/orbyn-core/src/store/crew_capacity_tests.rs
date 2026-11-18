@@ -165,6 +165,7 @@ fn settings_default_round_trip_and_update() {
     let saved = CapacitySettings {
         limit: 3,
         sampling: Sampling::OneInFour,
+        pause_enabled: true,
     };
     store.set_crew_capacity_settings(&p, saved).unwrap();
     assert_eq!(store.crew_capacity_settings(&p).unwrap(), saved);
@@ -177,6 +178,7 @@ fn settings_default_round_trip_and_update() {
     let updated = CapacitySettings {
         limit: 12,
         sampling: Sampling::Off,
+        pause_enabled: false,
     };
     store.set_crew_capacity_settings(&p, updated).unwrap();
     assert_eq!(store.crew_capacity_settings(&p).unwrap(), updated);
@@ -196,11 +198,13 @@ fn a_limit_of_zero_or_an_unknown_project_is_refused_and_changes_nothing() {
     let saved = CapacitySettings {
         limit: 5,
         sampling: Sampling::OneInFour,
+        pause_enabled: true,
     };
     store.set_crew_capacity_settings(&p, saved).unwrap();
     let zero = CapacitySettings {
         limit: 0,
         sampling: Sampling::Off,
+        pause_enabled: false,
     };
     assert!(matches!(
         store.set_crew_capacity_settings(&p, zero),

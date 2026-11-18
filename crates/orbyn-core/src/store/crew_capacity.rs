@@ -69,12 +69,18 @@ impl Store {
         let stored = self
             .reader()
             .query_row(
-                "SELECT limit_n, sampling FROM crew_capacity_settings WHERE project_id = ?1",
+                "SELECT limit_n, sampling, pause_enabled FROM crew_capacity_settings WHERE project_id = ?1",
                 [project_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
             )
             .optional()?;
-        let Some((limit, sampling)) = stored else {
+        let Some((limit, sampling, pause)) = stored else {
             return Ok(CapacitySettings::default());
         };
         Ok(CapacitySettings {
@@ -83,7 +89,17 @@ impl Store {
                 .filter(|n| *n >= 1)
                 .ok_or_else(|| CoreError::Internal("a stored capacity limit is invalid".into()))?,
             sampling: sampling_of(&sampling)?,
+            pause_enabled: pause == 1,
         })
+    }
+
+    /// Whether a person ever saved capacity settings for the project (otherwise the defaults apply).
+    pub fn crew_capacity_settings_saved(&self, project_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS (SELECT 1 FROM crew_capacity_settings WHERE project_id = ?1)",
+            [project_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// Saves a project's capacity settings, replacing any earlier ones. A limit of zero is refused, and so is a
@@ -108,9 +124,15 @@ impl Store {
                 return Err(CoreError::NotFound(format!("project {project_id}")));
             }
             tx.execute(
-                "INSERT INTO crew_capacity_settings (project_id, limit_n, sampling) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(project_id) DO UPDATE SET limit_n = excluded.limit_n, sampling = excluded.sampling",
-                params![project_id, settings.limit, sampling_name(settings.sampling)],
+                "INSERT INTO crew_capacity_settings (project_id, limit_n, sampling, pause_enabled) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id) DO UPDATE SET limit_n = excluded.limit_n, sampling = excluded.sampling,
+                     pause_enabled = excluded.pause_enabled",
+                params![
+                    project_id,
+                    settings.limit,
+                    sampling_name(settings.sampling),
+                    i64::from(settings.pause_enabled)
+                ],
             )?;
             insert_audit(
                 tx,
@@ -125,6 +147,7 @@ impl Store {
                     detail: json!({
                         "limit": settings.limit,
                         "sampling": sampling_name(settings.sampling),
+                        "pause_enabled": settings.pause_enabled,
                     }),
                 },
             )?;
