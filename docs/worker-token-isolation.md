@@ -212,11 +212,13 @@ The `Person` routes are closed to a token-only worker. This is what #441 still h
 - [ ] **`.git` closure on macOS.** The confinement does not close the repository's `.git` (`crew/classes/mod.rs`).
 - [ ] **`Local` routes stay open to a token holder.** Among them `POST /api/threads/{id}/git/action` (push), which is `Local`
   on purpose, runs without a raised mode, and the CLI's. Per-worker tokens (item 4) are the answer when a worker needs the API.
-- [ ] **Agent tool `orbyn_thread_configure`** refuses a looser `permission_mode` than the thread has; lowering or keeping it works.
+- [x] **Agent tool `orbyn_thread_configure`** refuses a looser `permission_mode` than the thread has (done in step 3); lowering or keeping it works.
 - [ ] **`POST /api/diagnostics/processes/{pid}/stop`** is `Local`. It can stop any process in the service's own tree, so a
   token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
 - [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
-  .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: it links, watches or reads, and
-  writes nothing to the forge.
+  .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: none of it writes to the forge.
+  Be exact about what it does do: `checkout` runs local `git fetch`, `switch` and `worktree add`, and `work` and `guide`
+  create a worktree or start an engine thread at the default permission mode. That grants nothing beyond what the open
+  `Local` runs route already does.
 - [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).
 - [ ] **Remote sessions** have no key, so they are read and `Local` only. A remote approve flow needs its own design.
