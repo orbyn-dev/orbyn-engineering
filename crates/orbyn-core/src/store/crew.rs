@@ -501,7 +501,7 @@ impl Store {
             .map(Some)
             .ok_or_else(|| {
                 CoreError::StoredDataDamaged(
-                    "the remembered default branch is damaged; reset it, then confirm the default branch again"
+                    "the remembered default branch is damaged; reset it, and the next task remembers the default branch again"
                         .into(),
                 )
             })
