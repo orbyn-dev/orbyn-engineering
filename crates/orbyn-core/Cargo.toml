@@ -26,6 +26,7 @@ futures-util.workspace = true
 getrandom.workspace = true
 icu_properties = "=2.4.0"
 ignore = "=0.4.34"
+notify = "=8.2.2"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
 portable-pty.workspace = true
 regex.workspace = true

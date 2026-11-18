@@ -39,7 +39,15 @@ interface ExplorerStore {
 }
 
 /** Reads running now, by what they ask (slot, thread, refresh), so a row asking twice reads once and a different question is not answered by it. */
-const running = new Map<string, Promise<void>>();
+interface Flight {
+  promise: Promise<void>;
+  generation: number;
+  again: boolean;
+  accepting: boolean;
+}
+const running = new Map<string, Flight>();
+/** Reset fences old completions even if a new request reuses the same slot generation. */
+let epoch = 0;
 /** The newest read of each slot owns its answer, whatever it asked. */
 const generation = new Map<string, number>();
 
@@ -52,24 +60,46 @@ async function keep<T>(
   quiet: boolean,
 ): Promise<void> {
   const held = running.get(asked);
-  if (held) return held;
+  if (held?.accepting && generation.get(slot) === held.generation) {
+    // A pushed change is newer than the response already in flight. One rerun
+    // absorbs the whole burst without queuing a callback for every event.
+    if (quiet) held.again = true;
+    return held.promise;
+  }
   const id = (generation.get(slot) ?? 0) + 1;
   generation.set(slot, id);
+  const startedIn = epoch;
+  const owns = () => epoch === startedIn && generation.get(slot) === id;
+  const flight: Flight = { promise: Promise.resolve(), generation: id, again: false, accepting: true };
   const before = current();
-  // A quiet read (an event) shows nothing while it runs, and never replaces data with an error.
   if (!quiet) put({ data: before?.data ?? null, loading: true, error: null });
-  const started = (quiet ? asBackground(read) : read()).then(
-    (data) => {
-      if (generation.get(slot) === id) put({ data, loading: false, error: null });
-    },
-    (error: unknown) => {
-      if (generation.get(slot) !== id) return;
-      const held = current()?.data ?? null;
-      if (quiet && held) put({ data: held, loading: false, error: null });
-      else put({ data: held, loading: false, error: toFailure(error) });
-    },
-  ).finally(() => running.delete(asked));
-  running.set(asked, started);
+  const started = (async () => {
+    try {
+      let background = quiet;
+      do {
+        flight.again = false;
+        try {
+          const data = await (background ? asBackground(read) : read());
+          if (owns()) put({ data, loading: false, error: null });
+        } catch (error: unknown) {
+          if (!owns()) return;
+          const kept = current()?.data ?? null;
+          if (background && kept) put({ data: kept, loading: false, error: null });
+          else put({ data: kept, loading: false, error: toFailure(error) });
+        }
+        background = true;
+      } while (flight.again && owns());
+    } finally {
+      // Close admission before this async body completes: an event in the
+      // promise-finalizer microtask gap must start a fresh request.
+      flight.accepting = false;
+    }
+  })().finally(() => {
+    // A reset may already have started another request with this same key.
+    if (running.get(asked) === flight) running.delete(asked);
+  });
+  flight.promise = started;
+  running.set(asked, flight);
   return started;
 }
 
@@ -110,6 +140,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => ({
     ]);
   },
   reset() {
+    epoch += 1;
     running.clear();
     generation.clear();
     set({ worktrees: {}, levels: {}, shown: {} });

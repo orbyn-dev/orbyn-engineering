@@ -13,7 +13,7 @@ Projects and the files inside them, and the one managed workspace that holds the
 | `project_icon_override` | Project display metadata validation |
 | `project_image_import` | A project image chosen outside the project |
 | `project_image_picker` | Searching a project for candidate images |
-| `explorer` | A project's worktrees and a read-only, lazily read look at their files, with change letters from one kept `git status` per worktree |
+| `explorer` | A project's worktrees and a read-only, lazily read look at their files, with change letters from one kept `git status` per worktree and focus-scoped native watches |
 | `files` | Reading and editing a thread's checkout inside its write scope |
 | `file_bytes` | Raw bytes of a checkout file for media and binary views |
 | `outside_files` | Read-only files outside a thread's checkout |
@@ -41,3 +41,7 @@ The crate's [group table](../../README.md#groups) lists every group.
 - Change letters, ignored paths and the dirty summary come from one `git status` per
   worktree through `source_control::git`, kept as the architecture's
   [Explorer](../../../../docs/architecture.md#explorer) section says.
+
+Native watch leases and their guarded, bounded directory registration live in
+`explorer::watch`; the event stream owns their lifetime. Store project-removal
+notifications revoke leases even when the filesystem is idle.

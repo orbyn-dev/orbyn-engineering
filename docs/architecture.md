@@ -1618,6 +1618,27 @@ still go through a thread's file routes. `orbynd` only routes; Core
   worktree lists its live threads by id and title.
 - **A write drops what is kept**, silently, as for the workspace status; a run that ends drops
   the project's and announces `explorer:<project>`.
+- **External edits push changes.** A focused Files view holds one
+  `GET /api/explorer/events?worktrees=<JSON pairs of project and worktree ids>` stream,
+  with the first 32 unfolded worktrees (at most 32 distinct pairs). The stream reserves
+  one slow-request lane slot until it closes, retaining two connections for interactive
+  requests within WKWebView's six-connection budget. Core applies the read API's trust, membership and
+  path guards before registering a watch. Windows share one native watcher per pair,
+  with at most 64 live watchers service-wide. Each watches at most 512 directories,
+  discovered through guarded, nonrecursive directory reads capped at 20,000 entries;
+  links, Git metadata, Orbyn data and the library's `repo/` are never traversed or watched.
+  Changes inside a directory beyond these bounds need an explicit refresh.
+  File changes are coalesced for 200 ms, invalidate the project's kept list/status
+  before announcing `explorer:<project>`, and reconcile directory watches and membership.
+  These are native notifications, without freshness polling. Failed watches invalidate
+  and announce the project before closing the subscription; reconnecting invalidates
+  and rereads the subscribed projects.
+  Blur, hiding, folding the worktree or leaving Files closes the client subscription;
+  the last subscriber releases its native handles. Project removal or loss of trust
+  revokes live subscriptions, and every notification rechecks authority before reading.
+  The accepted project-trust boundary and `.env` visibility above stay unchanged.
+  An event received during a matching client read queues one reread after it settles;
+  bursts share that pending reread, newer questions supersede it, and reset discards it.
 
 **The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
 the saved prefs as `leftBarView`; `explorerOpen` holds the rows a person unfolded or folded). The

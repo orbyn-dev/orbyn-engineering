@@ -105,6 +105,13 @@ class Limit {
 
 const slowLane = new Limit(SLOW_LANE_CAP);
 
+/** An extra long-lived stream uses one slow slot, preserving two interactive connections.
+ * The caller holds the reservation until its stream closes; waiting is abortable.
+ */
+export function reserveStreamConnection(signal: AbortSignal): Promise<() => void> {
+  return slowLane.acquire(signal);
+}
+
 /**
  * Runs `work` when its lane has room. A request aborted while it waits never starts, and a
  * slow one that outlasts `LANE_TIMEOUT_MS` is aborted, rejects with `timedOut()` and frees its slot.

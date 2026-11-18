@@ -7,6 +7,9 @@ mod guard;
 mod member;
 mod status;
 mod tree;
+mod watch;
+
+pub use watch::ExplorerWatch;
 
 #[cfg(test)]
 mod tests;
@@ -55,6 +58,7 @@ const ANNOUNCE_GAP: Duration = Duration::from_millis(200);
 
 /// The kept answers: each project's worktree list and each worktree's status.
 pub struct ExplorerReads {
+    watches: watch::Watches,
     lists: Swr<Vec<WorktreeRecord>>,
     statuses: Swr<Arc<Snapshot>>,
     gates: Mutex<HashMap<String, Arc<Semaphore>>>,
@@ -64,6 +68,7 @@ pub struct ExplorerReads {
 impl Default for ExplorerReads {
     fn default() -> Self {
         Self {
+            watches: watch::Watches::default(),
             lists: Swr::new(LIST_FRESH, LIST_MAX_AGE, 32),
             statuses: Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 128),
             gates: Mutex::default(),

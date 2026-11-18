@@ -71,6 +71,7 @@
     ["GET","/api/engines/{id}/native-sessions/capabilities"],
     ["GET","/api/engines/{id}/native-sessions/count"],
     ["GET","/api/engines/{id}/tools"],
+    ["GET","/api/explorer/events"],
     ["GET","/api/forges"],
     ["GET","/api/fs/browse"],
     ["GET","/api/health/dependencies"],

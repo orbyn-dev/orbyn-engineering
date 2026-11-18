@@ -84,8 +84,8 @@ export function mockApi(): Plugin {
           return;
         }
 
-        if (url.startsWith("/api/engines/update-events")) {
-          // No engine update runs in the mock, so the stream stays open and quiet.
+        if (url.startsWith("/api/engines/update-events") || url.startsWith("/api/explorer/events")) {
+          // Fixture data has no engine update or native file changes: keep the stream quiet.
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
           res.write(": connected\n\n");
           streams.add(res);
