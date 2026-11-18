@@ -32,7 +32,7 @@ function Row({ project }: { project: string }) {
     ).finally(() => { inflight.current = false; setBusy(false); });
   };
   return (
-    <section className="wp-row" aria-label="Worker provider" data-frame="settings-crew-worker-provider">
+    <section className="wp-row" aria-label="Worker provider">
       <div>
         <b>Worker provider</b>
         <small>Same as lead keeps workers and scouts on the lead’s provider. Any provider lets Crew pick among the engines that can run workers. Review lanes always use another provider; this row does not change that.</small>
