@@ -126,6 +126,8 @@ pub struct ReviewCoverage {
     /// Merges with measured lines.
     pub merges: u32,
     pub not_measured_merges: u32,
+    /// Lines the agents wrote plus lines no person is recorded as writing: "Agent or unconfirmed". A person's own
+    /// commit that the app did not record is counted here, never as a person's.
     pub agent_lines: u32,
     pub reviewed_lines: u32,
     pub in_queue_lines: u32,
