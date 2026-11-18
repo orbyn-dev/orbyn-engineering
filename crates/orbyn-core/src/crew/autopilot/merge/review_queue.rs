@@ -11,6 +11,7 @@ use super::queue::MergeTarget;
 use super::risk::Risk;
 use super::watch::revert_merge;
 use crate::app::Core;
+use crate::crew::capacity::{FIX_WAITING, paused_by_capacity};
 use crate::error::{CoreError, Result};
 use crate::store::MergeRecord;
 
@@ -137,14 +138,24 @@ impl Core {
                     &json!({ "about": "comment", "recorded": true }),
                 );
                 drop(_one_at_a_time);
+                // Race: the locks are released here, so if a paused answer overlaps a successful start, the waiting note
+                // can land after the start cleared it. The generic note had the same exposure; the next answer fixes it.
+                let mut paused = false;
                 let admitted: crate::error::Result<_> = async {
                     let run = self.store.crew_run(task_id)?.ok_or_else(|| CoreError::NotFound("merge lead".into()))?;
                     let thread = self.store.thread(&run.lead_thread_id)?;
-                    self.crew_merge_comment_fix(&thread, task_id).await.map_err(|error| CoreError::Invalid(error.message))
+                    self.crew_merge_comment_fix(&thread, task_id).await.map_err(|error| {
+                        paused = paused_by_capacity(&error);
+                        CoreError::Invalid(error.message)
+                    })
                 }.await;
                 if let Err(error) = admitted {
                     // Admission can include an engine failure. Persist only code-owned text, never its output.
-                    let why = if matches!(error, CoreError::NotFound(_)) {
+                    let why = if paused {
+                        // Not a failure and never retried here: the Comment stays stored, and answering it again (or the
+                        // lead's `crew_answer_review`) starts the fix once capacity frees.
+                        FIX_WAITING
+                    } else if matches!(error, CoreError::NotFound(_)) {
                         "Comment fix was not admitted: the merge lead or thread was not found."
                     } else {
                         "Comment fix was not admitted: review the task context before retrying."

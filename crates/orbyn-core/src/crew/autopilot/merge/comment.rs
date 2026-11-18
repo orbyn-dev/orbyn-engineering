@@ -108,22 +108,25 @@ impl Core {
                 "proves": "The fix stays within the original task's writable files."
             }));
         let key = stamper.answer_key(&key, &brief.id)?;
-        self.launch_crew_task(Launch {
-            lead: thread,
-            now: stamper.now,
-            brief,
-            key,
-            role: None,
-            lane: None,
-            lane_keeps_lead: false,
-            author_engine: None,
-            prefix: "worker",
-            prompt: None,
-            links: Links {
-                crew_started: true,
-                ..Links::default()
-            },
-        })
-        .await
+        let started = self
+            .launch_crew_task(Launch {
+                lead: thread,
+                now: stamper.now,
+                brief,
+                key,
+                role: None,
+                lane: None,
+                lane_keeps_lead: false,
+                author_engine: None,
+                prefix: "worker",
+                prompt: None,
+                links: Links {
+                    crew_started: true,
+                    ..Links::default()
+                },
+            })
+            .await?;
+        self.capacity_fix_started(task_id);
+        Ok(started)
     }
 }

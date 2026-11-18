@@ -39,6 +39,18 @@ pub(crate) async fn record_provenance(
     Err(error)
 }
 
+/// What `capacity_start_check` says first, so a caller can tell this refusal from any other `not_authorized`.
+const PAUSED: &str = "review capacity:";
+
+/// What a person sees on a merge whose Comment fix is held back by full review capacity. Code-owned text.
+pub(crate) const FIX_WAITING: &str = "The comment fix is waiting because review capacity is full. Answer the comment again after some merges are reviewed.";
+
+/// Whether `error` is the refusal of a Crew-started start while review capacity is full. Such a start is not an error to
+/// retry: nothing was stored, and the caller says it is waiting and leaves the next try to a later trigger.
+pub(crate) fn paused_by_capacity(error: &CrewError) -> bool {
+    error.code == ErrorCode::NotAuthorized && error.message.starts_with(PAUSED)
+}
+
 impl Core {
     /// Before a worker is granted: refuses a NEW start that Crew began itself at Low priority while more merges wait
     /// for a person than the project's limit, and only when a person turned `pause_enabled` on (off by default).
@@ -82,10 +94,24 @@ impl Core {
             StartDecision::Paused { waiting, limit } => Err(CrewError::new(
                 ErrorCode::NotAuthorized,
                 format!(
-                    "review capacity: {waiting} merges wait for a person and the limit is {limit}; \
+                    "{PAUSED} {waiting} merges wait for a person and the limit is {limit}; \
                      a new low-priority start from Crew is paused until some are reviewed"
                 ),
             )),
+        }
+    }
+
+    /// After a Comment fix started: removes the waiting note above, so a fix that is now running is not shown as waiting.
+    /// Any other note on the merge is left alone. A store failure is logged.
+    pub(crate) fn capacity_fix_started(&self, task_id: &str) {
+        let cleared = self.store.crew_merge(task_id).and_then(|merge| {
+            match merge.and_then(|m| m.needs_person).as_deref() {
+                Some(FIX_WAITING) => self.store.set_merge_needs_person(task_id, None),
+                _ => Ok(()),
+            }
+        });
+        if let Err(error) = cleared {
+            tracing::warn!(%error, task = task_id, "the waiting note was not cleared");
         }
     }
 
