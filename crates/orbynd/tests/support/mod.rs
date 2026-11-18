@@ -139,7 +139,12 @@ impl Service {
     }
 
     pub async fn send(&self, path: &str, body: Value) -> (u16, Value) {
-        let response = self.post(path).json(&body).send().await.unwrap();
+        // The test acts as the person: with a desktop shell it also presents the shell's key.
+        let mut request = self.post(path).json(&body);
+        if let Some(key) = &self.person_key {
+            request = request.header("x-orbyn-person", key);
+        }
+        let response = request.send().await.unwrap();
         let status = response.status().as_u16();
         let text = response.text().await.unwrap();
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))

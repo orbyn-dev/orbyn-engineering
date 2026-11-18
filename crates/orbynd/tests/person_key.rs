@@ -110,18 +110,31 @@ async fn fixture(desktop: bool) -> Fixture {
 
 async fn fixture_probing(desktop: bool, routes: Option<&[(String, String, String)]>) -> Fixture {
     let dir = TempDir::new();
-    let service = Service::start(
-        &dir.path().join("data"),
-        options_probing(&dir, desktop, routes),
-    );
     let folder = dir.path().join("app");
     repo(&folder);
+    // Setting up a workspace is a person action. A service with no shell has no key, so a first service with the
+    // development override does the setup on the same data dir and stops before the real one starts.
+    let setup = if desktop {
+        options_probing(&dir, desktop, routes)
+    } else {
+        Options::default()
+    };
+    let service = Service::start(&dir.path().join("data"), setup);
     let project = service.project(&folder, true).await;
     let listed = service
         .json(&format!("/api/projects/{project}/worktrees"))
         .await;
     let worktree = listed["worktrees"][0]["id"].as_str().unwrap().to_owned();
     let thread = service.thread(&project, "claude").await;
+    let service = if desktop {
+        service
+    } else {
+        drop(service);
+        Service::start(
+            &dir.path().join("data"),
+            options_probing(&dir, desktop, routes),
+        )
+    };
     Fixture {
         dir,
         service,
@@ -154,7 +167,7 @@ impl Fixture {
     /// Waits for the fake engine's report of what it did with the token alone.
     async fn probe(&self) -> Value {
         let path = self.dir.path().join("probe.json");
-        for _ in 0..1500 {
+        for _ in 0..6000 {
             if let Ok(text) = std::fs::read_to_string(&path)
                 && let Ok(report) = serde_json::from_str(&text)
             {
