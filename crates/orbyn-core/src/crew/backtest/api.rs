@@ -157,7 +157,7 @@ fn run_view(report: BacktestReport) -> wire::BacktestRun {
                 let (outcome, findings_n, score) = match &lane.result {
                     LaneResult::Scored(score) => (
                         wire::BacktestLaneOutcome::Scored,
-                        score.findings_n,
+                        lane.findings_n,
                         Some(score_view(score)),
                     ),
                     LaneResult::NotMeasured { findings_n } => {

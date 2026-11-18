@@ -180,6 +180,9 @@ pub struct LaneReport {
     pub state: LaneState,
     pub tokens_used: u64,
     pub result: LaneResult,
+    /// Every distinct finding the lane raised, including those on a pull request whose escape could not be resolved.
+    /// A scored `LaneScore::findings_n` leaves those out (it is precision's denominator).
+    pub findings_n: u32,
     /// Confirmed escapes in the window that could not be matched because their fix or revert files could not be read.
     /// Reported beside the score and never counted in it; `None` when the lane was not scored (not zero).
     pub unresolved_n: Option<u32>,
@@ -231,6 +234,7 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
                 state: lane.state,
                 tokens_used: lane.tokens_used,
                 result,
+                findings_n,
                 unresolved_n: lane.unresolved_n,
             }
         })

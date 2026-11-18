@@ -270,6 +270,7 @@ async fn an_escape_that_cannot_be_resolved_is_counted_as_unresolved_never_droppe
     .await;
     let score = lane.score.unwrap();
     // The finding on the unresolved PR is neither a hit nor a miss: it is not in precision and does not read "no escape".
+    assert_eq!(lane.findings_n, 2);
     assert_eq!(score.findings_n, 1);
     let run = rig
         .w
