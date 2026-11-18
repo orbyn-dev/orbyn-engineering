@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { HOSTILE_MARKERS } from "../../../../../mock/hostile";
 import { CrewNavRow } from "./CrewNavRow";
 import { FlowView } from "./FlowView";
 import { FlowZoom } from "./FlowZoom";
+import { FLOW_REFRESH_MS } from "./useFlow";
 
 let mock: MockApi;
 beforeEach(() => {
@@ -207,6 +208,35 @@ describe("Flow on the real routes", () => {
   it("says there are no crews, and a crew with no tasks", async () => {
     await open("crew-empty");
     expect(await screen.findByText("No crews running")).toBeVisible();
+  });
+
+  it("says no task matches a search, and counts 0 of 0 shown", async () => {
+    const { user } = await open("crew");
+    await table();
+    await user.type(screen.getByRole("searchbox"), "zzzz-no-such-task");
+    expect(await screen.findByText("No tasks match")).toBeVisible();
+    expect(screen.getByText("0 of 0 shown")).toBeVisible();
+  });
+
+  it("keeps the list and shows no error when a periodic read fails after it was shown", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await open("crew");
+      await rowsOf();
+      const real = vi.mocked(fetch).getMockImplementation()!;
+      vi.mocked(fetch).mockImplementation(async (input, init) =>
+        String(input).includes("/api/crew/flow/") ? new Response(JSON.stringify({ code: "unavailable", message: "The Flow service is busy." }), { status: 503 }) : real(input, init),
+      );
+      const before = calls("/api/crew/flow/").length;
+      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+      await waitFor(() => expect(calls("/api/crew/flow/").length).toBeGreaterThan(before));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      expect(await rowsOf()).toHaveLength(6);
+      expect(screen.queryByText("The Flow service is busy.")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says a crew has no tasks yet", async () => {
