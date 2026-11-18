@@ -32,6 +32,7 @@ mod core;
 mod could_not_start;
 mod crew_refusal;
 mod draft;
+mod escape_scan;
 mod escapes;
 mod fake;
 mod filters;

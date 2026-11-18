@@ -22,6 +22,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/crew/escapes", get(log))
         .route("/api/crew/escapes/thresholds", get(thresholds))
+        .route("/api/crew/escapes/possible", get(possible))
         .route("/api/crew/escapes/{id}", get(detail))
 }
 
@@ -45,6 +46,17 @@ async fn log(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl I
         query.0.get("state").map(String::as_str),
         page(&query)?,
     )?))
+}
+
+/// `project` (required), `limit`, `offset`. Read-only; the scan that fills it runs on the service's own tick.
+async fn possible(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    let project = query
+        .0
+        .get("project")
+        .ok_or_else(|| CoreError::Invalid("project is required".into()))?;
+    Ok(Json(
+        state.core.crew_escape_possible(project, page(&query)?)?,
+    ))
 }
 
 async fn detail(

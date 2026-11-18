@@ -53,6 +53,7 @@
     ["GET","/api/crew/classes","local"],
     ["GET","/api/crew/classes/test","local"],
     ["GET","/api/crew/escapes","local"],
+    ["GET","/api/crew/escapes/possible","local"],
     ["GET","/api/crew/escapes/thresholds","local"],
     ["GET","/api/crew/escapes/{id}","local"],
     ["GET","/api/crew/flow/board","local"],

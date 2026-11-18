@@ -448,6 +448,14 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         None
     };
+    let crew_escape_scan = if core.config.crew_preview {
+        let (core, scan_stop) = (core.clone(), stop.child_token());
+        Some(tokio::spawn(async move {
+            core.run_crew_escape_scan(scan_stop).await
+        }))
+    } else {
+        None
+    };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { activity.run_shell_activity(quit).await });
@@ -487,6 +495,13 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "Crew watch stopped with an error"),
             Err(error) => tracing::warn!(%error, "Crew watch task did not complete"),
+        }
+    }
+    if let Some(scan) = crew_escape_scan {
+        match scan.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "Crew escape scan stopped with an error"),
+            Err(error) => tracing::warn!(%error, "Crew escape scan task did not complete"),
         }
     }
     checks.abort();

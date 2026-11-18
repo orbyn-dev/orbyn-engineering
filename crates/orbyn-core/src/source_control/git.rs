@@ -111,7 +111,7 @@ pub(crate) async fn git_byte_exact(cwd: &Path, args: &[&str]) -> Result<Vec<u8>>
     hardened(cwd, CREW_BYTE_EXACT, args).await
 }
 
-async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> {
+async fn hardened_command(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Command> {
     let overrides = converter_overrides(cwd).await;
     let attributes = no_attributes(cwd).await?;
     let mut command = command(cwd);
@@ -124,6 +124,11 @@ async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> 
         .args(extra)
         .args(&overrides)
         .args(args);
+    Ok(command)
+}
+
+async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> {
+    let command = hardened_command(cwd, extra, args).await?;
     let output = async {
         crate::host::process::ManagedChild::spawn(command)?
             .output()
@@ -137,6 +142,60 @@ async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> 
         ));
     }
     Ok(output.stdout)
+}
+
+/// `git_hardened` that never holds more than `cap` bytes of output: past the cap the process tree is stopped and the call is an
+/// error. For read paths whose output size a repository controls (messages, file lists, blame). Dropping the future stops git too.
+pub(crate) async fn git_hardened_capped(cwd: &Path, args: &[&str], cap: usize) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let command = hardened_command(cwd, &[], args).await?;
+    let mut child = crate::host::process::ManagedChild::spawn(command)
+        .map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    let mut stdout = child.child_mut().stdout.take();
+    let mut stderr = child.child_mut().stderr.take();
+    drop(child.child_mut().stdin.take());
+    let read = async {
+        let mut bytes = Vec::new();
+        if let Some(out) = stdout.as_mut() {
+            out.take(cap as u64 + 1).read_to_end(&mut bytes).await?;
+        }
+        Ok::<_, std::io::Error>(bytes)
+    };
+    let drain = async {
+        if let Some(err) = stderr.as_mut() {
+            tokio::io::copy(err, &mut tokio::io::sink()).await?;
+        }
+        Ok::<_, std::io::Error>(())
+    };
+    // stdout and stderr are drained together: a chatty stderr must not stop git from finishing its stdout. The cap is checked as
+    // soon as stdout ends (at the cap or at EOF), whatever stderr is doing; an over-cap call drops the child, which stops the tree.
+    tokio::pin!(read, drain);
+    let mut drained = false;
+    let bytes = loop {
+        tokio::select! {
+            bytes = &mut read => {
+                break bytes.map_err(|error| CoreError::Git(format!("Could not read git: {error}")))?;
+            }
+            result = &mut drain, if !drained => {
+                result.map_err(|error| CoreError::Git(format!("Could not read git: {error}")))?;
+                drained = true;
+            }
+        }
+    };
+    if bytes.len() > cap {
+        return Err(CoreError::Git("git output is too large".into()));
+    }
+    let finish = async {
+        if !drained {
+            let _ = (&mut drain).await;
+        }
+    };
+    let (_, status) = tokio::join!(finish, child.wait());
+    let status = status.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    if !status.success() {
+        return Err(CoreError::Git("git failed".into()));
+    }
+    Ok(bytes)
 }
 
 pub(crate) fn text(bytes: &[u8]) -> String {

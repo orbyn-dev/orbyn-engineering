@@ -122,6 +122,75 @@ async fn a_possible_escape_is_listed_and_counted_apart_with_its_trail() {
 }
 
 #[tokio::test]
+async fn the_possible_list_holds_only_possible_escapes_and_a_get_writes_nothing() {
+    let app = serve("escapes-possible", true, false).await;
+    let project = fixtures::add_project(
+        &app.core,
+        app.core.config.data_dir.join("p").to_str().unwrap(),
+    );
+    let (status, empty) = app
+        .get(&format!("/api/crew/escapes/possible?project={project}"))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        (empty["total"].clone(), empty["rows"].clone()),
+        (json!(0), json!([]))
+    );
+    assert!(empty["as_of"].as_i64().unwrap() > 0);
+
+    let (project, id) = with_escape(&app, "A later commit reverts this merge.");
+    let snapshot = || {
+        (
+            app.core
+                .store
+                .crew_escape_page(&project, None, 200, 0)
+                .unwrap(),
+            app.core.store.crew_escape_events(&id, 200).unwrap(),
+        )
+    };
+    let before = snapshot();
+    for _ in 0..2 {
+        let (status, list) = app
+            .get(&format!("/api/crew/escapes/possible?project={project}"))
+            .await;
+        assert_eq!(status, 200);
+        assert_eq!(list["total"], 1);
+        let row = &list["rows"][0];
+        assert_eq!(
+            (
+                row["id"].as_str(),
+                row["state"].as_str(),
+                row["decided_by"].clone()
+            ),
+            (Some(id.as_str()), Some("possible"), json!(null))
+        );
+        assert!(
+            row["line"].as_str().unwrap().contains("not confirmed"),
+            "{row}"
+        );
+    }
+    assert_eq!(before, snapshot(), "a GET wrote");
+    // The static route is not read as an escape id, and the log still answers as before.
+    assert_eq!(app.get("/api/crew/escapes/possible").await.0, 400);
+    assert_eq!(
+        app.get(&format!(
+            "/api/crew/escapes/possible?project={project}&limit=0"
+        ))
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        app.get("/api/crew/escapes/possible?project=nobody").await.0,
+        404
+    );
+    let (_, log) = app
+        .get(&format!("/api/crew/escapes?project={project}"))
+        .await;
+    assert_eq!(log["possible"], 1);
+}
+
+#[tokio::test]
 async fn a_reason_goes_through_the_scrub_and_no_diff_text_is_in_the_body() {
     let app = serve("escapes-scrub", true, false).await;
     let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
@@ -222,6 +291,7 @@ async fn a_remote_viewer_reads_and_the_flag_off_hides_every_route() {
         format!("/api/crew/escapes?project={project}"),
         format!("/api/crew/escapes/{id}"),
         "/api/crew/escapes/thresholds".to_owned(),
+        format!("/api/crew/escapes/possible?project={project}"),
     ] {
         assert_eq!(remote.get(&path).await.0, 200, "{path}");
     }
@@ -230,6 +300,7 @@ async fn a_remote_viewer_reads_and_the_flag_off_hides_every_route() {
         "/api/crew/escapes?project=p".to_owned(),
         "/api/crew/escapes/esc_one".to_owned(),
         "/api/crew/escapes/thresholds".to_owned(),
+        "/api/crew/escapes/possible?project=p".to_owned(),
     ] {
         let (status, body) = off.get(&path).await;
         let (missing_status, missing) = off.get("/api/crew/not-a-route").await;
