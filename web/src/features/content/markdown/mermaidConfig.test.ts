@@ -56,10 +56,20 @@ describe("real Mermaid output through the sanitiser", () => {
       const { svg } = await mermaid.render(`m${name}`, source);
       const original = new DOMParser().parseFromString(svg, "text/html").body.querySelector("svg")!;
       expect(original.querySelector("style")?.textContent).toContain(`#m${name}`);
-      const cleaned = sanitizeSvg(svg)!;
+      const cleaned = sanitizeSvg(svg, `m${name}`)!;
       expect(cleaned.querySelector("style")?.textContent).toBe(original.querySelector("style")?.textContent);
       // Journey draws its section labels in <foreignObject>, which is removed on purpose (its <switch> text stays).
       if (name !== "journey") expect(cleaned.outerHTML).toBe(original.outerHTML);
     });
   }
+
+  it("sanitises a long Unicode classDef name quickly", async () => {
+    mermaid.initialize(mermaidConfig(false));
+    const name = `${"a".repeat(40)}é`;
+    const { svg } = await mermaid.render("mclassdef", `flowchart LR\n A-->B\n classDef ${name} fill:#f00\n class A ${name}`);
+    const started = performance.now();
+    const cleaned = sanitizeSvg(svg, "mclassdef")!;
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(cleaned.querySelector("style")?.textContent).toContain(name);
+  });
 });

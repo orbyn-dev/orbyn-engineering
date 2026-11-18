@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const initialize = vi.fn();
-const draw = vi.fn(async (..._args: unknown[]) => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg" data-diagram="yes"><g/></svg>' }));
+const draw = vi.fn(async (id: unknown, _code?: unknown) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${String(id)}" data-diagram="yes"><g/></svg>` }));
 vi.mock("mermaid", () => ({ default: { initialize: (config: unknown) => initialize(config), render: draw } }));
 
 import { Mermaid } from "./Mermaid";
@@ -59,9 +59,9 @@ describe("Mermaid", () => {
   });
 
   it("strips script, foreignObject and handlers from the drawn SVG", async () => {
-    draw.mockResolvedValueOnce({
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script><foreignObject><div>x</div></foreignObject><a href="javascript:alert(1)"><text>t</text></a><text onclick="x()">ok</text></svg>',
-    });
+    draw.mockImplementationOnce(async (id: unknown) => ({
+      svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${String(id)}" onload="alert(1)"><script>alert(1)</script><foreignObject><div>x</div></foreignObject><a href="javascript:alert(1)"><text>t</text></a><text onclick="x()">ok</text></svg>`,
+    }));
     const { container } = render(<Mermaid code="graph LR; A-->B;" />);
     await waitFor(() => expect(container.querySelector(".md-diagram svg")).not.toBeNull());
     const html = container.querySelector(".md-diagram")!.innerHTML;
@@ -100,11 +100,11 @@ describe("Mermaid", () => {
 });
 
 const SVG = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg" id="s">${inner}</svg>`;
-const clean = (markup: string) => sanitizeSvg(markup)?.outerHTML ?? "";
+const clean = (markup: string, id = "s") => sanitizeSvg(markup, id)?.outerHTML ?? "";
 
 describe("sanitizeSvg", () => {
   it("keeps a label written with a non-breaking space entity", () => {
-    expect(sanitizeSvg(SVG("<text>a&nbsp;b</text>"))?.textContent).toBe("a\u00a0b");
+    expect(sanitizeSvg(SVG("<text>a&nbsp;b</text>"), "s")?.textContent).toBe("a\u00a0b");
   });
 
   it("unwraps a link, keeping the node and label but not the link", () => {
@@ -121,7 +121,7 @@ describe("sanitizeSvg", () => {
       SVG("<!-- <img src=x onerror=window.__pwn3=1> --><g/>"),
     ];
     for (const markup of hostile) {
-      const out = sanitizeSvg(markup);
+      const out = sanitizeSvg(markup, "s");
       const holder = document.createElement("div");
       if (out) holder.append(out);
       expect(holder.querySelector("img")).toBeNull();
@@ -165,18 +165,17 @@ describe("sanitizeSvg", () => {
   it("keeps Mermaid's own scoped rules and keyframes but drops rules outside the root id", () => {
     const mermaidCss = '#d{font-family:sans-serif;fill:#000;}#d .node rect,#d .node circle{fill:#eee;}@keyframes dash{to{stroke-dashoffset:0;}}';
     const svg = (css: string) => `<svg xmlns="http://www.w3.org/2000/svg" id="d"><style>${css}</style><g/></svg>`;
-    expect(sanitizeSvg(svg(mermaidCss))?.querySelector("style")?.textContent).toBe(mermaidCss);
-    const mixed = sanitizeSvg(svg(`${mermaidCss}body{display:none}*{opacity:0}#d,body{color:red}#dx{fill:red}.a{fill:red}`))?.querySelector("style")?.textContent;
+    expect(sanitizeSvg(svg(mermaidCss), "d")?.querySelector("style")?.textContent).toBe(mermaidCss);
+    const mixed = sanitizeSvg(svg(`${mermaidCss}body{display:none}*{opacity:0}#d,body{color:red}#dx{fill:red}.a{fill:red}`), "d")?.querySelector("style")?.textContent;
     expect(mixed).toBe(mermaidCss);
     expect(clean(svg("body{display:none}"))).not.toContain("<style");
   });
 
   it("drops a style block it cannot parse, and any rule when the root has no id", () => {
     for (const css of ["#d{fill:red", "#d{fill:red}}", '#d{content:"x}', "#d{fill:red};@charset 'x';", "#d{fill:red}body"]) {
-      expect(clean(`<svg xmlns="http://www.w3.org/2000/svg" id="d"><style>${css}</style></svg>`), css).not.toContain("<style");
+      expect(clean(`<svg xmlns="http://www.w3.org/2000/svg" id="d"><style>${css}</style></svg>`, "d"), css).not.toContain("<style");
     }
-    const noId = clean('<svg xmlns="http://www.w3.org/2000/svg"><style>#d{fill:red}</style></svg>');
-    expect(noId).not.toContain("fill:red");
+    expect(sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg"><style>#d{fill:red}</style></svg>', "d")).toBeNull();
   });
 
   it("removes a <style> that holds elements, which the HTML parser makes real children", () => {
@@ -200,7 +199,7 @@ describe("sanitizeSvg", () => {
     ];
     for (const css of blocks) {
       const markup = `<svg xmlns="http://www.w3.org/2000/svg" id="s"><style>${css}</style><g/></svg>`;
-      const out = sanitizeSvg(markup)?.outerHTML ?? "";
+      const out = sanitizeSvg(markup, "s")?.outerHTML ?? "";
       expect(out, JSON.stringify(css)).not.toMatch(/<style|body|evil/);
     }
   });
@@ -287,7 +286,7 @@ describe("sanitizeSvg", () => {
       "#s{fill:red}@namespace x;body{display:none}",
     ];
     for (const css of hostile) {
-      const root = sanitizeSvg(`<svg xmlns="http://www.w3.org/2000/svg" id="s"><style>${css}</style><g/></svg>`);
+      const root = sanitizeSvg(`<svg xmlns="http://www.w3.org/2000/svg" id="s"><style>${css}</style><g/></svg>`, "s");
       const holder = document.createElement("div");
       if (root) holder.append(root);
       document.body.append(holder);
@@ -319,8 +318,7 @@ describe("sanitizeSvg", () => {
     expect(frames("dash")).toContain("@keyframes dash");
     expect(frames("edge-animation-frame")).toContain("@keyframes edge-animation-frame");
     expect(frames("s-fade")).toContain("@keyframes s-fade");
-    const noId = clean('<svg xmlns="http://www.w3.org/2000/svg"><style>@keyframes spin{to{opacity:0}}</style></svg>');
-    expect(noId).not.toContain("@keyframes");
+    expect(sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg"><style>@keyframes spin{to{opacity:0}}</style></svg>', "")).toBeNull();
   });
 
   it("rejects selectors with an escape in the id part or a sibling combinator", () => {
@@ -357,8 +355,32 @@ describe("sanitizeSvg", () => {
     expect(clean(SVG('<filter id="f"><feImage href="https://evil.test/x.png"/></filter>'))).not.toMatch(/evil/);
   });
 
+  it("returns null when the root id is not the one the caller gave Mermaid", () => {
+    const markup = '<svg xmlns="http://www.w3.org/2000/svg" id="root"><style>#root p{display:none;color:red}</style><g/></svg>';
+    expect(sanitizeSvg(markup, "root")).not.toBeNull();
+    expect(sanitizeSvg(markup, "mermaidr1")).toBeNull();
+    expect(sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg"><g/></svg>', "mermaidr1")).toBeNull();
+  });
+
+  it("checks selectors in linear time and still accepts Unicode names", () => {
+    const slow = [
+      `#s ${"a".repeat(40)}!`,
+      `#s${" ".repeat(40)}!`,
+      `#s .${"a".repeat(38)}é!`,
+      `#s ${"a".repeat(40)}é!`,
+      `#s ${"ab ".repeat(14)}!`,
+    ];
+    for (const selector of slow) {
+      const started = performance.now();
+      expect(clean(SVG(`<style>${selector}{fill:red}</style><g/>`)), selector).not.toContain("<style");
+      expect(performance.now() - started, selector).toBeLessThan(200);
+    }
+    const name = `${"a".repeat(40)}é`;
+    expect(clean(SVG(`<style>#s .${name}{fill:red}</style><g/>`))).toContain(name);
+  });
+
   it("returns null when there is no SVG root", () => {
-    expect(sanitizeSvg("<div>no</div>")).toBeNull();
-    expect(sanitizeSvg("")).toBeNull();
+    expect(sanitizeSvg("<div>no</div>", "s")).toBeNull();
+    expect(sanitizeSvg("", "s")).toBeNull();
   });
 });

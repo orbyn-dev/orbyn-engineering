@@ -111,9 +111,41 @@ function parseRules(css: string): CssRule[] | null {
   return rules;
 }
 
-/** What may follow the root `#id` in a selector: names, classes, ids, `*`, `>` and descendant spaces, plain pseudo-classes and `[attr]`/`[attr=value]`-style tests. */
-const SELECTOR_TAIL =
-  /^(?:\s+|\s*>\s*|\.[\w-]+|#[\w-]+|:[a-z-]+(?!\()|\*|[\w-]+|\[[\w-]+(?:[$^*]?=(?:"[\w-]*"|'[\w-]*'|[\w-]*))?\])*$/i;
+/** A name character: ASCII word characters, `-` and anything non-ASCII (CSS reads those, no-break space included, as part of a name). */
+const NAME = "[\\w\\u0080-\\uffff-]";
+/**
+ * What may follow the root `#id` in a selector, as one token at a time: names, classes, ids, `*`, `>` and descendant
+ * spaces (space and tab only), plain pseudo-classes and `[attr]`/`[attr=value]`-style tests. Each token is a separate
+ * sticky pattern with no star around an alternation, so a failed match cannot backtrack super-linearly.
+ */
+const SELECTOR_TOKENS = [
+  /[ \t]*>[ \t]*/y,
+  /[ \t]+/y,
+  new RegExp(`\\.${NAME}+`, "y"),
+  new RegExp(`#${NAME}+`, "y"),
+  new RegExp(`:[a-z-]+(?!${NAME}|\\()`, "iy"),
+  /\*/y,
+  new RegExp(`${NAME}+`, "y"),
+  new RegExp(`\\[${NAME}+(?:[$^*]?=(?:"${NAME}*"|'${NAME}*'|${NAME}*))?\\]`, "y"),
+];
+const NAME_CHAR = new RegExp(NAME);
+
+function selectorTailOk(tail: string): boolean {
+  let pos = 0;
+  while (pos < tail.length) {
+    let next = -1;
+    for (const token of SELECTOR_TOKENS) {
+      token.lastIndex = pos;
+      if (token.test(tail)) {
+        next = token.lastIndex;
+        break;
+      }
+    }
+    if (next <= pos) return false;
+    pos = next;
+  }
+  return true;
+}
 const KEYFRAME_STEP = /^\s*(?:from|to|[\d.]+%)(?:\s*,\s*(?:from|to|[\d.]+%))*\s*$/i;
 
 /**
@@ -137,7 +169,11 @@ function scopeCss(css: string, rootId: string): string | null {
     if (rootId === "" || nested || head.startsWith("@")) return false;
     return head.split(",").every((raw) => {
       const selector = raw.trim();
-      return selector.startsWith(`#${rootId}`) && SELECTOR_TAIL.test(selector.slice(rootId.length + 1)) && !/[\w-]/.test(selector.charAt(rootId.length + 1));
+      return (
+        selector.startsWith(`#${rootId}`) &&
+        !NAME_CHAR.test(selector.charAt(rootId.length + 1)) &&
+        selectorTailOk(selector.slice(rootId.length + 1))
+      );
     });
   });
   return kept.map(({ prelude, body }) => `${prelude}{${body}}`).join("");
@@ -197,11 +233,14 @@ function cleanChildren(parent: Element, rootId: string): void {
  * unwraps `<a>` links. Returns the cleaned element itself (insert it directly; do not re-serialise), or null when the
  * markup holds no SVG root.
  */
-export function sanitizeSvg(markup: string): SVGElement | null {
+export function sanitizeSvg(markup: string, expectedId: string): SVGElement | null {
   const doc = new DOMParser().parseFromString(markup, "text/html");
   const root = doc.body.querySelector("svg");
   if (!root || root.namespaceURI !== SVG_NS) return null;
+  // The scope of every kept style rule is the root's id, so it must be the one the caller gave Mermaid, not whatever
+  // the markup claims (an id such as the app's own would let a rule style the page).
+  if (root.getAttribute("id") !== expectedId) return null;
   cleanAttributes(root);
-  cleanChildren(root, root.getAttribute("id") ?? "");
+  cleanChildren(root, expectedId);
   return root as SVGElement;
 }
