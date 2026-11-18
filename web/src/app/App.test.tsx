@@ -325,6 +325,17 @@ describe("App against the mock API", () => {
       expect(pill).toHaveTextContent("App update");
     });
 
+    it("reads App update in server mode when the manual release is the only update", async () => {
+      idle();
+      mock.patchUpdates({
+        engines: [],
+        library: { ...mock.updates.library, behind: 0, incoming: [] },
+        app: { ...mock.updates.app, can_apply: false, mode: "server", blocked_reason: null },
+      });
+      render(<App />);
+      expect(await screen.findByRole("button", { name: "App update" })).toHaveTextContent("App update");
+    });
+
     it("labels the library and engine notices when the app has no channel", async () => {
       idle();
       mock.patchUpdates({
