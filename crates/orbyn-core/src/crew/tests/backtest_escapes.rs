@@ -193,7 +193,7 @@ async fn known_files_give_caught_unmatched_and_the_rate_from_five_escapes() {
     // The finding on b's PR was about z.rs: unmatched, not wrong. Under 10 findings no precision shows.
     assert_eq!(score.unmatched_n, 1);
     assert_eq!(score.precision, None);
-    assert_eq!(lane.unresolved_n, 0);
+    assert_eq!(lane.unresolved_n, Some(0));
 }
 
 #[tokio::test]
@@ -262,12 +262,29 @@ async fn an_escape_that_cannot_be_resolved_is_counted_as_unresolved_never_droppe
     let lane = run_lane(
         &rig,
         Arc::new(source),
-        vec![(first, finding("fp1", "a.rs"))],
+        vec![
+            (first, finding("fp1", "a.rs")),
+            (pr_of(&rig, &unreadable), finding("fp2", "q.rs")),
+        ],
     )
     .await;
     let score = lane.score.unwrap();
+    // The finding on the unresolved PR is neither a hit nor a miss: it is not in precision and does not read "no escape".
+    assert_eq!(score.findings_n, 1);
+    let run = rig
+        .w
+        .core
+        .store
+        .crew_backtest_runs_of(&rig.project)
+        .unwrap();
+    let results = rig.w.core.store.crew_backtest_results(&run[0].id).unwrap();
+    let on_unresolved = results.iter().find(|r| r.finding_fp == "fp2").unwrap();
+    assert_eq!(
+        on_unresolved.outcome,
+        crate::store::ResultOutcome::NotMeasured
+    );
     // The score is over the five that could be matched; the two others are reported beside it, not counted as misses.
-    assert_eq!((score.escapes_n, lane.unresolved_n), (5, 2));
+    assert_eq!((score.escapes_n, lane.unresolved_n), (5, Some(2)));
     assert_eq!(score.recall.unwrap().numerator, 1);
 }
 
@@ -363,7 +380,7 @@ async fn an_unreadable_log_is_not_measured_never_partial() {
     assert_eq!(lane.outcome, wire::BacktestLaneOutcome::NotMeasured);
     assert_eq!(
         (lane.score, lane.findings_n, lane.unresolved_n),
-        (None, 1, 0)
+        (None, 1, None)
     );
 }
 
@@ -486,5 +503,42 @@ async fn the_git_source_reads_the_files_of_a_commit_read_only() {
     assert_eq!((read.1, read.2, read.3), (None, None, None));
     // Nothing was written to the repository.
     assert_eq!(git.run(&["status", "--porcelain"]), before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fix_that_changed_more_than_the_file_limit_is_unresolved_never_shortened() {
+    let dir = std::env::temp_dir().join(format!("orbyn-escape-many-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = Git { dir: dir.clone() };
+    git.run(&["init", "-q"]);
+    std::fs::write(dir.join("base.txt"), "x\n").unwrap();
+    git.run(&["add", "-A"]);
+    git.run(&["commit", "-q", "-m", "base"]);
+    let write = |n: usize| {
+        for i in 0..n {
+            std::fs::write(dir.join(format!("f{i}.txt")), format!("{n}\n")).unwrap();
+        }
+    };
+    write(2000);
+    git.run(&["add", "-A"]);
+    git.run(&["commit", "-q", "-m", "exactly the limit"]);
+    let at_limit = git.run(&["rev-parse", "HEAD"]);
+    write(2001);
+    git.run(&["add", "-A"]);
+    git.run(&["commit", "-q", "-m", "over the limit"]);
+    let over = git.run(&["rev-parse", "HEAD"]);
+    let path = dir.to_string_lossy().into_owned();
+    let (a, b) = tokio::task::spawn_blocking(move || {
+        (
+            GitCommitFiles.files(&path, &at_limit),
+            GitCommitFiles.files(&path, &over),
+        )
+    })
+    .await
+    .unwrap();
+    assert_eq!(a.map(|f| f.len()), Some(2000));
+    assert_eq!(b, None);
     let _ = std::fs::remove_dir_all(&dir);
 }

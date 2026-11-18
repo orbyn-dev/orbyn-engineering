@@ -74,13 +74,13 @@ impl CommitFiles for GitCommitFiles {
                 .ok()?
                 .ok()
         })?;
-        let names: BTreeSet<String> = String::from_utf8_lossy(&bytes)
-            .split('\0')
-            .filter(|name| !name.is_empty())
-            .take(FILES_MAX)
-            .map(str::to_owned)
-            .collect();
-        Some(names.into_iter().collect())
+        // All of it or nothing: a name that is not UTF-8 can never match a finding's path, and a list longer than
+        // `FILES_MAX` would be shortened, so either makes the escape unresolved.
+        let mut names = BTreeSet::new();
+        for name in bytes.split(|b| *b == 0).filter(|name| !name.is_empty()) {
+            names.insert(std::str::from_utf8(name).ok()?.to_owned());
+        }
+        (names.len() <= FILES_MAX).then(|| names.into_iter().collect())
     }
 }
 

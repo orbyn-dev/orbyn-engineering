@@ -10,7 +10,8 @@ export type BacktestEstimate = { project: string, history_days: number, outcome_
  */
 eligible_prs: number, lanes: Array<BacktestEstimateLane>, 
 /**
- * False until the escape log exists: the report then shows "Not measured" for outcomes.
+ * False when the escape log cannot say: it holds no escape, cannot be read whole (damaged or over its cap) or is
+ * absent. The report then shows "Not measured" for outcomes.
  */
 outcomes_measured: boolean, 
 /**

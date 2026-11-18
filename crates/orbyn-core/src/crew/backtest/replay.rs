@@ -181,8 +181,8 @@ pub struct LaneReport {
     pub tokens_used: u64,
     pub result: LaneResult,
     /// Confirmed escapes in the window that could not be matched because their fix or revert files could not be read.
-    /// Reported beside the score and never counted in it; 0 when the lane was not scored.
-    pub unresolved_n: u32,
+    /// Reported beside the score and never counted in it; `None` when the lane was not scored (not zero).
+    pub unresolved_n: Option<u32>,
 }
 
 /// A run as a person reads it: the run and each lane. Built only from what the store holds.
@@ -204,10 +204,20 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
                 .iter()
                 .filter(|r| r.lane == lane.lane && r.engine == lane.engine);
             let findings_n = count(own.clone().count());
-            let matched = count(own.filter(|r| r.outcome == ResultOutcome::Caught).count());
+            let matched = count(
+                own.clone()
+                    .filter(|r| r.outcome == ResultOutcome::Caught)
+                    .count(),
+            );
+            // A finding on a pull request whose escape could not be resolved is stored `not_measured` and is not in a
+            // scored lane's precision: its escape is unknown, so it is neither a hit nor a miss.
+            let measured_n = count(
+                own.filter(|r| r.outcome != ResultOutcome::NotMeasured)
+                    .count(),
+            );
             let result = match (lane.state, lane.escapes_n, lane.caught_n) {
                 (LaneState::Stopped | LaneState::Done, Some(escapes), Some(caught)) => {
-                    LaneResult::Scored(from_counts(escapes, caught, findings_n, matched))
+                    LaneResult::Scored(from_counts(escapes, caught, measured_n, matched))
                 }
                 (LaneState::Stopped | LaneState::Done, _, _) => {
                     LaneResult::NotMeasured { findings_n }
@@ -221,7 +231,7 @@ pub fn report(store: &Store, run_id: &str) -> Result<BacktestReport> {
                 state: lane.state,
                 tokens_used: lane.tokens_used,
                 result,
-                unresolved_n: lane.unresolved_n.unwrap_or(0),
+                unresolved_n: lane.unresolved_n,
             }
         })
         .collect();
@@ -435,6 +445,16 @@ fn execute(
         // A lane stopped before its first replay saw no pull request: it is not scored, which is not zero escapes.
         let scored = measured.is_some()
             && (state == LaneState::Done || (state == LaneState::Stopped && !replayed.is_empty()));
+        // Pull requests this lane replayed whose escape could not be resolved.
+        let unresolved_prs: BTreeSet<u64> = match (&measured, scored) {
+            (Some(all), true) => all
+                .unresolved
+                .iter()
+                .filter_map(|u| u.pr)
+                .filter(|pr| replayed.contains(pr))
+                .collect(),
+            _ => BTreeSet::new(),
+        };
         let scoped: Vec<Escape> = match (&measured, scored) {
             (Some(all), true) => all
                 .escapes
@@ -468,7 +488,7 @@ fn execute(
                 pr: f.pr,
                 finding_fp: fp.clone(),
                 // Without a measured log nothing is known about escapes: not a miss, so never `unmatched`.
-                outcome: if scored {
+                outcome: if scored && !unresolved_prs.contains(&f.pr) {
                     outcome_of(f, &scoped)
                 } else {
                     ResultOutcome::NotMeasured
