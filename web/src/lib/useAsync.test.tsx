@@ -161,6 +161,50 @@ describe("useAsync", () => {
       await act(async () => reads[2]?.resolve("fresh"));
       expect(result.current.data).toBe("fresh");
     });
+
+    it("parks a tick that lands during the follow-up and reads once more after it", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => { void result.current.refreshQuietly(); });
+      await act(async () => reads[1]?.resolve("mine"));
+      expect(reads).toHaveLength(3);
+      // The follow-up holds the lane: a tick during it waits instead of cutting it short.
+      act(() => { void result.current.refreshQuietly(); });
+      expect(reads).toHaveLength(3);
+      expect(reads[2]?.signal.aborted).toBe(false);
+      await act(async () => reads[2]?.resolve("follow-up"));
+      expect(result.current.data).toBe("follow-up");
+      expect(reads).toHaveLength(4);
+      await act(async () => reads[3]?.resolve("after the tick"));
+      expect(result.current.data).toBe("after the tick");
+    });
+
+    it("drops a quiet read's answer when setData lands over it, without starting another", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.refreshQuietly(); });
+      act(() => result.current.setData("saved"));
+      await act(async () => reads[1]?.resolve("late"));
+      expect(result.current.data).toBe("saved");
+      expect(reads).toHaveLength(2);
+    });
+
+    it("forgets a parked read when the screen goes, so setData after that starts none", async () => {
+      const { reads, load } = deferred();
+      const { result, unmount } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => { void result.current.refreshQuietly(); });
+      const setData = result.current.setData;
+      expect(reads).toHaveLength(2);
+      unmount();
+      // The parked read died with the screen: the late save must not wake it.
+      act(() => setData("late save"));
+      expect(reads).toHaveLength(2);
+    });
   });
 
   describe("revisiting a key", () => {
