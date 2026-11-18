@@ -90,7 +90,7 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
           <Ic n="info" sm />
           <span>
             <b>{`${coverage.not_measured_merges} of ${total} merges aren’t in the map.`}</b>
-            {` They are from before ${dateOf(since)} or had no note written. Their lines are ${NOT_MEASURED}, not counted as read or unread.`}
+            {` They are from before ${dateOf(since)}, had no stored hunks or had no note written. Their lines are ${NOT_MEASURED}, not counted as read or unread.`}
           </span>
         </div>
       ) : null}
@@ -98,17 +98,18 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
         {coverage.areas.map((area) => {
           const { unread: left, notInQueue } = split(area);
           const pct = share(left, area.agent_lines);
+          const none = area.agent_lines === 0;
           return (
             <div className="cx-t15tile" key={area.area}>
               <b className="cx-a">{area.area}</b>
               <b className="cx-n">{pct ? `${count(left)} of ${count(area.agent_lines)}` : NOT_MEASURED}</b>
-              <small>{pct ? `lines no person has reviewed · ${pct}` : "No lines are recorded for this area"}</small>
+              <small>{pct ? `lines no person has reviewed · ${pct}` : `No lines are recorded for this area · ${merges(area.not_measured_merges)} ${NOT_MEASURED}`}</small>
               <div className="cx-sp3">
-                <span><i>Reviewed</i>{count(area.reviewed_lines)}</span>
-                <span><i>In your queue</i>{count(area.in_queue_lines)}</span>
-                <span><i>Not in a queue</i>{count(notInQueue)}</span>
+                <span><i>Reviewed</i>{none ? NOT_MEASURED : count(area.reviewed_lines)}</span>
+                <span><i>In your queue</i>{none ? NOT_MEASURED : count(area.in_queue_lines)}</span>
+                <span><i>Not in a queue</i>{none ? NOT_MEASURED : count(notInQueue)}</span>
               </div>
-              <small>{merges(area.merges)}</small>
+              <small>{none ? `0 merges with lines` : `${merges(area.merges)}${area.not_measured_merges > 0 ? ` · ${merges(area.not_measured_merges)} ${NOT_MEASURED}` : ""}`}</small>
             </div>
           );
         })}
@@ -123,13 +124,15 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
         <div className="cx-h">No person has read</div>
         {coverage.areas.flatMap((area) => {
           const { unread: left, notInQueue } = split(area);
+          const none = area.agent_lines === 0;
+          const cell = (n: number) => (none ? NOT_MEASURED : count(n));
           return [
-            <div key={`${area.area}-0`}><b>{area.area}</b><small>{merges(area.merges)}</small></div>,
-            <div key={`${area.area}-1`}><b>{count(area.agent_lines)}</b></div>,
-            <div key={`${area.area}-2`}><b>{count(area.reviewed_lines)}</b></div>,
-            <div key={`${area.area}-3`}><b>{count(area.in_queue_lines)}</b></div>,
-            <div key={`${area.area}-4`}><b>{count(notInQueue)}</b></div>,
-            <div key={`${area.area}-5`}><b>{count(left)}</b><small>{share(left, area.agent_lines) ?? NOT_MEASURED}</small></div>,
+            <div key={`${area.area}-0`}><b>{area.area}</b><small>{none ? `${merges(area.not_measured_merges)} ${NOT_MEASURED}` : `${merges(area.merges)}${area.not_measured_merges > 0 ? ` · ${merges(area.not_measured_merges)} ${NOT_MEASURED}` : ""}`}</small></div>,
+            <div key={`${area.area}-1`}><b>{cell(area.agent_lines)}</b></div>,
+            <div key={`${area.area}-2`}><b>{cell(area.reviewed_lines)}</b></div>,
+            <div key={`${area.area}-3`}><b>{cell(area.in_queue_lines)}</b></div>,
+            <div key={`${area.area}-4`}><b>{cell(notInQueue)}</b></div>,
+            <div key={`${area.area}-5`}><b>{cell(left)}</b>{none ? null : <small>{share(left, area.agent_lines)}</small>}</div>,
           ];
         })}
         <div><b>All areas</b><small>{merges(coverage.merges)}</small></div>

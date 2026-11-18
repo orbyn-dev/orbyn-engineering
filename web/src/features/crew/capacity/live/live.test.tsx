@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../../../api/client";
@@ -38,17 +38,17 @@ const coverage = (over: Partial<ReviewCoverage> = {}): ReviewCoverage => ({
 });
 
 type Answer = { status: number; body?: unknown } | "never";
-let answers: { preview: Answer; capacity: Answer; coverage: Answer };
+let answers: { preview: Answer; capacity: Answer; coverage: Answer; projects: Answer };
 const sent = () => vi.mocked(fetch).mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${String(url)}`);
 
 beforeEach(() => {
-  answers = { preview: { status: 200, body: { enabled: true } }, capacity: { status: 200, body: state() }, coverage: { status: 200, body: coverage() } };
+  answers = { preview: { status: 200, body: { enabled: true } }, capacity: { status: 200, body: state() }, coverage: { status: 200, body: coverage() }, projects: { status: 200, body: [project] } };
   useWorkspace.setState({ projects: { data: [project], loading: false, error: null } });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string) => {
       const url = String(input);
-      const answer = url.includes("/api/crew/preview") ? answers.preview : url.includes("/api/crew/capacity/coverage") ? answers.coverage : url.includes("/api/crew/capacity") ? answers.capacity : { status: 404 };
+      const answer = url.startsWith("/api/projects") ? answers.projects : url.includes("/api/crew/preview") ? answers.preview : url.includes("/api/crew/capacity/coverage") ? answers.coverage : url.includes("/api/crew/capacity") ? answers.capacity : { status: 404 };
       if (answer === "never") return new Promise<Response>(() => undefined);
       return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status });
     }),
@@ -56,11 +56,30 @@ beforeEach(() => {
 });
 
 describe("Review capacity on the real routes", () => {
+  it("loads the project list itself when the shell has not (a Preview hash opens before the workspace loads)", async () => {
+    useWorkspace.setState({ projects: { data: null, loading: false, error: null } });
+    render(<LiveCapacity view="settings" />);
+    expect(await screen.findByText("8 changes")).toBeInTheDocument();
+    expect(sent()).toContain("GET /api/projects");
+  });
+
+  it("says so when the project list can't be read, and has no capacity read to make", async () => {
+    useWorkspace.setState({ projects: { data: null, loading: false, error: null } });
+    answers.projects = { status: 500, body: { code: "boom", message: "No list." } };
+    render(<LiveCapacity view="coverage" />);
+    expect(await screen.findByText("Can’t read the projects")).toBeInTheDocument();
+    expect(sent().filter((call) => call.includes("/api/crew/capacity"))).toHaveLength(0);
+  });
+
   it("draws nothing and reads no capacity route while Crew Preview is off", async () => {
     answers.preview = { status: 404, body: { code: "not_found", message: "Not found" } };
     const { container } = render(<LiveCapacity view="settings" />);
     await waitFor(() => expect(sent()).toContain("GET /api/crew/preview"));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The read has been asked; wait until its 404 has settled into the shared read before asserting nothing was drawn.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(container).toBeEmptyDOMElement();
     expect(sent().filter((call) => call.includes("/capacity"))).toHaveLength(0);
   });
@@ -176,6 +195,15 @@ describe("Review coverage on the real routes", () => {
     expect(container.textContent).toContain("Their lines are Not measured, not counted as read or unread.");
     expect(screen.getAllByText("Not measured").length).toBeGreaterThan(0);
     expect(container.textContent).toContain("codex · model not measured");
+    expect(container.textContent).toContain("had no stored hunks");
+    // The area with no lines is Not measured in every cell and names its own Not measured merges, never zeros.
+    const docs = [...container.querySelectorAll(".cx-t15tile")].find((tile) => tile.textContent?.includes("docs/"))!;
+    expect(docs.textContent).toContain("3 merges Not measured");
+    expect(docs.textContent).not.toMatch(/\b0\b(?! merges with lines)/);
+    expect(docs.textContent?.match(/Not measured/g)?.length).toBeGreaterThanOrEqual(4);
+    const row = [...container.querySelectorAll(".cx-aptb > div")].find((cell) => cell.textContent?.startsWith("docs/"))!;
+    expect(row.textContent).toContain("3 merges Not measured");
+    expect(row.nextElementSibling?.textContent).toBe("Not measured");
   });
 
   it("shows the read error, and Try again reads once more", async () => {
