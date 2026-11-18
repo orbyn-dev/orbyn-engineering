@@ -608,6 +608,22 @@ async fn agui_interrupt_becomes_an_approval_and_resumes() {
 }
 
 #[tokio::test]
+async fn an_agui_run_ignores_another_runs_end_frames() {
+    let dir = TempDir::new();
+    let (_agent, url) = spawn_agui(&dir);
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "agui", &url, json!([])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from agui");
+}
+
+#[tokio::test]
 async fn agui_run_error_fails_the_run() {
     let dir = TempDir::new();
     let (_agent, url) = spawn_agui(&dir);
