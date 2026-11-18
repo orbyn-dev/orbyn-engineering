@@ -105,6 +105,9 @@ fn fixture(preview: bool, build: impl FnOnce(&Arc<AtomicUsize>) -> Vec<Scripted>
     config.engines.codex_program = "orbyn-test-no-such-codex".into();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    // These tests route; the confinement the router now reads is tested in `confined` and `crew_refusal`, and a platform with no
+    // restriction (Linux, Windows) would otherwise refuse every engine here.
+    config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
     core.mcp.bind_host(&core);
     let starts = Arc::new(AtomicUsize::new(0));
