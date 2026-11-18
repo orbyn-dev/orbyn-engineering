@@ -339,11 +339,12 @@ provider keys, join tokens and any secret (D5).
   `scripts/local.sh setup` and `up` (Docker only, no secrets), then
   `cargo test -p orbyn-core --features engine-client account::tests::e2e_engine`. It runs only on a pull request that
   changes `crates/orbyn-core/src/account/**`, that manifest (the pin) or the workflow, and by hand. It is not a required
-  check and adds no existing one's name. **Unverified:** the job has not run on a GitHub-hosted runner yet; the first run
-  shows its time and whether the Engine image builds there. Whether it becomes a required check is a decision for the
-  lead.
-- **Local stack hygiene.** The test leaves no Docker volume or image behind. Nobody runs a global Docker cleanup
-  without asking Products Research first.
+  check and reuses no existing check's name. It has run green on a GitHub-hosted `ubuntu-24.04` runner in about 6 minutes
+  (workflow run 44217028818, 2026-11-18), and the Engine image builds there. Whether it becomes a required check is a
+  decision for the lead.
+- **Local stack hygiene.** The test leaves no Docker volume or image behind, but it does leave its throwaway invite and
+  account in the Engine stack's own database (`orbyn_local`); `scripts/local.sh reset` drops that database and clears
+  them. Nobody runs a global Docker cleanup without asking Products Research first.
 
 ## No escalation across devices
 

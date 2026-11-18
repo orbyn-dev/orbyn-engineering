@@ -181,7 +181,7 @@ async fn two_devices_of_one_account_follow_each_other_and_merge_after_being_apar
     let (a, b) = (device(&dir, "a", &url), device(&dir, "b", &url));
     assert!(
         a.account.available() && b.account.available(),
-        "the Engine address must be a loopback IP literal"
+        "the account is unavailable: the Engine address must be a loopback IP literal such as http://127.0.0.1:8080 (the name localhost is refused), and the engine-client feature must be on"
     );
 
     // Sign up on A with a fresh invite, then the code the worker logged for the address.
@@ -225,20 +225,34 @@ async fn two_devices_of_one_account_follow_each_other_and_merge_after_being_apar
         .require_confirmed(action, Some(&nonce))
         .await
         .unwrap();
-    // A waits for B to join the request while B keeps asking, as its screen does.
-    let (approved, shown) = tokio::join!(a.account.approve(confirmed, &request.id), async {
-        let deadline = Instant::now() + PATIENCE;
-        loop {
-            let view = b.account.poll_approval().await.unwrap().unwrap();
-            if view.state == AccountApprovalState::EnterDigits {
-                return view;
+    // A waits for B to join the request while B keeps asking, as its screen does. When A's approval
+    // fails, B stops asking at once and the test fails with A's own error, not with B's timeout.
+    let a_failed = std::sync::atomic::AtomicBool::new(false);
+    let (approved, shown) = tokio::join!(
+        async {
+            let result = a.account.approve(confirmed, &request.id).await;
+            a_failed.store(result.is_err(), std::sync::atomic::Ordering::SeqCst);
+            result
+        },
+        async {
+            let deadline = Instant::now() + PATIENCE;
+            loop {
+                let view = b.account.poll_approval().await.unwrap().unwrap();
+                if view.state == AccountApprovalState::EnterDigits {
+                    return Some(view);
+                }
+                if a_failed.load(std::sync::atomic::Ordering::SeqCst) {
+                    return None;
+                }
+                assert!(Instant::now() < deadline, "B was never allowed");
+                tokio::time::sleep(Duration::from_millis(250)).await;
             }
-            assert!(Instant::now() < deadline, "B was never allowed");
-            tokio::time::sleep(Duration::from_millis(250)).await;
         }
-    });
+    );
+    let approved = approved.unwrap_or_else(|error| panic!("A could not approve B: {error:?}"));
+    let shown = shown.expect("B stopped asking although A approved");
     assert_eq!(shown.state, AccountApprovalState::EnterDigits);
-    let digits = ApprovalDigits::new(approved.unwrap().digits);
+    let digits = ApprovalDigits::new(approved.digits);
     let signed = b.account.submit_digits(digits).await.unwrap().unwrap();
     assert_eq!(signed.state, AccountApprovalState::Approved);
     assert_eq!(a.account.devices().await.unwrap().len(), 2);
