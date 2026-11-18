@@ -22,6 +22,7 @@ import type { AutopilotModes } from "../../../../generated/AutopilotModes";
 import type { AutopilotTripwires } from "../../../../generated/AutopilotTripwires";
 import type { AutopilotTrust } from "../../../../generated/AutopilotTrust";
 import type { CrewClassesView } from "../../../../generated/CrewClassesView";
+import type { CrewPinnedRefView } from "../../../../generated/CrewPinnedRefView";
 import type { CrewClassTest } from "../../../../generated/CrewClassTest";
 import type { CrewPreviewState } from "../../../../generated/CrewPreviewState";
 import type { CrewRouteView } from "../../../../generated/CrewRouteView";
@@ -85,6 +86,15 @@ export const crewApi = {
    * merges; until then it answers 400 "thread is required" and the panel shows that error.
    */
   classes: (project: string, signal?: AbortSignal) => request<CrewClassesView>("GET", `/api/crew/classes?${new URLSearchParams({ project })}`, undefined, signal),
+  pinnedRef: (project: string, signal?: AbortSignal) => request<CrewPinnedRefView>("GET", `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref`, undefined, signal),
+  confirmPinnedRef: (project: string, commit: string) => {
+    const path = `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref/confirm`;
+    return request<CrewPinnedRefView>("POST", path, { commit });
+  },
+  resetPinnedRef: (project: string) => {
+    const path = `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref/reset`;
+    return request<CrewPinnedRefView>("POST", path, {});
+  },
   /** 1 to 10 paths against those rules. Nothing is saved. */
   classesTest: (project: string, paths: string[], signal?: AbortSignal) => {
     const params = new URLSearchParams({ project });
