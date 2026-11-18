@@ -209,6 +209,53 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
 
+## As built: PR 4, create a check
+
+Migration **52** (`store/crew_escape_checks.sql`, the next free number when it opened; a later merge renumbers: rebase, bump, rerun). `crew_escape_checks(escape_id PK, project_id, path, asserts,
+run, fix_commit, task_id, state, proof, note, attempts, proposed_unix, updated_unix)`: at most one check per escape. The `check_*` event kinds were already in migration 51, so no kind is
+added. `store/crew_escape_checks.rs` (the writes), `crew/escapes/check.rs` (core API, the proof, the queue), `check_brief.rs`, `check_paths.rs`, four routes in `routes/crew_escapes.rs`.
+
+| Route | Does |
+| --- | --- |
+| `POST /api/crew/escapes/{id}/check` | **Propose.** A confirmed escape with a test gap (or no gap yet) gets a proposal: one new test file `path`, what it `asserts`, the `run` command, and the commit it must pass on. Writes no task and starts nothing. |
+| `POST /api/crew/escapes/{id}/check/accept` | **The only route that starts a worker.** `proposed` to `writing`, then the crew task. |
+| `POST /api/crew/escapes/{id}/check/retry` | `failed` back to `proposed` (a new round). Starts nothing: a person accepts again. |
+| `POST /api/crew/escapes/{id}/check/withdraw` | `proposed`, `writing`, `failed` or `proven` to `withdrawn`. Cancels a worker still writing; turns down a queued merge of it. |
+
+- **States.** `proposed`, `writing`, `proven`, `failed`, `withdrawn`, `merged`. `failed` covers a worker that stopped or was cancelled, a diff that was not only test files, a proof that did
+  not hold (including a check that passes on both), and a start that could not be made once a task existed. `withdrawn` and `merged` are final; a withdrawn check may be proposed again.
+- **Authority.** Person and enforced (`routes/classes.rs`, `tests/routes.json`, `web/src/api/personKey.ts`), in `crew::changes::STATE_CHANGING` with a `GUARDS` entry, local only, Crew
+  Preview gated: browser mode and the CLI get `403 desktop_required`, a remote viewer `403 local_only`, the flag off `404`. No MCP tool, CLI command, scan or timer calls propose, accept,
+  retry or withdraw. Each takes `project` and `seen` (`{state, gap, check}`: the escape's state and gap and the check's state); a mismatch is `409 stale`, checked before git is read.
+  Each answers `{escape, check}` (`EscapeCheckAnswer`). The same act on a check already in that state answers with it and writes nothing; the opposite act is `400` in plain words.
+- **Audit first, one transaction** (rule 6): the ledger row (`crew.escape.check.propose`, `.accept`, `.retry`, `.withdraw`), then the state, then the event where the design lists a kind:
+  `check_proposed` (a retry writes it again, cause `retry:<audit id>`), `check_withdrawn` (person), and from the core `check_failed`, `check_proven`, `check_merged` (cause `core:<task id>`).
+  Accept has no event kind of its own (migration 51 fixed the list), so its record is the audit row and `attempts`. A start refused before any task exists writes `crew.escape.check.start_failed`
+  and puts the check back to `proposed` with the reason, so one more accept retries it.
+- **The brief** (`check_brief.rs`) is an ordinary crew task written on the lead's behalf and started through `launch_crew_task`, the entry `crew_start` and the review fixes use, so the router
+  (refusals, the same-provider default of #675), the capacity gate, the secret and leak checks and the lease all apply. It carries the escape id, the one path (a write lease on exactly that
+  file), what the test asserts, how it is run and the two commit ids, and tells the worker to commit. It carries no diff, test body or command output. The key (never sent) has one `file_scope`
+  check on that path and protects `.orbyn/crew.json`. The worker is not given a lane, and no lane is removed or changed (`remove-lane` stays the only way).
+- **Only test files.** The design named no globs, so `check_paths.rs` is the rule: a relative path with no `..`, `.git`, backslash, glob character or colon, not a policy file (`.github/`,
+  `.orbyn/`, `.circleci/`, `.gitlab*`, `.cargo/`, `Jenkinsfile`, the manifests and runners that define what a check command does, `conftest.py`, `jest.config.*`, `vitest.config.*`), and either in
+  a `tests`, `test`, `__tests__`, `spec`, `specs` or `e2e` folder or named `test_x`, `x.test.y`, `x.spec.y`, `x_test.y` or `x_spec.y`. When the task passes, the core reads the worker's
+  committed change from git (`diff --raw` against the commit the worker started from) and judges every path: only **added** regular files (a modified, deleted, renamed, link or submodule path
+  is refused), at most 5, the proposed one among them. Anything else makes the check `failed` and the proof never runs. This is a second line after the key's `file_scope`.
+- **The proof** runs the person's `run` command twice, each in a throwaway detached worktree under the device's data folder (removed after) with the new files laid over the commit: on the
+  escaped merge (`crew_merges.merge_commit`; it must fail) and on the fix (it must pass). The fix is the commit the body names, else the revert the merge recorded, else the commit the escape's
+  detection named; an escape with none needs the person to name one. Only both together prove it. Passing on both is refused (`failed`, "passes on the escaped merge too"); failing on the
+  fix too and the wrong way round are refused with their own words; a command that could not run (did not start, ran out of time) is `failed` with no verdict on the test. The proof stores
+  two commit ids and two booleans, never output.
+- **The merge queue.** A proven check is queued through `crew_merge_request` (the Review queue merge route's own entry), on the escaped merge's branch, so its own risk tier, holds, owed lanes and
+  the person's required CI policy apply as for any change. When the queue refuses (no CI names set, no remote) the check stays `proven` with the reason and a person queues it from the Review
+  queue. Nothing here merges, releases or authorises a merge. The service's tick (`run_crew_escape_scan`) also records `merged` once the merge exists, and finishes a `writing` check whose task
+  ended while the core was down.
+- **Read API.** `GET /escapes/{id}` gains an optional `check` (additive; absent for an escape with no check). The other read shapes are unchanged.
+- **Choices where the note is silent:** the proof command comes from the person (the repository has no test selector the core can trust); the test-file globs above; at most one check per escape;
+  a tooling gap is refused with no proposal and no row; only a confirmed escape can have a check; retry never starts a worker; confirmed escapes still feed no breaker or router.
+- **Limits.** The proof lays the files over a commit, so a test that needs the worker's source changes to compile fails on both and is refused. The test environment's fake worker works in
+  the project's own checkout, so the tests reset it between attempts; a real worker has its own worktree. The proof's scratch worktrees run the person's command as the person, like any check.
+
 ## Decisions (owner)
 
 1. A revert is a possible escape at once, labelled so; confirmed only by a person. Counts are shown separately.

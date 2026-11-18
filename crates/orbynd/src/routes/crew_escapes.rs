@@ -33,6 +33,13 @@ pub fn writes() -> Router<AppState> {
         .route("/api/crew/escapes/{id}/confirm", post(confirm))
         .route("/api/crew/escapes/{id}/dismiss", post(dismiss))
         .route("/api/crew/escapes/{id}/gap", post(gap))
+        .route("/api/crew/escapes/{id}/check", post(check_propose))
+        .route("/api/crew/escapes/{id}/check/accept", post(check_accept))
+        .route("/api/crew/escapes/{id}/check/retry", post(check_retry))
+        .route(
+            "/api/crew/escapes/{id}/check/withdraw",
+            post(check_withdraw),
+        )
 }
 
 /// `project` (required), `state` (`possible`, `confirmed` or `dismissed`), `limit`, `offset`.
@@ -99,4 +106,40 @@ async fn gap(
     ApiJson(body): ApiJson<wire::EscapeGapSet>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_escape_set_gap(&id, &body)?))
+}
+
+async fn check_propose(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::EscapeCheckPropose>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.crew_escape_check_propose(&id, &body).await?,
+    ))
+}
+
+async fn check_accept(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::EscapeCheckAct>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_escape_check_accept(&id, &body).await?))
+}
+
+async fn check_retry(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::EscapeCheckAct>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_escape_check_retry(&id, &body)?))
+}
+
+async fn check_withdraw(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::EscapeCheckAct>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.crew_escape_check_withdraw(&id, &body).await?,
+    ))
 }

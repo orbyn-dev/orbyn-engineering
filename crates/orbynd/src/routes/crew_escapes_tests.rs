@@ -550,3 +550,175 @@ async fn with_the_flag_off_the_writes_are_not_there_and_a_remote_viewer_cannot_u
         orbyn_contracts::EscapeState::Possible
     );
 }
+
+// PR 4: a created check. Propose, accept, retry and withdraw are person routes; accept alone starts a worker. The rules (the proof, the
+// test-only diff, the merge queue, the states) are tested in `orbyn-core` (`crew/tests/escape_check.rs`); these are the transport.
+
+const CHECK_WRITES: [&str; 4] = [
+    "/api/crew/escapes/esc_one/check",
+    "/api/crew/escapes/esc_one/check/accept",
+    "/api/crew/escapes/esc_one/check/retry",
+    "/api/crew/escapes/esc_one/check/withdraw",
+];
+
+fn check_seen(state: &str) -> Value {
+    json!({ "state": state })
+}
+
+fn check_body(path: &str, project: &str, state: &str) -> Value {
+    if path.ends_with("/check") {
+        json!({ "project": project, "seen": check_seen(state), "path": "tests/escape_check.txt",
+               "asserts": "The value is fixed.", "run": "git grep -q x -- tests/escape_check.txt" })
+    } else {
+        json!({ "project": project, "seen": check_seen(state) })
+    }
+}
+
+#[tokio::test]
+async fn the_check_routes_are_person_routes_an_agent_cannot_reach_and_need_the_key() {
+    for path in CHECK_WRITES {
+        assert!(changes_crew_state(path), "{path}");
+    }
+    for route in [
+        "/api/crew/escapes/{id}/check",
+        "/api/crew/escapes/{id}/check/accept",
+        "/api/crew/escapes/{id}/check/retry",
+        "/api/crew/escapes/{id}/check/withdraw",
+    ] {
+        assert!(STATE_CHANGING.contains(&("POST", route)), "{route}");
+    }
+    assert!(!changes_crew_state("/api/crew/escapes/esc_one"));
+
+    let app = serve_with(
+        "escapes-check-key",
+        true,
+        false,
+        Access::new("token", vec![], None).with_person_key(Some("the-key")),
+    )
+    .await;
+    let (project, id) = with_escape(&app, "The merge was reverted.");
+    let tasks = |app: &Served| app.core.store.crew_tasks_in_flight().unwrap().len();
+    let before = tasks(&app);
+    for path in CHECK_WRITES {
+        let body = check_body(path, &project, "possible");
+        let (status, _) = post(&app, path, body.clone(), false, Some("the-key")).await;
+        assert_eq!(status, 401, "{path}: the service token comes first");
+        for key in [None, Some("wrong")] {
+            let (status, reply) = post(&app, path, body.clone(), true, key).await;
+            assert_eq!(
+                (status, &reply["code"]),
+                (403, &json!("person_required")),
+                "{path}"
+            );
+        }
+    }
+    assert_eq!(tasks(&app), before, "no refused call started a worker");
+    assert!(app.core.store.crew_escape_check(&id).unwrap().is_none());
+    assert_eq!(
+        app.core.store.crew_escape(&id).unwrap().unwrap().state,
+        orbyn_contracts::EscapeState::Possible
+    );
+
+    // With the key, an escape no person has confirmed has no check: refused in words, nothing written.
+    let (status, reply) = post(
+        &app,
+        CHECK_WRITES[0],
+        check_body(CHECK_WRITES[0], &project, "possible"),
+        true,
+        Some("the-key"),
+    )
+    .await;
+    assert_eq!(status, 400, "{reply}");
+    assert!(app.core.store.crew_escape_check(&id).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn the_check_routes_map_a_stale_view_a_missing_check_and_bad_input_to_plain_errors() {
+    let app = serve("escapes-check-errors", true, false).await;
+    let (project, id) = with_escape(&app, "The merge was reverted.");
+    let go = |path: &str, body: Value| {
+        let (app, path) = (&app, path.to_owned());
+        async move { post(app, &path, body, true, None).await }
+    };
+    // A person confirms the escape, then asks for a check on a stale view of it.
+    let (status, row) = go(
+        &format!("/api/crew/escapes/{id}/confirm"),
+        decide(&project, "possible"),
+    )
+    .await;
+    assert_eq!(status, 200, "{row}");
+    let (status, reply) = go(
+        CHECK_WRITES[0],
+        check_body(CHECK_WRITES[0], &project, "possible"),
+    )
+    .await;
+    assert_eq!((status, &reply["code"]), (409, &json!("stale")), "{reply}");
+    // A path that is not a test file, and another project's escape.
+    let mut body = check_body(CHECK_WRITES[0], &project, "confirmed");
+    body["path"] = json!("src/lib.rs");
+    let (status, reply) = go(CHECK_WRITES[0], body).await;
+    assert_eq!(
+        (status, &reply["code"]),
+        (400, &json!("invalid_input")),
+        "{reply}"
+    );
+    assert!(
+        reply["message"].as_str().unwrap().contains("test file"),
+        "{reply}"
+    );
+    let (status, _) = go(
+        CHECK_WRITES[0],
+        check_body(CHECK_WRITES[0], "nobody", "confirmed"),
+    )
+    .await;
+    assert_eq!(status, 404);
+    // Accept, retry and withdraw of an escape that has no check are not found; nothing started.
+    for path in &CHECK_WRITES[1..] {
+        let (status, reply) = go(path, check_body(path, &project, "confirmed")).await;
+        assert_eq!(
+            (status, &reply["code"]),
+            (404, &json!("not_found")),
+            "{path}: {reply}"
+        );
+    }
+    // Bodies without `seen` or with a field that is not part of the contract are refused.
+    let (status, _) = go(CHECK_WRITES[1], json!({ "project": project })).await;
+    assert_eq!(status, 400);
+    assert!(app.core.store.crew_escape_check(&id).unwrap().is_none());
+    // The detail read still has the shape it had: no check yet, so no `check` value.
+    let (_, detail) = app.get(&format!("/api/crew/escapes/{id}")).await;
+    assert!(detail["check"].is_null(), "{detail}");
+    assert!(detail["escape"].is_object() && detail["events"].is_array());
+}
+
+#[tokio::test]
+async fn with_the_flag_off_the_check_routes_are_not_there_and_a_remote_viewer_cannot_use_them() {
+    let off = serve("escapes-check-off", false, false).await;
+    for path in CHECK_WRITES {
+        let (status, reply) =
+            post(&off, path, check_body(path, "p", "confirmed"), true, None).await;
+        assert_eq!(
+            (status, &reply["code"]),
+            (404, &json!("not_found")),
+            "{path}"
+        );
+    }
+    let remote = serve("escapes-check-remote", true, true).await;
+    let (project, id) = with_escape(&remote, "The merge was reverted.");
+    for path in CHECK_WRITES {
+        let (status, reply) = post(
+            &remote,
+            path,
+            check_body(path, &project, "possible"),
+            true,
+            None,
+        )
+        .await;
+        assert_eq!(
+            (status, &reply["code"]),
+            (403, &json!("local_only")),
+            "{path}"
+        );
+    }
+    assert!(remote.core.store.crew_escape_check(&id).unwrap().is_none());
+}

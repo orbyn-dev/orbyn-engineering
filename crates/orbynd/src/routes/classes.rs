@@ -90,6 +90,10 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/escapes/{id}/confirm"),
     ("POST", "/api/crew/escapes/{id}/dismiss"),
     ("POST", "/api/crew/escapes/{id}/gap"),
+    ("POST", "/api/crew/escapes/{id}/check"),
+    ("POST", "/api/crew/escapes/{id}/check/accept"),
+    ("POST", "/api/crew/escapes/{id}/check/retry"),
+    ("POST", "/api/crew/escapes/{id}/check/withdraw"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -471,6 +475,26 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/escapes/{id}/gap",
         "Crew write behind local_only: the person sets an escape's test gap or tooling gap",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check",
+        "Crew write behind local_only: the person proposes a test-only check for a confirmed escape; nothing runs",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/accept",
+        "Crew write behind local_only: the person accepts a proposed check; the only escape route that starts a worker",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/retry",
+        "Crew write behind local_only: the person sends a failed check back to a proposal; starts nothing",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/withdraw",
+        "Crew write behind local_only: the person withdraws a check that is not merged",
     ),
     (
         "POST",

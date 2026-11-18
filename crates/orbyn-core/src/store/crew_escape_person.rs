@@ -49,7 +49,7 @@ impl EscapeDecision {
     }
 }
 
-fn state_word(state: EscapeState) -> &'static str {
+pub(super) fn state_word(state: EscapeState) -> &'static str {
     match state {
         EscapeState::Possible => "possible",
         EscapeState::Confirmed => "confirmed",
@@ -57,7 +57,7 @@ fn state_word(state: EscapeState) -> &'static str {
     }
 }
 
-fn load(tx: &Transaction<'_>, project: &str, id: &str) -> Result<EscapeRecord> {
+pub(super) fn load(tx: &Transaction<'_>, project: &str, id: &str) -> Result<EscapeRecord> {
     tx.query_row(&format!("{SELECT} WHERE e.id = ?1"), [id], escape_row)
         .optional()
         .map_err(unreadable)?
@@ -65,7 +65,7 @@ fn load(tx: &Transaction<'_>, project: &str, id: &str) -> Result<EscapeRecord> {
         .ok_or_else(|| CoreError::NotFound("escape".into()))
 }
 
-fn stale(record: &EscapeRecord, seen: &EscapeSeen) -> Result<()> {
+pub(super) fn stale(record: &EscapeRecord, seen: &EscapeSeen) -> Result<()> {
     if (record.state, record.gap) == (seen.state, seen.gap) {
         Ok(())
     } else {
@@ -75,7 +75,7 @@ fn stale(record: &EscapeRecord, seen: &EscapeSeen) -> Result<()> {
     }
 }
 
-fn room(tx: &Transaction<'_>, project: &str, escapes: u32, events: u32) -> Result<()> {
+pub(super) fn room(tx: &Transaction<'_>, project: &str, escapes: u32, events: u32) -> Result<()> {
     let count = |sql: &str| -> Result<u32> {
         tx.query_row(sql, [project], |row| row.get(0))
             .map_err(unreadable)
@@ -96,7 +96,7 @@ fn room(tx: &Transaction<'_>, project: &str, escapes: u32, events: u32) -> Resul
     Ok(())
 }
 
-fn audit(
+pub(super) fn audit(
     tx: &Transaction<'_>,
     action: &str,
     project: &str,
