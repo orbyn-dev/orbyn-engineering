@@ -50,6 +50,7 @@ describe("couldNotStartItems", () => {
   });
   it("titles the item with the task's name, or its id when it has none", () => {
     expect(couldNotStartItems([card({ name: "" })])[0]!.title).toBe("t1");
+    expect(couldNotStartItems([card({ name: "   " })])[0]).toMatchObject({ title: "t1", from: "Task t1" });
   });
   it("says the worker never ran when the service gave no reason", () => {
     expect(couldNotStartItems([card()])[0]!.cost).toBe(NEVER_RAN);
