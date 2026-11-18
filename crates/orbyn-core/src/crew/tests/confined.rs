@@ -46,15 +46,14 @@ async fn a_worker_is_refused_where_no_restriction_exists() {
         answer.to_string().contains(UNSUPPORTED_PLATFORM),
         "{answer}"
     );
-    let (id, state): (String, String) = w
+    // Refused up front: no task was stored.
+    let tasks: i64 = w
         .core
         .store
         .reader()
-        .query_row("SELECT id, state FROM crew_tasks", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+        .query_row("SELECT COUNT(*) FROM crew_tasks", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(state, "needs_person", "task {id}");
+    assert_eq!(tasks, 0);
     assert!(
         w.confines.lock().unwrap().is_empty(),
         "no process was asked for"

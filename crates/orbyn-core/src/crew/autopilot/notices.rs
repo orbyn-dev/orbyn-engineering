@@ -37,6 +37,7 @@ impl Core {
             image: false,
             tier: RouteTier::Lead,
             reviewer: false,
+            crew_worker: false,
         };
         let config = self.crew_router_config();
         machine

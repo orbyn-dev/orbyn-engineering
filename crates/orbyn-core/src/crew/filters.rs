@@ -23,6 +23,9 @@ pub struct Want {
     /// The role checks someone else's work, so the engine's model must fill a mapped tier: an engine with no mapping is a
     /// builder only, even when the role's tier is the worker tier.
     pub reviewer: bool,
+    /// The engine would run a crew worker or reviewer, which is confined: one that the run start would refuse is out. An
+    /// approver run is not confined, so it keeps this false.
+    pub crew_worker: bool,
 }
 
 impl Want {
@@ -40,6 +43,7 @@ impl Want {
             needs,
             tier,
             reviewer,
+            crew_worker: true,
         }
     }
 }
@@ -66,6 +70,17 @@ pub fn rejection(view: &EngineView, why: RejectionWhy, text: impl Into<String>) 
         why,
         text: short(text),
     }
+}
+
+/// An engine whose worker run would be refused at its start is never routed to: this is the same answer the run start gives
+/// (`host::confine::worker_refusal`), read once when the machine was gathered. It names the engine and the plain reason.
+pub fn crew_refusal(view: &EngineView) -> Option<RouteRejection> {
+    let refusal = view.crew_refusal.as_ref()?;
+    Some(rejection(
+        view,
+        RejectionWhy::MissingCapability,
+        refusal.plain(&view.name),
+    ))
 }
 
 /// A need the engine itself meets, or `None` for one the router does not know.
@@ -245,6 +260,12 @@ pub fn screen<'a>(
                 ));
             }
         }
+    }
+    // Once the engine is otherwise usable, the refusal the run start would give is the one thing left to keep it out.
+    if want.crew_worker
+        && let Some(why) = crew_refusal(view)
+    {
+        return Err(why);
     }
     let models: &[ModelInfo] = view.models.as_deref().unwrap_or(&[]);
     let selected = if view.tier == EngineTier::Acp {

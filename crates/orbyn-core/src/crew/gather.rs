@@ -61,7 +61,35 @@ impl Core {
                 None => view,
             }
         });
-        let views = futures_util::future::join_all(reads).await;
+        let mut views = futures_util::future::join_all(reads).await;
+        // The refusal a worker run would meet at its start, so the router never picks such an engine.
+        if self.config.crew_confine_workers {
+            // The driver's own tier and family, exactly what the run start reads (an instance's id is not its family).
+            let probes: Vec<_> = views
+                .iter()
+                .map(|v| {
+                    self.engines
+                        .driver(v.id.as_str())
+                        .ok()
+                        .map(|d| (d.descriptor().tier, d.family()))
+                })
+                .collect();
+            let refusals = tokio::task::spawn_blocking(move || {
+                probes
+                    .into_iter()
+                    .map(|probe| {
+                        probe.and_then(|(tier, family)| {
+                            crate::host::confine::worker_refusal(tier, &family)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .map_err(|error| crate::error::CoreError::Internal(error.to_string()))?;
+            for (view, refusal) in views.iter_mut().zip(refusals) {
+                view.crew_refusal = refusal;
+            }
+        }
         let default_engine = match self.preference("default_engine", project_id)? {
             Value::String(id) if !id.is_empty() => Some(id),
             _ => None,

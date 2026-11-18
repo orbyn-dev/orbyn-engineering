@@ -176,6 +176,7 @@ impl Core {
             image: false,
             tier: RouteTier::Lead,
             reviewer: false,
+            crew_worker: false,
         };
         let Some(lead_view) = machine
             .views
@@ -210,6 +211,7 @@ impl Core {
             image: false,
             tier: RouteTier::Worker,
             reviewer: false,
+            crew_worker: false,
         };
         let Ok(lead) = screen(lead_view, &lead_want, Some(lead_model), &config) else {
             return empty();

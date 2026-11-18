@@ -30,6 +30,7 @@ mod classes_project;
 mod confined;
 mod core;
 mod could_not_start;
+mod crew_refusal;
 mod draft;
 mod escapes;
 mod fake;

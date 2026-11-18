@@ -270,7 +270,7 @@ lead. When the rules cannot be read, or the work has no base commit, a lane coun
 author's own vendor (a single-vendor machine), the lane keeps the lead tier instead of lowering the only review available. A model pinned in the brief's
 `engine` wins over the lane default in either direction. An engine with no tier mapping (OpenCode before Settings maps it) is a builder only,
 so it never takes a lane. The reviewer is still another vendor than the builder where one is configured. The route card of a lane carries
-a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` answer reports its `tier`, `model` and `reasons`.
+a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` answer reports its `tier`, `model`, `reasons` and `rejected` (the engines left out, each with its reason).
 `crew_route` (dry run) shows the engine, model, tier and role before anything runs; the `route` in a start answer reports what has already started.
 
 **Router v0**
@@ -283,7 +283,22 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
      A test runs every combination of those facts through the router and the list and fails if they disagree.
      A sign-in that could not be confirmed has no designed label, so the list shows none for it while the router
      still refuses. Limited support (an `Unsupported` or `Graceful` version) is list-only and never keeps an engine out.
-2. Score: pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from
+   - **A worker run that would be refused is never routed to.** The run start refuses an engine that cannot take a crew
+     task (a terminal engine, Codex while `CODEX_WORKERS_ALLOWED` is off) and any machine with no restriction to apply
+     (`host::confine::worker_refusal`, the one function both read). The router reads its answer when the machine is
+     gathered and filters on it, after the checks above, with a plain reason per engine ("Codex can't run Crew workers. ...
+     Choose another engine for this crew, or do the work in a normal chat."). A brief that pins such an engine is refused
+     with that reason and never swapped. When no engine is left, `crew_start` refuses up front with the reason and stores
+     no task, lease, run or ledger row. This covers engine and platform refusals only: the preflight routes with no data
+     classes, so a data-class rejection is still recorded after the task is stored, as before. A review lane whose engines
+     are all refused takes that same later path. Approver runs are not confined, so they do not use this filter. `crew_route`
+     shows the same rejections.
+2. Provider, then score. With no engine named and a non-review role, the lead's own provider (engine family) comes
+   first (`RouterConfig::worker_provider`, default `WorkerProvider::SameAsLead`; a later Settings choice may set
+   `WorkerProvider::Any`, and nothing sets it yet; it has no serialized form yet). Another provider takes the work only when the lead's is refused or not available, and the route says so
+   (`lead_provider_unavailable`: "Codex workers are not available here, so Claude takes this."); otherwise the route
+   carries `lead_provider`. Review lanes, second keys and finding checks keep the other-vendor rule and ignore this.
+   Inside the chosen provider: score. Pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from
    `usage`, then the person's default engine to break ties.
    - **As built (slice 2, differs from the plan):** a full quota window is also a hard filter (`quota_exhausted`), not
      only a score input. The score is a weighted sum, 70% pass rate and 30% headroom, in integer permille, rather than
