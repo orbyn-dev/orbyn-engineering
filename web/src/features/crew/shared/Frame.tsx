@@ -12,20 +12,25 @@ export function Frame({
   height,
   panel,
   sheet,
+  live,
   children,
 }: {
   width?: number;
   height?: number;
   panel?: boolean;
   sheet?: boolean;
+  /** A screen on the real routes: the sample-data notice is left out. */
+  live?: boolean;
   children: ReactNode;
 }) {
   const className = ["cx-frame", panel ? "cx-panel" : "", sheet ? "cx-sheetpage" : ""].filter(Boolean).join(" ");
   return (
     <div className="cx-stage">
-      <p className="cx-notice" role="note">
-        <strong>Sample data.</strong> Crew is not connected to this app yet, so nothing here changes a repository.
-      </p>
+      {live ? null : (
+        <p className="cx-notice" role="note">
+          <strong>Sample data.</strong> Crew is not connected to this app yet, so nothing here changes a repository.
+        </p>
+      )}
       <div className={className} style={{ width: panel ? 320 : width, minHeight: height }}>
         {children}
       </div>
