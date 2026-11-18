@@ -43,6 +43,37 @@ pub struct Access {
 /// The request header that carries the person key. Only a `Person` route reads it.
 pub const PERSON_HEADER: &str = "x-orbyn-person";
 
+/// A browser cannot set a header on a WebSocket, and the key must not go in the URL, so a socket offers it as a
+/// subprotocol: `orbyn.person.<key>`, beside [`SOCKET_PROTOCOL`]. The offer is read only on an upgrade request.
+pub const PERSON_PROTOCOL_PREFIX: &str = "orbyn.person.";
+
+/// The one subprotocol a terminal socket selects. A browser fails a socket that offered protocols and was answered with
+/// none, and the answer must never echo the key.
+pub const SOCKET_PROTOCOL: &str = "orbyn.v1";
+
+/// The key a request presents: the header, or on a WebSocket upgrade the `orbyn.person.` subprotocol.
+fn person_candidate(headers: &HeaderMap) -> Option<&str> {
+    if let Some(value) = headers
+        .get(PERSON_HEADER)
+        .and_then(|value| value.to_str().ok())
+    {
+        return Some(value);
+    }
+    let upgrade = headers
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"));
+    if !upgrade {
+        return None;
+    }
+    headers
+        .get_all(header::SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .find_map(|protocol| protocol.trim().strip_prefix(PERSON_PROTOCOL_PREFIX))
+}
+
 struct Remote {
     key_sha256: String,
     sessions: Mutex<HashMap<String, Instant>>,
@@ -96,11 +127,7 @@ impl Access {
                 "This action is only available in the desktop app.",
             ));
         };
-        if headers
-            .get(PERSON_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|candidate| secrets_match(candidate, digest))
-        {
+        if person_candidate(headers).is_some_and(|candidate| secrets_match(candidate, digest)) {
             Ok(())
         } else {
             Err(ApiFailure::forbidden(
@@ -706,6 +733,35 @@ mod tests {
                 code(access.person_check(&with_person(wrong))).as_deref(),
                 Some("person_required"),
                 "{wrong:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_socket_upgrade_may_offer_the_key_as_a_subprotocol_and_nothing_else_may() {
+        let access = access().with_person_key(Some("the-key"));
+        let socket = |protocols: &str, upgrade: bool| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::SEC_WEBSOCKET_PROTOCOL, protocols.parse().unwrap());
+            if upgrade {
+                headers.insert(header::UPGRADE, "websocket".parse().unwrap());
+            }
+            headers
+        };
+        assert!(
+            access
+                .person_check(&socket("orbyn.v1, orbyn.person.the-key", true))
+                .is_ok()
+        );
+        for refused in [
+            socket("orbyn.v1, orbyn.person.the-ke", true),
+            socket("orbyn.v1", true),
+            // The offer counts on an upgrade only, so a plain request cannot use it.
+            socket("orbyn.v1, orbyn.person.the-key", false),
+        ] {
+            assert_eq!(
+                code(access.person_check(&refused)).as_deref(),
+                Some("person_required")
             );
         }
     }

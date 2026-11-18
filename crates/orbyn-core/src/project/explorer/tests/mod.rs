@@ -14,8 +14,6 @@ pub(super) async fn core(dir: &TempDir) -> Core {
     let root = library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
     config.engines.lookup_latest = false;
-    // File actions are a Preview feature until #441 is fixed.
-    config.crew_preview = true;
     let core = Core::open(config).unwrap();
     core.workspace
         .setup(WorkspaceSetup {

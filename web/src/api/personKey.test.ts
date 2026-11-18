@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { request } from "./client";
-import { forgetPersonKey, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, sendsPersonKey } from "./personKey";
+import { forgetPersonKey, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
 
 const ok = () => vi.fn(async () => new Response(null, { status: 204 }));
 const sentHeaders = (fetchMock: ReturnType<typeof ok>) => new Headers((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers);
@@ -17,30 +17,59 @@ afterEach(() => {
 });
 
 describe("which requests carry the person key", () => {
-  it("names the two enforced routes and no other", () => {
+  it("names the enforced routes and the field-level ones, and no other", () => {
     expect(sendsPersonKey("POST", "/api/approvals/a1/decide")).toBe(true);
     expect(sendsPersonKey("POST", "/api/projects/p/worktrees/w/file-actions")).toBe(true);
     expect(sendsPersonKey("post", "/api/approvals/a1/decide?x=1")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/console")).toBe(true);
+    expect(sendsPersonKey("PATCH", "/api/threads/t1")).toBe(true);
+    expect(sendsPersonKey("PUT", "/api/threads/t1/files/content")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/account/sign-in/digits")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/tasks/t1/merge")).toBe(true);
+    expect(sendsPersonKey("PUT", "/api/crew/autopilot/mode")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
     for (const [method, path] of [
       ["GET", "/api/approvals/a1/decide"],
       ["GET", "/api/approvals?state=pending"],
       ["POST", "/api/approvals/a1/decide/extra"],
       ["POST", "/api/approvals//decide"],
       ["POST", "/api/projects/p/worktrees/w/file"],
-      ["POST", "/api/threads/t1/console"],
-      ["PATCH", "/api/threads/t1"],
+      ["GET", "/api/threads/t1"],
+      ["POST", "/api/threads/t1/queue"],
+      ["POST", "/api/threads/t1/steer"],
+      ["POST", "/api/threads/t1/git/action"],
+      ["GET", "/api/threads/t1/console"],
+      ["DELETE", "/api/threads/t1"],
     ] as const) {
       expect(sendsPersonKey(method, path), `${method} ${path}`).toBe(false);
     }
   });
 
-  it("matches the service's route table: every entry is a person route there", () => {
+  it("is exactly the service's person rows plus its field-level rows", () => {
     const table = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../crates/orbynd/tests/routes.json"), "utf8")) as {
       protected: [string, string, string][];
     };
-    for (const [method, , pattern] of PERSON_ROUTES) {
-      expect(table.protected.some(([m, p, kind]) => m === method && p === pattern && kind === "person"), `${method} ${pattern}`).toBe(true);
+    const listed = new Set(PERSON_ROUTES.map(([method, pattern]) => `${method} ${pattern}`));
+    for (const [method, pattern] of PERSON_ROUTES) {
+      expect(table.protected.some(([m, p]) => m === method && p === pattern), `${method} ${pattern}`).toBe(true);
     }
+    const person = table.protected.filter(([, , kind]) => kind === "person").map(([m, p]) => `${m} ${p}`);
+    for (const row of person) expect(listed.has(row), `${row} is a person route the page does not send the key to`).toBe(true);
+    // The two field-level routes are the only local rows in the list.
+    const local = PERSON_ROUTES.filter(([method, pattern]) => table.protected.some(([m, p, kind]) => m === method && p === pattern && kind === "local"));
+    expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/threads/{id}/runs"]);
+  });
+});
+
+describe("the terminal sockets", () => {
+  it("offers the key as a subprotocol beside orbyn.v1, never in the URL", async () => {
+    shell(vi.fn(async () => "shell-key"));
+    expect(await personKeyProtocols()).toEqual(["orbyn.v1", "orbyn.person.shell-key"]);
+  });
+
+  it("offers only orbyn.v1 where there is no key", async () => {
+    shell(vi.fn(async () => ""));
+    expect(await personKeyProtocols()).toEqual(["orbyn.v1"]);
   });
 });
 

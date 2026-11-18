@@ -961,6 +961,11 @@ async fn a_thread_is_organized_and_configured_inside_its_project_only() {
             "orbyn_thread_configure",
             json!({ "thread_id": sibling, "permission_mode": "root" }),
         ),
+        // A mode looser than the sibling's own is the person's to choose, in the app (#441).
+        (
+            "orbyn_thread_configure",
+            json!({ "thread_id": sibling, "permission_mode": "full_access" }),
+        ),
     ] {
         service.admit(&thread, &call(name, args)).await;
         let events = service
@@ -972,6 +977,11 @@ async fn a_thread_is_organized_and_configured_inside_its_project_only() {
         service.finished(&thread).await;
         assert!(text_of(&events).contains("tool error=true"), "{name}");
     }
+    let sibling_now = service.json(&format!("/api/threads/{sibling}")).await;
+    assert_ne!(
+        sibling_now["lifecycle"]["permission_mode"], "full_access",
+        "an agent cannot loosen a sibling's mode"
+    );
     service.stop().await;
 }
 

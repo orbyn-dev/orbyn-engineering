@@ -13,11 +13,11 @@ can read it.
 
 An engine child is such a process. With the token it can call every protected route as the person, including
 `POST /api/approvals/{id}/decide` (approve its own request), `/api/threads/{id}/console`, `/api/updates/app/apply` and
-the explorer's file actions. Today two flags stand in for a fix:
+the explorer's file actions. Two flags stood in for a fix (as written before step 3; see "Step 3: what is built"):
 
-- Explorer file actions (#601) answer only under the Preview flag (`routes/explorer.rs`, `preview_gate`; core refuses
-  too in `project/explorer/write.rs`).
-- Crew routes and tools are Preview-only (`docs/crew.md`, slice 4f).
+- Explorer file actions (#601) answered only under the Preview flag. Step 3 removed that gate and the core check; the
+  person key guards the route now.
+- Crew routes and tools are Preview-only (`docs/crew.md`, slice 4f). The flag stays for readiness, not for worker-proofing.
 ## What exists today
 
 - **macOS Crew workers** start under `sandbox-exec` with the data folder denied (`host::confine`, #527). So a confined
@@ -72,11 +72,10 @@ The final list is an open question below.
 
 1. Class table and key plumbing, with every protected route classified; an unclassified route fails a route-table test.
    No behavior change: all routes stay `Local`.
-2. Shell and page send the key; `Person` is enforced for explorer file actions and approvals only.
-3. Remove the explorer Preview gate and the core `crew_preview` check on file actions. Update `docs/architecture.md`
-   ("Person only, and gated") in the same commit.
-4. Move the remaining person routes over, one group per PR. Crew keeps its flag for readiness; the #441 sentences in
-   `docs/crew.md` and `routes/crew.rs` go, and Crew writes need no worker-proof flag.
+2. Shell and page send the key; `Person` is enforced for explorer file actions and approvals only. **Done (#631).**
+3. Enforce the rest of the `Person` table, add the field-level checks, remove the explorer Preview gate and the core
+   `crew_preview` check on file actions, and reword the #441 sentences on Crew's flag. **Done (this change).**
+4. Per-worker tokens, only when a worker needs the HTTP API (item 4 above), and the sandbox work in "Still open after step 3".
 
 ## Tests
 
@@ -107,8 +106,9 @@ actions, as it already does for approve-once.
 
 ## Flags that can go
 
-- Explorer file actions: the Preview gate and the core check (step 3). This is the one that goes first.
-- The #441 wording on Crew's Preview flag (step 4). The flag itself stays while Crew is unfinished.
+- Explorer file actions: the Preview gate and the core check. Gone in step 3.
+- The #441 wording on Crew's Preview flag. Gone in step 3. The flag itself stays while Crew is unfinished, as a readiness
+  flag, not a worker-proof one.
 
 ## Open questions for the owner
 
@@ -159,17 +159,66 @@ Browser mode (`orbyn start`, a tab on the service address, a remote session) has
 CLI reads `service.json` and has the token only, so it cannot call an enforced route either, and `orbyn` cannot approve. Both
 still read, run threads and use every `Local` route. Each later group moved to `ENFORCED` adds its routes to this list.
 
-### Still open after step 2
+### Still open after step 2 (closed by step 3)
 
-Step 2 closes only the routes above. `orbyn` cannot approve through `decide`, but a process holding the token can still do each of
-these as the person until its step moves it to `ENFORCED`:
+Step 2 closed the routes above only; the list it left, `POST /api/policy/rules`, `PATCH /api/threads/{id}`,
+`POST /api/threads/{id}/runs` (`permission_mode`), project trust, workflow approve, questions answer and dismiss, Crew's
+approve-once, deny and dismiss, and the console, terminals, scripts, file writes, pull merges and reviews, updates,
+workspace and account routes, is closed by step 3.
 
-- `POST /api/policy/rules` (grant a rule that auto-approves).
-- `PATCH /api/threads/{id}` and `POST /api/threads/{id}/runs` (`permission_mode` can be raised; `runs` needs a field-level check).
-- `POST /api/projects/{id}/trust`.
-- `POST /api/projects/{id}/workflows/{run}/approve`.
-- `POST /api/questions/{id}/answer` and the dismiss route.
-- Crew's approve-once, deny and dismiss routes (approve-once also needs the shell's nonce).
-- The console, terminals, scripts, file writes, pull merges and reviews, updates, workspace and account routes.
+## Step 3: what is built
 
-So "cannot approve" holds for a command or tool approval only, not for every grant of authority. Closing the list is steps 3 and 4.
+- **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (96 routes):
+  Account, Crew's person writes, engines, updates, workspace, shell actions, scheduled tasks, preferences, policy rules,
+  redaction settings, questions, project trust and publish, workflow approve, pull merges and reviews, the explorer, the
+  console, terminals, scripts, file writes and computer use. A test (`routes/tests.rs`) fails for a `Person` route that is
+  not enforced, and for an `ENFORCED` line that is not a `Person` row. The web side is the same list in
+  `PERSON_ROUTES` (`web/src/api/personKey.ts`); its test fails if the list differs from the service's person rows.
+- **Field-level.** `FIELD_LEVEL` lists the two routes that stay `Local` as a whole and check the key for part of the body:
+  `POST /api/threads/{id}/runs` when `permission_mode` is looser than the thread's current mode (`Supervised`, `AutoEdits`,
+  `Auto`, `FullAccess`, loosest last; keeping or lowering it needs no key), and `POST /agui/threads/{id}` when `resume[]`
+  is non-empty. `PATCH /api/threads/{id}` is `Person` as a whole, so any patch needs the key.
+- **Sockets.** `GET /ws/terminal/{thread}` and `/ws/terminal/{thread}/{terminal}` are enforced. A browser cannot set a header
+  on `new WebSocket`, and the key must not be in the URL (the URL already carries `?token=` for the service token). The page
+  offers the key as a subprotocol: `new WebSocket(url, ["orbyn.v1", "orbyn.person.<key>"])`. The service reads the offer on an
+  upgrade request only (`person_candidate`, `http/access.rs`), checks it as it checks the header, and the upgrade selects
+  `orbyn.v1` and never the key. A header is still read first, so a non-browser client may use `x-orbyn-person`.
+- **The explorer gate is gone.** `routes/explorer.rs` has no `preview_gate` and `Core::explorer_file_action` no
+  `crew_preview` check. The route needs the key, as the table says. `docs/architecture.md` ("Person only, and gated") says so.
+- **Crew's flag.** Crew's routes still answer 404 with the flag off, because Crew is unfinished. `docs/crew.md` and
+  `routes/crew.rs` no longer say the flag is a worker-proofing measure.
+- **Tests.** The fake engine's probe now calls every `Person` route from `tests/routes.json` with the service token alone
+  (`ORBYN_FAKE_PROBE_ROUTES`): every answer is `403 person_required`. The same calls from the test with the key are never
+  refused for want of it, and a socket opens with the subprotocol and is refused without it
+  (`tests/person_key.rs`). Web unit tests check the list, the header and the subprotocol; the mock and the browser e2e send
+  the fixed fake key or run with the development override.
+
+### What browser mode and the CLI lose now
+
+Everything `Person`, which is now every write that grants authority: no sign-in, preferences, policy rules, approvals,
+trust, terminals, console, scripts, file writes, updates, forge writes (comments, labels, reviewers, edits, close, reopen, revert, delete branch, stack actions) or Crew writes from a browser tab or a remote session, and a run
+cannot raise its permission mode there. The `orbyn` CLI loses `orbyn theme set` and `orbyn theme clear` (`PUT /api/preferences`)
+and `orbyn update` (`POST /api/updates/app/apply`); each answers `403 desktop_required` or `person_required`. Reads,
+thread runs, queueing and every other `Local` route work as before.
+
+### Still open after step 3
+
+The `Person` routes are closed to a token-only worker. This is what #441 still holds, as its own checklist:
+
+- [ ] **Windows workers.** No sandbox exists, so Windows workers stay refused. A Low-integrity or AppContainer worker needs a
+  spike of its own.
+- [ ] **The store read.** A worker that can read the data folder can read the store and the answer-key table
+  (`crew/classes/pin.rs`). The macOS sandbox denies the folder, so this is Windows and any unconfined engine.
+- [ ] **`.git` closure on macOS.** The confinement does not close the repository's `.git` (`crew/classes/mod.rs`).
+- [ ] **`Local` routes stay open to a token holder.** Among them `POST /api/threads/{id}/git/action` (push), which is `Local`
+  on purpose, runs without a raised mode, and the CLI's. Per-worker tokens (item 4) are the answer when a worker needs the API.
+- [x] **Agent tool `orbyn_thread_configure`** refuses a looser `permission_mode` than the thread has (done in step 3); lowering or keeping it works.
+- [ ] **`POST /api/diagnostics/processes/{pid}/stop`** is `Local`. It can stop any process in the service's own tree, so a
+  token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
+- [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
+  .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: none of it writes to the forge.
+  Be exact about what it does do: `checkout` runs local `git fetch`, `switch` and `worktree add`, and `work` and `guide`
+  create a worktree or start an engine thread at the default permission mode. That grants nothing beyond what the open
+  `Local` runs route already does.
+- [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).
+- [ ] **Remote sessions** have no key, so they are read and `Local` only. A remote approve flow needs its own design.

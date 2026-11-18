@@ -27,7 +27,7 @@ use axum::Router;
 use orbyn_core::{Core, CoreConfig};
 use tokio::net::TcpListener;
 
-use super::classes::{ENFORCED, PERSON};
+use super::classes::{ENFORCED, FIELD_LEVEL, PERSON};
 use super::router;
 use crate::http::AppState;
 use crate::http::access::Access;
@@ -266,6 +266,41 @@ fn every_enforced_route_is_a_person_route_in_the_table() {
             rows.iter()
                 .any(|row| row[0] == *method && row[1] == *path && row[2] == "person"),
             "{method} {path} is enforced but is not a person row of tests/routes.json"
+        );
+    }
+}
+
+/// Step 3 enforces every `Person` route, so a new one cannot be classified without the key. A route that must stay
+/// unenforced for a while would be listed here with its reason, and the doc's "Still open" says so.
+#[test]
+fn every_person_route_is_enforced() {
+    let missing: Vec<String> = PERSON
+        .iter()
+        .filter(|(m, p, _)| !ENFORCED.iter().any(|(em, ep)| (em, ep) == (m, p)))
+        .map(|(m, p, _)| format!("{m} {p}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "these Person routes do not need the person key: {missing:?}"
+    );
+}
+
+/// A field-level route is `Local` in the table (it needs no key for most requests) and its handler checks the key.
+#[test]
+fn every_field_level_route_is_a_local_row_in_the_table() {
+    let table = pinned();
+    let rows = table["protected"].as_array().unwrap();
+    assert!(!FIELD_LEVEL.is_empty());
+    for (method, path, field) in FIELD_LEVEL {
+        assert!(!field.is_empty());
+        assert!(
+            !ENFORCED.iter().any(|(m, p)| (m, p) == (method, path)),
+            "{method} {path} is enforced as a whole, so it is not field-level"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row[0] == *method && row[1] == *path && row[2] == "local"),
+            "{method} {path} is field-level but is not a local row of tests/routes.json"
         );
     }
 }

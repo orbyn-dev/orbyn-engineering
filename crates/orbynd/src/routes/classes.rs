@@ -1,30 +1,30 @@
 //! The class of every protected route: `Local` is opened by the service token alone, `Person` is a route where acting as
 //! the person matters (design: `docs/worker-token-isolation.md`, #441). A `Person` route listed in [`ENFORCED`] also needs
-//! this launch's person key (`x-orbyn-person`), which only the desktop shell holds; every other `Person` route is still
-//! classified only and behaves as `Local` until a later step adds it to [`ENFORCED`]. Browser mode and the CLI cannot use
-//! an enforced route.
+//! this launch's person key (`x-orbyn-person`), which only the desktop shell holds. Browser mode and the CLI cannot use an
+//! enforced route (owner ruling): the answer is `403 desktop_required`. Since step 3 every `Person` route is enforced, and a
+//! test fails for a `Person` route that is not.
 //!
 //! The rule for `Person`: the route decides or grants something only the person may (an approval, a trust or policy
 //! grant, redaction), acts on the person's files or shell, replaces the app, or writes account or Crew state behind
-//! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`. Browser mode and the
-//! CLI will not be able to use `Person` routes (owner ruling).
+//! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`.
 //!
-//! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push) and `POST /api/threads/{id}/runs`. `runs` takes
-//! `permission_mode` (and model, effort, options) in its body, so raising the mode there needs a field-level person
-//! check in a later step. Checked for the same field: `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`;
-//! `queue` and `steer` take model, effort and options but no `permission_mode`. `PATCH /api/threads/{id}` also takes it
-//! and is `Person` as a whole.
+//! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push). Two routes are `Local` as a whole but check the key
+//! in their handler for part of the request, listed in [`FIELD_LEVEL`]: `POST /api/threads/{id}/runs` when its body raises
+//! `permission_mode` above the thread's current mode, and `POST /agui/threads/{id}` when its `resume[]` is non-empty (it
+//! answers an interrupt, as `decide` does). `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`; `queue` and
+//! `steer` take model, effort and options but no `permission_mode`. `PATCH /api/threads/{id}` also takes it and is `Person`
+//! as a whole.
 //!
 //! `Person` routes are listed here with a reason each. Every other protected route is `"local"` in `tests/routes.json`,
 //! one line each, so a new route must be classified in a diff: the route-table test fails for a route with no class.
 //!
-//! `POST /agui/threads/{id}` is `Local` in the table because a plain run needs no key, but a non-empty `resume[]` on it
-//! answers an interrupt and is checked in the handler (`routes/stream.rs`), exactly like `decide`. A route that needs a key for
-//! only part of its body is checked in its handler, not listed in [`ENFORCED`].
+//! The terminal sockets are `GET` routes a browser opens with `new WebSocket`, which cannot set a header, and the key must
+//! not be in the URL. The page offers it as the subprotocol `orbyn.person.<key>` beside `orbyn.v1` (the only one the upgrade
+//! answers); [`require_person`] reads it on an upgrade request only (`http/access.rs`).
 //!
-//! To enforce another `Person` route, add its `(method, path)` to [`ENFORCED`]: one line. A test fails for an entry
-//! that is not a `Person` route or not a registered route, and the web client's list of routes that send the key
-//! (`web/src/api/personKey.ts`) gets the same line.
+//! To add a `Person` route: one row in [`PERSON`], one line in [`ENFORCED`], one in the web client's list
+//! (`web/src/api/personKey.ts`), and a row in `tests/routes.json`. Tests fail for an entry that is not a `Person` route or not
+//! a registered route, and for a `Person` route that is not enforced.
 
 use axum::body::Body;
 use axum::extract::{MatchedPath, Request, State};
@@ -35,13 +35,155 @@ use std::sync::Arc;
 use crate::http::ApiFailure;
 use crate::http::access::Access;
 
-/// The `Person` routes that need the person key today. Each must also be in [`PERSON`].
+/// The `Person` routes that need the person key. Each must also be in [`PERSON`], and every `PERSON` route is here.
 pub const ENFORCED: &[(&str, &str)] = &[
+    // Account (behind its own local_only layer).
+    ("POST", "/api/account/approvals/{id}/approve"),
+    ("POST", "/api/account/approvals/{id}/deny"),
+    ("POST", "/api/account/confirm"),
+    ("POST", "/api/account/confirm/cancel"),
+    ("POST", "/api/account/connect"),
+    ("POST", "/api/account/connect/later"),
+    ("POST", "/api/account/connect/seen"),
+    ("POST", "/api/account/connect/use-account"),
+    ("POST", "/api/account/connect/use-device"),
+    ("DELETE", "/api/account/devices/{id}"),
+    ("POST", "/api/account/ended/seen"),
+    ("POST", "/api/account/sign-in"),
+    ("POST", "/api/account/sign-in/approval"),
+    ("POST", "/api/account/sign-in/cancel"),
+    ("POST", "/api/account/sign-in/digits"),
+    ("POST", "/api/account/sign-in/second-factor"),
+    ("POST", "/api/account/sign-out"),
+    ("POST", "/api/account/sign-out-everywhere"),
+    ("POST", "/api/account/sign-up/code"),
+    ("POST", "/api/account/sign-up/invite"),
+    ("POST", "/api/account/sign-up/resend"),
+    ("POST", "/api/account/sign-up/start"),
+    ("POST", "/api/account/sync/now"),
+    ("POST", "/api/account/sync/pause"),
+    ("POST", "/api/account/sync/resume"),
+    // Crew person writes (behind local_only).
+    ("POST", "/api/crew/backtest/start"),
+    ("POST", "/api/crew/backtest/{id}/stop"),
+    ("POST", "/api/crew/capacity/settings"),
+    ("POST", "/api/crew/capacity/tasks/{id}"),
+    ("POST", "/api/crew/approvals/second-engine/{id}/dismiss"),
+    ("POST", "/api/crew/approvals/{id}/approve-once"),
+    ("POST", "/api/crew/approvals/{id}/deny"),
+    ("POST", "/api/crew/approvals/{id}/dismiss"),
+    ("POST", "/api/crew/autopilot/areas/follow"),
+    ("POST", "/api/crew/autopilot/areas/override"),
+    ("POST", "/api/crew/autopilot/confirm"),
+    ("PUT", "/api/crew/autopilot/mode"),
+    ("POST", "/api/crew/autopilot/review/{task_id}/comment"),
+    ("POST", "/api/crew/autopilot/review/{task_id}/looks-good"),
+    ("POST", "/api/crew/autopilot/review/{task_id}/revert"),
+    ("POST", "/api/crew/background/create"),
+    ("POST", "/api/crew/background/{id}/delete"),
+    ("POST", "/api/crew/background/{id}/disable"),
+    ("POST", "/api/crew/background/{id}/enable"),
+    ("POST", "/api/crew/background/{id}/update"),
+    ("POST", "/api/crew/guard/targets/add"),
+    ("POST", "/api/crew/guard/targets/{id}/remove"),
+    ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
+    ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
+    ("POST", "/api/crew/review/{task_id}/consent"),
+    ("POST", "/api/crew/review/{task_id}/remove-lane"),
+    ("POST", "/api/crew/settings/engine-tiers/save"),
+    ("POST", "/api/crew/tasks/{id}/cancel"),
+    ("POST", "/api/crew/tasks/{id}/merge"),
+    ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    // Engines, updates, workspace and the shell.
+    ("POST", "/api/acp/registry/{id}"),
+    ("POST", "/api/engines/custom"),
+    ("POST", "/api/engines/probe-binary"),
+    ("POST", "/api/engines/update-all"),
+    ("POST", "/api/engines/{id}/install-recommended"),
+    ("POST", "/api/engines/{id}/update"),
+    ("POST", "/api/shell/actions"),
+    ("POST", "/api/updates/app/apply"),
+    ("POST", "/api/updates/apply-all"),
+    ("POST", "/api/workspace/rollback"),
+    ("POST", "/api/workspace/setup"),
+    ("POST", "/api/workspace/update"),
+    // Preferences, policy and redaction.
+    ("POST", "/api/policy/rules"),
+    ("DELETE", "/api/policy/rules/{id}"),
+    ("PUT", "/api/preferences"),
+    ("PUT", "/api/projects/{id}/preferences"),
+    ("PUT", "/api/settings/preferences"),
+    ("PUT", "/api/settings/secrets/formats/{id}"),
+    ("POST", "/api/settings/secrets/patterns"),
+    ("DELETE", "/api/settings/secrets/patterns/{id}"),
+    ("PUT", "/api/settings/secrets/patterns/{id}"),
+    ("PUT", "/api/settings/secrets/projects/{id}"),
+    ("PUT", "/api/settings/secrets/surfaces"),
+    // Projects, approvals and questions.
+    ("POST", "/api/approvals/{id}/decide"),
+    ("POST", "/api/projects/{id}/publish"),
+    ("POST", "/api/projects/{id}/pulls/close"),
+    ("PATCH", "/api/projects/{id}/pulls/{number}"),
+    ("POST", "/api/projects/{id}/pulls/{number}/action"),
+    ("POST", "/api/projects/{id}/pulls/{number}/comments"),
+    (
+        "PATCH",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}/react",
+    ),
+    ("POST", "/api/projects/{id}/pulls/{number}/labels"),
+    ("POST", "/api/projects/{id}/pulls/{number}/reviewers"),
+    ("POST", "/api/projects/{id}/pulls/{number}/stack"),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve",
+    ),
+    ("POST", "/api/projects/{id}/pulls/{number}/merge"),
+    ("POST", "/api/projects/{id}/pulls/{number}/review"),
+    ("POST", "/api/projects/{id}/trust"),
+    ("POST", "/api/projects/{id}/workflows/{run}/approve"),
     (
         "POST",
         "/api/projects/{id}/worktrees/{worktree}/file-actions",
     ),
-    ("POST", "/api/approvals/{id}/decide"),
+    ("POST", "/api/questions/{id}/answer"),
+    ("POST", "/api/questions/{id}/dismiss"),
+    // Scheduled tasks.
+    ("POST", "/api/tasks"),
+    ("PUT", "/api/tasks/{id}"),
+    ("POST", "/api/tasks/{id}/enabled"),
+    // Terminal sockets: the key travels as a subprotocol, never in the URL.
+    ("GET", "/ws/terminal/{thread_id}"),
+    ("GET", "/ws/terminal/{thread_id}/{terminal}"),
+    // Threads: console, terminals, scripts, files, computer use, pull requests, permission mode.
+    ("PATCH", "/api/threads/{id}"),
+    ("POST", "/api/threads/{id}/computer"),
+    ("POST", "/api/threads/{id}/console"),
+    ("PUT", "/api/threads/{id}/files/content"),
+    ("POST", "/api/threads/{id}/pulls/{number}/merge"),
+    ("POST", "/api/threads/{id}/pulls/{number}/review"),
+    ("POST", "/api/threads/{id}/scripts"),
+    ("POST", "/api/threads/{id}/terminals"),
+];
+
+/// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
+/// "field-level"): `(method, path, field)`. A test fails for an entry that is not a `local` row of `tests/routes.json`, and
+/// the web client sends the key on these routes too (`web/src/api/personKey.ts`).
+#[cfg(test)]
+pub const FIELD_LEVEL: &[(&str, &str, &str)] = &[
+    (
+        "POST",
+        "/api/threads/{id}/runs",
+        "permission_mode above the thread's current mode (routes/runs.rs)",
+    ),
+    (
+        "POST",
+        "/agui/threads/{id}",
+        "a non-empty resume[], which answers an interrupt (routes/stream.rs)",
+    ),
 ];
 
 /// Whether a request for this method and matched route pattern needs the person key.
@@ -406,6 +548,56 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/projects/{id}/pulls/close",
+        "closes pull requests on the forge as the person",
+    ),
+    (
+        "PATCH",
+        "/api/projects/{id}/pulls/{number}",
+        "edits a pull request on the forge as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/action",
+        "closes, reopens, reverts or deletes the branch of a pull request as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/comments",
+        "posts a comment on the forge as the person",
+    ),
+    (
+        "PATCH",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}",
+        "edits the person's comment on the forge",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}/react",
+        "reacts on the forge as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/labels",
+        "changes a pull request's labels on the forge",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/reviewers",
+        "requests or removes reviewers on the forge as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/stack",
+        "merges or updates a stack of pull requests as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve",
+        "resolves a review thread on the forge as the person",
+    ),
+    (
+        "POST",
         "/api/projects/{id}/pulls/{number}/merge",
         "merges a pull request as the person",
     ),
@@ -570,3 +762,46 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "attaches to a person's shell, which takes keystrokes",
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::http::StatusCode;
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::any;
+
+    /// Every enforced route behind a stub handler that does nothing: the layer refuses a request with no key or a wrong one and
+    /// lets the right key through, for routes that must never be called for real in a test (updates, workspace, engines).
+    #[tokio::test]
+    async fn the_layer_guards_every_enforced_route() {
+        let access =
+            Arc::new(Access::new("secret", Vec::new(), None).with_person_key(Some("the-key")));
+        let mut router = Router::new();
+        // One route per path: a path with several enforced methods would merge two `any` fallbacks.
+        let paths: std::collections::BTreeSet<&str> =
+            ENFORCED.iter().map(|(_, path)| *path).collect();
+        for path in paths {
+            router = router.route(path, any(|| async { StatusCode::NO_CONTENT }));
+        }
+        let router = router.route_layer(from_fn_with_state(access, require_person));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        let client = reqwest::Client::new();
+        for (method, path) in ENFORCED {
+            let uri = format!("{base}{}", path.replace(['{', '}'], ""));
+            for (key, want) in [(None, 403), (Some("wrong"), 403), (Some("the-key"), 204)] {
+                let mut request = client.request(
+                    reqwest::Method::from_bytes(method.as_bytes()).unwrap(),
+                    &uri,
+                );
+                if let Some(key) = key {
+                    request = request.header("x-orbyn-person", key);
+                }
+                let status = request.send().await.unwrap().status().as_u16();
+                assert_eq!(status, want, "{method} {path} with {key:?}");
+            }
+        }
+    }
+}

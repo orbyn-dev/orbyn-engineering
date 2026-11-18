@@ -22,7 +22,7 @@ async fn serve(name: &str, preview: bool) -> (u16, std::path::PathBuf) {
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
         core,
-        access: Arc::new(Access::new("token", vec![], None)),
+        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
         remote: false,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),

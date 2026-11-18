@@ -27,7 +27,50 @@ fn repo(path: &Path) {
     run_git(path, &["commit", "-q", "-m", "first"]);
 }
 
-fn options(dir: &TempDir, desktop: bool) -> Options {
+/// The `[method, path, body]` of every `Person` route in `tests/routes.json`, path parameters filled with `x`. Step 3
+/// enforces every one of them (`routes/tests.rs` fails for a `Person` route that is not enforced), so this is the enforced set.
+fn person_routes() -> Vec<(String, String, String)> {
+    let table: Value = serde_json::from_str(
+        &std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/routes.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let mut routes = Vec::new();
+    for row in table["protected"].as_array().unwrap() {
+        if row[2] != "person" {
+            continue;
+        }
+        let mut path = String::new();
+        let mut inside = false;
+        for c in row[1].as_str().unwrap().chars() {
+            match c {
+                '{' => {
+                    inside = true;
+                    path.push('x');
+                }
+                '}' => inside = false,
+                _ if !inside => path.push(c),
+                _ => {}
+            }
+        }
+        routes.push((row[0].as_str().unwrap().to_owned(), path, "{}".to_owned()));
+    }
+    routes
+}
+
+fn options_probing(
+    dir: &TempDir,
+    desktop: bool,
+    routes: Option<&[(String, String, String)]>,
+) -> Options {
+    let probe_routes = routes
+        .map(|routes| {
+            vec![(
+                "ORBYN_FAKE_PROBE_ROUTES".to_owned(),
+                json!(routes).to_string(),
+            )]
+        })
+        .unwrap_or_default();
     Options {
         args: if desktop {
             vec!["--parent-stdin".into()]
@@ -36,8 +79,6 @@ fn options(dir: &TempDir, desktop: bool) -> Options {
         },
         env: vec![
             ("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()),
-            // File actions are Preview-only until step 3 of the design.
-            ("ORBYN_CREW_PREVIEW".into(), "1".into()),
             // The most the service says, so the log check below reads a real log.
             ("ORBYN_LOG".into(), "debug".into()),
             (
@@ -48,7 +89,10 @@ fn options(dir: &TempDir, desktop: bool) -> Options {
                 "ORBYN_FAKE_PROBE_DATA".into(),
                 dir.path().join("data").to_string_lossy().into_owned(),
             ),
-        ],
+        ]
+        .into_iter()
+        .chain(probe_routes)
+        .collect(),
     }
 }
 
@@ -61,16 +105,36 @@ struct Fixture {
 }
 
 async fn fixture(desktop: bool) -> Fixture {
+    fixture_probing(desktop, None).await
+}
+
+async fn fixture_probing(desktop: bool, routes: Option<&[(String, String, String)]>) -> Fixture {
     let dir = TempDir::new();
-    let service = Service::start(&dir.path().join("data"), options(&dir, desktop));
     let folder = dir.path().join("app");
     repo(&folder);
+    // Setting up a workspace is a person action. A service with no shell has no key, so a first service with the
+    // development override does the setup on the same data dir and stops before the real one starts.
+    let setup = if desktop {
+        options_probing(&dir, desktop, routes)
+    } else {
+        Options::default()
+    };
+    let service = Service::start(&dir.path().join("data"), setup);
     let project = service.project(&folder, true).await;
     let listed = service
         .json(&format!("/api/projects/{project}/worktrees"))
         .await;
     let worktree = listed["worktrees"][0]["id"].as_str().unwrap().to_owned();
     let thread = service.thread(&project, "claude").await;
+    let service = if desktop {
+        service
+    } else {
+        drop(service);
+        Service::start(
+            &dir.path().join("data"),
+            options_probing(&dir, desktop, routes),
+        )
+    };
     Fixture {
         dir,
         service,
@@ -103,7 +167,7 @@ impl Fixture {
     /// Waits for the fake engine's report of what it did with the token alone.
     async fn probe(&self) -> Value {
         let path = self.dir.path().join("probe.json");
-        for _ in 0..1500 {
+        for _ in 0..6000 {
             if let Ok(text) = std::fs::read_to_string(&path)
                 && let Ok(report) = serde_json::from_str(&text)
             {
@@ -309,4 +373,122 @@ async fn the_key_is_in_no_file_env_argv_or_log() {
     let handle =
         std::fs::read_to_string(f.dir.path().join("data/service.json")).unwrap_or_default();
     assert!(handle.is_empty() || !handle.contains("person"));
+}
+
+/// Step 3: every `Person` route, called by an engine with the service token alone, is refused; and the same calls with
+/// the shell's key are not refused for want of the key. A request with the key reaches the handler, which answers for the
+/// fake ids and empty body with whatever it does (a 4xx), so only the person codes are ruled out; the other answers are the
+/// routes' own tests. The ids are not real, so no handler can act.
+#[tokio::test]
+async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
+    let routes = person_routes();
+    assert!(routes.len() > 90, "the table has the person rows");
+    let f = fixture_probing(true, Some(&routes)).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    f.service.admit(&f.thread, "hello").await;
+    let report = f.probe().await;
+    let calls = report["calls"].as_array().unwrap();
+    assert_eq!(calls.len(), routes.len(), "the engine called every route");
+    for call in calls {
+        assert_eq!(call["status"], 403, "{call}");
+        assert_eq!(call["code"], "person_required", "{call}");
+    }
+
+    // The sockets are GET routes: without an upgrade they are refused the same way, and the key as a subprotocol opens one.
+    let sockets: Vec<&(String, String, String)> =
+        routes.iter().filter(|(m, _, _)| m == "GET").collect();
+    assert_eq!(sockets.len(), 2, "the two terminal sockets");
+    for (_, path, _) in &sockets {
+        let refused = f.service.get(path).send().await.unwrap();
+        assert_eq!(refused.status(), 403, "{path}");
+    }
+
+    // With the key, the person layer lets each one through. The route's own answer follows (not found, invalid and so on).
+    // Routes whose handler takes no body and acts on the machine or the network (updates, the skills workspace, every
+    // engine's update) are not called with the key here: an empty request could do real work. The layer's behavior for them is
+    // covered with a stub handler in `routes/classes.rs` (`the_layer_guards_every_enforced_route`).
+    const SKIPPED: [&str; 6] = [
+        "/api/updates/app/apply",
+        "/api/updates/apply-all",
+        "/api/engines/update-all",
+        "/api/workspace/update",
+        "/api/workspace/setup",
+        "/api/workspace/rollback",
+    ];
+    for (method, path, body) in routes
+        .iter()
+        .filter(|(m, p, _)| m != "GET" && !SKIPPED.contains(&p.as_str()))
+    {
+        let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
+        let response = f
+            .service
+            .client
+            .request(method, format!("{}{path}", f.service.url))
+            .bearer_auth(&f.service.token)
+            .header(KEY_HEADER, &key)
+            .header("content-type", "application/json")
+            .body(body.clone())
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let reply: Value = response.json().await.unwrap_or(Value::Null);
+        assert!(
+            !matches!(
+                reply["code"].as_str(),
+                Some("person_required" | "desktop_required")
+            ),
+            "{path} refused the right key: {status} {reply}"
+        );
+    }
+}
+
+/// A browser cannot set a header on a socket and the key must not be in the URL, so the page offers it as the subprotocol
+/// `orbyn.person.<key>` beside `orbyn.v1`. The upgrade answers `orbyn.v1` and never echoes the key.
+#[tokio::test]
+async fn a_terminal_socket_takes_the_key_as_a_subprotocol_and_never_echoes_it() {
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    let url = format!(
+        "{}/ws/terminal/{}?token={}",
+        f.service.url.replacen("http", "ws", 1),
+        f.thread,
+        f.service.token
+    );
+    let open = |protocols: Option<String>| {
+        let mut request = url.clone().into_client_request().unwrap();
+        if let Some(protocols) = protocols {
+            request.headers_mut().insert(
+                "sec-websocket-protocol",
+                HeaderValue::from_str(&protocols).unwrap(),
+            );
+        }
+        async move { connect_async(request).await }
+    };
+    // No key, a wrong key and the token's own value are refused before the upgrade.
+    for offered in [
+        None,
+        Some("orbyn.v1".to_owned()),
+        Some(format!("orbyn.v1, orbyn.person.{}", "0".repeat(64))),
+        Some(format!("orbyn.v1, orbyn.person.{}", f.service.token)),
+    ] {
+        let refused = open(offered.clone()).await;
+        let Err(tokio_tungstenite::tungstenite::Error::Http(response)) = refused else {
+            panic!("{offered:?} was not refused");
+        };
+        assert_eq!(response.status(), 403, "{offered:?}");
+    }
+    let (_socket, response) = open(Some(format!("orbyn.v1, orbyn.person.{key}")))
+        .await
+        .expect("the key opens the socket");
+    assert_eq!(response.status(), 101);
+    assert_eq!(
+        response.headers().get("sec-websocket-protocol").unwrap(),
+        "orbyn.v1",
+        "the answer selects orbyn.v1 and never the key"
+    );
 }
