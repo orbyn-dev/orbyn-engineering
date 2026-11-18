@@ -1,6 +1,7 @@
 import { lazy } from "react";
 import { REVIEW_FRAMES } from "./autopilot/review/names";
 import { BACKTEST_FRAMES } from "./backtest/names";
+import { CAPACITY_LIVE_FRAMES } from "./capacity/live/names";
 import { CAPACITY_FRAMES } from "./capacity/names";
 import { ESCAPE_FRAMES } from "./escape/names";
 import { FLOW_FRAMES } from "./flow/names";
@@ -19,7 +20,7 @@ export function crewPreviewRoute(hash: string): string | null {
   if (!__ORBYN_PREVIEWS__) return null;
   const match = /^#\/preview\/crew\/([a-z0-9-]+)$/.exec(hash);
   // Built here, not at module level, so a production build drops every frame id with this branch.
-  const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES, ...FLOW_FRAMES];
+  const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...CAPACITY_LIVE_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES, ...FLOW_FRAMES];
   return [...frames, ...NEEDSYOU_FRAMES].find((name) => name === match?.[1]) ?? null;
 }
 
