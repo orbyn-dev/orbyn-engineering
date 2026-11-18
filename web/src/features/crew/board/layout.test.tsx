@@ -40,11 +40,7 @@ function panelWidth(width: number) {
   );
 }
 
-// Failing case, not a passing one: a bug found while writing this test, left for its own fix.
-// `useNarrow` (useWidth.ts) runs its effect once, on the render that still shows "Reading the board", so `ref.current` is null and
-// the observer never attaches. When the cards arrive the observed element mounts, but the effect does not run again, so `narrow`
-// stays false: below 640 px the board still draws every column open and never takes its narrow branch.
-it.skip("opens Needs you and Running first in a narrow panel, and leaves the rest behind their counts", async () => {
+it("opens Needs you and Running first in a narrow panel, and leaves the rest behind their counts", async () => {
   panelWidth(600);
   mock.reset("crew");
   render(<BoardView />);

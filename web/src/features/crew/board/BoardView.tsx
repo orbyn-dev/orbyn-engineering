@@ -103,7 +103,7 @@ function CrewBoard({ crew }: { crew: string }) {
   const isOpen = (spec: ColumnSpec) => overrides[spec.id] ?? (narrow ? spec.id === "needs_you" || spec.id === "running" : !spec.rail);
 
   return (
-    <div ref={ref as React.RefObject<HTMLDivElement>} className="bd-body" data-narrow={narrow || undefined}>
+    <div ref={ref} className="bd-body" data-narrow={narrow || undefined}>
       <div className="bd-chips" role="group" aria-label="Filter the board">
         <button type="button" className="bd-chip" aria-pressed={engine === null && kind === null} onClick={() => { setEngine(null); setKind(null); }}>
           All {board.total}
