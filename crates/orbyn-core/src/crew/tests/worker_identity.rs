@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::harness::{Turn, brief, key, world, world_confined};
+#[cfg(target_os = "macos")]
+use super::harness::world_confined;
+use super::harness::{Turn, brief, key, world};
 
 async fn check(w: super::harness::World) {
     let (answer, error) = w.start(brief(json!({})), key()).await;
