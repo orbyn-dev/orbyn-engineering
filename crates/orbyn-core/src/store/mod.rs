@@ -44,6 +44,9 @@ mod crew_flow;
 mod crew_guard;
 mod crew_merge_forge;
 mod crew_merges;
+mod crew_person_commits;
+#[cfg(test)]
+mod crew_person_commits_tests;
 mod crew_provenance;
 #[cfg(test)]
 mod crew_provenance_tests;

@@ -30,6 +30,7 @@ impl Store {
             for item in hunks {
                 let (kind, engine, model) = match &item.author {
                     Author::Agent { engine, model } => ("agent", Some(engine), model.as_ref()),
+                    Author::Unknown { engine, model } => ("unknown", Some(engine), model.as_ref()),
                     Author::Person => ("person", None, None),
                 };
                 tx.execute(
@@ -148,6 +149,7 @@ impl Store {
             .map(|(path, start, len, kind, engine, model, note_ref)| {
                 let author = match (kind.as_str(), engine) {
                     ("agent", Some(engine)) => Author::Agent { engine, model },
+                    ("unknown", Some(engine)) => Author::Unknown { engine, model },
                     ("person", _) => Author::Person,
                     _ => {
                         return Err(CoreError::Internal(
