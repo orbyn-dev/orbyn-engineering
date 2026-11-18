@@ -84,6 +84,7 @@ export function ForecastScreen({ data }: { data: ForecastData }) {
           <div className="crew-phd">
             <b>{data.headline}</b>
             <span className="crew-tag">Before work starts</span>
+            <span className="cx-cwpv" title="Planned: the service finds a conflict when a merge is tried and has no forecast from the dependency graph yet">Planned</span>
           </div>
           <p className="crew-cl">{data.conflict}</p>
           <Box>
