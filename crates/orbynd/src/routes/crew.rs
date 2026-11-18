@@ -211,6 +211,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/projects/{id}/pinned-ref/reset",
         "core crew_reset_pinned_ref: clears only this project's remembered default branch, audited in the same transaction; a later task reads the ref the checkout has then; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/projects/{id}/worker-provider/set",
+        "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -259,6 +264,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/api/crew/projects/{id}/pinned-ref/reset",
             post(pinned_ref_reset),
         )
+        .route(
+            "/api/crew/projects/{id}/worker-provider/set",
+            post(worker_provider_set),
+        )
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
@@ -301,6 +310,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/guard/targets", get(guard_targets))
         .route("/api/crew/guard/test", get(guard_test))
         .route("/api/crew/projects/{id}/pinned-ref", get(pinned_ref))
+        .route(
+            "/api/crew/projects/{id}/worker-provider",
+            get(worker_provider),
+        )
         .route("/api/crew/classes", get(classes))
         .route("/api/crew/classes/test", get(classes_test))
         .route("/api/crew/route/{task_id}", get(route_view))
@@ -510,6 +523,28 @@ async fn pinned_ref_reset(
     Path(project_id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_reset_pinned_ref(&project_id).await?))
+}
+
+/// The project's stored worker-provider choice; `same_as_lead` when none. Read-only.
+async fn worker_provider(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_worker_provider_view(&project_id)?))
+}
+
+/// A person chooses where this project's workers are routed when a brief names no engine.
+async fn worker_provider_set(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewWorkerProviderSet>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .crew_set_worker_provider(&project_id, &body)
+            .await?,
+    ))
 }
 
 fn required(query: &QueryMap, name: &str) -> Result<String, CoreError> {

@@ -258,6 +258,7 @@ impl Core {
                 classes: None,
             },
             &machine.views,
+            &thread.project_id,
         )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
         self.capacity_start_check(
@@ -323,7 +324,7 @@ impl Core {
             default_engine: machine.default_engine.clone(),
             classes: Some(&classes),
         };
-        let router_config = match self.crew_router_config_with_mappings() {
+        let router_config = match self.crew_router_config_with_mappings(&thread.project_id) {
             Ok(config) => config,
             Err(error) => {
                 self.crew_needs_person(&task.id, &error.message, false);
@@ -454,8 +455,9 @@ impl Core {
         &self,
         input: &RouteInput<'_>,
         views: &[super::view::EngineView],
+        project_id: &str,
     ) -> Result<(), CrewError> {
-        let Ok(config) = self.crew_router_config_with_mappings() else {
+        let Ok(config) = self.crew_router_config_with_mappings(project_id) else {
             return Ok(());
         };
         let Err(RouteFailure::Refused(refusal)) =

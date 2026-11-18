@@ -49,6 +49,7 @@ mod crew_schema;
 #[cfg(test)]
 mod crew_tests;
 mod crew_tier_settings;
+mod crew_worker_provider;
 mod hub;
 mod installs;
 mod migrations;

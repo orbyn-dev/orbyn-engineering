@@ -41,6 +41,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/guard/targets/{id}/remove"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
+    ("POST", "/api/crew/projects/{id}/worker-provider/set"),
 ];
 
 /// Reads confer no action authority. The notice projection may record observed
@@ -77,6 +78,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/classes"),
     ("GET", "/api/crew/classes/test"),
     ("GET", "/api/crew/projects/{id}/pinned-ref"),
+    ("GET", "/api/crew/projects/{id}/worker-provider"),
     ("GET", "/api/crew/route/{id}"),
     ("GET", "/api/crew/escapes"),
     ("GET", "/api/crew/escapes/thresholds"),

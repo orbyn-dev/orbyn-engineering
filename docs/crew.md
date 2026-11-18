@@ -294,8 +294,14 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
      are all refused takes that same later path. Approver runs are not confined, so they do not use this filter. `crew_route`
      shows the same rejections.
 2. Provider, then score. With no engine named and a non-review role, the lead's own provider (engine family) comes
-   first (`RouterConfig::worker_provider`, default `WorkerProvider::SameAsLead`; a later Settings choice may set
-   `WorkerProvider::Any`, and nothing sets it yet; it has no serialized form yet). Another provider takes the work only when the lead's is refused or not available, and the route says so
+   first (`RouterConfig::worker_provider`, the per-project **Worker provider** setting: `same_as_lead` (default) or `any`, where `any`
+   lets every allowed provider compete on score, still after the refusal and platform filters). It is stored per project in the existing
+   `project_preferences` table, key `crew_worker_provider` (no migration); absent, damaged or unknown text reads as `same_as_lead`, and
+   saving `same_as_lead` clears the row. `GET /api/crew/projects/{id}/worker-provider` reads it; `POST .../worker-provider/set` with
+   `{"worker_provider": "same_as_lead" | "any"}` saves it. The write is a Person route behind the Crew Preview gate and `local_only`: it needs the
+   person key (desktop only, so browser mode and the CLI get `403 desktop_required`), writes a `crew.worker_provider.set` audit row in the same
+   transaction, and no MCP tool reaches it. `crew_start`, `crew_route` and review routing read it for the project of the lead's thread; a task
+   already routed keeps its engine. The Settings > Crew row follows the Designer's frame. Under `same_as_lead` another provider takes the work only when the lead's is refused or not available, and the route says so
    (`lead_provider_unavailable`: "Codex workers are not available here, so Claude takes this."); otherwise the route
    carries `lead_provider`. Review lanes, second keys and finding checks keep the other-vendor rule and ignore this.
    Inside the chosen provider: score. Pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from

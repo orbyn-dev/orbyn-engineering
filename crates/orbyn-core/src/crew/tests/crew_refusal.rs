@@ -368,3 +368,89 @@ mod core {
         );
     }
 }
+
+fn routed_any(
+    brief: &orbyn_contracts::Brief,
+    engines: &[crate::crew::EngineView],
+    ask: &Ask,
+) -> Result<orbyn_contracts::RouteDecision, crate::crew::RouteFailure> {
+    let config = crate::crew::RouterConfig {
+        worker_provider: crate::crew::WorkerProvider::Any,
+        ..crate::crew::RouterConfig::default()
+    };
+    crate::crew::route(
+        &crate::crew::RouteInput {
+            brief,
+            run_id: orbyn_contracts::CrewId::new("run-01").unwrap(),
+            created_at: orbyn_contracts::CrewTimestamp::new("2026-11-12T09:00:00Z").unwrap(),
+            role: ask.role,
+            lane: ask
+                .lane
+                .map(|l| orbyn_contracts::CrewToken::new(l).unwrap()),
+            lane_keeps_lead: false,
+            author_engine: ask
+                .author
+                .map(|a| orbyn_contracts::CrewToken::new(a).unwrap()),
+            lead_engine: ask
+                .lead
+                .map(|l| orbyn_contracts::CrewToken::new(l).unwrap()),
+            default_engine: None,
+            classes: None,
+        },
+        engines,
+        &config,
+        &crate::crew::EvalHistory::default(),
+    )
+}
+
+#[test]
+fn any_still_leaves_out_an_engine_whose_worker_run_would_be_refused() {
+    let ask = Ask {
+        lead: Some("claude"),
+        ..Ask::default()
+    };
+    // Codex has the headroom and would win under `any`, but a worker on it would be refused.
+    let engines = [headroom("claude", 80), refusing(headroom("codex", 0))];
+    let decision = routed_any(&brief(json!({})), &engines, &ask).unwrap();
+    assert_eq!(decision.engine.as_str(), "claude");
+    assert!(
+        decision
+            .rejected
+            .iter()
+            .any(|r| r.engine.as_str() == "codex" && r.text.as_str().contains("not available"))
+    );
+    // Pinning it is refused as before.
+    let pinned = routed_any(&brief(pin("codex")), &engines, &ask);
+    assert!(matches!(pinned, Err(crate::crew::RouteFailure::Refused(_))));
+}
+
+#[test]
+fn a_review_lane_goes_to_another_vendor_under_any_too() {
+    // The default setting is covered by `a_review_lane_still_goes_to_another_vendor_and_a_pin_is_honoured`.
+    let lane = Ask {
+        role: Some(RouteRole::Review),
+        lane: Some("correctness"),
+        author: Some("claude"),
+        lead: Some("claude"),
+        ..Ask::default()
+    };
+    // Claude has the better headroom, yet a review never runs on the author's vendor.
+    let engines = [headroom("claude", 0), headroom("codex", 90)];
+    let decision = routed_any(&reading(json!({ "kind": "review" })), &engines, &lane).unwrap();
+    assert_eq!(decision.engine.as_str(), "codex");
+    assert!(!has(&decision, "lead_provider"));
+}
+
+#[test]
+fn the_stored_names_are_same_as_lead_and_any() {
+    use crate::crew::WorkerProvider;
+    for (text, value) in [
+        ("\"same_as_lead\"", WorkerProvider::SameAsLead),
+        ("\"any\"", WorkerProvider::Any),
+    ] {
+        assert_eq!(serde_json::from_str::<WorkerProvider>(text).unwrap(), value);
+        assert_eq!(serde_json::to_string(&value).unwrap(), text);
+    }
+    assert!(serde_json::from_str::<WorkerProvider>("\"all\"").is_err());
+    assert_eq!(WorkerProvider::default(), WorkerProvider::SameAsLead);
+}

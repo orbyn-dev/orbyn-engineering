@@ -87,15 +87,54 @@ impl Core {
     }
     /// Fallible so a storage failure cannot silently restore higher-tier defaults.
     /// Revision zero uses the explicit CoreConfig seed, never name-derived ACP tiers.
+    /// `project_id` is the project of the thread being routed: its stored worker provider fills
+    /// `worker_provider` (absent or unknown reads as the lead's provider).
     pub(in crate::crew) fn crew_router_config_with_mappings(
         &self,
+        project_id: &str,
     ) -> std::result::Result<RouterConfig, CrewError> {
         let mut config = self.crew_router_config();
         let saved = self.store.crew_acp_tiers().map_err(internal)?;
         if saved.revision > 0 {
             config.acp_tiers = saved.assignments;
         }
+        config.worker_provider = self
+            .store
+            .crew_worker_provider(project_id)
+            .map_err(internal)?;
         Ok(config)
+    }
+
+    /// `GET /api/crew/projects/{id}/worker-provider`: the project's stored choice, `same_as_lead` when none.
+    pub fn crew_worker_provider_view(
+        &self,
+        project_id: &str,
+    ) -> Result<orbyn_contracts::CrewWorkerProviderView> {
+        self.crew_preview_only()?;
+        crate::crew::valid_id(project_id)?;
+        self.store.project(project_id)?;
+        Ok(orbyn_contracts::CrewWorkerProviderView {
+            project: project_id.to_owned(),
+            worker_provider: self.store.crew_worker_provider(project_id)?,
+        })
+    }
+
+    /// `PUT /api/crew/projects/{id}/worker-provider`: a person's choice for one project, audited. It changes where work
+    /// runs, so no model tool reaches it. The next start or dry run reads it; a task already routed keeps its engine.
+    pub async fn crew_set_worker_provider(
+        &self,
+        project_id: &str,
+        change: &orbyn_contracts::CrewWorkerProviderSet,
+    ) -> Result<orbyn_contracts::CrewWorkerProviderView> {
+        self.crew_preview_only()?;
+        crate::crew::valid_id(project_id)?;
+        self.store.project(project_id)?;
+        // A start reads the setting while it holds this lock, so a save never lands between routing and its record.
+        let _held = self.crew_starts.lock().await;
+        self.store
+            .set_crew_worker_provider(project_id, change.worker_provider, "user")?;
+        drop(_held);
+        self.crew_worker_provider_view(project_id)
     }
 
     pub fn crew_engine_tiers(&self) -> Result<Value> {
