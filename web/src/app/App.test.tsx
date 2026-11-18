@@ -165,7 +165,7 @@ describe("App against the mock API", () => {
       for (const thread of mock.threads) thread.active_run = null;
     };
     const openDialog = async (user: ReturnType<typeof userEvent.setup>) => {
-      await user.click(await screen.findByRole("button", { name: "Updates available: 1 app, 1 Skills library, 1 engine" }));
+      await user.click(await screen.findByRole("button", { name: "Updates available: 1 app, 1 engine, 1 Skills library" }));
       return screen.findByRole("dialog", { name: "Update everything" });
     };
 
@@ -211,8 +211,8 @@ describe("App against the mock API", () => {
       idle();
       const user = userEvent.setup();
       render(<App />);
-      const pill = await screen.findByRole("button", { name: "Updates available: 1 app, 1 Skills library, 1 engine" });
-      expect(pill).toHaveTextContent("App 1 · Library 1 · Engines 1");
+      const pill = await screen.findByRole("button", { name: "Updates available: 1 app, 1 engine, 1 Skills library" });
+      expect(pill).toHaveTextContent("App 1 · Engines 1 · Library 1");
       expect(pill.querySelector("svg.logo")).toHaveAttribute("data-logo", "16");
       await user.click(pill);
       const dialog = await screen.findByRole("dialog", { name: "Update everything" });
@@ -281,7 +281,7 @@ describe("App against the mock API", () => {
       });
       const user = userEvent.setup();
       render(<App />);
-      await user.click(await screen.findByRole("button", { name: "Updates available: 1 Skills library, 1 engine" }));
+      await user.click(await screen.findByRole("button", { name: "Updates available: 1 engine, 1 Skills library" }));
       const dialog = await screen.findByRole("dialog", { name: "Update everything" });
       expect(within(dialog).getByText(/Replace the orbynd binary/)).toBeInTheDocument();
       expect(within(dialog).queryByRole("button", { name: "Update everything" })).toBeDisabled();
@@ -313,6 +313,18 @@ describe("App against the mock API", () => {
       expect(screen.queryByRole("button", { name: /^Updates available/ })).toBeNull();
     });
 
+    it("reads App update when only an app update exists that this build cannot apply", async () => {
+      idle();
+      mock.patchUpdates({
+        engines: [],
+        library: { ...mock.updates.library, behind: 0, incoming: [] },
+        app: { ...mock.updates.app, can_apply: false, mode: "desktop", blocked_reason: "Runs are active." },
+      });
+      render(<App />);
+      const pill = await screen.findByRole("button", { name: "App update" });
+      expect(pill).toHaveTextContent("App update");
+    });
+
     it("labels the library and engine notices when the app has no channel", async () => {
       idle();
       mock.patchUpdates({
@@ -320,8 +332,8 @@ describe("App against the mock API", () => {
       });
       const user = userEvent.setup();
       render(<App />);
-      const pill = await screen.findByRole("button", { name: "Updates available: 1 Skills library, 1 engine" });
-      expect(pill).toHaveTextContent("Library 1 · Engines 1");
+      const pill = await screen.findByRole("button", { name: "Updates available: 1 engine, 1 Skills library" });
+      expect(pill).toHaveTextContent("Engines 1 · Library 1");
 
       await user.click(pill);
       const dialog = await screen.findByRole("dialog", { name: "Update everything" });

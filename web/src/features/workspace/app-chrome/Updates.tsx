@@ -228,14 +228,15 @@ export function UpdatePill() {
   const { app, library, engines } = availableSources(status);
   const sources = [
     app ? { label: "App 1", spoken: "1 app" } : null,
-    library ? { label: "Library 1", spoken: "1 Skills library" } : null,
     engines ? { label: `Engines ${engines}`, spoken: `${engines} ${engines === 1 ? "engine" : "engines"}` } : null,
+    library ? { label: "Library 1", spoken: "1 Skills library" } : null,
   ].filter((source) => source !== null);
-  const serverUpdate = status.app.mode === "server" && appHasUpdate(status);
+  // An app update this build cannot apply here (a server, or runs still active) has no count; the dialog keeps its reason.
+  const manualOnly = appHasUpdate(status) && !app;
   const failed = failedStep(run) !== null || Boolean(run?.error);
-  if (!sources.length && !serverUpdate && !run?.running && !failed) return null;
+  if (!sources.length && !manualOnly && !run?.running && !failed) return null;
 
-  const label = sources.length ? sources.map((source) => source.label).join(" · ") : "Server update";
+  const label = sources.length ? sources.map((source) => source.label).join(" · ") : "App update";
   const spoken = sources.length ? `Updates available: ${sources.map((source) => source.spoken).join(", ")}` : label;
 
   const steps = run?.steps ?? [];
