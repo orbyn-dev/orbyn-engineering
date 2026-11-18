@@ -4,6 +4,8 @@
 //! the Crew Preview flag off neither does anything.
 
 use orbyn_contracts::{CrewError, ErrorCode};
+use std::time::Duration;
+
 use serde_json::json;
 
 use super::{Author, Priority, StartDecision, record_at_merge, start_allowed, waiting_count};
@@ -11,9 +13,54 @@ use crate::app::Core;
 use crate::error::CoreError;
 use crate::store::{MergeRecord, Store};
 
+/// What a person reads on a `provenance_failed` row. Code-owned and fixed per stage: never git's output, a path or an
+/// error's text, which can hold an absolute path of this machine.
+fn failure_reason(stage: &str) -> &'static str {
+    match stage {
+        "hunks" => {
+            "The merged changes could not be read or stored, so their authorship was not recorded."
+        }
+        "note" => {
+            "The local provenance note could not be written, so the merge's lines are not counted."
+        }
+        _ => "Provenance could not be recorded for this merge.",
+    }
+}
+
+/// The ledger write is retried a few times: a failure row that is lost is the one silent outcome this hook must not have.
+const LEDGER_TRIES: u32 = 3;
+
+/// Writes one `provenance_failed` row on the merge's task: the stage, a fixed reason, that the merge reads as Not
+/// measured, and `resolved: false` until a retry succeeds. A store failure is retried, then logged.
+fn write_failure(store: &Store, merge: &MergeRecord, stage: &str) {
+    let body = json!({
+        "stage": stage,
+        "why": failure_reason(stage),
+        "coverage": "Not measured",
+        "retry": "at the next merge",
+        "resolved": false,
+    });
+    for attempt in 1..=LEDGER_TRIES {
+        match store.add_crew_autopilot_event(
+            &merge.task_id,
+            &merge.crew_id,
+            "provenance_failed",
+            &body,
+        ) {
+            Ok(_) => return,
+            Err(write) if attempt == LEDGER_TRIES => {
+                tracing::warn!(error = %write, task = %merge.task_id, "could not write a provenance_failed event");
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(20 * u64::from(attempt))),
+        }
+    }
+}
+
 /// Records the provenance of one stored merge. A failure is written to the approval ledger on the merge's task as
-/// `provenance_failed` (the same place `area_breaker_failed` goes), logged, and returned so a test can see the failure
-/// path was taken. The caller never lets it fail the merge: the merge has already happened.
+/// `provenance_failed` (the same place `area_breaker_failed` goes) with a fixed reason, logged with its detail, and
+/// returned so a test can see the failure path was taken. The merge then reads as Not measured in coverage: a failed
+/// record leaves no note, and a merge without one is never counted. The caller never lets it fail the merge: the merge
+/// has already happened.
 pub(crate) async fn record_provenance(
     store: &Store,
     merge: &MergeRecord,
@@ -30,13 +77,65 @@ pub(crate) async fn record_provenance(
         Err(error) => ("hunks", error),
     };
     tracing::warn!(%error, stage, task = %merge.task_id, "the merge's provenance was not recorded");
-    let body = json!({ "stage": stage, "why": error.public_message(), "resolved": false });
-    if let Err(write) =
-        store.add_crew_autopilot_event(&merge.task_id, &merge.crew_id, "provenance_failed", &body)
-    {
-        tracing::warn!(error = %write, task = %merge.task_id, "could not write a provenance_failed event");
-    }
+    write_failure(store, merge, stage);
     Err(error)
+}
+
+/// The most unresolved failures one retry pass looks at.
+const RETRY_READ: u32 = 10;
+
+/// Tries again every merge whose provenance failed and has not since been recorded, oldest first, at most
+/// `RETRY_READ` per pass. A try that works writes a `resolved: true` row on the same task and the merge then counts in
+/// coverage; one that fails again changes nothing (the first row already says so) and is tried at the next pass. The
+/// range is recorded as of its own merge time, so a repository whose first merge failed begins measuring at it.
+pub(crate) async fn retry_provenance(store: &Store) {
+    let Ok(failures) = store.crew_unresolved_provenance_failures(RETRY_READ) else {
+        return;
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for failure in failures {
+        if !seen.insert(failure.task_id.clone()) {
+            continue;
+        }
+        let Ok(Some(merge)) = store.crew_merge(&failure.task_id) else {
+            continue;
+        };
+        let agent = agent_of(store, &merge);
+        let retried = match record_at_merge(store, &merge, &agent, &[], merge.merged_unix).await {
+            Ok(recorded) => recorded.note,
+            Err(error) => Err(error),
+        };
+        match retried {
+            Ok(()) => {
+                let body = json!({ "stage": failure.body["stage"], "resolved": true });
+                if let Err(error) = store.add_crew_autopilot_event(
+                    &merge.task_id,
+                    &merge.crew_id,
+                    "provenance_failed",
+                    &body,
+                ) {
+                    tracing::warn!(%error, task = %merge.task_id, "could not mark a provenance failure resolved");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, task = %merge.task_id, "the merge's provenance still fails");
+            }
+        }
+    }
+}
+
+/// The task's engine, and its routed model when that decision was for this engine.
+fn agent_of(store: &Store, merge: &MergeRecord) -> Author {
+    let model = store
+        .crew_route_decisions(&merge.task_id)
+        .ok()
+        .and_then(|all| all.into_iter().next_back())
+        .filter(|d| d.engine.as_str() == merge.engine)
+        .map(|d| d.model.as_str().to_owned());
+    Author::Agent {
+        engine: merge.engine.clone(),
+        model,
+    }
 }
 
 /// What `capacity_start_check` says first, so a caller can tell this refusal from any other `not_authorized`.
@@ -141,24 +240,18 @@ impl Core {
         if !self.crew_enabled() {
             return;
         }
-        let model = self
-            .store
-            .crew_route_decisions(&merge.task_id)
-            .ok()
-            .and_then(|all| all.into_iter().next_back())
-            .filter(|d| d.engine.as_str() == merge.engine)
-            .map(|d| d.model.as_str().to_owned());
-        let agent = Author::Agent {
-            engine: merge.engine.clone(),
-            model,
-        };
+        let agent = agent_of(&self.store, merge);
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             tracing::warn!(task = %merge.task_id, "no runtime to record the merge's provenance on");
+            // Not silent: the ledger says it, and a later pass records it.
+            write_failure(&self.store, merge, "start");
             return;
         };
         let (store, merge) = (self.store.clone(), merge.clone());
         runtime.spawn(async move {
-            // Already logged and written to the ledger inside.
+            // Earlier failures first, so a transient one heals at the next merge. Already logged and written to the
+            // ledger inside.
+            retry_provenance(&store).await;
             let _ = record_provenance(&store, &merge, agent, now).await;
         });
     }
