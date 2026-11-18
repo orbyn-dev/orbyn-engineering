@@ -554,11 +554,12 @@ async fn with_the_flag_off_the_writes_are_not_there_and_a_remote_viewer_cannot_u
 // PR 4: a created check. Propose, accept, retry and withdraw are person routes; accept alone starts a worker. The rules (the proof, the
 // test-only diff, the merge queue, the states) are tested in `orbyn-core` (`crew/tests/escape_check.rs`); these are the transport.
 
-const CHECK_WRITES: [&str; 4] = [
+const CHECK_WRITES: [&str; 5] = [
     "/api/crew/escapes/esc_one/check",
     "/api/crew/escapes/esc_one/check/accept",
     "/api/crew/escapes/esc_one/check/retry",
     "/api/crew/escapes/esc_one/check/withdraw",
+    "/api/crew/escapes/esc_one/check/approve",
 ];
 
 fn check_seen(state: &str) -> Value {
@@ -569,6 +570,8 @@ fn check_body(path: &str, project: &str, state: &str) -> Value {
     if path.ends_with("/check") {
         json!({ "project": project, "seen": check_seen(state), "path": "tests/escape_check.txt",
                "asserts": "The value is fixed.", "run": "git grep -q x -- tests/escape_check.txt" })
+    } else if path.ends_with("/approve") {
+        json!({ "project": project, "seen": check_seen(state), "commit": "a".repeat(40), "diff_hash": "b".repeat(64) })
     } else {
         json!({ "project": project, "seen": check_seen(state) })
     }
@@ -584,6 +587,7 @@ async fn the_check_routes_are_person_routes_an_agent_cannot_reach_and_need_the_k
         "/api/crew/escapes/{id}/check/accept",
         "/api/crew/escapes/{id}/check/retry",
         "/api/crew/escapes/{id}/check/withdraw",
+        "/api/crew/escapes/{id}/check/approve",
     ] {
         assert!(STATE_CHANGING.contains(&("POST", route)), "{route}");
     }
@@ -679,6 +683,17 @@ async fn the_check_routes_map_a_stale_view_a_missing_check_and_bad_input_to_plai
             (status, &reply["code"]),
             (404, &json!("not_found")),
             "{path}: {reply}"
+        );
+    }
+    // An approval names the exact commit and hash: anything that is not one is refused before it is looked at.
+    for (field, value) in [("commit", "xyz"), ("diff_hash", "123")] {
+        let mut body = check_body(CHECK_WRITES[4], &project, "confirmed");
+        body[field] = json!(value);
+        let (status, reply) = go(CHECK_WRITES[4], body).await;
+        assert_eq!(
+            (status, &reply["code"]),
+            (400, &json!("invalid_input")),
+            "{field}: {reply}"
         );
     }
     // Bodies without `seen` or with a field that is not part of the contract are refused.

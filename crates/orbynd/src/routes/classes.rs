@@ -94,6 +94,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/escapes/{id}/check/accept"),
     ("POST", "/api/crew/escapes/{id}/check/retry"),
     ("POST", "/api/crew/escapes/{id}/check/withdraw"),
+    ("POST", "/api/crew/escapes/{id}/check/approve"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -495,6 +496,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/escapes/{id}/check/withdraw",
         "Crew write behind local_only: the person withdraws a check that is not merged",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/approve",
+        "Crew write behind local_only: the person approves the exact change a proof may run on a machine that cannot restrict it",
     ),
     (
         "POST",

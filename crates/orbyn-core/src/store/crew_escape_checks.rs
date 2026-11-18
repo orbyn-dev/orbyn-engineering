@@ -45,6 +45,14 @@ pub struct EscapeCheckRecord {
     pub proof: Option<EscapeCheckProof>,
     pub note: Option<String>,
     pub attempts: u32,
+    /// The worker's change as the core read it (commit, hash over paths and bytes, paths), once the task passed.
+    pub diff_commit: Option<String>,
+    pub diff_hash: Option<String>,
+    pub diff_paths: Vec<String>,
+    /// What a person approved: the commit and hash of the change. The proof on a machine that cannot restrict it runs only a change whose
+    /// commit and hash equal these.
+    pub approved_commit: Option<String>,
+    pub approved_hash: Option<String>,
     pub proposed_unix: i64,
     pub updated_unix: i64,
 }
@@ -106,6 +114,15 @@ fn check_row(row: &Row<'_>) -> rusqlite::Result<EscapeCheckRecord> {
             .transpose()?,
         note: row.get("note")?,
         attempts: row.get("attempts")?,
+        diff_commit: row.get("diff_commit")?,
+        diff_hash: row.get("diff_hash")?,
+        diff_paths: row
+            .get::<_, Option<String>>("diff_paths")?
+            .map(|text| serde_json::from_str(&text).map_err(bad))
+            .transpose()?
+            .unwrap_or_default(),
+        approved_commit: row.get("approved_commit")?,
+        approved_hash: row.get("approved_hash")?,
         proposed_unix: row.get("proposed_unix")?,
         updated_unix: row.get("updated_unix")?,
     })
@@ -294,6 +311,7 @@ impl Store {
         project: &str,
         id: &str,
         seen: &EscapeCheckSeen,
+        expect: &CheckProposal<'_>,
         task_id: &str,
         at: i64,
     ) -> Result<(EscapeRecord, EscapeCheckRecord, bool)> {
@@ -312,6 +330,19 @@ impl Store {
                     "Only a confirmed escape can have a check written.".into(),
                 ));
             }
+            if escape.gap == Some(EscapeGap::ToolingGap) {
+                return Err(CoreError::Invalid(
+                    "This escape is now a tooling gap, which has no proposal. Change the gap to a test gap first.".into(),
+                ));
+            }
+            // The brief the caller wrote was made from the proposal it read; accept only that proposal.
+            if (&check.path[..], &check.asserts[..], &check.run[..], &check.fix_commit[..])
+                != (expect.path, expect.asserts, expect.run, expect.fix_commit)
+            {
+                return Err(CoreError::Stale(
+                    "This proposal changed since the brief was written. Reload it and accept again.".into(),
+                ));
+            }
             room(tx, project, 0, 3)?;
             audit(
                 tx,
@@ -322,6 +353,7 @@ impl Store {
             )?;
             changed(tx.execute(
                 "UPDATE crew_escape_checks SET state = 'writing', task_id = ?1, proof = NULL, note = NULL,
+                        diff_commit = NULL, diff_hash = NULL, diff_paths = NULL, approved_commit = NULL, approved_hash = NULL,
                         attempts = attempts + 1, updated_unix = ?2
                  WHERE escape_id = ?3 AND state = 'proposed'",
                 params![task_id, at, id],
@@ -357,7 +389,7 @@ impl Store {
                 json!({ "project": project, "escape": id, "task": task_id, "why": why }),
             )?;
             changed(tx.execute(
-                "UPDATE crew_escape_checks SET state = 'proposed', task_id = NULL, note = ?1, updated_unix = ?2
+                "UPDATE crew_escape_checks SET state = 'proposed', task_id = NULL, note = ?1, diff_commit = NULL, diff_hash = NULL, diff_paths = NULL, approved_commit = NULL, approved_hash = NULL, updated_unix = ?2
                  WHERE escape_id = ?3 AND state = 'writing' AND task_id = ?4",
                 params![why.chars().take(200).collect::<String>(), at, id, task_id],
             )?)?;
@@ -392,7 +424,7 @@ impl Store {
                 json!({ "project": project, "escape": id, "was_task": check.task_id, "attempts": check.attempts }),
             )?;
             changed(tx.execute(
-                "UPDATE crew_escape_checks SET state = 'proposed', task_id = NULL, proof = NULL, note = NULL, updated_unix = ?1
+                "UPDATE crew_escape_checks SET state = 'proposed', task_id = NULL, proof = NULL, note = NULL, diff_commit = NULL, diff_hash = NULL, diff_paths = NULL, approved_commit = NULL, approved_hash = NULL, updated_unix = ?1
                  WHERE escape_id = ?2 AND state = 'failed'",
                 params![at, id],
             )?)?;
@@ -555,5 +587,128 @@ impl Store {
             )?;
             Ok(true)
         })
+    }
+
+    /// The core records the worker's change as it read it from git. Only a `writing` check of this task; the same commit and hash
+    /// again changes nothing, and a different commit clears any approval of an earlier one.
+    pub fn record_escape_check_diff(
+        &self,
+        escape_id: &str,
+        task_id: &str,
+        commit: &str,
+        hash: &str,
+        paths: &[String],
+        at: i64,
+    ) -> Result<bool> {
+        self.commit(|tx, _| {
+            let Some(check) = read(tx, escape_id)? else {
+                return Ok(false);
+            };
+            if check.state != EscapeCheckState::Writing
+                || check.task_id.as_deref() != Some(task_id)
+                || (check.diff_commit.as_deref(), check.diff_hash.as_deref())
+                    == (Some(commit), Some(hash))
+            {
+                return Ok(false);
+            }
+            tx.execute(
+                "UPDATE crew_escape_checks SET diff_commit = ?1, diff_hash = ?2, diff_paths = ?3,
+                        approved_commit = NULL, approved_hash = NULL, updated_unix = ?4
+                 WHERE escape_id = ?5 AND state = 'writing' AND task_id = ?6",
+                params![
+                    commit,
+                    hash,
+                    serde_json::to_string(paths)?,
+                    at,
+                    escape_id,
+                    task_id
+                ],
+            )?;
+            Ok(true)
+        })
+    }
+
+    /// A person approves exactly the change the core read: its commit and hash. Audit row first. The same approval again changes
+    /// nothing; a commit or hash that is not the current change is `stale`.
+    pub fn approve_escape_check(
+        &self,
+        project: &str,
+        id: &str,
+        seen: &EscapeCheckSeen,
+        commit: &str,
+        hash: &str,
+        at: i64,
+    ) -> Result<(EscapeRecord, EscapeCheckRecord, bool)> {
+        self.commit(|tx, _| {
+            let escape = load(tx, project, id)?;
+            let check = read(tx, id)?.ok_or_else(|| CoreError::NotFound("check".into()))?;
+            if (check.approved_commit.as_deref(), check.approved_hash.as_deref())
+                == (Some(commit), Some(hash))
+            {
+                return Ok((escape, check, false));
+            }
+            stale(&escape, Some(&check), seen)?;
+            if check.state != EscapeCheckState::Writing || check.diff_commit.is_none() {
+                return Err(CoreError::Invalid(
+                    "There is no change waiting for approval on this check.".into(),
+                ));
+            }
+            if (check.diff_commit.as_deref(), check.diff_hash.as_deref())
+                != (Some(commit), Some(hash))
+            {
+                return Err(CoreError::Stale(
+                    "The change differs from the one you saw. Reload it and approve again.".into(),
+                ));
+            }
+            room(tx, project, 0, 1)?;
+            audit(
+                tx,
+                "crew.escape.check.approve",
+                project,
+                id,
+                json!({ "project": project, "escape": id, "task": check.task_id, "commit": commit,
+                        "diff_hash": hash, "paths": check.diff_paths }),
+            )?;
+            changed(tx.execute(
+                "UPDATE crew_escape_checks SET approved_commit = ?1, approved_hash = ?2, updated_unix = ?3
+                 WHERE escape_id = ?4 AND state = 'writing' AND diff_commit = ?1 AND diff_hash = ?2",
+                params![commit, hash, at, id],
+            )?)?;
+            let check = read(tx, id)?.ok_or_else(|| unreadable(()))?;
+            Ok((escape, check, true))
+        })
+    }
+
+    /// Withdrawn checks whose task still has an open entry in the merge queue: `(escape id, task id)`. A withdrawn check never merges.
+    pub fn crew_escape_checks_withdrawn_queued(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.reader();
+        let mut query = conn
+            .prepare(
+                "SELECT c.escape_id, c.task_id FROM crew_escape_checks c
+                 JOIN crew_merge_queue q ON q.task_id = c.task_id
+                 WHERE c.state = 'withdrawn' AND q.state IN ('waiting', 'queued', 'blocked') LIMIT 200",
+            )
+            .map_err(unreadable)?;
+        query
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(unreadable)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(unreadable)
+    }
+
+    /// `writing` checks whose task does not exist: the process ended between the accept and the start of the task.
+    pub fn crew_escape_checks_without_task(&self) -> Result<Vec<EscapeCheckRecord>> {
+        let conn = self.reader();
+        let mut query = conn
+            .prepare(
+                "SELECT * FROM crew_escape_checks c WHERE c.state = 'writing'
+                 AND NOT EXISTS (SELECT 1 FROM crew_tasks t WHERE t.id = c.task_id) LIMIT 200",
+            )
+            .map_err(unreadable)?;
+        query
+            .query_map([], check_row)
+            .map_err(unreadable)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(unreadable)
     }
 }

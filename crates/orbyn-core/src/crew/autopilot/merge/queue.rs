@@ -90,6 +90,7 @@ impl Core {
         target: &MergeTarget,
         now: i64,
     ) -> Result<MergeEntry> {
+        self.refuse_unproven_escape_check(task_id)?;
         let task = self
             .store
             .crew_task(task_id)?

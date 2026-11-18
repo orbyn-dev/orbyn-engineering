@@ -242,6 +242,7 @@
     ["POST","/api/crew/escapes/mark","person"],
     ["POST","/api/crew/escapes/{id}/check","person"],
     ["POST","/api/crew/escapes/{id}/check/accept","person"],
+    ["POST","/api/crew/escapes/{id}/check/approve","person"],
     ["POST","/api/crew/escapes/{id}/check/retry","person"],
     ["POST","/api/crew/escapes/{id}/check/withdraw","person"],
     ["POST","/api/crew/escapes/{id}/confirm","person"],

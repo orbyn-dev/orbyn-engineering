@@ -74,6 +74,7 @@ fn writing(store: &Store, id: &str) {
             PROJECT,
             id,
             &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            &proposal(),
             TASK,
             AT + 1,
         )
@@ -311,14 +312,21 @@ fn a_stale_view_and_another_projects_escape_are_refused_and_write_nothing() {
 
     proposed(&store, &id);
     // The check changed since the person looked: accepting a check seen as absent is stale.
-    let accepted =
-        store.accept_escape_check(PROJECT, &id, &seen(EscapeState::Confirmed, None), TASK, AT);
+    let accepted = store.accept_escape_check(
+        PROJECT,
+        &id,
+        &seen(EscapeState::Confirmed, None),
+        &proposal(),
+        TASK,
+        AT,
+    );
     assert!(matches!(accepted, Err(CoreError::Stale(_))), "{accepted:?}");
     assert_eq!(audits(&store), ["crew.escape.check.propose"]);
     let elsewhere = store.accept_escape_check(
         "another-project",
         &id,
         &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+        &proposal(),
         TASK,
         AT,
     );
@@ -337,6 +345,7 @@ fn accept_writes_the_audit_row_and_writing_with_the_task_and_a_repeat_changes_no
             PROJECT,
             &id,
             &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            &proposal(),
             TASK,
             AT + 1,
         )
@@ -369,6 +378,7 @@ fn accept_writes_the_audit_row_and_writing_with_the_task_and_a_repeat_changes_no
             PROJECT,
             &id,
             &seen(EscapeState::Confirmed, None),
+            &proposal(),
             "sha256:other",
             AT + 9,
         )
@@ -499,7 +509,7 @@ fn a_failed_check_is_retried_to_a_proposal_that_only_accept_starts() {
 
     let seen_failed = seen(EscapeState::Confirmed, Some(EscapeCheckState::Failed));
     // Accept is for a proposal only.
-    let early = store.accept_escape_check(PROJECT, &id, &seen_failed, TASK, AT + 3);
+    let early = store.accept_escape_check(PROJECT, &id, &seen_failed, &proposal(), TASK, AT + 3);
     assert!(matches!(early, Err(CoreError::Invalid(_))), "{early:?}");
 
     let (_, retried) = store
@@ -689,4 +699,314 @@ fn the_table_refuses_a_writing_check_with_no_task_and_an_unknown_state_and_follo
         store.crew_escape_check(&id),
         Err(CoreError::Unreadable(_))
     ));
+}
+
+const COMMIT: &str = "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0";
+const HASH: &str = "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a";
+
+fn writing_seen() -> EscapeCheckSeen {
+    seen(EscapeState::Confirmed, Some(EscapeCheckState::Writing))
+}
+
+fn record_diff(store: &Store, id: &str, commit: &str, hash: &str) -> bool {
+    store
+        .record_escape_check_diff(
+            id,
+            TASK,
+            commit,
+            hash,
+            &["tests/escape_check.txt".to_owned()],
+            AT + 5,
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_diff_is_recorded_for_the_writing_check_of_that_task_only_and_a_new_one_clears_the_approval() {
+    let (_dir, store, _task, id) = confirmed();
+    proposed(&store, &id);
+    // A proposal has no diff.
+    assert!(!record_diff(&store, &id, COMMIT, HASH));
+    writing(&store, &id);
+    assert!(
+        !store
+            .record_escape_check_diff(&id, "sha256:other", COMMIT, HASH, &[], AT + 5)
+            .unwrap(),
+        "another task's diff is not recorded"
+    );
+    assert!(record_diff(&store, &id, COMMIT, HASH));
+    assert!(
+        !record_diff(&store, &id, COMMIT, HASH),
+        "the same change twice changes nothing"
+    );
+    let check = store.crew_escape_check(&id).unwrap().unwrap();
+    assert_eq!(
+        (
+            check.diff_commit.as_deref(),
+            check.diff_hash.as_deref(),
+            check.diff_paths.as_slice()
+        ),
+        (
+            Some(COMMIT),
+            Some(HASH),
+            &["tests/escape_check.txt".to_owned()][..]
+        )
+    );
+    store
+        .approve_escape_check(PROJECT, &id, &writing_seen(), COMMIT, HASH, AT + 6)
+        .unwrap();
+    assert!(
+        store
+            .crew_escape_check(&id)
+            .unwrap()
+            .unwrap()
+            .approved_commit
+            .is_some()
+    );
+    // A different change drops the approval of the earlier one.
+    assert!(record_diff(&store, &id, &"d".repeat(40), HASH));
+    let check = store.crew_escape_check(&id).unwrap().unwrap();
+    assert_eq!((check.approved_commit, check.approved_hash), (None, None));
+}
+
+#[test]
+fn an_approval_binds_the_exact_commit_and_hash_with_the_audit_row_first_and_a_repeat_changes_nothing()
+ {
+    let (_dir, store, _task, id) = confirmed();
+    writing(&store, &id);
+    // Nothing waits yet.
+    let none = store.approve_escape_check(PROJECT, &id, &writing_seen(), COMMIT, HASH, AT + 6);
+    assert!(matches!(none, Err(CoreError::Invalid(_))), "{none:?}");
+    record_diff(&store, &id, COMMIT, HASH);
+    let audits_before = audits(&store).len();
+    for (commit, hash) in [(&"a".repeat(40)[..], HASH), (COMMIT, &"b".repeat(64)[..])] {
+        let wrong = store.approve_escape_check(PROJECT, &id, &writing_seen(), commit, hash, AT + 6);
+        assert!(matches!(wrong, Err(CoreError::Stale(_))), "{wrong:?}");
+    }
+    let old_view = store.approve_escape_check(
+        PROJECT,
+        &id,
+        &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+        COMMIT,
+        HASH,
+        AT + 6,
+    );
+    assert!(matches!(old_view, Err(CoreError::Stale(_))), "{old_view:?}");
+    let elsewhere = store.approve_escape_check(
+        "another-project",
+        &id,
+        &writing_seen(),
+        COMMIT,
+        HASH,
+        AT + 6,
+    );
+    assert!(
+        matches!(elsewhere, Err(CoreError::NotFound(_))),
+        "{elsewhere:?}"
+    );
+    assert_eq!(
+        audits(&store).len(),
+        audits_before,
+        "a refused approval writes nothing"
+    );
+
+    let (_, check, written) = store
+        .approve_escape_check(PROJECT, &id, &writing_seen(), COMMIT, HASH, AT + 6)
+        .unwrap();
+    assert!(written);
+    assert_eq!(
+        (
+            check.approved_commit.as_deref(),
+            check.approved_hash.as_deref()
+        ),
+        (Some(COMMIT), Some(HASH))
+    );
+    assert_eq!(audits(&store).last().unwrap(), "crew.escape.check.approve");
+    let detail: String = store
+        .reader()
+        .query_row(
+            "SELECT detail FROM audit_events WHERE action = 'crew.escape.check.approve'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(detail.contains(COMMIT) && detail.contains(HASH), "{detail}");
+    let (_, again, written) = store
+        .approve_escape_check(PROJECT, &id, &writing_seen(), COMMIT, HASH, AT + 9)
+        .unwrap();
+    assert!(!written);
+    assert_eq!(again, check);
+    assert_eq!(audits(&store).len(), audits_before + 1);
+    // A withdrawn check cannot be approved.
+    store
+        .withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 10)
+        .unwrap();
+    let late = store.approve_escape_check(
+        PROJECT,
+        &id,
+        &seen(EscapeState::Confirmed, Some(EscapeCheckState::Withdrawn)),
+        "e".repeat(40).as_str(),
+        HASH,
+        AT + 11,
+    );
+    assert!(matches!(late, Err(CoreError::Invalid(_))), "{late:?}");
+}
+
+#[test]
+fn accept_is_refused_when_the_proposal_changed_or_the_escape_became_a_tooling_gap_and_clears_any_diff()
+ {
+    let (_dir, store, _task, id) = confirmed();
+    proposed(&store, &id);
+    let proposed_seen = seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed));
+    for changed in [
+        CheckProposal {
+            path: "tests/other.txt",
+            ..proposal()
+        },
+        CheckProposal {
+            asserts: "Something else.",
+            ..proposal()
+        },
+        CheckProposal {
+            run: "git grep -q y",
+            ..proposal()
+        },
+        CheckProposal {
+            fix_commit: &"9".repeat(40),
+            ..proposal()
+        },
+    ] {
+        let refused =
+            store.accept_escape_check(PROJECT, &id, &proposed_seen, &changed, TASK, AT + 1);
+        assert!(matches!(refused, Err(CoreError::Stale(_))), "{refused:?}");
+    }
+    assert_eq!(
+        store.crew_escape_check(&id).unwrap().unwrap().state,
+        EscapeCheckState::Proposed
+    );
+    store
+        .set_escape_gap(
+            PROJECT,
+            &id,
+            &orbyn_contracts::EscapeSeen {
+                state: EscapeState::Confirmed,
+                gap: None,
+            },
+            EscapeGap::ToolingGap,
+            AT + 2,
+        )
+        .unwrap();
+    let tooling = store.accept_escape_check(
+        PROJECT,
+        &id,
+        &EscapeCheckSeen {
+            state: EscapeState::Confirmed,
+            gap: Some(EscapeGap::ToolingGap),
+            check: Some(EscapeCheckState::Proposed),
+        },
+        &proposal(),
+        TASK,
+        AT + 3,
+    );
+    assert!(matches!(tooling, Err(CoreError::Invalid(_))), "{tooling:?}");
+    assert_eq!(
+        store.crew_escape_check(&id).unwrap().unwrap().state,
+        EscapeCheckState::Proposed
+    );
+
+    // A retry after a failure starts clean: no diff and no approval carry over.
+    let (_dir, store, _task, id) = confirmed();
+    writing(&store, &id);
+    record_diff(&store, &id, COMMIT, HASH);
+    store
+        .approve_escape_check(PROJECT, &id, &writing_seen(), COMMIT, HASH, AT + 6)
+        .unwrap();
+    store
+        .finish_escape_check(
+            &id,
+            TASK,
+            &CheckFinish::Failed {
+                note: "no".into(),
+                proof: None,
+            },
+            AT + 7,
+        )
+        .unwrap();
+    store
+        .retry_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Failed)),
+            AT + 8,
+        )
+        .unwrap();
+    let check = store.crew_escape_check(&id).unwrap().unwrap();
+    assert_eq!(
+        (
+            check.diff_commit,
+            check.diff_hash,
+            check.approved_commit,
+            check.approved_hash,
+            check.diff_paths.len()
+        ),
+        (None, None, None, None, 0)
+    );
+}
+
+#[test]
+fn the_tick_finds_writing_checks_with_no_task_and_withdrawn_checks_still_queued() {
+    let (_dir, store, task, id) = confirmed();
+    // `TASK` is no task of this store's: a writing check on it is one a crash left behind.
+    writing(&store, &id);
+    let stuck = store.crew_escape_checks_without_task().unwrap();
+    assert_eq!(
+        stuck
+            .iter()
+            .map(|c| c.escape_id.as_str())
+            .collect::<Vec<_>>(),
+        [id.as_str()]
+    );
+    store
+        .withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 2)
+        .unwrap();
+    assert!(store.crew_escape_checks_without_task().unwrap().is_empty());
+    assert!(
+        store
+            .crew_escape_checks_withdrawn_queued()
+            .unwrap()
+            .is_empty()
+    );
+    // A check on a real task, withdrawn while that task waits in the queue.
+    let (_dir, store, _task, id2) = confirmed();
+    let task2 = format!("sha256:{:064x}", 0xbb);
+    store
+        .reader()
+        .execute(
+            "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at) VALUES (?1, 'crew-1', 'run-bb', 't', 't')",
+            [&task2],
+        )
+        .unwrap();
+    proposed(&store, &id2);
+    store
+        .accept_escape_check(
+            PROJECT,
+            &id2,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            &proposal(),
+            &task2,
+            AT + 1,
+        )
+        .unwrap();
+    assert!(store.crew_escape_checks_without_task().unwrap().is_empty());
+    store
+        .withdraw_escape_check(PROJECT, &id2, &writing_seen(), AT + 2)
+        .unwrap();
+    store
+        .add_merge_entry(&crate::crew::fixtures::merge_entry(&task2, "/p", "x"))
+        .unwrap();
+    assert_eq!(
+        store.crew_escape_checks_withdrawn_queued().unwrap(),
+        [(id2.clone(), task2.clone())]
+    );
+    let _ = task;
 }

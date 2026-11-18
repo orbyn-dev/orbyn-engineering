@@ -235,7 +235,8 @@ pub struct EscapeGapSet {
 
 wire_enum! {
 /// Where a created check stands (slice 4k, PR 4). `proposed` is only a proposal: nothing runs until a person accepts. `writing` is a
-/// worker writing the test files. `proven` passed the proof (it fails on the escaped merge and passes on the fix or revert) and has
+/// worker writing the test files, or, when the worker is done on a machine that cannot restrict the proof, the proof waiting for a
+/// person to approve the files. `proven` passed the proof (it fails on the escaped merge and passes on the fix or revert) and has
 /// gone to the merge queue like any change. `failed` is a worker that stopped, a diff outside the test files, or a proof that did not
 /// hold (including a check that passes on both commits). `withdrawn` and `merged` are final.
 pub enum EscapeCheckState {
@@ -281,6 +282,15 @@ pub struct EscapeCheckRow {
     pub note: Option<String>,
     /// How many times a person accepted it.
     pub attempts: u32,
+    /// The worker's change as the core read it: the commit, a SHA-256 over its paths and bytes, and its paths (added test files only).
+    /// Present once the worker's task passed.
+    pub diff_commit: Option<String>,
+    pub diff_hash: Option<String>,
+    pub diff_paths: Vec<String>,
+    /// True while the proof waits for a person to approve exactly this commit and hash (a machine that cannot restrict the proof).
+    pub awaiting_approval: bool,
+    /// True when a person approved exactly `diff_commit` and `diff_hash`.
+    pub approved: bool,
     /// One plain sentence that says where the check stands.
     pub line: String,
     #[ts(type = "number")]
@@ -330,6 +340,17 @@ wire! {
 pub struct EscapeCheckAct {
     pub project: String,
     pub seen: EscapeCheckSeen,
+}
+}
+
+wire! {
+/// A person approves the worker's change so the proof may run it (`POST /api/crew/escapes/{id}/check/approve`), on a machine that
+/// cannot restrict the proof. The approval names the commit and the hash the person saw; a different change needs a new approval.
+pub struct EscapeCheckApprove {
+    pub project: String,
+    pub seen: EscapeCheckSeen,
+    pub commit: String,
+    pub diff_hash: String,
 }
 }
 

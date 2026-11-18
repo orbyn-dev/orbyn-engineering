@@ -11,14 +11,18 @@
 mod check;
 mod check_brief;
 pub mod check_paths;
+mod check_proof;
 mod person;
 mod possible;
 mod scan;
 mod thresholds;
 mod view;
 
+pub use check::escape_check_blocks_queue;
 #[cfg(test)]
 pub(crate) use check::escape_check_change;
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use check_proof::confined as check_proof_confined_for_test;
 pub use scan::{
     COMMITS_PER_MERGE, CURSOR_KEY, GIT_CALLS_PER_SCAN, Limits, MERGES_PER_SCAN, SCAN_SECONDS,
     ScanOutcome,

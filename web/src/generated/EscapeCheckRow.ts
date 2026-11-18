@@ -39,6 +39,19 @@ note: string | null,
  */
 attempts: number, 
 /**
+ * The worker's change as the core read it: the commit, a SHA-256 over its paths and bytes, and its paths (added test files only).
+ * Present once the worker's task passed.
+ */
+diff_commit: string | null, diff_hash: string | null, diff_paths: Array<string>, 
+/**
+ * True while the proof waits for a person to approve exactly this commit and hash (a machine that cannot restrict the proof).
+ */
+awaiting_approval: boolean, 
+/**
+ * True when a person approved exactly `diff_commit` and `diff_hash`.
+ */
+approved: boolean, 
+/**
  * One plain sentence that says where the check stands.
  */
 line: string, proposed_unix: number, updated_unix: number, };

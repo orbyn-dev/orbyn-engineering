@@ -1,35 +1,54 @@
-//! Which paths a created check may add (docs/crew/escapes.md, decision 4: "a created check only adds test files, never policy files").
+//! Which path a created check may add (docs/crew/escapes.md, decision 4: "a created check only adds test files, never policy files").
 //! The design names no globs, so these are the ones this version uses, and they are the only rule: the core compares the diff of the
 //! worker's change against them and refuses anything else, whatever the worker or its brief said.
 //!
-//! A path is a **test file** when it is relative, has no `..`, `.git`, empty or backslash segment, no glob character (`* ? [ ] { } !`) and no `:` or quote, is not a **policy file** (below), and
-//! either a folder in it is `tests`, `test`, `__tests__`, `spec`, `specs` or `e2e`, or its name starts `test_` or holds `.test.`,
-//! `.spec.`, `_test.` or `_spec.`. Case is ignored.
+//! A path is a **test file** when it is relative and plain ASCII; has no empty, `.`, `..` or hidden (leading `.`) segment, no segment
+//! ending in a dot or a space, no Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with or without an
+//! extension), no backslash, colon, quote, control character or glob character (`* ? [ ] { } !`) and at most 200 bytes; is not a **policy
+//! file** (below); and either a folder in it is `tests`, `test`, `__tests__`, `spec`, `specs` or `e2e`, or its name starts `test_` or holds
+//! `.test.`, `.spec.`, `_test.` or `_spec.`. Case is ignored. Non-ASCII is refused rather than normalised, so no look-alike spelling can
+//! name another file.
 //!
-//! A **policy file** is never a test file even inside a test folder: anything under `.github/`, `.orbyn/`, `.circleci/`, `.gitlab*`,
-//! `.cargo/`, `Jenkinsfile`, the manifests and runners that define what a check command does (`package.json`, `Makefile`, `justfile`,
-//! `Taskfile.yml`, `tox.ini`, `noxfile.py`, `pyproject.toml`, `build.rs`, `conftest.py`, `pytest.ini`, `setup.cfg`, `setup.py`,
-//! `Cargo.toml`, `Cargo.lock`) and `jest.config.*` and `vitest.config.*`.
+//! A **policy file** is never a test file, even inside a test folder: anything under `.github/`, `.orbyn/`, `.circleci/`, `.gitlab*` or
+//! `.cargo/` (and every hidden segment, which also covers `.gitattributes`, `.gitignore`, `.gitmodules`, `.babelrc` and `.env`), and the
+//! manifests, lock files, build files and runner or tool configuration that decide what a check command does: `package.json`,
+//! `Makefile`, `justfile`, `Taskfile.yml`, `tox.ini`, `noxfile.py`, `pyproject.toml`, `build.rs`, `conftest.py`, `pytest.ini`,
+//! `setup.cfg`, `setup.py`, `Cargo.toml`, `Cargo.lock`, `go.mod`, `go.sum`, `CMakeLists.txt`, `pom.xml`, `Dockerfile`, `BUILD`,
+//! `BUILD.bazel`, `WORKSPACE`, `rust-toolchain*`, `build.gradle*`, `settings.gradle*`, `tsconfig*.json`, `babel.config.*`,
+//! `jest.config.*`, `vitest.config.*`, `playwright.config.*`, `karma.conf.*`, `docker-compose*`, and the lock files of npm, yarn and pnpm.
+//! `conftest.py` is a policy file: it changes how every test in its folder runs, so a check cannot add one.
 //!
-//! The worker's change is **only added files**: a modified, deleted, renamed, copied or type-changed path, a symlink, a submodule or
-//! more than [`MOST_FILES`] files is refused, and the one path the person proposed must be among them.
-
-/// The most files one check adds.
-pub const MOST_FILES: usize = 5;
+//! The worker's change is **exactly one added file**, the path the person proposed: the key's `file_scope` allows that one path, so a
+//! second file would already fail the worker's verification, and the core judges it again from git. A modified, deleted, renamed, copied
+//! or type-changed path, a symlink or a submodule is refused.
 
 /// The longest path, in bytes.
 pub const PATH_MAX: usize = 200;
 
+const RESERVED: [&str; 4] = ["con", "prn", "aux", "nul"];
+
+fn reserved(segment: &str) -> bool {
+    let stem = segment.split('.').next().unwrap_or(segment).to_lowercase();
+    RESERVED.contains(&stem.as_str())
+        || (stem.len() == 4
+            && (stem.starts_with("com") || stem.starts_with("lpt"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
 fn segments_ok(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= PATH_MAX
+        && path.is_ascii()
         && !path.starts_with('/')
-        && !path.contains('\\')
-        && !path.contains([':', '*', '?', '[', ']', '{', '}', '!', '"', '\''])
+        && !path.contains(['\\', ':', '*', '?', '[', ']', '{', '}', '!', '"', '\''])
         && !path.chars().any(char::is_control)
-        && path
-            .split('/')
-            .all(|s| !s.is_empty() && s != "." && s != ".." && !s.eq_ignore_ascii_case(".git"))
+        && path.split('/').all(|s| {
+            !s.is_empty()
+                && !s.starts_with('.')
+                && !s.ends_with('.')
+                && !s.ends_with(' ')
+                && !reserved(s)
+        })
 }
 
 /// A file that defines what a check command does or how the repository is gated.
@@ -46,6 +65,17 @@ pub fn is_policy(path: &str) -> bool {
         || matches!(
             name,
             "package.json"
+                | "package-lock.json"
+                | "yarn.lock"
+                | "pnpm-lock.yaml"
+                | "go.mod"
+                | "go.sum"
+                | "cmakelists.txt"
+                | "pom.xml"
+                | "dockerfile"
+                | "build"
+                | "build.bazel"
+                | "workspace"
                 | "makefile"
                 | "justfile"
                 | "taskfile.yml"
@@ -60,8 +90,20 @@ pub fn is_policy(path: &str) -> bool {
                 | "cargo.toml"
                 | "cargo.lock"
         )
-        || name.starts_with("jest.config.")
-        || name.starts_with("vitest.config.")
+        || [
+            "jest.config.",
+            "vitest.config.",
+            "playwright.config.",
+            "babel.config.",
+            "karma.conf.",
+            "rust-toolchain",
+            "build.gradle",
+            "settings.gradle",
+            "docker-compose",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+        || (name.starts_with("tsconfig") && name.ends_with(".json"))
 }
 
 /// Whether `path` is a test file by the rule in the module notes.
@@ -127,16 +169,11 @@ pub fn parse_raw(out: &[u8]) -> Result<Vec<Change>, String> {
     Ok(changes)
 }
 
-/// Judges the worker's whole change against the rule: the paths added, or the plain reason it is refused. `wanted` is the path the
-/// person proposed, which must be one of them.
+/// Judges the worker's whole change against the rule: the one path added, or the plain reason it is refused. `wanted` is the path the
+/// person proposed, which must be the only change.
 pub fn judge(changes: &[Change], wanted: &str) -> Result<Vec<String>, String> {
     if changes.is_empty() {
         return Err("The worker committed no change, so there is no test file to prove.".into());
-    }
-    if changes.len() > MOST_FILES {
-        return Err(format!(
-            "The change adds more than {MOST_FILES} files. A check adds a few test files."
-        ));
     }
     for change in changes {
         if change.status != 'A' {
@@ -154,13 +191,17 @@ pub fn judge(changes: &[Change], wanted: &str) -> Result<Vec<String>, String> {
         if let Some(why) = refusal(&change.path) {
             return Err(format!("{}: {why}", change.path));
         }
+        if change.path != wanted {
+            return Err(format!(
+                "The change adds {}, but a check adds only the proposed file {wanted}.",
+                change.path
+            ));
+        }
     }
-    if !changes.iter().any(|c| c.path == wanted) {
-        return Err(format!(
-            "The change does not add the proposed file {wanted}."
-        ));
+    if changes.len() != 1 {
+        return Err("The change adds more than the one proposed file.".into());
     }
-    Ok(changes.iter().map(|c| c.path.clone()).collect())
+    Ok(vec![wanted.to_owned()])
 }
 
 #[cfg(test)]
@@ -195,6 +236,37 @@ mod tests {
             "tests/**",
             "tests/a?.rs",
             "tests/[a].rs",
+            "tests/a.rs.",
+            "tests/a ",
+            "tests/trailing./a.rs",
+            "tests/con.rs",
+            "tests/CON",
+            "tests/aux.test.ts",
+            "tests/Nul.txt",
+            "tests/com1.rs",
+            "tests/LPT9.test.js",
+            "tests/caf\u{e9}.test.js",
+            "tests/.hidden.test.js",
+            "tests/.gitattributes",
+            "tests/.gitignore",
+            "tests/.gitmodules",
+            "tests/.babelrc",
+            "tests/tsconfig.json",
+            "tests/tsconfig.app.json",
+            "tests/playwright.config.ts",
+            "tests/jest.config.js",
+            "tests/pytest.ini",
+            "tests/go.mod",
+            "tests/BUILD",
+            "tests/BUILD.bazel",
+            "tests/CMakeLists.txt",
+            "tests/build.gradle",
+            "tests/build.gradle.kts",
+            "tests/rust-toolchain.toml",
+            "tests/Cargo.toml",
+            "tests/package-lock.json",
+            "tests/Dockerfile",
+            "tests/conftest.py",
             "package.json",
             "tests/package.json",
             "tests/Makefile",
@@ -209,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn a_change_must_only_add_plain_test_files_and_include_the_proposed_one() {
+    fn a_change_must_be_exactly_the_one_proposed_added_file() {
         let add = |path: &str| Change {
             status: 'A',
             mode: "100644".into(),
@@ -222,6 +294,7 @@ mod tests {
         assert!(judge(&[], "tests/a.rs").is_err());
         assert!(judge(&[add("tests/b.rs")], "tests/a.rs").is_err());
         assert!(judge(&[add("tests/a.rs"), add("src/lib.rs")], "tests/a.rs").is_err());
+        assert!(judge(&[add("tests/a.rs"), add("tests/b.rs")], "tests/a.rs").is_err());
         assert!(judge(&[add("tests/a.rs"), add(".orbyn/crew.json")], "tests/a.rs").is_err());
         let mut modified = add("tests/a.rs");
         modified.status = 'M';
@@ -229,10 +302,6 @@ mod tests {
         let mut link = add("tests/a.rs");
         link.mode = "120000".into();
         assert!(judge(&[link], "tests/a.rs").is_err());
-        let many: Vec<Change> = (0..=MOST_FILES)
-            .map(|n| add(&format!("tests/{n}.rs")))
-            .collect();
-        assert!(judge(&many, "tests/0.rs").is_err());
     }
 
     #[test]

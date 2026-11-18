@@ -69,6 +69,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/escapes/{id}/gap"],
   ["POST", "/api/crew/escapes/{id}/check"],
   ["POST", "/api/crew/escapes/{id}/check/accept"],
+  ["POST", "/api/crew/escapes/{id}/check/approve"],
   ["POST", "/api/crew/escapes/{id}/check/retry"],
   ["POST", "/api/crew/escapes/{id}/check/withdraw"],
   ["POST", "/api/crew/projects/{id}/pinned-ref/confirm"],

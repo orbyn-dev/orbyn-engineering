@@ -15,6 +15,13 @@ CREATE TABLE crew_escape_checks (
     proof TEXT CHECK(proof IS NULL OR json_valid(proof)),
     note TEXT CHECK(note IS NULL OR length(note) <= 200),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+    -- The worker's change as the core read it from git: the commit, a SHA-256 over its paths and bytes, and its paths. A person's approval
+    -- (a machine that cannot restrict the proof) names this commit and hash, so a different change needs a new approval.
+    diff_commit TEXT CHECK(diff_commit IS NULL OR length(diff_commit) = 40),
+    diff_hash TEXT CHECK(diff_hash IS NULL OR length(diff_hash) = 64),
+    diff_paths TEXT CHECK(diff_paths IS NULL OR json_valid(diff_paths)),
+    approved_commit TEXT CHECK(approved_commit IS NULL OR length(approved_commit) = 40),
+    approved_hash TEXT CHECK(approved_hash IS NULL OR length(approved_hash) = 64),
     proposed_unix INTEGER NOT NULL,
     updated_unix INTEGER NOT NULL,
     CHECK(state NOT IN ('writing', 'proven', 'merged') OR task_id IS NOT NULL)

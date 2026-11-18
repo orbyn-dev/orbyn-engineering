@@ -36,6 +36,7 @@ impl Core {
         now: i64,
     ) -> Result<MergeEntry> {
         self.crew_preview_only()?;
+        self.refuse_unproven_escape_check(task_id)?;
         if self.config.crew_merge_required_checks.is_empty() {
             return Err(CoreError::Invalid(
                 "the person must configure the forge's required CI names before queueing".into(),

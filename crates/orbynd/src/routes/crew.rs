@@ -253,6 +253,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/escapes/{id}/check/approve",
+        "core crew_escape_check_approve: a person approves exactly the commit and the hash over the paths and bytes the core read from the worker's change, audit row first; only then does a proof that cannot be restricted run it; a different change needs a new approval; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),

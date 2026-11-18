@@ -36,6 +36,7 @@ pub fn writes() -> Router<AppState> {
         .route("/api/crew/escapes/{id}/check", post(check_propose))
         .route("/api/crew/escapes/{id}/check/accept", post(check_accept))
         .route("/api/crew/escapes/{id}/check/retry", post(check_retry))
+        .route("/api/crew/escapes/{id}/check/approve", post(check_approve))
         .route(
             "/api/crew/escapes/{id}/check/withdraw",
             post(check_withdraw),
@@ -141,5 +142,15 @@ async fn check_withdraw(
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(
         state.core.crew_escape_check_withdraw(&id, &body).await?,
+    ))
+}
+
+async fn check_approve(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<wire::EscapeCheckApprove>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state.core.crew_escape_check_approve(&id, &body).await?,
     ))
 }
