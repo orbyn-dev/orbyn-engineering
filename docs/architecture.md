@@ -1636,18 +1636,15 @@ a person's create, move (including rename), or delete request without a thread.
   attempt precedes effects, and the outcome records allow or deny. No file contents
   or arbitrary request paths enter those audit rows. Reads retain their existing
   thread-relative read-only display policy.
-- **Person only, and gated.** The route is protected like every token route, and its handler is the
+- **Person only.** The route is protected like every token route, and its handler is the
   only caller of `Core::explorer_file_action` (a source scan in the explorer tests fails on a
-  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. That is not enough on its
-  own: until #441 is fixed, `orbynd` writes the per-launch service token to the data folder and the
-  `orbyn` CLI reads it, so an engine or crew worker that can read the data folder can call this
-  route as the person. For that reason it is behind the Preview flag Crew uses
-  (`ORBYN_CREW_PREVIEW`, off by default): with the flag off the route answers `404` like a path
-  that does not exist, and Core refuses too. The gate is removed when #441 is fixed. Since step 2
-  of `docs/worker-token-isolation.md` the route also needs the per-launch person key
-  (`x-orbyn-person`) that only the desktop shell holds, so a process that read the token from the
-  data folder gets `403 person_required`, and a service with no shell (browser mode) answers
-  `403 desktop_required`.
+  second one), so no tool, crew task or MCP tool inside Orbyn reaches it. A process that read the
+  per-launch service token from the data folder (an engine or crew worker running as the person)
+  must not reach it either, so the route needs the per-launch person key (`x-orbyn-person`) that
+  only the desktop shell holds (`docs/worker-token-isolation.md`): a token-only caller gets
+  `403 person_required`, and a service with no shell (browser mode) answers
+  `403 desktop_required`. There is no Preview flag on this route and Core has no flag check; the key
+  is the gate.
 - **The root is canonicalized, not refused.** The guard resolves the worktree root to the folder it
   really is before any check, for reads and writes alike, so a project registered under another
   spelling (a Windows 8.3 short name, `/var` for `/private/var`) still reads, and writes stay inside

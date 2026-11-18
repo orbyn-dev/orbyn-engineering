@@ -569,8 +569,10 @@ events record the `actor`: `lead` for the lead's tool, `local_caller` for the lo
 
 **As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
 flag. With it off every route answers 404 for every method, like a path nothing serves, and `/api/info` omits `crew_preview`. The flag is
-read, never set, over HTTP. **The Preview flag stays for development only until [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441)
-is fixed:** a worker runs as the person and can read the service token and the data folder, so it could reach these routes.
+read, never set, over HTTP. **The Preview flag stays while Crew is unfinished, not to keep a worker out:** every route that changes state needs the
+person key only the desktop shell holds (`docs/worker-token-isolation.md`, step 3), so a worker that read the service token
+gets `403 person_required`. What [#441](https://github.com/orbyn-dev/orbyn-engineering/issues/441) still holds is the Windows
+sandbox and the store read.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
 `/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.

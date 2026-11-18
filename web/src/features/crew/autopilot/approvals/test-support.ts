@@ -9,6 +9,9 @@ export const randomNonce = () => Array.from(crypto.getRandomValues(new Uint8Arra
 
 type Invoke = (command: string, args?: Record<string, unknown>) => unknown;
 
+/** The shell also answers `person_key` (the key approve-once sends); a spec's own `invoke` sees only the commands it is about. */
+const shell = (invoke: Invoke): Invoke => (command, args) => (command === "person_key" ? "test-person-key" : invoke(command, args));
+
 /**
  * Makes this window the desktop app (the service says a shell started it, and the shell's bridge answers with `invoke`) or a plain
  * browser tab. Call it after the mock fetch is installed and before the card is drawn.
@@ -21,7 +24,7 @@ export async function inApp(attached: boolean, invoke?: Invoke) {
     }
     return real(input, init);
   }));
-  (window as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } }).__TAURI_INTERNALS__ = attached && invoke ? { invoke } : undefined;
+  (window as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } }).__TAURI_INTERNALS__ = attached && invoke ? { invoke: shell(invoke) } : undefined;
   await readShellStatus();
 }
 

@@ -21,11 +21,6 @@ impl Core {
         action: &ExplorerFileAction,
         actor: &str,
     ) -> Result<()> {
-        // The route is behind the Preview flag until #441 is fixed; the core fails closed too, so
-        // a second caller cannot reach it with the flag off.
-        if !self.config.crew_preview {
-            return Err(CoreError::NotFound("file actions".into()));
-        }
         let _writer = self.explorer.writer.clone().lock_owned().await;
         let audit = AuditRecord {
             actor: actor.to_owned(),

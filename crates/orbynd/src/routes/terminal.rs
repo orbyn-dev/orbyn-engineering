@@ -1,7 +1,9 @@
 //! `GET /ws/terminal/:thread_id`: binary in and out; a JSON text frame
 //! `{cols,rows}` resizes. Trust is checked before the socket upgrades. The same
 //! with `/:terminal` attaches to a named terminal, and `?observe=true` watches
-//! one without being able to type or resize.
+//! one without being able to type or resize. Both routes need the person key (`routes/classes.rs`): a browser cannot set a
+//! header on a socket and the key must not be in the URL, so the page offers it as the subprotocol `orbyn.person.<key>`
+//! beside `orbyn.v1`, and the upgrade answers `orbyn.v1` only (never the key).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,6 +26,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
+use crate::http::access::SOCKET_PROTOCOL;
 use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER};
 use axum::Router;
 use axum::routing::{get, patch, post};
@@ -87,16 +90,18 @@ pub async fn terminal(
             )?
         }
     };
-    Ok(upgrade.on_upgrade(move |socket| {
-        serve(
-            state,
-            thread_id,
-            MAIN_TERMINAL.to_owned(),
-            session,
-            socket,
-            false,
-        )
-    }))
+    Ok(upgrade
+        .protocols([SOCKET_PROTOCOL])
+        .on_upgrade(move |socket| {
+            serve(
+                state,
+                thread_id,
+                MAIN_TERMINAL.to_owned(),
+                session,
+                socket,
+                false,
+            )
+        }))
 }
 
 fn trusted_thread(state: &AppState, id: &str) -> ApiResult<orbyn_contracts::Thread> {
@@ -125,6 +130,7 @@ pub async fn attach(
         .ok_or_else(not_found)?;
     let observe = query.get("observe").is_some_and(|value| value == "true");
     Ok(upgrade
+        .protocols([SOCKET_PROTOCOL])
         .on_upgrade(move |socket| serve(state, thread_id, terminal, session, socket, observe)))
 }
 

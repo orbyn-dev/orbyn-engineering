@@ -33,8 +33,9 @@
 //! the grant up. No caller that only speaks HTTP to the service can approve once, with or without the service token. This is not
 //! OS-level presence (docs/crew.md, "Approving once: local presence"). Deny and dismiss need no grant (they only refuse), so a
 //! token holder can deny or dismiss a hold, never approve one; their ledger rows say `local_caller`, not `person`. Remote viewers
-//! are refused for all three. Until #441 (workers can read the service token and the data folder) is fixed, the Preview flag stays
-//! for development only.
+//! are refused for all three. Every Crew route that changes state also needs the person key (`routes/classes.rs`), so a worker that
+//! read the service token gets `403 person_required`; the Preview flag is for readiness, not for worker-proofing. What #441 still
+//! holds is the Windows sandbox and the store read.
 
 use axum::Json;
 use axum::Router;

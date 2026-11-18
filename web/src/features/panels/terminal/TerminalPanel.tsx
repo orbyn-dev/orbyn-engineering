@@ -2,7 +2,7 @@ import { RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isTerminalShortcut } from "../../../product/shell/shortcuts";
 import { readingKey } from "./terminalKeys";
-import { api } from "../api";
+import { api, personKeyProtocols } from "../api";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
@@ -124,7 +124,8 @@ export function TerminalPanel({
     let cleanup = () => {};
     setConnection("connecting");
 
-    void loadXterm().then(({ Terminal, FitAddon, SearchAddon }) => {
+    // The key for the shell goes as a subprotocol: a socket has no headers and the key never goes in the URL.
+    void Promise.all([loadXterm(), personKeyProtocols()]).then(([{ Terminal, FitAddon, SearchAddon }, protocols]) => {
       if (disposed) return;
       const terminal = new Terminal({
         convertEol: false,
@@ -173,7 +174,7 @@ export function TerminalPanel({
         terminal.options.theme = terminalTheme();
       };
 
-      const socket = new WebSocket(terminalUrl(threadId, window.location, terminalId, observe));
+      const socket = new WebSocket(terminalUrl(threadId, window.location, terminalId, observe), protocols);
       socket.binaryType = "arraybuffer";
       const encoder = new TextEncoder();
 
