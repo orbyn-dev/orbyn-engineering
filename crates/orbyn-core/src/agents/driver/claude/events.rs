@@ -160,6 +160,10 @@ impl StreamMapper {
                 && frame.get("uuid").and_then(Value::as_str) == self.awaiting.as_deref()
             {
                 self.awaiting = None;
+                // The echo proves the prompt's turn has begun, so a held leftover result must not end the run.
+                if self.held.is_some() {
+                    self.resumed = true;
+                }
             } else if matches!(kind, Some("assistant" | "stream_event"))
                 || (kind == Some("system")
                     && frame.get("subtype").and_then(Value::as_str) == Some("task_notification"))

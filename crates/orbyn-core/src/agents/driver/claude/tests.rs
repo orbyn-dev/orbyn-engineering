@@ -116,6 +116,10 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
         "another message's echo is not ours"
     );
     mapper.on_frame(&echo("mine"));
+    assert!(
+        !mapper.waiting_on_hold(),
+        "the echo means the prompt's turn began; a slow first token must not end the run"
+    );
     mapper.on_frame(&said("here is your answer"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
