@@ -133,6 +133,34 @@ describe("useAsync", () => {
       await act(async () => reads[2]?.resolve("follow-up"));
       expect(result.current.data).toBe("follow-up");
     });
+
+    it("releases the lane when setData lands over a read in flight, so a later quiet read still runs", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => result.current.setData("saved"));
+      await act(async () => reads[1]?.resolve("late"));
+      expect(result.current.data).toBe("saved");
+      act(() => { void result.current.refreshQuietly(); });
+      expect(reads).toHaveLength(3);
+      await act(async () => reads[2]?.resolve("fresh"));
+      expect(result.current.data).toBe("fresh");
+    });
+
+    it("runs the one read parked behind a person's read when setData lands", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => { void result.current.refreshQuietly(); });
+      act(() => { void result.current.refreshQuietly(); });
+      expect(reads).toHaveLength(2);
+      act(() => result.current.setData("saved"));
+      expect(reads).toHaveLength(3);
+      await act(async () => reads[2]?.resolve("fresh"));
+      expect(result.current.data).toBe("fresh");
+    });
   });
 
   describe("revisiting a key", () => {

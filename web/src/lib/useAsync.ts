@@ -147,6 +147,12 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
       if (keep) writeKept(key, data);
       if (key !== keyRef.current) return;
       generation.current += 1;
+      // A read in flight is now stale and will never settle, so release the lane as settled() does and run the one parked read.
+      foreground.current = false;
+      if (eventWaiting.current) {
+        eventWaiting.current = false;
+        void runRef.current({ background: true, force: false }, true);
+      }
       setState({ status: "ready", data, error: null, refreshing: false });
     },
     [key, keep],

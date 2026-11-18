@@ -218,22 +218,32 @@ describe("Flow on the real routes", () => {
     expect(screen.getByText("0 of 0 shown")).toBeVisible();
   });
 
-  it("keeps the list and shows no error when a periodic read fails after it was shown", async () => {
+  const failFlow = () => {
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input).includes("/api/crew/flow/") ? new Response(JSON.stringify({ code: "unavailable", message: "The Flow service is busy." }), { status: 503 }) : real(input, init),
+    );
+  };
+  const tickAndSettle = async () => {
+    const before = calls("/api/crew/flow/").length;
+    await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
+    await waitFor(() => expect(calls("/api/crew/flow/").length).toBeGreaterThan(before));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  };
+
+  it("keeps the list, shows no error and keeps polling after a periodic read fails", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       await open("crew");
       await rowsOf();
-      const real = vi.mocked(fetch).getMockImplementation()!;
-      vi.mocked(fetch).mockImplementation(async (input, init) =>
-        String(input).includes("/api/crew/flow/") ? new Response(JSON.stringify({ code: "unavailable", message: "The Flow service is busy." }), { status: 503 }) : real(input, init),
-      );
-      const before = calls("/api/crew/flow/").length;
-      await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
-      await waitFor(() => expect(calls("/api/crew/flow/").length).toBeGreaterThan(before));
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      failFlow();
+      await tickAndSettle();
       expect(await rowsOf()).toHaveLength(6);
       expect(screen.queryByText("The Flow service is busy.")).toBeNull();
       expect(screen.queryByRole("alert")).toBeNull();
+      // The status stayed ready, so the next tick reads again (a failed read used to stop the polling for good).
+      await tickAndSettle();
+      expect(await rowsOf()).toHaveLength(6);
     } finally {
       vi.useRealTimers();
     }
