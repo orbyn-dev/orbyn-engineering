@@ -84,7 +84,8 @@ pub struct BacktestEstimate {
     /// Merges the project recorded 30 to 180 days ago: the ones a replay may use.
     pub eligible_prs: u32,
     pub lanes: Vec<BacktestEstimateLane>,
-    /// False until the escape log exists: the report then shows "Not measured" for outcomes.
+    /// False when the escape log cannot say: it holds no escape, cannot be read whole (damaged or over its cap) or is
+    /// absent. The report then shows "Not measured" for outcomes.
     pub outcomes_measured: bool,
     /// The run in progress, when there is one: only one runs at a time.
     pub running: Option<String>,
@@ -101,6 +102,9 @@ pub struct BacktestLaneRun {
     pub tokens_used: u64,
     pub outcome: BacktestLaneOutcome,
     pub findings_n: u32,
+    /// Confirmed escapes in the window that could not be matched because the files of their fix or revert could not be
+    /// read. Counted here beside the score and never inside it; null unless `outcome` is `scored`.
+    pub unresolved_n: Option<u32>,
     /// Present only when `outcome` is `scored`.
     pub score: Option<LaneScore>,
 }

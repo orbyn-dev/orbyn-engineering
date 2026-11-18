@@ -600,3 +600,48 @@ fn a_full_log_refuses_more_and_never_drops_a_row() {
     );
     assert!(store.crew_escape_of_merge(&task).unwrap().is_none());
 }
+
+/// Every act of a person inside ONE clock second, each clicked twice: the second click of each is the same act (nothing written), and
+/// the changes that differ each get an event of their own, so the unique trail never refuses one.
+#[test]
+fn a_person_acting_and_double_clicking_inside_one_tick_never_errors() {
+    let (_dir, store, _task, id) = with_possible();
+    let gap = |from: Option<EscapeGap>, to: EscapeGap| {
+        let view = EscapeSeen {
+            state: EscapeState::Possible,
+            gap: from,
+        };
+        for _ in 0..2 {
+            store.set_escape_gap(PROJECT, &id, &view, to, AT).unwrap();
+        }
+    };
+    gap(None, EscapeGap::TestGap);
+    gap(Some(EscapeGap::TestGap), EscapeGap::ToolingGap);
+    gap(Some(EscapeGap::ToolingGap), EscapeGap::TestGap);
+    for _ in 0..2 {
+        store
+            .decide_escape(
+                PROJECT,
+                &id,
+                EscapeDecision::Confirm,
+                &EscapeSeen {
+                    state: EscapeState::Possible,
+                    gap: Some(EscapeGap::TestGap),
+                },
+                None,
+                AT,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        kinds(&store, &id),
+        [
+            EscapeEventKind::Detected,
+            EscapeEventKind::Reclassified,
+            EscapeEventKind::Reclassified,
+            EscapeEventKind::Reclassified,
+            EscapeEventKind::Confirmed
+        ]
+    );
+    assert_eq!(audits(&store).len(), 4);
+}
