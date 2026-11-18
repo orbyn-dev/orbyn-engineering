@@ -65,67 +65,82 @@ function unsafeCss(raw: string): boolean {
   return false;
 }
 
-/**
- * Splits CSS into its top-level statements (original text), or null when it cannot be parsed with confidence.
- * Callers run `unsafeCss` first, which already refuses backslashes, comment markers and malformed `url(`.
- */
-function topLevelRules(css: string): string[] | null {
-  // A CSS string ends at a newline, so a newline anywhere makes the string boundaries uncertain.
-  if (/[\n\r\f]/.test(css)) return null;
-  const text = css;
-  const rules: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let quote = "";
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quote) {
-      if (ch === quote) quote = "";
-    } else if (ch === '"' || ch === "'") quote = ch;
-    else if (ch === "{") depth++;
-    else if (ch === "}") {
-      if (--depth < 0) return null;
-      if (depth === 0) {
-        rules.push(text.slice(start, i + 1));
-        start = i + 1;
-      }
-    } else if (ch === ";" && depth === 0) return null; // a block-less at-rule (@import, @charset, @namespace)
-  }
-  if (quote || depth !== 0 || text.slice(start).trim() !== "") return null;
-  return rules;
+interface CssRule {
+  prelude: string;
+  body: string;
+  /** True when the declaration block holds another `{` outside a string. */
+  nested: boolean;
 }
 
 /**
- * Keeps only the rules of a Mermaid style block that cannot reach outside the diagram: selectors that all start with
- * the root svg's own `#id` (how Mermaid scopes its rules), and its `@keyframes`. Returns the original text when
- * nothing is dropped, and null when the block cannot be parsed (drop it whole).
+ * The one CSS tokenizer. Splits `css` into top-level `prelude{body}` rules, tracking strings in preludes and bodies
+ * alike, so every later check works on this split and never re-derives quote state. Returns null when it cannot be
+ * parsed with confidence. Callers run `unsafeCss` first, which refuses backslashes, comment markers and malformed
+ * `url(`; a newline is refused here because a CSS string ends at one.
+ */
+function parseRules(css: string): CssRule[] | null {
+  if (/[\n\r\f]/.test(css)) return null;
+  const rules: CssRule[] = [];
+  let prelude = "";
+  let body = "";
+  let nested = false;
+  let depth = 0;
+  let quote = "";
+  for (const ch of css) {
+    const inBody = depth > 0;
+    if (quote) {
+      if (ch === quote) quote = "";
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "{") {
+      depth++;
+      if (depth === 1) continue; // the block opener itself
+      nested = true;
+    } else if (ch === "}") {
+      if (--depth < 0) return null;
+      if (depth === 0) {
+        rules.push({ prelude, body, nested });
+        prelude = body = "";
+        nested = false;
+        continue;
+      }
+    } else if (ch === ";" && depth === 0) return null; // a block-less at-rule (@import, @charset, @namespace)
+    if (inBody || depth > 0) body += ch;
+    else prelude += ch;
+  }
+  if (quote || depth !== 0 || prelude.trim() !== "") return null;
+  return rules;
+}
+
+/** What may follow the root `#id` in a selector: names, classes, ids, `*`, `>` and descendant spaces, plain pseudo-classes and `[attr]`/`[attr=value]`-style tests. */
+const SELECTOR_TAIL =
+  /^(?:\s+|\s*>\s*|\.[\w-]+|#[\w-]+|:[a-z-]+(?!\()|\*|[\w-]+|\[[\w-]+(?:[$^*]?=(?:"[\w-]*"|'[\w-]*'|[\w-]*))?\])*$/i;
+const KEYFRAME_STEP = /^\s*(?:from|to|[\d.]+%)(?:\s*,\s*(?:from|to|[\d.]+%))*\s*$/i;
+
+/**
+ * Keeps only the rules of a Mermaid style block that cannot reach outside the diagram, and rebuilds the text from
+ * them: rules whose selectors all are `#<rootId>` followed by the strict grammar above (how Mermaid scopes its
+ * rules), with no nested block, and its `@keyframes`. Returns null when the block cannot be parsed (drop it whole).
  */
 function scopeCss(css: string, rootId: string): string | null {
-  const rules = topLevelRules(css);
+  const rules = parseRules(css);
   if (!rules) return null;
-  const own = new RegExp(`^#${rootId.replace(/[^\w-]/g, "\\$&")}(?![\\w-])`);
-  const kept = rules.filter((rule) => {
-    const open = rule.indexOf("{");
-    const prelude = rule.slice(0, open).trim();
-    const frames = /^@keyframes\s+([\w-]+)$/i.exec(prelude);
+  const kept = rules.filter(({ prelude, body, nested }) => {
+    const head = prelude.trim();
+    const frames = /^@keyframes\s+([\w-]+)$/i.exec(head);
     if (frames) {
       // Keyframe names are page-global: only Mermaid's own, or ones prefixed with this diagram's id.
       const name = frames[1]!;
       if (name !== "dash" && name !== "edge-animation-frame" && !(rootId !== "" && name.startsWith(`${rootId}-`))) return false;
-      // Keyframe steps are only `from`, `to` or percentages.
-      const inner = topLevelRules(rule.slice(open + 1, -1));
-      return inner !== null && inner.every((step) => /^\s*(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*\s*\{[^{}]*\}$/i.test(step));
+      const steps = parseRules(body);
+      return steps !== null && steps.every((step) => !step.nested && KEYFRAME_STEP.test(step.prelude));
     }
-    // Mermaid never nests rules; a brace in the declarations (outside strings) is CSS nesting that can leave the scope.
-    const nested = /[{}]/.test(rule.slice(open + 1, -1).replace(/"[^"]*"|'[^']*'/g, ""));
-    return (
-      rootId !== "" &&
-      !nested &&
-      !prelude.startsWith("@") &&
-      prelude.split(",").every((selector) => own.test(selector.trim()) && !/[\\~+]/.test(selector))
-    );
+    if (rootId === "" || nested || head.startsWith("@")) return false;
+    return head.split(",").every((raw) => {
+      const selector = raw.trim();
+      return selector.startsWith(`#${rootId}`) && SELECTOR_TAIL.test(selector.slice(rootId.length + 1)) && !/[\w-]/.test(selector.charAt(rootId.length + 1));
+    });
   });
-  return kept.length === rules.length ? css : kept.join("");
+  return kept.map(({ prelude, body }) => `${prelude}{${body}}`).join("");
 }
 
 function cleanAttributes(el: Element): void {

@@ -228,6 +228,86 @@ describe("sanitizeSvg", () => {
     expect(clean(SVG('<style>#s{content:"{x}"}</style><g/>'))).toContain("<style");
   });
 
+  it("reads a quoted brace in a selector or at-rule prelude as part of the string, not as the block start", () => {
+    for (const css of [
+      '#s:not([x="{"]),body p{display:none;content:"x"}',
+      "#s:not([x='{']),body p{display:none;content:'x'}",
+      '#s:not([x="{"]) ~ *{display:none;content:"x"}',
+      "#s:not([x='{']) ~ *{display:none;content:'x'}",
+      '#s[x="}"],body{display:none}#s[y="{"]{fill:red}',
+      '#s[x="{"],body{display:none;content:"}"}',
+      '#s{fill:red}body[x="{"]{display:none;content:"x"}',
+      '@media x"{"{body{display:none}}',
+      '@keyframes dash"{"x{to{opacity:0}}body{display:none;content:"x"}',
+      '#s:not([x="{"]),html{display:none;content:"x"}',
+      '#s:not([x="{"])+*{display:none;content:"x"}',
+      '#s:is([x="{"]),body p{display:none;content:"x"}',
+      '#s:not([x="{ "]),body p{display:none;content:"x"}',
+      "#s:not([x='{'], [y=\"{\"]),body p,#s{display:none;content:'x'}",
+      '#s:has([x="{"]),:root{display:none;content:"x"}',
+      "#s:is(a,body){display:none}",
+      '#s:where([x="{"],body){display:none;content:"x"}',
+    ]) {
+      expect(clean(SVG(`<style>${css}</style><g/>`)), css).not.toMatch(/display:none/);
+    }
+    // Mermaid's own attribute selectors still pass.
+    expect(clean(SVG('<style>#s [data-look="neo"].node rect{fill:red}#s [id$="-arrowhead"] path{fill:red}</style><g/>'))).toContain("data-look");
+  });
+
+  it("never lets a hostile style leave a rule outside the root id", () => {
+    const hostile = [
+      "body{display:none}",
+      "*{opacity:0}",
+      "#s,body{display:none}",
+      "#sx{fill:red}",
+      "#s~*{display:none}",
+      "#s+*{display:none}",
+      "#s{fill:red}\n#s{fill:red}body{display:none}",
+      '#s{content:"/*"}body{display:none}#s{content:"*/"}',
+      '#s{a:\\"}body{display:none}#s{b:"}',
+      "#s{fill:url(#a')}body{display:none}#s{b:'}",
+      "#s{fill:red;body:has(&) p{display:none}}",
+      "#s{~ *{display:none}}",
+      "#s{@media all{p{display:none}}}",
+      '#s:not([x="{"]),body p{display:none;content:"x"}',
+      "#s:not([x='{']),body p{display:none;content:'x'}",
+      '#s:not([x="{"]) ~ *{display:none;content:"x"}',
+      "@media all{body{display:none}}",
+      "@font-face{font-family:x;src:url(https://evil.test/f)}",
+      "@import url(https://evil.test/a.css);",
+      "@keyframes spin{to{opacity:0}}body{display:none}",
+      ":root{--x:1}",
+      "html{display:none}",
+      "#s{fill:red}}body{display:none}",
+      "#s{fill:red}body{display:none}{",
+      "#s:is(a,body){display:none}",
+      "#s:has(~ body){display:none}",
+      '#s{fill:red}#s [x="a,b"],body{display:none}',
+      "@page{margin:0}",
+      "#s{fill:red}@namespace x;body{display:none}",
+    ];
+    for (const css of hostile) {
+      const root = sanitizeSvg(`<svg xmlns="http://www.w3.org/2000/svg" id="s"><style>${css}</style><g/></svg>`);
+      const holder = document.createElement("div");
+      if (root) holder.append(root);
+      document.body.append(holder);
+      try {
+        for (const sheet of Array.from(document.styleSheets)) {
+          for (const rule of Array.from(sheet.cssRules) as CSSRule[]) {
+            const text = rule.cssText;
+            if (/^@keyframes\s+(dash|edge-animation-frame|s-[\w-]+)\b/.test(text)) continue;
+            const selector = (rule as CSSStyleRule).selectorText ?? "";
+            expect(selector.length, `${css} -> ${text}`).toBeGreaterThan(0);
+            for (const one of selector.split(",")) expect(one.trim(), `${css} -> ${text}`).toMatch(/^#s(?![\w-])/);
+          }
+        }
+      } finally {
+        holder.remove();
+      }
+      expect(holder.innerHTML, css).not.toMatch(/evil\.test|body\{|html\{|@media|@import|@font-face/);
+    }
+  });
+
   it("removes comment nodes inside a style element even when every rule is kept", () => {
     expect(clean(SVG("<style><!-- x -->#s{fill:red}</style><g/>"))).toBe(clean(SVG("<style>#s{fill:red}</style><g/>")));
     expect(clean(SVG("<style><!-- x -->#s{fill:red}</style><g/>"))).not.toContain("<!--");
