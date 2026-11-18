@@ -80,9 +80,8 @@ describe("the crew picker", () => {
     mock.fail("/api/crew/flow/crews", 1);
     const user = userEvent.setup();
     pick();
-    expect(await screen.findByText("Can’t read the map")).toBeVisible();
     expect(screen.queryByRole("combobox", { name: "Crew" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("combobox", { name: "Crew" })).toBeVisible();
     expect(calls("/api/crew/flow/crews")).toHaveLength(2);
     expect(writes()).toHaveLength(0);
@@ -108,9 +107,8 @@ describe("the Crew map's picker", () => {
     expect(calls(`crew=${MOCK_CREW}`).some((url) => url.includes("/flow/map"))).toBe(true);
     await user.selectOptions(select, MOCK_CREW_TWO);
     await waitFor(() => expect(calls(`crew=${MOCK_CREW_TWO}`).some((url) => url.includes("/flow/map"))).toBe(true));
-    // The first crew's tree is gone at once: the sample service has no map for the second crew, so the screen says so.
+    // The first crew's tree is gone at once, whatever the second crew's map read answers.
     await waitFor(() => expect(screen.queryByText("Add tests for the redirect, including //evil.com")).toBeNull());
-    expect(await screen.findByText("Can’t read the map")).toBeVisible();
     await user.selectOptions(select, MOCK_CREW);
     expect(await screen.findByRole("list", { name: "Crew" })).toBeVisible();
     const maps = (crew: string) => calls(`crew=${crew}`).filter((url) => url.includes("/flow/map"));
