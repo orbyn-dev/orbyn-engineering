@@ -174,6 +174,8 @@ pub struct Core {
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
     pub(crate) crew_merges: tokio::sync::Mutex<()>,
+    /// Crew Preview: the reviewer replay's runner and its run in progress.
+    pub(crate) crew_backtest: crate::crew::backtest::Slot,
     _lock: File,
 }
 
@@ -323,11 +325,13 @@ impl Core {
             crew_bus: crate::crew::Bus::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
+            crew_backtest: Default::default(),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
+        core.crew_backtest_recover();
         core.apply_login_preference()?;
         core.wire_changes();
         Ok(core)
