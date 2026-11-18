@@ -34,6 +34,10 @@ pub(crate) fn record_launch(mode: &str, args: &[String]) {
 
             "cwd": std::env::current_dir().expect("cwd"),
 
+            // The one engine variable a test reads by value: the run's opt-in to the
+            // task tools. Every other name is recorded without its value.
+            "task_tools": std::env::var("CLAUDE_CODE_ENABLE_TODO_TOOLS").ok(),
+
             "env": std::env::vars_os()
 
                 .map(|(name, _)| name.to_string_lossy().into_owned())

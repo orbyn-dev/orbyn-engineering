@@ -1,4 +1,4 @@
-use super::args::{CAPABILITY_ENV, session_cwd_in};
+use super::args::{CAPABILITY_ENV, run_env, session_cwd_in};
 use super::catalog::{documented_catalog, read_control};
 use super::events::{StreamMapper, on_user, rejected_limit};
 use super::mcp::{claude_tools, init_tools, parse_mcp_list};
@@ -1274,4 +1274,17 @@ fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
         huge["mcpServers"][MCP_SERVER_NAME]["timeout"],
         json!(24u64 * 24 * 60 * 60 * 1000)
     );
+}
+
+/// The task-tool flag is a person's opt-in: off sets nothing, a confined run gets
+/// nothing, and a value the person already set is left alone, `0` included.
+#[test]
+fn the_task_tools_flag_is_set_only_for_an_opted_in_unconfined_run() {
+    use std::ffi::OsStr;
+    let on = [("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1")];
+    assert!(run_env(false, false, None).is_empty());
+    assert_eq!(run_env(true, false, None), on);
+    assert!(run_env(true, true, None).is_empty());
+    assert!(run_env(true, false, Some(OsStr::new("0"))).is_empty());
+    assert!(run_env(true, false, Some(OsStr::new("1"))).is_empty());
 }

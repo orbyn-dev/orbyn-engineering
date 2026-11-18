@@ -161,6 +161,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         claude_program: std::env::var("ORBYN_CLAUDE_BIN").unwrap_or(defaults.claude_program),
         codex_program: std::env::var("ORBYN_CODEX_BIN").unwrap_or(defaults.codex_program),
         codex_sandbox: sandbox,
+        claude_task_tools: env_flag("ORBYN_CLAUDE_TASK_TOOLS"),
         lookup_latest: !env_flag("ORBYN_OFFLINE"),
         update_timeout: defaults.update_timeout,
         known_engine_ids: known_engine_ids(std::env::var_os("ORBYN_KNOWN_ENGINE_IDS").as_deref())?,

@@ -77,6 +77,15 @@ impl Service {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // The runner's own Claude session or task-tool switches must not decide a test: a
+        // test that needs one asks for it through `options.env`.
+        for name in [
+            "CLAUDECODE",
+            "ORBYN_CLAUDE_TASK_TOOLS",
+            "CLAUDE_CODE_ENABLE_TODO_TOOLS",
+        ] {
+            command.env_remove(name);
+        }
         for (key, value) in &options.env {
             command.env(key, value);
         }
