@@ -577,3 +577,36 @@ async fn the_stored_note_and_rows_carry_unknown_with_the_tasks_engine() {
     );
     assert!(text.contains("\"unknown\""));
 }
+
+#[tokio::test]
+async fn a_trailer_holding_separator_bytes_cannot_forge_a_record_for_another_commit() {
+    let (_db, store) = open();
+    let known = add_task(&store, 7);
+    let dir = TempDir::new();
+    let repo = dir.path().join("repo");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("c.txt"), "base\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "base"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    commit_as(&repo, "victim.txt", "v\n", PERSON, PERSON, "by hand");
+    let victim = git(&repo, &["rev-parse", "HEAD"]);
+    // The next commit's trailer tries to end its record and start one for the victim, with a real task.
+    let forged = format!("work\n\nOrbyn-Task: {known}\x1e{victim}\x1f{known}");
+    commit_as(&repo, "forger.txt", "f\n", PERSON, PERSON, &forged);
+    git(&repo, &["checkout", "-q", "main"]);
+    let before = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["merge", "-q", "--no-ff", "-m", "merge", "feature"]);
+    let merge = git(&repo, &["rev-parse", "HEAD"]);
+    let r = Repo {
+        _dir: dir,
+        path: repo,
+        before,
+        merge,
+        listed_person: String::new(),
+        listed_but_worker: String::new(),
+    };
+    let got = recorded(&store, &r, &known, &[]).await;
+    let of = |path: &str| got.iter().find(|(p, _)| p == path).unwrap().1.clone();
+    assert_eq!(of("victim.txt"), "unknown", "{got:?}");
+}

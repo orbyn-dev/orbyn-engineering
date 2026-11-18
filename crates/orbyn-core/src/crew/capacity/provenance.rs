@@ -446,10 +446,14 @@ const TRAILER_CHUNK: usize = 64;
 /// cannot be read has no entry. Trailer text is whatever the committer wrote: the caller checks each id exists.
 async fn trailer_tasks(repo: &Path, commits: &[String]) -> HashMap<String, Vec<String>> {
     let mut found = HashMap::new();
+    // A message can hold any byte but a NUL, so a fixed separator could be forged into a fake record. Each record
+    // starts with a nonce no message can know, and only ids this call asked about are kept.
+    let nonce = crate::util::new_id();
     let format = format!(
-        "--format=%H%x1f%(trailers:key={},valueonly,unfold,separator=%x2C)%x1e",
+        "--format={nonce}%H%x1f%(trailers:key={},valueonly,unfold,separator=%x2C)",
         TASK_TRAILER
     );
+    let asked: HashSet<&str> = commits.iter().map(String::as_str).collect();
     for chunk in commits
         .iter()
         .take(TRAILER_COMMITS_MAX)
@@ -469,12 +473,12 @@ async fn trailer_tasks(repo: &Path, commits: &[String]) -> HashMap<String, Vec<S
         let Ok(out) = git_byte_exact(repo, &args).await else {
             continue;
         };
-        for record in String::from_utf8_lossy(&out).split('\u{1e}') {
-            let Some((id, values)) = record.trim().split_once('\u{1f}') else {
+        for record in String::from_utf8_lossy(&out).split(nonce.as_str()).skip(1) {
+            let Some((id, values)) = record.split_once('\u{1f}') else {
                 continue;
             };
             let id = id.trim().to_ascii_lowercase();
-            if is_revision(&id) {
+            if is_revision(&id) && asked.contains(id.as_str()) {
                 let tasks = values
                     .split(',')
                     .map(|value| value.trim().to_owned())
