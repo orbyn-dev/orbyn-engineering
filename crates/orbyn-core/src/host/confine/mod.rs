@@ -390,6 +390,19 @@ pub fn unavailable() -> Option<String> {
     platform::unavailable()
 }
 
+/// Why the escape-check proof cannot be confined here, or `None` when it can: [`unavailable`], and on macOS also a `HOME` that
+/// resolves, since the proof's credential-folder denials are built from it and must never be dropped.
+pub fn proof_unavailable() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        unavailable().or_else(platform::proof_unavailable)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        unavailable()
+    }
+}
+
 /// A reason the engine itself cannot take a crew task, whatever the machine.
 pub fn engine_refusal(tier: EngineTier, family: &str) -> Option<&'static str> {
     if tier == EngineTier::Terminal {

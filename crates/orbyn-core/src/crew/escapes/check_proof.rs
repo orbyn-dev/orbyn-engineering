@@ -37,7 +37,7 @@ const TREE_MAX: u64 = 1024 * 1024 * 1024;
 pub fn confined() -> bool {
     #[cfg(target_os = "macos")]
     {
-        crate::host::confine::unavailable().is_none()
+        crate::host::confine::proof_unavailable().is_none()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -204,7 +204,8 @@ pub async fn run(
     tokio::select! {
         biased;
         () = cancel.cancelled() => None,
-        waited = tokio::time::timeout(limit, child.wait()) => match waited {
+        // Recorded as it runs, so a descendant that called `setsid` and outlives a leader that exits is still reaped on the drop below.
+        waited = tokio::time::timeout(limit, child.wait_tracking(Duration::from_millis(100))) => match waited {
             Ok(Ok(status)) => Some(status.success()),
             _ => None,
         },
@@ -372,6 +373,50 @@ mod tests {
         let stop = CancellationToken::new();
         stop.cancel();
         assert_eq!(go("git --version", long, &stop).await, None);
+    }
+
+    /// A test that calls `setsid` leaves the process group, which the deadline and a withdraw used to kill alone: its whole tree is
+    /// reaped now, and so is a `setsid` child left running by a leader that exits 0. The pid is polled for, with no fixed delay, so a
+    /// slow machine only waits longer.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_run_reaps_a_setsid_descendant_at_its_deadline_on_a_cancel_and_after_the_leader_exits()
+     {
+        use crate::testing::{assert_process_reaped, process_alive, setsid_sleeper, sleeper_pid};
+        for how in ["the deadline", "a cancel", "the leader exiting 0"] {
+            let dir = TempDir::new();
+            let data = dir.path().join("data");
+            let root = data.join("proof");
+            std::fs::create_dir_all(&data).unwrap();
+            let pid_file = data.join("pid");
+            let token = CancellationToken::new();
+            let limit = Duration::from_secs(if how == "the deadline" { 8 } else { 600 });
+            let after = if how == "the leader exiting 0" {
+                format!(
+                    "while [ ! -f '{}' ]; do sleep 0.05; done; sleep 1; exit 0",
+                    pid_file.display()
+                )
+            } else {
+                "wait".to_owned()
+            };
+            let started = tokio::spawn({
+                let script = format!("{} {after}", setsid_sleeper(&pid_file, false));
+                let (root, data, token) = (root.clone(), data.clone(), token.clone());
+                async move { run(&script, &root, &data, false, limit, &token).await }
+            });
+            let escaped = sleeper_pid(&pid_file).await;
+            assert!(process_alive(escaped));
+            if how == "a cancel" {
+                token.cancel();
+            }
+            let expected = if how == "the leader exiting 0" {
+                Some(true)
+            } else {
+                None
+            };
+            assert_eq!(started.await.unwrap(), expected, "{how}");
+            assert_process_reaped(escaped, how).await;
+        }
     }
 
     /// The command gets a short, fixed environment: its own `HOME` and `TMPDIR` inside the scratch folder, `CI=1`, and nothing that
