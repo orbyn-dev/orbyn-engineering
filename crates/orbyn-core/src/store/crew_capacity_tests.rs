@@ -165,6 +165,7 @@ fn settings_default_round_trip_and_update() {
     let saved = CapacitySettings {
         limit: 3,
         sampling: Sampling::OneInFour,
+        pause_enabled: true,
     };
     store.set_crew_capacity_settings(&p, saved).unwrap();
     assert_eq!(store.crew_capacity_settings(&p).unwrap(), saved);
@@ -177,6 +178,7 @@ fn settings_default_round_trip_and_update() {
     let updated = CapacitySettings {
         limit: 12,
         sampling: Sampling::Off,
+        pause_enabled: false,
     };
     store.set_crew_capacity_settings(&p, updated).unwrap();
     assert_eq!(store.crew_capacity_settings(&p).unwrap(), updated);
@@ -196,11 +198,13 @@ fn a_limit_of_zero_or_an_unknown_project_is_refused_and_changes_nothing() {
     let saved = CapacitySettings {
         limit: 5,
         sampling: Sampling::OneInFour,
+        pause_enabled: true,
     };
     store.set_crew_capacity_settings(&p, saved).unwrap();
     let zero = CapacitySettings {
         limit: 0,
         sampling: Sampling::Off,
+        pause_enabled: false,
     };
     assert!(matches!(
         store.set_crew_capacity_settings(&p, zero),
@@ -333,4 +337,73 @@ fn a_sample_batch_round_trips_with_chosen_and_not_chosen_and_never_changes() {
         "a refused batch leaves no row"
     );
     assert_eq!(store.crew_review_sample("batch-1").unwrap().unwrap(), batch);
+}
+
+#[test]
+fn migration_50_keeps_a_settings_row_saved_before_it_with_pausing_off() {
+    let dir = TempDir::new();
+    let path = dir.path().join("old50.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v <= 49) {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "INSERT INTO projects (id, path, name, is_git, managed, scratch, created_at) VALUES ('p1', '/r', 'p', 1, 0, 0, 't')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_capacity_settings (project_id, limit_n, sampling) VALUES ('p1', 3, 'one_in_four')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let store = Store::open(&path, "capacity-50").unwrap();
+    assert_eq!(store.upgrade().expect("an upgrade").from, 49);
+    let kept = store.crew_capacity_settings("p1").unwrap();
+    assert_eq!(
+        kept,
+        CapacitySettings {
+            limit: 3,
+            sampling: Sampling::OneInFour,
+            pause_enabled: false
+        }
+    );
+}
+
+#[test]
+fn a_task_write_is_one_transaction_with_an_audit_row_and_a_bad_one_changes_nothing() {
+    let (_dir, store) = open();
+    let id = add_task(&store, 1);
+    let audits = |s: &Store| -> i64 {
+        s.reader()
+            .query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.capacity.task'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let now = store
+        .set_crew_task_capacity(&id, Some(Priority::Low), Some(true))
+        .unwrap();
+    assert_eq!(now, (Priority::Low, true));
+    assert_eq!(audits(&store), 1);
+    assert!(store.set_crew_task_capacity(&id, None, None).is_err());
+    assert!(
+        store
+            .set_crew_task_capacity("missing", Some(Priority::High), None)
+            .is_err()
+    );
+    assert_eq!(audits(&store), 1);
+    assert_eq!(
+        store.crew_task_capacity(&id).unwrap(),
+        (Priority::Low, true)
+    );
 }

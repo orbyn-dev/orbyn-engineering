@@ -172,3 +172,26 @@ pub(super) const CAPABILITY_ENV: &[(&str, &str)] = &[
     ("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),
     ("CLAUDE_CODE_AUTO_CONNECT_IDE", "0"),
 ];
+
+/// The variable that makes the CLI provide the modern task tools (`TaskCreate`,
+/// `TaskUpdate`, `TaskGet`, `TaskList`) on every model. Anthropic documents it as off
+/// unless set, and as leaving `CLAUDE_CODE_ENABLE_TASKS` to choose between those tools
+/// and `TodoWrite`; the driver projects both into the plan activity.
+const TASK_TOOLS_VAR: &str = "CLAUDE_CODE_ENABLE_TODO_TOOLS";
+
+/// What a run adds to the CLI's environment. Nothing unless a person turned the task
+/// tools on for the service (`ORBYN_CLAUDE_TASK_TOOLS=1`, read once at start), the run is
+/// not confined (no confined run has been observed working with them) and the person
+/// has not set the variable themselves: their own value, `0` included, is inherited
+/// untouched. Orbyn never reads this from repository files, worker output or requests.
+pub(super) fn run_env(
+    opted_in: bool,
+    confined: bool,
+    inherited: Option<&std::ffi::OsStr>,
+) -> Vec<(&'static str, &'static str)> {
+    if opted_in && !confined && inherited.is_none() {
+        vec![(TASK_TOOLS_VAR, "1")]
+    } else {
+        Vec::new()
+    }
+}

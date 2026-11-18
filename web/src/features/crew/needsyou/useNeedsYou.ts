@@ -58,6 +58,10 @@ export function useNeedsYou(): NeedsState {
   const background = useAsync("needs-background", (signal) => needsApi.backgroundWaiting(signal));
   const notices = useSecondEngineNotices();
   const reloadNotices = notices.reload;
+  const quietNotices = notices.refreshQuietly;
+  const quietStops = stops.refreshQuietly;
+  const quietReview = review.refreshQuietly;
+  const quietBackground = background.refreshQuietly;
   const reloadStops = stops.reload;
   const reloadReview = review.reload;
   const reloadBackground = background.reload;
@@ -66,13 +70,14 @@ export function useNeedsYou(): NeedsState {
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === "hidden") return;
-      void reloadStops();
-      void reloadReview();
-      void reloadBackground();
-      void reloadNotices();
+      // A read the timer starts keeps the list on screen and never turns a source into an error: only a person's retry does.
+      void quietStops();
+      void quietReview();
+      void quietBackground();
+      void quietNotices();
     }, NEEDS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [reloadStops, reloadReview, reloadBackground, reloadNotices]);
+  }, [quietStops, quietReview, quietBackground, quietNotices]);
 
   const retry = useCallback(() => {
     void reloadHeld();

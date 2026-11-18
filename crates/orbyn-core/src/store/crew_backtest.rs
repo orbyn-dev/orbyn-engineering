@@ -244,6 +244,41 @@ impl Store {
         lanes: &[(String, String, String)],
         created_unix: i64,
     ) -> Result<()> {
+        self.create_run(id, project_id, state, budgets, lanes, created_unix, false)
+    }
+
+    /// `crew_backtest_create` for a run that starts now: when any run is already `running` nothing is written and the
+    /// answer is `CrewTaskBusy`. The check and the insert are one transaction, so two starts cannot both win.
+    pub fn crew_backtest_create_alone(
+        &self,
+        id: &str,
+        project_id: &str,
+        budgets: &BTreeMap<String, u64>,
+        lanes: &[(String, String, String)],
+        created_unix: i64,
+    ) -> Result<()> {
+        self.create_run(
+            id,
+            project_id,
+            BacktestState::Running,
+            budgets,
+            lanes,
+            created_unix,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_run(
+        &self,
+        id: &str,
+        project_id: &str,
+        state: BacktestState,
+        budgets: &BTreeMap<String, u64>,
+        lanes: &[(String, String, String)],
+        created_unix: i64,
+        alone: bool,
+    ) -> Result<()> {
         if budgets.is_empty()
             || budgets
                 .values()
@@ -263,6 +298,18 @@ impl Store {
             )?;
             if !known {
                 return Err(CoreError::NotFound(format!("project {project_id}")));
+            }
+            if alone {
+                let busy: bool = tx.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM crew_backtest_runs WHERE state = 'running')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if busy {
+                    return Err(CoreError::CrewTaskBusy(
+                        "A backtest is already running. Stop it or wait for it to end.".into(),
+                    ));
+                }
             }
             tx.execute(
                 "INSERT INTO crew_backtest_runs (id, project_id, state, budgets, created_unix)
@@ -341,7 +388,8 @@ impl Store {
     }
 
     /// Marks every run left `running` (the app stopped under it) failed with the reason "interrupted", and its open
-    /// lanes with it. Returns how many runs it changed. A later startup hook calls this; nothing does yet.
+    /// lanes with it. Returns how many runs it changed. The core calls it once at startup, when no run of a past process
+    /// can still be alive (a release build aborts on a panic, so a crashed run is never closed by its own process).
     pub fn crew_backtest_recover_interrupted(&self, finished_unix: i64) -> Result<usize> {
         self.commit(|tx, _| {
             let ids: Vec<String> = tx
@@ -353,6 +401,43 @@ impl Store {
             }
             Ok(ids.len())
         })
+    }
+
+    /// Records that a person asked a run to stop: while it is `running` its `stop_reason` becomes `reason`, and the state
+    /// stays `running` until the replay ends, so the one-at-a-time rule holds until the last replay is over. Returns
+    /// whether it recorded the request: a run that is not running, or was already asked, is left as it is.
+    pub fn crew_backtest_ask_stop(&self, id: &str, reason: &str) -> Result<bool> {
+        let changed = self.writer().execute(
+            "UPDATE crew_backtest_runs SET stop_reason = ?2
+              WHERE id = ?1 AND state = 'running' AND stop_reason IS NULL",
+            params![id, reason],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Whether a person asked this run to stop (a running run with a reason). The replay asks before every replay.
+    pub fn crew_backtest_stop_asked(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT stop_reason IS NOT NULL FROM crew_backtest_runs WHERE id = ?1 AND state = 'running'",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// The run in progress, if any.
+    pub fn crew_backtest_running(&self) -> Result<Option<String>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT id FROM crew_backtest_runs WHERE state = 'running' ORDER BY created_unix, id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     /// One run.

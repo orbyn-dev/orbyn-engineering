@@ -11,7 +11,9 @@ mod classes;
 mod composer;
 mod crew;
 mod crew_areas;
+mod crew_backtest;
 mod crew_board;
+mod crew_capacity;
 mod crew_map;
 mod crew_tasks;
 mod engines;
@@ -53,9 +55,13 @@ mod crew_areas_tests;
 #[cfg(test)]
 mod crew_background_tests;
 #[cfg(test)]
+mod crew_backtest_tests;
+#[cfg(test)]
 mod crew_board_tests;
 #[cfg(test)]
 mod crew_cancel_tests;
+#[cfg(test)]
+mod crew_capacity_tests;
 #[cfg(test)]
 mod crew_classes_tests;
 #[cfg(test)]

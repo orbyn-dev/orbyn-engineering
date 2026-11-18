@@ -119,7 +119,7 @@ type Outcome = "done" | "closed" | "failed";
 
 export function useHeldCommands(onAnswered: () => void) {
   const read = useAsync<AutopilotHeldList>("crew-held", (signal) => crewApi.held(signal));
-  const { reload } = read;
+  const { reload, refreshQuietly } = read;
   const desktop = useDesktopApp();
   const remote = useConnection((state) => state.remote);
   const [closed, setClosed] = useState<Record<string, Closed>>({});
@@ -137,10 +137,10 @@ export function useHeldCommands(onAnswered: () => void) {
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState !== "hidden") void reload();
+      if (document.visibilityState !== "hidden") void refreshQuietly();
     }, HELD_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [reload]);
+  }, [refreshQuietly]);
 
   const list = read.data;
   const at = useMemo(() => Date.now(), [list]); // eslint-disable-line react-hooks/exhaustive-deps -- the list is the moment it was read

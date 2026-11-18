@@ -68,6 +68,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/capacity/settings",
+        "core crew_set_capacity_settings: Preview, limit of at least 1, sampling, pause_enabled (off by default); audit row in the same transaction; no agent tool; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/capacity/tasks/{id}",
+        "core crew_set_task_capacity: Preview, an existing task, priority and/or crew_started, nothing else; no agent tool; local only",
+    ),
+    (
+        "POST",
         "/api/crew/review/{id}/consent",
         "core crew_review_consent: local only, person transport, exact pending request id with pinned head and round, once or wait, ten-minute expiry, atomic single consumption; no client actor or grant flag; no model tool",
     ),
@@ -178,6 +188,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/backtest/start",
+        "core crew_backtest_start: a person's choice only; a request with a lane, an engine and a model each, a token budget for every engine (tokens per engine, never summed) and no other field, a review or check lane and never a builder, no money field; one run at a time (a second start while one runs is refused, check and insert in one transaction); refused while no replay engine is connected; no scheduler or tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/backtest/{id}/stop",
+        "core crew_backtest_stop: a person's request; only records the ask, the run ends as stopped before its next replay and keeps what it replayed; a run that already ended is returned unchanged; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/projects/{id}/pinned-ref/confirm",
         "core crew_confirm_pinned_ref: the default branch must still be the whole commit the person saw, else stale; the pin and its audit row in one transaction; no agent tool reaches it; local only",
     ),
@@ -237,6 +257,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
+        .merge(super::crew_backtest::writes())
+        .merge(super::crew_capacity::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
@@ -275,7 +297,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/route/{task_id}", get(route_view))
         .route("/api/crew/review/{task_id}/controls", get(review_controls))
         .route("/api/crew/settings/engine-tiers", get(engine_tiers))
+        .merge(super::crew_capacity::reads())
         .merge(writes)
+        .merge(super::crew_backtest::reads())
         .merge(super::crew_tasks::routes())
         .merge(super::crew_board::routes())
         .merge(super::crew_map::routes())

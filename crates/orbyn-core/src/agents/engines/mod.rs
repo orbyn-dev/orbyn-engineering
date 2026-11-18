@@ -62,6 +62,9 @@ pub struct EngineConfig {
     pub claude_program: String,
     pub codex_program: String,
     pub codex_sandbox: String,
+    /// A person turned on Claude's modern task tools for the service
+    /// (`ORBYN_CLAUDE_TASK_TOOLS=1`). Off by default.
+    pub claude_task_tools: bool,
     pub lookup_latest: bool,
     pub update_timeout: Duration,
     /// Automatic known-provider discovery; explicit registrations remain available.
@@ -79,6 +82,7 @@ impl Default for EngineConfig {
             claude_program: "claude".into(),
             codex_program: "codex".into(),
             codex_sandbox: "workspace-write".into(),
+            claude_task_tools: false,
             lookup_latest: true,
             update_timeout: UPDATE_TIMEOUT,
             known_engine_ids: None,
@@ -146,10 +150,10 @@ impl EngineManager {
         config: EngineConfig,
     ) -> Self {
         let drivers: Vec<Arc<dyn EngineDriver>> = vec![
-            Arc::new(ClaudeDriver::new(
-                config.claude_program.clone(),
-                config.approval_timeout,
-            )),
+            Arc::new(
+                ClaudeDriver::new(config.claude_program.clone(), config.approval_timeout)
+                    .with_task_tools(config.claude_task_tools),
+            ),
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),

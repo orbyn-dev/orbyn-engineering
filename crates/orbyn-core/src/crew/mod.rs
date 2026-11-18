@@ -4,7 +4,7 @@
 
 mod autopilot;
 mod background;
-mod backtest;
+pub mod backtest;
 mod bus;
 mod cancel;
 pub(crate) mod capacity;

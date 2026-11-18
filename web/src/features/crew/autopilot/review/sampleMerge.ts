@@ -65,15 +65,15 @@ export const mergeQueue: MergeQueueData = {
   summary: "3 candidates · 1 merged today",
   rows: [
     { n: 1, title: "Rotate the signing key", detail: "crew/keys-rotate · Low conflict risk · checks passed on its own branch", state: "merged", status: "Merged 15:02", tier: "high" },
-    { n: 2, title: "Use next in the auth redirect", detail: "Rebased on 1 · re-running 2 of 3 checks on the combined state", state: "running", status: "Re-checking combined", tier: "medium" },
-    { n: 3, title: "Update the login docs", detail: "Waiting for 2 · will be rebased on the result", state: "waiting", status: "Waiting", tier: "low" },
+    { n: 2, title: "Use next in the auth redirect", detail: "Merged onto 1 · re-running 2 of 3 checks on the combined state", state: "running", status: "Re-checking combined", tier: "medium" },
+    { n: 3, title: "Update the login docs", detail: "Waiting for 2 · will be merged onto the result", state: "waiting", status: "Waiting", tier: "low" },
   ],
   notes: [
     {
       heading: "How the queue works",
       items: [
         "Verified work joins the queue in order.",
-        "Each candidate is rebased on the queue ahead of it, and its required checks run again on the combined state before main moves.",
+        "Each candidate is merged onto the branch tip in a scratch checkout, one at a time, and its required checks run again on that combined state before main moves.",
         "If the combined checks fail, the candidate leaves the queue with its reason and goes back to Build.",
       ],
     },

@@ -2,7 +2,7 @@
 //! size) with the permille rounded down. A finding that matches no escape is "unmatched", never "wrong": the log
 //! may simply not know about a defect it found.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::outcomes::Escape;
 
@@ -18,6 +18,9 @@ pub struct PastFinding {
     pub lane: String,
     pub engine: String,
     pub model: String,
+    /// What identifies the finding (`crew_findings`' fingerprint). One finding is one fingerprint on one pull request
+    /// from one lane, however often it was raised: the same rule in `rates` and in a stored run's report.
+    pub fingerprint: String,
     /// The files the finding is about.
     pub files: Vec<String>,
 }
@@ -40,13 +43,20 @@ pub struct Rate {
 
 impl Rate {
     fn of(numerator: u32, denominator: u32) -> Self {
+        // A share is never above the whole: a numerator past the denominator is a bug upstream and shows as 1000.
         let permille = u64::from(numerator) * 1000 / u64::from(denominator.max(1));
         Self {
             numerator,
             denominator,
-            permille: permille as u32,
+            permille: u32::try_from(permille).map_or(1000, |p| p.min(1000)),
         }
     }
+}
+
+/// A count of `usize` as the `u32` a score keeps. A count above `u32::MAX` shows as `u32::MAX`: it never wraps to a small
+/// number, which would read as a better or worse lane than it is.
+pub(super) fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// One lane's counts, and its rates once there are enough of them. Below the minimum only the counts show.
@@ -62,9 +72,47 @@ pub struct LaneScore {
     pub unmatched_n: u32,
 }
 
-/// Paths compare with `/` separators, so a path from Windows tooling matches the same file from git.
+/// A path as it compares: `/` separators, no empty or `.` segments, `..` resolved against the segment before it, and a
+/// Windows drive letter in lower case. So `./src//a.rs`, `src\\a.rs` and `src/x/../a.rs` are all `src/a.rs`. A `..` that
+/// climbs above the start is kept, so `../a.rs` never equals `a.rs`. An absolute path stays absolute (a leading `/` or a
+/// drive): the repository root is not known here, so it matches only the same absolute path, never a relative one. A path
+/// with nothing left (`""`, `.`, `./`) is `None` and matches nothing.
+fn normalise(path: &str) -> Option<String> {
+    let path = path.replace('\\', "/");
+    let (root, rest) = match path.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => (
+            format!("{}:/", char::from(*drive).to_ascii_lowercase()),
+            path[2..].trim_start_matches('/'),
+        ),
+        [b'/', ..] => ("/".to_owned(), path.trim_start_matches('/')),
+        _ => (String::new(), path.as_str()),
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rest.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => match parts.last() {
+                Some(&last) if last != ".." => {
+                    parts.pop();
+                }
+                // Above the root of an absolute path there is nothing: stay at the root.
+                _ if !root.is_empty() => {}
+                _ => parts.push(".."),
+            },
+            other => parts.push(other),
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("{root}{}", parts.join("/")))
+}
+
 fn same_file(a: &str, b: &str) -> bool {
-    a.replace('\\', "/") == b.replace('\\', "/")
+    match (normalise(a), normalise(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 fn finding_matches(finding: &PastFinding, escape: &Escape) -> bool {
@@ -94,22 +142,49 @@ pub fn match_escape(findings: &[PastFinding], escape: &Escape) -> Outcome {
 
 /// One lane's score. `findings` are that lane's findings on eligible pull requests and `escapes` those of the same
 /// pull requests.
+///
+/// Repeats count once: the same fingerprint on the same pull request from the same lane, engine and model is one
+/// finding however often it was raised, so a repeat can neither raise precision nor lower it. Two findings with
+/// different fingerprints are two, even about the same files (a stored run keeps one row per fingerprint).
 pub fn rates(findings: &[PastFinding], escapes: &[Escape]) -> LaneScore {
-    let escapes_n = escapes.len() as u32;
-    let findings_n = findings.len() as u32;
-    let caught = escapes
-        .iter()
-        .filter(|escape| match_escape(findings, escape) == Outcome::Caught)
-        .count() as u32;
-    let matched = findings
+    let findings = distinct(findings);
+    let escapes_n = count(escapes.len());
+    let findings_n = count(findings.len());
+    let caught = count(
+        escapes
+            .iter()
+            .filter(|escape| match_escape(&findings, escape) == Outcome::Caught)
+            .count(),
+    );
+    let matched = count(
+        findings
+            .iter()
+            .filter(|finding| {
+                escapes
+                    .iter()
+                    .any(|escape| finding_matches(finding, escape))
+            })
+            .count(),
+    );
+    from_counts(escapes_n, caught, findings_n, matched)
+}
+
+/// The findings with repeats (see `rates`) dropped, in the order first seen.
+fn distinct(findings: &[PastFinding]) -> Vec<PastFinding> {
+    let mut seen = BTreeSet::new();
+    findings
         .iter()
         .filter(|finding| {
-            escapes
-                .iter()
-                .any(|escape| finding_matches(finding, escape))
+            seen.insert((
+                finding.pr,
+                finding.lane.clone(),
+                finding.engine.clone(),
+                finding.model.clone(),
+                finding.fingerprint.clone(),
+            ))
         })
-        .count() as u32;
-    from_counts(escapes_n, caught, findings_n, matched)
+        .cloned()
+        .collect()
 }
 
 /// A lane's score from its counts: `caught` escapes of `escapes_n`, and `matched` findings of `findings_n`. What a
@@ -153,6 +228,7 @@ mod tests {
             lane: lane.to_owned(),
             engine: "engine-a".to_owned(),
             model: "model-a".to_owned(),
+            fingerprint: format!("fp:{lane}:{pr}:{file}"),
             files: vec![file.to_owned()],
         }
     }
@@ -184,7 +260,12 @@ mod tests {
             finding("correctness", 2, "b.rs"),
             finding("correctness", 3, "x.rs"),
             finding("correctness", 4, "d.rs"),
-            finding("correctness", 4, "d.rs"),
+            // Another finding on the same escape, about d.rs and a second file: not a repeat of the one above.
+            PastFinding {
+                fingerprint: "fp:d-and-d2".to_owned(),
+                files: vec!["d.rs".to_owned(), "d2.rs".to_owned()],
+                ..finding("correctness", 4, "d.rs")
+            },
         ];
         all.extend((6..=10).map(|pr| finding("correctness", pr, "f.rs")));
         all
@@ -319,6 +400,120 @@ mod tests {
         assert_eq!(scores["security"].unmatched_n, 0);
         assert_eq!(scores["style"].recall.map(|r| r.permille), Some(0));
         assert_eq!(scores["style"].findings_n, 0);
+    }
+
+    #[test]
+    fn identical_findings_count_once_for_precision() {
+        // Ten distinct findings (PR 6..=15, no escape) plus the same finding on PR 1 raised three times: 11 findings,
+        // one of which matches. Counting the repeats would give 3 of 13.
+        let mut findings: Vec<PastFinding> = (6..=15)
+            .map(|pr| finding("correctness", pr, "f.rs"))
+            .collect();
+        findings.extend((0..3).map(|_| finding("correctness", 1, "a.rs")));
+        let score = rates(&findings, &five_escapes());
+        assert_eq!((score.findings_n, score.unmatched_n), (11, 10));
+        assert_eq!(
+            score.precision,
+            Some(Rate {
+                numerator: 1,
+                denominator: 11,
+                permille: 90
+            })
+        );
+        // The same fingerprint with its path spelled another way is the same finding.
+        let spelled = [
+            finding("correctness", 1, "a.rs"),
+            PastFinding {
+                files: vec!["./a.rs".to_owned()],
+                ..finding("correctness", 1, "a.rs")
+            },
+        ];
+        assert_eq!(rates(&spelled, &five_escapes()).findings_n, 1);
+        // A different fingerprint about the same file is another finding.
+        let two = [
+            finding("correctness", 1, "a.rs"),
+            PastFinding {
+                fingerprint: "fp:other".to_owned(),
+                ..finding("correctness", 1, "a.rs")
+            },
+        ];
+        assert_eq!(rates(&two, &five_escapes()).findings_n, 2);
+    }
+
+    #[test]
+    fn findings_that_differ_in_pr_lane_or_fingerprint_are_not_duplicates() {
+        let findings = [
+            finding("correctness", 1, "a.rs"),
+            finding("correctness", 2, "a.rs"),
+            finding("security", 1, "a.rs"),
+            finding("correctness", 1, "b.rs"),
+        ];
+        assert_eq!(rates(&findings, &[]).findings_n, 4);
+    }
+
+    #[test]
+    fn paths_match_across_dot_segments_separators_and_dot_dot() {
+        for (finding_path, changed) in [
+            ("./a.rs", "a.rs"),
+            ("a.rs", "./a.rs"),
+            ("src//a.rs", "src/a.rs"),
+            ("src/./a.rs", "src/a.rs"),
+            ("src/x/../a.rs", "src/a.rs"),
+            ("src\\x\\..\\a.rs", "./src/a.rs"),
+            ("C:\\repo\\a.rs", "c:/repo/a.rs"),
+            ("/repo/a.rs", "/repo//a.rs"),
+            ("/../repo/a.rs", "/repo/a.rs"),
+        ] {
+            assert_eq!(
+                match_escape(&[finding("c", 1, finding_path)], &escape(1, changed)),
+                Outcome::Caught,
+                "{finding_path} against {changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn paths_that_name_different_files_never_match() {
+        for (finding_path, changed) in [
+            ("../a.rs", "a.rs"),
+            ("a.rs", "../a.rs"),
+            ("../../a.rs", "../a.rs"),
+            // An absolute path is not the relative one: the repository root is not known.
+            ("/repo/a.rs", "a.rs"),
+            ("a.rs", "/repo/a.rs"),
+            ("src/a.rs", "a.rs"),
+            ("A.rs", "a.rs"),
+            // Nothing left of the path matches nothing, not even itself.
+            ("", ""),
+            (".", "./"),
+            ("src/..", "."),
+        ] {
+            assert_eq!(
+                match_escape(&[finding("c", 1, finding_path)], &escape(1, changed)),
+                Outcome::Unmatched,
+                "{finding_path} against {changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_count_past_u32_max_saturates_and_never_wraps() {
+        assert_eq!(count(0), 0);
+        assert_eq!(count(7), 7);
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(count(u32::MAX as usize), u32::MAX);
+            assert_eq!(count(u32::MAX as usize + 1), u32::MAX);
+            assert_eq!(count(usize::MAX), u32::MAX);
+        }
+    }
+
+    #[test]
+    fn a_share_is_never_above_the_whole() {
+        assert_eq!(Rate::of(5, 3).permille, 1000);
+        assert_eq!(Rate::of(u32::MAX, 1).permille, 1000);
+        assert_eq!(Rate::of(u32::MAX, u32::MAX).permille, 1000);
+        assert_eq!(Rate::of(0, 0).permille, 0);
     }
 
     #[test]

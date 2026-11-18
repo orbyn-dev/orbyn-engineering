@@ -30,7 +30,7 @@ export function FlowZoom({ id, onBack, onCrew }: { id: string; onBack(): void; o
   const running = read.data ? !["passed", "stopped", "cancelled"].includes(read.data.row.state) : false;
   const reviewing = (read.data?.review_consents?.length ?? 0) > 0
     || read.data?.lanes.some((lane) => !["passed", "stopped", "cancelled"].includes(lane.state));
-  useRefresh(read.reload, !running && !reviewing);
+  useRefresh(read.refreshQuietly, !running && !reviewing);
   const back = (
     <Button small onClick={onBack}>
       All tasks

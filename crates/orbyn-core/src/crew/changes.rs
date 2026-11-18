@@ -11,7 +11,11 @@ use crate::account::changes::{normalize, paths_with_prefix, pattern_matches};
 /// Every route under `/api/crew` that changes state, as `(method, path)`. A `{id}` segment matches any one segment.
 pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/merge"),
+    ("POST", "/api/crew/backtest/start"),
+    ("POST", "/api/crew/backtest/{id}/stop"),
     ("POST", "/api/crew/settings/engine-tiers/save"),
+    ("POST", "/api/crew/capacity/settings"),
+    ("POST", "/api/crew/capacity/tasks/{id}"),
     ("POST", "/api/crew/review/{id}/consent"),
     ("POST", "/api/crew/review/{id}/remove-lane"),
     ("PUT", "/api/crew/autopilot/mode"),
@@ -43,6 +47,10 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
 pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/settings/engine-tiers"),
     ("GET", "/api/crew/review/{id}/controls"),
+    ("GET", "/api/crew/backtest/estimate"),
+    ("GET", "/api/crew/backtest/{id}/report"),
+    ("GET", "/api/crew/capacity"),
+    ("GET", "/api/crew/capacity/coverage"),
     ("GET", "/api/crew/preview"),
     ("GET", "/api/crew/autopilot"),
     ("GET", "/api/crew/autopilot/guards"),
@@ -113,6 +121,23 @@ mod tests {
                 !changes_crew_state(&route.replace("{id}", "t-1")),
                 "{route}"
             );
+        }
+    }
+
+    #[test]
+    fn an_agents_request_to_a_capacity_write_is_refused_by_path_and_the_reads_are_not() {
+        for path in [
+            "/api/crew/capacity/settings",
+            "/api/crew/capacity/tasks/t-1",
+        ] {
+            assert!(changes_crew_state(path), "{path}");
+            assert!(
+                crew_change(&format!("curl -X POST http://127.0.0.1:9{path} -d x")),
+                "{path}"
+            );
+        }
+        for path in ["/api/crew/capacity", "/api/crew/capacity/coverage"] {
+            assert!(!changes_crew_state(path), "{path}");
         }
     }
 
