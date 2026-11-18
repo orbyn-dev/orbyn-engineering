@@ -4,6 +4,10 @@
 //! nothing and no caller can forget it. Ids, commit ids, enums, areas, engine and model names and one short reason of at most 200
 //! characters are stored; never a diff, a test body, command output, a prompt or a secret.
 //!
+//! Pruning to [`ESCAPES_PER_PROJECT_MAX`] is not built in PR 1 (only reverts write, bounded by merges). Event DELETE is refused by
+//! trigger, so the 20,000-event limit needs its own removal path in a later PR. `crew_merges.areas` is `CHECK(json_valid)`, so the
+//! revert trigger never sees invalid JSON; valid JSON that is not a list of strings makes every read of that row `Unreadable`.
+//!
 //! **Unreadable fails closed.** Every read maps any storage error, an unknown enum word or a damaged `areas` value to
 //! `CoreError::Unreadable`: the whole read fails, never a row left out and never a guess (rule 7).
 //!
@@ -169,27 +173,41 @@ impl Store {
         Ok((rows, total))
     }
 
-    /// Every escape of a project whose merge reached the branch at or after `merged_since`, oldest merge first, at most
-    /// [`ESCAPES_PER_PROJECT_MAX`]. All of it or an error: one unreadable row fails the whole read. This is the read the reviewer replay's
-    /// escape source builds on; count `confirmed` as escapes and keep `possible` apart.
+    /// Every escape of a project whose merge reached the branch at or after `merged_since`, oldest merge first. All of it or an
+    /// error: one unreadable row fails the whole read, and so does more than [`ESCAPES_PER_PROJECT_MAX`] matching escapes
+    /// (`Unreadable`; narrow `merged_since`), so a caller never gets a silently shortened log. This is the read the reviewer
+    /// replay's escape source builds on; count `confirmed` as escapes and keep `possible` apart.
     pub fn crew_escapes_of_project(
         &self,
         project_id: &str,
         merged_since: i64,
     ) -> Result<Vec<EscapeRecord>> {
+        self.escapes_of_project_capped(project_id, merged_since, ESCAPES_PER_PROJECT_MAX)
+    }
+
+    pub(super) fn escapes_of_project_capped(
+        &self,
+        project_id: &str,
+        merged_since: i64,
+        cap: u32,
+    ) -> Result<Vec<EscapeRecord>> {
         let conn = self.reader();
-        conn.prepare(&format!(
-            "{SELECT} WHERE e.project_id = ?1 AND m.merged_unix >= ?2
-             ORDER BY m.merged_unix, e.id LIMIT ?3"
-        ))
-        .map_err(unreadable)?
-        .query_map(
-            params![project_id, merged_since, ESCAPES_PER_PROJECT_MAX],
-            escape_row,
-        )
-        .map_err(unreadable)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(unreadable)
+        let rows = conn
+            .prepare(&format!(
+                "{SELECT} WHERE e.project_id = ?1 AND m.merged_unix >= ?2
+                 ORDER BY m.merged_unix, e.id LIMIT ?3"
+            ))
+            .map_err(unreadable)?
+            .query_map(params![project_id, merged_since, cap + 1], escape_row)
+            .map_err(unreadable)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(unreadable)?;
+        if rows.len() > cap as usize {
+            return Err(CoreError::Unreadable(
+                "The escape log is too large to read whole; narrow the window.".into(),
+            ));
+        }
+        Ok(rows)
     }
 
     /// The escape of one merge, if the log holds one.

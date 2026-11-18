@@ -128,6 +128,7 @@ Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later me
 - **Thresholds** are one JSON document in the existing `settings` table under `crew_escape_thresholds` (not a `pref:` key, so the account sync never
   carries it): `report_days` 60, `follow_up_days` 14, `min_merges` 10, `rate_multiple` 2; `stored` says whether a person's values are in force.
   Absent means defaults; present but unparsable, unknown-field or out of range is `unreadable`, never the defaults.
+- **Limits not built.** The 5,000-escape and 20,000-event pruning waits for PR 2's writer; `DELETE` on events is refused by trigger, so pruning needs its own removal path. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
 - **Display only.** Nothing reads the log for a decision: the breaker, the Router and every gate ignore it (decision 2). Test-covered for the breaker.
 
 ### The stable read API (for the backtest's `EscapeSource`, slice 4n)
@@ -136,7 +137,7 @@ On `Store` (`store/crew_escapes.rs`), over `EscapeRecord` and `EscapeEventRecord
 
 | Function | Returns |
 | --- | --- |
-| `crew_escapes_of_project(project_id, merged_since)` | every escape of a project whose merge reached the branch at or after `merged_since` (Unix s), oldest merge first, at most 5,000 |
+| `crew_escapes_of_project(project_id, merged_since)` | every escape of a project whose merge reached the branch at or after `merged_since` (Unix s), oldest merge first, more than 5,000 is `Unreadable` (narrow `merged_since`), never a shortened list |
 | `crew_escape_of_merge(task_id)` | the escape of one merge, if any |
 | `crew_escape(id)`, `crew_escape_events(id, limit)` | one escape; its trail, oldest first |
 | `crew_escape_page(project, state, limit, offset)` | one page, newest found first, and the total |

@@ -394,3 +394,37 @@ fn pages_filter_by_state_and_windows_cut_by_merge_time() {
         }
     );
 }
+
+#[test]
+fn a_log_over_the_cap_is_an_error_not_a_shortened_list() {
+    let (_dir, store) = open();
+    for n in 1..=3 {
+        let task = seed(
+            &store.writer(),
+            n,
+            "waiting",
+            None,
+            "alpha",
+            100 * i64::from(n),
+        );
+        store.set_merge_reverted(&task, "feed").unwrap();
+    }
+    assert_eq!(
+        store
+            .escapes_of_project_capped(PROJECT, 0, 3)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert!(matches!(
+        store.escapes_of_project_capped(PROJECT, 0, 2),
+        Err(CoreError::Unreadable(_))
+    ));
+    assert_eq!(
+        store
+            .escapes_of_project_capped(PROJECT, 150, 2)
+            .unwrap()
+            .len(),
+        2
+    );
+}
