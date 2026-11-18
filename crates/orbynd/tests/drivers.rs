@@ -295,6 +295,206 @@ async fn codex_failed_turn_reports_its_error_and_late_frames_are_dropped() {
     assert!(!text_of(&events).contains("too late"));
 }
 
+/// The `background.stopped` events a run reported, with their reasons.
+fn stopped_reasons(events: &[Value]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|event| event["event"]["name"] == "background.stopped")
+        .filter_map(|event| {
+            event["event"]["value"]["reason"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+/// Waits for the engine's word, said after its turn completed with an agent
+/// running. A run that ended at the completion never delivers it, so seeing it
+/// means the run is held; the stream is read, not slept on.
+async fn codex_held(service: &Service, thread: &str) {
+    service
+        .events_until(thread, None, |event| {
+            event["event"]["name"] == "engine.warning"
+        })
+        .await;
+    let body = service.json(&format!("/api/threads/{thread}")).await;
+    assert!(!body["active_run"].is_null(), "the run ended: {body}");
+}
+
+fn codex_options(env: &[(&str, &str)]) -> Options {
+    Options {
+        env: env
+            .iter()
+            .map(|(key, value)| ((*key).into(), (*value).into()))
+            .collect(),
+        ..Options::default()
+    }
+}
+
+#[tokio::test]
+async fn a_codex_sub_agent_keeps_the_run_open_until_it_ends() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-finish]").await;
+    // The parent's turn completed with its sub-agent running; the agent's result
+    // starts a turn of its own, and closing the engine at the first completion
+    // would lose it.
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex and the agent finished");
+    assert!(stopped_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn a_codex_run_ends_when_its_sub_agent_does_and_no_turn_follows() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-quiet]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+    assert!(stopped_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn cancelling_a_codex_run_with_a_sub_agent_running_says_it_was_stopped() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let run = service.admit(&thread, "go [bg-agent-hang]").await;
+    codex_held(&service, &thread).await;
+    let (status, _) = service
+        .send(&format!("/api/runs/{run}/cancel"), json!({}))
+        .await;
+    assert_eq!(status, 202);
+    assert_eq!(service.finished(&thread).await, "cancelled");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["cancelled"]);
+}
+
+#[tokio::test]
+async fn a_codex_run_gives_up_on_a_sub_agent_that_never_ends_and_says_so() {
+    let dir = TempDir::new();
+    let options = codex_options(&[("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "800")]);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    // The parent answered, so the run is complete; the agent that was still
+    // running is reported, not silently dropped.
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+    assert_eq!(stopped_reasons(&events), ["limit"]);
+}
+
+#[tokio::test]
+async fn a_codex_engine_that_exits_with_a_sub_agent_running_says_it_was_stopped() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-exit]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["engine exited"]);
+}
+
+#[tokio::test]
+async fn a_codex_hold_ends_when_nothing_is_heard_from_the_agent() {
+    let dir = TempDir::new();
+    let options = codex_options(&[
+        ("ORBYN_CODEX_BACKGROUND_IDLE_MS", "600"),
+        ("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "60000"),
+    ]);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["idle"]);
+}
+
+#[tokio::test]
+async fn a_codex_hold_ends_when_the_agent_fails_or_closes_even_if_a_state_comes_late() {
+    for tag in ["bg-agent-error", "bg-agent-closed", "bg-agent-stale"] {
+        let dir = TempDir::new();
+        // No limit would end these in time: only the agent's own end does.
+        let options = codex_options(&[
+            ("ORBYN_CODEX_BACKGROUND_IDLE_MS", "60000"),
+            ("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "60000"),
+        ]);
+        let (service, thread) = setup(&dir, options, "codex").await;
+        service.admit(&thread, &format!("go [{tag}]")).await;
+        assert_eq!(service.finished(&thread).await, "completed", "{tag}");
+        let events = service.all_events(&thread).await;
+        assert_eq!(text_of(&events), "hello from codex", "{tag}");
+        assert!(stopped_reasons(&events).is_empty(), "{tag}");
+    }
+}
+
+#[tokio::test]
+async fn a_failed_codex_turn_with_a_sub_agent_running_says_it_was_stopped() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-hang][fail]").await;
+    assert_eq!(service.finished(&thread).await, "failed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["turn ended"]);
+}
+
+#[tokio::test]
+async fn a_codex_engine_that_crashes_after_answering_still_completes_the_run() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-crash]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+    assert_eq!(stopped_reasons(&events), ["engine exited"]);
+}
+
+#[tokio::test]
+async fn the_engines_own_sub_agent_does_not_hold_the_run() {
+    let dir = TempDir::new();
+    let options = codex_options(&[("ORBYN_CODEX_BACKGROUND_LIMIT_MS", "60000")]);
+    let (service, thread) = setup(&dir, options, "codex").await;
+    service.admit(&thread, "go [bg-internal]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert!(stopped_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn a_message_sent_during_a_codex_hold_ends_it_and_runs_as_the_next_turn() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    codex_held(&service, &thread).await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/steer"),
+            json!({ "prompt": "next please" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    // The held turn ended with its agent stopped, and the message became a run.
+    for _ in 0..2000 {
+        let audit = service.audit(&thread).await;
+        let admitted = audit.iter().filter(|row| row["action"] == "run.admit");
+        let thread_body = service.json(&format!("/api/threads/{thread}")).await;
+        if admitted.count() >= 2 && thread_body["active_run"].is_null() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let audit = service.audit(&thread).await;
+    assert!(
+        audit
+            .iter()
+            .filter(|row| row["action"] == "run.admit")
+            .count()
+            >= 2,
+        "the message never ran as a turn"
+    );
+    let events = service.all_events(&thread).await;
+    assert_eq!(stopped_reasons(&events), ["new message"]);
+}
+
 #[tokio::test]
 async fn codex_gets_the_mcp_server_without_approve() {
     let dir = TempDir::new();
