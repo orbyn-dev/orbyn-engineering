@@ -70,12 +70,18 @@ pub fn library(root: &Path) -> PathBuf {
     crate::util::canonicalize(root).unwrap()
 }
 
-/// A shell line that starts a child which leaves its process group with `setsid`, writes its pid to `pid_file` (renamed into place
-/// once whole) and sleeps, while the shell waits for it. Perl is on macOS and on Linux; neither has a `setsid` program in common.
+/// A shell command that starts, in the background, a child which leaves its process group with `setsid`, optionally ignores SIGTERM,
+/// writes its pid to `pid_file` (renamed into place once whole) and sleeps. Append what the shell does next, such as `wait`. Perl is
+/// on macOS and on Linux; neither has a `setsid` program in common.
 #[cfg(unix)]
-pub fn setsid_sleeper(pid_file: &Path) -> String {
+pub fn setsid_sleeper(pid_file: &Path, ignore_term: bool) -> String {
+    let ignore = if ignore_term {
+        "$SIG{TERM}=\"IGNORE\"; "
+    } else {
+        ""
+    };
     format!(
-        "perl -e 'use POSIX; POSIX::setsid(); open(F, \">{p}.tmp\"); print F $$; close F; rename(\"{p}.tmp\", \"{p}\"); sleep 600' & wait",
+        "perl -e 'use POSIX; POSIX::setsid(); {ignore}open(F, \">{p}.tmp\"); print F $$; close F; rename(\"{p}.tmp\", \"{p}\"); sleep 600' &",
         p = pid_file.display()
     )
 }
