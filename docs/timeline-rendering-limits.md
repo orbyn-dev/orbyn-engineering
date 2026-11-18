@@ -165,9 +165,11 @@ once at start, like the other `ORBYN_*` service variables) makes its runs carry
   request. With the opt-in off Orbyn sets no flag.
 - A value the person already set for `CLAUDE_CODE_ENABLE_TODO_TOOLS`, `0` included,
   is inherited untouched and wins.
-- A confined run (`spec.confine`) gets no flag, because no confined run has been
+- A confined run (`spec.confine`) gets no flag from Orbyn, because no confined run has been
   observed working with the task tools; the confinement profile lets a worker write
   only its own transcript and run directory, so its task state is unchecked.
+  That refers to Orbyn's flag only: a person's own `CLAUDE_CODE_ENABLE_TODO_TOOLS` is inherited by a
+  confined run like any other.
 - `CLAUDE_CODE_ENABLE_TASKS` is never set or changed by Orbyn. Anthropic documents
   that it still selects between the Task tools and `TodoWrite` whatever
   `CLAUDE_CODE_ENABLE_TODO_TOOLS` says, so a person's `CLAUDE_CODE_ENABLE_TASKS=0`
