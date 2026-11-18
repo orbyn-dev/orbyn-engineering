@@ -225,3 +225,32 @@ async fn a_task_that_did_start_cannot_be_retried_elsewhere() {
         "{missing:?}"
     );
 }
+
+#[tokio::test]
+async fn a_dismiss_that_lands_first_means_the_lead_is_not_asked() {
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let id = refused_after_routing(&w, "Dismissed elsewhere.").await;
+    let before = w.sent_to(&w.lead).len();
+    // Another window dismisses the task after the checks passed and before this call's cancel.
+    let other = id.clone();
+    let answer = w
+        .core
+        .crew_retry_with(&id, "user", || {
+            w.core
+                .store
+                .move_crew_task(&other, "cancelled", None)
+                .unwrap();
+        })
+        .await;
+    assert!(
+        matches!(answer, Err(CoreError::CrewTaskBusy(_))),
+        "{answer:?}"
+    );
+    assert_eq!(w.task(&id).state, "cancelled");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(
+        w.sent_to(&w.lead).len(),
+        before,
+        "the lead was asked to start a dismissed task"
+    );
+}

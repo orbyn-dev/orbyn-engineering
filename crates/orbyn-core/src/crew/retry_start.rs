@@ -9,7 +9,8 @@
 //!
 //! Order, each step failing closed: the task must exist and derive as `could_not_start` (else `task_busy`); an engine other than the
 //! one that refused must be installed, on, signed in and allowed to run crew workers (else `task_busy`, with the sentence the card
-//! shows); then the cancel; then the message.
+//! shows); then the cancel; then the message, only if this call made the cancel (a task already cancelled by another window is
+//! `task_busy` and the lead is not asked).
 
 use std::sync::Arc;
 
@@ -30,6 +31,16 @@ impl Core {
         self: &Arc<Self>,
         task_id: &str,
         actor: &str,
+    ) -> Result<CrewTaskRetried> {
+        self.crew_retry_with(task_id, actor, || {}).await
+    }
+
+    /// `crew_retry_elsewhere`, with a hook between the checks and the cancel, so a test can make another window act there.
+    pub(super) async fn crew_retry_with(
+        self: &Arc<Self>,
+        task_id: &str,
+        actor: &str,
+        between: impl FnOnce(),
     ) -> Result<CrewTaskRetried> {
         self.crew_preview_only()?;
         valid_id(task_id)?;
@@ -65,18 +76,44 @@ impl Core {
             .find(|r| r.state == ResultState::NeedsPerson)
             .map(|r| super::redact(&r.summary))
             .unwrap_or_default();
-        self.crew_cancel_task(
+        between();
+        let cancelled = self
+            .crew_cancel_task(
+                task_id,
+                Some("Could not start; retried on another engine."),
+                actor,
+            )
+            .await?;
+        self.retry_after_cancel(
+            cancelled.already,
             task_id,
-            Some("Could not start; retried on another engine."),
-            actor,
+            &run.lead_thread_id,
+            refused,
+            &why,
         )
-        .await?;
+    }
+
+    /// The lead is asked only when this call made the cancel. A task already cancelled was dismissed or retried by someone else
+    /// meanwhile (another window): asking again would override the dismiss or start the task twice.
+    fn retry_after_cancel(
+        self: &Arc<Self>,
+        already: bool,
+        task_id: &str,
+        lead_thread_id: &str,
+        refused: Option<String>,
+        why: &str,
+    ) -> Result<CrewTaskRetried> {
+        if already {
+            return Err(CoreError::CrewTaskBusy(
+                "This task was already cancelled, so nothing was started again.".into(),
+            ));
+        }
         let on = refused.map_or_else(String::new, |engine| format!(" on {engine}"));
         let note = format!(
             "Task {task_id} could not start{on}: {why} The person cancelled it and asks you to start it again with crew_start; \
              the router now picks an engine that can run a crew worker."
         );
-        let lead_told = match self.runs.enqueue(&run.lead_thread_id, &note, &[]) {
+        let lead_told = match self.runs.enqueue(lead_thread_id, &note, &[]) {
             Ok(_) => true,
             Err(error) => {
                 tracing::warn!(%error, "could not ask the lead to start a task again");
