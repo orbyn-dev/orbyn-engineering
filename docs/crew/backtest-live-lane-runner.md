@@ -37,13 +37,14 @@ Design note. Status: proposal, nothing built. Today `crew_backtest_start` (`crew
 
 `docs/engine-run-contract.md` applies to every replay. No silent kill: a cancel or budget stop is recorded as `stopped` with its reason. A replay with no assistant output, or an ACP reply other than `end_turn`, is `ReplayFailed`, never an empty finding list.
 
-## 7. Risks and open questions for the product owner
+## 7. Decisions (conservative defaults, the owner can change them)
 
-1. Cost surprise: tokens × 180 days of merges can be large. Is a person-set cap enough, or should a start also require a confirmed estimate?
-2. Data leaving the machine: each replay sends old diffs to the engine's provider. Should the start screen say so once per run?
-3. Old merges may carry secrets that were later removed. Nothing scans a merge's tree for secrets today. Should a replay skip merges that touch files such as `.env`, add a scan, or only warn?
-4. Flaky engines add noise to recall. Run each lane once, or N times and keep only findings that repeat?
-5. Which tree to replay: the merge commit, or `crew_reviews.commit_id`, the head the lane actually reviewed?
+1. Cost: the person confirms the estimate before every run and also sets a hard cap. We enforce what we can: number of replays, wall time, turns per replay, and a lane stops when measured spend passes the cap. A single replay can still overshoot, because no engine takes a token limit; the screen says so. If the estimate is Not measured, the run needs the person's explicit confirm of that fact.
+2. Data leaving the machine: old diffs go only to an engine the person already uses for Crew, only when the person starts the run. The confirm dialog names the engine, the number of merges and the size. Never automatic, never from a background trigger.
+3. Secrets: a merge whose diff touches a protected or secret-class path from `.orbyn/crew.json`, or matches the existing secret-pattern check, is skipped and shown as Not measured with a plain reason. It is never sent.
+4. Flaky engines: at most one automatic retry, for a transport error only. An engine failure makes that replay Not measured, never a scored miss.
+5. Tree: replay what the reviewer originally saw, the PR head diff against the merge's first parent. If either cannot be resolved, Not measured.
+6. Engines: Claude on macOS now. Codex stays refused. OpenCode only after Settings maps its tier.
 
 ## 8. PR split
 
