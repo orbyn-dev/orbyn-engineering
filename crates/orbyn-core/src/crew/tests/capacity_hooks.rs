@@ -66,7 +66,7 @@ async fn a_low_start_that_crew_began_is_refused_over_the_limit_with_the_waiting_
     waiting(&w, 3).await;
     let error = w
         .core
-        .capacity_start_check(&project(&w), Some((Priority::Low, true)))
+        .capacity_start_check(&project(&w), Some((Priority::Low, true)), None)
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::NotAuthorized);
     assert!(error.message.contains("3 merges wait"), "{}", error.message);
@@ -79,7 +79,7 @@ async fn at_the_limit_a_low_crew_start_goes() {
     limit(&w, 3);
     waiting(&w, 3).await;
     w.core
-        .capacity_start_check(&project(&w), Some((Priority::Low, true)))
+        .capacity_start_check(&project(&w), Some((Priority::Low, true)), None)
         .unwrap();
 }
 
@@ -94,7 +94,7 @@ async fn a_person_started_task_and_a_medium_or_high_task_go_over_the_limit() {
         (Priority::Medium, true),
         (Priority::High, true),
     ] {
-        w.core.capacity_start_check(&p, Some(stored)).unwrap();
+        w.core.capacity_start_check(&p, Some(stored), None).unwrap();
     }
 }
 
@@ -117,7 +117,7 @@ async fn with_the_preview_flag_off_the_start_check_does_nothing() {
     let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
     limit(&w, 1);
     w.core
-        .capacity_start_check(&project(&w), Some((Priority::Low, true)))
+        .capacity_start_check(&project(&w), Some((Priority::Low, true)), None)
         .unwrap();
 }
 
@@ -154,7 +154,7 @@ async fn failures_of(w: &World, task: &str) -> Vec<crate::store::AutopilotEvent>
 }
 
 #[tokio::test]
-async fn a_merge_through_the_queue_records_its_hunks_and_with_no_person_commit_every_line_is_the_agents()
+async fn a_merge_through_the_queue_records_its_hunks_and_with_no_person_commit_or_worker_identity_every_line_is_unknown()
  {
     let m = merging(Mode::On, |_| vec![("src/feature.txt", "feature\n")]).await;
     let id = passed(&m.w, &["src/**"], "Add a feature.").await;
@@ -167,15 +167,48 @@ async fn a_merge_through_the_queue_records_its_hunks_and_with_no_person_commit_e
     let hunks = hunks_of(&m.w, &id).await;
     assert_eq!(hunks.len(), 1, "{hunks:?}");
     assert_eq!(hunks[0].hunk.hunk.path, "src/feature.txt");
+    // The fake engine's commit carries no worker identity and nothing is recorded as a person's: unconfirmed, counted
+    // with the agent's lines and never a person's.
     assert!(matches!(
         &hunks[0].hunk.author,
-        Author::Agent { engine, .. } if engine == "alpha"
+        Author::Unknown { engine, .. } if engine == "alpha"
     ));
     let rows = m.w.core.store.crew_autopilot_events(&id).unwrap();
     assert!(
         rows.iter().all(|e| e.kind != "provenance_failed"),
         "a good write leaves no failure row"
     );
+}
+
+#[tokio::test]
+async fn the_hook_reads_the_projects_recorded_person_commits() {
+    let m = merging(Mode::On, |_| vec![("src/feature.txt", "feature\n")]).await;
+    let id = passed(&m.w, &["src/**"], "Add a feature.").await;
+    m.w.core
+        .crew_queue_merge(&id, &m.target, NOW)
+        .await
+        .unwrap();
+    assert!(matches!(
+        &m.process(NOW + 1).await[..],
+        [MergeOutcome::Merged { .. }]
+    ));
+    assert!(!hunks_of(&m.w, &id).await.is_empty());
+    let merge = m.w.core.store.crew_merge(&id).unwrap().unwrap();
+    // The worker's commit is recorded as a person's by the app (as a future person-action path would), in this project.
+    m.w.core
+        .store
+        .record_person_commit(&project(&m.w), &merge.candidate, "test_action", NOW)
+        .unwrap();
+    let agent = Author::Agent {
+        engine: "alpha".into(),
+        model: None,
+    };
+    record_provenance(&m.w.core.store, &merge, agent, NOW + 2)
+        .await
+        .unwrap();
+    let hunks = m.w.core.store.crew_hunks_of_merge(merge.id).unwrap();
+    assert_eq!(hunks.len(), 1, "{hunks:?}");
+    assert_eq!(hunks[0].hunk.author, Author::Person);
 }
 
 #[tokio::test]

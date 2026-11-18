@@ -13,4 +13,9 @@ began_unix?: number | null, as_of_unix: number,
 /**
  * Merges with measured lines.
  */
-merges: number, not_measured_merges: number, agent_lines: number, reviewed_lines: number, in_queue_lines: number, areas: Array<AreaCoverage>, engines: Array<EngineCoverage>, };
+merges: number, not_measured_merges: number, 
+/**
+ * Lines the agents wrote plus lines no person is recorded as writing: "Agent or unconfirmed". A person's own
+ * commit that the app did not record is counted here, never as a person's.
+ */
+agent_lines: number, reviewed_lines: number, in_queue_lines: number, areas: Array<AreaCoverage>, engines: Array<EngineCoverage>, };

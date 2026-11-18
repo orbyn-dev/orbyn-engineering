@@ -63,6 +63,13 @@
   opacity: 0.45;
   cursor: default;
 }
+/* A live screen's disabled control stays readable (4.5:1 or better) and reads as unavailable by its outline, not by fading. */
+.cx-frame.cx-live button:disabled {
+  opacity: 1;
+  background: transparent;
+  color: var(--color-textSoft);
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+}
 .cx-frame .cx-segx .cx-ovf {
   padding: 0 6px;
   color: var(--color-textSoft);

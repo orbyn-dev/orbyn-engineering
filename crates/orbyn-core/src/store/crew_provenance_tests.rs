@@ -36,6 +36,14 @@ fn agent() -> Author {
     }
 }
 
+/// What a line nobody confirmed is stored as, with the merge task's engine and model.
+fn unknown() -> Author {
+    Author::Unknown {
+        engine: "claude".into(),
+        model: Some("model-1".into()),
+    }
+}
+
 fn lines(prefix: &str, n: u32) -> String {
     (1..=n).map(|i| format!("{prefix}{i}\n")).collect()
 }
@@ -129,10 +137,10 @@ fn kinds(rows: &[StoredHunk]) -> Vec<(String, u32, u32, &'static str)> {
                 r.hunk.hunk.path.clone(),
                 r.hunk.hunk.start,
                 r.hunk.hunk.len,
-                if r.hunk.author == Author::Person {
-                    "person"
-                } else {
-                    "agent"
+                match r.hunk.author {
+                    Author::Person => "person",
+                    Author::Agent { .. } => "agent",
+                    Author::Unknown { .. } => "unknown",
                 },
             )
         })
@@ -198,8 +206,8 @@ async fn a_merge_stores_agent_and_person_rows_and_a_local_note() {
     let (repo, before, merge) = merged_repo(dir.path());
     let (_db, store) = open();
     let record = store_merge(&store, 1, &repo, &before, &merge);
-    // Only the person's commit is positively known. Emails are not read: the agent commit says "person" and the
-    // person commit says "agent".
+    // Only the person's commit is positively known. Neither commit has a worker address, so the rest is unknown; the
+    // emails ("person@example.com" on the agent's commit) are read only to find worker addresses.
     let people = vec![git(&repo, &["rev-parse", "feature"])];
     let done = record_at_merge(&store, &record, &agent(), &people, 1000)
         .await
@@ -209,13 +217,13 @@ async fn a_merge_stores_agent_and_person_rows_and_a_local_note() {
 
     let rows = store.crew_hunks_of_merge(record.id).unwrap();
     let got = kinds(&rows);
-    assert!(got.contains(&("a.txt".into(), 2, 1, "agent")));
-    assert!(got.contains(&("a.txt".into(), 5, 1, "agent")));
+    assert!(got.contains(&("a.txt".into(), 2, 1, "unknown")));
+    assert!(got.contains(&("a.txt".into(), 5, 1, "unknown")));
     assert!(got.contains(&("a.txt".into(), 8, 1, "person")));
-    assert!(got.contains(&("new.txt".into(), 1, 3, "agent")));
+    assert!(got.contains(&("new.txt".into(), 1, 3, "unknown")));
     assert!(rows.iter().all(|r| r.note_ref.as_deref() == Some(NOTE_REF)));
     let first = &rows[0].hunk.author;
-    assert_eq!(first, &agent());
+    assert_eq!(first, &unknown());
     // A person's row carries no engine or model.
     let (engine, model): (Option<String>, Option<String>) = store
         .reader()
@@ -273,7 +281,7 @@ async fn nobody_known_as_a_person_means_every_hunk_is_the_agents() {
         .note
         .unwrap();
     let rows = store.crew_hunks_of_merge(record.id).unwrap();
-    assert!(rows.iter().all(|r| r.hunk.author == agent()));
+    assert!(rows.iter().all(|r| r.hunk.author == unknown()));
 }
 
 #[tokio::test]
@@ -483,20 +491,21 @@ async fn a_later_person_commit_that_shifts_lines_does_not_take_the_agents_hunk()
         got,
         [
             ("a.txt".into(), 1, 3, "person"),
-            ("a.txt".into(), 6, 2, "agent"),
+            ("a.txt".into(), 6, 2, "unknown"),
             ("a.txt".into(), 8, 1, "person"),
-            ("a.txt".into(), 9, 2, "agent"),
-            ("a.txt".into(), 13, 1, "agent"),
+            ("a.txt".into(), 9, 2, "unknown"),
+            ("a.txt".into(), 13, 1, "unknown"),
         ]
     );
 }
 
 #[tokio::test]
-async fn a_forged_email_on_an_agent_commit_stays_agent_and_no_recorded_commit_means_all_agent() {
+async fn an_email_that_claims_to_be_a_person_never_makes_a_person_and_no_recorded_commit_means_all_unknown()
+ {
     let dir = TempDir::new();
     let (repo, before, merge, agent_commit) = shifted_repo(dir.path());
     let (_db, store) = open();
-    // The agent commit claims to be a person; nothing reads the email.
+    // The agent commit claims to be a person; an email can only make a line agent or leave it unknown.
     git(&repo, &["config", "user.email", "x@example.com"]);
     let author = git(&repo, &["log", "-1", "--format=%ae", &agent_commit]);
     assert_ne!(author, "");
@@ -506,8 +515,8 @@ async fn a_forged_email_on_an_agent_commit_stays_agent_and_no_recorded_commit_me
         .unwrap();
     let rows = store.crew_hunks_of_merge(record.id).unwrap();
     assert!(
-        rows.iter().all(|r| r.hunk.author == agent()),
-        "nothing recorded means nobody is a person"
+        rows.iter().all(|r| r.hunk.author == unknown()),
+        "nothing recorded means nobody is a person, and no worker address means nobody is confirmed an agent"
     );
 }
 
@@ -577,14 +586,14 @@ async fn a_merge_with_no_hunk_has_no_note_and_no_note_ref() {
 
 const SHIFTED: [(&str, u32, u32, &str); 5] = [
     ("a.txt", 1, 3, "person"),
-    ("a.txt", 6, 2, "agent"),
+    ("a.txt", 6, 2, "unknown"),
     ("a.txt", 8, 1, "person"),
-    ("a.txt", 9, 2, "agent"),
-    ("a.txt", 13, 1, "agent"),
+    ("a.txt", 9, 2, "unknown"),
+    ("a.txt", 13, 1, "unknown"),
 ];
 
 #[tokio::test]
-async fn an_id_that_is_not_in_the_list_stays_agent_even_if_rewritten() {
+async fn an_id_that_is_not_in_the_list_stays_unknown_even_if_rewritten() {
     let dir = TempDir::new();
     let (repo, before, merge, _agent_commit) = shifted_repo(dir.path());
     let (_db, store) = open();
@@ -597,11 +606,11 @@ async fn an_id_that_is_not_in_the_list_stays_agent_even_if_rewritten() {
         .await
         .unwrap();
     let rows = store.crew_hunks_of_merge(record.id).unwrap();
-    assert!(rows.iter().all(|r| r.hunk.author == agent()));
+    assert!(rows.iter().all(|r| r.hunk.author == unknown()));
     assert_eq!(
         rows.len(),
         3,
-        "unsplit: the person's lines are the agent's too"
+        "unsplit: the person's lines are unconfirmed too"
     );
 }
 
@@ -624,18 +633,21 @@ async fn a_repository_ignore_revs_file_cannot_reattribute_lines() {
 }
 
 #[tokio::test]
-async fn a_failed_blame_leaves_the_hunks_with_the_agent() {
+async fn a_failed_blame_leaves_the_hunks_unknown() {
     let dir = TempDir::new();
     let (repo, _before, merge, _) = shifted_repo(dir.path());
     let person: std::collections::HashSet<String> = [merge.clone()].into();
     let hunks = vec![hunk("missing.txt", 1, 3)];
     let out =
-        crate::crew::capacity::attribute_by_blame(&repo, &merge, hunks, &person, &agent()).await;
+        crate::crew::capacity::attribute_by_blame(&repo, &merge, hunks, &person, &agent(), &|_| {
+            false
+        })
+        .await;
     assert_eq!(
         out,
         [AuthoredHunk {
             hunk: hunk("missing.txt", 1, 3),
-            author: agent()
+            author: unknown()
         }]
     );
 }

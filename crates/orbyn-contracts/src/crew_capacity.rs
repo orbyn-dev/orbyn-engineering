@@ -14,9 +14,42 @@ wire_enum! {
 pub enum CapacityPriority { High, Medium, Low }
 }
 
+wire_enum! {
+/// Which Crew trigger a refused start came from.
+pub enum HeldStartKind { CommentFix, ReviewFix, EscapeCheck, Background, Unknown }
+}
+
+wire_enum! {
+/// `held` while the start is refused; `started` once the same trigger started.
+pub enum HeldStartState { Held, Started }
+}
+
+wire! {
+/// One Crew-started Low-priority start that review capacity refused. No task text and no engine output: the trigger's
+/// kind, a stable key (an id or hash, so a repeat is one row), the counts at the last refusal and the times.
+pub struct HeldStart {
+    pub id: String,
+    pub kind: HeldStartKind,
+    pub key: String,
+    pub state: HeldStartState,
+    /// Merges waiting for a person at the last refusal.
+    pub waiting: u32,
+    /// The limit at the last refusal.
+    pub limit: u32,
+    #[ts(type = "number")]
+    pub first_seen_unix: i64,
+    #[ts(type = "number")]
+    pub last_seen_unix: i64,
+    /// When the same trigger started. Absent while it is held.
+    #[serde(default)]
+    #[ts(type = "number | null", optional)]
+    pub started_unix: Option<i64>,
+}
+}
+
 wire! {
 /// What a new Low-priority start that Crew began itself would meet right now: the merges waiting for a person and the
-/// limit. A refused start is not stored, so this is the current decision and not a list of held tasks.
+/// limit. This is the current decision; the refused starts themselves are listed in `CapacityState::held`.
 pub struct PausedStart {
     pub waiting: u32,
     pub limit: u32,
@@ -49,6 +82,10 @@ pub struct CapacityState {
     #[ts(optional = nullable)]
     pub paused: Option<PausedStart>,
     pub plan: Vec<SamplePlan>,
+    /// Starts that review capacity refused while pausing was on, most recently seen first, at most 200 per project. Empty
+    /// when none was refused. A row stays, marked `started`, after the same trigger starts.
+    #[serde(default)]
+    pub held: Vec<HeldStart>,
     /// Tasks picked for a closer look by sampling whose merge still waits for a person. Empty while sampling is off.
     pub picked: Vec<String>,
 }
@@ -126,6 +163,8 @@ pub struct ReviewCoverage {
     /// Merges with measured lines.
     pub merges: u32,
     pub not_measured_merges: u32,
+    /// Lines the agents wrote plus lines no person is recorded as writing: "Agent or unconfirmed". A person's own
+    /// commit that the app did not record is counted here, never as a person's.
     pub agent_lines: u32,
     pub reviewed_lines: u32,
     pub in_queue_lines: u32,

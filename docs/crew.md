@@ -1141,10 +1141,23 @@ wait than the project's limit; at the limit, or for a person-started or Medium o
 priority or `crew_started` yet, so the start path passes none (Medium, person-started) and nothing pauses until a later change
 sets them. A failure reading the settings or the queue lets the start go.
 
+**As built (slice 4l, held starts, migration 54):** with `pause_enabled` on, a refused Crew-started Low start is noted in
+`crew_paused_starts` (`store/crew_paused_starts.rs`): one row per project, kind (`comment_fix`, `review_fix`,
+`escape_check`; `background` is reserved; `unknown` marks a Crew-started launch that named no trigger) and a stable key
+the caller supplies through `Links::trigger`: the merge task id for a comment fix, a hash of the task id and finding
+fingerprint for a review fix, the check id for an escape check (ids and hashes only, never the brief's hash, which
+changes per attempt), with the waiting count and limit at the last refusal, `first_seen` and `last_seen`. The same
+trigger refused again updates its row; when the same trigger later starts, the row is marked `started`; it is held again
+if refused after that. At most 200 rows per project, `started` rows are dropped before `held` ones, then the oldest by last sighting. No task text and no engine
+output are stored. Nothing is retried on a timer, the refusal is still `not_authorized`, and with pausing off, for a
+person's start or for High and Medium work nothing is written. `GET /api/crew/capacity` returns them as `held`.
+Background crew runs still start no crew task (`crew_background_start_run` only records a run row), so they have no start
+path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_started` with a `PausedTrigger` of kind `Background`.
+
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
-note in a detached task (the merge path is synchronous, git is async), with an empty person-commit list, so every line reads
-as the agent until a later change passes positively identified person commits. A failure never fails or delays a merge: it is
+note in a detached task (the merge path is synchronous, git is async), against the project's `crew_person_commits` (empty until
+an app path records a person's commit: see the person signal below). A failure never fails or delays a merge: it is
 logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling runs in the same
 detached task, off by default: see `crew/README.md`, `capacity`.
 
@@ -1154,9 +1167,9 @@ and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps t
 task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
 commit, one blame per file, repository ignore-revs lists cleared) is in the positive `person_commits` list the caller
 passes. Anything not positively a person's is the agent's: an empty list, an unknown or rewritten id, a conflict
-resolution, a failed blame. An author email is never read, and a merged hunk is split into runs of one author. The merge
-hook must pass only positively identified person commits (for example commits the person made through the app or
-pressed Looks good on), never a guess. The first time provenance is recorded for a repository is kept once in
+resolution, a failed blame (this paragraph is the first build; the person signal below replaces its agent default with a
+third value, `unknown`, and reads author and committer emails). A merged hunk is split into runs of one author. The merge
+hook must pass only positively identified person commits, never a guess. The first time provenance is recorded for a repository is kept once in
 `crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
 merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
 transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
@@ -1164,6 +1177,32 @@ transaction. Then a note in the Agent Trace shape (version, revision, per file t
 local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
 carries it, and a test keeps it so. A note that fails is returned for the caller to log; the merge is not failed.
 Nothing calls this from the merge queue yet; the hook is a separate PR.
+
+**As built (slice 4l, person signal, migration 55; design: `docs/crew/provenance-person-signal.md`):** a line's author is one of three
+values. `agent`: the commit that last changed it (`git blame` of the merge commit) has an author or committer email that is exactly
+`worker+<task id>@orbyn.invalid` for a task that exists in `crew_tasks` (the id must be the app's `sha256:` and 64 lowercase hex form), or a
+message trailer `Orbyn-Task: <task id>` naming such a task. `person`: the commit id is in `crew_person_commits` for the project that led the
+merge's task, and the commit has no worker address. `unknown`: everything else (a person's manual commit, history from before this change,
+a bot, the app's own `Orbyn Crew <crew@orbyn.invalid>` merge, so a conflict resolution is `unknown` even if its message carries a trailer).
+Reading an email can only produce `agent` or leave `unknown`, never `person`. The service stores all three values (`crew_hunks.author_kind`;
+migration 55 rebuilds the table to allow `unknown` and copies old rows as they were). Coverage counts `unknown` with the agent's lines (the
+wire shape is unchanged: `agent_lines` is "Agent or unconfirmed", and the screens say so). A wrong `person` label is worse than a missing one,
+so nothing infers a person from a name or an email, a look-alike or upper-case address never matches, a repository `.mailmap` can only hide or
+invent a worker address, and a listed commit that also carries a worker address stays `agent`.
+
+Where the identity comes from: `RunSpec.crew_task` is set for a run whose thread is a Crew worker's, and the Claude, OpenCode (ACP) and Codex
+drivers add `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (`Orbyn Crew worker (<engine>/<model>)
+<worker+<task id>@orbyn.invalid>`) to that process's own environment after `host::child_env::for_engine` (`agents/driver/worker_identity.rs`).
+The engine and model in the name are cleaned (outside `[A-Za-z0-9._:/-]` becomes `_`, 64 characters at most) and are never matched on. A
+process started ahead of the turn is not used for a worker, because it would lack the identity. The worker brief asks for the
+`Orbyn-Task: <task id>` trailer, best effort: the person owns the repository's hooks and the app cannot enforce it. The identity is a label,
+not a boundary: a worker can override it in its own command, and a shell profile that exports `GIT_*_EMAIL` wins over it for commands the
+engine's shell runs (probe results are in the design note). Such a commit reads `unknown`, which counts as agent.
+
+`crew_person_commits` (project, full commit id, time, action) is written only by `Store::record_person_commit`, in the same transaction as
+its `crew.person_commit` audit row. No app path commits on a person's action today (the README "Initial commit" at project creation is not
+recorded), so nothing calls it and the list is empty: no line is `person`. A future path must refuse a commit that contains a worker-written
+change; workers write into the person's own checkout, and only the path knows what it staged. No route was added.
 
 **As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run; the store and replay follow below.
 
@@ -1676,6 +1715,6 @@ The row tables are in [crew/beta-rows.md](crew/beta-rows.md):
 - [Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built): designed screens not yet built, 160 screens.
 - [Appendix C](crew/beta-rows.md#appendix-c-unfinished-rows-that-have-no-design-yet): unfinished rows that have no design yet.
 
-**As built (slice 4l, coverage, contracts and routes, migration 50):** `crew/capacity/coverage.rs` counts the lines agents wrote in merges, reviewed when the merge is Looks good or Commented (merge-level, never line-level), in the queue when it waits with High or Medium risk. A merge before its repository's provenance start, with no hunk or no note, is Not measured and adds no line. Migration 50 adds `pause_enabled` (default off): `capacity_start_check` lets every start go until a person turns it on. Review fix tasks and merge-comment fixes set `Links::crew_started`, stored as Low and Crew-started; a person's start and review lanes stay Medium and person-started (background crews have no start path yet). Routes: `GET /api/crew/capacity` and `GET /api/crew/capacity/coverage` are Local reads; `POST /api/crew/capacity/settings` and `POST /api/crew/capacity/tasks/{id}` are Person writes behind `local_only`. A refused start is not stored, so there is no paused-task list. The screens are not wired yet.
+**As built (slice 4l, coverage, contracts and routes, migration 50):** `crew/capacity/coverage.rs` counts the lines agents wrote in merges, reviewed when the merge is Looks good or Commented (merge-level, never line-level), in the queue when it waits with High or Medium risk. A merge before its repository's provenance start, with no hunk or no note, is Not measured and adds no line. Migration 50 adds `pause_enabled` (default off): `capacity_start_check` lets every start go until a person turns it on. Review fix tasks and merge-comment fixes set `Links::crew_started`, stored as Low and Crew-started; a person's start and review lanes stay Medium and person-started (background crews have no start path yet). Routes: `GET /api/crew/capacity` and `GET /api/crew/capacity/coverage` are Local reads; `POST /api/crew/capacity/settings` and `POST /api/crew/capacity/tasks/{id}` are Person writes behind `local_only`. The refused starts are listed since migration 54 (below). The screens are not wired yet.
 
 **As built (slice 4l, web wiring, matched to Crew Designs v77):** `web/src/features/crew/capacity/live/` draws two screens from the two Local reads, at `#/preview/crew/capacity-live-settings` and `capacity-live-coverage` in a Preview build, only while the service's Crew Preview is on. The screens read the project list themselves, because a Preview hash opens before the app shell loads the workspace: "Reading projects" while it is out, "Can't read the projects" with Retry when it fails and "No project to show" (nothing else) when it is empty; no capacity route is read until a project is known. The settings sheet is `capacity-settings` (its "What the limit does and doesn't do" box only once a limit is saved), with its `-unset`, `-saved-off`, `-paused-banner`, `-loading`, `-error` and `-no-plan` states; the paused banner is on that sheet, and `capacity-over` is not built (the Review queue is not in the beta). A saved limit with pausing off reads `Off` and `Review every batch` (the `· default` suffix and the shorter pause and low-risk help text are only for the page before a limit is saved). The coverage map is `capacity-coverage`, with `-empty`, `-not-begun`, `-gaps` (partial: the banner only, no button, no lists and no split by reason, because the service sends one Not measured total), `-gaps-narrow` (partial: the banner wraps; the stacked lists are Planned), `-low`, `-error`, `-loading`, `-picker` and `-picker-narrow` (partial: the chip and menu are built; the chip on its own row and the map as cards are not). Coverage shows the exact counts and, whenever any merge is Not measured, the gaps banner; there is no low-sample cutoff and no "thin" or "rests on" wording (the cutoff is an open product question). A failed read draws the red banner, the raw error line and one dash tile. A person with several projects picks one from the chip: choosing reads that project's coverage and sends nothing else; with one project the chip is plain text. Engine labels are the service's own, `claude · Sonnet 5.5`. Planned, drawn as a Planned pill beside a disabled control or as a heading with no rows, never with invented data: the editor for the limit, sampling and pause switch (`Change the limit`, `Set a limit`; frames `capacity-settings-editor`, `-editor-narrow` and `-editor-error` are not built), the lists of Not measured merges and "Try the 2 again" (the live banner has neither; the sample gaps frame draws them), the link from an area to its files and `Open the Review queue`. No screen sends the two Person writes (the client is in `live/api.ts`). Missing data reads "Not measured" (provenance never began; an area with no lines, in every cell; an engine with no model); coverage stays merge-level. Not drawn: the page head, tabs and breadcrumb the frames put around the coverage page (the app draws the page alone), and the narrow-window and panel layouts of the map as cards. The paused-board, paused-card, resumed, sampling and digest frames have no real data and stay sample-only; the sample frames `capacity-settings`, `-settings-unset`, `-coverage`, `-coverage-gaps`, `-coverage-empty`, `-coverage-low` and `-coverage-error` follow v77 wording.

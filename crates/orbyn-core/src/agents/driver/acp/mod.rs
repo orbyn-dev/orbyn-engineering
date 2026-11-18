@@ -22,6 +22,7 @@ use super::pipes::{
     EngineProcess, exit_message, resolve_engine, spawn_engine_confined, spawn_engine_with,
 };
 use super::rpc::{Inbound, RpcClient};
+use super::worker_identity::{with_identity, worker_env};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, MCP_SERVER_NAME,
     ModelCatalog, ProbeDir, RunHandle, RunSpec,
@@ -214,8 +215,12 @@ impl EngineDriver for AcpDriver {
     ) -> Result<RunHandle> {
         let command = resolve_engine(&self.engine.target)?;
         let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
+        let identity = spec.crew_task.as_deref().map_or_else(Vec::new, |task| {
+            worker_env(task, &self.engine.id, spec.model.as_deref())
+        });
+        let env = with_identity(self.env, &identity);
         let process =
-            spawn_engine_confined(&command, &args, &spec.cwd, self.env, spec.confine.as_ref())?;
+            spawn_engine_confined(&command, &args, &spec.cwd, &env, spec.confine.as_ref())?;
         let cancel = CancellationToken::new();
         let slot = self.sign_in_slot();
         let task = tokio::spawn(run_protocol(process, spec, events, cancel.clone(), slot));

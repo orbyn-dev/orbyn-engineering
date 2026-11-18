@@ -47,6 +47,52 @@ pub enum Priority {
     Low,
 }
 
+/// Which Crew trigger a held start came from. A stored value, so the names never change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PausedKind {
+    /// A fix for a person's merge Comment.
+    CommentFix,
+    /// A fix for a confirmed review finding.
+    ReviewFix,
+    /// The worker of a check created from a confirmed escape.
+    EscapeCheck,
+    /// A background crew run. Reserved: no background trigger creates a crew task yet, so nothing stores this today.
+    Background,
+    /// A Crew-started launch that named no trigger. A bug in the caller, kept visible rather than labelled as another kind.
+    Unknown,
+}
+
+impl PausedKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CommentFix => "comment_fix",
+            Self::ReviewFix => "review_fix",
+            Self::EscapeCheck => "escape_check",
+            Self::Background => "background",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "comment_fix" => Self::CommentFix,
+            "review_fix" => Self::ReviewFix,
+            "escape_check" => Self::EscapeCheck,
+            "background" => Self::Background,
+            "unknown" => Self::Unknown,
+            _ => return None,
+        })
+    }
+}
+
+/// The trigger of a Crew-started start: its kind and a stable key (an id or hash, never text), so the same trigger
+/// refused again is one held row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PausedTrigger {
+    pub kind: PausedKind,
+    pub key: String,
+}
+
 /// A person's capacity settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CapacitySettings {

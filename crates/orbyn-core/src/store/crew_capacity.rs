@@ -284,19 +284,56 @@ impl Store {
             .optional()?)
     }
 
-    /// The Low-risk merges of a project up to merge `up_to` that no batch has taken yet, oldest first: the open sampling batch.
-    pub fn crew_open_low_merges(&self, project_id: &str, up_to: i64) -> Result<Vec<MergeRecord>> {
+    /// When sampling was last turned on for the project, in unix seconds: the time of the latest settings audit row
+    /// that set sampling on while the row before it (or the default) had it off. Saving other settings with sampling
+    /// still on does not move it; turning sampling off clears it, so off then on again starts a new boundary. `None`
+    /// while sampling is off. The audit log is append-only, so no migration or extra column is needed.
+    pub fn crew_sampling_since(&self, project_id: &str) -> Result<Option<i64>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT ts, detail FROM audit_events WHERE action = 'crew.capacity.settings' AND target = ?1 ORDER BY id",
+        )?;
+        let rows = statement
+            .query_map([project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut since = None;
+        for (ts, detail) in rows {
+            let detail: serde_json::Value = serde_json::from_str(&detail)?;
+            let on = detail["sampling"].as_str() == Some(sampling_name(Sampling::OneInFour));
+            match (on, since) {
+                (true, None) => {
+                    since = Some(crate::util::parse_time(&ts).ok_or_else(|| {
+                        CoreError::Internal("a settings audit time is invalid".into())
+                    })?);
+                }
+                (false, _) => since = None,
+                (true, Some(_)) => {}
+            }
+        }
+        Ok(since)
+    }
+
+    /// The Low-risk merges of a project up to merge `up_to` that no batch has taken yet and that landed at or after
+    /// `since_unix`, oldest first: the open sampling batch. Merges from before are never part of it.
+    pub fn crew_open_low_merges(
+        &self,
+        project_id: &str,
+        up_to: i64,
+        since_unix: i64,
+    ) -> Result<Vec<MergeRecord>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT m.* FROM crew_merges m
              JOIN crew_runs r ON r.task_id = m.task_id
              JOIN threads t ON t.id = r.lead_thread_id
-             WHERE t.project_id = ?1 AND m.risk = 'low' AND m.id <= ?2
+             WHERE t.project_id = ?1 AND m.risk = 'low' AND m.id <= ?2 AND m.merged_unix >= ?3
                AND NOT EXISTS (SELECT 1 FROM crew_review_samples s WHERE s.task_id = m.task_id)
              ORDER BY m.id",
         )?;
         Ok(statement
-            .query_map(params![project_id, up_to], merge_row)?
+            .query_map(params![project_id, up_to, since_unix], merge_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
