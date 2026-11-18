@@ -1,6 +1,6 @@
 # Who wrote a line: a positive person signal for merge provenance (4l)
 
-Design note for issue #711. Status: proposal, nothing built. Until it is built every line stays `agent` and coverage says merge-level only.
+Design note for issue #711. Status: built (slice 4l, migration 54), except the person path that records `crew_person_commits` rows, which does not exist yet: until one does, no line is `person`, and coverage stays merge-level.
 
 ## The problem
 
@@ -42,3 +42,16 @@ Mark agent commits positively, mark person commits positively only where the app
 - v1 does not credit a person's manual commits: `unknown` counts as agent until a person attests.
 - The coverage screens fold `unknown` into the agent count, labelled "Agent or unconfirmed"; the service still returns all three values.
 - One commit probe each for Claude, OpenCode and Codex (Codex once workers are allowed). Each records whether the variables win for author and committer; the build lists the result per engine. Engines where the environment does not win stay `unknown`.
+
+## Probe results
+
+One commit per engine, in a scratch repository, with the four variables set in the engine process's environment the way the app sets them, and
+the commit made by the engine's own shell tool. Read back with `git log --format='%an <%ae> | %cn <%ce>'`. Date of the probes: 2026-11-19.
+
+| Engine | Result |
+| --- | --- |
+| OpenCode (v2.2.5) | The environment won for author and committer, name and email, with the person's real shell profile (it exports no `GIT_*` variable). Run as `opencode run --standalone --auto` with model `opencode/beam-free`; that is not the `opencode acp` process the app launches, and without `--standalone` OpenCode v2 hands the command to a background service that does not inherit the caller's environment, so this probe covers the shell tool only. A second commit with a profile that exports `GIT_AUTHOR_EMAIL` and `GIT_COMMITTER_EMAIL` (through `ZDOTDIR`) took the profile's emails and kept the environment's names: such a commit reads `unknown`, as the note says. |
+| Claude (2.1.327) | Not probed: the CLI in this environment reports `loggedIn: false` ("OAuth session expired and could not be refreshed"), so no run could start. Its labels are unverified until it is probed. |
+| Codex (0.166.0) | Not probed: `CODEX_WORKERS_ALLOWED` is false, so no Crew worker runs on it, and this change does not loosen that. The per-run environment is in the driver and is unit-tested only as far as its construction. |
+
+Engines where a probe shows the environment does not win stay `unknown`. Re-run the Claude probe where the CLI is signed in before relying on its labels.
