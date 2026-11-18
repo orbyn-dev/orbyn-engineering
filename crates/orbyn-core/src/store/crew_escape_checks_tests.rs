@@ -1314,3 +1314,37 @@ fn an_event_that_is_already_recorded_is_not_an_error_to_the_person() {
         1
     );
 }
+
+/// Only a repeat of the same event is ignored: a row the table refuses for another reason (here a cause over 200 characters) is still
+/// an error, and its act changes nothing.
+#[test]
+fn an_event_the_table_refuses_for_another_reason_is_still_an_error() {
+    let (_dir, store, _task, id) = confirmed();
+    let long = format!("sha256:{}", "a".repeat(250));
+    proposed(&store, &id);
+    store
+        .accept_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            &proposal(),
+            &long,
+            AT + 1,
+        )
+        .unwrap();
+    let refused = store.finish_escape_check(
+        &id,
+        &long,
+        &CheckFinish::Failed {
+            proof: None,
+            note: "no".into(),
+        },
+        AT + 2,
+    );
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        store.crew_escape_check(&id).unwrap().unwrap().state,
+        EscapeCheckState::Writing,
+        "the whole act rolled back"
+    );
+}

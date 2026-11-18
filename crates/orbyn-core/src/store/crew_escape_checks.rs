@@ -12,7 +12,7 @@
 //! - **The core's own steps** (`finish`, `merge`, `note`, `unwind`) record what the proof and the merge queue found. They write the
 //!   `check_failed`, `check_proven` and `check_merged` events (cause `core:<task id>:<round>`), never a confirmation of anything.
 //! - **Every event has a cause of its own attempt** (a person's own acts name their audit row, the core's name the task and the round
-//!   of proposing it is in), and an event insert that meets the same (escape, kind, cause) is `OR IGNORE`: already recorded, never a store error.
+//!   of proposing it is in), and an event insert that meets the same (escape, kind, cause) is `ON CONFLICT DO NOTHING`: already recorded, never a store error.
 //! - **Isolation.** Every act names a project; an escape of another project is `not found`.
 //! - **Bounds.** A person's act that would pass 20,000 events for the project is refused, as in PR 2.
 //!
@@ -166,11 +166,13 @@ fn event(
 ) -> Result<()> {
     let word = serde_json::to_value(kind)?;
     let state = state_word(escape.state);
-    // OR IGNORE: the trail is unique per (escape, kind, cause), so the same event again is "already recorded", never an error to the
-    // person. Each cause below names its own attempt, so a different attempt is never mistaken for a repeat.
+    // ON CONFLICT DO NOTHING on the unique key only: the same event again is "already recorded", never an error to the person. Any other
+    // refusal (NOT NULL, a CHECK) still errors, so no event is dropped silently. Each cause names its own round, so a different
+    // attempt is never mistaken for a repeat.
     tx.execute(
-        "INSERT OR IGNORE INTO crew_escape_events (escape_id, project_id, kind, from_state, to_state, decided_by, cause, at)
-         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
+        "INSERT INTO crew_escape_events (escape_id, project_id, kind, from_state, to_state, decided_by, cause, at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)
+         ON CONFLICT(escape_id, kind, cause) DO NOTHING",
         params![escape.id, escape.project_id, word.as_str(), state, by, cause, at],
     )?;
     Ok(())
