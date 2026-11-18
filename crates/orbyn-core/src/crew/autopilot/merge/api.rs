@@ -667,10 +667,24 @@ impl Core {
         for entry in &all {
             let key = (entry.repo.clone(), entry.branch.clone());
             let before = ahead.get(&key).copied().unwrap_or(0);
-            if matches!(entry.state.as_str(), "queued" | "blocked") {
+            let forge = self.store.crew_forge_merge(&entry.task_id)?;
+            // The forge lane skips an intent that waits on a person, so it is not ahead of anything.
+            let skipped = forge
+                .as_ref()
+                .is_some_and(|f| f.phase == crate::store::ForgePhase::NeedsPerson);
+            if matches!(entry.state.as_str(), "queued" | "blocked") && !skipped {
                 *ahead.entry(key).or_default() += 1;
             }
-            rows.push(queue_entry(entry, before, &scrubs.of(&entry.task_id)));
+            let mut row = queue_entry(entry, before, &scrubs.of(&entry.task_id));
+            row.forge = forge.map(|f| wire::AutopilotForgeIntent {
+                phase: serde_json::to_value(f.phase)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .unwrap_or_default(),
+                revision: f.revision,
+                pull: f.pull,
+            });
+            rows.push(row);
         }
         let count = |state: &str| to_u32(all.iter().filter(|e| e.state == state).count());
         let forecast = wire::AutopilotForecast {
@@ -947,6 +961,7 @@ fn queue_entry(entry: &MergeEntry, ahead: u32, scrub: &Scrub) -> wire::Autopilot
         released: entry.released,
         queued_unix: entry.queued_unix,
         ahead,
+        forge: None,
     }
 }
 

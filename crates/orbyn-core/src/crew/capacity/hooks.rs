@@ -312,8 +312,8 @@ impl Core {
     /// recorded as above and never fails or delays the merge. The queue's merge path is synchronous and git is async,
     /// so the write runs as a detached task; its result is visible in the store once it finishes.
     ///
-    /// Sampling is not run here. The boundary for it is one `crew_process_merges` pass (its `MergeOutcome::Merged`
-    /// list), and that function is not part of this hook.
+    /// Then, for a Low merge and only when a person turned sampling on, adds it to the project's open sampling batch
+    /// (see `batch`). A failure there is logged and never fails the merge.
     pub(crate) fn capacity_after_merge(&self, merge: &MergeRecord, now: i64) {
         if !self.crew_enabled() {
             return;
@@ -331,6 +331,10 @@ impl Core {
             // ledger inside.
             retry_provenance(&store).await;
             let _ = record_provenance(&store, &merge, agent, now).await;
+            // Off by default: with sampling off this reads the merge's project and its setting and writes nothing.
+            if let Err(error) = super::sample_after_merge(&store, &merge, now) {
+                tracing::warn!(%error, task = %merge.task_id, "the merge was not added to a review sample");
+            }
         });
     }
 }

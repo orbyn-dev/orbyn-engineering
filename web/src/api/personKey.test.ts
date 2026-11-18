@@ -26,6 +26,7 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("PUT", "/api/threads/t1/files/content")).toBe(true);
     expect(sendsPersonKey("POST", "/api/account/sign-in/digits")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/tasks/t1/merge")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/autopilot/merge-queue/t1/resolve")).toBe(true);
     expect(sendsPersonKey("PUT", "/api/crew/autopilot/mode")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/projects/p1/worker-provider/set")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/escapes/mark")).toBe(true);

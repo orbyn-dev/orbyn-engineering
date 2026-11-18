@@ -2582,6 +2582,10 @@ reconciled by PR identity, head and merge commit. An absent or uncertain receipt
 Origin supplies the canonical host/repository, with explicit API hostname and PR repository selectors; CLI default repositories
 and host overrides cannot select the destination. Credential-bearing or unsupported origin URLs refuse admission. The actual
 merge tree and parents are compared to the checked combination; a mismatch commits with the Review record as needing a person.
+A forge intent in `needs_person` is skipped by the lane (it is not progressing and each entry pins its own base), is never left by the
+pipeline itself, and never gets a second merge request. One that got there after a merge request may still have it on the forge: it can only
+be rejected, and a reject stays reconcilable so a later merge is recorded. It ends by a PR merged by hand (read from the forge) or a person's
+audited `reject` or `retry` (Person route, key enforced, local only, intent as seen else `stale`); a retry runs every guard again.
 The existing local branch API is explicit compatibility behavior: compare-and-swap only when no checkout holds the branch, and it
 refuses forge intents. Under `off` every merge waits for a person; under `on` high risk waits; mode, area ceilings, holds, findings
 and owed lanes are rechecked before the forge writer. Same-vendor Security needs a persisted once-consent or Full exception

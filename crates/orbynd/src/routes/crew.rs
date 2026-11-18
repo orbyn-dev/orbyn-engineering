@@ -103,6 +103,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/autopilot/merge-queue/{id}/resolve",
+        "core crew_forge_resolve: a person's answer for a forge merge that needs one, reject or retry, the intent as seen (else stale); the forge is read first and a PR already merged by hand is recorded as merged instead; the audit row first, in one transaction with the intent and its queue entry; no write is ever sent to the forge; retry is refused after a merge request, and a reject then stays reconcilable; no agent tool can reject or retry (the lead's merge tool only records a merge the forge already shows); local only",
+    ),
+    (
+        "POST",
         "/api/crew/autopilot/review/{id}/looks-good",
         "core crew_answer_review: the stored merge, the whole commit the person saw, one answer at a time; local only",
     ),
@@ -276,6 +281,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/autopilot/mode", put(set_mode))
         .route("/api/crew/autopilot/confirm", post(confirm))
+        .route(
+            "/api/crew/autopilot/merge-queue/{task_id}/resolve",
+            post(forge_resolve),
+        )
         .route(
             "/api/crew/autopilot/review/{task_id}/looks-good",
             post(looks_good),
@@ -696,6 +705,15 @@ async fn answer(
             .autopilot_answer(&task_id, &body, answering, unix_now())
             .await?,
     ))
+}
+
+/// A person's answer for a forge merge that needs one: `{ "action": "reject" | "retry", "seen_revision": n }`.
+async fn forge_resolve(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+    ApiJson(body): ApiJson<wire::CrewForgeResolve>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_forge_resolve(&task_id, &body).await?))
 }
 
 async fn looks_good(

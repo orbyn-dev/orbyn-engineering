@@ -86,6 +86,8 @@ pub struct CapacityState {
     /// when none was refused. A row stays, marked `started`, after the same trigger starts.
     #[serde(default)]
     pub held: Vec<HeldStart>,
+    /// Tasks picked for a closer look by sampling whose merge still waits for a person. Empty while sampling is off.
+    pub picked: Vec<String>,
 }
 }
 

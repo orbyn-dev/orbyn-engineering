@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::store::{MergeEntry, MergeRecord};
+use crate::store::{ForgeMerge, ForgePhase, MergeEntry, MergeRecord};
 
 /// A merge that reached `branch` in `repo`, with `text` in each free-text field.
 pub fn merge_record(task: &str, repo: &str, branch: &str, text: &str) -> MergeRecord {
@@ -58,6 +58,36 @@ pub fn merge_entry(task: &str, repo: &str, text: &str) -> MergeEntry {
         released: false,
         queued_unix: 1,
     }
+}
+
+/// A queued forge merge waiting on a person, as the pipeline leaves it: the entry `blocked`, the intent `needs_person` with no PR.
+/// Returns the intent's revision, the token a person's answer names. The task must exist.
+pub fn forge_needs_person(core: &crate::Core, task: &str, repo: &str, why: &str) -> i64 {
+    let mut entry = merge_entry(task, repo, why);
+    entry.state = "blocked".to_owned();
+    core.store.add_merge_entry(&entry).unwrap();
+    let mut intent = ForgeMerge {
+        task_id: task.to_owned(),
+        repo: repo.to_owned(),
+        remote: "owned-fixture".to_owned(),
+        branch: "main".to_owned(),
+        source: "crew/fixture".to_owned(),
+        candidate: entry.candidate.clone(),
+        base: "b".repeat(40),
+        combined: None,
+        pull: None,
+        phase: ForgePhase::Prepared,
+        merge_commit: None,
+        evidence: Vec::new(),
+        note: None,
+        merge_sent: false,
+        revision: 0,
+    };
+    core.store.add_crew_forge_merge(&intent).unwrap();
+    intent.phase = ForgePhase::NeedsPerson;
+    intent.note = Some(why.to_owned());
+    core.store.save_crew_forge_merge(&mut intent).unwrap();
+    intent.revision
 }
 
 /// Runs git in `repo` as a fixed test identity and returns its trimmed output; a failure panics.

@@ -109,6 +109,7 @@ impl Core {
                 .into_iter()
                 .map(held_wire)
                 .collect(),
+            picked: self.store.crew_picked_for_review(project_id)?,
         })
     }
 

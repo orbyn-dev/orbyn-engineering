@@ -32,4 +32,8 @@ paused?: PausedStart | null, plan: Array<SamplePlan>,
  * Starts that review capacity refused while pausing was on, most recently seen first, at most 200 per project. Empty
  * when none was refused. A row stays, marked `started`, after the same trigger starts.
  */
-held: Array<HeldStart>, };
+held: Array<HeldStart>, 
+/**
+ * Tasks picked for a closer look by sampling whose merge still waits for a person. Empty while sampling is off.
+ */
+picked: Array<string>, };

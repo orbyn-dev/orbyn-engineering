@@ -53,6 +53,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/autopilot/areas/override"],
   ["POST", "/api/crew/autopilot/confirm"],
   ["PUT", "/api/crew/autopilot/mode"],
+  ["POST", "/api/crew/autopilot/merge-queue/{task_id}/resolve"],
   ["POST", "/api/crew/autopilot/review/{task_id}/comment"],
   ["POST", "/api/crew/autopilot/review/{task_id}/looks-good"],
   ["POST", "/api/crew/autopilot/review/{task_id}/revert"],

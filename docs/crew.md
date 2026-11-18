@@ -588,6 +588,17 @@ or neutral (a repository's path-scoped jobs are often skipped), but never fail, 
 combined-state check blocks the entry for a person rather than re-running. The `forge_publish_requested` and `forge_merge_requested`
 events record the `actor`: `lead` for the lead's tool, `local_caller` for the local HTTP caller.
 
+**A forge merge that needs a person.** The lane skips an intent in `needs_person` and goes on with the next (each entry pins its own
+base, so no later entry depends on it). The pipeline never leaves `needs_person` itself and never sends a merge request twice. An
+intent that got there before any merge request was sent has nothing in flight. One that got there after a request may still have it
+on the forge (a merge queue); it cannot be retried, and a reject keeps it reconcilable so a later merge is still recorded. A PR merged
+by hand is read from the forge and recorded (audit `via` "lane reconcile"; for the lead's own crew only). A person answers with
+`POST /api/crew/autopilot/merge-queue/{id}/resolve` (`{action: reject | retry, seen_revision}`; Person route, key enforced, local only,
+audit row first, `409 stale` for an intent that moved): `reject` drops it, `retry` sends it back to `awaiting_ci` (or `prepared` when
+nothing was published) so the guards run again, and is refused after a merge request, after an unclear publication and after the base
+moved. The forge is read first, with a search for the PR when none is recorded. The queue view shows each entry's forge `phase` and
+`revision`. See the [Autopilot README](../crates/orbyn-core/src/crew/autopilot/README.md#merge-queue-review-queue-and-watch-on-main).
+
 **As built (slice 4f, HTTP):** `orbynd` serves Autopilot's views and the person's few answers under `/api/crew`, all behind the Preview
 flag. With it off every route answers 404 for every method, like a path nothing serves, and `/api/info` omits `crew_preview`. The flag is
 read, never set, over HTTP. **The Preview flag stays while Crew is unfinished, not to keep a worker out:** every route that changes state needs the
@@ -1110,7 +1121,7 @@ Proposed stay Proposed.
 (`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and
 `crew_started` (default 0, a person's start) on `crew_tasks`, and each sampled batch in `crew_review_samples`: task
 ids, chosen or not, the seed and the time, with no prompt or path. A task stored before 47 is Medium and
-person-started, so it can never be paused. The start hook and the merge hook below read them; sampling is not wired yet.
+person-started, so it can never be paused. The start hook and the merge hook below read them; the merge hook also runs sampling (below).
 
 **As built (slice 4l, start hook):** `crew/capacity/hooks.rs` is called by one line in `start.rs`, after the lease conflict
 check and before the task is stored, and does nothing with the Crew Preview flag off. A start that Crew began itself at Low
@@ -1136,8 +1147,8 @@ path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_star
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
 note in a detached task (the merge path is synchronous, git is async), with an empty person-commit list, so every line reads
 as the agent until a later change passes positively identified person commits. A failure never fails or delays a merge: it is
-logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling's
-boundary would be one `crew_process_merges` pass; it is not wired.
+logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling runs in the same
+detached task, off by default: see `crew/README.md`, `capacity`.
 
 **As built (slice 4l, per-hunk provenance, migration 48):** `crew/capacity/provenance.rs` reads the new-file line ranges a
 merge brought in (a byte-exact `git diff -U0 before merge`; added, modified and renamed-and-edited files count, deleted
