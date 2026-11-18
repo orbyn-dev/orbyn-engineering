@@ -8,6 +8,7 @@ use super::sandbox::{
     approval_policy, collaboration_mode, sandbox_policy, thread_config, tier_param,
 };
 use super::tools::codex_tools;
+use super::turn::started_turn;
 use crate::agents::driver::{EngineOutcome, RunKind};
 use crate::agents::selection::SERVICE_TIER;
 use crate::governance::approvals::Verdict;
@@ -260,6 +261,108 @@ fn other_threads_cannot_finish_this_turn() {
         &json!({ "threadId": "subagent", "turn": { "status": "completed" } }),
     );
     assert!(step.outcome.is_none());
+}
+
+fn finished(mapper: &mut TurnMapper, turn: Value) -> Option<EngineOutcome> {
+    mapper
+        .on_notification(
+            "turn/completed",
+            &json!({ "threadId": "thread", "turn": turn }),
+        )
+        .outcome
+}
+
+#[test]
+fn a_completed_turn_with_another_id_does_not_end_the_run() {
+    let mut mapper = mapper();
+    mapper.set_turn("turn-mine");
+    assert!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-old", "status": "failed", "error": { "message": "old" } })
+        )
+        .is_none()
+    );
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-mine", "status": "completed" })
+        ),
+        Some(EngineOutcome::Completed)
+    ));
+}
+
+#[test]
+fn only_the_matching_turn_reports_an_interrupt_or_failure() {
+    let mut mapper = mapper();
+    mapper.set_turn("turn-mine");
+    assert!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-old", "status": "interrupted" })
+        )
+        .is_none()
+    );
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-mine", "status": "interrupted" })
+        ),
+        Some(EngineOutcome::Cancelled)
+    ));
+}
+
+#[test]
+fn a_completed_turn_without_an_id_is_ours() {
+    let mut mapper = mapper();
+    mapper.set_turn("turn-mine");
+    assert!(matches!(
+        finished(&mut mapper, json!({ "status": "completed" })),
+        Some(EngineOutcome::Completed)
+    ));
+}
+
+#[test]
+fn a_sub_agent_turn_started_does_not_become_this_runs_turn() {
+    // No id from the turn/start reply (compact): the run learns it from
+    // `turn/started`, but only from its own thread.
+    let sub = json!({ "threadId": "subagent", "turn": { "id": "turn-sub" } });
+    let own = json!({ "threadId": "thread", "turn": { "id": "turn-mine" } });
+    assert_eq!(started_turn("thread", &sub), None);
+    assert_eq!(started_turn("thread", &own).as_deref(), Some("turn-mine"));
+    assert_eq!(
+        started_turn("thread", &json!({ "turn": { "id": "turn-x" } })).as_deref(),
+        Some("turn-x")
+    );
+    let mut mapper = mapper();
+    let mut known = started_turn("thread", &sub);
+    assert!(known.is_none());
+    known = known.or_else(|| started_turn("thread", &own));
+    mapper.set_turn(&known.unwrap());
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-mine", "status": "completed" })
+        ),
+        Some(EngineOutcome::Completed)
+    ));
+}
+
+#[test]
+fn the_first_completed_turn_ends_a_run_whose_id_was_never_known() {
+    let mut mapper = mapper();
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-any", "status": "completed" })
+        ),
+        Some(EngineOutcome::Completed)
+    ));
+    let mut mapper = self::mapper();
+    assert!(matches!(
+        finished(&mut mapper, json!({ "status": "completed" })),
+        Some(EngineOutcome::Completed)
+    ));
 }
 
 #[test]

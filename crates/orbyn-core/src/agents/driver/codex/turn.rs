@@ -54,6 +54,9 @@ pub(super) async fn run_protocol(
         let _ = events.send(EngineEvent::Turn(turn.clone())).await;
     }
     let mut mapper = TurnMapper::new(session.clone());
+    if let Some(turn) = &turn_id {
+        mapper.set_turn(turn);
+    }
     let mut interrupted_at: Option<tokio::time::Instant> = None;
     let outcome = loop {
         let deadline = interrupted_at.map(|at| at + INTERRUPT_GRACE);
@@ -100,10 +103,11 @@ pub(super) async fn run_protocol(
                     Inbound::Notification { method, params } => {
                         if method == "turn/started"
                             && turn_id.is_none()
-                            && let Some(id) = params.pointer("/turn/id").and_then(Value::as_str)
+                            && let Some(id) = started_turn(&session, &params)
                         {
-                            turn_id = Some(id.to_owned());
-                            if events.send(EngineEvent::Turn(id.to_owned())).await.is_err() {
+                            turn_id = Some(id.clone());
+                            mapper.set_turn(&id);
+                            if events.send(EngineEvent::Turn(id)).await.is_err() {
                                 return;
                             }
                         }
@@ -139,6 +143,19 @@ pub(super) async fn run_protocol(
         outcome
     };
     let _ = events.send(EngineEvent::Finished(outcome)).await;
+}
+
+/// The turn id of a `turn/started` on this thread. Another thread's turn
+/// (a sub-agent's) is never this run's.
+pub(super) fn started_turn(session: &str, params: &Value) -> Option<String> {
+    let theirs = params.get("threadId").and_then(Value::as_str);
+    if theirs.is_some_and(|thread| thread != session) {
+        return None;
+    }
+    params
+        .pointer("/turn/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 const EXIT_WAIT: Duration = Duration::from_secs(2);

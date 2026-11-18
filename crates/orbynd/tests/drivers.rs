@@ -78,6 +78,16 @@ async fn codex_turn_maps_to_events_and_ignores_subagents() {
 }
 
 #[tokio::test]
+async fn codex_run_ignores_a_completed_turn_that_is_not_its_own() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "[stale-turn]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from codex");
+}
+
+#[tokio::test]
 async fn a_codex_turn_waits_for_its_tools_to_start() {
     let dir = TempDir::new();
     let options = Options {
