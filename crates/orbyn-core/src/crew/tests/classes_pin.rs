@@ -279,6 +279,27 @@ async fn a_broken_stored_row_and_a_failed_write_block_instead_of_opening() {
 }
 
 #[tokio::test]
+async fn a_stored_commit_that_is_not_a_full_object_id_is_a_broken_row() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let project = project_of(&w);
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO project_preferences (project_id, key, value) VALUES (?1, 'crew_pinned_ref', ?2)",
+        rusqlite::params![
+            project,
+            r#"{"reference":"origin/main","commit":"--upload-pack=x","remote":true}"#
+        ],
+    )
+    .unwrap();
+    assert!(w.core.crew_pinned_ref_view(&project).await.is_err());
+    let (answer, error) = w.start(brief_writing(1), key()).await;
+    assert!(!error, "{answer}");
+    says(&refused(&answer), "cannot be read");
+}
+
+#[tokio::test]
 async fn the_dry_run_reads_the_default_branch_but_never_remembers_it() {
     let w = two().await;
     commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));

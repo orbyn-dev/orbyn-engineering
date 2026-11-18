@@ -219,7 +219,7 @@ pub async fn read_pinned(root: &Path) -> Pinned {
     Pinned::Unreadable(pin, ClassFile::refused(why.to_owned()))
 }
 
-fn is_object_id(text: &str) -> bool {
+pub(super) fn is_object_id(text: &str) -> bool {
     matches!(text.len(), 40 | 64) && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
