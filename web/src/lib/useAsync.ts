@@ -120,6 +120,8 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
   const reload = useCallback(() => run({ background: false, force: false }), [run]);
   /** The person asked for a real read. */
   const reloadNow = useCallback(() => run({ background: false, force: true }), [run]);
+  /** Reads again the way an event does: no loading state, never an error over data on screen, and behind a person's read. */
+  const refreshQuietly = useCallback(() => run({ background: true, force: false }), [run]);
   useRefreshOn(options.refreshOn, () => run({ background: true, force: false }));
 
   const firstKey = useRef(key);
@@ -149,5 +151,5 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
     [key, keep],
   );
 
-  return { ...state, reload, reloadNow, setData };
+  return { ...state, reload, reloadNow, refreshQuietly, setData };
 }
