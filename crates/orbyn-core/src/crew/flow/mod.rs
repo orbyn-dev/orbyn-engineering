@@ -65,6 +65,7 @@ fn flow_row(facts: &Facts, line: Vec<wire::FlowCell>, scrub: &Scrub) -> wire::Fl
             .as_ref()
             .map_or_else(String::new, |r| scrub.text(&r.member, 60)),
         state: facts.task.state.clone(),
+        could_not_start: facts.could_not_start(),
         round: round(facts),
         cells: line,
         created_at: facts.task.created_at.clone(),

@@ -176,7 +176,8 @@ function CrewBoard({ crew }: { crew: string }) {
 
 function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
   const write = useTaskWrite({ id: card.id, name: card.name, allowCancel: card.can_cancel, allowRerun: card.can_rerun, onDone: onChanged });
-  const needs = card.state === "needs_person";
+  // A task refused at its start waits for no decision: it says so, and is not drawn as one that does.
+  const needs = card.state === "needs_person" && !card.could_not_start;
   const checks = checksLine(card);
   const model = modelLine(card);
   return (
@@ -193,6 +194,7 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
       </div>
       {card.owner ? <div className="bd-ln">owner {card.owner}</div> : null}
       {checks ? <div className="bd-ln">{checks}</div> : null}
+      {card.could_not_start ? <div className="bd-ln"><b>Could not start</b> · {card.reason ?? "The worker never ran."}</div> : null}
       {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
       <WriteStatus id={card.id} op={write.op} />
       {write.dialog}

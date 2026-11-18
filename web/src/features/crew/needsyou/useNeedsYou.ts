@@ -4,7 +4,7 @@ import { serviceUrl } from "../../../api/origin";
 import { useAsync } from "../../../lib/useAsync";
 import { crewApi } from "../autopilot/approvals/api";
 import { useHeldCommands, type HoldControl } from "../autopilot/approvals/held";
-import { backgroundItems, heldItems, mainItems, rank, secondEngineItems, stopItems } from "./assemble";
+import { backgroundItems, couldNotStartItems, heldItems, mainItems, rank, secondEngineItems, stopItems } from "./assemble";
 import { useSecondEngineNotices } from "./secondEngines";
 import { needsApi } from "./api";
 import type { NeedsItem } from "./model";
@@ -56,15 +56,18 @@ export function useNeedsYou(): NeedsState {
   const stops = useAsync("needs-stops", (signal) => crewApi.stops(signal));
   const review = useAsync("needs-review", (signal) => needsApi.reviewQueue(signal));
   const background = useAsync("needs-background", (signal) => needsApi.backgroundWaiting(signal));
+  const refused = useAsync("needs-could-not-start", (signal) => needsApi.couldNotStart(signal));
   const notices = useSecondEngineNotices();
   const reloadNotices = notices.reload;
   const quietNotices = notices.refreshQuietly;
   const quietStops = stops.refreshQuietly;
   const quietReview = review.refreshQuietly;
   const quietBackground = background.refreshQuietly;
+  const quietRefused = refused.refreshQuietly;
   const reloadStops = stops.reload;
   const reloadReview = review.reload;
   const reloadBackground = background.reload;
+  const reloadRefused = refused.reload;
   const reloadHeld = held.reload;
 
   useEffect(() => {
@@ -75,9 +78,10 @@ export function useNeedsYou(): NeedsState {
       void quietReview();
       void quietBackground();
       void quietNotices();
+      void quietRefused();
     }, NEEDS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [quietStops, quietReview, quietBackground, quietNotices]);
+  }, [quietStops, quietReview, quietBackground, quietNotices, quietRefused]);
 
   const retry = useCallback(() => {
     void reloadHeld();
@@ -85,7 +89,8 @@ export function useNeedsYou(): NeedsState {
     void reloadReview();
     void reloadBackground();
     void reloadNotices();
-  }, [reloadHeld, reloadStops, reloadReview, reloadBackground, reloadNotices]);
+    void reloadRefused();
+  }, [reloadHeld, reloadStops, reloadReview, reloadBackground, reloadNotices, reloadRefused]);
 
   const heldRows = held.rows;
   const items = useMemo(() => {
@@ -93,11 +98,12 @@ export function useNeedsYou(): NeedsState {
     return rank([
       ...heldItems(heldRows, now),
       ...(stops.data ? stopItems(stops.data.recent, { inARow: stops.data.in_a_row_limit, inARun: stops.data.in_a_run_limit }).filter((one) => !dismissed.has(dismissKey(one.id))) : []),
+      ...(refused.data ? couldNotStartItems(refused.data) : []),
       ...(review.data ? mainItems(review.data) : []),
       ...(background.data ? backgroundItems(background.data) : []),
       ...(notices.data ? secondEngineItems(notices.data) : []),
     ]);
-  }, [heldRows, stops.data, review.data, background.data, notices.data, dismissed]);
+  }, [heldRows, stops.data, review.data, background.data, refused.data, notices.data, dismissed]);
   // Keep only the dismissals whose stop is still in the service's list, so the stored list cannot grow without end.
   const recent = stops.data?.recent;
   useEffect(() => {
@@ -140,11 +146,12 @@ export function useNeedsYou(): NeedsState {
     { name: "stops", failed: stops.status === "error", error: stops.error },
     { name: "the Review queue", failed: review.status === "error", error: review.error },
     { name: "background crews", failed: background.status === "error", error: background.error },
+    { name: "tasks that could not start", failed: refused.status === "error", error: refused.error },
     { name: "second-engine notices", failed: notices.status === "error", error: notices.error },
   ];
   const failed = reads.filter((one) => one.failed);
   // The held read has no loading flag of its own: the inbox waits for the other sources, and held commands join when they arrive.
-  const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && notices.status === "loading";
+  const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && refused.status === "loading" && notices.status === "loading";
   if (failed.length === reads.length) return { status: "error", failure: failed[0]!.error as ApiFailure, retry };
   if (loading) return { status: "loading" };
   return { status: "ready", items, hold, partial: failed.map((one) => one.name), noticeFailure: notices.failure, retry, dismiss };

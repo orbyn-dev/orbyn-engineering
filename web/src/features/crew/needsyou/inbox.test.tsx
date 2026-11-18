@@ -200,7 +200,7 @@ describe("the Needs you inbox on live data", () => {
 
   it("is an error when nothing could be read, and retrying reads again", async () => {
     mock.reset("crew");
-    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine"]) mock.fail(path, 1, 503, "unavailable");
+    for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine", "/api/crew/flow/crews"]) mock.fail(path, 1, 503, "unavailable");
     const user = userEvent.setup();
     render(<NeedsYouInbox />);
     expect(await screen.findByText("Can’t read what needs you")).toBeVisible();

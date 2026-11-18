@@ -6,8 +6,13 @@ import { REASON_MAX } from "./api";
 import { rerunBusy, runWrite, useWrites, type Op, type WriteKind } from "./store";
 import "./writes.css";
 
-const COPY: Record<WriteKind, { title: string; body: string; confirm: string; tone: "danger" | "primary" }> = {
+/** `dismiss` is the cancel route under the words a task that could not start uses. */
+export type Ask = WriteKind | "dismiss";
+
+const COPY: Record<Ask, { title: string; body: string; confirm: string; tone: "danger" | "primary" }> = {
   cancel: { title: "Cancel this task?", body: "Its worker is stopped and the task ends as cancelled.", confirm: "Cancel task", tone: "danger" },
+  dismiss: { title: "Dismiss this task?", body: "It never started. It ends as cancelled and leaves Needs you.", confirm: "Dismiss task", tone: "primary" },
+  retry: { title: "Retry on another engine?", body: "This task is cancelled and its lead is asked to start it again on an engine that can run workers.", confirm: "Retry", tone: "primary" },
   rerun: { title: "Re-run this task’s checks?", body: "This runs the checks again on this computer and can take up to 30 minutes.", confirm: "Re-run checks", tone: "primary" },
 };
 
@@ -39,7 +44,7 @@ export function useTaskWrite({ id, name, allowCancel, allowRerun, onDone }: { id
   return { op, can, ask: setAsking, dialog };
 }
 
-export function ConfirmWrite({ kind, name, onClose, onConfirm }: { kind: WriteKind; name: string; onClose(): void; onConfirm(reason: string): void }) {
+export function ConfirmWrite({ kind, name, onClose, onConfirm }: { kind: Ask; name: string; onClose(): void; onConfirm(reason: string): void }) {
   const copy = COPY[kind];
   const [reason, setReason] = useState("");
   // A second press while the first is being handled sends nothing.
@@ -68,10 +73,12 @@ export function ConfirmWrite({ kind, name, onClose, onConfirm }: { kind: WriteKi
     >
       {name ? <p className="tw-name">{name}</p> : null}
       <p>{copy.body}</p>
-      <label className="tw-reason">
-        Reason (optional)
-        <textarea value={reason} maxLength={REASON_MAX} rows={2} onChange={(event) => setReason(event.target.value)} />
-      </label>
+      {kind === "retry" ? null : (
+        <label className="tw-reason">
+          Reason (optional)
+          <textarea value={reason} maxLength={REASON_MAX} rows={2} onChange={(event) => setReason(event.target.value)} />
+        </label>
+      )}
     </Dialog>
   );
 }
@@ -83,7 +90,7 @@ export function WriteStatus({ id, op, children }: { id: string; op: Op | undefin
   if (op.phase === "busy") {
     return (
       <p className="tw-status" role="status">
-        {op.kind === "cancel" ? "Cancelling…" : "Re-running the checks. This can take up to 30 minutes."}
+        {op.kind === "cancel" ? "Cancelling…" : op.kind === "retry" ? "Retrying…" : "Re-running the checks. This can take up to 30 minutes."}
         {children}
       </p>
     );
@@ -105,6 +112,13 @@ export function WriteStatus({ id, op, children }: { id: string; op: Op | undefin
     return (
       <p className="tw-status" role="status">
         {op.answer.already ? "Already cancelled." : "Cancelled."} {close}
+      </p>
+    );
+  }
+  if (op.kind === "retry") {
+    return (
+      <p className="tw-status" role="status">
+        {op.answer.lead_told ? "Cancelled. Its lead is asked to start it again." : "Cancelled. Its lead could not be asked: start it again yourself."} {close}
       </p>
     );
   }

@@ -247,6 +247,7 @@
     ["POST","/api/crew/tasks/{id}/cancel","person"],
     ["POST","/api/crew/tasks/{id}/merge","person"],
     ["POST","/api/crew/tasks/{id}/rerun-checks","person"],
+    ["POST","/api/crew/tasks/{id}/retry-elsewhere","person"],
     ["POST","/api/diagnostics/otlp","local"],
     ["POST","/api/diagnostics/processes/{pid}/stop","local"],
     ["POST","/api/diagnostics/repair","local"],

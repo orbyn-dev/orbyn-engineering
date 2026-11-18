@@ -12,4 +12,8 @@ engine?: string | null,
 /**
  * The lead's member name.
  */
-owner: string, state: string, round: number, cells: Array<FlowCell>, created_at: string, updated_at: string, };
+owner: string, state: string, 
+/**
+ * The worker never ran because the task was refused at its start; the Build stage is `failed`, not `needs_you`.
+ */
+could_not_start: boolean, round: number, cells: Array<FlowCell>, created_at: string, updated_at: string, };

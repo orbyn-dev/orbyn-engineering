@@ -101,6 +101,7 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
             "can_cancel",
             "can_rerun",
             "checks",
+            "could_not_start",
             "effort",
             "engine",
             "id",

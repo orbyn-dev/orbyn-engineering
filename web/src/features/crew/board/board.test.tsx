@@ -79,6 +79,20 @@ describe("the Taskboard on the board route", () => {
     expect(within(column(/^Passed/)).queryByText("Fix the typo in the README")).toBeNull();
   });
 
+  it("draws a task refused at its start as Could not start, not as one that waits for a decision", async () => {
+    await open("crew-could-not-start");
+    const needs = within(column(/^Needs you/));
+    const refused = needs.getByText("Rename returnTo to next in the session code").closest("li")!;
+    expect(refused).not.toHaveAttribute("data-needs");
+    expect(refused).toHaveTextContent("Could not start · Crew workers on Codex are not available yet.");
+    expect(refused.querySelector(".bd-amber")).toBeNull();
+    // The task that really waits keeps its amber reason.
+    const waiting = needs.getByText("Which target wins when both next and returnTo are set?").closest("li")!;
+    expect(waiting).toHaveAttribute("data-needs");
+    expect(waiting.querySelector(".bd-amber")).toHaveTextContent("a person decides");
+    expect(waiting).not.toHaveTextContent("Could not start");
+  });
+
   it("shows a needs_person card's reason read-only, as plain text, with no Answer button", async () => {
     await open("crew");
     const needs = within(column(/^Needs you/));
