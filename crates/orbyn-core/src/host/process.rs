@@ -328,7 +328,7 @@ impl Drop for ManagedChild {
 #[cfg(unix)]
 pub struct ProcessTree {
     leader: i32,
-    seen: std::sync::Mutex<Vec<unix_tree::Member>>,
+    seen: std::sync::Mutex<std::collections::HashSet<unix_tree::Member>>,
 }
 
 #[cfg(unix)]
@@ -341,7 +341,7 @@ impl ProcessTree {
     pub fn from_group(leader: i32) -> Self {
         Self {
             leader,
-            seen: std::sync::Mutex::new(Vec::new()),
+            seen: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 

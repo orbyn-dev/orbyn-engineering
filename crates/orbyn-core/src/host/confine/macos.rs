@@ -280,7 +280,10 @@ fn proof_secrets(home: Option<OsString>, account_home: Option<PathBuf>) -> Resul
                     push_unique(&mut found, path);
                 }
                 if let Some(real) = resolved {
-                    for target in linked_targets(&real, &real_base) {
+                    let targets = linked_targets(&real, &real_base).ok_or_else(|| {
+                        refuse("a credential folder holds too many entries to check its links")
+                    })?;
+                    for target in targets {
                         push_unique(&mut found, target);
                     }
                 }
@@ -296,10 +299,11 @@ fn push_unique(found: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-/// The real path of each link found inside `folder` (a few levels down, a bounded number of entries), left out when it is the home or
-/// holds the home, which a rule would turn into a denial of everything.
-fn linked_targets(folder: &Path, home: &Path) -> Vec<PathBuf> {
-    const DEPTH: usize = 3;
+/// The real path of each link found inside `folder`, left out when it is the home or holds the home, which a rule would turn into a
+/// denial of everything. `None` when the folder is bigger or deeper than the bound: a walk that stops early would leave links
+/// unchecked, so the caller refuses (fails closed) instead.
+fn linked_targets(folder: &Path, home: &Path) -> Option<Vec<PathBuf>> {
+    const DEPTH: usize = 8;
     const ENTRIES: usize = 2000;
     let mut targets = Vec::new();
     let mut seen = 0;
@@ -311,7 +315,7 @@ fn linked_targets(folder: &Path, home: &Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             seen += 1;
             if seen > ENTRIES {
-                return targets;
+                return None;
             }
             let path = entry.path();
             let Ok(kind) = entry.file_type() else {
@@ -323,12 +327,15 @@ fn linked_targets(folder: &Path, home: &Path) -> Vec<PathBuf> {
                 {
                     targets.push(real);
                 }
-            } else if kind.is_dir() && depth + 1 < DEPTH {
+            } else if kind.is_dir() {
+                if depth + 1 >= DEPTH {
+                    return None;
+                }
                 pending.push((path, depth + 1));
             }
         }
     }
-    targets
+    Some(targets)
 }
 
 /// The account's home folder from the user database (not the environment).
@@ -514,6 +521,20 @@ mod proof_tests {
         }
         // A toolchain folder at the same kind of link stays readable.
         assert_eq!(run(&at(&home.join(".cargo/file"))), Some(true));
+    }
+
+    /// A credential folder too big to check for links makes the proof unconfined (a person approves it) rather than half checked.
+    #[test]
+    fn a_credential_folder_too_big_to_check_fails_closed() {
+        let dir = TempDir::new();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".kube")).unwrap();
+        for index in 0..2001 {
+            std::fs::write(home.join(".kube").join(format!("c{index}")), "").unwrap();
+        }
+        let home = Some(home.into_os_string());
+        let here = Some(dir.path().to_path_buf());
+        assert!(proof_secrets(home, here).is_err());
     }
 
     /// A single key file that is a link out of a real credential folder is denied at its target too.

@@ -48,16 +48,24 @@ async fn a_setsid_child_that_ignores_sigterm_dies_after_terminate_wait_and_drop(
     assert_process_reaped(escaped, "terminate, wait and drop").await;
 }
 
-/// After the leader was waited for, its pid is free to be reused: the owner knows it is reaped (`id()` is `None`), so the drop signals
-/// the group and what was recorded (checked by start time) and walks nothing.
+/// A smoke test, not a proof of pid-reuse safety: after the leader was waited for, `id()` is `None`, nothing is walked, and the drop
+/// signals nothing but the group and what was recorded. A process of the test's own (its parent is this test, not the leader) lives on.
 #[tokio::test]
-async fn a_reaped_leader_is_not_walked() {
+async fn a_reaped_leader_signals_nothing_outside_the_group_and_the_record() {
     let dir = TempDir::new();
+    let mut bystander = std::process::Command::new("/bin/sleep")
+        .arg("600")
+        .spawn()
+        .unwrap();
     let mut child = spawn(dir.path(), "exit 0".into());
-    let leader = child.child.id().unwrap() as i32;
     child.wait().await.unwrap();
     assert!(child.child.id().is_none(), "reaped: nothing may be walked");
     assert!(child.tree.seen.lock().unwrap().is_empty());
-    assert!(leader > 1);
     drop(child);
+    assert!(
+        bystander.try_wait().unwrap().is_none(),
+        "the bystander was left alone"
+    );
+    bystander.kill().unwrap();
+    bystander.wait().unwrap();
 }
