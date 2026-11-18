@@ -41,7 +41,7 @@ function Flow({ initialCrew }: { initialCrew: string | null }) {
   const crews = useFlowCrews();
   const [picked, setPicked] = useState<string | null>(initialCrew);
   const [task, setTask] = useState<string | null>(null);
-  useRefresh(crews.reload, crews.status !== "ready");
+  useRefresh(crews.refreshQuietly, crews.status !== "ready");
 
   if (crews.status === "loading") return <Loading label="Reading Flow" rows={4} />;
   if (crews.status === "error" && !crews.data) return <ErrorState title="Can’t read Flow" failure={crews.error} onRetry={() => void crews.reload()} />;
@@ -94,7 +94,7 @@ function CrewTasks({ crew, onOpen }: { crew: string; onOpen(id: string): void })
   }, [draft]);
 
   const { first, rows, next, showMore, busy, failure } = useFlowTasks({ crew, filter, q, engine });
-  useRefresh(first.reload, first.status !== "ready" || rows.length > first.data!.tasks.length);
+  useRefresh(first.refreshQuietly, first.status !== "ready" || rows.length > first.data!.tasks.length);
   const page = first.data;
   if (page) counts.current = page.counts;
   // The engines to pick from are the ones seen on any list read for this crew, so choosing one does not empty the choice.

@@ -106,13 +106,13 @@ mod tests {
 
     #[test]
     fn non_ascii_letters_are_never_uppercased_into_symbols() {
-        // `ß` uppercases to `SS`, the Turkish dotless `ı` to `I` (then `1`), the long `ſ` to `S`, the `ﬃ` ligature to `FFI`.
+        // `ß` uppercases to `SS`, the Turkish dotless `ı` to `I` (then `1`), the long `ſ` to `S`, the `ﬀ` ligature to `FF`. Each case below has the right length, or the right length once uppercased, so only the ASCII rule refuses it.
         assert_eq!(normalize_email_code("ßABCDEF"), None);
         assert_eq!(normalize_email_code("ABCDEFß"), None);
         assert_eq!(normalize_email_code("ſABCDEFG"), None);
-        assert_eq!(normalize_email_code("ﬃABCDE"), None);
+        assert_eq!(normalize_email_code("ﬀABCDEF"), None);
         assert_eq!(normalize_invite("ıBCD-EFGH-JKMN-PQRS"), None);
-        assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRß"), None);
+        assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQß"), None);
         assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRſ"), None);
     }
 }

@@ -1,10 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
+import { NEEDS_REFRESH_MS } from "./useNeedsYou";
 
 let mock: MockApi;
 // App's cold module graph is fixture setup, not part of the live-frame assertion deadline.
@@ -305,5 +306,29 @@ describe("the Inbox tab of the Crew page", () => {
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps the list and shows no error when a periodic read fails after it was shown", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await open("crew-held-account");
+      const before = within(await list()).getAllByRole("listitem").length;
+      expect(before).toBeGreaterThan(0);
+      const real = vi.mocked(fetch).getMockImplementation()!;
+      vi.mocked(fetch).mockImplementation(async (input, init) =>
+        String(input).includes("/api/crew/") && !String(input).includes("/api/crew/preview")
+          ? new Response(JSON.stringify({ code: "unavailable", message: "The service is busy." }), { status: 503 })
+          : real(input, init),
+      );
+      const reads = calls("/api/crew/").length;
+      await act(async () => { vi.advanceTimersByTime(NEEDS_REFRESH_MS); });
+      await waitFor(() => expect(calls("/api/crew/").length).toBeGreaterThan(reads));
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      expect(within(await list()).getAllByRole("listitem")).toHaveLength(before);
+      expect(screen.queryByText("The service is busy.")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
