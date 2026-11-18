@@ -326,6 +326,16 @@ impl Core {
         parts.escapes = escapes;
     }
 
+    /// Tests: a run of `project` that is running, as one a crash or a slow replay leaves, with one lane.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn crew_backtest_seed_running(&self, id: &str, project: &str) {
+        let budgets = BTreeMap::from([("a".to_owned(), 100)]);
+        let lanes = [("security".to_owned(), "a".to_owned(), "m".to_owned())];
+        self.store
+            .crew_backtest_create(id, project, BacktestState::Running, &budgets, &lanes, 1)
+            .unwrap();
+    }
+
     /// Tests: waits until the run in progress has ended.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn crew_backtest_join(&self) {

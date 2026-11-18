@@ -14,10 +14,12 @@ pub const INVITE_LEN: usize = 16;
 pub const EMAIL_CODE_LEN: usize = 8;
 
 fn normalize(input: &str, len: usize, alphabet: &str, crockford: bool) -> Option<String> {
+    // ASCII only: Unicode uppercasing turns `ß` into `SS`, a dotless `ı` into `I` and `ſ` into `S`, symbols the person
+    // never typed, so any other character is refused before it can be mapped into the alphabet.
     let code: String = input
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '-')
-        .flat_map(char::to_uppercase)
+        .map(|c| c.to_ascii_uppercase())
         // Crockford reads `O` as `0` and `I` and `L` as `1`, as the Engine does for an invite; the emailed code has none of them.
         .map(|c| match (crockford, c) {
             (true, 'O') => '0',
@@ -100,5 +102,17 @@ mod tests {
         assert_eq!(normalize_invite("ABCD-EFGH-JKMN"), None);
         assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRST"), None);
         assert_eq!(normalize_email_code("ABCD-EFG"), None);
+    }
+
+    #[test]
+    fn non_ascii_letters_are_never_uppercased_into_symbols() {
+        // `ß` uppercases to `SS`, the Turkish dotless `ı` to `I` (then `1`), the long `ſ` to `S`, the `ﬃ` ligature to `FFI`.
+        assert_eq!(normalize_email_code("ßABCDEF"), None);
+        assert_eq!(normalize_email_code("ABCDEFß"), None);
+        assert_eq!(normalize_email_code("ſABCDEFG"), None);
+        assert_eq!(normalize_email_code("ﬃABCDE"), None);
+        assert_eq!(normalize_invite("ıBCD-EFGH-JKMN-PQRS"), None);
+        assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRß"), None);
+        assert_eq!(normalize_invite("ABCD-EFGH-JKMN-PQRſ"), None);
     }
 }

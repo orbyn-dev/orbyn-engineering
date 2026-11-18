@@ -41,12 +41,13 @@ pub(crate) async fn record_provenance(
 
 impl Core {
     /// Before a worker is granted: refuses a NEW start that Crew began itself at Low priority while more merges wait
-    /// for a person than the project's limit. Nothing is stored when it refuses.
+    /// for a person than the project's limit, and only when a person turned `pause_enabled` on (off by default).
+    /// Nothing is stored when it refuses.
     ///
-    /// `stored` is the task's `(priority, crew_started)` from the store (migration 47). A task that is being created
-    /// has none yet, so the start path passes `None` and this reads it as Medium and person-started: nothing pauses
-    /// until a later change sets them. A store failure reading the settings or the queue lets the start go, since
-    /// this only ever holds back optional work.
+    /// `stored` is the task's `(priority, crew_started)`. A task being created has no row yet, so the start path
+    /// passes `Some((Low, true))` when its launch carries `Links::crew_started` (review fixes, merge-comment fixes)
+    /// and `None` otherwise, which reads as Medium and person-started and never pauses. A store failure reading the
+    /// settings or the queue lets the start go, since this only ever holds back optional work.
     pub(crate) fn capacity_start_check(
         &self,
         project_id: &str,
@@ -72,6 +73,10 @@ impl Core {
                 return Ok(());
             }
         };
+        // Off until a person turns it on: the default never holds a start back.
+        if !settings.pause_enabled {
+            return Ok(());
+        }
         match start_allowed(settings, waiting, priority, crew_started) {
             StartDecision::Go => Ok(()),
             StartDecision::Paused { waiting, limit } => Err(CrewError::new(
@@ -81,6 +86,22 @@ impl Core {
                      a new low-priority start from Crew is paused until some are reviewed"
                 ),
             )),
+        }
+    }
+
+    /// After the task is stored: when Crew began it itself, records it as Low priority and Crew-started so a later
+    /// start can be paused against it. A person's start stores nothing (the defaults are Medium and person-started).
+    /// A store failure is logged and never fails the start.
+    pub(crate) fn capacity_mark_started(&self, task_id: &str, crew_started: bool) {
+        if !self.crew_enabled() || !crew_started {
+            return;
+        }
+        let marked = self
+            .store
+            .set_crew_task_priority(task_id, Priority::Low)
+            .and_then(|()| self.store.set_crew_task_crew_started(task_id, true));
+        if let Err(error) = marked {
+            tracing::warn!(%error, task = task_id, "the task's capacity mark was not stored");
         }
     }
 

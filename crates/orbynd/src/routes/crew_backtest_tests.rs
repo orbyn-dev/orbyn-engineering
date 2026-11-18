@@ -3,14 +3,12 @@
 //! (`crew/tests/backtest_api.rs`, `crew/backtest/*`). No engine runs: a start is refused until a replay engine is connected,
 //! and these tests connect a scripted one.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use orbyn_core::crew::backtest::ScriptedRunner;
 use orbyn_core::crew::changes::{READS, STATE_CHANGING, changes_crew_state};
 use orbyn_core::crew::fixtures;
-use orbyn_core::store::BacktestState;
 use orbyn_core::{Core, CoreConfig};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -287,19 +285,7 @@ async fn one_run_at_a_time_and_a_stop_only_asks() {
         .crew_backtest_use(Arc::new(ScriptedRunner::default()), None);
 
     // A run from earlier is still running.
-    let budgets: BTreeMap<String, u64> = [("a".to_owned(), 100)].into();
-    let lanes = vec![("security".to_owned(), "a".to_owned(), "m".to_owned())];
-    app.core
-        .store
-        .crew_backtest_create(
-            "earlier",
-            &app.project,
-            BacktestState::Running,
-            &budgets,
-            &lanes,
-            1,
-        )
-        .unwrap();
+    app.core.crew_backtest_seed_running("earlier", &app.project);
     let (status, body) = app.post(START, app.request()).await;
     assert_eq!(status, 409, "{body}");
     assert!(

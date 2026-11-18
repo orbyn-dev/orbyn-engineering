@@ -86,5 +86,9 @@ test("background crews with none yet offer the templates, and a template opens t
   await expect(page.getByRole("button", { name: "New background crew" })).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Triggers" })).toBeVisible();
   await page.getByRole("button", { name: "Use the Dependency bump template" }).click();
-  await expect(page.getByRole("dialog", { name: /New background crew/ })).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: /New background crew/ });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("It is created off. Turn it on when you want its trigger to start runs. It is kept on this device.")).toBeVisible();
+  await expect(dialog.getByLabel("Turns")).toHaveValue("40");
+  await expect(dialog.getByLabel("Minutes")).toHaveValue("60");
 });

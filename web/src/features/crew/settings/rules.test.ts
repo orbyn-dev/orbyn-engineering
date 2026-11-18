@@ -18,4 +18,10 @@ describe("Settings › Crew rows (Crew Designs v23)", () => {
     const { container } = await openFrame("settings-crew");
     expect(container.textContent).toContain("Claude Code 1M tokens · Codex 800k tokens");
   });
+
+  it("has no default budget row for background crews: a background crew's budget is set when it is created", async () => {
+    const { container } = await openFrame("settings-crew");
+    expect(container.textContent).not.toContain("Default budget for background crews");
+    expect(container.textContent).not.toContain("Claude Code 300k tokens · Codex 250k tokens");
+  });
 });

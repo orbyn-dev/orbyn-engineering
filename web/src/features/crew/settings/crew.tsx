@@ -82,15 +82,6 @@ export function SettingsCrew() {
           </div>
           <div className="cx-setrow">
             <div>
-              <b>Default budget for background crews</b>
-              <small>
-                Set when a background crew is created, in each engine’s own unit. A run that reaches it stops with the reason “budget” and lands in the Review queue with what it finished.
-              </small>
-            </div>
-            <span className="cx-sv">Claude Code 300k tokens · Codex 250k tokens</span>
-          </div>
-          <div className="cx-setrow">
-            <div>
               <b>Exchanges before the lead is told</b>
               <small>How many messages two members may trade before the lead steps in. A repo rule can lower it.</small>
             </div>

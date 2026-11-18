@@ -71,7 +71,7 @@ export const WIRE_TRIGGER: Record<TriggerId, BackgroundTriggerKind> = {
 };
 
 /** What a new crew starts with, and the route's limits: agent turns 1 to 1000 and minutes 1 to 1440 for each run. */
-export const DEFAULT_BUDGET: BackgroundBudget = { turns: 40, minutes: 30 };
+export const DEFAULT_BUDGET: BackgroundBudget = { turns: 40, minutes: 60 };
 export const LIMITS = { turns: 1000, minutes: 1440, hours: 720, text: 100, name: 80 } as const;
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -92,8 +92,8 @@ export const whenLong = (iso: string): string => {
   return `${day(at)}, ${clock(at)}`;
 };
 
-/** "When CI fails on main": the trigger of a crew, in words. A security advisory crew reads as the advisory, as the design draws it. */
-export function startsWhen(crew: Pick<WireCrew, "template" | "trigger">): string {
+/** "When CI fails on main": the trigger of a crew, in words. */
+export function startsWhen(crew: Pick<WireCrew, "trigger">): string {
   const { trigger } = crew;
   switch (trigger.kind) {
     case "ci_failure":
@@ -103,7 +103,7 @@ export function startsWhen(crew: Pick<WireCrew, "template" | "trigger">): string
     case "schedule":
       return trigger.every_hours === 1 ? "Every hour" : `Every ${trigger.every_hours ?? "?"} hours`;
     case "dependency_update":
-      return crew.template === "security_advisory" ? "When a security advisory is published" : "When a dependency update opens";
+      return "When a dependency update opens";
   }
 }
 
@@ -119,7 +119,7 @@ export function configuredAs(trigger: BackgroundTrigger): string | null {
     case "schedule":
       return trigger.every_hours ? (trigger.every_hours === 1 ? "Every hour" : `Every ${trigger.every_hours} hours`) : null;
     case "dependency_update":
-      return trigger.ecosystem || null;
+      return trigger.ecosystem ? `Dependabot or Renovate PRs · ${trigger.ecosystem}` : "Dependabot or Renovate PRs";
   }
 }
 
@@ -131,18 +131,13 @@ const STOP_REASON: Record<NonNullable<WireRun["stop_reason"]>, string> = {
 };
 const reasonOf = (run: WireRun) => (run.stop_reason ? STOP_REASON[run.stop_reason] : null);
 
-/** How a run ended, as the Last run cell says it. */
-function outcome(run: WireRun): string {
-  if (run.state === "running") return `Running · ${run.minutes_spent} min`;
-  if (run.state === "stopped") return `Stopped · ${reasonOf(run)?.toLowerCase() ?? "stopped"}`;
-  return "Landed in Review";
-}
+/** "12 turns, 9 min", or "running, 6 min" while it goes: what a run has spent, as the list draws it. */
+const spent = (run: WireRun) => `${run.turns_spent} ${run.turns_spent === 1 ? "turn" : "turns"}, ${run.minutes_spent} min`;
 
-/** "Sat 7 Nov, 15:11 · landed in Review": the newest run of a crew, or "Never run". */
+/** "Sat 7 Nov, 15:11 · 12 turns, 9 min": the newest run of a crew, or "Never run". */
 export function lastRunLine(run: WireRun | undefined): string | null {
   if (!run) return null;
-  const how = outcome(run);
-  return `${whenLong(run.started_at)} · ${how.charAt(0).toLowerCase()}${how.slice(1)}`;
+  return `${whenLong(run.started_at)} · ${run.state === "running" ? `running, ${run.minutes_spent} min` : spent(run)}`;
 }
 
 /** A crew's state as the route reports it; a stopped crew says why, from its newest run. */
@@ -163,7 +158,10 @@ const STARTED_BY: Record<BackgroundTriggerKind, (trigger: BackgroundTrigger) => 
 /** One row of Recent runs: only what the route reports. */
 export function runRow(run: WireRun, crew: WireCrew, now: Date): BackgroundRun {
   const ended = run.ended_at ?? run.updated_at;
-  const result = run.state === "needs_review" ? `Landed in Review · ${whenShort(ended, now)}` : run.state === "running" ? `Running · ${run.minutes_spent} min` : `Ended · ${whenShort(ended, now)}`;
+  // The design's three results: "Finished 15:49 · 12 turns, 9 min", "Running · 6 min" and "40 of 40 turns · 31 of 60 min".
+  const result = run.state === "running" ? `Running · ${run.minutes_spent} min`
+    : run.state === "stopped" ? `${run.turns_spent} of ${run.budget.turns} turns · ${run.minutes_spent} of ${run.budget.minutes} min`
+    : `Finished ${whenShort(ended, now)} · ${spent(run)}`;
   return {
     id: run.id,
     name: crew.name,

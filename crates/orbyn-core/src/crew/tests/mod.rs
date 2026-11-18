@@ -22,6 +22,7 @@ mod bus_guards;
 mod bus_review;
 mod bus_support;
 mod cancel;
+mod capacity_api;
 mod capacity_hooks;
 mod classes;
 mod classes_pin;

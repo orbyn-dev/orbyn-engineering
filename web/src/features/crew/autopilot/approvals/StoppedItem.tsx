@@ -13,21 +13,20 @@ export interface StoppedRun {
 }
 
 /**
- * A background run that reached its budget, as a Review queue item: Stopped with the reason "budget",
- * not Failed, with what it finished and what it didn't. Amber: it needs you to raise the budget or let it be.
+ * A background run that reached its budget, as a Review queue item: Stopped with the reason Budget,
+ * not Failed, with what it finished and what it didn't. The row has one action, Open; the budget is set when the crew is created.
  */
-export function StoppedBudgetItem({ run, onOpen, onRaise }: { run: StoppedRun; onOpen?(): void; onRaise?(): void }) {
+export function StoppedBudgetItem({ run, onOpen }: { run: StoppedRun; onOpen?(): void }) {
   return (
-    <article className="ap-box ap-box-am" aria-label={`${run.title} · Stopped · budget`}>
+    <article className="ap-box ap-box-am" aria-label={`${run.title} · Stopped · Budget`}>
       <div className="ap-chips"><Chip tone="plain">{RISK_LABEL[run.risk].replace(" risk", "")}</Chip><Chip tone="plain">Planned</Chip></div>
-      <h4>{run.title} · Stopped · budget</h4>
+      <h4>{run.title} · Stopped · Budget</h4>
       <p className="ap-muted">{run.meta}</p>
       <p className="ap-muted">Checks {run.checks} · Not verified: {run.notVerified} · {run.budget}</p>
       <div className="ap-acts">
         {onOpen ? <Button small onClick={onOpen}>Open what it finished</Button> : null}
-        {onRaise ? <Button small tone="primary" onClick={onRaise}>Raise the budget and continue</Button> : null}
       </div>
-      <p><b>Stopped · budget</b> It reached its budget. What it finished is merged or ready; the rest is listed.</p>
+      <p><b>Stopped · Budget</b> It reached its budget. What it finished is merged or ready; the rest is listed.</p>
     </article>
   );
 }

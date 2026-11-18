@@ -81,7 +81,7 @@ fn compiled() -> &'static [(&'static str, Regex)] {
 }
 
 /// Characters that hide text from a person: zero-width, bidirectional controls and the tag block.
-fn hidden(c: char) -> bool {
+pub(crate) fn hidden(c: char) -> bool {
     matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{e0000}'..='\u{e007f}')
 }
 

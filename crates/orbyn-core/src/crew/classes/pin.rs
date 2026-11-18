@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use orbyn_contracts as wire;
 
-use super::file::{ClassFile, Pinned, PinnedRef, read_pinned};
+use super::classify::redacted_ref;
+use super::file::{ClassFile, Pinned, PinnedRef, is_object_id, read_pinned};
 use crate::app::Core;
 use crate::crew::valid_id;
 use crate::error::{CoreError, Result};
@@ -43,6 +44,21 @@ pub(super) enum Decision {
         missing: bool,
         current: Option<(String, String)>,
     },
+}
+
+/// The remembered default branch, checked when it is read back: the row is data a writer other than this code could have
+/// changed, so a commit that is not a full object id is a broken row, never a commit to compare against. The caller fails
+/// closed on the error, as it does for a row that does not parse.
+pub(super) fn stored(store: &Store, project_id: &str) -> Result<Option<CrewPinnedRef>> {
+    let pin = store.crew_pinned_ref(project_id)?;
+    if let Some(pin) = &pin
+        && !is_object_id(&pin.commit)
+    {
+        return Err(CoreError::Invalid(
+            "the remembered default-branch commit is not a full commit id".into(),
+        ));
+    }
+    Ok(pin)
 }
 
 /// What the checkout's default branch says now, against the commit last accepted for this project. Reads only.
@@ -125,14 +141,15 @@ fn short(commit: &str) -> String {
 fn missing_reason(stored: &CrewPinnedRef) -> String {
     format!(
         "Orbyn remembered the default branch {} at {}. It is gone now, so this task may not read HEAD alone: fetch it again, or ask a person to reset the remembered default branch.",
-        stored.reference,
+        redacted_ref(&stored.reference),
         short(&stored.commit)
     )
 }
 
 fn rewritten_reason(name: &str, older: &str, newer: &str) -> String {
     format!(
-        "the default branch {name} now points at {}, which does not descend from the commit Orbyn remembered, {}. Ask a person to confirm the new default branch before a task starts.",
+        "the default branch {} now points at {}, which does not descend from the commit Orbyn remembered, {}. Ask a person to confirm the new default branch before a task starts.",
+        redacted_ref(name),
         short(newer),
         short(older)
     )
@@ -154,7 +171,7 @@ pub(super) enum Shown {
 
 /// The decision a view shows. A broken stored row is an error, never "nothing remembered".
 pub(super) async fn show(store: &Store, project_id: &str, root: &Path) -> Result<Shown> {
-    let stored = store.crew_pinned_ref(project_id)?;
+    let stored = stored(store, project_id)?;
     Ok(match decide(root, stored.as_ref()).await {
         Decision::None => Shown::None,
         Decision::Read { pin, file, .. } | Decision::Unreadable { pin, file } => {
@@ -188,11 +205,17 @@ impl Core {
     /// and whether a start would accept it without a person.
     pub async fn crew_pinned_ref_view(&self, project_id: &str) -> Result<wire::CrewPinnedRefView> {
         let root = self.pin_root(project_id)?;
-        let stored = self.store.crew_pinned_ref(project_id)?;
+        let stored = stored(&self.store, project_id)?;
         let decision = decide(&root, stored.as_ref()).await;
         let (current_ref, current_commit, accepted, missing, blocked) = match decision {
             Decision::None => (None, None, true, false, None),
-            Decision::Read { pin, .. } => (Some(pin.name), Some(pin.commit), true, false, None),
+            Decision::Read { pin, .. } => (
+                Some(redacted_ref(&pin.name)),
+                Some(pin.commit),
+                true,
+                false,
+                None,
+            ),
             Decision::Unreadable { file, .. } => {
                 (None, None, false, false, Some(file.problem_text()))
             }
@@ -205,7 +228,7 @@ impl Core {
             } => {
                 let current = current.or_else(|| (!missing).then_some((name, commit)));
                 (
-                    current.as_ref().map(|(name, _)| name.clone()),
+                    current.as_ref().map(|(name, _)| redacted_ref(name)),
                     current.map(|(_, commit)| commit),
                     false,
                     missing,
@@ -217,7 +240,7 @@ impl Core {
             project: project_id.to_owned(),
             current_ref,
             current_commit,
-            stored_ref: stored.as_ref().map(|pin| pin.reference.clone()),
+            stored_ref: stored.as_ref().map(|pin| redacted_ref(&pin.reference)),
             stored_commit: stored.as_ref().map(|pin| pin.commit.clone()),
             accepted,
             missing,
@@ -289,6 +312,20 @@ mod tests {
             moved.contains("origin/main")
                 && moved.contains("bbbbbbbbbbbb")
                 && moved.contains("aaaaaaaaaaaa")
+        );
+    }
+
+    #[test]
+    fn a_ref_name_in_a_reason_is_redacted() {
+        let token = format!("ghp_{}", "q".repeat(36));
+        let stored = CrewPinnedRef {
+            reference: format!("origin/{token}"),
+            commit: "a".repeat(40),
+            remote: true,
+        };
+        assert!(!missing_reason(&stored).contains(&token));
+        assert!(
+            !rewritten_reason(&stored.reference, &stored.commit, &"b".repeat(40)).contains(&token)
         );
     }
 }
