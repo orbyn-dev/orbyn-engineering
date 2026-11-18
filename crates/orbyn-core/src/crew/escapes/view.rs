@@ -31,7 +31,7 @@ fn line(record: &EscapeRecord) -> String {
     }
 }
 
-fn row_wire(record: &EscapeRecord) -> wire::EscapeRow {
+pub(super) fn row_wire(record: &EscapeRecord) -> wire::EscapeRow {
     wire::EscapeRow {
         id: record.id.clone(),
         project: record.project_id.clone(),

@@ -7,10 +7,10 @@ use super::*;
 use crate::testing::TempDir;
 use orbyn_contracts::{EscapeActor, EscapeEventKind, EscapeSource, EscapeState};
 
-const PROJECT: &str = "p1";
+pub(super) const PROJECT: &str = "p1";
 
 /// One project, its lead thread, and a task with a run and a merge (`review_state` as given), by raw SQL as an old release left them.
-fn seed(
+pub(super) fn seed(
     conn: &Connection,
     n: u32,
     review_state: &str,
@@ -51,13 +51,13 @@ fn seed(
     task
 }
 
-fn open() -> (TempDir, Store) {
+pub(super) fn open() -> (TempDir, Store) {
     let dir = TempDir::new();
     let store = Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
     (dir, store)
 }
 
-fn escapes(store: &Store) -> Vec<EscapeRecord> {
+pub(super) fn escapes(store: &Store) -> Vec<EscapeRecord> {
     store.crew_escapes_of_project(PROJECT, 0).unwrap()
 }
 

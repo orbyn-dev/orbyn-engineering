@@ -28,6 +28,11 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("POST", "/api/crew/tasks/t1/merge")).toBe(true);
     expect(sendsPersonKey("PUT", "/api/crew/autopilot/mode")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/projects/p1/worker-provider/set")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/escapes/mark")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/escapes/esc_1/confirm")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/escapes/esc_1/dismiss")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/escapes/esc_1/gap")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/crew/escapes/esc_1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/projects/p1/worker-provider")).toBe(false);
     expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
     for (const [method, path] of [

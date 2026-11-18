@@ -112,7 +112,7 @@ Each write takes a `seen` token (a mismatch is `409 stale`, as areas do) and ans
 
 ## As built: PR 1, store and revert log
 
-Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later merge renumbers (rebase, bump, rerun). Read-only: no route writes.
+Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later merge renumbers (rebase, bump, rerun). Read-only: no route writes (the person's writes are PR 2, below).
 
 - **Tables.** `crew_escapes` as designed, less `crew_escape_checks` (PR 4). Table checks: `source`, `state`, `gap`, `gap_by`, `decided_by` are enums;
   `reason` is at most 200 characters; a possible row has no decision and a confirmed row is decided by `person`; one row per merge.
@@ -128,8 +128,36 @@ Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later me
 - **Thresholds** are one JSON document in the existing `settings` table under `crew_escape_thresholds` (not a `pref:` key, so the account sync never
   carries it): `report_days` 60, `follow_up_days` 14, `min_merges` 10, `rate_multiple` 2; `stored` says whether a person's values are in force.
   Absent means defaults; present but unparsable, unknown-field or out of range is `unreadable`, never the defaults.
-- **Limits not built.** The 5,000-escape and 20,000-event pruning waits for PR 2's writer; `DELETE` on events is refused by trigger, so pruning needs its own removal path. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
+- **Limits not built.** The 5,000-escape and 20,000-event pruning is still not built (PR 2's writer refuses to pass either limit instead); `DELETE` on events is refused by trigger, so pruning needs its own removal path. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
 - **Display only.** Nothing reads the log for a decision: the breaker, the Router and every gate ignore it (decision 2). Test-covered for the breaker.
+
+## As built: PR 2, person acts
+
+No migration. `store/crew_escape_person.rs` (the writes), `crew/escapes/person.rs` (core API), four routes in `routes/crew_escapes.rs`.
+
+| Route | Does |
+| --- | --- |
+| `POST /api/crew/escapes/{id}/confirm` | `possible` to `confirmed`. The only way an escape becomes confirmed besides a mark. |
+| `POST /api/crew/escapes/{id}/dismiss` | `possible` to `dismissed`. Not offered again. |
+| `POST /api/crew/escapes/mark` | The merge becomes a confirmed escape at once (`person_marked`). A merge with a possible escape is confirmed (source stays); confirmed is returned as it is; dismissed is refused. |
+| `POST /api/crew/escapes/{id}/gap` | Sets `test_gap` or `tooling_gap` (`gap_by` person) on a possible or confirmed escape. Not on a dismissed one. |
+
+- **Bodies.** `project` (an escape or merge of another project is `404`), `seen` (the state and gap the person saw; a mismatch is `409 stale`),
+  and for confirm, dismiss and mark an optional `note` (at most 200 characters, redacted, kept in the audit row; a mark's note is also the new
+  escape's reason). Each answers with the escape as it now stands (`EscapeRow`). The existing read shapes are unchanged.
+- **Transitions.** `possible` to `confirmed` or `dismissed`; both are final. The same act on an escape already in that state answers with it
+  unchanged and writes nothing (a retry after a lost answer, whatever `seen` was). The opposite act is `400` in plain words ("This escape is already
+  dismissed, so it cannot be confirmed now."), after the stale check. There is no undo in v1; a wrong decision is for the owner to rule on.
+- **Audit first, one transaction** (rule 6): the ledger's audit row (`crew.escape.confirm`, `.dismiss`, `.mark`, `.gap`; who `user`, when, the
+  note), then the state change, then the `crew_escape_events` row (`confirmed`, `dismissed`, `reclassified` for a gap; a mark writes `detected` then
+  `confirmed`) whose `cause` is `person:<audit id>`. The state is read and compared inside the immediate transaction and the `UPDATE` repeats the
+  old state, so two acts racing leave one decision. A mark that would pass 5,000 escapes, or any act that would pass 20,000 events, is refused.
+- **Authority.** `Person` and enforced (`routes/classes.rs`, `tests/routes.json`, `web/src/api/personKey.ts`): browser mode and the CLI get
+  `403 desktop_required`, a remote viewer `403 local_only`, the flag off `404`. All four are in `crew::changes::STATE_CHANGING`, so an agent's
+  request is refused by path (N1); no MCP tool, CLI command, timer or scan calls them. Nothing confirms by itself: detection, the revert trigger
+  and every later PR write `possible` only. A confirm feeds no breaker, Router or gate (decision 2); a test checks the area mode is unchanged.
+- **Choices where the note is silent:** state and action names are the note's (`possible`, `confirmed`, `dismissed`; `mark`, `confirm`, `dismiss`,
+  `gap`); `seen` is the escape's state and gap; the gap is built here because the PR plan lists it; confirmed and dismissed are final.
 
 ### The stable read API (for the backtest's `EscapeSource`, slice 4n)
 

@@ -21,6 +21,17 @@ pub(super) struct Served {
 }
 
 pub(super) async fn serve(name: &str, preview: bool, remote: bool) -> Served {
+    serve_with(
+        name,
+        preview,
+        remote,
+        Access::new("token", vec![], None).with_dev_person_override(true),
+    )
+    .await
+}
+
+/// As [`serve`], with the caller's access: a test of a `Person` route gives it a person key and no development override.
+pub(super) async fn serve_with(name: &str, preview: bool, remote: bool, access: Access) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-flow-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -30,7 +41,7 @@ pub(super) async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
+        access: Arc::new(access),
         remote,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
