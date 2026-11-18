@@ -62,7 +62,7 @@ impl Core {
             .map(|grant| grant.path.as_str().to_owned())
             .collect();
         let mut classes = classify(root, base.as_deref(), file, &patterns).await;
-        let stored = match self.store.crew_pinned_ref(&lead.project_id) {
+        let stored = match pin::stored(&self.store, &lead.project_id) {
             Ok(pin) => pin,
             Err(error) => {
                 return (
