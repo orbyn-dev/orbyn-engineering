@@ -86,6 +86,29 @@ describe("the trail of tool calls", () => {
     expect(group).toHaveClass("s-fail");
   });
 
+  it("counts the failed calls apart in an opened group instead of folding them into its count", async () => {
+    render(
+      <Trail
+        items={[make("Bash", { command: "ls" }, { exitCode: 0 }), make("Bash", { command: "npm test" }, { exitCode: 1, result: "1 failed" })]}
+      />,
+    );
+    const group = rows()[0]!;
+    await userEvent.click(group);
+    expect(group.querySelector(".tln")).toHaveTextContent("· 1 failed");
+    expect(group.querySelector(".tln")).toHaveClass("tln-fail");
+  });
+
+  it("says in the group row that a fetch ended without a result, and does not mark the row failed", () => {
+    const ok = make("WebFetch", { url: "https://example.com/a" }, { exitCode: 0 });
+    const missing = make("WebFetch", { url: "https://example.com/b" }, { result: null, done: false, endedAt: undefined });
+    render(<Trail items={[ok, missing]} />);
+    const group = rows()[0]!;
+    expect(group.querySelector(".tla")).toHaveTextContent("Fetched 2 pages");
+    expect(group.querySelector(".tln")).toHaveTextContent("· 1 no result reported");
+    expect(group.querySelector(".tln")).not.toHaveClass("tln-fail");
+    expect(group).not.toHaveClass("s-fail");
+  });
+
   it("starts a capped output at its first line, not its end", async () => {
     const output = Array.from({ length: 20 }, (_, n) => `line ${n}`).join("\n");
     render(<Trail items={[make("Bash", { command: "seq 20" }, { exitCode: 0, result: output })]} />);

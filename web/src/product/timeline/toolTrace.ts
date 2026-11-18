@@ -113,6 +113,15 @@ const callWeight = (item: ToolItem): number => {
 
 export const toolFailed = (item: ToolItem) => item.outcome === "failure" || (item.exitCode !== null && item.exitCode !== 0);
 
+/** What the engine reported for one call; only an exit 0 or a success outcome counts as success. */
+export type CallOutcome = "success" | "failed" | "no-result" | "unknown";
+
+export function callOutcome(item: ToolItem): CallOutcome {
+  if (toolFailed(item)) return "failed";
+  if ((item.outcome === "success" || item.exitCode === 0) && item.done && item.result !== null) return "success";
+  return item.done && item.result !== null ? "unknown" : "no-result";
+}
+
 export interface WorkSummary {
   summary: string;
   action: ToolAction | "mixed" | "reasoning";
@@ -130,9 +139,9 @@ export function summarizeWork(items: readonly (ToolItem | ReasoningItem)[]): Wor
     };
   }
   const groups = new Map<ToolAction, { calls: number; weight: number; order: number }>();
-  const failed = tools.filter(toolFailed).length;
-  const succeeded = tools.filter((tool) => !toolFailed(tool) && (tool.outcome === "success" || tool.exitCode === 0) && tool.done && tool.result !== null);
-  const unknown = tools.filter((tool) => !toolFailed(tool) && tool.outcome !== "success" && tool.exitCode === null && tool.done && tool.result !== null).length;
+  const failed = tools.filter((tool) => callOutcome(tool) === "failed").length;
+  const succeeded = tools.filter((tool) => callOutcome(tool) === "success");
+  const unknown = tools.filter((tool) => callOutcome(tool) === "unknown").length;
   const pending = tools.length - failed - succeeded.length - unknown;
   for (const tool of succeeded) {
     const { action } = traceTool(tool);

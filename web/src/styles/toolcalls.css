@@ -121,6 +121,10 @@
 .tcr.s-fail .tln {
   color: var(--color-danger);
 }
+/* A failed count takes danger even when the row's own state does not. */
+.tcr .tln.tln-fail {
+  color: var(--color-danger);
+}
 .tcr .du .er,
 .cf .er {
   color: var(--color-danger);

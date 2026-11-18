@@ -12,7 +12,7 @@ import { HtmlRender } from "../HtmlRender";
 import { McpApp } from "../McpApp";
 import { SurfacedWorkflows, WorkflowCards } from "../WorkflowControls";
 import { useThreadOfTimeline } from "../timelineThread";
-import { callKind, callLabel, callMs, callState, runLabel, type CallKind, type CallRun, type CallState } from "../toolCalls";
+import { callKind, callLabel, callMs, callState, runLabel, runOutcomes, type CallKind, type CallRun, type CallState } from "../toolCalls";
 import { Block } from "./blocks/Block";
 
 const KIND_ICONS: Record<CallKind, LucideIcon> = {
@@ -168,6 +168,10 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
   const failing = failedAt >= 0 ? run.items[failedAt] : undefined;
   const lead = !open && running && current ? "Running" : label.verb;
   const detail = !open ? (running && current ? callLabel(current, cwd).object : failing ? callLabel(failing, cwd).object : null) : null;
+  // A collapsed row that can name the call that failed says that instead; everything else
+  // states the unmet outcomes, so a failed or unanswered call never hides behind the count.
+  const outcomes = detail ? null : runOutcomes(run, live, cancelled);
+  const note = outcomes ?? (label.note ? { failed: 0, text: label.note } : null);
   const exit = failing?.exitCode;
   const exited = !open && failing && exit !== null && exit !== undefined && exit !== 0;
   const duration = total === null ? "" : callDuration(total);
@@ -180,7 +184,7 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
       summaryClassName={`tcr ${stateClass(state)}`.trim()}
       summaryProps={{
         "aria-label": withState(
-          [lead, detail, !detail && label.note ? `· ${label.note}` : null, exited ? `exit ${exit} ·` : null, duration].filter(Boolean).join(" "),
+          [lead, detail, !detail && note ? `· ${note.text}` : null, exited ? `exit ${exit} ·` : null, duration].filter(Boolean).join(" "),
           state,
         ),
       }}
@@ -192,7 +196,7 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
           <span className="lb" data-command={command}>
             <span className="tla">{lead}</span>
             {detail ? <span className="tlb tlfill">{detail}</span> : null}
-            {!detail && label.note ? <span className="tln">· {label.note}</span> : null}
+            {!detail && note ? <span className={`tln${note.failed ? " tln-fail" : ""}`}>· {note.text}</span> : null}
           </span>
           <span className="du">
             {exited ? (

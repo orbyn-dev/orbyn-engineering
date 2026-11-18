@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolItem } from "../../product/timeline/types";
-import { callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, sourceLines } from "./toolCalls";
+import { callKind, callLabel, callMs, callRuns, callState, resultRows, runLabel, runOutcomes, sourceLines } from "./toolCalls";
 import { callDuration } from "../../lib/format";
 
 const call = (name: string, args: unknown, extra: Partial<ToolItem> = {}): ToolItem => ({
@@ -66,6 +66,21 @@ describe("tool call rows", () => {
     const commands = callRuns([call("Bash", { command: "a" }), call("Bash", { command: "b" })])[0]!;
     expect(runLabel(commands, false).verb).toBe("Ran 2 commands");
     expect(runLabel(commands, true).verb).toBe("Running 2 commands");
+  });
+
+  it("counts a group's unmet outcomes apart from the calls its count names", () => {
+    const group = (...calls: Partial<ToolItem>[]) => callRuns(calls.map((extra, at) => call("Bash", { command: `c${at}` }, extra)))[0]!;
+    const ok = { exitCode: 0 };
+    // One of two commands failed: the row keeps the group's count and says how many failed.
+    expect(runOutcomes(group(ok, { exitCode: 1, result: "2 failed" }), false, false)).toEqual({ failed: 1, text: "1 failed" });
+    expect(runOutcomes(group({ exitCode: 1 }, { exitCode: 2 }), false, false)).toEqual({ failed: 2, text: "2 failed" });
+    // A call the engine never answered is not a success, and it is not silent either.
+    expect(runOutcomes(group(ok, { result: null, done: false }), false, false)).toEqual({ failed: 0, text: "1 no result reported" });
+    // A finished call that reported no outcome is unknown, never counted as one that worked.
+    expect(runOutcomes(group(ok, { exitCode: null, done: true, result: "ok" }), false, false)).toEqual({ failed: 0, text: "1 outcome unknown" });
+    // While the calls are still running, nothing is missing yet, and a group of successes says nothing.
+    expect(runOutcomes(group(ok, { result: null, done: false }), true, false)).toBeNull();
+    expect(runOutcomes(group(ok, ok), false, false)).toBeNull();
   });
 
   it("labels each kind with its own verb, object and note", () => {

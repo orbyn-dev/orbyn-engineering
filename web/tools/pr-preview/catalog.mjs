@@ -155,6 +155,7 @@ export const FRAMES = {
   "thread-interrupted": { route: "#/threads/t-interrupted" },
   "thread-empty": { route: "#/threads/t-empty" },
   "thread-tools": { route: "#/threads/t-tools" },
+  "thread-tools-open": { route: "#/threads/t-tools", steps: [click("button", "Ran", { prefix: true }), click("button", "Ran 3", { prefix: true })] },
   "thread-tools-live": { route: "#/threads/t-tools-live" },
   "thread-details": { route: "#/threads/t-done", steps: [click("button", "Details")] },
   "details-popover": { route: "#/threads/t-done", steps: [click("button", "Details")] },
