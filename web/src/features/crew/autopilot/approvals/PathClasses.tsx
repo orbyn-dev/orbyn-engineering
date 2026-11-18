@@ -342,7 +342,7 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
       {note ? (
         <div className="ap-banner ap-banner-am" role="alert" data-frame="classes-pinned-ref-blocked">
           <p><b>default branch changed</b><br />{agrees ? pin.blocked : note.slice(BLOCKED_PREFIX.length)}</p>
-          {agrees ? <dl className="ap-facts ap-pin-facts">
+          {agrees ? <dl className="ap-facts">
             <div><dt>Remembered ref</dt><dd>{pin.stored_ref}</dd></div>
             <div><dt>Remembered commit</dt><dd><code>{pin.stored_commit}</code></dd></div>
             <div><dt>Current ref</dt><dd>{pin.current_ref ?? "No default-branch ref"}</dd></div>
