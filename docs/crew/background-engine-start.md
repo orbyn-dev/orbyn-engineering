@@ -42,10 +42,11 @@ All behind `CoreConfig::crew_preview`, tests first with fake engines.
 3. Listeners: schedule timer and CI-failure watch as one owned future like `run_crew_merge_watch`, opt-in, awaited on shutdown, deduplicated by event key. Fake-forge tests.
 4. Review join: stopped runs in the Review queue, a route for Run now, contracts and `web/src/generated` in the same commit.
 
-## 7. Open questions for the product owner
+## 7. Decisions (conservative defaults, the owner can change them)
 
-1. Daily budget: reset at local midnight, or a rolling 24 hours?
-2. May a background run's Low-risk merge land by itself under the Autopilot risk rules, or must every background merge wait for a person in 4h?
-3. Is Run now (`manual`) in 4h, yes or no?
-4. Stored kinds `issue_label` and `dependency_update` have no listener: refuse to turn them on in 4h, yes or no?
-5. A file trigger with no matching crew: show it as a suggestion the person can adopt, or ignore it?
+1. The daily budget resets at local midnight. A refusal shows the reset time.
+2. v1: every background merge waits for a person. No Autopilot auto-landing for background runs until escape data exists.
+3. Run now (`manual`) is part of 4h and is the first PR.
+4. `issue_label` and `dependency_update` are refused when turned on, with a plain reason (no listener).
+5. A file trigger with no matching crew is ignored: nothing starts and nothing is adopted. At most a diagnostic line, "found in .orbyn/crew.json, no matching crew", and no UI.
+6. The listeners PR (3) gets an independent Opus review: event text from outside is never part of the prompt as instructions.
