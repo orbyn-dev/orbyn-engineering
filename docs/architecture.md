@@ -3165,7 +3165,7 @@ unverified; the shared storage correction is not a substitute for that walkthrou
 `{url, token}` on stdout once it can serve, after registering stop handlers and writing
 the CLI's service handle. A stop immediately after that line still cleans up the handle.
 `--skills-dir` is accepted and ignored
-for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBYN_LIBRARY_BUNDLE`, `ORBYN_WORKSPACE_URL`, `ORBYN_UPDATE_MANIFEST`, `ORBYN_CLAUDE_BIN`, `ORBYN_CODEX_BIN`, `ORBYN_CODEX_SANDBOX` (default
+for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBYN_LIBRARY_BUNDLE`, `ORBYN_WORKSPACE_URL`, `ORBYN_UPDATE_MANIFEST`, `ORBYN_CLAUDE_BIN`, `ORBYN_CLAUDE_TASK_TOOLS` (`1` lets unconfined Claude runs carry `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`; off by default), `ORBYN_CODEX_BIN`, `ORBYN_CODEX_SANDBOX` (default
 `workspace-write`), `ORBYN_APPROVAL_TIMEOUT_SECS` (default 1800),
 `ORBYN_AGENT_DESKTOP`, `ORBYN_BROWSER`, `ORBYN_BROWSER_HEADLESS`,
 `ORBYN_BROWSER_IN_PROCESS_GPU`, `ORBYN_OFFLINE`

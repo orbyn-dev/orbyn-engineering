@@ -42,7 +42,7 @@ use crate::agents::engines::maintenance;
 use crate::agents::engines::probe::{probe_cli, read_login};
 use crate::error::{CoreError, Result};
 use crate::util::write_private;
-use args::{CAPABILITY_ENV, RUN_ENV};
+use args::{CAPABILITY_ENV, run_env};
 use catalog::{documented_catalog, probe_failed, read_control};
 use mcp::{SERVERS_LEARNED, claude_tools, learn_servers, list_mcp};
 use protocol::{Inputs, run_protocol};
@@ -68,6 +68,8 @@ pub struct ClaudeDriver {
     named: Option<(String, String)>,
     /// Tokens before Claude compacts, from the instance.
     auto_compact_window: Option<u32>,
+    /// A person turned the modern task tools on for the service; see `args::run_env`.
+    task_tools: bool,
     /// The service's approval timeout; the run's MCP tool timeout is this plus a margin.
     approval_timeout: Duration,
 }
@@ -78,8 +80,15 @@ impl ClaudeDriver {
             program,
             named: None,
             auto_compact_window: None,
+            task_tools: false,
             approval_timeout,
         }
+    }
+
+    /// Sets the person's opt-in to the modern task tools for every run.
+    pub fn with_task_tools(mut self, enabled: bool) -> Self {
+        self.task_tools = enabled;
+        self
     }
 }
 
@@ -146,6 +155,7 @@ impl EngineDriver for ClaudeDriver {
                 .auto_compact_window
                 .as_deref()
                 .and_then(|window| window.parse().ok()),
+            task_tools: self.task_tools,
             approval_timeout: self.approval_timeout,
         }))
     }
@@ -430,7 +440,12 @@ impl ClaudeDriver {
             write_private(&run_settings_path(spec), settings.to_string().as_bytes())?;
         }
         let args = run_args(spec, &mcp_path);
-        spawn_engine_confined(&command, &args, &spec.cwd, RUN_ENV, spec.confine.as_ref())
+        let env = run_env(
+            self.task_tools,
+            spec.confine.is_some(),
+            std::env::var_os("CLAUDE_CODE_ENABLE_TODO_TOOLS").as_deref(),
+        );
+        spawn_engine_confined(&command, &args, &spec.cwd, &env, spec.confine.as_ref())
     }
 
     /// Reads the CLI's `initialize` response from a process that never gets a

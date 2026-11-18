@@ -640,23 +640,23 @@ async fn claude_launches_reach(file: &std::path::Path, wanted: usize) {
     panic!("{} launches, wanted {wanted}", claude_run_launches(file));
 }
 
-/// The CLI leaves the modern task tools out on newer and unrecognized models unless a
-/// run asks for them. The driver projects `TaskCreate`, `TaskUpdate` and `TaskList` into
-/// the same plan activity as `TodoWrite`, so a run must carry the opt-in; without it no
-/// Tasks row can appear. The seeded `0` proves the run overrides an inherited value
-/// instead of passing through whatever the service was started with.
-#[tokio::test]
-async fn a_claude_run_opts_into_the_task_tools_the_plan_row_projects() {
+/// What the run's own child saw as `CLAUDE_CODE_ENABLE_TODO_TOOLS`, for a service started
+/// with `extra` in its environment. The capability probe and the one-shot title call are
+/// Claude launches too; the opt-in belongs to runs alone, so they are checked as well.
+async fn task_tools_seen_by_a_run(extra: &[(&str, &str)]) -> Value {
     let dir = TempDir::new();
     let file = dir.path().join("launches");
+    let mut env = vec![(
+        "ORBYN_FAKE_LAUNCH_FILE".to_owned(),
+        file.to_string_lossy().into_owned(),
+    )];
+    env.extend(
+        extra
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
+    );
     let options = Options {
-        env: vec![
-            (
-                "ORBYN_FAKE_LAUNCH_FILE".into(),
-                file.to_string_lossy().into_owned(),
-            ),
-            ("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "0".into()),
-        ],
+        env,
         ..Options::default()
     };
     let (service, thread) = setup(&dir, options, "claude").await;
@@ -668,15 +668,12 @@ async fn a_claude_run_opts_into_the_task_tools_the_plan_row_projects() {
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .filter(|entry| entry["mode"] == "claude")
         .collect();
-    // The capability probe and the one-shot title call are Claude launches too, and the
-    // opt-in belongs to runs alone.
     let (runs, others): (Vec<&Value>, Vec<&Value>) = launches.iter().partition(|entry| {
         entry["args"]
             .as_array()
             .is_some_and(|args| args.iter().any(|arg| arg == "--permission-prompt-tool"))
     });
     assert_eq!(runs.len(), 1, "{launches:?}");
-    assert_eq!(runs[0]["task_tools"], "1");
     assert!(!others.is_empty(), "{launches:?}");
     for entry in others {
         assert_ne!(
@@ -684,6 +681,32 @@ async fn a_claude_run_opts_into_the_task_tools_the_plan_row_projects() {
             "a non-run launch took the driver's opt-in: {entry}"
         );
     }
+    runs[0]["task_tools"].clone()
+}
+
+/// Off unless a person turns it on: Orbyn sets no task-tool flag by default.
+#[tokio::test]
+async fn a_claude_run_sets_no_task_tools_flag_by_default() {
+    assert_eq!(task_tools_seen_by_a_run(&[]).await, Value::Null);
+}
+
+/// A person's `ORBYN_CLAUDE_TASK_TOOLS=1` on the service makes its unconfined runs ask
+/// the CLI for the modern task tools the plan row projects.
+#[tokio::test]
+async fn a_persons_opt_in_makes_a_claude_run_carry_the_task_tools_flag() {
+    let seen = task_tools_seen_by_a_run(&[("ORBYN_CLAUDE_TASK_TOOLS", "1")]).await;
+    assert_eq!(seen, "1");
+}
+
+/// A value the person already set for the CLI wins, `0` included, even with the opt-in.
+#[tokio::test]
+async fn a_persons_own_task_tools_value_is_never_overridden() {
+    let seen = task_tools_seen_by_a_run(&[
+        ("ORBYN_CLAUDE_TASK_TOOLS", "1"),
+        ("CLAUDE_CODE_ENABLE_TODO_TOOLS", "0"),
+    ])
+    .await;
+    assert_eq!(seen, "0");
 }
 
 /// The thread's events through the end of its `runs`th run.
