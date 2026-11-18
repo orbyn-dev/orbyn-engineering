@@ -373,6 +373,7 @@ mod tests {
             granted,
             [
                 "allow-crew-presence",
+                "allow-person-key",
                 "allow-quit-core",
                 "allow-restart-core",
                 "allow-show-core-log"
