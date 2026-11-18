@@ -15,7 +15,7 @@
 //!   Only both together prove it. A check that passes on both is refused (`failed`, "passes on both"); a command that could not run is
 //!   not a failure of the test and is `failed` too, with that reason. The proof stores two commit ids and two booleans, never output.
 //!   **It never runs unrestricted and unreviewed.** Where the machine can restrict it (macOS: no network, no reading of the data
-//!   folder, writes only in its own tree), it runs after the worker's task passes. Anywhere else the check stays `writing` with the
+//!   folder, no clipboard or launchd job, writes only in its own tree), it runs after the worker's task passes. Anywhere else the check stays `writing` with the
 //!   change's commit, hash and paths shown, and a person approves exactly that commit and hash (`check/approve`) before it runs; a
 //!   different change needs a new approval.
 //! - **The merge queue.** A proven check is queued through [`Core::crew_merge_request`], the same entry the Review queue's merge route
@@ -25,7 +25,7 @@
 //!   removed; merging is not authorised here.
 //! - **Recovery.** The worker's end calls [`Core::spawn_escape_check_ended`]; the service's tick calls [`Core::crew_escape_check_reconcile`],
 //!   which starts the proof of a check whose task ended while the core was down, puts a `writing` check whose task never started back
-//!   to `proposed`, records the merge of a proven one, turns down a queued merge of a withdrawn one and removes proof folders a crash
+//!   to `proposed`, records the merge of a proven one, turns down a queued merge of any task whose check is no longer proven for it and removes proof folders a crash
 //!   left. Proofs run in their own tasks, never inline in the tick. A flaky test can be proven by chance (each side runs once).
 
 use std::collections::{HashMap, HashSet};
@@ -113,15 +113,17 @@ fn line(check: &EscapeCheckRecord) -> String {
         EscapeCheckState::Proposed => {
             format!(
                 "Proposed: add {path}. Nothing runs until a person accepts. Accepting starts a worker that writes only this file. \
-                 Then `{}` runs that file as you, and the file is code nobody has reviewed: on a Mac it runs inside a restriction with no \
-                 network, no reading of Orbyn's data and writes only in its own copy of the repository; on any other machine it runs only \
-                 after a person approves the exact files shown here.",
+                 Then `{}` runs that file, and the file is code nobody has reviewed. It gets a short environment (no tokens or keys of \
+                 yours) and a copy of the repository without its history. On a Mac it runs inside a restriction: no network, no clipboard, \
+                 no launchd jobs, no reading Orbyn's data, other programs' environment or Claude's saved conversations, and it can write \
+                 only in its own copy and /dev/null; it can still read the rest of what your account can read. On any other machine nothing \
+                 restricts it, so it runs only after a person approves the exact files shown here.",
                 check.run
             )
         }
         EscapeCheckState::Writing => match (&check.diff_commit, &check.diff_hash) {
             (Some(commit), Some(hash)) if check.approved_commit.is_none() => format!(
-                "Waiting for a person to approve {path} (commit {}, hash {}): the proof runs it as you, unrestricted, so check the file first.",
+                "Waiting for a person to approve {path} (commit {}, hash {}): the proof runs it as you, unrestricted, so read the file first.",
                 short(commit),
                 short(hash)
             ),
@@ -567,11 +569,34 @@ impl Core {
         if let Some(token) = driving().lock().unwrap_or_else(|e| e.into_inner()).get(id) {
             token.cancel();
         }
+        let mut check = check;
         if let (Some(task), Some(was)) = (&check.task_id, was) {
             match was {
                 EscapeCheckState::Writing => self.cancel_check_task(task).await?,
-                EscapeCheckState::Proven if self.store.merge_entry(task)?.is_some() => {
-                    self.crew_reject_merge(task, "The check was withdrawn.")?;
+                EscapeCheckState::Proven => {
+                    // The check is withdrawn already: whatever the queue says now must not turn that into an error.
+                    let note = match self.store.merge_entry(task) {
+                        Ok(Some(entry))
+                            if matches!(entry.state.as_str(), "waiting" | "queued" | "blocked") =>
+                        {
+                            self.crew_reject_merge(task, "The check is no longer proven for this task.")
+                                .err()
+                                .map(|_| "The queued merge could not be turned down; the tick will retry.")
+                        }
+                        Ok(Some(entry)) => Some(if entry.state == "merged" {
+                            "Already merged: the merge could not be stopped."
+                        } else {
+                            "Already out of the queue: nothing to stop."
+                        }),
+                        Ok(None) => None,
+                        Err(_) => Some("The queue could not be read; the tick will turn the merge down."),
+                    };
+                    if let Some(note) = note {
+                        let _ = self.store.note_escape_check(id, task, note, unix_now());
+                        if let Ok(Some(fresh)) = self.store.crew_escape_check(id) {
+                            check = fresh;
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -591,7 +616,11 @@ impl Core {
             return Ok(());
         }
         match self
-            .crew_cancel_task(task_id, Some("The check was withdrawn."), "user")
+            .crew_cancel_task(
+                task_id,
+                Some("The check is no longer proven for this task."),
+                "user",
+            )
             .await
         {
             Ok(_) => Ok(()),
@@ -678,10 +707,12 @@ impl Core {
             }
             Err(error) => tracing::warn!(%error, "the escape checks could not be read"),
         }
-        match self.store.crew_escape_checks_withdrawn_queued() {
+        match self.store.crew_escape_checks_unproven_queued() {
             Ok(queued) => {
                 for (_, task) in queued {
-                    if let Err(error) = self.crew_reject_merge(&task, "The check was withdrawn.") {
+                    if let Err(error) = self
+                        .crew_reject_merge(&task, "The check is no longer proven for this task.")
+                    {
                         tracing::warn!(%error, "a withdrawn check's queued merge could not be turned down");
                     }
                 }
@@ -816,7 +847,8 @@ impl Core {
         };
         if !proven(self) {
             if matches!(self.store.merge_entry(task_id), Ok(Some(_)))
-                && let Err(error) = self.crew_reject_merge(task_id, "The check was withdrawn.")
+                && let Err(error) =
+                    self.crew_reject_merge(task_id, "The check is no longer proven for this task.")
             {
                 tracing::warn!(%error, "a withdrawn check's queued merge could not be turned down");
             }
@@ -948,12 +980,13 @@ impl Core {
         token: &CancellationToken,
     ) -> Result<Option<bool>> {
         let scratch = self.proof_root().join(crate::util::new_id());
-        let (from, rev, to) = (repo.to_path_buf(), commit.to_owned(), scratch.clone());
+        let tree = check_proof::tree(&scratch);
+        let (from, rev, to) = (repo.to_path_buf(), commit.to_owned(), tree.clone());
         let built = tokio::task::spawn_blocking(move || check_proof::extract(&from, &rev, &to))
             .await
             .map_err(|error| CoreError::Internal(error.to_string()))
             .and_then(|done| done)
-            .and_then(|()| check_proof::lay(&scratch, files));
+            .and_then(|()| check_proof::lay(&tree, files));
         let outcome = match built {
             Ok(()) => Ok(check_proof::run(
                 run,
@@ -995,10 +1028,28 @@ fn prune_scratch(root: &Path, older: std::time::Duration) {
     }
 }
 
-/// A machine-wide gate for the merge queue: a task that writes an escape check may be queued only while its check is `proven`.
-/// Pure so every entry reads the same rule; `None` when the task has no check or the check is proven.
-pub fn escape_check_blocks_queue(check: Option<&EscapeCheckRecord>) -> Option<String> {
-    let check = check?;
+/// A machine-wide gate for the merge queue: a task that an accept ever created for an escape check may be queued or merged only while
+/// that escape's **current** check names this same task and is `proven`. `recorded` is whether an accept ever created the task (a row
+/// that is never deleted), so a retried, withdrawn or proposed-again check cannot hide its old worker's change. Pure so every entry reads
+/// the same rule; `None` when the task is no check's, or its check is proven for it.
+pub fn escape_check_blocks_queue(
+    task_id: &str,
+    recorded: bool,
+    check: Option<&EscapeCheckRecord>,
+) -> Option<String> {
+    if !recorded && check.is_none() {
+        return None;
+    }
+    let Some(check) = check else {
+        return Some(
+            "This task was written for an escape check that no longer exists, so it cannot be queued for merge.".into(),
+        );
+    };
+    if check.task_id.as_deref() != Some(task_id) {
+        return Some(
+            "This task was an earlier attempt at an escape check, not the check's current one, so it cannot be queued for merge.".into(),
+        );
+    }
     let state = match check.state {
         EscapeCheckState::Proven => return None,
         EscapeCheckState::Proposed => "only proposed",
@@ -1013,11 +1064,11 @@ pub fn escape_check_blocks_queue(check: Option<&EscapeCheckRecord>) -> Option<St
 }
 
 impl Core {
-    /// Refuses to queue a task whose escape check is not `proven`. **Fails closed**: a check that cannot be read refuses too, with a
-    /// plain reason. The one helper every merge-queue entry calls.
+    /// Refuses to queue or merge a task whose escape check is not `proven` for it. **Fails closed**: a check that cannot be read
+    /// refuses too, with a plain reason. The one helper every merge-queue and merge-processing entry calls.
     pub(crate) fn refuse_unproven_escape_check(&self, task_id: &str) -> Result<()> {
-        match self.store.crew_escape_check_for_task(task_id) {
-            Ok(check) => match escape_check_blocks_queue(check.as_ref()) {
+        match self.store.crew_escape_check_task_status(task_id) {
+            Ok((recorded, check)) => match escape_check_blocks_queue(task_id, recorded, check.as_ref()) {
                 None => Ok(()),
                 Some(why) => Err(CoreError::Invalid(why)),
             },

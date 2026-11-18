@@ -40,7 +40,10 @@ fn segments_ok(path: &str) -> bool {
         && path.len() <= PATH_MAX
         && path.is_ascii()
         && !path.starts_with('/')
-        && !path.contains(['\\', ':', '*', '?', '[', ']', '{', '}', '!', '"', '\''])
+        && !path.contains([
+            '\\', ':', '*', '?', '[', ']', '{', '}', '!', '"', '\'', '$', '`', ';', '&', '|', '<',
+            '>',
+        ])
         && !path.chars().any(char::is_control)
         && path.split('/').all(|s| {
             !s.is_empty()
@@ -48,7 +51,15 @@ fn segments_ok(path: &str) -> bool {
                 && !s.ends_with('.')
                 && !s.ends_with(' ')
                 && !reserved(s)
+                && !short_name(s)
         })
+}
+
+/// A Windows 8.3 short name (`PROGRA~1`, `x~2.txt`): another spelling of a longer name the rules above would have judged.
+fn short_name(segment: &str) -> bool {
+    segment
+        .match_indices('~')
+        .any(|(at, _)| segment[at + 1..].starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// A file that defines what a check command does or how the repository is gated.
@@ -89,6 +100,21 @@ pub fn is_policy(path: &str) -> bool {
                 | "setup.py"
                 | "cargo.toml"
                 | "cargo.lock"
+                | "gemfile"
+                | "gemfile.lock"
+                | "rakefile"
+                | "global.json"
+                | "deno.json"
+                | "deno.jsonc"
+                | "deno.lock"
+                | "bunfig.toml"
+                | "meson.build"
+                | "buck"
+                | "sitecustomize.py"
+                | "usercustomize.py"
+                | "directory.build.props"
+                | "directory.build.targets"
+                | "directory.packages.props"
         )
         || [
             "jest.config.",
@@ -100,10 +126,19 @@ pub fn is_policy(path: &str) -> bool {
             "build.gradle",
             "settings.gradle",
             "docker-compose",
+            "vite.config.",
+            "vitest.workspace.",
+            "cypress.config.",
         ]
         .iter()
         .any(|prefix| name.starts_with(prefix))
         || (name.starts_with("tsconfig") && name.ends_with(".json"))
+        || (name.starts_with("requirements") && name.ends_with(".txt"))
+        || [
+            ".csproj", ".fsproj", ".vbproj", ".sln", ".props", ".targets",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
 }
 
 /// Whether `path` is a test file by the rule in the module notes.
@@ -271,6 +306,27 @@ mod tests {
             "tests/package.json",
             "tests/Makefile",
             "tests/vitest.config.ts",
+            "tests/Gemfile",
+            "tests/Rakefile",
+            "tests/requirements.txt",
+            "tests/requirements-dev.txt",
+            "tests/Directory.Build.props",
+            "tests/app.csproj",
+            "tests/app.fsproj",
+            "tests/global.json",
+            "tests/deno.json",
+            "tests/bunfig.toml",
+            "tests/vite.config.ts",
+            "tests/vitest.workspace.ts",
+            "tests/cypress.config.js",
+            "tests/meson.build",
+            "tests/BUCK",
+            "tests/sitecustomize.py",
+            "tests/CONIN$",
+            "tests/CONOUT$.txt",
+            "tests/PROGRA~1.test.js",
+            "tests/a~1.test.js",
+            "tests/x~12/a.test.js",
             "Cargo.toml",
             "tests",
             "",

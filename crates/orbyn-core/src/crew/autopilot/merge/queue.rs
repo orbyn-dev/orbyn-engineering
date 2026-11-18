@@ -266,6 +266,18 @@ impl Core {
             }
             self.store
                 .set_merge_entry_state(&entry.task_id, "merging", None)?;
+            // Re-read the escape check now `merging` is written: a withdraw either committed before this (blocked here) or sees `merging` and
+            // is refused, so a withdrawn check never lands.
+            if let Err(error) = self.refuse_unproven_escape_check(&entry.task_id) {
+                let why = error.public_message();
+                self.store
+                    .set_merge_entry_state(&entry.task_id, "blocked", Some(&why))?;
+                outcomes.push(MergeOutcome::Blocked {
+                    task_id: entry.task_id,
+                    why,
+                });
+                continue;
+            }
             let outcome = self.integrate(&entry, target, now).await;
             let outcome = match outcome {
                 Ok(outcome) => outcome,

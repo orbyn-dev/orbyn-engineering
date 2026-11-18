@@ -86,6 +86,32 @@ pub(super) fn profile(confinement: &Confinement) -> String {
     text
 }
 
+/// What the escape-check proof adds to every worker rule (it runs after them, so later rules win): no network, no creating a job
+/// through launchd (`launchctl submit` runs a program from launchd, outside this profile), no clipboard, and writes only in the
+/// proof's own folder (`RUN`) and the two device files a process needs. The data folder's denial is repeated last, with the proof's
+/// own folder and the folders on the way to it opened again after it.
+const PROOF_EXTRAS: &str = "(deny network*)\n\
+    (deny job-creation)\n\
+    (deny mach-lookup (global-name \"com.apple.pasteboard.1\"))\n\
+    (deny file-write* (subpath \"/\"))\n\
+    (allow file-write* (literal \"/dev/null\") (literal \"/dev/dtracehelper\"))\n\
+    (deny file-read* file-write* (subpath (param \"DATA\")))\n\
+    (allow file-read* file-write* (subpath (param \"RUN\")))\n";
+
+/// The profile of the escape-check proof: the profile a crew worker would get for `confinement` (every worker rule, the transcripts'
+/// denial and `(deny process-info* (target others))` included), then [`PROOF_EXTRAS`], then the folders on the way to the proof's own
+/// folder opened for a look again, since the repeated data-folder denial would otherwise close them.
+pub(super) fn proof_profile(confinement: &Confinement) -> String {
+    let mut text = profile(confinement);
+    text.push_str(PROOF_EXTRAS);
+    for index in 0..route(confinement).len() {
+        text.push_str(&format!(
+            "(allow file-read-metadata (literal (param \"M{index}\")))\n"
+        ));
+    }
+    text
+}
+
 /// The data folder and every folder above it, up to and including `/`, then the same for the
 /// saved-conversations folder: renaming `~/.claude` would put the transcripts under a name
 /// the rules do not cover.
@@ -174,10 +200,18 @@ fn parameters(confinement: &Confinement) -> Vec<(String, PathBuf)> {
 }
 
 pub fn wrap(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<()> {
+    wrap_with(confinement, command, profile(confinement))
+}
+
+fn wrap_with(
+    confinement: &Confinement,
+    command: &mut ResolvedCommand,
+    profile: String,
+) -> Result<()> {
     if let Some(reason) = unavailable() {
         return Err(CoreError::EngineUnavailable(reason));
     }
-    let mut prefix: Vec<OsString> = vec!["-p".into(), profile(confinement).into()];
+    let mut prefix: Vec<OsString> = vec!["-p".into(), profile.into()];
     for (name, path) in parameters(confinement) {
         let mut pair = OsString::from(format!("{name}="));
         pair.push(path);
@@ -189,6 +223,11 @@ pub fn wrap(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<
     command.program = TOOL.into();
     command.prefix = prefix;
     Ok(())
+}
+
+/// [`wrap`] with the proof's profile ([`proof_profile`]).
+pub fn wrap_proof(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<()> {
+    wrap_with(confinement, command, proof_profile(confinement))
 }
 
 pub fn unavailable() -> Option<String> {

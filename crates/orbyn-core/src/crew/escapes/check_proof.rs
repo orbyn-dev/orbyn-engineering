@@ -9,8 +9,12 @@
 //!   anywhere on it, or a file already there that is a link, is refused.
 //! - **Output is discarded** (`/dev/null`): nothing is read into memory, so a chatty test cannot grow it. The command is stopped at the
 //!   deadline or when the check is withdrawn, and its whole process tree with it.
-//! - **Confined where the machine can.** On macOS the command runs under `sandbox-exec` with a profile that denies the network, denies
-//!   the core's data folder except the proof's own folder, and allows writes only to that folder, `/dev` and the temporary folders.
+//! - **A scrubbed environment.** Only `PATH`, a `HOME` and a `TMPDIR` inside the proof's own folder, `LANG` and `CI=1` reach the
+//!   command, never a token, key or session marker of the person's.
+//! - **Confined where the machine can.** On macOS the command runs under `sandbox-exec` with the profile a crew worker gets (the
+//!   data folder denied, Claude's saved conversations denied, no reading of other processes' command lines or environment, no task
+//!   port, Apple events, LaunchServices or signals to others), and in addition no network, no launchd job, no clipboard, and writes
+//!   only inside the proof's own folder and `/dev/null`: not the shared temporary folders.
 //!   Anywhere else no such restriction exists, so [`confined`] is false and the core does not run the proof until a person has approved
 //!   the exact change (its commit and a hash over its paths and bytes).
 
@@ -102,6 +106,12 @@ pub fn extract(repo: &Path, commit: &str, dest: &Path) -> Result<()> {
                     unpacked = Err("the archive holds a .git entry".into());
                     break;
                 }
+                // A link in the commit is left out: a test could read through it, and a test that needs one fails on both runs and is
+                // refused, which is the safe answer.
+                let kind = entry.header().entry_type();
+                if kind.is_symlink() || kind.is_hard_link() {
+                    continue;
+                }
                 // `unpack_in` refuses a path that would leave `dest`.
                 match entry.unpack_in(dest) {
                     Ok(true) => {}
@@ -170,30 +180,23 @@ pub fn lay(root: &Path, files: &[(String, Vec<u8>)]) -> Result<()> {
     Ok(())
 }
 
-/// Runs `run` in `dir`: `Some(true)` on exit 0, `Some(false)` on any other exit, `None` when it did not start, ran out of `limit`,
-/// or was cancelled. Output is discarded. `data` is the core's data folder, which a confined run may not read.
+/// The folder of the proof's tree inside its scratch root `root`; `home` and `tmp` beside it are the command's `HOME` and `TMPDIR`.
+pub fn tree(root: &Path) -> PathBuf {
+    root.join("tree")
+}
+
+/// Runs `run` in the tree of `root` (made by [`extract`]): `Some(true)` on exit 0, `Some(false)` on any other exit, `None` when it
+/// did not start, ran out of `limit`, or was cancelled. Output is discarded. `data` is the core's data folder, which a confined run may
+/// not read; `root` is inside it and is the one place a confined run may write.
 pub async fn run(
     run: &str,
-    dir: &Path,
+    root: &Path,
     data: &Path,
     confined: bool,
     limit: Duration,
     cancel: &CancellationToken,
 ) -> Option<bool> {
-    let (program, args) = crate::host::terminal::shell_command(run);
-    let mut command = tokio::process::Command::new(&program);
-    command.args(&args);
-    if confined {
-        command = sandboxed(run, dir, data)?;
-    }
-    command
-        .current_dir(dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .env_remove("ORBYN_DATA_DIR")
-        .kill_on_drop(true);
-    crate::host::child_env::for_tool(command.as_std_mut());
+    let command = proof_command(run, root, data, confined)?;
     let mut child = crate::host::process::ManagedChild::spawn(command).ok()?;
     tokio::select! {
         biased;
@@ -205,53 +208,56 @@ pub async fn run(
     }
 }
 
-#[cfg(target_os = "macos")]
-fn sandboxed(run: &str, dir: &Path, data: &Path) -> Option<tokio::process::Command> {
-    let dir = std::fs::canonicalize(dir).ok()?;
-    let data = std::fs::canonicalize(data).ok()?;
-    let mut profile = String::from(
-        "(version 1)\n(allow default)\n(deny network*)\n\
-         (deny file-write* (subpath \"/\"))\n\
-         (allow file-write* (subpath \"/dev\"))\n\
-         (allow file-write* (subpath \"/private/tmp\"))\n\
-         (allow file-write* (subpath \"/private/var/folders\"))\n\
-         (deny file-read* file-write* (subpath (param \"DATA\")))\n\
-         (allow file-read* file-write* (subpath (param \"RUN\")))\n",
-    );
-    let mut parameters = vec![
-        ("DATA".to_owned(), data.clone()),
-        ("RUN".to_owned(), dir.clone()),
-    ];
-    for (index, folder) in dir
-        .ancestors()
-        .skip(1)
-        .filter(|f| f.starts_with(&data))
-        .enumerate()
-    {
-        profile.push_str(&format!(
-            "(allow file-read-metadata (literal (param \"M{index}\")))\n"
-        ));
-        parameters.push((format!("M{index}"), folder.to_path_buf()));
-    }
-    profile.push_str(
-        "(deny mach-priv-task-port)\n(deny appleevent-send)\n(deny lsopen)\n(deny signal)\n\
-         (allow signal (target self) (target children) (target same-sandbox))\n",
-    );
+/// The one place a proof's process is built, so its environment is narrowed here and nowhere else: only `PATH`, `HOME` (the scratch
+/// `home`), `TMPDIR` (the scratch `tmp`), `LANG` and `CI=1` (plus what Windows needs to start a program). No token, key or session
+/// marker is inherited, whatever its name. `None` when it was to be confined and could not be.
+fn proof_command(
+    run: &str,
+    root: &Path,
+    data: &Path,
+    confined: bool,
+) -> Option<tokio::process::Command> {
+    let (home, tmp) = (root.join("home"), root.join("tmp"));
+    std::fs::create_dir_all(tree(root)).ok()?;
+    std::fs::create_dir_all(&home).ok()?;
+    std::fs::create_dir_all(&tmp).ok()?;
     let (program, args) = crate::host::terminal::shell_command(run);
-    let mut command = tokio::process::Command::new("/usr/bin/sandbox-exec");
-    command.arg("-p").arg(profile);
-    for (name, path) in parameters {
-        let mut pair = std::ffi::OsString::from(format!("{name}="));
-        pair.push(path);
-        command.arg("-D").arg(pair);
+    let mut resolved = crate::host::process::ResolvedCommand {
+        path: program.clone(),
+        program,
+        prefix: args,
+    };
+    if confined {
+        let projects = crate::agents::usage::history_root(crate::agents::usage::Engine::Claude)?;
+        crate::host::confine::Confinement::new(data, root, &[], &[])
+            .and_then(|rules| rules.with_closed_claude_folder(&projects))
+            .and_then(|rules| rules.wrap_proof(&mut resolved))
+            .ok()?;
     }
-    command.arg(program).args(args);
+    let mut command = tokio::process::Command::new(&resolved.program);
+    command
+        .args(&resolved.prefix)
+        .current_dir(tree(root))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let plain = command.as_std_mut();
+    plain.env_clear();
+    // The one gate for what a spawned program inherits; it sets `PATH`.
+    crate::host::child_env::for_tool(plain);
+    plain
+        .env("HOME", &home)
+        .env("TMPDIR", &tmp)
+        .env("LANG", "en_US.UTF-8")
+        .env("CI", "1");
+    #[cfg(windows)]
+    for name in ["SYSTEMROOT", "COMSPEC", "PATHEXT"] {
+        if let Some(value) = std::env::var_os(name) {
+            plain.env(name, value);
+        }
+    }
     Some(command)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn sandboxed(_: &str, _: &Path, _: &Path) -> Option<tokio::process::Command> {
-    None
 }
 
 #[cfg(test)]
@@ -345,14 +351,13 @@ mod tests {
     async fn a_run_reports_the_exit_a_cancel_and_a_deadline_and_keeps_no_output() {
         let dir = TempDir::new();
         let data = dir.path().join("data");
+        let root = data.join("proof");
         std::fs::create_dir_all(&data).unwrap();
-        let tree = data.join("tree");
-        std::fs::create_dir_all(&tree).unwrap();
         let cancel = CancellationToken::new();
         let go = |cmd: &str, limit: Duration, token: &CancellationToken| {
-            let (cmd, tree, data, token) =
-                (cmd.to_owned(), tree.clone(), data.clone(), token.clone());
-            async move { run(&cmd, &tree, &data, false, limit, &token).await }
+            let (cmd, root, data, token) =
+                (cmd.to_owned(), root.clone(), data.clone(), token.clone());
+            async move { run(&cmd, &root, &data, false, limit, &token).await }
         };
         let long = Duration::from_secs(30);
         assert_eq!(go("git --version", long, &cancel).await, Some(true));
@@ -366,58 +371,167 @@ mod tests {
         assert_eq!(go("git --version", long, &stop).await, None);
     }
 
-    /// On a Mac that can restrict: no network and no reading of the data folder, where an unrestricted run has both.
+    /// The command gets a short, fixed environment: its own `HOME` and `TMPDIR` inside the scratch folder, `CI=1`, and nothing that
+    /// looks like a token, key or session marker of the person's.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_run_gets_only_a_scrubbed_environment_with_its_own_home_and_tmp() {
+        let dir = TempDir::new();
+        let data = dir.path().join("data");
+        let root = data.join("proof");
+        std::fs::create_dir_all(&data).unwrap();
+        let cancel = CancellationToken::new();
+        assert_eq!(
+            run(
+                "/usr/bin/env > ../env.txt",
+                &root,
+                &data,
+                false,
+                Duration::from_secs(30),
+                &cancel
+            )
+            .await,
+            Some(true)
+        );
+        let text = std::fs::read_to_string(root.join("env.txt")).unwrap();
+        let names: Vec<&str> = text.lines().filter_map(|l| l.split('=').next()).collect();
+        for name in ["PATH", "HOME", "TMPDIR", "CI"] {
+            assert!(names.contains(&name), "{name} is set: {names:?}");
+        }
+        assert!(
+            text.contains(&format!("HOME={}", root.join("home").display())),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("TMPDIR={}", root.join("tmp").display())),
+            "{text}"
+        );
+        for name in &names {
+            let upper = name.to_ascii_uppercase();
+            for secret in [
+                "TOKEN",
+                "SECRET",
+                "KEY",
+                "PASSWORD",
+                "ANTHROPIC",
+                "OPENAI",
+                "CLAUDE",
+                "ORBYN",
+                "GITHUB",
+                "AWS_",
+                "SSH_AUTH_SOCK",
+                "CODEX",
+            ] {
+                assert!(
+                    !upper.contains(secret),
+                    "{name} leaked into the proof: {names:?}"
+                );
+            }
+        }
+    }
+
+    /// On a Mac that can restrict: everything the worker's profile denies, and in addition no network, no other process's environment,
+    /// no launchd job, no clipboard, and writes only in its own scratch folder (and `/dev/null`). Where an unrestricted run has the
+    /// ability, the same command is run unrestricted first, so the test proves the restriction and not a broken command.
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn a_confined_run_has_no_network_and_cannot_read_the_data_folder() {
+    async fn a_confined_run_has_every_worker_rule_and_the_proofs_own() {
         if !confined() {
             return;
         }
         let dir = TempDir::new();
         let data = std::fs::canonicalize(dir.path()).unwrap().join("data");
-        let tree = data.join("tree");
-        std::fs::create_dir_all(&tree).unwrap();
+        let root = data.join("proof");
+        std::fs::create_dir_all(&data).unwrap();
         std::fs::write(data.join("secret.txt"), "secret").unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let cancel = CancellationToken::new();
         let limit = Duration::from_secs(30);
+        let go = |cmd: String, confined: bool| {
+            let (root, data, cancel) = (root.clone(), data.clone(), cancel.clone());
+            async move { run(&cmd, &root, &data, confined, limit, &cancel).await }
+        };
+        // No network.
         let connect = format!("/usr/bin/nc -z 127.0.0.1 {port}");
-        assert_eq!(
-            run(&connect, &tree, &data, false, limit, &cancel).await,
-            Some(true)
-        );
-        assert_eq!(
-            run(&connect, &tree, &data, true, limit, &cancel).await,
-            Some(false)
-        );
+        assert_eq!(go(connect.clone(), false).await, Some(true));
+        assert_eq!(go(connect, true).await, Some(false));
+        // The data folder is unreadable.
         let read = format!("/bin/cat {}", data.join("secret.txt").display());
-        assert_eq!(
-            run(&read, &tree, &data, false, limit, &cancel).await,
-            Some(true)
+        assert_eq!(go(read.clone(), false).await, Some(true));
+        assert_eq!(go(read, true).await, Some(false));
+        // Another process's command line and environment are unreadable. (`ps eww` shows no environment even unrestricted on a
+        // current macOS, so the positive control is the command line, which the same rule covers.)
+        let other = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 60; true", "orbyn-proof-probe-hunter2"])
+            .env("ORBYN_PROOF_PROBE", "hunter2")
+            .spawn()
+            .unwrap();
+        let spy = format!(
+            "/bin/ps -o command= -p {} | /usr/bin/grep -q hunter2",
+            other.id()
         );
         assert_eq!(
-            run(&read, &tree, &data, true, limit, &cancel).await,
+            go(spy.clone(), false).await,
+            Some(true),
+            "the probe works unrestricted"
+        );
+        assert_eq!(go(spy, true).await, Some(false));
+        let spy_env = format!("/bin/ps eww -p {} | /usr/bin/grep -q hunter2", other.id());
+        assert_eq!(go(spy_env, true).await, Some(false));
+        let mut other = other;
+        let _ = other.kill();
+        let _ = other.wait();
+        // Writes: not the shared temporary folder, not the data folder, not the person's home; yes its own folders and /dev/null.
+        let shared = std::path::PathBuf::from(format!(
+            "/private/tmp/orbyn-proof-{}",
+            crate::util::new_id()
+        ));
+        assert_eq!(
+            go(format!("/usr/bin/touch {}", shared.display()), true).await,
             Some(false)
         );
-        // It can write in its own folder and nowhere else under the data folder.
+        assert!(!shared.exists(), "a write to /private/tmp landed");
+        let elsewhere = data.join("other.txt");
         assert_eq!(
-            run("/usr/bin/touch own.txt", &tree, &data, true, limit, &cancel).await,
-            Some(true)
-        );
-        let elsewhere = format!("/usr/bin/touch {}", data.join("other.txt").display());
-        assert_eq!(
-            run(&elsewhere, &tree, &data, true, limit, &cancel).await,
+            go(format!("/usr/bin/touch {}", elsewhere.display()), true).await,
             Some(false)
         );
-        assert!(
-            tree.join("own.txt").exists(),
-            "own.txt missing; tree has {:?}",
-            std::fs::read_dir(&tree)
-                .unwrap()
-                .map(|e| e.unwrap().file_name())
-                .collect::<Vec<_>>()
+        assert!(!elsewhere.exists());
+        assert_eq!(go("/usr/bin/touch own.txt".into(), true).await, Some(true));
+        assert!(root.join("tree/own.txt").exists());
+        assert_eq!(
+            go("/usr/bin/touch \"$TMPDIR/own.txt\"".into(), true).await,
+            Some(true)
         );
-        assert!(!data.join("other.txt").exists(), "other.txt was written");
+        assert!(root.join("tmp/own.txt").exists());
+        assert_eq!(go("echo x > /dev/null".into(), true).await, Some(true));
+        // No launchd job: it would run a program from launchd, outside this profile.
+        let marker = data.join("launched.txt");
+        let label = format!("orbyn.proof.{}", crate::util::new_id());
+        let submit = format!(
+            "/bin/launchctl submit -l {label} -- /usr/bin/touch {}",
+            marker.display()
+        );
+        assert_eq!(go(submit, true).await, Some(false));
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(["remove", &label])
+            .output();
+        assert!(!marker.exists(), "a launchd job ran");
+        // No clipboard.
+        assert_eq!(
+            go("echo orbyn | /usr/bin/pbcopy".into(), true).await,
+            Some(false)
+        );
+        // Claude's saved conversations are closed, as for a worker.
+        if let Some(projects) =
+            crate::agents::usage::history_root(crate::agents::usage::Engine::Claude)
+            && projects.exists()
+        {
+            assert_eq!(
+                go(format!("/bin/ls {}", projects.display()), true).await,
+                Some(false)
+            );
+        }
     }
 }

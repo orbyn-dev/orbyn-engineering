@@ -212,9 +212,9 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 ## As built: PR 4, create a check
 
 Migration **52** (`store/crew_escape_checks.sql`, the next free number when it opened; a later merge renumbers: rebase, bump, rerun). `crew_escape_checks(escape_id PK, project_id, path, asserts,
-run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, diff_paths, approved_commit, approved_hash, proposed_unix, updated_unix)`: at most one check per escape. The
+run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, diff_paths, approved_commit, approved_hash, proposed_unix, updated_unix)`: at most one check per escape. `crew_escape_check_tasks(task_id PK, escape_id, created_unix)` records **every task an accept ever created**, in the accept transaction, and is never deleted or cleared (a retry clears `task_id`, a new proposal after a withdraw replaces the check row). The
 `check_*` event kinds were already in migration 51, so no kind is added. `store/crew_escape_checks.rs` (the writes), `crew/escapes/check.rs` (core API, the proof, the queue),
-`check_brief.rs`, `check_paths.rs`, `check_proof.rs` (the scratch tree and the confined run), five routes in `routes/crew_escapes.rs`.
+`check_brief.rs`, `check_paths.rs`, `check_proof.rs` (the scratch tree and the confined run), `host/confine` (`wrap_proof`: the proof's sandbox profile), five routes in `routes/crew_escapes.rs`.
 
 | Route | Does |
 | --- | --- |
@@ -241,8 +241,8 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   check on that path and protects `.orbyn/crew.json`. The worker is not given a lane, and no lane is removed or changed (`remove-lane` stays the only way).
 - **Only one test file** (`check_paths.rs`). The design named no globs, so these are the rules. The path is relative, ASCII only (a non-ASCII name is refused, never normalised), at most 200 bytes, with no
   `..`, no hidden segment (nothing starting with `.`), no segment ending in a dot or a space, no Windows reserved name (`con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9`, with or without an extension),
-  and no backslash, glob character, colon or quote. It is not a config, manifest or build file, **even inside a test folder** (lock files, `go.mod`, `CMakeLists.txt`, `pom.xml`, `Dockerfile`, `BUILD`,
-  `WORKSPACE`, `rust-toolchain*`, `build.gradle*`, `tsconfig*.json`, the babel, jest, vitest, playwright and karma configs, `docker-compose*`, the CI folders and the manifests that define what a check does).
+  no Windows 8.3 short name (`PROGRA~1`), and no backslash, glob character, colon, quote, `$` (which also refuses `CONIN$` and `CONOUT$`) or shell metacharacter. It is not a config, manifest or build file, **even inside a test folder** (lock files, `go.mod`, `CMakeLists.txt`, `pom.xml`, `Dockerfile`, `BUILD`,
+  `WORKSPACE`, `rust-toolchain*`, `build.gradle*`, `tsconfig*.json`, the babel, jest, vitest, vite, cypress, playwright and karma configs, `vitest.workspace.*`, `docker-compose*`, `Gemfile`, `Rakefile`, `requirements*.txt`, `*.csproj` and the other .NET project files, `Directory.Build.props`, `global.json`, `deno.json`, `bunfig.toml`, `meson.build`, `BUCK`, `sitecustomize.py`, the CI folders and the manifests that define what a check does).
   **`conftest.py` is policy**: pytest runs it on collection, so it can run anything, and the check is refused. The path must be in a `tests`, `test`, `__tests__`, `spec`, `specs` or `e2e` folder or named
   `test_x`, `x.test.y`, `x.spec.y`, `x_test.y` or `x_spec.y`. When the task passes, the core reads the worker's committed change from git (`git diff --raw -z --no-renames --no-abbrev` against the commit the worker
   started from) and the change must be **exactly one added regular file, the proposed path**. A modified, deleted, renamed, link or submodule path, a second file or a different path makes the check `failed` and the
@@ -251,33 +251,44 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   revert the merge recorded, else the commit the escape's detection named; an escape with none needs the person to name one. Only both together prove it. Passing on both is refused (`failed`, "passes on the
   escaped merge too"); failing on the fix too and the wrong way round are refused with their own words; a command that could not run (did not start, ran out of time, stopped) is `failed` with no verdict on the
   test. The proof stores two commit ids and two booleans, never output.
-  - **Where it runs.** Each run is in a fresh scratch tree under the device's data folder (`crew-escape-proof`), made from `git archive` of that commit, so the person's `.git` (config, hooks, other branches) is not
-    there; the one test file is laid over it without following any link (each folder on the way is checked with `symlink_metadata`; a link or a file where a folder belongs is refused). The tree is removed after
-    each run, and the tick removes any a crash left behind.
-  - **What the command can do.** Its output (stdout, stderr) and input are discarded, so nothing it prints is kept or fed anywhere. It has a time limit and stops at once when the check is withdrawn. It runs off
-    the tick's critical path (a spawned task, one per check). The person's `run` command is arbitrary code the person wrote; it is not a sandbox against a malicious command except as below.
-  - **Confinement, or an approval.** Where the machine can confine it (macOS `sandbox-exec`: no network at all, the device's data folder denied except the proof's own scratch tree, writes only in that tree, the
-    system temp folders and `/dev`) the proof runs confined and needs no approval. Anywhere else (Linux, Windows, a Mac where `sandbox-exec` is unavailable) it would run with the person's own access, so
-    **it never runs until a person approves the exact change**: the core records the commit and a SHA-256 over the sorted paths and bytes of the worker's change (`diff_commit`, `diff_hash`, `diff_paths`), the
-    check stays `writing`, and the check view (`awaiting_approval`, `diff_paths`, the hash) shows the file and the hash. `check/approve` with that commit and hash writes the audit row first and lets the proof run.
-    A different commit or hash is `409 stale`; a new change from the worker drops an earlier approval. The accept text says in plain words what runs, where, under what confinement, and when an approval is
-    needed. A non-test build ignores the test-only switch that says a world is not confinable.
-  - **A flaky test can be proven by chance.** One run on each commit cannot tell a test that fails on the escape because of the bug from one that fails by luck or by the machine. A person reads the test before
-    they merge it; the proof is evidence, not a verdict.
+  - **Where it runs.** Each run is in a fresh scratch folder under the device's data folder (`crew-escape-proof/<id>`) with its own `tree` (made from `git archive` of that commit, so the person's `.git` (config,
+    hooks, other branches) is not there, and any symlink or hard link in the commit is left out), `home` and `tmp`. The one test file is laid over the tree without following any link (each folder on the way is checked
+    with `symlink_metadata`; a link or a file where a folder belongs is refused). The folder is removed after each run, and the tick removes any a crash left behind.
+  - **What the command gets.** Its output and input are discarded. It has a time limit and stops at once when the check is withdrawn. It runs off the tick's critical path. Its environment is cleared and set to
+    exactly `PATH`, `HOME` (the scratch `home`), `TMPDIR` (the scratch `tmp`), `LANG` and `CI=1` (plus what Windows needs to start a program): no token, key, session marker or account variable is inherited.
+    The person's `run` command is arbitrary code the person wrote; apart from the restriction below it runs as the person.
+  - **Confinement, or an approval.** Where the machine can confine it (macOS `sandbox-exec`) the proof runs under **the profile a Crew worker gets** (`host/confine/macos.rs`, so every worker rule is inherited: the data
+    folder denied, Claude's saved conversations and history denied, `(deny process-info* (target others))` so another program's command line and environment cannot be read, no task port, Apple events,
+    LaunchServices or signals to others), and in addition: **no network**, **no launchd job** (`launchctl submit`), **no clipboard**, and **writes only inside its own scratch folder and `/dev/null`** (the shared
+    `/private/tmp` and `/private/var/folders` are not writable; the test has its own `TMPDIR`). The data-folder denial comes last, with the scratch folder opened again after it. It can still **read** what the person's account
+    can read outside Orbyn's data folder and Claude's saved conversations (the worker's profile does not deny `~/.ssh` either). Such a run needs no approval. Anywhere else (Linux, Windows, a Mac where `sandbox-exec` is
+    unavailable) it would run with the person's own access, so **it never runs until a person approves the exact change**: the core records the commit and a SHA-256 over the sorted paths and bytes of the worker's
+    change (`diff_commit`, `diff_hash`, `diff_paths`), the check stays `writing`, and the check view (`awaiting_approval`, `diff_paths`, the hash) shows the file and the hash. `check/approve` with that commit and hash
+    writes the audit row first and lets the proof run. A different commit or hash is `409 stale`; a new change from the worker drops an earlier approval. The accept text says in plain words what runs, where, under what
+    confinement, what it can write and read, and when an approval is needed. A non-test build ignores the test-only switch that says a world is not confinable.
+  - **A flaky test can be proven by chance.** One run on each commit cannot tell a test that fails on the escape because of the bug from one that fails by luck or by the machine. Nothing
+    enforces a human read of the test: with autopilot on, the only guard is that a check's task can be queued only once its check is `proven` (the guard below), and a proven check can still be a luckily passing one. The
+    proof is evidence, not a verdict.
 - **The merge queue.** A proven check is queued through `crew_merge_request` (the Review queue merge route's own entry), on the escaped merge's branch, so its own risk tier, holds, owed lanes and the person's
   required CI policy apply as for any change. The core queues only if the check is still `proven`, reads it again just before, and after the entry exists rejects it if the check was withdrawn meanwhile. When the
   queue refuses (no CI names set, no remote) the check stays `proven` with the reason and a person queues it from the Review queue. Nothing here merges, releases or authorises a merge.
-- **The guard: no unproven check merges.** One shared helper, `Core::refuse_unproven_escape_check(task)` over the pure `escape_check_blocks_queue`, refuses any task that has a `crew_escape_checks` row unless that
-  check is `proven`, with a plain reason, and **fails closed** (a check row that cannot be read refuses). It is one line at the top of each of the three entries into the merge queue, with no other change to merge
-  code: `crew_queue_merge` (`autopilot/merge/queue.rs`, the lead's tool and the queue entry), `crew_merge_target` (`autopilot/merge/tool.rs`, which `crew_merge_request` calls, the Review queue's route) and
-  `crew_queue_forge_merge` (`autopilot/merge/forge.rs`). Paths checked for a bypass (by searching every non-test caller): the lead's MCP tool `crew_queue_merge` goes `crew_merge_target`, then `crew_queue_forge_merge`, then
-  `crew_queue_merge`; the Review queue's `POST /crew/tasks/{id}/merge` calls `crew_merge_request`, which calls the same two; the escape check's own `escape_check_queue` calls `crew_merge_request`; and the only non-test caller
-  of `add_merge_entry` is inside `crew_queue_merge`, after the guard. `process`, `watch` and `release` act on entries that exist, and an entry for a check's task can only come from those entries (or race a
-  withdrawal, which the tick turns down). Tests cover the lead tool, the forge
-  entry, the Review queue route and the queue entry against writing, failed, withdrawn and proven checks, and a damaged row.
+- **The guard: no unproven check merges.** One shared helper, `Core::refuse_unproven_escape_check(task)` over the pure `escape_check_blocks_queue(task, recorded, check)`, refuses a task an accept ever created for a check
+  (`crew_escape_check_tasks`) **unless the escape's current check names that same task and is `proven`**, with a plain reason, and **fails closed** (a record or check that cannot be read refuses). So a retried check
+  (its task cleared), a withdrawn and proposed-again check (its row replaced), a failed or still-writing check, and an earlier attempt's task are all refused; only the current proven task passes. It is one line in each
+  of the three entries into the merge queue, with no other change to queue code: `crew_queue_merge` (`autopilot/merge/queue.rs`, the lead's tool and the queue entry), `crew_merge_target` (`autopilot/merge/tool.rs`,
+  which `crew_merge_request` calls, the Review queue's route) and `crew_queue_forge_merge` (`autopilot/merge/forge.rs`), and it is also part of `merge_blocker` (`holds.rs`), which both `crew_process_merges` and
+  `process_forge_entry` call, so a task whose check stopped being proven after it was queued is blocked when processed. Paths checked for a bypass (by searching every non-test caller): the lead's MCP tool
+  `crew_queue_merge` goes `crew_merge_target`, then `crew_queue_forge_merge`, then `crew_queue_merge`; the Review queue's `POST /crew/tasks/{id}/merge` calls `crew_merge_request`, which calls the same two; the escape check's
+  own `escape_check_queue` calls `crew_merge_request`; and the only non-test caller of `add_merge_entry` is inside `crew_queue_merge`, after the guard. `process`, `watch` and `release` act on entries that exist and
+  pass `merge_blocker`. Tests cover the lead tool, the forge entry, the Review queue route and the queue entry against writing, failed, withdrawn, retried and re-proposed checks (old task refused, current proven task
+  accepted) and a damaged row or record.
+- **Withdraw and a merge that is landing.** A withdraw is refused, with no state change and in plain words ("the merge is landing; withdraw after it ends"), when the check's queue entry is `merging` or its forge intent is
+  `merge_requested` or `merged`; that read is inside the withdraw's transaction. The merge side re-reads the guard right after it writes `merging` (local queue) or saves `merge_requested` (forge) and undoes the step
+  if the check is no longer proven, so exactly one order can happen and a withdrawn check never lands. A withdraw that committed does not report an error for a queue entry that is already merged or out of the queue:
+  the answer's `note` says so ("Already merged: the merge could not be stopped").
 - **The tick** (`run_crew_escape_scan` calls `crew_escape_check_reconcile`, off its critical path, cancelled with the service): it records `merged` once the merge exists, finishes a `writing` check whose task ended
-  while the core was down, **unwinds a `writing` check whose task never existed** (the process died between accept and the start) back to `proposed` with a plain reason, **turns down a queue entry whose check is
-  `withdrawn`**, and removes scratch trees a crash left.
+  while the core was down, **unwinds a `writing` check whose task never existed** (the process died between accept and the start) back to `proposed` with a plain reason, **turns down an open queue entry of any task
+  whose check is no longer proven for it (withdrawn, failed, proposed again or gone)**, and removes scratch trees a crash left.
 - **Read API.** `GET /escapes/{id}` gains an optional `check` (additive; absent for an escape with no check) with the diff, its hash and paths, and whether it awaits or has an approval. The other read shapes are unchanged.
 - **Choices where the note is silent:** the proof command comes from the person (the repository has no test selector the core can trust); the test-file rules above; one file only; `conftest.py` is policy; at most one
   check per escape; a tooling gap is refused with no proposal and no row; only a confirmed escape can have a check; retry never starts a worker; approval is a state of `writing`, not a new state; confirmed escapes still

@@ -100,6 +100,10 @@ impl Core {
         target: &MergeTarget,
     ) -> Result<Option<String>> {
         let task_id = entry.task_id.as_str();
+        // A task written for an escape check merges only while that check is proven for it (the shared, fail-closed guard).
+        if let Err(error) = self.refuse_unproven_escape_check(task_id) {
+            return Ok(Some(error.public_message()));
+        }
         let risk = self.refresh_merge_review_risk(entry)?;
         let task = self
             .store

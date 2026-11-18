@@ -28,3 +28,13 @@ CREATE TABLE crew_escape_checks (
 );
 CREATE INDEX crew_escape_checks_by_task ON crew_escape_checks(task_id);
 CREATE INDEX crew_escape_checks_by_state ON crew_escape_checks(state);
+
+-- Every task an accept ever created for a check, written in the accept transaction and never deleted or cleared (a retry clears
+-- `crew_escape_checks.task_id`, a withdraw followed by a new proposal deletes the row). The merge queue refuses a recorded task unless the
+-- escape's current check names that same task and is proven, so an old worker's change can never be queued as an unproven one.
+CREATE TABLE crew_escape_check_tasks (
+    task_id TEXT PRIMARY KEY,
+    escape_id TEXT NOT NULL,
+    created_unix INTEGER NOT NULL
+);
+CREATE INDEX crew_escape_check_tasks_by_escape ON crew_escape_check_tasks(escape_id);

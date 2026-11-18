@@ -320,6 +320,13 @@ impl Core {
         self.merge_gate_from_evidence(task, &intent.evidence, combined, &intent.candidate, now)?;
         intent.phase = ForgePhase::MergeRequested;
         self.store.save_crew_forge_merge(intent)?;
+        // Re-read the escape check with the request saved: a withdraw either committed before this (undo the request here) or sees the
+        // saved phase and is refused, so a withdrawn check never lands.
+        if let Err(error) = self.refuse_unproven_escape_check(task) {
+            intent.phase = ForgePhase::AwaitingCi;
+            self.store.save_crew_forge_merge(intent)?;
+            return Ok(blocked(task, &error.public_message()));
+        }
         self.merge_event(task, "merge_queued", &json!({"forge_merge_requested": true, "actor": actor, "pull": number, "head": intent.candidate, "base": intent.base}));
         let options = MergePull {
             method: "merge".into(),

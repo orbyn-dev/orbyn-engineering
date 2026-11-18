@@ -218,6 +218,43 @@ impl Store {
             .map_err(unreadable)
     }
 
+    /// What the merge queue needs to judge a task: whether any accept ever created it for a check (`crew_escape_check_tasks`, never
+    /// deleted), and the escape's check as it is now. The check is found through the recorded escape, not through its current task, so a
+    /// retry or a new proposal cannot hide an old task.
+    pub fn crew_escape_check_task_status(
+        &self,
+        task_id: &str,
+    ) -> Result<(bool, Option<EscapeCheckRecord>)> {
+        let conn = self.reader();
+        let escape: Option<String> = conn
+            .query_row(
+                "SELECT escape_id FROM crew_escape_check_tasks WHERE task_id = ?1",
+                [task_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(unreadable)?;
+        let current = match &escape {
+            Some(escape) => conn
+                .query_row(
+                    "SELECT * FROM crew_escape_checks WHERE escape_id = ?1",
+                    [escape],
+                    check_row,
+                )
+                .optional()
+                .map_err(unreadable)?,
+            None => conn
+                .query_row(
+                    "SELECT * FROM crew_escape_checks WHERE task_id = ?1",
+                    [task_id],
+                    check_row,
+                )
+                .optional()
+                .map_err(unreadable)?,
+        };
+        Ok((escape.is_some() || current.is_some(), current))
+    }
+
     /// Checks in these states, oldest first, at most [`OPEN_CHECKS_MAX`].
     pub fn crew_escape_checks_in(
         &self,
@@ -351,6 +388,10 @@ impl Store {
                 id,
                 json!({ "project": project, "escape": id, "task": task_id, "path": check.path, "attempt": check.attempts + 1 }),
             )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO crew_escape_check_tasks (task_id, escape_id, created_unix) VALUES (?1, ?2, ?3)",
+                params![task_id, id, at],
+            )?;
             changed(tx.execute(
                 "UPDATE crew_escape_checks SET state = 'writing', task_id = ?1, proof = NULL, note = NULL,
                         diff_commit = NULL, diff_hash = NULL, diff_paths = NULL, approved_commit = NULL, approved_hash = NULL,
@@ -469,6 +510,23 @@ impl Store {
                     "This check is already merged, so it cannot be withdrawn now.".into(),
                 ));
             }
+            // A merge past its point of no return cannot be stopped by a withdraw: refuse, with no state change. The merge side re-reads the
+            // check after it marks the entry `merging` (or saves the forge intent as requested), and both sides run in a transaction on this
+            // database, so exactly one of the two orders happens and a withdrawn check never lands.
+            if let Some(task) = &check.task_id {
+                let landing: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM crew_merge_queue WHERE task_id = ?1 AND state = 'merging')
+                         OR EXISTS(SELECT 1 FROM crew_forge_merges WHERE task_id = ?1
+                                   AND json_extract(body, '$.phase') IN ('merge_requested', 'merged'))",
+                    [task],
+                    |row| row.get(0),
+                )?;
+                if landing {
+                    return Err(CoreError::Invalid(
+                        "The merge is landing right now. Withdraw the check after it ends.".into(),
+                    ));
+                }
+            }
             room(tx, project, 0, 1)?;
             let audit_id = audit(
                 tx,
@@ -538,7 +596,8 @@ impl Store {
         })
     }
 
-    /// The core notes what happened to a proven check in the merge queue (queued, or why not). Only a `proven` check of this task.
+    /// The core notes what happened to a proven check in the merge queue (queued, or why not), or to a withdrawn one (its entry could not be
+    /// stopped). Only a `proven` or `withdrawn` check of this task.
     pub fn note_escape_check(
         &self,
         escape_id: &str,
@@ -549,7 +608,7 @@ impl Store {
         self.commit(|tx, _| {
             tx.execute(
                 "UPDATE crew_escape_checks SET note = ?1, updated_unix = ?2
-                 WHERE escape_id = ?3 AND state = 'proven' AND task_id = ?4",
+                 WHERE escape_id = ?3 AND state IN ('proven', 'withdrawn') AND task_id = ?4",
                 params![
                     note.chars().take(200).collect::<String>(),
                     at,
@@ -679,14 +738,17 @@ impl Store {
         })
     }
 
-    /// Withdrawn checks whose task still has an open entry in the merge queue: `(escape id, task id)`. A withdrawn check never merges.
-    pub fn crew_escape_checks_withdrawn_queued(&self) -> Result<Vec<(String, String)>> {
+    /// Open merge-queue entries of a task that an accept created for a check whose escape's current check is not proven for that very
+    /// task (withdrawn, failed, proposed again, writing again, or gone): `(escape id, task id)`. Such an entry never merges.
+    pub fn crew_escape_checks_unproven_queued(&self) -> Result<Vec<(String, String)>> {
         let conn = self.reader();
         let mut query = conn
             .prepare(
-                "SELECT c.escape_id, c.task_id FROM crew_escape_checks c
-                 JOIN crew_merge_queue q ON q.task_id = c.task_id
-                 WHERE c.state = 'withdrawn' AND q.state IN ('waiting', 'queued', 'blocked') LIMIT 200",
+                "SELECT t.escape_id, t.task_id FROM crew_escape_check_tasks t
+                 JOIN crew_merge_queue q ON q.task_id = t.task_id
+                 LEFT JOIN crew_escape_checks c ON c.escape_id = t.escape_id
+                 WHERE q.state IN ('waiting', 'queued', 'blocked')
+                   AND NOT (c.task_id = t.task_id AND c.state IN ('proven', 'merged')) LIMIT 200",
             )
             .map_err(unreadable)?;
         query

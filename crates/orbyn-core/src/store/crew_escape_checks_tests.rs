@@ -972,7 +972,7 @@ fn the_tick_finds_writing_checks_with_no_task_and_withdrawn_checks_still_queued(
     assert!(store.crew_escape_checks_without_task().unwrap().is_empty());
     assert!(
         store
-            .crew_escape_checks_withdrawn_queued()
+            .crew_escape_checks_unproven_queued()
             .unwrap()
             .is_empty()
     );
@@ -1005,8 +1005,119 @@ fn the_tick_finds_writing_checks_with_no_task_and_withdrawn_checks_still_queued(
         .add_merge_entry(&crate::crew::fixtures::merge_entry(&task2, "/p", "x"))
         .unwrap();
     assert_eq!(
-        store.crew_escape_checks_withdrawn_queued().unwrap(),
+        store.crew_escape_checks_unproven_queued().unwrap(),
         [(id2.clone(), task2.clone())]
     );
     let _ = task;
+}
+
+#[test]
+fn every_task_an_accept_created_is_recorded_for_good_and_found_through_its_escape() {
+    let (_dir, store, _task, id) = confirmed();
+    assert_eq!(
+        store.crew_escape_check_task_status(TASK).unwrap(),
+        (false, None)
+    );
+    writing(&store, &id);
+    let (recorded, current) = store.crew_escape_check_task_status(TASK).unwrap();
+    assert!(recorded);
+    assert_eq!(current.unwrap().task_id.as_deref(), Some(TASK));
+    // Fail, retry: the check forgets its task, the record does not.
+    store
+        .finish_escape_check(
+            &id,
+            TASK,
+            &CheckFinish::Failed {
+                note: "no".into(),
+                proof: None,
+            },
+            AT + 3,
+        )
+        .unwrap();
+    store
+        .retry_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Failed)),
+            AT + 4,
+        )
+        .unwrap();
+    let (recorded, current) = store.crew_escape_check_task_status(TASK).unwrap();
+    assert!(recorded);
+    assert_eq!(current.unwrap().task_id, None);
+    // Withdraw and propose again: the check row is replaced, the record stays.
+    store
+        .withdraw_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            AT + 5,
+        )
+        .unwrap();
+    store
+        .propose_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Withdrawn)),
+            &proposal(),
+            AT + 6,
+        )
+        .unwrap();
+    let (recorded, current) = store.crew_escape_check_task_status(TASK).unwrap();
+    assert!(recorded);
+    assert_eq!(current.unwrap().state, EscapeCheckState::Proposed);
+    let count: i64 = store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM crew_escape_check_tasks WHERE task_id = ?1",
+            [TASK],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn a_withdraw_is_refused_while_the_merge_lands_and_nothing_changes() {
+    let (_dir, store, _task, id) = confirmed();
+    let task2 = format!("sha256:{:064x}", 0xcc);
+    store
+        .reader()
+        .execute(
+            "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at) VALUES (?1, 'crew-1', 'run-cc', 't', 't')",
+            [&task2],
+        )
+        .unwrap();
+    proposed(&store, &id);
+    store
+        .accept_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            &proposal(),
+            &task2,
+            AT + 1,
+        )
+        .unwrap();
+    store
+        .add_merge_entry(&crate::crew::fixtures::merge_entry(&task2, "/p", "x"))
+        .unwrap();
+    store
+        .set_merge_entry_state(&task2, "merging", None)
+        .unwrap();
+    let audits_before = audits(&store).len();
+    let refused = store.withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 2);
+    assert!(
+        matches!(refused, Err(CoreError::Invalid(ref why)) if why.contains("landing")),
+        "{refused:?}"
+    );
+    assert_eq!(audits(&store).len(), audits_before);
+    assert_eq!(
+        store.crew_escape_check(&id).unwrap().unwrap().state,
+        EscapeCheckState::Writing
+    );
+    store.set_merge_entry_state(&task2, "queued", None).unwrap();
+    store
+        .withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 3)
+        .unwrap();
 }
