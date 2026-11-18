@@ -16,6 +16,7 @@ mod autopilot_support;
 mod autopilot_watch;
 mod background;
 mod backtest_api;
+mod backtest_escapes;
 mod bus;
 mod bus_flood;
 mod bus_guards;

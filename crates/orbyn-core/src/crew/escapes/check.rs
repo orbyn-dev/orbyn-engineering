@@ -421,7 +421,12 @@ impl Core {
         let stamper = self
             .review_stamper(&thread, &thread.engine)
             .map_err(crew_error)?;
-        let (brief_draft, key_draft) = drafts(&escape, &check, &merge.merge_commit);
+        let (brief_draft, key_draft) = drafts(
+            &escape,
+            &check,
+            &merge.merge_commit,
+            self.store.crew_escape_check_round(id)?,
+        );
         let brief = stamper.brief(&brief_draft).map_err(crew_error)?;
         let key = stamper
             .answer_key(&key_draft, &brief.id)

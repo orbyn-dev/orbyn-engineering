@@ -145,7 +145,10 @@ fn migration_52_follows_51_and_leaves_older_tables_alone() {
 
     let store = Store::open(&path, "checks-upgrade").unwrap();
     let upgrade = store.upgrade().expect("an upgrade");
-    assert_eq!((upgrade.from, upgrade.to), (51, 52));
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (51, migrations::MIGRATIONS.last().unwrap().0)
+    );
     let reader = store.reader();
     let after: (i64, i64, i64) = reader
         .query_row(
@@ -447,7 +450,7 @@ fn the_core_records_a_proven_or_failed_end_once_and_only_for_its_own_task() {
         (
             EscapeEventKind::CheckProven,
             EscapeActor::Core,
-            format!("core:{TASK}").as_str()
+            format!("core:{TASK}:1").as_str()
         )
     );
     // Recorded once: a second end writes nothing.
@@ -1120,4 +1123,228 @@ fn a_withdraw_is_refused_while_the_merge_lands_and_nothing_changes() {
     store
         .withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 3)
         .unwrap();
+}
+
+/// Every step of a check's life inside ONE clock second, even with the same task id each attempt (the worst a same-tick accept can
+/// give): the unique `(escape, kind, cause)` of the trail never refuses a person's act, and the trail stays complete and in order.
+#[test]
+fn a_check_event_never_collides_when_the_whole_life_runs_inside_one_tick() {
+    let (_dir, store, _task, id) = confirmed();
+    let open = Some(EscapeCheckState::Proposed);
+    let failed = || CheckFinish::Failed {
+        proof: None,
+        note: "no".into(),
+    };
+    let propose = || {
+        store.propose_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, None),
+            &proposal(),
+            AT,
+        )
+    };
+    // Propose, withdraw, propose again, accept, fail, retry, accept again, fail again, retry again: all at the same second.
+    propose().unwrap();
+    store
+        .withdraw_escape_check(PROJECT, &id, &seen(EscapeState::Confirmed, open), AT)
+        .unwrap();
+    store
+        .propose_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Withdrawn)),
+            &proposal(),
+            AT,
+        )
+        .unwrap();
+    for attempt in 1..=2 {
+        let (_, _, started) = store
+            .accept_escape_check(
+                PROJECT,
+                &id,
+                &seen(EscapeState::Confirmed, open),
+                &proposal(),
+                TASK,
+                AT,
+            )
+            .unwrap();
+        assert!(started, "attempt {attempt} starts one worker");
+        assert!(store.finish_escape_check(&id, TASK, &failed(), AT).unwrap());
+        store
+            .retry_escape_check(
+                PROJECT,
+                &id,
+                &seen(EscapeState::Confirmed, Some(EscapeCheckState::Failed)),
+                AT,
+            )
+            .unwrap();
+    }
+    assert_eq!(store.crew_escape_check(&id).unwrap().unwrap().attempts, 2);
+    use EscapeEventKind::*;
+    assert_eq!(
+        kinds(&store, &id),
+        [
+            Detected,
+            Confirmed,
+            CheckProposed,
+            CheckWithdrawn,
+            CheckProposed,
+            CheckFailed,
+            CheckProposed,
+            CheckFailed,
+            CheckProposed
+        ]
+    );
+    let causes: std::collections::HashSet<String> = store
+        .crew_escape_events(&id, 50)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.cause)
+        .collect();
+    assert_eq!(causes.len(), 9, "every event has its own cause: {causes:?}");
+}
+
+/// A double click on each route of a person's act is one change: the second answers with the check as it is, writes no audit row, no
+/// event and no second attempt.
+#[test]
+fn a_double_click_on_each_act_changes_nothing_the_second_time() {
+    let (_dir, store, _task, id) = confirmed();
+    let proposed_seen = seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed));
+    for _ in 0..2 {
+        store
+            .propose_escape_check(
+                PROJECT,
+                &id,
+                &seen(EscapeState::Confirmed, None),
+                &proposal(),
+                AT,
+            )
+            .unwrap();
+    }
+    for _ in 0..2 {
+        store
+            .accept_escape_check(PROJECT, &id, &proposed_seen, &proposal(), TASK, AT)
+            .unwrap();
+    }
+    assert_eq!(store.crew_escape_check(&id).unwrap().unwrap().attempts, 1);
+    store
+        .finish_escape_check(
+            &id,
+            TASK,
+            &CheckFinish::Failed {
+                proof: None,
+                note: "no".into(),
+            },
+            AT,
+        )
+        .unwrap();
+    for _ in 0..2 {
+        store
+            .retry_escape_check(
+                PROJECT,
+                &id,
+                &seen(EscapeState::Confirmed, Some(EscapeCheckState::Failed)),
+                AT,
+            )
+            .unwrap();
+    }
+    for _ in 0..2 {
+        store
+            .withdraw_escape_check(PROJECT, &id, &proposed_seen, AT)
+            .unwrap();
+    }
+    use EscapeEventKind::*;
+    assert_eq!(
+        kinds(&store, &id),
+        [
+            Detected,
+            Confirmed,
+            CheckProposed,
+            CheckFailed,
+            CheckProposed,
+            CheckWithdrawn
+        ]
+    );
+    assert_eq!(
+        audits(&store),
+        [
+            "crew.escape.check.propose",
+            "crew.escape.check.accept",
+            "crew.escape.check.retry",
+            "crew.escape.check.withdraw"
+        ]
+    );
+}
+
+/// An event already on the trail for the same escape, kind and cause is "already recorded": the act still lands and nothing errors.
+#[test]
+fn an_event_that_is_already_recorded_is_not_an_error_to_the_person() {
+    let (_dir, store, _task, id) = confirmed();
+    writing(&store, &id);
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_escape_events (escape_id, project_id, kind, decided_by, cause, at)
+             VALUES (?1, ?2, 'check_failed', 'core', ?3, 1)",
+            rusqlite::params![id, PROJECT, format!("core:{TASK}:1")],
+        )
+        .unwrap();
+    let wrote = store
+        .finish_escape_check(
+            &id,
+            TASK,
+            &CheckFinish::Failed {
+                proof: None,
+                note: "no".into(),
+            },
+            AT + 2,
+        )
+        .unwrap();
+    assert!(wrote);
+    assert_eq!(
+        store.crew_escape_check(&id).unwrap().unwrap().state,
+        EscapeCheckState::Failed
+    );
+    assert_eq!(
+        kinds(&store, &id)
+            .iter()
+            .filter(|k| **k == EscapeEventKind::CheckFailed)
+            .count(),
+        1
+    );
+}
+
+/// Only a repeat of the same event is ignored: a row the table refuses for another reason (here a cause over 200 characters) is still
+/// an error, and its act changes nothing.
+#[test]
+fn an_event_the_table_refuses_for_another_reason_is_still_an_error() {
+    let (_dir, store, _task, id) = confirmed();
+    let long = format!("sha256:{}", "a".repeat(250));
+    proposed(&store, &id);
+    store
+        .accept_escape_check(
+            PROJECT,
+            &id,
+            &seen(EscapeState::Confirmed, Some(EscapeCheckState::Proposed)),
+            &proposal(),
+            &long,
+            AT + 1,
+        )
+        .unwrap();
+    let refused = store.finish_escape_check(
+        &id,
+        &long,
+        &CheckFinish::Failed {
+            proof: None,
+            note: "no".into(),
+        },
+        AT + 2,
+    );
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        store.crew_escape_check(&id).unwrap().unwrap().state,
+        EscapeCheckState::Writing,
+        "the whole act rolled back"
+    );
 }

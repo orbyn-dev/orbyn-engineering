@@ -25,13 +25,16 @@ pub(super) fn drafts(
     escape: &EscapeRecord,
     check: &EscapeCheckRecord,
     escaped_commit: &str,
+    round: i64,
 ) -> (Value, Value) {
     let outcome = format!(
-        "Escape {id}: a merge that got past review and checks was later found defective. Add ONE new test file at {path}. \
+        "Escape {id}, round {round}: a merge that got past review and checks was later found defective. Add ONE new test file at {path}. \
          The test must assert: {asserts} It is run with: {run} It must fail on commit {escaped} (the merge that escaped) \
          and pass on commit {fix} (the fix or revert). Add only test files: change, delete and rename nothing else, and \
          never touch a policy, CI or manifest file or the repository's rules file. Commit the new file, then report.",
         id = escape.id,
+        // `{round}` is part of the brief, so its id (a hash of the brief and its second) is its own round's: a retry or a new proposal accepted
+        // within the same second as the last attempt is a new task, never the old one again.
         path = check.path,
         asserts = check.asserts,
         run = check.run,

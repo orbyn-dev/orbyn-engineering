@@ -57,6 +57,7 @@ fn lane(engine: &str, tokens: u64, state: LaneState) -> BacktestLaneRow {
         state,
         escapes_n: None,
         caught_n: None,
+        unresolved_n: None,
     }
 }
 
@@ -194,6 +195,7 @@ fn the_tables_keep_ids_and_counts_only() {
                 "state",
                 "escapes_n",
                 "caught_n",
+                "unresolved_n",
             ],
         ),
         (
@@ -295,6 +297,7 @@ fn lane_progress_and_results_are_saved_together_and_saving_twice_changes_nothing
     let mut a = lane("engine-a", 300, LaneState::Stopped);
     a.escapes_n = Some(4);
     a.caught_n = Some(2);
+    a.unresolved_n = Some(3);
     let results = [
         result("engine-a", 1, "sha256:f1", ResultOutcome::Caught),
         result("engine-a", 2, "sha256:f2", ResultOutcome::NoEscape),

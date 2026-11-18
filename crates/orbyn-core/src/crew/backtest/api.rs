@@ -7,8 +7,9 @@
 //!   store transaction. A stop only asks: the run stays `running` until its last replay is over, then ends as `stopped`.
 //! - **No live engine.** Until a live `LaneRunner` exists nothing is connected, and a start is refused (`Unsupported`) before
 //!   anything is written. Tests install a fake with `crew_backtest_use`.
-//! - **Outcomes are Not measured.** The escape log (slice 4k) is not merged, so the source is `NoEscapeLog` and every lane
-//!   shows finding counts only, never a zero.
+//! - **Outcomes come from the escape log** (slice 4k) through `EscapeLog`, read-only. A project whose log holds no escape,
+//!   or whose log cannot be read whole (over its cap), is Not measured: every lane then shows finding counts only, never a
+//!   zero. Escapes whose fix files cannot be read are counted as unresolved in the lane, never scored.
 //! - **Budgets are tokens per engine,** one entry per engine and never summed. No money appears in a request or a view.
 //! - **History is the project's own merges** (`crew_merges`), numbered by the merge's record id: a pull request nobody
 //!   merged through Crew is not replayed (open question 7 of the design note).
@@ -18,8 +19,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use orbyn_contracts as wire;
 
+use super::escape_log::{EscapeLog, GitCommitFiles};
 use super::history::{HISTORY_DAYS, OUTCOME_DAYS, PastPr, eligible_prs};
-use super::outcomes::{EscapeSource, NoEscapeLog, Window};
+use super::outcomes::{EscapeSource, Window};
 use super::replay::{
     BacktestReport, BacktestRequest, LaneKind, LaneResult, LaneRunner, LaneSpec, STOPPED_BY_PERSON,
     begin, finish, report,
@@ -155,7 +157,7 @@ fn run_view(report: BacktestReport) -> wire::BacktestRun {
                 let (outcome, findings_n, score) = match &lane.result {
                     LaneResult::Scored(score) => (
                         wire::BacktestLaneOutcome::Scored,
-                        score.findings_n,
+                        lane.findings_n,
                         Some(score_view(score)),
                     ),
                     LaneResult::NotMeasured { findings_n } => {
@@ -173,6 +175,7 @@ fn run_view(report: BacktestReport) -> wire::BacktestRun {
                     tokens_used: lane.tokens_used,
                     outcome,
                     findings_n,
+                    unresolved_n: lane.unresolved_n,
                     score,
                 }
             })
@@ -186,7 +189,9 @@ impl Core {
             .lock()
             .escapes
             .clone()
-            .unwrap_or_else(|| Arc::new(NoEscapeLog))
+            .unwrap_or_else(|| {
+                Arc::new(EscapeLog::new(self.store.clone(), Arc::new(GitCommitFiles)))
+            })
     }
 
     /// The project's merges as the history a backtest replays: one entry per merge Crew recorded for it.
@@ -242,7 +247,7 @@ impl Core {
                     replays: eligible,
                 })
                 .collect(),
-            outcomes_measured: self.backtest_escapes().escapes(project, window).is_ok(),
+            outcomes_measured: self.backtest_escapes().measurable(project, window),
             running: self.store.crew_backtest_running()?,
         })
     }
