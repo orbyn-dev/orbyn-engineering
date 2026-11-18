@@ -60,7 +60,7 @@ function Body({ state }: { state: CapacityState }) {
           </span>
           <span className="cx-acts">
             <Planned why={WHY.editor} />
-            <Btn className="cx-btn">Set a limit</Btn>
+            <Btn className="cx-btn" reason={`Planned: ${WHY.editor}`}>Set a limit</Btn>
           </span>
         </div>
       ) : null}
@@ -79,7 +79,7 @@ function Body({ state }: { state: CapacityState }) {
               <span className="cx-sv">{changes(state.limit)}</span>
               <span style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
                 <Planned why={WHY.editor} />
-                <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px", padding: "0 10px" }}>Change the limit</Btn>
+                <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px", padding: "0 10px" }} reason={`Planned: ${WHY.editor}`}>Change the limit</Btn>
               </span>
             </span>
           ) : (
@@ -135,15 +135,17 @@ function Body({ state }: { state: CapacityState }) {
           </div>
         )
       ) : null}
-      <div className="cx-fbx">
-        <h6>What the limit does and doesn’t do</h6>
-        <div className="cx-fkv">
-          <span>Does</span>
-          <b>Pauses new Low-priority starts while the queue is over the limit, and says so on the Crew page</b>
-          <span>Doesn’t</span>
-          <b>Stop running work, stop a merge, or pause a task you started or any High-priority task</b>
+      {state.settings_saved ? (
+        <div className="cx-fbx">
+          <h6>What the limit does and doesn’t do</h6>
+          <div className="cx-fkv">
+            <span>Does</span>
+            <b>Pauses new Low-priority starts while the queue is over the limit, and says so on the Crew page</b>
+            <span>Doesn’t</span>
+            <b>Stop running work, stop a merge, or pause a task you started or any High-priority task</b>
+          </div>
         </div>
-      </div>
+      ) : null}
       <p style={{ margin: "2px 0 0", display: "flex", gap: "6px", alignItems: "flex-start", color: "var(--color-muted)", fontSize: "12px", lineHeight: 1.45 }}>
         <Ic n="info" sm />
         <span>Workers run as you, with your machine’s permissions.</span>

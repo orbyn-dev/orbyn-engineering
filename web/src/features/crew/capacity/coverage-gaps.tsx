@@ -7,7 +7,7 @@ const NOTE = "The notes ref couldn’t be updated";
 /** Crew Designs v77, frame `capacity-coverage-gaps`: the banner is built; the two lists and Try the 2 again are Planned. */
 export function CapacityCoverageGaps() {
   return (
-    <CoverageShell project="orbyn-engineering">
+    <CoverageShell project="orbyn-engineering" notMeasured>
       <div className="cx-cwbn" style={{ margin: "0" }}>
         <Ic n="info" sm />
         <span>

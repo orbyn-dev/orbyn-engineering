@@ -38,10 +38,12 @@ const coverage = (over: Partial<ReviewCoverage> = {}): ReviewCoverage => ({
 });
 
 type Answer = { status: number; body?: unknown } | "never";
+let hold: { project: string; answer: Promise<Response> } | null;
 let answers: { preview: Answer; capacity: Answer; coverage: Answer; projects: Answer; coverageBy: Record<string, Answer> };
 const sent = () => vi.mocked(fetch).mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${String(url)}`);
 
 beforeEach(() => {
+  hold = null;
   answers = { preview: { status: 200, body: { enabled: true } }, capacity: { status: 200, body: state() }, coverage: { status: 200, body: coverage() }, projects: { status: 200, body: [project] }, coverageBy: {} };
   useWorkspace.setState({ projects: { data: [project], loading: false, error: null } });
   vi.stubGlobal(
@@ -49,6 +51,7 @@ beforeEach(() => {
     vi.fn(async (input: string) => {
       const url = String(input);
       const answer = url.startsWith("/api/projects") ? answers.projects : url.includes("/api/crew/preview") ? answers.preview : url.includes("/api/crew/capacity/coverage") ? (answers.coverageBy[new URL(url, "http://x").searchParams.get("project") ?? ""] ?? answers.coverage) : url.includes("/api/crew/capacity") ? answers.capacity : { status: 404 };
+      if (hold && url.includes("/api/crew/capacity/coverage") && new URL(url, "http://x").searchParams.get("project") === hold.project) return hold.answer;
       if (answer === "never") return new Promise<Response>(() => undefined);
       return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status });
     }),
@@ -169,6 +172,9 @@ describe("Review capacity on the real routes", () => {
     expect(screen.getByText("Planned")).toBeInTheDocument();
     expect(container.textContent).toContain("Review every low-risk batch, or review a sample sized to the batch.");
     expect(container.textContent).not.toContain("Paused starts begin by themselves");
+    expect(screen.queryByText("What the limit does and doesn’t do")).toBeNull();
+    expect(screen.getByRole("button", { name: "Set a limit" })).toHaveAttribute("title", expect.stringMatching(/^Planned: /));
+    expect(container.textContent).not.toContain("Crew is not connected");
   });
 
   it("a saved limit with pausing off and every batch reviewed reads Off and Review every batch, with no default suffix, no plan and no banner", async () => {
@@ -371,17 +377,48 @@ describe("Review coverage states and the project picker", () => {
     expect(screen.getByRole("button", { name: "orbyn-engineering" })).toBeInTheDocument();
   });
 
-  it("heads a map with gaps by the banner, then Planned: a disabled Try again and two list headings with no rows and no invented count", async () => {
+  it("a late answer for the project that was left does not replace the chosen project's map", async () => {
+    answers.projects = { status: 200, body: [project, docs] };
+    useWorkspace.setState({ projects: { data: [project, docs], loading: false, error: null } });
+    answers.coverageBy = { "p-docs": { status: 200, body: coverage({ project: "p-docs", areas: [{ area: "guides/", merges: 9, agent_lines: 1420, reviewed_lines: 910, in_queue_lines: 310, not_measured_merges: 0 }] }) } };
+    let release: () => void = () => undefined;
+    hold = { project: "p-app", answer: new Promise<Response>((resolve) => { release = () => resolve(new Response(JSON.stringify(coverage()), { status: 200 })); }) };
+    const user = userEvent.setup();
+    render(<LiveCapacity view="coverage" />);
+    await user.click(await screen.findByRole("button", { name: "orbyn-engineering" }));
+    await user.click(within(await screen.findByRole("menu", { name: "Project" })).getByRole("menuitem", { name: "orbyn-docs" }));
+    expect((await screen.findAllByText("guides/")).length).toBeGreaterThan(0);
+    await act(async () => {
+      release();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getAllByText("guides/").length).toBeGreaterThan(0);
+    expect(screen.queryByText("auth/")).toBeNull();
+  });
+
+  it("closes the menu on a click outside and leaves the project as it was", async () => {
+    answers.projects = { status: 200, body: [project, docs] };
+    useWorkspace.setState({ projects: { data: [project, docs], loading: false, error: null } });
+    const user = userEvent.setup();
+    render(<LiveCapacity view="coverage" />);
+    await screen.findAllByText("auth/");
+    await user.click(screen.getByRole("button", { name: "orbyn-engineering" }));
+    await screen.findByRole("menu", { name: "Project" });
+    await user.click(document.body);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getAllByText("auth/").length).toBeGreaterThan(0);
+  });
+
+  it("heads a map with gaps by the banner alone: no button, no list, no Planned pill, no split by reason", async () => {
     answers.coverage = { status: 200, body: coverage({ merges: 24, not_measured_merges: 14 }) };
     const { container } = render(<LiveCapacity view="coverage" />);
     expect(await screen.findByText("14 of 38 merges aren’t in the map.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeDisabled();
-    expect(screen.getByText("Merges with no provenance note")).toBeInTheDocument();
-    expect(screen.getByText("Before provenance began")).toBeInTheDocument();
-    expect(container.querySelectorAll(".cx-t15row")).toHaveLength(0);
-    expect(container.textContent).not.toContain("Try the 2 again");
-    // Planned: the banner button, the two lists and the link from an area to its files.
-    expect(screen.getAllByText("Planned")).toHaveLength(4);
+    expect(screen.queryByRole("button", { name: /Try/ })).toBeNull();
+    expect(container.querySelectorAll(".cx-t15list, .cx-t15row")).toHaveLength(0);
+    expect(container.textContent).not.toMatch(/Merges with no provenance note|Before provenance began|Try the/);
+    // Planned: only the link from an area to its files.
+    expect(screen.getAllByText("Planned")).toHaveLength(1);
     expect(sent().filter((call) => !call.startsWith("GET "))).toEqual([]);
   });
 

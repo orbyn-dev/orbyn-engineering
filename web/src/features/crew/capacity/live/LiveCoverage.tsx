@@ -115,7 +115,7 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
         {since != null ? (
           <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <Planned why={WHY.queue} style={{ marginLeft: "0" }} />
-            <Btn className="cx-ghost" style={{ height: "28px" }}>Open the Review queue</Btn>
+            <Btn className="cx-ghost" style={{ height: "28px" }} reason={`Planned: ${WHY.queue}`}>Open the Review queue</Btn>
           </span>
         ) : null}
       </div>
@@ -129,29 +129,13 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
         {`As of ${momentOf(coverage.as_of_unix)} · ${count(coverage.agent_lines)} agent-written lines from ${merges(coverage.merges)} since ${dateOf(since)}`}
       </span>
       {coverage.not_measured_merges > 0 ? (
-        <>
-          <div className="cx-cwbn" style={{ margin: "0", flexWrap: "wrap" }}>
-            <Ic n="info" sm />
-            <span style={{ flex: 1, minWidth: "200px" }}>
-              <b>{`${coverage.not_measured_merges} of ${total} merges aren’t in the map.`}</b>
-              {` They are from before ${dateOf(since)}, had no stored hunks or had no note written. Their lines are ${NOT_MEASURED}, not counted as read or unread.`}
-            </span>
-            <span className="cx-acts">
-              <Planned why={WHY.gaps} />
-              <Btn className="cx-btn">Try again</Btn>
-            </span>
-          </div>
-          {["Merges with no provenance note", "Before provenance began"].map((title) => (
-            <div className="cx-t15list" key={title}>
-              <div className="cx-hd">
-                <b>
-                  {title}
-                  <Planned why={WHY.gaps} />
-                </b>
-              </div>
-            </div>
-          ))}
-        </>
+        <div className="cx-cwbn" style={{ margin: "0", flexWrap: "wrap" }}>
+          <Ic n="info" sm />
+          <span style={{ flex: 1, minWidth: "200px" }}>
+            <b>{`${coverage.not_measured_merges} of ${total} merges aren’t in the map.`}</b>
+            {` They are from before ${dateOf(since)}, had no stored hunks or had no note written. Their lines are ${NOT_MEASURED}, not counted as read or unread.`}
+          </span>
+        </div>
       ) : null}
       <div className="cx-t15map">
         {coverage.areas.map((area) => {
