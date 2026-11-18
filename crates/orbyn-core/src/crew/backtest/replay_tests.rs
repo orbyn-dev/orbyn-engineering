@@ -746,6 +746,18 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn read(path: &str) -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
+}
+
+/// The lines of a source that are code: no `//` comment lines.
+fn code_of(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_caller() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -754,9 +766,10 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
     assert!(files.len() > 100, "the scan found no sources");
 
     // Any mention of the backtest outside its own module and store, however it is imported (`backtest::run`,
-    // `use crate::crew::{backtest}`, a glob, a re-export), is a possible caller. The only mentions allowed are the
-    // module declaration and the store's own registration, each line by line. Built in parts so this file never
-    // matches itself.
+    // `use crate::crew::{backtest}`, a glob, a re-export), is a possible caller. Each mention must be one of the places
+    // below, line by line: the wire types, the route table and the one route file (transport only), the marker lists,
+    // the module declarations, the store's registration, and the core's own slot and startup recovery (`app.rs`).
+    // Built in parts so this file never matches itself.
     let word = ["back", "test"].concat();
     for file in &files {
         let name = file.to_string_lossy().replace('\\', "/");
@@ -768,28 +781,49 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
         let text = std::fs::read_to_string(file).unwrap();
         for line in text.lines().filter(|l| l.to_lowercase().contains(&word)) {
             let line = line.trim();
-            let declaration = name.ends_with("/crew/mod.rs") && line == format!("mod {word};");
+            let declaration = (name.ends_with("/crew/mod.rs")
+                && line == format!("pub mod {word};"))
+                || (name.ends_with("/routes/mod.rs")
+                    && (line == format!("mod crew_{word};")
+                        || line == format!("mod crew_{word}_tests;")))
+                || (name.ends_with("/orbyn-contracts/src/lib.rs")
+                    && line.contains(&format!("crew_{word}")));
             let registration = (name.ends_with("/store/mod.rs")
                 || name.ends_with("/store/migrations.rs"))
                 && (line.contains(&format!("crew_{word}")) || line.starts_with("Backtest"))
                 || (name.ends_with("/store/mod.rs") && line.contains("MOST_BUDGET_TOKENS"));
+            let wire_types = name.ends_with("/orbyn-contracts/src/crew_backtest.rs");
+            let core_slot =
+                name.ends_with("/orbyn-core/src/app.rs") && line.contains(&format!("crew_{word}"));
+            let markers =
+                name.ends_with("/crew/changes.rs") && line.contains(&format!("/api/crew/{word}/"));
+            let route_table = name.ends_with("/routes/crew.rs")
+                && (line.contains(&format!("/api/crew/{word}/"))
+                    || line.contains(&format!("crew_{word}::"))
+                    || line.contains(&format!("core crew_{word}_")));
+            let route_file = name.ends_with("/routes/crew_backtest.rs");
             assert!(
-                declaration || registration,
-                "{name} mentions the backtest: `{line}`; only a person's start (the routes of PR 3) may reach it"
+                declaration
+                    || registration
+                    || wire_types
+                    || core_slot
+                    || markers
+                    || route_table
+                    || route_file,
+                "{name} mentions the backtest: `{line}`; only a person's start (the routes) may reach it"
+            );
+        }
+        // The start is called by the route file and nowhere else (outside the tests).
+        if !name.ends_with("/routes/crew_backtest.rs") {
+            assert!(
+                !text.contains(&format!("crew_{word}_start(")),
+                "{name} calls the start; only the person's route may"
             );
         }
     }
 
     // The replay itself schedules and spawns nothing.
-    let replay = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/crew/backtest/replay.rs"),
-    )
-    .unwrap();
-    let code: String = replay
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let replay = code_of(&read("src/crew/backtest/replay.rs"));
     for word in [
         "tokio",
         "spawn",
@@ -798,6 +832,27 @@ fn only_a_persons_start_can_reach_the_replay_there_is_no_timer_and_no_other_call
         "cron",
         "Command::new",
     ] {
-        assert!(!code.contains(word), "replay.rs mentions {word}");
+        assert!(!replay.contains(word), "replay.rs mentions {word}");
+    }
+
+    // The core's entry point has no timer either, runs one background task, and reaches `begin` and `finish` once each,
+    // from the start and from nowhere else in the module.
+    let api = code_of(&read("src/crew/backtest/api.rs"));
+    for word in ["interval", "sleep", "cron", "Command::new", "Instant"] {
+        assert!(!api.contains(word), "api.rs mentions {word}");
+    }
+    assert_eq!(api.matches("spawn_blocking(").count(), 1);
+    assert_eq!(api.matches("begin(&").count(), 1);
+    assert_eq!(api.matches("finish(").count(), 1);
+    let start = api.find("fn crew_backtest_start").unwrap();
+    let after = &api[start..];
+    let end = after.find("pub fn crew_backtest_stop").unwrap();
+    assert!(after[..end].contains("begin(&") && after[..end].contains("finish("));
+    for other in ["history.rs", "outcomes.rs", "score.rs", "mod.rs"] {
+        let text = code_of(&read(&format!("src/crew/backtest/{other}")));
+        assert!(
+            !text.contains("begin(") && !text.contains("finish("),
+            "{other} reaches the replay"
+        );
     }
 }

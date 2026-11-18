@@ -1,15 +1,14 @@
 //! Replaying review lanes and checks on past pull requests (slice 4n PR 2), and scoring them against the escape log.
 //!
 //! Rules this module keeps:
-//! - A backtest starts only when a person chooses it. `run` is the only way in and nothing calls it on a timer, at
-//!   startup or from any scheduler; the route that a person's click reaches is a later PR (the guard test in
-//!   `replay_tests` fails if any other non-test code calls it).
+//! - A backtest starts only when a person chooses it. `begin` and `finish` (`run` is the two together) are the only
+//!   way in and nothing calls them on a timer, at startup or from any scheduler: only `api::crew_backtest_start`,
+//!   which the person's route reaches (the guard test in `replay_tests` fails if any other non-test code calls them).
 //! - The budget is tokens per engine. Two engines' budgets are never added, compared or pooled, and no money appears
 //!   anywhere: a request that names a money field or a price-like engine is refused.
 //! - Only review lanes and checks replay. A builder lane cannot be written as a `LaneKind`, and a lane named like
 //!   one is refused.
-//! - Nothing here runs a model. A `LaneRunner` does the replay; the live one arrives with the routes, and tests use
-//!   `FakeLaneRunner`.
+//! - Nothing here runs a model. A `LaneRunner` does the replay; no live one exists yet, and tests use `FakeLaneRunner`.
 //! - A lane whose engine has spent its budget stops and says so; a lane whose replay breaks fails and the others go
 //!   on. The lanes of one engine share that engine's budget.
 
@@ -251,12 +250,45 @@ fn outcome_of(finding: &PastFinding, escapes: &[Escape]) -> ResultOutcome {
     }
 }
 
-/// Runs a backtest a person chose to start. Replays each lane on each eligible pull request of `prs` (merged 30 to
-/// 180 days before `now_unix`), stops a lane once its engine's token budget is spent, records a lane whose replay
-/// broke as failed without stopping the others, stores every finding and returns the report read back from the store.
-///
-/// When `escapes` says Not measured the run still finishes: findings are counted and nothing is scored, because
-/// no recall or precision can be read from an escape log that cannot say.
+/// Why a run a person stopped says it stopped.
+pub const STOPPED_BY_PERSON: &str = "stopped by the person";
+
+/// Records a run a person chose to start, with each lane pending. With `alone` set, a run already in progress refuses
+/// it (`CrewTaskBusy`) and nothing is written: one backtest at a time. Nothing is replayed here.
+pub fn begin(
+    store: &Store,
+    run_id: &str,
+    request: &BacktestRequest,
+    now_unix: i64,
+    alone: bool,
+) -> Result<()> {
+    request.validate()?;
+    let lane_keys: Vec<(String, String, String)> = request
+        .lanes
+        .iter()
+        .map(|s| (s.lane.clone(), s.engine.clone(), s.model.clone()))
+        .collect();
+    if alone {
+        store.crew_backtest_create_alone(
+            run_id,
+            &request.project,
+            &request.budgets,
+            &lane_keys,
+            now_unix,
+        )
+    } else {
+        store.crew_backtest_create(
+            run_id,
+            &request.project,
+            BacktestState::Running,
+            &request.budgets,
+            &lane_keys,
+            now_unix,
+        )
+    }
+}
+
+/// Runs a backtest a person chose to start. `begin` and `finish` together.
 pub fn run(
     store: &Store,
     run_id: &str,
@@ -266,25 +298,45 @@ pub fn run(
     runner: &dyn LaneRunner,
     escapes: &dyn EscapeSource,
 ) -> Result<BacktestReport> {
-    request.validate()?;
-    let eligible = eligible_prs(prs, now_unix);
-    let lane_keys: Vec<(String, String, String)> = request
-        .lanes
-        .iter()
-        .map(|s| (s.lane.clone(), s.engine.clone(), s.model.clone()))
-        .collect();
-    store.crew_backtest_create(
+    begin(store, run_id, request, now_unix, false)?;
+    finish(
+        store,
         run_id,
-        &request.project,
-        BacktestState::Running,
-        &request.budgets,
-        &lane_keys,
+        request,
+        prs,
         now_unix,
-    )?;
-    // From here a run exists. Whatever goes wrong (an error, a panic in the runner) ends it as failed, so it never
-    // stays `running`; the final write is best effort.
+        runner,
+        escapes,
+        &|| false,
+    )
+}
+
+/// Replays each lane on each eligible pull request of `prs` (merged 30 to 180 days before `now_unix`) for a run
+/// `begin` recorded, stops a lane once its engine's token budget is spent, records a lane whose replay broke as failed
+/// without stopping the others, stores every finding and returns the report read back from the store.
+/// `stop` is asked before every replay: once it says yes the run ends as stopped, scoring what was replayed.
+///
+/// When `escapes` says Not measured the run still finishes: findings are counted and nothing is scored, because
+/// no recall or precision can be read from an escape log that cannot say.
+#[allow(clippy::too_many_arguments)]
+pub fn finish(
+    store: &Store,
+    run_id: &str,
+    request: &BacktestRequest,
+    prs: &[PastPr],
+    now_unix: i64,
+    runner: &dyn LaneRunner,
+    escapes: &dyn EscapeSource,
+    stop: &dyn Fn() -> bool,
+) -> Result<BacktestReport> {
+    let eligible = eligible_prs(prs, now_unix);
+    // From here a run exists. Whatever goes wrong (an error, or in a test or dev build a panic in the runner) ends it
+    // as failed, so it does not stay `running`; the final write is best effort. A release build aborts on a panic
+    // (`panic = "abort"`), which no code can catch: the startup recovery marks such a run failed as "interrupted".
     let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        execute(store, run_id, request, &eligible, now_unix, runner, escapes)
+        execute(
+            store, run_id, request, &eligible, now_unix, runner, escapes, stop,
+        )
     }));
     let error = match ended {
         Ok(Ok(())) => return report(store, run_id),
@@ -295,6 +347,7 @@ pub fn run(
     Err(error)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute(
     store: &Store,
     run_id: &str,
@@ -303,6 +356,7 @@ fn execute(
     now_unix: i64,
     runner: &dyn LaneRunner,
     escapes: &dyn EscapeSource,
+    stop: &dyn Fn() -> bool,
 ) -> Result<()> {
     let window = Window {
         from_unix: now_unix - HISTORY_DAYS * DAY_SECS,
@@ -312,6 +366,7 @@ fn execute(
     let mut spent: BTreeMap<&str, u64> = BTreeMap::new();
     let mut budget_spent_engines = BTreeSet::new();
     let mut failed = 0usize;
+    let mut stopped_by_person = false;
 
     for spec in &request.lanes {
         let budget = request.budgets[&spec.engine];
@@ -331,6 +386,12 @@ fn execute(
         let mut replayed = BTreeSet::new();
         let mut state = LaneState::Done;
         for pr in eligible {
+            // A person's stop ends the run: this lane and every later one stop before their next replay.
+            if stop() {
+                state = LaneState::Stopped;
+                stopped_by_person = true;
+                break;
+            }
             // Only this engine's own spending is compared with this engine's own budget.
             if spent.get(spec.engine.as_str()).copied().unwrap_or(0) >= budget {
                 state = LaneState::Stopped;
@@ -399,6 +460,8 @@ fn execute(
 
     let (state, reason) = if failed == request.lanes.len() {
         (BacktestState::Failed, None)
+    } else if stopped_by_person {
+        (BacktestState::Stopped, Some(STOPPED_BY_PERSON.to_owned()))
     } else if !budget_spent_engines.is_empty() {
         let engines: Vec<&str> = budget_spent_engines.iter().map(String::as_str).collect();
         (

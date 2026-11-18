@@ -11,6 +11,8 @@ use crate::account::changes::{normalize, paths_with_prefix, pattern_matches};
 /// Every route under `/api/crew` that changes state, as `(method, path)`. A `{id}` segment matches any one segment.
 pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/merge"),
+    ("POST", "/api/crew/backtest/start"),
+    ("POST", "/api/crew/backtest/{id}/stop"),
     ("POST", "/api/crew/settings/engine-tiers/save"),
     ("POST", "/api/crew/review/{id}/consent"),
     ("POST", "/api/crew/review/{id}/remove-lane"),
@@ -43,6 +45,8 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
 pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/settings/engine-tiers"),
     ("GET", "/api/crew/review/{id}/controls"),
+    ("GET", "/api/crew/backtest/estimate"),
+    ("GET", "/api/crew/backtest/{id}/report"),
     ("GET", "/api/crew/preview"),
     ("GET", "/api/crew/autopilot"),
     ("GET", "/api/crew/autopilot/guards"),
