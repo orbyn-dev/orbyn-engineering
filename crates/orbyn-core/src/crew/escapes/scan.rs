@@ -14,11 +14,13 @@
 //! When more than one fires for a merge the order is 1, 3, 2: the strongest evidence that needs the least git comes first.
 //!
 //! **Read-only and local.** Only `git` on the project's own checkout, hardened (no repository filter, diff converter or attribute
-//! runs a program): `merge-base`, `log`, `diff`, `rev-list`, `blame`. No worker, no engine call, no network, no write to a repository.
+//! runs a program): `merge-base`, `log`, `diff`, `diff-tree`, `rev-list`, `blame`, with literal pathspecs and the branch read as `refs/heads/<branch>`. No worker, no engine call, no network, no write to a repository.
 //! A GET never runs it; `run_crew_escape_scan` does, once when the service starts and on every Crew watch interval.
 //!
 //! **Bounds.** At most [`MERGES_PER_SCAN`] merges, [`COMMITS_PER_MERGE`] later commits per merge, [`GIT_CALLS_PER_SCAN`] git calls and
-//! [`SCAN_SECONDS`] seconds per scan; what is not reached stays a candidate for the next scan (newest merges first). A project whose
+//! [`SCAN_SECONDS`] seconds per scan, each git call cut at the scan's deadline and capped in output bytes; what is not reached stays a
+//! candidate. A merge with no signal never gets a row, so the scan keeps a cursor (`CURSOR_KEY` in `settings`) and the next scan resumes
+//! after the last merge looked at, wrapping to the newest at the end: every merge is reached over successive scans. A project whose
 //! log is at its 5,000 escapes or 20,000 events is refused whole, before any git runs and with nothing written.
 //!
 //! **Idempotent.** A merge with an escape row of any state is not a candidate, a dismissed escape stays dismissed, and the writer
@@ -34,7 +36,7 @@ use orbyn_contracts::EscapeSource;
 use super::thresholds::escape_thresholds;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::source_control::git::{git_hardened, git_raw};
+use crate::source_control::git::git_hardened_capped;
 use crate::store::{ESCAPES_PER_PROJECT_MAX, EVENTS_PER_PROJECT_MAX, MergeRecord, PossibleEscape};
 
 /// The most merges one scan looks at.
@@ -50,6 +52,13 @@ const FILES_PER_FIX: usize = 10;
 const HUNKS_PER_FILE: usize = 20;
 const MERGE_FILES_MAX: usize = 2000;
 const INTRODUCED_MAX: usize = 500;
+/// Output caps per git call, in bytes.
+const LOG_BYTES: usize = 1 << 20;
+const LIST_BYTES: usize = 1 << 20;
+const DIFF_BYTES: usize = 256 << 10;
+const BLAME_BYTES: usize = 1 << 20;
+/// Where the next scan resumes (merge time and id of the last merge looked at), in `settings`; never an account preference.
+pub const CURSOR_KEY: &str = "crew_escape_scan_cursor";
 
 /// The bounds of one scan. [`Limits::default`] is what the service uses; tests pass smaller ones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +98,6 @@ struct Later {
     id: String,
     at: i64,
     message: String,
-    files: Vec<String>,
 }
 
 impl Later {
@@ -98,6 +106,7 @@ impl Later {
     }
 }
 
+#[derive(Debug)]
 enum Stop {
     /// The call, merge or time bound is spent.
     Budget,
@@ -119,10 +128,22 @@ impl Budget {
         Ok(())
     }
 
-    async fn out(&mut self, repo: &Path, args: &[&str]) -> std::result::Result<String, Stop> {
+    /// One hardened git call, bounded in time by what is left of the scan and in size by `cap`. Every path argument is literal.
+    async fn out(
+        &mut self,
+        repo: &Path,
+        args: &[&str],
+        cap: usize,
+    ) -> std::result::Result<String, Stop> {
         self.take()?;
-        let bytes = git_hardened(repo, args).await.map_err(|_| Stop::Git)?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        let mut full: Vec<&str> = vec!["--literal-pathspecs"];
+        full.extend_from_slice(args);
+        match tokio::time::timeout(left, git_hardened_capped(repo, &full, cap)).await {
+            Err(_) => Err(Stop::Budget),
+            Ok(Err(_)) => Err(Stop::Git),
+            Ok(Ok(bytes)) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+        }
     }
 }
 
@@ -148,31 +169,25 @@ fn is_fix_subject(subject: &str) -> bool {
     matches!(word.as_str(), "fix" | "fixes" | "fixed")
 }
 
-/// Commits after the merge on the branch, newest first, with their files.
+/// Commits after the merge on the branch, newest first. The log is NUL-separated (`\0 id \0 time \0 message`): a commit message
+/// cannot hold a NUL, so no message can forge or split an entry.
 fn parse_log(out: &str) -> Vec<Later> {
-    out.split('\u{1e}')
-        .filter(|chunk| !chunk.trim().is_empty())
-        .filter_map(|chunk| {
-            let mut parts = chunk.splitn(4, '\u{1f}');
-            let id = parts.next()?.trim().to_owned();
-            let at = parts.next()?.trim().parse().ok()?;
-            let message = parts.next()?.trim().to_owned();
-            let files = parts
-                .next()
-                .unwrap_or("")
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(str::to_owned)
-                .collect();
-            is_id(&id).then_some(Later {
-                id,
-                at,
-                message,
-                files,
-            })
-        })
-        .collect()
+    let mut parts = out.split('\0');
+    if parts.next() != Some("") {
+        return Vec::new();
+    }
+    let mut commits = Vec::new();
+    while let (Some(id), Some(at), Some(message)) = (parts.next(), parts.next(), parts.next()) {
+        let (Ok(at), true) = (at.parse::<i64>(), is_id(id)) else {
+            return Vec::new();
+        };
+        commits.push(Later {
+            id: id.to_owned(),
+            at,
+            message: message.trim().to_owned(),
+        });
+    }
+    commits
 }
 
 /// Signal 1. The oldest later commit that reverts the merge, unless it is a re-land or a bisect.
@@ -198,19 +213,15 @@ fn external_revert<'a>(merge: &str, later: &'a [Later]) -> Option<&'a Later> {
     })
 }
 
-/// The old-side line ranges of a `-U0` diff. A pure insertion names the line it follows.
+/// The old-side line ranges of a `-U0` diff. A pure insertion (count 0) has no old line and is left out: a fix that only adds
+/// lines next to the merge's lines changes none of them.
 fn old_ranges(diff: &str) -> Vec<(u32, u32)> {
     diff.lines()
         .filter_map(|line| {
             let old = line.strip_prefix("@@ -")?.split(' ').next()?;
             let (start, count) = old.split_once(',').unwrap_or((old, "1"));
             let (start, count): (u32, u32) = (start.parse().ok()?, count.parse().ok()?);
-            let first = start.max(1);
-            Some(if count == 0 {
-                (first, first)
-            } else {
-                (first, start + count - 1)
-            })
+            (count > 0 && start > 0).then(|| (start, start + count - 1))
         })
         .take(HUNKS_PER_FILE)
         .collect()
@@ -230,52 +241,54 @@ fn blamed(porcelain: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn valid_branch(branch: &str) -> bool {
-    !branch.is_empty()
+/// The branch as a full ref, so a tag or another ref with the same short name can never stand in for it.
+fn branch_ref(branch: &str) -> Option<String> {
+    let ok = !branch.is_empty()
         && !branch.starts_with('-')
-        && !branch.chars().any(|c| c.is_whitespace() || c.is_control())
+        && !branch.chars().any(|c| c.is_whitespace() || c.is_control());
+    ok.then(|| {
+        if branch.starts_with("refs/") {
+            branch.to_owned()
+        } else {
+            format!("refs/heads/{branch}")
+        }
+    })
 }
 
-/// Reads the later commits of one merge. `None` means git could not say (not an ancestor of the branch, or unreadable).
+/// Reads the later commits of one merge. An error means git could not say (not an ancestor of the branch, or unreadable).
 async fn later_commits(
     budget: &mut Budget,
     repo: &Path,
     record: &MergeRecord,
 ) -> std::result::Result<Vec<Later>, Stop> {
-    if !valid_branch(&record.branch) || !is_id(&record.merge_commit) {
+    let Some(branch) = branch_ref(&record.branch) else {
+        return Err(Stop::Git);
+    };
+    if !is_id(&record.merge_commit) {
         return Err(Stop::Git);
     }
-    budget.take()?;
-    let ancestor = git_raw(
-        repo,
-        &[
-            "merge-base",
-            "--is-ancestor",
-            &record.merge_commit,
-            &record.branch,
-        ],
-    )
-    .await
-    .map_err(|_| Stop::Git)?;
-    if ancestor.status.code() != Some(0) {
-        return Err(Stop::Git);
-    }
-    let range = format!("{}..{}", record.merge_commit, record.branch);
+    // Exit 0 only when the merge is on the branch; any other exit, or a missing object, is an error here.
+    budget
+        .out(
+            repo,
+            &["merge-base", "--is-ancestor", &record.merge_commit, &branch],
+            LIST_BYTES,
+        )
+        .await?;
+    let range = format!("{}..{branch}", record.merge_commit);
     let count = format!("--max-count={COMMITS_PER_MERGE}");
     let out = budget
         .out(
             repo,
             &[
-                "-c",
-                "core.quotepath=false",
                 "log",
                 "--no-merges",
-                "--name-only",
                 &count,
-                "--format=%x1e%H%x1f%ct%x1f%B%x1f",
+                "--format=%x00%H%x00%ct%x00%B",
                 &range,
                 "--",
             ],
+            LOG_BYTES,
         )
         .await?;
     Ok(parse_log(&out))
@@ -300,7 +313,6 @@ async fn follow_up_fix<'a>(
                 && c.at <= until
                 && is_fix_subject(c.subject())
                 && !is_revert(c)
-                && !c.files.is_empty()
         })
         .take(FIXES_PER_MERGE)
         .collect();
@@ -315,40 +327,62 @@ async fn follow_up_fix<'a>(
         .out(
             repo,
             &[
-                "-c",
-                "core.quotepath=false",
                 "diff",
                 "--name-only",
+                "-z",
                 "--no-ext-diff",
                 "--no-textconv",
                 before,
                 merge,
                 "--",
             ],
+            LIST_BYTES,
         )
         .await?;
-    let merged_files: BTreeSet<&str> = files_out.lines().take(MERGE_FILES_MAX).collect();
-    let shared: Vec<(&Later, Vec<&str>)> = fixes
-        .into_iter()
-        .map(|c| {
-            let both = c
-                .files
-                .iter()
-                .map(String::as_str)
-                .filter(|f| merged_files.contains(f))
-                .take(FILES_PER_FIX)
-                .collect::<Vec<_>>();
-            (c, both)
-        })
-        .filter(|(_, both)| !both.is_empty())
+    let merged_files: BTreeSet<&str> = files_out
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .take(MERGE_FILES_MAX)
         .collect();
+    let mut shared: Vec<(&Later, Vec<String>)> = Vec::new();
+    for fix in fixes {
+        let names = match budget
+            .out(
+                repo,
+                &[
+                    "diff-tree",
+                    "--no-commit-id",
+                    "--name-only",
+                    "-r",
+                    "-z",
+                    "--no-ext-diff",
+                    &fix.id,
+                ],
+                LIST_BYTES,
+            )
+            .await
+        {
+            Ok(names) => names,
+            Err(Stop::Git) => continue,
+            Err(stop) => return Err(stop),
+        };
+        let both: Vec<String> = names
+            .split('\0')
+            .filter(|f| merged_files.contains(f))
+            .take(FILES_PER_FIX)
+            .map(str::to_owned)
+            .collect();
+        if !both.is_empty() {
+            shared.push((fix, both));
+        }
+    }
     if shared.is_empty() {
         return Ok(None);
     }
     let range = format!("{before}..{merge}");
     let max = format!("--max-count={}", INTRODUCED_MAX + 1);
     let introduced: BTreeSet<String> = budget
-        .out(repo, &["rev-list", &max, &range])
+        .out(repo, &["rev-list", &max, &range], LIST_BYTES)
         .await?
         .lines()
         .map(|l| l.trim().to_owned())
@@ -371,8 +405,9 @@ async fn follow_up_fix<'a>(
                         &parent,
                         &fix.id,
                         "--",
-                        file,
+                        &file,
                     ],
+                    DIFF_BYTES,
                 )
                 .await
             {
@@ -384,14 +419,15 @@ async fn follow_up_fix<'a>(
             if ranges.is_empty() {
                 continue;
             }
-            let mut args: Vec<String> = vec!["blame".into(), "--porcelain".into()];
+            let mut args: Vec<String> =
+                vec!["blame".into(), "--porcelain".into(), "--no-textconv".into()];
             for (from, to) in ranges {
                 args.push("-L".into());
                 args.push(format!("{from},{to}"));
             }
-            args.extend([parent.clone(), "--".into(), file.to_owned()]);
+            args.extend([parent.clone(), "--".into(), file]);
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            match budget.out(repo, &refs).await {
+            match budget.out(repo, &refs, BLAME_BYTES).await {
                 Ok(porcelain) => {
                     if blamed(&porcelain).iter().any(|id| introduced.contains(id)) {
                         return Ok(Some(fix));
@@ -490,9 +526,24 @@ impl Core {
         self.crew_preview_only()?;
         let thresholds = escape_thresholds(&self.store)?;
         let since = now - i64::from(thresholds.report_days) * 86_400;
-        let candidates = self
+        // Resume after the last merge the previous scan looked at, so merges with no signal (which never get a row) are not looked
+        // at again and again while older ones starve. When the rest of the list is shorter than a scan, wrap to the newest.
+        let cursor = self.scan_cursor()?;
+        let want = limits.merges + 1;
+        let mut candidates = self
             .store
-            .crew_escape_scan_candidates(since, limits.merges + 1)?;
+            .crew_escape_scan_candidates(since, want, cursor)?;
+        if cursor.is_some() && candidates.len() < want as usize {
+            let top = self.store.crew_escape_scan_candidates(since, want, None)?;
+            for item in top {
+                if candidates.len() >= want as usize {
+                    break;
+                }
+                if !candidates.iter().any(|(m, _)| m.task_id == item.0.task_id) {
+                    candidates.push(item);
+                }
+            }
+        }
         let mut outcome = ScanOutcome {
             truncated: candidates.len() > limits.merges as usize,
             ..ScanOutcome::default()
@@ -503,6 +554,7 @@ impl Core {
             deadline: Instant::now() + Duration::from_secs(SCAN_SECONDS),
         };
         let mut found: BTreeMap<String, Vec<PossibleEscape>> = BTreeMap::new();
+        let mut last: Option<&MergeRecord> = None;
         for (record, project) in candidates.iter().take(limits.merges as usize) {
             let is_full = match full.get(project) {
                 Some(known) => *known,
@@ -531,6 +583,19 @@ impl Core {
                 }
             }
             outcome.scanned += 1;
+            last = Some(record);
+        }
+        // Everything in reach was looked at: start again from the newest next time. Otherwise carry on after the last one.
+        let finished = !outcome.truncated && outcome.scanned as usize == candidates.len();
+        let next = match (finished, last) {
+            (true, _) => Some(String::new()),
+            (false, Some(record)) => Some(format!("{}:{}", record.merged_unix, record.id)),
+            (false, None) => None,
+        };
+        if let Some(next) = next
+            && self.store.setting(CURSOR_KEY)?.unwrap_or_default() != next
+        {
+            self.store.set_setting(CURSOR_KEY, &next)?;
         }
         for (project, items) in found {
             match self.store.record_possible_escapes(&project, &items, now) {
@@ -546,6 +611,19 @@ impl Core {
             }
         }
         Ok(outcome)
+    }
+
+    /// Where the last truncated scan stopped. Absent or empty means start from the newest; a damaged value fails closed.
+    fn scan_cursor(&self) -> Result<Option<(i64, i64)>> {
+        let Some(text) = self.store.setting(CURSOR_KEY)?.filter(|t| !t.is_empty()) else {
+            return Ok(None);
+        };
+        text.split_once(':')
+            .and_then(|(at, id)| Some((at.parse().ok()?, id.parse().ok()?)))
+            .map(Some)
+            .ok_or_else(|| {
+                CoreError::Unreadable("The escape scan cursor could not be read.".into())
+            })
     }
 
     /// The service's scan: once at start, then on every Crew watch interval (the watch's tick; none when the interval is off).
@@ -582,5 +660,109 @@ impl Core {
                 _ = timer.tick() => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TempDir;
+
+    #[test]
+    fn the_log_is_nul_separated_so_a_message_cannot_forge_an_entry() {
+        let id = "a".repeat(40);
+        let other = "b".repeat(40);
+        let out = format!(
+            "\0{id}\0100\0docs: x\x1e{other}\x1f1\x1ffix: forged\n\0{other}\0200\0second\n"
+        );
+        let commits = parse_log(&out);
+        assert_eq!(commits.len(), 2);
+        assert_eq!((commits[0].id.as_str(), commits[0].at), (id.as_str(), 100));
+        assert!(commits[0].message.contains("forged"));
+        assert_eq!(
+            (commits[1].id.as_str(), commits[1].message.as_str()),
+            (other.as_str(), "second")
+        );
+        // Anything that does not parse is no log at all, never a guess.
+        assert!(parse_log("garbage").is_empty());
+        assert!(parse_log(&format!("\0{id}\0notatime\0m")).is_empty());
+    }
+
+    #[test]
+    fn a_pure_insertion_has_no_old_lines() {
+        let diff = "@@ -3,0 +4 @@ x\n@@ -7 +8 @@\n@@ -10,2 +11,2 @@\n";
+        assert_eq!(old_ranges(diff), vec![(7, 7), (10, 11)]);
+    }
+
+    fn repo() -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new();
+        let path = dir.path().join("r");
+        std::fs::create_dir_all(&path).unwrap();
+        for args in [
+            vec!["-c", "init.defaultBranch=main", "init", "-q"],
+            vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        ] {
+            crate::testing::run_git(&path, &args);
+        }
+        (dir, path)
+    }
+
+    #[tokio::test]
+    async fn a_call_is_cut_at_the_scans_deadline_and_at_its_output_cap() {
+        let (_dir, path) = repo();
+        let mut spent = Budget {
+            calls: 10,
+            deadline: Instant::now(),
+        };
+        assert!(matches!(
+            spent.out(&path, &["log"], 1 << 20).await,
+            Err(Stop::Budget)
+        ));
+        let mut roomy = Budget {
+            calls: 10,
+            deadline: Instant::now() + Duration::from_secs(30),
+        };
+        assert!(
+            roomy
+                .out(&path, &["log"], 1 << 20)
+                .await
+                .unwrap()
+                .contains("base")
+        );
+        // The output is past its cap: the call is refused, not cut to a partial answer.
+        assert!(matches!(
+            roomy.out(&path, &["log"], 10).await,
+            Err(Stop::Git)
+        ));
+        // A call count of zero is the same bound.
+        let mut none = Budget {
+            calls: 0,
+            deadline: Instant::now() + Duration::from_secs(30),
+        };
+        assert!(matches!(
+            none.out(&path, &["log"], 1 << 20).await,
+            Err(Stop::Budget)
+        ));
+    }
+
+    #[test]
+    fn a_branch_is_a_full_ref() {
+        assert_eq!(branch_ref("main").as_deref(), Some("refs/heads/main"));
+        assert_eq!(branch_ref("refs/heads/x").as_deref(), Some("refs/heads/x"));
+        assert!(
+            branch_ref("-x").is_none() && branch_ref("a b").is_none() && branch_ref("").is_none()
+        );
     }
 }

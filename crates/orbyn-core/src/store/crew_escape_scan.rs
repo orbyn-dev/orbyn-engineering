@@ -49,12 +49,14 @@ fn source_word(source: EscapeSource) -> Result<&'static str> {
 }
 
 impl Store {
-    /// Merges with no escape row, made at or after `merged_since`, newest first, at most `limit`, each with its project. Merges whose
-    /// lead thread is gone have no project and drop out, as for 4j.
+    /// Merges with no escape row, made at or after `merged_since`, newest first, at most `limit`, each with its project. With
+    /// `after` (the merge time and id of the last merge a scan looked at) only merges older than that in this order are returned,
+    /// so successive scans rotate through them. Merges whose lead thread is gone have no project and drop out, as for 4j.
     pub fn crew_escape_scan_candidates(
         &self,
         merged_since: i64,
         limit: u32,
+        after: Option<(i64, i64)>,
     ) -> Result<Vec<(MergeRecord, String)>> {
         let conn = self.reader();
         conn.prepare(
@@ -62,13 +64,20 @@ impl Store {
              JOIN crew_runs r ON r.task_id = m.task_id
              JOIN threads t ON t.id = r.lead_thread_id
              WHERE m.merged_unix >= ?1
+               AND (?3 IS NULL OR m.merged_unix < ?3 OR (m.merged_unix = ?3 AND m.id < ?4))
                AND NOT EXISTS (SELECT 1 FROM crew_escapes e WHERE e.merge_task_id = m.task_id)
              ORDER BY m.merged_unix DESC, m.id DESC LIMIT ?2",
         )
         .map_err(unreadable)?
-        .query_map(params![merged_since, limit], |row| {
-            Ok((merge_row(row)?, row.get::<_, String>("scan_project")?))
-        })
+        .query_map(
+            params![
+                merged_since,
+                limit,
+                after.map(|a| a.0),
+                after.map_or(0, |a| a.1)
+            ],
+            |row| Ok((merge_row(row)?, row.get::<_, String>("scan_project")?)),
+        )
         .map_err(unreadable)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(unreadable)

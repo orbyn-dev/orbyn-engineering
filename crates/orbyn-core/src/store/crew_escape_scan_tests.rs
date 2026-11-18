@@ -27,7 +27,7 @@ fn candidates_are_merges_without_an_escape_newest_first_and_bounded() {
     store.set_merge_reverted(&reverted, "feed01").unwrap();
     let ids = |since, limit| -> Vec<String> {
         store
-            .crew_escape_scan_candidates(since, limit)
+            .crew_escape_scan_candidates(since, limit, None)
             .unwrap()
             .into_iter()
             .map(|(m, project)| {
@@ -71,7 +71,12 @@ fn a_batch_adds_possible_rows_only_with_one_detected_event_and_a_repeat_adds_not
     let again = store.record_possible_escapes(PROJECT, &batch, 950).unwrap();
     assert_eq!((again.added, again.already_held), (0, 2));
     assert_eq!(escapes(&store), rows, "a repeat changes nothing");
-    assert!(store.crew_escape_scan_candidates(0, 50).unwrap().is_empty());
+    assert!(
+        store
+            .crew_escape_scan_candidates(0, 50, None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -96,7 +101,12 @@ fn a_dismissed_escape_is_not_a_candidate_and_is_not_offered_again() {
             600,
         )
         .unwrap();
-    assert!(store.crew_escape_scan_candidates(0, 50).unwrap().is_empty());
+    assert!(
+        store
+            .crew_escape_scan_candidates(0, 50, None)
+            .unwrap()
+            .is_empty()
+    );
     // Even a scan that found it again, with new evidence, adds nothing and does not undo the dismissal.
     let other = found(&task, EscapeSource::Revert, "revert:new");
     let added = store

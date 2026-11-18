@@ -191,7 +191,7 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
      Not offered when that revert was itself reverted or reapplied (a re-land) or its message says `bisect`. The crew's own revert already has its row from the schema.
   2. *Follow-up fix.* A later non-merge commit within `follow_up_days` (the stored threshold, 14) of the merge whose subject starts with the word `fix`, `fixes` or `fixed`
      (not `fixture`), not a revert, on a file the merge changed, and that changes a **line the merge added**: `git blame` at the fix's parent names a commit the merge brought in.
-     A fix next to those lines, on other lines, on another file, called something else, or after the window is not offered. The reason says it may be ordinary follow-up work.
+     A fix next to those lines (a pure insertion adds no old line), on other lines, on another file, called something else, or after the window is not offered. The reason says it may be ordinary follow-up work.
   3. *Post-merge check.* `watch = broken`, not reverted: the device's own repository checks only (forge CI status stays Planned). No git.
 - **Candidates.** Merges of a project with **no escape row of any state**, made within the report window (60 days, stored), newest first. A dismissed escape therefore is never a
   candidate and the writer's `INSERT OR IGNORE` on the unique merge would keep it dismissed anyway; a repeat scan adds nothing.
@@ -200,11 +200,13 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 - **When it runs.** The doc says after a merge, a revert and the watch's tick. Those hooks sit in the merge code, which this PR does not touch, so the scan is a **bounded
   background step of its own**: `Core::run_crew_escape_scan`, started by the service (Preview only) once at start and then on every Crew watch interval
   (`ORBYN_CREW_WATCH_INTERVAL_SECS`; none when that is off). No route, tool or CLI command runs it. A later PR may also call `crew_escape_scan` from the merge and revert paths.
-- **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Beyond that the rest stays a candidate for the next scan (`truncated`; newest first).
+- **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Each git call is cut at the scan's deadline and its output is capped (1 MiB for the log, name lists and blame, 256 KiB for a diff; past the cap the merge is skipped, never half read). The log is NUL-separated, so no commit message can forge an entry; paths are literal pathspecs; the branch is read as `refs/heads/<branch>` (a tag of the same name cannot stand in).
+  **Rotation.** A merge with no signal never gets a row, so the scan keeps a cursor (the merge time and id of the last merge looked at) in `settings` under `crew_escape_scan_cursor`, device config like the thresholds. The next scan resumes after it and wraps to the newest when it reaches the end, so every merge in the window is reached over successive scans; a cut-short scan (`truncated`) is no longer a starved one.
   A project at 5,000 escapes or 20,000 events is refused whole before any git runs, and a batch that would pass either limit is refused whole by the writer: nothing is
   partly written, the scan reports `refused` and logs a plain sentence. Pruning is still not built.
 - **Choices where the note is silent:** the order of signals when several fire, the bisect and re-land filters, blame (not a line-number overlap) as the meaning of "overlapping
   hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
+- **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
 
 ## Decisions (owner)

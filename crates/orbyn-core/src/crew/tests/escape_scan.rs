@@ -87,6 +87,20 @@ impl Repo {
         self.head()
     }
 
+    /// Inserts a new line after `line` of a file and commits it on the current branch.
+    fn insert(&self, file: &str, line: usize, text: &str, message: &str) {
+        let path = self.dir.join(file);
+        let mut lines: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.insert(line, text.to_owned());
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "-m", message]);
+    }
+
     /// A feature branch that changes `line` of `src/a.txt`, merged into `main` with a merge commit. Returns (before, merge).
     fn feature(&self, name: &str, line: usize) -> (String, String) {
         self.git(&["checkout", "-q", "-B", "main"]);
@@ -365,10 +379,94 @@ async fn a_fix_after_the_follow_up_window_is_not_offered() {
 async fn a_fix_of_something_the_merge_did_not_add_is_not_offered_even_in_the_same_hunk_area() {
     let mut s = scan_rig().await;
     s.merge(3, 3).await;
-    // Line 4 sits next to the merge's line 3 but came from the base commit.
+    // Line 5 is two lines from the merge's line 3 and came from the base commit.
     s.repo
         .edit("src/a.txt", 5, "fixed line 5", "fix: next to it");
     nothing_found(&s.scan().await, 1);
+}
+
+#[tokio::test]
+async fn a_fix_that_only_adds_lines_next_to_the_merges_lines_is_not_offered() {
+    let mut s = scan_rig().await;
+    s.merge(3, 3).await;
+    // A pure insertion right after the merge's line: it changes none of the merge's lines.
+    s.repo.insert("src/a.txt", 3, "guard", "fix: add a guard");
+    nothing_found(&s.scan().await, 1);
+}
+
+#[tokio::test]
+async fn a_commit_message_cannot_forge_or_split_log_entries() {
+    let mut s = scan_rig().await;
+    let (_, merge) = s.merge(3, 3).await;
+    let forged = format!(
+        "docs: tidy\x1e{}\x1f1\x1ffix: forged\n\nmore",
+        "e".repeat(40)
+    );
+    s.repo.edit("src/b.txt", 9, "docs", &forged);
+    let fix = s
+        .repo
+        .edit("src/a.txt", 3, "fixed line 3", "fix: the real one");
+    let out = s.scan().await;
+    assert_eq!((out.scanned, out.found, out.skipped), (1, 1, 0), "{out:?}");
+    let row = s.only_possible(wire::EscapeSource::FollowUpFix);
+    let detail = s.rig.w.core.crew_escape_detail(&row.id).unwrap();
+    assert_eq!(detail.events[0].cause, format!("follow_up_fix:{fix}"));
+    let _ = merge;
+}
+
+#[tokio::test]
+async fn a_tag_named_like_the_branch_does_not_stand_in_for_it() {
+    let mut s = scan_rig().await;
+    let base = s.repo.head();
+    let (_, merge) = s.merge(3, 3).await;
+    s.repo.git(&["revert", "-m", "1", "--no-edit", &merge]);
+    // A tag `main` on the base commit would win a plain `main`; the scan reads refs/heads/main only.
+    s.repo.git(&["tag", "main", &base]);
+    let out = s.scan().await;
+    assert_eq!((out.scanned, out.found), (1, 1), "{out:?}");
+}
+
+#[tokio::test]
+async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_successive_scans() {
+    let mut s = scan_rig().await;
+    let mut merges = Vec::new();
+    for (i, line) in [3, 6, 9, 12, 15].into_iter().enumerate() {
+        merges.push(s.merge(line, 5 - i as i64).await);
+    }
+    let limits = Limits {
+        merges: 2,
+        calls: 200,
+    };
+    async fn scan(s: &Scan, limits: Limits) -> Result<ScanOutcome, crate::error::CoreError> {
+        s.rig
+            .w
+            .core
+            .crew_escape_scan_within(unix_now(), limits)
+            .await
+    }
+    // Nothing shows on any of them yet: the newest two are looked at and no row is made.
+    let first = scan(&s, limits).await.unwrap();
+    assert_eq!(
+        (first.scanned, first.found, first.truncated),
+        (2, 0, true),
+        "{first:?}"
+    );
+    // The oldest merge is reverted later. A scan that kept re-reading the newest two would never see it.
+    s.repo
+        .git(&["revert", "-m", "1", "--no-edit", &merges[0].1]);
+    let second = scan(&s, limits).await.unwrap();
+    assert_eq!((second.scanned, second.found), (2, 0), "{second:?}");
+    let third = scan(&s, limits).await.unwrap();
+    assert_eq!(third.found, 1, "{third:?}");
+    assert!(
+        s.rig
+            .w
+            .core
+            .store
+            .crew_escape_of_merge(&merges[0].0)
+            .unwrap()
+            .is_some()
+    );
 }
 
 // Signal 3: a post-merge check failure.
