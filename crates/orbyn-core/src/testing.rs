@@ -69,3 +69,54 @@ pub fn library(root: &Path) -> PathBuf {
     run_git(root, &["commit", "-q", "-m", "library"]);
     crate::util::canonicalize(root).unwrap()
 }
+
+/// A shell line that starts a child which leaves its process group with `setsid`, writes its pid to `pid_file` (renamed into place
+/// once whole) and sleeps, while the shell waits for it. Perl is on macOS and on Linux; neither has a `setsid` program in common.
+#[cfg(unix)]
+pub fn setsid_sleeper(pid_file: &Path) -> String {
+    format!(
+        "perl -e 'use POSIX; POSIX::setsid(); open(F, \">{p}.tmp\"); print F $$; close F; rename(\"{p}.tmp\", \"{p}\"); sleep 600' & wait",
+        p = pid_file.display()
+    )
+}
+
+/// The pid the sleeper wrote, polled (no fixed delay) for up to ten seconds.
+#[cfg(unix)]
+pub async fn sleeper_pid(pid_file: &Path) -> i32 {
+    for _ in 0..1000 {
+        if let Ok(text) = std::fs::read_to_string(pid_file)
+            && let Ok(pid) = text.trim().parse()
+        {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the escaped child never started");
+}
+
+/// Whether `pid` is a live process. A killed one stays a zombie until its parent reaps it, which `ps` shows as state `Z`.
+#[cfg(unix)]
+pub fn process_alive(pid: i32) -> bool {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let state = String::from_utf8_lossy(&out.stdout);
+    !state.trim().is_empty() && !state.trim().starts_with('Z')
+}
+
+/// Polls for the process to be gone (up to ten seconds) and kills it before failing, so a failed test leaves nothing behind.
+#[cfg(unix)]
+pub async fn assert_process_reaped(pid: i32, how: &str) {
+    for _ in 0..500 {
+        if !process_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // SAFETY: the test's own sleeper.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
+    panic!("a setsid descendant survived {how}");
+}

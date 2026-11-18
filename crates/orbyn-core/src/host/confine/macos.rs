@@ -104,10 +104,10 @@ const PROOF_EXTRAS: &str = "(deny network*)\n\
 /// The profile of the escape-check proof: the profile a crew worker would get for `confinement` (every worker rule, the transcripts'
 /// denial and `(deny process-info* (target others))` included), then [`PROOF_EXTRAS`], then the folders on the way to the proof's own
 /// folder opened for a look again, since the repeated data-folder denial would otherwise close them.
-pub(super) fn proof_profile(confinement: &Confinement) -> String {
+fn proof_profile(confinement: &Confinement, secrets: usize) -> String {
     let mut text = profile(confinement);
     text.push_str(PROOF_EXTRAS);
-    for index in 0..proof_secrets().len() {
+    for index in 0..secrets {
         text.push_str(&format!(
             "(deny file-read* (subpath (param \"S{index}\")))\n"
         ));
@@ -234,36 +234,79 @@ fn wrap_with(
     Ok(())
 }
 
-/// The person's folders that hold credentials, which the proof may not read. Toolchain folders (`~/.cargo`, `~/.rustup`, npm's) are not
-/// listed: a test needs them. Named by parameter `S0`, `S1`..., never in the profile text.
-fn proof_secrets() -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return Vec::new();
+/// The credential folders under the home, relative to it. Toolchain folders (`~/.cargo`, `~/.rustup`, npm's) are not listed: a test
+/// needs them.
+const SECRET_FOLDERS: [&str; 8] = [
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".config/gh",
+    ".netrc",
+    ".docker",
+    ".kube",
+    "Library/Keychains",
+];
+
+/// The person's credential folders that the proof may not read, named by parameter `S0`, `S1`..., never in the profile text. Each is
+/// denied under the home as written, under the home's real path, and at its own real path when it is a link (a dotfiles `~/.ssh`), so
+/// neither name reaches the files. Fails closed: an unset, empty or relative `home`, or one that does not resolve, is an error, never
+/// an empty list, because the proof would then run with no credential denials at all.
+fn proof_secrets(home: Option<OsString>) -> Result<Vec<PathBuf>> {
+    let refuse = |why: &str| {
+        CoreError::EngineUnavailable(format!(
+            "The check cannot be restricted from the credential folders: {why}."
+        ))
     };
-    let home = std::fs::canonicalize(&home).unwrap_or(home);
-    [
-        ".ssh",
-        ".aws",
-        ".gnupg",
-        ".config/gh",
-        ".netrc",
-        ".docker",
-        ".kube",
-        "Library/Keychains",
-    ]
-    .iter()
-    .map(|part| home.join(part))
-    .collect()
+    let home = home
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| refuse("HOME is not set"))?;
+    if !home.is_absolute() {
+        return Err(refuse("HOME is not an absolute path"));
+    }
+    let real_home = std::fs::canonicalize(&home).map_err(|_| refuse("HOME does not resolve"))?;
+    let mut found: Vec<PathBuf> = Vec::new();
+    for part in SECRET_FOLDERS {
+        let named = [home.join(part), real_home.join(part)];
+        let resolved: Vec<PathBuf> = named
+            .iter()
+            .filter_map(|path| std::fs::canonicalize(path).ok())
+            .collect();
+        for path in named.into_iter().chain(resolved) {
+            if !found.contains(&path) {
+                found.push(path);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Whether the proof's credential denials can be built on this machine (`None`), or why not. Checked before a proof is allowed to
+/// count as confined, so an unresolvable `HOME` leaves the check waiting for a person's approval instead of running without them.
+pub fn proof_unavailable() -> Option<String> {
+    proof_secrets(std::env::var_os("HOME"))
+        .err()
+        .map(|error| error.to_string())
 }
 
 /// [`wrap`] with the proof's profile ([`proof_profile`]) and the credential folders as extra parameters.
 pub fn wrap_proof(confinement: &Confinement, command: &mut ResolvedCommand) -> Result<()> {
-    let secrets = proof_secrets()
+    wrap_proof_at(confinement, command, std::env::var_os("HOME"))
+}
+
+fn wrap_proof_at(
+    confinement: &Confinement,
+    command: &mut ResolvedCommand,
+    home: Option<OsString>,
+) -> Result<()> {
+    let secrets = proof_secrets(home)?;
+    let profile = proof_profile(confinement, secrets.len());
+    let extra = secrets
         .into_iter()
         .enumerate()
         .map(|(index, path)| (format!("S{index}"), path))
         .collect();
-    wrap_with(confinement, command, proof_profile(confinement), secrets)
+    wrap_with(confinement, command, profile, extra)
 }
 
 pub fn unavailable() -> Option<String> {
@@ -298,4 +341,93 @@ pub(super) fn check(tool: &Path) -> Option<String> {
 #[cfg(test)]
 pub(super) fn above_len(confinement: &Confinement) -> usize {
     above(confinement).len()
+}
+
+#[cfg(test)]
+mod proof_tests {
+    use super::*;
+    use crate::testing::TempDir;
+
+    fn run_under(home: Option<OsString>, script: &str) -> Result<Option<bool>> {
+        let dir = TempDir::new();
+        let data = std::fs::canonicalize(dir.path()).unwrap().join("data");
+        let run = data.join("runs/p");
+        std::fs::create_dir_all(&run).unwrap();
+        let rules = Confinement::new(&data, &run, &[], &[]).unwrap();
+        let mut command = ResolvedCommand {
+            program: "/bin/sh".into(),
+            prefix: vec!["-c".into(), script.into()],
+            path: "/bin/sh".into(),
+        };
+        wrap_proof_at(&rules, &mut command, home)?;
+        let status = std::process::Command::new(&command.program)
+            .args(&command.prefix)
+            .current_dir(&run)
+            .status()
+            .unwrap();
+        Ok(Some(status.success()))
+    }
+
+    #[test]
+    fn a_home_that_is_unset_empty_relative_or_missing_is_refused() {
+        for home in [None, Some(OsString::new()), Some("relative".into())] {
+            assert!(proof_secrets(home).is_err());
+        }
+        let dir = TempDir::new();
+        let missing = dir.path().join("missing");
+        assert!(proof_secrets(Some(missing.clone().into_os_string())).is_err());
+        let mut command = ResolvedCommand {
+            program: "/usr/bin/true".into(),
+            prefix: Vec::new(),
+            path: "/usr/bin/true".into(),
+        };
+        let data = std::fs::canonicalize(dir.path()).unwrap();
+        let run = data.join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let rules = Confinement::new(&data, &run, &[], &[]).unwrap();
+        assert!(wrap_proof_at(&rules, &mut command, None).is_err());
+        assert_eq!(
+            command.program,
+            Path::new("/usr/bin/true"),
+            "left as it was"
+        );
+    }
+
+    #[test]
+    fn a_linked_credential_folder_is_denied_by_both_names() {
+        if unavailable().is_some() {
+            return;
+        }
+        let dir = TempDir::new();
+        let base = std::fs::canonicalize(dir.path()).unwrap();
+        let home = base.join("home");
+        let dotfiles = base.join("dotfiles");
+        for folder in [".ssh", ".cargo"] {
+            std::fs::create_dir_all(dotfiles.join(folder)).unwrap();
+            std::fs::write(dotfiles.join(folder).join("file"), "key").unwrap();
+        }
+        std::fs::create_dir_all(&home).unwrap();
+        for folder in [".ssh", ".cargo"] {
+            std::os::unix::fs::symlink(dotfiles.join(folder), home.join(folder)).unwrap();
+        }
+        let through_link = home.join(".ssh/file");
+        let through_target = dotfiles.join(".ssh/file");
+        let at = |path: &Path| format!("/bin/cat '{}'", path.display());
+        let home_name = || Some(home.clone().into_os_string());
+        // The probe reads the same files unrestricted first, so a denial is the restriction and not a broken command.
+        assert!(std::fs::read(&through_target).is_ok());
+        for path in [&through_link, &through_target] {
+            assert_eq!(
+                run_under(home_name(), &at(path)).unwrap(),
+                Some(false),
+                "{}",
+                path.display()
+            );
+        }
+        // A toolchain folder at the same kind of link stays readable.
+        assert_eq!(
+            run_under(home_name(), &at(&home.join(".cargo/file"))).unwrap(),
+            Some(true)
+        );
+    }
 }

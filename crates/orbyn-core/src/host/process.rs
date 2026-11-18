@@ -1,6 +1,8 @@
 //! Child processes as owned resources. Each engine runs in its own process tree
 //! and the tree dies with its owner on every exit path. Unix uses a process
-//! group; Windows uses a job object with `taskkill /T` as the fallback.
+//! group plus a walk of the descendants, which also reaches a child that left the
+//! group with `setsid`; Windows uses a job object, which holds every descendant
+//! (no breakaway is allowed), with `taskkill /T` as the fallback.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -10,6 +12,11 @@ use tokio::process::{Child, Command};
 
 use crate::error::{CoreError, Result};
 
+#[cfg(all(test, unix))]
+#[path = "process/unix_tests.rs"]
+mod unix_tests;
+#[cfg(unix)]
+mod unix_tree;
 #[cfg(all(test, windows))]
 #[path = "process/windows_tests.rs"]
 mod windows_tests;
@@ -316,17 +323,23 @@ impl ProcessTree {
     }
 
     pub fn terminate(&self) {
-        self.signal(libc::SIGTERM);
-    }
-
-    pub fn kill(&self) {
-        self.signal(libc::SIGKILL);
-    }
-
-    fn signal(&self, signal: i32) {
         if self.leader <= 1 {
             return;
         }
+        unix_tree::terminate(self.leader);
+        self.signal(libc::SIGTERM);
+    }
+
+    /// Kills the group and every descendant, including one that called `setsid`. The descendants are found while the leader is
+    /// alive: one already orphaned to `init` is out of reach (see `unix_tree`).
+    pub fn kill(&self) {
+        if self.leader <= 1 {
+            return;
+        }
+        unix_tree::kill(self.leader);
+    }
+
+    fn signal(&self, signal: i32) {
         // SAFETY: `kill` takes plain integers and touches no memory. A negative
         // pid addresses the group this type owns; ESRCH after exit is harmless.
         unsafe {

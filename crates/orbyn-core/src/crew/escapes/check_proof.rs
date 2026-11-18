@@ -37,7 +37,7 @@ const TREE_MAX: u64 = 1024 * 1024 * 1024;
 pub fn confined() -> bool {
     #[cfg(target_os = "macos")]
     {
-        crate::host::confine::unavailable().is_none()
+        crate::host::confine::proof_unavailable().is_none()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -372,6 +372,44 @@ mod tests {
         let stop = CancellationToken::new();
         stop.cancel();
         assert_eq!(go("git --version", long, &stop).await, None);
+    }
+
+    /// A test that calls `setsid` leaves the process group, which the deadline and a withdraw used to kill alone: its whole tree is
+    /// reaped now. The pid is polled for, with no fixed delay, so a slow machine only waits longer.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_run_reaps_a_setsid_descendant_at_its_deadline_and_on_a_cancel() {
+        use crate::testing::{assert_process_reaped, process_alive, setsid_sleeper, sleeper_pid};
+        for cancelled in [false, true] {
+            let dir = TempDir::new();
+            let data = dir.path().join("data");
+            let root = data.join("proof");
+            std::fs::create_dir_all(&data).unwrap();
+            let pid_file = data.join("pid");
+            let token = CancellationToken::new();
+            let limit = Duration::from_secs(if cancelled { 600 } else { 8 });
+            let started = tokio::spawn({
+                let (script, root, data, token) = (
+                    setsid_sleeper(&pid_file),
+                    root.clone(),
+                    data.clone(),
+                    token.clone(),
+                );
+                async move { run(&script, &root, &data, false, limit, &token).await }
+            });
+            let escaped = sleeper_pid(&pid_file).await;
+            assert!(process_alive(escaped));
+            if cancelled {
+                token.cancel();
+            }
+            assert_eq!(started.await.unwrap(), None);
+            let how = if cancelled {
+                "a cancel"
+            } else {
+                "the deadline"
+            };
+            assert_process_reaped(escaped, how).await;
+        }
     }
 
     /// The command gets a short, fixed environment: its own `HOME` and `TMPDIR` inside the scratch folder, `CI=1`, and nothing that
