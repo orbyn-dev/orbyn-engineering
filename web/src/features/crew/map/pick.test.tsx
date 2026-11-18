@@ -80,6 +80,7 @@ describe("the crew picker", () => {
     mock.fail("/api/crew/flow/crews", 1);
     const user = userEvent.setup();
     pick();
+    expect(await screen.findByText("Can’t read the map")).toBeVisible();
     expect(screen.queryByRole("combobox", { name: "Crew" })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("combobox", { name: "Crew" })).toBeVisible();
