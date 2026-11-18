@@ -73,7 +73,9 @@ pub(crate) fn sample_after_merge(
     if sampling == Sampling::Off {
         return Ok(Vec::new());
     }
-    // Sampling is on, so a start time exists; one that cannot be read is treated as "now": nothing older is sampled.
+    // Sampling was on at the first read, but a start time may not be readable: sampling can be turned off between the
+    // two reads, or its audit row may be missing. Then the start is "now", which is safe: nothing older is sampled.
+    // A merge in the start's own second counts as after it (times are whole seconds and cannot be ordered within one).
     let since = store.crew_sampling_since(&project)?.unwrap_or(now);
     let _one_at_a_time = CLOSING.lock().unwrap_or_else(|p| p.into_inner());
     // Oldest first, and again while four remain: hooks finish in any order, so whichever one runs first closes
