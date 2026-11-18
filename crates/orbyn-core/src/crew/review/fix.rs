@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 
 use super::{MOST_FIXES, RULES_FILE};
 use crate::app::Core;
+use crate::crew::capacity::paused_by_capacity;
 use crate::crew::checks::{Site, changed, covers};
 use crate::crew::guard::{key_needles, refuse_leak};
 use crate::crew::leases::internal;
@@ -277,6 +278,13 @@ impl Core {
             Ok(mut answer) => {
                 answer["started"] = json!(true);
                 answer
+            }
+            // Full review capacity is not a failure and is not retried here: the lead is told and nothing was stored. A
+            // confirmed finding is decided once, so the next try is a new review of the work, which files it again.
+            Err(error) if paused_by_capacity(&error) => {
+                let why = "Review capacity is full, so the fix is waiting. Ask for a new review of this work after some merges are reviewed; a finding it files again is checked and fixed then.";
+                self.tell_lead_text(&subject.id, &format!("No fix brief was sent yet: {why}"));
+                json!({ "started": false, "stopped": "review_capacity", "why": why })
             }
             Err(error) => json!({ "started": false, "error": error }),
         })
