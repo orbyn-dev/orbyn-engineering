@@ -121,6 +121,23 @@ mod tests {
     }
 
     #[test]
+    fn an_agents_request_to_a_capacity_write_is_refused_by_path_and_the_reads_are_not() {
+        for path in [
+            "/api/crew/capacity/settings",
+            "/api/crew/capacity/tasks/t-1",
+        ] {
+            assert!(changes_crew_state(path), "{path}");
+            assert!(
+                crew_change(&format!("curl -X POST http://127.0.0.1:9{path} -d x")),
+                "{path}"
+            );
+        }
+        for path in ["/api/crew/capacity", "/api/crew/capacity/coverage"] {
+            assert!(!changes_crew_state(path), "{path}");
+        }
+    }
+
+    #[test]
     fn an_unknown_route_under_crew_counts_as_a_change() {
         assert!(changes_crew_state("/api/crew/new-thing"));
         assert!(changes_crew_state("/api/crew/autopilot/review/t/revert/x"));

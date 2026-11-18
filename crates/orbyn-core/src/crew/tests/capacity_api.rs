@@ -222,3 +222,44 @@ async fn with_the_preview_flag_off_every_capacity_call_is_not_found() {
     assert!(w.core.crew_capacity_state(&p).is_err());
     assert!(w.core.crew_review_coverage(&p, 0).is_err());
 }
+
+#[tokio::test]
+async fn a_high_task_is_never_paused_even_marked_crew_started_over_the_limit() {
+    let w = quiet().await;
+    waiting(&w, 3).await;
+    save(&w, 1, true);
+    // A task stored High and Crew-started: the check reads its stored pair and lets it go.
+    assert!(
+        w.core
+            .capacity_start_check(&project(&w), Some((Priority::High, true)))
+            .is_ok()
+    );
+    // And through the start path: a person's start (the only kind that is not Low) goes over the limit.
+    let started = crew_launch(&w, "src/high/**", false).await.unwrap();
+    let task = started["task"].as_str().unwrap();
+    w.core
+        .crew_set_task_capacity(
+            task,
+            &wire::CapacityTaskInput {
+                priority: Some(wire::CapacityPriority::High),
+                crew_started: Some(true),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        w.core.store.crew_task_capacity(task).unwrap(),
+        (Priority::High, true)
+    );
+    assert_eq!(
+        w.core
+            .crew_capacity_state(&project(&w))
+            .unwrap()
+            .paused
+            .map(|p| p.limit),
+        Some(1),
+        "the queue is over, so a Low Crew start would pause"
+    );
+    w.core
+        .capacity_start_check(&project(&w), Some((Priority::High, true)))
+        .unwrap();
+}

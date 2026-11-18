@@ -10,7 +10,7 @@ use super::{
     start_allowed, waiting_count,
 };
 use crate::app::Core;
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::util::unix_now;
 
 /// Rows of the sampling plan shown to a person: batches of 1 to 4, 5 to 8, 9 to 12 and 13 to 16.
@@ -165,21 +165,11 @@ impl Core {
         input: &wire::CapacityTaskInput,
     ) -> Result<wire::CapacityTaskAnswer> {
         self.crew_preview_only()?;
-        if input.priority.is_none() && input.crew_started.is_none() {
-            return Err(CoreError::Invalid(
-                "send a priority, crew_started or both".into(),
-            ));
-        }
-        // Reads first, so an unknown task changes nothing.
-        self.store.crew_task_capacity(task_id)?;
-        if let Some(priority) = input.priority {
-            self.store
-                .set_crew_task_priority(task_id, priority_of(priority))?;
-        }
-        if let Some(started) = input.crew_started {
-            self.store.set_crew_task_crew_started(task_id, started)?;
-        }
-        let (priority, crew_started) = self.store.crew_task_capacity(task_id)?;
+        let (priority, crew_started) = self.store.set_crew_task_capacity(
+            task_id,
+            input.priority.map(priority_of),
+            input.crew_started,
+        )?;
         Ok(wire::CapacityTaskAnswer {
             task: task_id.to_owned(),
             priority: priority_wire(priority),

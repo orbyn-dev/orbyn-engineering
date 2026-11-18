@@ -188,6 +188,65 @@ impl Store {
         )
     }
 
+    /// Sets a task's priority and/or Crew-started flag in one transaction with an audit row, and returns what is stored
+    /// now. A fieldless call, an unknown task or a failed write changes nothing.
+    pub fn set_crew_task_capacity(
+        &self,
+        task_id: &str,
+        priority: Option<Priority>,
+        crew_started: Option<bool>,
+    ) -> Result<(Priority, bool)> {
+        if priority.is_none() && crew_started.is_none() {
+            return Err(CoreError::Invalid(
+                "send a priority, crew_started or both".into(),
+            ));
+        }
+        self.commit(|tx, _| {
+            let known: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM crew_tasks WHERE id = ?1)",
+                [task_id],
+                |row| row.get(0),
+            )?;
+            if !known {
+                return Err(CoreError::NotFound(format!("crew task {task_id}")));
+            }
+            if let Some(priority) = priority {
+                tx.execute(
+                    "UPDATE crew_tasks SET priority = ?2 WHERE id = ?1",
+                    params![task_id, priority_name(priority)],
+                )?;
+            }
+            if let Some(started) = crew_started {
+                tx.execute(
+                    "UPDATE crew_tasks SET crew_started = ?2 WHERE id = ?1",
+                    params![task_id, i64::from(started)],
+                )?;
+            }
+            insert_audit(
+                tx,
+                &AuditRecord {
+                    actor: "user".into(),
+                    action: "crew.capacity.task".into(),
+                    target: task_id.into(),
+                    decision: None,
+                    source: "user".into(),
+                    thread_id: None,
+                    run_id: None,
+                    detail: json!({
+                        "priority": priority.map(priority_name),
+                        "crew_started": crew_started,
+                    }),
+                },
+            )?;
+            let (p, s): (String, i64) = tx.query_row(
+                "SELECT priority, crew_started FROM crew_tasks WHERE id = ?1",
+                [task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            Ok((priority_of(&p)?, s == 1))
+        })
+    }
+
     fn set_task_column(&self, task_id: &str, sql: &str, value: impl rusqlite::ToSql) -> Result<()> {
         self.commit(|tx, _| {
             if tx.execute(sql, params![task_id, value])? == 0 {

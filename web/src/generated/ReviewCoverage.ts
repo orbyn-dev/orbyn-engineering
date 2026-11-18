@@ -9,7 +9,7 @@ export type ReviewCoverage = { project: string,
 /**
  * When provenance first began on this device. Absent: it never has, and nothing is measured.
  */
-began_unix?: number, as_of_unix: number, 
+began_unix?: number | null, as_of_unix: number, 
 /**
  * Merges with measured lines.
  */

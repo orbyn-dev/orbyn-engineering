@@ -116,7 +116,8 @@ wire! {
 pub struct ReviewCoverage {
     pub project: String,
     /// When provenance first began on this device. Absent: it never has, and nothing is measured.
-    #[ts(type = "number", optional = nullable)]
+    #[serde(default)]
+    #[ts(type = "number | null", optional)]
     pub began_unix: Option<i64>,
     #[ts(type = "number")]
     pub as_of_unix: i64,

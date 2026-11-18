@@ -41,12 +41,13 @@ pub(crate) async fn record_provenance(
 
 impl Core {
     /// Before a worker is granted: refuses a NEW start that Crew began itself at Low priority while more merges wait
-    /// for a person than the project's limit. Nothing is stored when it refuses.
+    /// for a person than the project's limit, and only when a person turned `pause_enabled` on (off by default).
+    /// Nothing is stored when it refuses.
     ///
-    /// `stored` is the task's `(priority, crew_started)` from the store (migration 47). A task that is being created
-    /// has none yet, so the start path passes `None` and this reads it as Medium and person-started: nothing pauses
-    /// until a later change sets them. A store failure reading the settings or the queue lets the start go, since
-    /// this only ever holds back optional work.
+    /// `stored` is the task's `(priority, crew_started)`. A task being created has no row yet, so the start path
+    /// passes `Some((Low, true))` when its launch carries `Links::crew_started` (review fixes, merge-comment fixes)
+    /// and `None` otherwise, which reads as Medium and person-started and never pauses. A store failure reading the
+    /// settings or the queue lets the start go, since this only ever holds back optional work.
     pub(crate) fn capacity_start_check(
         &self,
         project_id: &str,
