@@ -65,20 +65,19 @@ impl Store {
         })
     }
 
-    /// The newest provenance failures that no later row marks resolved for the same task, at most `limit`, oldest first.
+    /// The oldest provenance failures that no later row marks resolved for the same task, at most `limit`, oldest first.
     /// Resolved rows are filtered out in SQL, so they never crowd the unresolved ones out of the bound.
     pub fn crew_unresolved_provenance_failures(&self, limit: u32) -> Result<Vec<AutopilotEvent>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
-            "SELECT id, crew_id, task_id, kind, body, at FROM (
-                 SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events f
+            "SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events f
                  WHERE kind = 'provenance_failed'
                    AND json_extract(body, '$.resolved') = 0
                    AND NOT EXISTS (
                        SELECT 1 FROM crew_autopilot_events r
                        WHERE r.kind = 'provenance_failed' AND json_extract(r.body, '$.resolved') = 1
                          AND r.task_id = f.task_id AND r.id > f.id)
-                 ORDER BY id DESC LIMIT ?1) ORDER BY id",
+                 ORDER BY id LIMIT ?1",
         )?;
         let rows = statement
             .query_map([limit], |row| {

@@ -30,29 +30,48 @@ fn failure_reason(stage: &str) -> &'static str {
 /// The ledger write is retried a few times: a failure row that is lost is the one silent outcome this hook must not have.
 const LEDGER_TRIES: u32 = 3;
 
-/// Writes one `provenance_failed` row on the merge's task: the stage, a fixed reason, that the merge reads as Not
-/// measured, and `resolved: false` until a retry succeeds. A store failure is retried, then logged.
-fn write_failure(store: &Store, merge: &MergeRecord, stage: &str) {
-    let body = json!({
+/// The row a failed record leaves: the stage, a fixed reason, that the merge reads as Not measured, and
+/// `resolved: false` until a retry succeeds.
+fn failure_body(stage: &str) -> serde_json::Value {
+    json!({
         "stage": stage,
         "why": failure_reason(stage),
         "coverage": "Not measured",
         "retry": "at the next merge",
         "resolved": false,
-    });
-    for attempt in 1..=LEDGER_TRIES {
-        match store.add_crew_autopilot_event(
-            &merge.task_id,
-            &merge.crew_id,
-            "provenance_failed",
-            &body,
-        ) {
-            Ok(_) => return,
-            Err(write) if attempt == LEDGER_TRIES => {
-                tracing::warn!(error = %write, task = %merge.task_id, "could not write a provenance_failed event");
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(20 * u64::from(attempt))),
+    })
+}
+
+fn write_failure_once(store: &Store, merge: &MergeRecord, body: &serde_json::Value) -> bool {
+    match store.add_crew_autopilot_event(&merge.task_id, &merge.crew_id, "provenance_failed", body)
+    {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(%error, task = %merge.task_id, "could not write a provenance_failed event");
+            false
         }
+    }
+}
+
+/// Writes the failure row on the merge's task, retried a few times without blocking the runtime.
+async fn write_failure(store: &Store, merge: &MergeRecord, stage: &str) {
+    let body = failure_body(stage);
+    for attempt in 1..=LEDGER_TRIES {
+        if write_failure_once(store, merge, &body) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20 * u64::from(attempt))).await;
+    }
+}
+
+/// The same for a caller with no runtime: the only place a blocking sleep is allowed.
+fn write_failure_blocking(store: &Store, merge: &MergeRecord, stage: &str) {
+    let body = failure_body(stage);
+    for attempt in 1..=LEDGER_TRIES {
+        if write_failure_once(store, merge, &body) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20 * u64::from(attempt)));
     }
 }
 
@@ -77,7 +96,7 @@ pub(crate) async fn record_provenance(
         Err(error) => ("hunks", error),
     };
     tracing::warn!(%error, stage, task = %merge.task_id, "the merge's provenance was not recorded");
-    write_failure(store, merge, stage);
+    write_failure(store, merge, stage).await;
     Err(error)
 }
 
@@ -244,7 +263,7 @@ impl Core {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             tracing::warn!(task = %merge.task_id, "no runtime to record the merge's provenance on");
             // Not silent: the ledger says it, and a later pass records it.
-            write_failure(&self.store, merge, "start");
+            write_failure_blocking(&self.store, merge, "start");
             return;
         };
         let (store, merge) = (self.store.clone(), merge.clone());

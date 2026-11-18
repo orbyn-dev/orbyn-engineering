@@ -340,7 +340,7 @@ fn a_failed_row_leaves_no_hunk_and_no_start_behind() {
 }
 
 #[tokio::test]
-async fn recording_the_same_merge_twice_is_refused_and_changes_nothing() {
+async fn recording_the_same_merge_twice_replaces_its_hunks_and_keeps_the_first_start() {
     let dir = TempDir::new();
     let (repo, before, merge) = merged_repo(dir.path());
     let (_db, store) = open();
@@ -348,8 +348,12 @@ async fn recording_the_same_merge_twice_is_refused_and_changes_nothing() {
     record_at_merge(&store, &record, &agent(), &[], 10)
         .await
         .unwrap();
-    let again = record_at_merge(&store, &record, &agent(), &[], 20).await;
-    assert!(again.is_err());
+    let first = store.crew_hunks_of_merge(record.id).unwrap();
+    record_at_merge(&store, &record, &agent(), &[], 20)
+        .await
+        .unwrap();
+    // A retry replaces the merge's hunks (no duplicate, no conflict) and never moves the start.
+    assert_eq!(store.crew_hunks_of_merge(record.id).unwrap(), first);
     assert_eq!(
         store
             .crew_provenance_began(&repo.to_string_lossy())

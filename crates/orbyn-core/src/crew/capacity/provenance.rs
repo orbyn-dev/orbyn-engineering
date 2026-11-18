@@ -434,15 +434,31 @@ impl Drop for Scratch {
 
 /// One lock per repository, so two merges recorded at once on it write the notes ref one after the other: each
 /// `git notes add` reads the ref, makes a commit on it and moves it, and two at once can lose a note or hit a ref lock.
-/// The map only grows by one entry per repository path this process records for.
-fn note_lock(repo: &Path) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+/// The key is the shared git directory (`--git-common-dir`), where the notes ref lives, so a repository and its linked
+/// worktrees share one lock. The map grows by one entry per repository this process records for.
+async fn note_lock(repo: &Path) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     use std::sync::{Arc, LazyLock, Mutex};
     static LOCKS: LazyLock<Mutex<HashMap<std::path::PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
         LazyLock::new(Mutex::default);
-    let key = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let common = git(repo, &["rev-parse", "--git-common-dir"])
+        .await
+        .map(|out| std::path::PathBuf::from(text(&out)))
+        .map(|dir| {
+            if dir.is_absolute() {
+                dir
+            } else {
+                repo.join(dir)
+            }
+        })
+        .unwrap_or_else(|_| repo.to_path_buf());
+    let key = std::fs::canonicalize(&common).unwrap_or(common);
     let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
     Arc::clone(locks.entry(key).or_default())
 }
+
+/// The longest one `git notes add` may take while it holds the repository's lock, so one hung git cannot block every
+/// later note write. A timeout is an ordinary failed note: a `provenance_failed` row, retried at the next merge.
+const NOTE_GIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// How often one note write is tried when git reports a ref lock clash (another process, such as a person's own
 /// git command, moving the same ref). The lock above already orders this process's own writes.
@@ -454,7 +470,7 @@ fn is_lock_clash(error: &CoreError) -> bool {
 
 /// Writes the note on the merge commit, replacing an earlier one. Local only. The body goes through a scratch file
 /// (`-F`), not the command line, so its size cannot hit a command-line limit. Writes on one repository are taken one at
-/// a time, and a ref lock clash with another process is tried again a bounded number of times.
+/// a time, and a ref lock clash with another process is tried again a bounded number of times. Each git call is bounded by `NOTE_GIT_LIMIT`.
 async fn write_note(repo: &Path, merge: &str, body: &Value) -> Result<()> {
     need_revision(merge)?;
     let scratch = Scratch::create(repo, &serde_json::to_vec(body)?).await?;
@@ -462,11 +478,14 @@ async fn write_note(repo: &Path, merge: &str, body: &Value) -> Result<()> {
     let notes_ref = format!("--ref={NOTE_REF}");
     let mut args: Vec<&str> = NOTE_IDENTITY.to_vec();
     args.extend(["notes", &notes_ref, "add", "-f", "-F", &file_text, merge]);
-    let lock = note_lock(repo);
+    let lock = note_lock(repo).await;
     let _held = lock.lock().await;
     let mut tries = 1;
     loop {
-        match git(repo, &args).await {
+        let attempt = tokio::time::timeout(NOTE_GIT_LIMIT, git(repo, &args))
+            .await
+            .unwrap_or_else(|_| Err(CoreError::Git("git notes timed out".into())));
+        match attempt {
             Ok(_) => return Ok(()),
             Err(error) if tries < NOTE_TRIES && is_lock_clash(&error) => {
                 tokio::time::sleep(std::time::Duration::from_millis(25 * u64::from(tries))).await;
