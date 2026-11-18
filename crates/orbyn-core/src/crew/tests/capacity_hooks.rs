@@ -393,7 +393,7 @@ async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_re
             .is_err()
     );
     assert_eq!(failures_of(&w, &merge.task_id).await.len(), 1);
-    // Still failing: nothing new is written, the row stays unresolved.
+    // Still failing: a retry_failed row is written, the original stays unresolved.
     retry_provenance(&w.core.store).await;
     assert!(
         w.core
@@ -402,7 +402,9 @@ async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_re
             .unwrap()
             .is_empty()
     );
-    assert_eq!(failures_of(&w, &merge.task_id).await.len(), 1);
+    let rows = failures_of(&w, &merge.task_id).await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[1].body["retry_failed"], true);
     w.core
         .store
         .reader()
@@ -413,11 +415,11 @@ async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_re
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].note_ref.as_deref(), Some(NOTE_REF));
     let rows = failures_of(&w, &merge.task_id).await;
-    assert_eq!(rows.len(), 2, "{rows:?}");
-    assert_eq!(rows[1].body["resolved"], true);
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert_eq!(rows[2].body["resolved"], true);
     // Resolved: a further pass changes nothing.
     retry_provenance(&w.core.store).await;
-    assert_eq!(failures_of(&w, &merge.task_id).await.len(), 2);
+    assert_eq!(failures_of(&w, &merge.task_id).await.len(), 3);
     assert_eq!(w.core.store.crew_hunks_of_merge(merge.id).unwrap().len(), 1);
 }
 
@@ -432,4 +434,92 @@ async fn recording_the_same_merge_twice_replaces_its_hunks_instead_of_failing() 
         assert!(recorded.note.is_ok());
     }
     assert_eq!(w.core.store.crew_hunks_of_merge(merge.id).unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_failure_is_retried_three_times_then_left_so_it_cannot_hold_back_newer_ones() {
+    let w = quiet().await;
+    let merges = chained_merges(&w, 2).await;
+    w.core
+        .store
+        .reader()
+        .execute_batch(
+            "CREATE TRIGGER no_hunks BEFORE INSERT ON crew_hunks BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+    assert!(
+        record_provenance(&w.core.store, &merges[0], agent(), NOW)
+            .await
+            .is_err()
+    );
+    for _ in 0..5 {
+        retry_provenance(&w.core.store).await;
+    }
+    let rows = failures_of(&w, &merges[0].task_id).await;
+    // The original and exactly three failed retries; the last says it gave up.
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert!(
+        rows[3].body["retry"]
+            .as_str()
+            .unwrap()
+            .starts_with("gave up")
+    );
+    assert!(
+        w.core
+            .store
+            .crew_unresolved_provenance_failures(10, 3)
+            .unwrap()
+            .is_empty()
+    );
+    // A newer failure is still picked up.
+    assert!(
+        record_provenance(&w.core.store, &merges[1], agent(), NOW)
+            .await
+            .is_err()
+    );
+    let pending = w
+        .core
+        .store
+        .crew_unresolved_provenance_failures(10, 3)
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].task_id, merges[1].task_id);
+}
+
+#[tokio::test]
+async fn linked_worktrees_of_one_repository_share_the_note_lock_and_lose_no_note() {
+    let w = quiet().await;
+    let mut merges = chained_merges(&w, 8).await;
+    let base = std::env::temp_dir().join(format!("orbyn-wt-{}-{}", std::process::id(), NOW));
+    let mut paths = vec![w.repo.clone()];
+    for name in ["a", "b"] {
+        let path = base.join(name);
+        std::fs::create_dir_all(&base).unwrap();
+        gitq(
+            &w.repo,
+            &["worktree", "add", "-q", "--detach", &path.to_string_lossy()],
+        )
+        .await;
+        paths.push(path);
+    }
+    for (i, merge) in merges.iter_mut().enumerate() {
+        merge.repo = paths[i % 3].to_string_lossy().into_owned();
+    }
+    let who = agent();
+    let recorded = futures_util::future::join_all(
+        merges
+            .iter()
+            .map(|m| record_at_merge(&w.core.store, m, &who, &[], NOW)),
+    )
+    .await;
+    for (i, result) in recorded.into_iter().enumerate() {
+        let recorded = result.unwrap_or_else(|e| panic!("merge {i}: {e}"));
+        assert!(recorded.note.is_ok(), "merge {i}: {:?}", recorded.note);
+    }
+    let notes_ref = format!("--ref={NOTE_REF}");
+    let listed = gitq(&w.repo, &["notes", &notes_ref, "list"]).await;
+    let count = gitq(&w.repo, &["rev-list", "--count", NOTE_REF]).await;
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!(listed.lines().count(), 8, "{listed}");
+    assert_eq!(count.trim(), "8");
 }

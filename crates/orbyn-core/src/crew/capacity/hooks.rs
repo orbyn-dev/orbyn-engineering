@@ -55,9 +55,12 @@ fn write_failure_once(store: &Store, merge: &MergeRecord, body: &serde_json::Val
 
 /// Writes the failure row on the merge's task, retried a few times without blocking the runtime.
 async fn write_failure(store: &Store, merge: &MergeRecord, stage: &str) {
-    let body = failure_body(stage);
+    write_failure_row(store, merge, &failure_body(stage)).await;
+}
+
+async fn write_failure_row(store: &Store, merge: &MergeRecord, body: &serde_json::Value) {
     for attempt in 1..=LEDGER_TRIES {
-        if write_failure_once(store, merge, &body) {
+        if write_failure_once(store, merge, body) {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20 * u64::from(attempt))).await;
@@ -103,12 +106,15 @@ pub(crate) async fn record_provenance(
 /// The most unresolved failures one retry pass looks at.
 const RETRY_READ: u32 = 10;
 
+/// How many times a failed record is retried before it is left as Not measured for good.
+const RETRY_TRIES: u32 = 3;
+
 /// Tries again every merge whose provenance failed and has not since been recorded, oldest first, at most
 /// `RETRY_READ` per pass. A try that works writes a `resolved: true` row on the same task and the merge then counts in
-/// coverage; one that fails again changes nothing (the first row already says so) and is tried at the next pass. The
+/// coverage; one that fails again writes a `retry_failed` row with the try count, and after `RETRY_TRIES` tries the merge is left as Not measured and no longer retried. The
 /// range is recorded as of its own merge time, so a repository whose first merge failed begins measuring at it.
 pub(crate) async fn retry_provenance(store: &Store) {
-    let Ok(failures) = store.crew_unresolved_provenance_failures(RETRY_READ) else {
+    let Ok(failures) = store.crew_unresolved_provenance_failures(RETRY_READ, RETRY_TRIES) else {
         return;
     };
     let mut seen = std::collections::BTreeSet::new();
@@ -138,6 +144,24 @@ pub(crate) async fn retry_provenance(store: &Store) {
             }
             Err(error) => {
                 tracing::warn!(%error, task = %merge.task_id, "the merge's provenance still fails");
+                let tries = store
+                    .crew_provenance_retry_count(&merge.task_id)
+                    .unwrap_or(0)
+                    + 1;
+                let body = json!({
+                    "stage": failure.body["stage"],
+                    "why": failure.body["why"],
+                    "coverage": "Not measured",
+                    "retry": if tries >= RETRY_TRIES {
+                        "gave up after 3 retries; stays Not measured"
+                    } else {
+                        "at the next merge"
+                    },
+                    "retry_failed": true,
+                    "attempt": tries,
+                    "resolved": false,
+                });
+                write_failure_row(store, &merge, &body).await;
             }
         }
     }

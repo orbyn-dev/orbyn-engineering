@@ -65,14 +65,23 @@ impl Store {
         })
     }
 
-    /// The oldest provenance failures that no later row marks resolved for the same task, at most `limit`, oldest first.
+    /// The oldest provenance failures that no later row marks resolved for the same task, at most `limit`, oldest first. A failure already retried `max_retries` times (rows marked `retry_failed`) is left out, so
+    /// permanent failures cannot hold back newer ones.
     /// Resolved rows are filtered out in SQL, so they never crowd the unresolved ones out of the bound.
-    pub fn crew_unresolved_provenance_failures(&self, limit: u32) -> Result<Vec<AutopilotEvent>> {
+    pub fn crew_unresolved_provenance_failures(
+        &self,
+        limit: u32,
+        max_retries: u32,
+    ) -> Result<Vec<AutopilotEvent>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events f
                  WHERE kind = 'provenance_failed'
                    AND json_extract(body, '$.resolved') = 0
+                   AND json_extract(body, '$.retry_failed') IS NULL
+                   AND (SELECT count(*) FROM crew_autopilot_events x
+                        WHERE x.kind = 'provenance_failed' AND x.task_id = f.task_id AND x.id > f.id
+                          AND json_extract(x.body, '$.retry_failed') = 1) < ?2
                    AND NOT EXISTS (
                        SELECT 1 FROM crew_autopilot_events r
                        WHERE r.kind = 'provenance_failed' AND json_extract(r.body, '$.resolved') = 1
@@ -80,7 +89,7 @@ impl Store {
                  ORDER BY id LIMIT ?1",
         )?;
         let rows = statement
-            .query_map([limit], |row| {
+            .query_map(params![limit, max_retries], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -103,6 +112,16 @@ impl Store {
                 })
             })
             .collect()
+    }
+
+    /// How many retries of this task's failed provenance have themselves failed.
+    pub fn crew_provenance_retry_count(&self, task_id: &str) -> Result<u32> {
+        Ok(self.reader().query_row(
+            "SELECT count(*) FROM crew_autopilot_events
+             WHERE kind = 'provenance_failed' AND task_id = ?1 AND json_extract(body, '$.retry_failed') = 1",
+            [task_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// The hunks of a merge, by path and line.
