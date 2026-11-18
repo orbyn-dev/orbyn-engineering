@@ -2600,7 +2600,7 @@ and records `NoChecks` as unverified. A reproducible first-parent Crew culprit p
 is Off; uncertain causes ask a person. A person's Revert requests the same task. The task has no model worker or fabricated
 route: Core creates the exact rollback in its registered sibling checkout, retains the original scope/effect grants and protected
 files, and verifies the rollback tree plus trusted repository checks through the ordinary Evidence/Gate/Result path.
-Schema 54 binds the original merge to one immutable corrective task/run, destination, base, candidate and checkout before admission.
+Schema 55 binds the original merge to one immutable corrective task/run, destination, base, candidate and checkout before admission.
 Older Store binaries reject that schema before writes; existing migrations and records remain intact. Restart reuses the binding
 and resumes code verification, then admits the passed task to the ordinary forge queue. All reviewer lane Gates, configured
 current-head CI, mode/area holds and locked lanes still apply. Normal review launches into the validated retained candidate

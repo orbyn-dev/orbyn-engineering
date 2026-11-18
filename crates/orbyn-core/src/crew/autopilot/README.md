@@ -282,7 +282,7 @@ including old ones; neither action approves or retries work. Guarded commands re
 
 ### Corrective forge tasks
 
-A rollback has its own immutable schema-54 binding to the original merge, remote, branch, current target tip, candidate and
+A rollback has its own immutable schema-55 binding to the original merge, remote, branch, current target tip, candidate and
 registered sibling checkout. The original merge stays in the Review queue until the corrective merge receipt is confirmed. Parent projection and the idempotent area effect are resumed after a crash; completion and the revert ledger row commit together only after both succeeded.
 Revert replies report that persisted state and carry no revert commit while the PR waits. Repeating an answer or restarting
 reuses the same task and publication intent. Unknown creates and merges use the ordinary receipt reconciler without another send.

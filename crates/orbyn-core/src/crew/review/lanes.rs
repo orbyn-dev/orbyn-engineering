@@ -425,6 +425,7 @@ impl Core {
                 review: Some(review),
                 fix: None,
                 crew_started: false,
+                trigger: None,
                 correction_subject: self
                     .store
                     .crew_correction_for_task(&subject.id)
