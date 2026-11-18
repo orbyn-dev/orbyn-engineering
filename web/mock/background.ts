@@ -10,7 +10,7 @@ import type { BackgroundCrewUpdate } from "../src/generated/BackgroundCrewUpdate
 import type { BackgroundRun } from "../src/generated/BackgroundRun.ts";
 import type { MockResponse } from "./api.ts";
 
-const budget = { turns: 40, minutes: 30 };
+const budget = { turns: 40, minutes: 60 };
 const crew = (id: string, name: string, template: BackgroundCrew["template"], trigger: BackgroundCrew["trigger"], enabled: boolean, state: BackgroundCrew["state"], reviews: number): BackgroundCrew => ({
   id, project_id: "p-app", name, template, trigger, budget, enabled, state, reviews_waiting: reviews, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-07T14:00:00Z",
 });
@@ -26,11 +26,11 @@ const seed = (): { crews: BackgroundCrew[]; runs: BackgroundRun[] } => ({
     crew("bg-sec", "Security advisories", "security_advisory", { kind: "dependency_update" }, false, "idle", 0),
   ],
   runs: [
-    run("r-ci-1", "bg-ci", "needs_review", "2026-11-07T15:11:00Z", "2026-11-07T15:49:00Z"),
-    run("r-ci-0", "bg-ci", "stopped", "2026-11-06T09:20:00Z", "2026-11-06T09:50:00Z", { stop_reason: "budget", turns_spent: 40, minutes_spent: 30, review_waiting: true }),
-    run("r-flaky-1", "bg-flaky", "needs_review", "2026-11-06T07:00:00Z", "2026-11-06T07:20:00Z"),
-    run("r-dep-2", "bg-dep", "running", "2026-11-07T15:40:00Z", null),
-    run("r-dep-1", "bg-dep", "needs_review", "2026-11-07T09:30:00Z", "2026-11-07T09:50:00Z"),
+    run("r-ci-1", "bg-ci", "needs_review", "2026-11-07T15:11:00Z", "2026-11-07T15:49:00Z", { turns_spent: 12, minutes_spent: 9 }),
+    run("r-ci-0", "bg-ci", "stopped", "2026-11-06T09:20:00Z", "2026-11-06T09:51:00Z", { stop_reason: "budget", turns_spent: 40, minutes_spent: 31, review_waiting: true }),
+    run("r-flaky-1", "bg-flaky", "needs_review", "2026-11-06T07:00:00Z", "2026-11-06T07:14:00Z", { turns_spent: 21, minutes_spent: 14 }),
+    run("r-dep-2", "bg-dep", "running", "2026-11-07T09:30:00Z", null, { turns_spent: 3, minutes_spent: 6 }),
+    run("r-dep-1", "bg-dep", "needs_review", "2026-11-06T09:30:00Z", "2026-11-06T09:34:00Z", { turns_spent: 7, minutes_spent: 4 }),
   ],
 });
 
