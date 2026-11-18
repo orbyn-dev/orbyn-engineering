@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { useVisibleProjects, useWorkspace } from "../../../../product/state/workspace";
 import { useCrewPreview } from "../../autopilot/approvals/useCrew";
+import { Frame } from "../../shared/Frame";
 import { LiveCoverage } from "./LiveCoverage";
 import { LiveSettings } from "./LiveSettings";
+
+/** The page card these screens draw in, with the frame's own padding, so a state before a project is known is not flush to the corner. */
+function Card({ children }: { children: ReactNode }) {
+  return <Frame sheet live>{children}</Frame>;
+}
 
 /**
  * The Review capacity and coverage screens on the real routes, opened by hash in a Preview build. Nothing is drawn, and no
@@ -21,9 +27,9 @@ export function LiveCapacity({ view }: { view: "settings" | "coverage" }) {
     if (on) void refresh();
   }, [on, refresh]);
   if (!on) return null;
-  if (projects === null) return failure ? <ErrorState title="Can’t read the projects" failure={failure} onRetry={() => void refresh()} /> : <Loading label="Reading projects" rows={2} />;
+  if (projects === null) return <Card>{failure ? <ErrorState title="Can’t read the projects" failure={failure} onRetry={() => void refresh()} /> : <Loading label="Reading projects" rows={2} />}</Card>;
   const project = projects.find((entry) => entry.id === chosen) ?? projects[0];
-  if (!project) return <Empty title="No project to show" />;
+  if (!project) return <Card><Empty title="No project to show" /></Card>;
   return view === "settings" ? (
     <LiveSettings key={project.id} project={project.id} />
   ) : (
