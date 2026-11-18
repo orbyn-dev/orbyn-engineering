@@ -523,3 +523,35 @@ async fn linked_worktrees_of_one_repository_share_the_note_lock_and_lose_no_note
     assert_eq!(listed.lines().count(), 8, "{listed}");
     assert_eq!(count.trim(), "8");
 }
+
+#[tokio::test]
+async fn a_retry_failure_row_never_copies_the_why_of_an_old_style_row() {
+    let w = quiet().await;
+    let merge = chained_merges(&w, 1).await.remove(0);
+    // A row as written before the fixed reasons: its `why` is raw git output with an absolute path.
+    w.core
+        .store
+        .add_crew_autopilot_event(
+            &merge.task_id,
+            &merge.crew_id,
+            "provenance_failed",
+            &json!({ "stage": "hunks", "why": "fatal: /Users/someone/secret/repo is not a repository", "resolved": false }),
+        )
+        .unwrap();
+    w.core
+        .store
+        .reader()
+        .execute_batch(
+            "CREATE TRIGGER no_hunks BEFORE INSERT ON crew_hunks BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+    retry_provenance(&w.core.store).await;
+    let rows = failures_of(&w, &merge.task_id).await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[1].body["retry_failed"], true);
+    assert!(
+        !rows[1].body.to_string().contains("/Users/"),
+        "{:?}",
+        rows[1].body
+    );
+}

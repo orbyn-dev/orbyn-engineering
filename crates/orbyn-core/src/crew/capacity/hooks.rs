@@ -150,7 +150,7 @@ pub(crate) async fn retry_provenance(store: &Store) {
                     + 1;
                 let body = json!({
                     "stage": failure.body["stage"],
-                    "why": failure.body["why"],
+                    "why": failure_reason(failure.body["stage"].as_str().unwrap_or("")),
                     "coverage": "Not measured",
                     "retry": if tries >= RETRY_TRIES {
                         "gave up after 3 retries; stays Not measured"
