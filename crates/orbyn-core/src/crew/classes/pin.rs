@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use orbyn_contracts as wire;
 
 use super::classify::redacted_ref;
-use super::file::{ClassFile, Pinned, PinnedRef, is_object_id, read_pinned};
+use super::file::{ClassFile, Pinned, PinnedRef, read_pinned};
 use crate::app::Core;
 use crate::crew::valid_id;
 use crate::error::{CoreError, Result};
@@ -46,19 +46,11 @@ pub(super) enum Decision {
     },
 }
 
-/// The remembered default branch, checked when it is read back: the row is data a writer other than this code could have
-/// changed, so a commit that is not a full object id is a broken row, never a commit to compare against. The caller fails
-/// closed on the error, as it does for a row that does not parse.
+/// The remembered default branch. The store checks it as it reads the row (a row that does not parse, or a commit that is not a
+/// full object id, is `CoreError::StoredDataDamaged`), so no caller can compare against a broken pin. Callers fail closed on
+/// the error.
 pub(super) fn stored(store: &Store, project_id: &str) -> Result<Option<CrewPinnedRef>> {
-    let pin = store.crew_pinned_ref(project_id)?;
-    if let Some(pin) = &pin
-        && !is_object_id(&pin.commit)
-    {
-        return Err(CoreError::Invalid(
-            "the remembered default-branch commit is not a full commit id".into(),
-        ));
-    }
-    Ok(pin)
+    store.crew_pinned_ref(project_id)
 }
 
 /// What the checkout's default branch says now, against the commit last accepted for this project. Reads only.
