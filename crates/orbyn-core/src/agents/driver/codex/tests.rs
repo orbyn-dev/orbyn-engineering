@@ -262,6 +262,79 @@ fn other_threads_cannot_finish_this_turn() {
     assert!(step.outcome.is_none());
 }
 
+fn finished(mapper: &mut TurnMapper, turn: Value) -> Option<EngineOutcome> {
+    mapper
+        .on_notification(
+            "turn/completed",
+            &json!({ "threadId": "thread", "turn": turn }),
+        )
+        .outcome
+}
+
+#[test]
+fn a_completed_turn_with_another_id_does_not_end_the_run() {
+    let mut mapper = mapper();
+    mapper.set_turn("turn-mine");
+    assert!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-old", "status": "failed", "error": { "message": "old" } })
+        )
+        .is_none()
+    );
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-mine", "status": "completed" })
+        ),
+        Some(EngineOutcome::Completed)
+    ));
+}
+
+#[test]
+fn only_the_matching_turn_reports_an_interrupt_or_failure() {
+    let mut mapper = mapper();
+    mapper.set_turn("turn-mine");
+    assert!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-old", "status": "interrupted" })
+        )
+        .is_none()
+    );
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-mine", "status": "interrupted" })
+        ),
+        Some(EngineOutcome::Cancelled)
+    ));
+}
+
+#[test]
+fn a_completed_turn_without_an_id_waits_when_ours_is_known() {
+    let mut mapper = mapper();
+    mapper.set_turn("turn-mine");
+    assert!(finished(&mut mapper, json!({ "status": "completed" })).is_none());
+}
+
+#[test]
+fn the_first_completed_turn_ends_a_run_whose_id_was_never_known() {
+    let mut mapper = mapper();
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-any", "status": "completed" })
+        ),
+        Some(EngineOutcome::Completed)
+    ));
+    let mut mapper = self::mapper();
+    assert!(matches!(
+        finished(&mut mapper, json!({ "status": "completed" })),
+        Some(EngineOutcome::Completed)
+    ));
+}
+
 #[test]
 fn completed_without_started_still_produces_a_whole_message() {
     let mut mapper = mapper();

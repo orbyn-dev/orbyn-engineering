@@ -49,6 +49,18 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
 
     }}));
 
+    // A previous or engine-started turn on this thread finishing must not end
+    // the run for the person's prompt either.
+    if has(prompt, "stale-turn") {
+        send(&json!({ "method": "turn/completed", "params": {
+            "threadId": state.thread,
+            "turn": {
+                "id": "turn-previous", "items": [], "status": "failed",
+                "error": { "message": "previous turn failed" },
+            },
+        }}));
+    }
+
     codex_note(
         state,
         "item/started",

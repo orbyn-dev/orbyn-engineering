@@ -54,6 +54,9 @@ pub(super) async fn run_protocol(
         let _ = events.send(EngineEvent::Turn(turn.clone())).await;
     }
     let mut mapper = TurnMapper::new(session.clone());
+    if let Some(turn) = &turn_id {
+        mapper.set_turn(turn);
+    }
     let mut interrupted_at: Option<tokio::time::Instant> = None;
     let outcome = loop {
         let deadline = interrupted_at.map(|at| at + INTERRUPT_GRACE);
@@ -103,6 +106,7 @@ pub(super) async fn run_protocol(
                             && let Some(id) = params.pointer("/turn/id").and_then(Value::as_str)
                         {
                             turn_id = Some(id.to_owned());
+                            mapper.set_turn(id);
                             if events.send(EngineEvent::Turn(id.to_owned())).await.is_err() {
                                 return;
                             }
