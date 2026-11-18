@@ -83,6 +83,22 @@ describe("tool call rows", () => {
     expect(runOutcomes(group(ok, ok), false, false)).toBeNull();
   });
 
+  it("reads a resultless call as unknown when its run was interrupted, and as no result when the run ended normally", () => {
+    const group = (...calls: Partial<ToolItem>[]) => callRuns(calls.map((extra, at) => call("Bash", { command: `c${at}` }, extra)))[0]!;
+    const open = { exitCode: null, result: null, done: false };
+    expect(runOutcomes(group({ exitCode: 0 }, open), false, true)).toEqual({ failed: 0, text: "1 outcome unknown" });
+    expect(runOutcomes(group(open, open), false, true)).toEqual({ failed: 0, text: "2 outcomes unknown" });
+    expect(runOutcomes(group({ exitCode: 0 }, open), false, false)).toEqual({ failed: 0, text: "1 no result reported" });
+    expect(runOutcomes(group(open, open), false, false)).toEqual({ failed: 0, text: "2 no results reported" });
+  });
+
+  it("states only the most serious outcome of a mixed group", () => {
+    const group = (...calls: Partial<ToolItem>[]) => callRuns(calls.map((extra, at) => call("Bash", { command: `c${at}` }, extra)))[0]!;
+    const mixed = group({ exitCode: 0 }, { exitCode: 1 }, { result: null, done: false }, { exitCode: null, result: "ok" });
+    expect(runOutcomes(mixed, false, false)).toEqual({ failed: 1, text: "1 failed" });
+    expect(runOutcomes(mixed, false, true)).toEqual({ failed: 1, text: "1 failed" });
+  });
+
   it("labels each kind with its own verb, object and note", () => {
     const label = (item: ToolItem) => {
       const { verb, object, note } = callLabel(item, "/work");

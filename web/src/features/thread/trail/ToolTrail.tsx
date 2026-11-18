@@ -165,15 +165,11 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
   const label = runLabel(run, running);
   const Icon = KIND_ICONS[run.kind];
   const current = run.items[states.lastIndexOf("running")];
-  const failing = failedAt >= 0 ? run.items[failedAt] : undefined;
   const lead = !open && running && current ? "Running" : label.verb;
-  const detail = !open ? (running && current ? callLabel(current, cwd).object : failing ? callLabel(failing, cwd).object : null) : null;
-  // A collapsed row that can name the call that failed says that instead; everything else
-  // states the unmet outcomes, so a failed or unanswered call never hides behind the count.
+  // Only a call still running is named on a collapsed row; a failed call never replaces the count,
+  // so the row keeps "Ran 6 commands" and says how many of them did not succeed. The open list names each.
+  const detail = !open && running && current ? callLabel(current, cwd).object : null;
   const outcomes = detail ? null : runOutcomes(run, live, cancelled);
-  const note = outcomes ?? (label.note ? { failed: 0, text: label.note } : null);
-  const exit = failing?.exitCode;
-  const exited = !open && failing && exit !== null && exit !== undefined && exit !== 0;
   const duration = total === null ? "" : callDuration(total);
   const command = detail && run.kind === "command" ? detail : undefined;
   return (
@@ -184,7 +180,7 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
       summaryClassName={`tcr ${stateClass(state)}`.trim()}
       summaryProps={{
         "aria-label": withState(
-          [lead, detail, !detail && note ? `· ${note.text}` : null, exited ? `exit ${exit} ·` : null, duration].filter(Boolean).join(" "),
+          [lead, detail, outcomes ? `· ${outcomes.text}` : null, !detail && label.note ? `· ${label.note}` : null, duration].filter(Boolean).join(" "),
           state,
         ),
       }}
@@ -194,19 +190,19 @@ export function TrailRun({ run, live }: { run: CallRun; live: boolean }) {
             <StateIcon state={state} Icon={Icon} />
           </span>
           <span className="lb" data-command={command}>
-            <span className="tla">{lead}</span>
+            <span className="tla">
+              {lead}
+              {outcomes ? (
+                <>
+                  {" · "}
+                  <span className={outcomes.failed ? "tla-fail" : undefined}>{outcomes.text}</span>
+                </>
+              ) : null}
+            </span>
             {detail ? <span className="tlb tlfill">{detail}</span> : null}
-            {!detail && note ? <span className={`tln${note.failed ? " tln-fail" : ""}`}>· {note.text}</span> : null}
+            {!detail && label.note ? <span className="tln">· {label.note}</span> : null}
           </span>
-          <span className="du">
-            {exited ? (
-              <>
-                <span className="er">exit {exit}</span> · {duration}
-              </>
-            ) : (
-              duration
-            )}
-          </span>
+          <span className="du">{duration}</span>
           <span className="tcv">
             <ChevronRight size={14} aria-hidden />
           </span>

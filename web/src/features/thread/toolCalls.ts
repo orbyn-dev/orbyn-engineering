@@ -429,15 +429,18 @@ export function runLabel(run: CallRun, running: boolean): RunLabel {
   }
 }
 
-/** What a group row must say about the calls its count does not vouch for; failed calls lead. */
+/** What a group row says about the calls its count does not vouch for. */
 export interface RunOutcomes {
   failed: number;
   text: string;
 }
 
 /**
- * The unmet outcomes in a group, for the row that names the group rather than its calls.
- * A call still running is not missing yet, so a live group says nothing about it.
+ * The unmet outcomes in a group, for the row that names the group rather than its calls. The row
+ * shows one count, the most serious kind: failed calls first, then calls with no result reported,
+ * then calls with an unknown outcome. A mixed group never lists them all; the open list shows each
+ * call's own outcome. A call still running is not missing yet, so a live group says nothing of it.
+ * `cancelled` is a run that was interrupted: its calls with no result are unknown, not unanswered.
  */
 export function runOutcomes(run: CallRun, live: boolean, cancelled: boolean): RunOutcomes | null {
   let failed = 0;
@@ -445,7 +448,7 @@ export function runOutcomes(run: CallRun, live: boolean, cancelled: boolean): Ru
   let unknown = 0;
   for (const item of run.items) {
     if (callState(item, live, cancelled) === "running") continue;
-    const outcome = callOutcome(item);
+    const outcome = callOutcome(item, cancelled);
     if (outcome === "failed") failed += 1;
     else if (outcome === "no-result") noResult += 1;
     else if (outcome === "unknown") unknown += 1;

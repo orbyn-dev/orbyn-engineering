@@ -121,9 +121,10 @@
 .tcr.s-fail .tln {
   color: var(--color-danger);
 }
-/* A failed count takes danger even when the row's own state does not. */
-.tcr .tln.tln-fail {
+/* Only the failed count takes danger, in the verb's own weight; the dot before it stays plain. */
+.tcr .tla .tla-fail {
   color: var(--color-danger);
+  font-weight: 400;
 }
 .tcr .du .er,
 .cf .er {
