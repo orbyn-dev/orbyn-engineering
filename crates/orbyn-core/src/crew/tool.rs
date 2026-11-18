@@ -253,6 +253,7 @@ impl Core {
             lane,
             lane_keeps_lead,
             author_engine,
+            lead_engine: CrewToken::new(thread.engine.clone()).ok(),
             default_engine: machine.default_engine.clone(),
             classes: classes.as_ref(),
         };

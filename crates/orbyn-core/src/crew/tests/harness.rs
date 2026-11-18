@@ -377,6 +377,11 @@ pub async fn world_confined(script: Script) -> World {
     .await
 }
 
+/// `world_confined`, with these fake engines (an id ending in `codex` is of the Codex family).
+pub async fn world_confined_with(script: Script, engines: &[(&str, bool)]) -> World {
+    world_full(true, script, engines, false, true, Vec::new(), None).await
+}
+
 pub async fn world_forge(script: Script) -> World {
     world_full(
         true,
@@ -421,6 +426,7 @@ async fn world_full(
             scout: Some("scout".into()),
         };
         config.crew_tiers = Some(crate::crew::RouterConfig {
+            worker_provider: Default::default(),
             tiers: engines
                 .iter()
                 .map(|(id, _)| ((*id).to_owned(), words.clone()))
@@ -454,7 +460,8 @@ async fn world_full(
             approval_turns: approval_turns.clone(),
             approval_specs: approval_specs.clone(),
             id: (*id).to_owned(),
-            family: (*id).to_owned(),
+            // An id that ends in `codex` is a Codex engine, so the run-start refusal for that family applies to it.
+            family: if id.ends_with("codex") { "codex" } else { id }.to_owned(),
             steerable: *steerable,
             tiered,
             steered: steered.clone(),

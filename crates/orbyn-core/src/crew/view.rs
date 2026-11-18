@@ -27,6 +27,9 @@ pub struct EngineView {
     /// The most used window of the engine's own limit report, 0 to 100. `None` when the
     /// engine reports none.
     pub used_percent: Option<u32>,
+    /// Set when a crew worker on this engine would be refused at run start (`host::confine::worker_refusal`). The router
+    /// never assigns a worker to such an engine. `None` where workers are not confined.
+    pub crew_refusal: Option<crate::host::confine::WorkerRefusal>,
 }
 
 impl EngineView {
@@ -48,6 +51,7 @@ impl EngineView {
             capabilities: status.capabilities.clone(),
             models: None,
             used_percent: None,
+            crew_refusal: None,
         })
     }
 

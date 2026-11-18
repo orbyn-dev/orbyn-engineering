@@ -392,5 +392,48 @@ pub fn engine_refusal(tier: EngineTier, family: &str) -> Option<&'static str> {
     (family == "codex" && !CODEX_WORKERS_ALLOWED).then_some(CODEX_REFUSED)
 }
 
+/// Why a crew worker cannot run, whichever check said so.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerRefusal {
+    pub reason: String,
+    /// The whole machine cannot restrict a worker, so no engine would do.
+    pub machine: bool,
+}
+
+impl WorkerRefusal {
+    /// One plain answer for a person: which engine cannot run Crew workers (or that none can),
+    /// why, and what to do instead.
+    pub fn plain(&self, engine: &str) -> String {
+        if self.machine {
+            format!(
+                "Crew can't run workers on this machine. {} Do this work in a normal chat for now.",
+                self.reason
+            )
+        } else {
+            format!(
+                "{engine} can't run Crew workers. {} Choose another engine for this crew, or do the work in a normal chat.",
+                self.reason
+            )
+        }
+    }
+}
+
+/// The single check that decides whether this engine may run a crew worker on this machine:
+/// the machine's restriction first, then the engine itself. The run start and the router both
+/// ask it, so they cannot disagree. Starts a harmless process once (see [`unavailable`]), so
+/// call it off the async threads.
+pub fn worker_refusal(tier: EngineTier, family: &str) -> Option<WorkerRefusal> {
+    if let Some(reason) = unavailable() {
+        return Some(WorkerRefusal {
+            reason,
+            machine: true,
+        });
+    }
+    engine_refusal(tier, family).map(|reason| WorkerRefusal {
+        reason: reason.to_owned(),
+        machine: false,
+    })
+}
+
 #[cfg(test)]
 mod tests;

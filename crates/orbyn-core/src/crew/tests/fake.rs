@@ -84,6 +84,7 @@ pub fn engine(id: &str) -> EngineView {
         capabilities: caps(),
         models: Some(models),
         used_percent: None,
+        crew_refusal: None,
     }
 }
 
@@ -134,6 +135,7 @@ pub struct Ask {
     pub locked: bool,
     pub author: Option<&'static str>,
     pub default_engine: Option<&'static str>,
+    pub lead: Option<&'static str>,
     pub history: EvalHistory,
 }
 
@@ -151,6 +153,7 @@ pub fn run(
             lane: ask.lane.map(|l| CrewToken::new(l).unwrap()),
             lane_keeps_lead: ask.locked,
             author_engine: ask.author.map(|a| CrewToken::new(a).unwrap()),
+            lead_engine: ask.lead.map(|l| CrewToken::new(l).unwrap()),
             default_engine: ask.default_engine.map(str::to_owned),
             classes: None,
         },

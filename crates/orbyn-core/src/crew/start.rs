@@ -238,6 +238,27 @@ impl Core {
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
         let now = crate::util::unix_now();
+        // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
+        // start is refused here with the reason, and no task, lease, run or ledger row exists.
+        let machine = self
+            .crew_machine(Some(&thread.project_id))
+            .await
+            .map_err(|e| invalid(e.public_message()))?;
+        self.refuse_unrunnable_route(
+            &RouteInput {
+                brief: &brief,
+                run_id: run_id.clone(),
+                created_at: created_at.clone(),
+                role,
+                lane: lane.clone(),
+                lane_keeps_lead,
+                author_engine: author_engine.clone(),
+                lead_engine: CrewToken::new(thread.engine.clone()).ok(),
+                default_engine: machine.default_engine.clone(),
+                classes: None,
+            },
+            &machine.views,
+        )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
         self.capacity_start_check(
             &thread.project_id,
@@ -290,10 +311,6 @@ impl Core {
         // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
         // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
         let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
-        let machine = self
-            .crew_machine(Some(&thread.project_id))
-            .await
-            .map_err(|e| invalid(e.public_message()))?;
         let input = RouteInput {
             brief: &brief,
             run_id: run_id.clone(),
@@ -302,6 +319,7 @@ impl Core {
             lane,
             lane_keeps_lead,
             author_engine,
+            lead_engine: CrewToken::new(thread.engine.clone()).ok(),
             default_engine: machine.default_engine.clone(),
             classes: Some(&classes),
         };
@@ -414,6 +432,7 @@ impl Core {
                     "lane": decision.lane,
                     "effort": decision.effort,
                     "reasons": decision.reasons,
+                    "rejected": decision.rejected,
                 },
                 }))
             }
@@ -425,6 +444,35 @@ impl Core {
                 self.crew_needs_person(&task.id, &error.message, false);
                 Err(error)
             }
+        }
+    }
+
+    /// Routes the brief on the machine's engines before any task exists. The router leaves out an engine whose worker run would
+    /// be refused at its start; when that leaves nothing, or the brief pins such an engine, the start ends here with the one
+    /// plain reason. Any other refusal is left to the routing after the task is stored, as before.
+    fn refuse_unrunnable_route(
+        &self,
+        input: &RouteInput<'_>,
+        views: &[super::view::EngineView],
+    ) -> Result<(), CrewError> {
+        let Ok(config) = self.crew_router_config_with_mappings() else {
+            return Ok(());
+        };
+        let Err(RouteFailure::Refused(refusal)) =
+            route(input, views, &config, &EvalHistory::default())
+        else {
+            return Ok(());
+        };
+        let refused = refusal.rejected.iter().find(|why| {
+            views.iter().any(|view| {
+                view.id == why.engine
+                    && super::filters::crew_refusal(view)
+                        .is_some_and(|own| own.text.as_str() == why.text.as_str())
+            })
+        });
+        match refused {
+            Some(why) => Err(CrewError::new(ErrorCode::NotAuthorized, why.text.as_str())),
+            None => Ok(()),
         }
     }
 
@@ -545,19 +593,18 @@ impl Core {
         if !self.config.crew_confine_workers {
             return Ok(());
         }
-        let refuse = |reason: String| CrewError::new(ErrorCode::NotAuthorized, reason);
-        if let Some(reason) = tokio::task::spawn_blocking(crate::host::confine::unavailable)
-            .await
-            .map_err(|error| invalid(error.to_string()))?
-        {
-            return Err(refuse(reason));
-        }
         let driver = self
             .engines
             .driver(engine.as_str())
             .map_err(|error| invalid(error.public_message()))?;
-        match crate::host::confine::engine_refusal(driver.descriptor().tier, &driver.family()) {
-            Some(reason) => Err(refuse(reason.to_owned())),
+        let (tier, family) = (driver.descriptor().tier, driver.family());
+        match tokio::task::spawn_blocking(move || {
+            crate::host::confine::worker_refusal(tier, &family)
+        })
+        .await
+        .map_err(|error| invalid(error.to_string()))?
+        {
+            Some(refusal) => Err(CrewError::new(ErrorCode::NotAuthorized, refusal.reason)),
             None => Ok(()),
         }
     }

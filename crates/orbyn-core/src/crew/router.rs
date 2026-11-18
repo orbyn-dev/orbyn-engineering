@@ -15,7 +15,9 @@ use orbyn_contracts::{
 use super::classes::PathClasses;
 use super::filters::{Admitted, Want, class_screen, rejection, screen, short};
 use super::score::{EvalHistory, Scored, score};
-use super::tiers::{RouterConfig, lane_is_lead_only, reviews, role_for_kind, role_tier};
+use super::tiers::{
+    RouterConfig, WorkerProvider, lane_is_lead_only, reviews, role_for_kind, role_tier,
+};
 use super::view::EngineView;
 
 /// Everything one routing needs besides the engines.
@@ -31,6 +33,9 @@ pub struct RouteInput<'a> {
     pub lane_keeps_lead: bool,
     /// The engine that did the work being reviewed, for the other-vendor rule.
     pub author_engine: Option<CrewToken>,
+    /// The engine the lead session runs on. With no engine named in the brief, a non-review role goes to this engine's provider
+    /// first (`RouterConfig::worker_provider`).
+    pub lead_engine: Option<CrewToken>,
     /// The person's default engine. It breaks a tie and adds no points.
     pub default_engine: Option<String>,
     /// What the repository's data classes say about the brief's files, read at the commit the task starts from. `None` is no
@@ -276,10 +281,19 @@ fn route_at(
             (a, scored)
         })
         .collect();
+    // With no engine named, a worker goes to the lead's provider first. Score only orders engines inside a provider.
+    let lead_view = match (&input.lead_engine, request.is_none() && !reviews(role)) {
+        (Some(lead), true) if config.worker_provider == WorkerProvider::SameAsLead => {
+            engines.iter().find(|v| v.id == *lead)
+        }
+        _ => None,
+    };
+    let lead_family = lead_view.map(|v| v.family.as_str());
+    let in_lead = |a: &Admitted<'_>| lead_family.is_none_or(|family| a.view.family == family);
     ranked.sort_by(|(a, sa), (b, sb)| {
-        sb.score
-            .score
-            .cmp(&sa.score.score)
+        in_lead(b)
+            .cmp(&in_lead(a))
+            .then_with(|| sb.score.score.cmp(&sa.score.score))
             .then_with(|| is_default(b).cmp(&is_default(a)))
             .then_with(|| a.view.id.cmp(&b.view.id))
     });
@@ -329,6 +343,7 @@ fn route_at(
     let tie_won_by_default = request.is_none()
         && ranked.len() > 1
         && is_default(chosen)
+        && in_lead(&ranked[1].0) == in_lead(chosen)
         && ranked[1].1.score.score == chosen_score.score.score;
     let chosen_same_vendor = compared
         && author_family
@@ -371,6 +386,22 @@ fn route_at(
                 chosen_score.score.score
             ),
         )),
+    }
+    if let Some(lead) = lead_view {
+        reasons.push(if chosen.view.family == lead.family {
+            reason(
+                "lead_provider",
+                format!("Same provider as the lead ({}).", lead.name),
+            )
+        } else {
+            reason(
+                "lead_provider_unavailable",
+                format!(
+                    "{} workers are not available here, so {} takes this.",
+                    lead.name, chosen.view.name
+                ),
+            )
+        });
     }
     if tie_won_by_default {
         reasons.push(reason(

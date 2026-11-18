@@ -16,6 +16,7 @@ fn lead() -> Want {
         image: false,
         tier: RouteTier::Lead,
         reviewer: false,
+        crew_worker: false,
     }
 }
 

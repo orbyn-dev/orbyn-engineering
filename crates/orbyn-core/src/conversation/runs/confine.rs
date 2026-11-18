@@ -1,5 +1,5 @@
 use super::*;
-use crate::host::confine::{Confinement, engine_refusal, unavailable};
+use crate::host::confine::{Confinement, worker_refusal};
 
 /// Where one worker's turn starts and what it resumes.
 pub(super) struct Launch<'a> {
@@ -41,11 +41,8 @@ impl RunManager {
         if !core.config.crew_confine_workers {
             return Ok(None);
         }
-        if let Some(reason) = engine_refusal(driver.descriptor().tier, &driver.family()) {
-            return Err(CoreError::EngineUnavailable(reason.to_owned()));
-        }
-        if let Some(reason) = unavailable() {
-            return Err(CoreError::EngineUnavailable(reason));
+        if let Some(refusal) = worker_refusal(driver.descriptor().tier, &driver.family()) {
+            return Err(CoreError::EngineUnavailable(refusal.reason));
         }
         let project = Path::new(&thread.cwd);
         let confinement = Confinement::new(
