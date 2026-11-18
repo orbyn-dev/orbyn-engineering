@@ -1,5 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ApiFailure } from "../../api/client";
 import type { AccountApprovalView } from "../../generated/AccountApprovalView";
 import { Button } from "../../ui/controls";
 import { accountApi } from "./api";
@@ -55,8 +56,11 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
     setBusy(true);
     try {
       await accountApi.cancelSignIn();
-    } catch {
-      if (open) {
+    } catch (error) {
+      // A request the service cannot be asked about again (a 4xx such as account_disabled) would make Cancel fail
+      // for ever: only a lost connection or a server fault keeps the open request here to try again.
+      const retryable = !(error instanceof ApiFailure) || error.status === 0 || error.status >= 500;
+      if (open && retryable) {
         setFailures(LOOK_FAILURES);
         return;
       }
