@@ -27,6 +27,8 @@ import type { CrewPreviewState } from "../../../../generated/CrewPreviewState";
 import type { CrewRouteView } from "../../../../generated/CrewRouteView";
 import type { GuardTest } from "../../../../generated/GuardTest";
 import type { GuardTargets } from "../../../../generated/GuardTargets";
+import type { CrewWorkerProvider } from "../../../../generated/CrewWorkerProvider";
+import type { CrewWorkerProviderView } from "../../../../generated/CrewWorkerProviderView";
 
 export const PAGE = 18;
 
@@ -34,6 +36,10 @@ export const PAGE = 18;
 export const NOT_CONNECTED = "Crew is not connected to this app yet";
 
 export const crewApi = {
+  /** The project's stored Worker provider choice; `same_as_lead` when none was saved. */
+  workerProvider: (project: string, signal?: AbortSignal) => request<CrewWorkerProviderView>("GET", `/api/crew/projects/${encodeURIComponent(project)}/worker-provider`, undefined, signal),
+  /** A Person write: the client sends the person key on it. */
+  setWorkerProvider: (project: string, worker_provider: CrewWorkerProvider) => request<CrewWorkerProviderView>("POST", `/api/crew/projects/${encodeURIComponent(project)}/worker-provider/set`, { worker_provider }),
   preview: (signal?: AbortSignal) => request<CrewPreviewState>("GET", "/api/crew/preview", undefined, signal),
   secondEngineNotices: (before: number | null, signal?: AbortSignal) => {
     const query = new URLSearchParams({ limit: "200" });

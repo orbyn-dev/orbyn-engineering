@@ -301,7 +301,7 @@ a `review_lane_tier` reason, and the `route` in a `crew_start` or `crew_review` 
    `{"worker_provider": "same_as_lead" | "any"}` saves it. The write is a Person route behind the Crew Preview gate and `local_only`: it needs the
    person key (desktop only, so browser mode and the CLI get `403 desktop_required`), writes a `crew.worker_provider.set` audit row in the same
    transaction, and no MCP tool reaches it. `crew_start`, `crew_route` and review routing read it for the project of the lead's thread; a task
-   already routed keeps its engine. The Settings > Crew row follows the Designer's frame. Under `same_as_lead` another provider takes the work only when the lead's is refused or not available, and the route says so
+   already routed keeps its engine. Settings > Crew has the row (frames `settings-crew-worker-provider`, `-any`, `-narrow`): a Same as lead / Any provider choice for the project of the checkout Settings shows, saved through the route above. Under `same_as_lead` another provider takes the work only when the lead's is refused or not available, and the route says so
    (`lead_provider_unavailable`: "Codex workers are not available here, so Claude takes this."); otherwise the route
    carries `lead_provider`. Review lanes, second keys and finding checks keep the other-vendor rule and ignore this.
    Inside the chosen provider: score. Pass rate for the brief's `kind` from Eval history (seeded defaults until there is data), quota headroom from

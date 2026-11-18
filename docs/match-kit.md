@@ -71,7 +71,7 @@ It offers Sign in and Dismiss and grants no action.
 ## Add a screen
 
 Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`.
-Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`.
+Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`. Crew, Settings › Worker provider (Crew Designs v75): `settings-crew-worker-provider`, `settings-crew-worker-provider-any`, `settings-crew-worker-provider-narrow`.
 These retain the beta stage list; the planned graph and PR cards are not drawn.
 
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
