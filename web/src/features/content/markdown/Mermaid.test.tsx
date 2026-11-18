@@ -205,6 +205,34 @@ describe("sanitizeSvg", () => {
     }
   });
 
+  it("refuses a malformed url( that would swallow the next rule, in style blocks and attributes", () => {
+    for (const bad of ["url(#a')", 'url(#a")', "url(#a(b)", "url(#a", "url(#a b)"]) {
+      const out = clean(SVG(`<style>#s{fill:${bad}}body{display:none}#s{b:'}</style><g/>`));
+      expect(out, bad).not.toMatch(/<style|body/);
+      expect(clean(SVG(`<rect style="fill:${bad}"/>`)), bad).not.toContain("style=");
+    }
+    for (const good of ["url(#a)", 'url("#a")', "url('#a')", "url( #a-1 )"]) {
+      expect(clean(SVG(`<style>#s{fill:${good}}</style><g/>`)), good).toContain("<style");
+    }
+  });
+
+  it("drops rules that nest CSS inside the declarations", () => {
+    for (const css of [
+      "#s{fill:red;body:has(&) p{display:none}}",
+      "#s{~ *{display:none}}",
+      "#s{& ~ *{display:none}}",
+      "#s{@media all{p{display:none}}}",
+    ]) {
+      expect(clean(SVG(`<style>${css}</style><g/>`)), css).not.toContain("<style");
+    }
+    expect(clean(SVG('<style>#s{content:"{x}"}</style><g/>'))).toContain("<style");
+  });
+
+  it("removes comment nodes inside a style element even when every rule is kept", () => {
+    expect(clean(SVG("<style><!-- x -->#s{fill:red}</style><g/>"))).toBe(clean(SVG("<style>#s{fill:red}</style><g/>")));
+    expect(clean(SVG("<style><!-- x -->#s{fill:red}</style><g/>"))).not.toContain("<!--");
+  });
+
   it("keeps only Mermaid's own keyframes names or ones prefixed with the root id", () => {
     const frames = (name: string) => clean(SVG(`<style>@keyframes ${name}{to{opacity:0}}</style><g/>`));
     expect(frames("spin")).not.toContain("<style");

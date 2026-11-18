@@ -55,14 +55,23 @@ function unsafeCss(raw: string): boolean {
   if (/\\|\/\*/.test(raw)) return true;
   const css = raw.toLowerCase();
   if (/@import|image-set\(|image\(|src\(|expression\(|javascript:|vbscript:|behavior:|-moz-binding|cross-fade\(|element\(/.test(css)) return true;
-  for (const match of css.matchAll(/url\(\s*(['"]?)\s*(.?)/g)) if (match[2] !== "#") return true;
+  // Only a complete `url(#id)` (quoted or not) passes. A quote or `(` inside an unquoted url( makes a bad-url token
+  // that swallows text up to the next `)`, which would hide the rules after it from any reader that does not do the same.
+  for (const match of css.matchAll(/url\(/g)) {
+    const token = /url\(\s*(?:"#[\w-]*"|'#[\w-]*'|#[\w-]*)\s*\)/y;
+    token.lastIndex = match.index;
+    if (!token.test(css)) return true;
+  }
   return false;
 }
 
-/** Splits CSS into its top-level statements (original text), or null when it cannot be parsed with confidence. */
+/**
+ * Splits CSS into its top-level statements (original text), or null when it cannot be parsed with confidence.
+ * Callers run `unsafeCss` first, which already refuses backslashes, comment markers and malformed `url(`.
+ */
 function topLevelRules(css: string): string[] | null {
-  // CSS strings end at a newline and escapes/comments change where they end: none of that is accepted here.
-  if (/[\\\n\r\f]|\/\*/.test(css)) return null;
+  // A CSS string ends at a newline, so a newline anywhere makes the string boundaries uncertain.
+  if (/[\n\r\f]/.test(css)) return null;
   const text = css;
   const rules: string[] = [];
   let start = 0;
@@ -107,8 +116,11 @@ function scopeCss(css: string, rootId: string): string | null {
       const inner = topLevelRules(rule.slice(open + 1, -1));
       return inner !== null && inner.every((step) => /^\s*(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*\s*\{[^{}]*\}$/i.test(step));
     }
+    // Mermaid never nests rules; a brace in the declarations (outside strings) is CSS nesting that can leave the scope.
+    const nested = /[{}]/.test(rule.slice(open + 1, -1).replace(/"[^"]*"|'[^']*'/g, ""));
     return (
       rootId !== "" &&
+      !nested &&
       !prelude.startsWith("@") &&
       prelude.split(",").every((selector) => own.test(selector.trim()) && !/[\\~+]/.test(selector))
     );
