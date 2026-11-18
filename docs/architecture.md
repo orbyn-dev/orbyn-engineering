@@ -387,6 +387,8 @@ run on an engine that does not offer it runs Supervised, never the nearest loose
 and the composer shows and offers the same. Every run launches its own engine process
 with the mode stated, so a mode change takes effect from the next turn's process.
 
+How a run ends, for every engine, is in [engine-run-contract.md](engine-run-contract.md).
+
 Parsers are tested against recorded real frames in `driver/fixtures`, named by version.
 `cargo test -p orbyn-core live_ -- --ignored` reads each installed CLI's real catalog,
 with no prompt.

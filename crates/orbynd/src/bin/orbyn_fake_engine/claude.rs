@@ -216,6 +216,33 @@ pub(crate) fn claude(args: &[String]) {
 
     }));
 
+    if has(&prompt, "leftover") {
+        // A background agent finished while the process was down: the CLI runs a turn for its
+        // notification before it reaches the prompt.
+        send(&json!({
+
+            "type": "assistant", "parent_tool_use_id": null,
+
+            "message": { "content": [{ "type": "text", "text": "the old agent finished" }] },
+
+        }));
+
+        send(&json!({
+
+            "type": "result", "subtype": "success", "is_error": false,
+
+            "result": "the old agent finished", "session_id": session,
+
+        }));
+    }
+
+    // The CLI echoes the prompt as it takes it up (--replay-user-messages).
+    send(&json!({
+
+        "type": "user", "uuid": first["uuid"], "isReplay": true, "message": first["message"],
+
+    }));
+
     let block = |index: u64, block: Value| {
         send(&json!({
 
@@ -516,6 +543,21 @@ pub(crate) fn claude(args: &[String]) {
         answer = "launched".to_owned();
     }
 
+    let agent = has(&prompt, "agent-finish");
+
+    if agent {
+        // A subagent running in the background: the CLI ends it if the process exits.
+        send(&json!({
+
+            "type": "system", "subtype": "task_started", "task_id": "agent1",
+
+            "tool_use_id": "toolu_agent", "task_type": "local_agent", "description": "probe",
+
+        }));
+
+        answer = "launched an agent".to_owned();
+    }
+
     record_launch("claude-prompt", std::slice::from_ref(&prompt));
 
     if !has(&prompt, "silent") {
@@ -550,14 +592,16 @@ pub(crate) fn claude(args: &[String]) {
         delta(3, json!({ "type": "text_delta", "text": "too late" }));
     }
 
-    if has(&prompt, "workflow-finish") {
+    if has(&prompt, "workflow-finish") || agent {
         // A finished workflow notifies the session, which starts a follow-up turn.
 
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         send(&json!({
 
-            "type": "system", "subtype": "task_notification", "task_id": "wtask1",
+            "type": "system", "subtype": "task_notification",
+
+            "task_id": if agent { "agent1" } else { "wtask1" },
 
             "tool_use_id": "toolu_wf", "status": "completed", "output_file": "", "summary": "probe",
 
