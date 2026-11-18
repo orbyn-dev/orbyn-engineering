@@ -64,6 +64,10 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/account/sync/pause"),
     ("POST", "/api/account/sync/resume"),
     // Crew person writes (behind local_only).
+    ("POST", "/api/crew/backtest/start"),
+    ("POST", "/api/crew/backtest/{id}/stop"),
+    ("POST", "/api/crew/capacity/settings"),
+    ("POST", "/api/crew/capacity/tasks/{id}"),
     ("POST", "/api/crew/approvals/second-engine/{id}/dismiss"),
     ("POST", "/api/crew/approvals/{id}/approve-once"),
     ("POST", "/api/crew/approvals/{id}/deny"),
