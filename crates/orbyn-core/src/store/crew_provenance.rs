@@ -3,7 +3,7 @@
 
 use rusqlite::{OptionalExtension, params};
 
-use super::Store;
+use super::{AutopilotEvent, Store};
 use crate::crew::capacity::{Author, AuthoredHunk, Hunk};
 use crate::error::{CoreError, Result};
 
@@ -17,6 +17,7 @@ pub struct StoredHunk {
 impl Store {
     /// Stores the hunks of one merge and, if this repository has none yet, the time provenance began, in one
     /// transaction: a failed row leaves neither the hunks nor the start behind. The start is set once and never moved.
+    /// Hunks stored for this merge by an earlier try are replaced, so a retry after a failed note is safe.
     pub fn record_crew_hunks(
         &self,
         merge_id: i64,
@@ -25,6 +26,7 @@ impl Store {
         hunks: &[AuthoredHunk],
     ) -> Result<()> {
         self.commit(|tx, _| {
+            tx.execute("DELETE FROM crew_hunks WHERE merge_id = ?1", [merge_id])?;
             for item in hunks {
                 let (kind, engine, model) = match &item.author {
                     Author::Agent { engine, model } => ("agent", Some(engine), model.as_ref()),
@@ -61,6 +63,65 @@ impl Store {
             )?;
             Ok(())
         })
+    }
+
+    /// The oldest provenance failures that no later row marks resolved for the same task, at most `limit`, oldest first. A failure already retried `max_retries` times (rows marked `retry_failed`) is left out, so
+    /// permanent failures cannot hold back newer ones.
+    /// Resolved rows are filtered out in SQL, so they never crowd the unresolved ones out of the bound.
+    pub fn crew_unresolved_provenance_failures(
+        &self,
+        limit: u32,
+        max_retries: u32,
+    ) -> Result<Vec<AutopilotEvent>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT id, crew_id, task_id, kind, body, at FROM crew_autopilot_events f
+                 WHERE kind = 'provenance_failed'
+                   AND json_extract(body, '$.resolved') = 0
+                   AND json_extract(body, '$.retry_failed') IS NULL
+                   AND (SELECT count(*) FROM crew_autopilot_events x
+                        WHERE x.kind = 'provenance_failed' AND x.task_id = f.task_id AND x.id > f.id
+                          AND json_extract(x.body, '$.retry_failed') = 1) < ?2
+                   AND NOT EXISTS (
+                       SELECT 1 FROM crew_autopilot_events r
+                       WHERE r.kind = 'provenance_failed' AND json_extract(r.body, '$.resolved') = 1
+                         AND r.task_id = f.task_id AND r.id > f.id)
+                 ORDER BY id LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map(params![limit, max_retries], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, crew_id, task_id, kind, body, at)| {
+                Ok(AutopilotEvent {
+                    id,
+                    crew_id,
+                    task_id,
+                    kind,
+                    body: serde_json::from_str(&body)?,
+                    at,
+                })
+            })
+            .collect()
+    }
+
+    /// How many retries of this task's failed provenance have themselves failed.
+    pub fn crew_provenance_retry_count(&self, task_id: &str) -> Result<u32> {
+        Ok(self.reader().query_row(
+            "SELECT count(*) FROM crew_autopilot_events
+             WHERE kind = 'provenance_failed' AND task_id = ?1 AND json_extract(body, '$.retry_failed') = 1",
+            [task_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// The hunks of a merge, by path and line.

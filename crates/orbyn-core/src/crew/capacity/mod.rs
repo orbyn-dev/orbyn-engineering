@@ -17,7 +17,7 @@ mod sampling;
 
 pub use backpressure::{StartDecision, start_allowed, waiting_count};
 pub use coverage::{AreaCoverage, CoverageMap, EngineCoverage, MergeProvenance, coverage};
-pub(crate) use hooks::{FIX_WAITING, paused_by_capacity, record_provenance};
+pub(crate) use hooks::{FIX_WAITING, paused_by_capacity, record_provenance, retry_provenance};
 pub(crate) use provenance::attribute_by_blame;
 pub use provenance::{
     Author, AuthoredHunk, Hunk, NOTE_REF, Recorded, hunks_of, parse_blame, parse_diff,
