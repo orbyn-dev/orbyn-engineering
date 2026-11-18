@@ -66,7 +66,8 @@ export function couldNotStartItems(cards: FlowCard[]): NeedsItem[] {
     .map((card) => ({
       id: `task:${card.id}`,
       kind: "could_not_start" as const,
-      title: "Could not start",
+      // The task's name: the narrow card's title (its kind label says "Could not start"). The wide row keeps the drawn frame's "Could not start" in bold (NeedsRow).
+      title: card.name || card.id,
       risk: null,
       undo: null,
       from: `Task ${card.name || card.id}${card.engine ? ` · ${card.engine}` : ""}`,

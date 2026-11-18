@@ -8,6 +8,7 @@ import { installMockFetch } from "../../../test-support";
 import { useWrites } from "../writes/store";
 import { couldNotStartItems, NEVER_RAN } from "./assemble";
 import { NeedsYouInbox } from "./NeedsYouInbox";
+import { NeedsCard } from "./NeedsYou";
 
 let mock: MockApi;
 beforeAll(async () => {
@@ -43,12 +44,26 @@ describe("couldNotStartItems", () => {
   it("makes a Could not start item with the reason and only Retry and Dismiss, and skips a card that did start", () => {
     const items = couldNotStartItems([card({ reason: REFUSED, engine: "codex" }), card({ id: "t2", could_not_start: false })]);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "could_not_start", title: "Could not start", cost: REFUSED, ref: "t1" });
+    expect(items[0]).toMatchObject({ kind: "could_not_start", title: "Build it", from: "Task Build it · codex", cost: REFUSED, ref: "t1" });
     expect(items[0]!.actions.map((a) => a.label)).toEqual(["Retry on another engine", "Dismiss"]);
     expect(items[0]!.actions.some((a) => a.key === "approve" || a.key === "deny")).toBe(false);
   });
+  it("titles the item with the task's name, or its id when it has none", () => {
+    expect(couldNotStartItems([card({ name: "" })])[0]!.title).toBe("t1");
+  });
   it("says the worker never ran when the service gave no reason", () => {
     expect(couldNotStartItems([card()])[0]!.cost).toBe(NEVER_RAN);
+  });
+});
+
+describe("the narrow card of a task that could not start", () => {
+  it("reads kind, the task's name as the title, then the reason, and never the engine in the name's place", () => {
+    const [one] = couldNotStartItems([card({ name: "Rename returnTo to next", reason: REFUSED, engine: "codex" })]);
+    const { container } = render(<ul><NeedsCard item={one!} handlers={{ act: () => undefined }} /></ul>);
+    const parts = [...container.querySelectorAll("li > span")].map((node) => node.textContent);
+    expect(parts).toEqual(["Could not start", "Rename returnTo to next", REFUSED]);
+    expect(container).not.toHaveTextContent("codex");
+    expect(screen.getByRole("button", { name: "Retry on another engine: Rename returnTo to next" })).toBeVisible();
   });
 });
 

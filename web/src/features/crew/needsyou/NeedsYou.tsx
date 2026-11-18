@@ -37,7 +37,7 @@ export function NeedsRow({ item, rank, handlers }: { item: NeedsItem; rank: numb
     <li className="ny-item" data-kind={item.kind}>
       <span className="ny-rk" aria-hidden>{rank}</span>
       <div className="ny-tt">
-        <b>{item.title}</b>
+        <b>{item.kind === "could_not_start" ? KIND_ONE[item.kind] : item.title}</b>
         <div className="ny-m">
           {item.kind === "review" && item.risk ? <span className="ny-tag" data-tone={item.risk === "high" || item.overdue ? "amber" : item.risk === "low" ? "lo" : undefined}>Risk · {RISK_WORD[item.risk]}</span> : null}
           {item.kind === "review" && item.undo ? <span className="ny-tag" data-tone="lo">{UNDO_WORD[item.undo]}</span> : null}
@@ -62,7 +62,8 @@ export function NeedsCard({ item, handlers }: { item: NeedsItem; handlers: Needs
     <li className="ny-card" data-kind={item.kind}>
       <span className="ny-k">{kind}</span>
       <span className="ny-t">{item.title}</span>
-      <span className="ny-e">{item.engine ?? item.from}</span>
+      {/* A task that could not start is named by its title, and its reason is the line below: the engine does not take the name's place. */}
+      {item.kind === "could_not_start" ? null : <span className="ny-e">{item.engine ?? item.from}</span>}
       {item.cost ? <span className="ny-ln">{item.cost}</span> : null}
       {item.hint ? <span className="ny-k">{item.hint}</span> : null}
       <div className="ny-ca">
