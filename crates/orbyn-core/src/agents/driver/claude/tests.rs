@@ -106,6 +106,8 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     mapper.on_frame(&said("the old agent finished"));
     mapper.on_frame(&done());
     assert!(mapper.outcome.is_none());
+    // The prompt's turn has not begun: after the grace the run ends on this result, not never.
+    assert!(mapper.waiting_on_hold());
     mapper.on_frame(&echo("someone-else"));
     mapper.on_frame(&said("a second leftover"));
     mapper.on_frame(&done());

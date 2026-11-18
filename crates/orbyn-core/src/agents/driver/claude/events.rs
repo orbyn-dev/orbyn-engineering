@@ -238,8 +238,12 @@ impl StreamMapper {
                 ]
             }
             Some("result") if self.awaiting.is_some() && self.leftover => {
-                // The turn the CLI ran for its own leftovers, ahead of the prompt.
+                // The turn the CLI ran for its own leftovers, ahead of the prompt. If the prompt's own
+                // turn never follows (a CLI that does not echo as expected), the run ends on this
+                // result after the hold grace instead of waiting forever.
                 self.leftover = false;
+                self.held = Some(result_outcome(frame));
+                self.resumed = false;
                 session(frame)
             }
             Some("result") => {

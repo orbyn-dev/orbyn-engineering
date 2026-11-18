@@ -19,7 +19,7 @@ breaks one looks like a message with no reply, and the person has to send it twi
 
 | Engine | Rule 1 (background work) | Rule 2 (the prompt's own turn) |
 |---|---|---|
-| Claude | `task_started` with type `local_agent`, and `local_workflow`, hold the first `result` until the matching `task_notification` or `task_updated` arrives; the follow-up turn then ends the run. A shell (`local_bash`) cannot be held, because a dev server may never end; it is reported as `background.stopped` when the run ends. | The prompt goes in with a `uuid` and the CLI runs with `--replay-user-messages`. It echoes the prompt as it takes it up; a `result` before the echo, after a turn had begun, belongs to the leftover turn and is ignored. A failure with no turn begun (lost session, no login) still ends the run. |
+| Claude | `task_started` with type `local_agent`, and `local_workflow`, hold the first `result` until the matching `task_notification` or `task_updated` arrives; the follow-up turn then ends the run. A shell (`local_bash`) cannot be held, because a dev server may never end; it is reported as `background.stopped` when the run ends. | The prompt goes in with a `uuid` and the CLI runs with `--replay-user-messages`. It echoes the prompt as it takes it up; a `result` before the echo, after a turn had begun, belongs to the leftover turn and is ignored. A failure with no turn begun (lost session, no login) still ends the run. If the prompt's turn never follows a leftover result, the run ends on that result after a short grace instead of waiting forever. |
 | Codex, ACP, OpenCode, AG-UI | Engineering 3 audits these against the contract. | Same. |
 
 ## Observed on Claude Code 2.1.327
