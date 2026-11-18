@@ -76,7 +76,7 @@ export function roundView(row: FlowTaskRow): RoundView {
   const text = `Round ${row.round}`;
   if (row.state === "running" || row.state === "verifying" || row.state === "changed_approach" || row.state === "routed") return { tone: "run", text };
   if (row.state === "failed" || row.state === "stopped") return { tone: "fail", text };
-  if (row.state === "needs_person") return { tone: "need", text };
+  if (row.state === "needs_person") return row.could_not_start ? { tone: "fail", text: "Could not start" } : { tone: "need", text };
   return { tone: "plain", text };
 }
 

@@ -2975,7 +2975,11 @@ to the claude and acp drivers; a driver that cannot apply them does not start th
 started ahead of a turn (warm) is not used for a worker.
 
 Hard rule 7 applies: where the restriction cannot be applied, the worker is refused before it exists,
-with a plain line in the task's "refused by the app" item. That covers Windows and Linux ("Crew runs on
+with a plain line in the task's "refused by the app" item. That item is "Could not start", not an approval: a task in
+`needs_person` whose worker never reported (`crew_runs.last_report_run` empty, no evidence) derives as could-not-start from stored
+data, so tasks stored before this derive the same way. It offers Retry on another engine (`POST /api/crew/tasks/{id}/retry-elsewhere`:
+person only; another engine must be allowed, then the person's cancel and a message to the lead to start it again) and Dismiss (the
+person's cancel). That covers Windows and Linux ("Crew runs on
 macOS in the beta; Windows later."), a missing `sandbox-exec`, a core that itself runs under a macOS
 restriction (`sandbox-exec` cannot nest), Codex (it starts its own profile per command, so the core
 refuses it until that is checked; one constant, `CODEX_WORKERS_ALLOWED`) and terminal engines (not

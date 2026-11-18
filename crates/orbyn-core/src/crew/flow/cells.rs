@@ -50,6 +50,10 @@ pub(super) fn build_state(facts: &Facts) -> &str {
 }
 
 fn build(facts: &Facts) -> FlowCellState {
+    // A task refused at its start asks nothing of the person but a retry or a dismiss: its build failed, it is not waiting on one.
+    if facts.could_not_start() {
+        return FlowCellState::Failed;
+    }
     let fixing = !facts.fixes.is_empty();
     match build_state(facts) {
         "briefed" | "routed" if fixing => FlowCellState::Running,
@@ -273,6 +277,8 @@ fn you(facts: &Facts) -> FlowCellState {
 pub(super) fn cells(facts: &Facts) -> Vec<FlowCell> {
     let route = if facts.route.is_some() {
         FlowCellState::Done
+    } else if facts.could_not_start() {
+        FlowCellState::Failed
     } else if facts.task.state == "needs_person" {
         FlowCellState::NeedsYou
     } else {

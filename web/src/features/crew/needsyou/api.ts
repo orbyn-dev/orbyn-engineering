@@ -8,6 +8,9 @@ import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundCrewList } from "../../../generated/BackgroundCrewList";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
 import type { BackgroundRunList } from "../../../generated/BackgroundRunList";
+import type { FlowBoard } from "../../../generated/FlowBoard";
+import type { FlowCard } from "../../../generated/FlowCard";
+import type { FlowCrewList } from "../../../generated/FlowCrewList";
 
 const PAGE = 200;
 /** The most pages one read follows, so a very long queue cannot hold the inbox open. */
@@ -28,6 +31,12 @@ async function pages<T extends { next_offset?: number | null }, Item>(path: (off
 }
 
 export const needsApi = {
+  /** The tasks refused at their start: the Needs you column of every crew's board, the cards that say so. */
+  async couldNotStart(signal?: AbortSignal): Promise<FlowCard[]> {
+    const crews = await pages<FlowCrewList, string>((offset) => `/api/crew/flow/crews?limit=${PAGE}&offset=${offset}`, (page) => page.crews.map((crew) => crew.id), signal);
+    const boards = await Promise.all(crews.map((crew) => get<FlowBoard>(`/api/crew/flow/board?crew=${encodeURIComponent(crew)}&column=needs_you&limit=50&offset=0`, signal)));
+    return boards.flatMap((board) => board.columns.flatMap((column) => column.cards)).filter((card) => card.could_not_start);
+  },
   /** The after-merge Review queue. */
   reviewQueue: (signal?: AbortSignal): Promise<AutopilotReviewItem[]> =>
     pages<AutopilotReviewQueue, AutopilotReviewItem>((offset) => `/api/crew/autopilot/review?limit=${PAGE}&offset=${offset}`, (page) => page.items, signal),

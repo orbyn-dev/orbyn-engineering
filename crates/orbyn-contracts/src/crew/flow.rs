@@ -96,6 +96,8 @@ pub struct FlowTaskRow {
     /// The lead's member name.
     pub owner: String,
     pub state: String,
+    /// The worker never ran because the task was refused at its start; the Build stage is `failed`, not `needs_you`.
+    pub could_not_start: bool,
     pub round: u32,
     pub cells: Vec<FlowCell>,
     pub created_at: String,

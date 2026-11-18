@@ -183,6 +183,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/tasks/{id}/retry-elsewhere",
+        "core crew_retry_elsewhere: the person's retry of a task whose worker never ran (a start refusal); the task must derive as could-not-start (no report, no evidence) and another engine must be on and allowed to run workers (409 task_busy otherwise), then the person's cancel with its audit rows and a message to the lead to start it again; no body; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "core crew_rerun_checks: the person's re-run of the key's checks only; the task must be passed, or stopped for a benign reason after its checks ran live (a safety stop is refused), with a key and a checkout, no live verification, no open worker run, no other re-run on the device and a 10 second gap per task (409 task_busy); the intent audit row before any command, every command screened by the always-denied list and the blast-radius guard (a refused check is not run), bounded in time, the outcome row after with counts only; no Evidence or Gate is stored; the answer has counts and the ids of refused checks, never a command, output or claim, and no state changes; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
@@ -260,6 +265,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_backtest::writes())
         .merge(super::crew_capacity::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
+        .route(
+            "/api/crew/tasks/{id}/retry-elsewhere",
+            post(retry_elsewhere),
+        )
         .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
     Router::new()
@@ -856,6 +865,18 @@ async fn guard_remove(
         .get(CONFIRM_HEADER)
         .and_then(|value| value.to_str().ok());
     Ok(Json(state.core.guard_target_remove(&id, nonce)?))
+}
+
+/// The person's retry of a task that could not start: cancels it and asks its lead to start it again. No body.
+async fn retry_elsewhere(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    // The flag first: with it off nothing here exists.
+    if !state.core.config.crew_preview {
+        return Err(CoreError::NotFound("route".into()).into());
+    }
+    Ok(Json(state.core.crew_retry_elsewhere(&id, "user").await?))
 }
 
 /// The person's re-run of a task's key checks. The body may be empty, or `{ "reason": "..." }`. The answer is counts and outcomes.

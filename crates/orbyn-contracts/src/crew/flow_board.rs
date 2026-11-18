@@ -55,6 +55,10 @@ pub struct FlowCard {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub reason: Option<String>,
+    /// The worker never ran: the task was refused at its start (an engine the app cannot restrict, no route, a setting that
+    /// blocks it) and waits in Needs you only so the person can retry or dismiss it. Not an approval: nothing is asked of the
+    /// person but that choice. `reason` holds the refusal in the core's words.
+    pub could_not_start: bool,
     /// The task has not ended, so a cancel may apply.
     pub can_cancel: bool,
     /// Its checks may be run again: it passed, or it stopped for a benign reason after its checks ran, and it has a checkout.
