@@ -26,4 +26,8 @@ settings_saved: boolean,
 /**
  * Set while a new Low-priority Crew start would pause now: pausing is on and the waiting count is over the limit.
  */
-paused?: PausedStart | null, plan: Array<SamplePlan>, };
+paused?: PausedStart | null, plan: Array<SamplePlan>, 
+/**
+ * Tasks picked for a closer look by sampling whose merge still waits for a person. Empty while sampling is off.
+ */
+picked: Array<string>, };

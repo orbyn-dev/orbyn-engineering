@@ -272,6 +272,57 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The project a task belongs to, through its run's lead thread. `None` for a task with no run.
+    pub fn crew_project_of_task(&self, task_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT t.project_id FROM crew_runs r JOIN threads t ON t.id = r.lead_thread_id WHERE r.task_id = ?1",
+                [task_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The Low-risk merges of a project up to merge `up_to` that no batch has taken yet and that landed after the
+    /// newest merge of any recorded batch, oldest first: the open sampling batch.
+    pub fn crew_open_low_merges(&self, project_id: &str, up_to: i64) -> Result<Vec<MergeRecord>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT m.* FROM crew_merges m
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE t.project_id = ?1 AND m.risk = 'low' AND m.id <= ?2
+               AND NOT EXISTS (SELECT 1 FROM crew_review_samples s WHERE s.task_id = m.task_id)
+               AND m.id > COALESCE((
+                   SELECT MAX(m2.id) FROM crew_merges m2
+                   JOIN crew_review_samples s2 ON s2.task_id = m2.task_id
+                   JOIN crew_runs r2 ON r2.task_id = m2.task_id
+                   JOIN threads t2 ON t2.id = r2.lead_thread_id
+                   WHERE t2.project_id = ?1), 0)
+             ORDER BY m.id",
+        )?;
+        Ok(statement
+            .query_map(params![project_id, up_to], merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The tasks of a project picked for review whose merge still waits for a person, oldest merge first.
+    pub fn crew_picked_for_review(&self, project_id: &str) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT m.task_id FROM crew_merges m
+             JOIN crew_review_samples s ON s.task_id = m.task_id AND s.chosen = 1
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE t.project_id = ?1 AND m.review_state = 'waiting'
+             ORDER BY m.id",
+        )?;
+        Ok(statement
+            .query_map([project_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Records a sampled batch once: each task with whether it was chosen, the seed and the time. A batch id that
     /// was recorded before, a batch with no task or the same task twice is refused, so a record never changes.
     pub fn record_crew_review_sample(

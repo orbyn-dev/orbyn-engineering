@@ -3,19 +3,20 @@
 //! process, no file and no model. The facts come in, a decision goes out. `provenance` is the exception: it runs git
 //! for a merged range and writes a local note.
 
-// The start check and the merge hook (`hooks`) call the settings, `Priority`, the backpressure decision and
-// `provenance::record_at_merge`. Only the sampling run (`Sampling::OneInFour`, `plan_size`, `choose`, `Seeded`) still
-// calls nothing here; the PR that wires it narrows this allow.
+// The start check and the merge hook (`hooks`) call the settings, `Priority`, the backpressure decision,
+// `provenance::record_at_merge` and the sampling run (`batch`).
 #![allow(dead_code, unused_imports)]
 
 mod api;
 mod backpressure;
+mod batch;
 mod coverage;
 mod hooks;
 mod provenance;
 mod sampling;
 
 pub use backpressure::{StartDecision, start_allowed, waiting_count};
+pub(crate) use batch::{BATCH_SIZE, close_batch, sample_after_merge};
 pub use coverage::{AreaCoverage, CoverageMap, EngineCoverage, MergeProvenance, coverage};
 pub(crate) use hooks::{FIX_WAITING, paused_by_capacity, record_provenance, retry_provenance};
 pub(crate) use provenance::attribute_by_blame;
