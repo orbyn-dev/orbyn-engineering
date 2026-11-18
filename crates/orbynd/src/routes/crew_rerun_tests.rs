@@ -32,7 +32,7 @@ async fn serve(name: &str, preview: bool, remote: bool) -> Served {
     let core = Arc::new(Core::open(config).unwrap());
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new("token", vec![], None)),
+        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
         remote,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),

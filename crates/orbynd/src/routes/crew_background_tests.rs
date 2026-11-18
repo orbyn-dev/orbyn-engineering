@@ -32,7 +32,7 @@ async fn serve(name: &str) -> Served {
     let project = fixtures::add_project(&core, dir.join("repo").to_str().unwrap());
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new("token", vec![], None)),
+        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
         remote: false,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),

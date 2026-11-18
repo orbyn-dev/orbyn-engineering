@@ -685,7 +685,10 @@ mod tests {
         let access =
             Arc::new(Access::new("secret", Vec::new(), None).with_person_key(Some("the-key")));
         let mut router = Router::new();
-        for (_, path) in ENFORCED {
+        // One route per path: a path with several enforced methods would merge two `any` fallbacks.
+        let paths: std::collections::BTreeSet<&str> =
+            ENFORCED.iter().map(|(_, path)| *path).collect();
+        for path in paths {
             router = router.route(path, any(|| async { StatusCode::NO_CONTENT }));
         }
         let router = router.route_layer(from_fn_with_state(access, require_person));
