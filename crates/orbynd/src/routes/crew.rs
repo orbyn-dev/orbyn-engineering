@@ -104,7 +104,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/autopilot/merge-queue/{id}/resolve",
-        "core crew_forge_resolve: a person's answer for a forge merge that needs one, reject or retry, the intent as seen (else stale); the forge is read first and a PR already merged by hand is recorded as merged instead; the audit row first, in one transaction with the intent and its queue entry; nothing is ever sent to the forge; no agent tool reaches it; local only",
+        "core crew_forge_resolve: a person's answer for a forge merge that needs one, reject or retry, the intent as seen (else stale); the forge is read first and a PR already merged by hand is recorded as merged instead; the audit row first, in one transaction with the intent and its queue entry; no write is ever sent to the forge; retry is refused after a merge request, and a reject then stays reconcilable; no agent tool can reject or retry (the lead's merge tool only records a merge the forge already shows); local only",
     ),
     (
         "POST",

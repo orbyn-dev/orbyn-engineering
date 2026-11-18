@@ -220,6 +220,8 @@ impl Core {
         }
         self.store
             .set_merge_entry_state(task_id, "rejected", Some(why))?;
+        // A forge intent is left as it is (its escape-check and recovery rules are unchanged); this writes the audit row of that.
+        self.store.note_crew_forge_entry_rejected(task_id, why)?;
         self.merge_event(
             task_id,
             "merge_rejected",

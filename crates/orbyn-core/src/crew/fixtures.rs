@@ -80,6 +80,7 @@ pub fn forge_needs_person(core: &crate::Core, task: &str, repo: &str, why: &str)
         merge_commit: None,
         evidence: Vec::new(),
         note: None,
+        merge_sent: false,
         revision: 0,
     };
     core.store.add_crew_forge_merge(&intent).unwrap();

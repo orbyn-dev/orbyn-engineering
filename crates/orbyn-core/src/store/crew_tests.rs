@@ -435,6 +435,7 @@ fn forge_intent(task_id: &str) -> ForgeMerge {
         merge_commit: None,
         evidence: Vec::new(),
         note: None,
+        merge_sent: false,
         revision: 0,
     }
 }
@@ -512,19 +513,37 @@ fn needs_person_has_no_way_out_for_the_pipeline_but_a_person_can_resolve_it() {
     }
     // A person's answer is the only way out, and it needs the revision that was seen.
     assert!(matches!(
-        store.resolve_crew_forge_merge(&id, intent.revision - 1, &ForgeResolution::Reject, "user"),
+        store.resolve_crew_forge_merge(
+            &id,
+            intent.revision - 1,
+            &ForgeResolution::Reject,
+            "user",
+            "test"
+        ),
         Err(CoreError::Stale(_))
     ));
     assert_eq!(resolve_audits(&store), 0);
     let retried = store
-        .resolve_crew_forge_merge(&id, intent.revision, &ForgeResolution::Retry, "user")
+        .resolve_crew_forge_merge(
+            &id,
+            intent.revision,
+            &ForgeResolution::Retry,
+            "user",
+            "test",
+        )
         .unwrap();
     assert_eq!(retried.phase, ForgePhase::AwaitingCi);
     assert_eq!(store.merge_entry(&id).unwrap().unwrap().state, "queued");
     assert_eq!(resolve_audits(&store), 1);
     // It is no longer waiting: the same answer is stale, and a pipeline state is not resolvable.
     assert!(matches!(
-        store.resolve_crew_forge_merge(&id, retried.revision, &ForgeResolution::Reject, "user"),
+        store.resolve_crew_forge_merge(
+            &id,
+            retried.revision,
+            &ForgeResolution::Reject,
+            "user",
+            "test"
+        ),
         Err(CoreError::Stale(_))
     ));
     assert_eq!(resolve_audits(&store), 1);
@@ -541,7 +560,13 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
         .unwrap();
     assert!(
         store
-            .resolve_crew_forge_merge(&id, intent.revision, &ForgeResolution::Retry, "user")
+            .resolve_crew_forge_merge(
+                &id,
+                intent.revision,
+                &ForgeResolution::Retry,
+                "user",
+                "test"
+            )
             .is_err()
     );
     assert_eq!(
@@ -553,7 +578,13 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
     );
     store.set_merge_entry_state(&id, "blocked", None).unwrap();
     let rejected = store
-        .resolve_crew_forge_merge(&id, intent.revision, &ForgeResolution::Reject, "user")
+        .resolve_crew_forge_merge(
+            &id,
+            intent.revision,
+            &ForgeResolution::Reject,
+            "user",
+            "test",
+        )
         .unwrap();
     assert_eq!(
         (
@@ -567,7 +598,13 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
     again.phase = ForgePhase::AwaitingCi;
     assert!(store.save_crew_forge_merge(&mut again).is_err());
     assert!(matches!(
-        store.resolve_crew_forge_merge(&id, rejected.revision, &ForgeResolution::Retry, "user"),
+        store.resolve_crew_forge_merge(
+            &id,
+            rejected.revision,
+            &ForgeResolution::Retry,
+            "user",
+            "test"
+        ),
         Err(CoreError::Stale(_))
     ));
     assert!(store.crew_forge_unfinished().unwrap().is_empty());
@@ -596,14 +633,20 @@ fn a_retry_is_refused_when_publication_may_have_happened_and_a_merge_needs_its_p
         },
     ] {
         assert!(matches!(
-            store.resolve_crew_forge_merge(&id, intent.revision, &resolution, "user"),
+            store.resolve_crew_forge_merge(&id, intent.revision, &resolution, "user", "test"),
             Err(CoreError::Invalid(_))
         ));
     }
     assert_eq!(resolve_audits(&store), 0);
     assert!(
         store
-            .resolve_crew_forge_merge(&id, intent.revision, &ForgeResolution::Reject, "user")
+            .resolve_crew_forge_merge(
+                &id,
+                intent.revision,
+                &ForgeResolution::Reject,
+                "user",
+                "test"
+            )
             .is_ok()
     );
 }

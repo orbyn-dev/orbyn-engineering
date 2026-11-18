@@ -80,6 +80,8 @@ struct RemoteState {
     creates: usize,
     merges: usize,
     unknown_merge: bool,
+    /// The forge accepts the merge request but does not merge yet (a merge queue, auto-merge).
+    queued_merge: bool,
     unknown_create: bool,
     unreadable_once: bool,
     wrong_merge_commit: bool,
@@ -152,6 +154,9 @@ async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
                     args.windows(2)
                         .any(|pair| pair == ["--match-head-commit", s.head.as_str()])
                 );
+                if s.queued_merge {
+                    return Ok(String::new());
+                }
                 let intent = core.store.crew_forge_merge(&task).unwrap().unwrap();
                 let merged = if s.wrong_merge_commit {
                     intent.candidate
@@ -1126,6 +1131,7 @@ async fn a_crash_after_the_merged_write_leaves_a_state_recovery_finishes() {
                     merge_commit: commit,
                 },
                 "core",
+                "test",
             )
             .unwrap();
         assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_none());
@@ -1178,6 +1184,332 @@ async fn a_retry_with_a_closed_pr_is_refused_and_leaves_it_resolvable() {
                 .await
                 .unwrap();
         assert_eq!(done.outcome, "rejected");
+    })
+    .await;
+}
+
+/// An intent whose merge request was accepted but has not landed, then sent to `needs_person` because the PR looked changed.
+async fn requested_then_stuck(s: &Setup, state: &Arc<Mutex<RemoteState>>) -> i64 {
+    state.lock().unwrap().queued_merge = true;
+    s.w.core
+        .crew_queue_forge_merge(&s.task, &s.target, NOW)
+        .await
+        .unwrap();
+    let first =
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW)
+            .await
+            .unwrap();
+    assert!(
+        matches!(first.as_slice(), [MergeOutcome::Blocked { why, .. }] if why.contains("merge requested")),
+        "{first:?}"
+    );
+    let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+    assert_eq!(
+        (intent.phase, intent.merge_sent),
+        (ForgePhase::MergeRequested, true)
+    );
+    let real = state.lock().unwrap().head.clone();
+    state.lock().unwrap().head = "d".repeat(40);
+    s.w.core
+        .crew_process_forge_merges(&s.target, NOW + 1)
+        .await
+        .unwrap();
+    state.lock().unwrap().head = real;
+    let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+    assert_eq!(
+        (intent.phase, intent.merge_sent),
+        (ForgePhase::NeedsPerson, true)
+    );
+    intent.revision
+}
+
+#[tokio::test]
+async fn an_intent_with_a_merge_request_cannot_be_retried_and_a_reject_still_records_a_late_merge()
+{
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        let revision = requested_then_stuck(&s, &state).await;
+        let retry =
+            s.w.core
+                .crew_forge_resolve(
+                    &s.task,
+                    &answer(orbyn_contracts::CrewForgeAction::Retry, revision),
+                )
+                .await;
+        assert!(
+            matches!(retry, Err(CoreError::Invalid(why)) if why.contains("cannot be sent again"))
+        );
+        assert_eq!(audit_rows(&s, &s.task), 0);
+        let done =
+            s.w.core
+                .crew_forge_resolve(
+                    &s.task,
+                    &answer(orbyn_contracts::CrewForgeAction::Reject, revision),
+                )
+                .await
+                .unwrap();
+        assert_eq!(done.outcome, "rejected");
+        let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        assert_eq!(
+            (intent.phase, intent.merge_sent),
+            (ForgePhase::Rejected, true)
+        );
+        assert!(intent.note.unwrap().contains("left as it is"));
+        assert_eq!(
+            s.w.core.store.crew_forge_unfinished().unwrap().len(),
+            1,
+            "still in the reconcile set"
+        );
+        // The request is still pending: nothing is recorded and nothing is sent again.
+        let merges = counts(&state).1;
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW + 2)
+            .await
+            .unwrap();
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_none());
+        assert_eq!(counts(&state).1, merges);
+        // The forge's queue lands it later: the merge is recorded and the entry is merged.
+        merge_by_hand(&s, &state);
+        let outcomes =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 3)
+                .await
+                .unwrap();
+        assert!(
+            matches!(outcomes.as_slice(), [MergeOutcome::Merged { .. }]),
+            "{outcomes:?}"
+        );
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_some());
+        assert_eq!(
+            s.w.core.store.merge_entry(&s.task).unwrap().unwrap().state,
+            "merged"
+        );
+        assert!(s.w.core.store.crew_forge_unfinished().unwrap().is_empty());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_reject_reads_the_forge_for_a_publication_with_no_pr_number() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        state.lock().unwrap().unknown_create = true;
+        assert!(
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .is_err()
+        );
+        // The create answered nothing and the forge shows no PR: the intent waits for a person with no PR number.
+        state.lock().unwrap().published = false;
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW + 1)
+            .await
+            .unwrap();
+        let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        assert_eq!((intent.phase, intent.pull), (ForgePhase::NeedsPerson, None));
+        // A retry cannot tell whether it would publish twice.
+        let retry =
+            s.w.core
+                .crew_forge_resolve(
+                    &s.task,
+                    &answer(orbyn_contracts::CrewForgeAction::Retry, intent.revision),
+                )
+                .await;
+        assert!(matches!(retry, Err(CoreError::Invalid(_))));
+        // The PR shows up and was merged on the forge: a reject records that merge instead.
+        {
+            let mut remote = state.lock().unwrap();
+            remote.published = true;
+        }
+        merge_by_hand(&s, &state);
+        let done =
+            s.w.core
+                .crew_forge_resolve(
+                    &s.task,
+                    &answer(orbyn_contracts::CrewForgeAction::Reject, intent.revision),
+                )
+                .await
+                .unwrap();
+        assert_eq!(
+            (done.outcome.as_str(), done.phase.as_str()),
+            ("merged", "merged")
+        );
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .pull,
+            Some(7)
+        );
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_some());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_reject_with_no_pr_found_says_the_branch_may_have_been_pushed() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        state.lock().unwrap().unknown_create = true;
+        assert!(
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW)
+                .await
+                .is_err()
+        );
+        state.lock().unwrap().published = false;
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW + 1)
+            .await
+            .unwrap();
+        let revision =
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .revision;
+        s.w.core
+            .crew_forge_resolve(
+                &s.task,
+                &answer(orbyn_contracts::CrewForgeAction::Reject, revision),
+            )
+            .await
+            .unwrap();
+        let note =
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .note
+                .unwrap();
+        assert!(note.contains("may have been pushed"), "{note}");
+        assert!(s.w.core.store.crew_forge_unfinished().unwrap().is_empty());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_scoped_lead_does_not_read_or_settle_another_crews_waiting_entry() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    let head = state.lock().unwrap().head.clone();
+    make_proven_check(&s, &head);
+    with_crew_fixture(fixture, async {
+        stuck_with_pr(&s, &state).await;
+        merge_by_hand(&s, &state);
+        let reads = state.lock().unwrap().pull_reads;
+        let outcomes =
+            s.w.core
+                .process_forge_merges_for(&s.target, Some("another-crew"), NOW + 2)
+                .await
+                .unwrap();
+        assert!(
+            matches!(outcomes.as_slice(), [MergeOutcome::NeedsPerson { .. }]),
+            "{outcomes:?}"
+        );
+        assert_eq!(
+            state.lock().unwrap().pull_reads,
+            reads,
+            "no forge read for another crew's entry"
+        );
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_forge_merge(&s.task)
+                .unwrap()
+                .unwrap()
+                .phase,
+            ForgePhase::NeedsPerson
+        );
+        // Its own lane records it, and the audit row says the lane did.
+        let own =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 3)
+                .await
+                .unwrap();
+        assert!(matches!(own.as_slice(), [MergeOutcome::Merged { .. }]));
+        let via: Vec<String> =
+            s.w.core
+                .store
+                .list_audit(None, 500)
+                .unwrap()
+                .iter()
+                .filter(|r| r.action == "crew.merge.forge.resolve")
+                .map(|r| r.detail["via"].as_str().unwrap_or_default().to_owned())
+                .collect();
+        assert_eq!(via, ["lane reconcile"]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_retry_after_the_base_moved_is_refused_up_front() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        let (head, revision) = stuck_head(&s).await;
+        state.lock().unwrap().base = "c".repeat(40);
+        let retry =
+            s.w.core
+                .crew_forge_resolve(
+                    &head,
+                    &answer(orbyn_contracts::CrewForgeAction::Retry, revision),
+                )
+                .await;
+        assert!(
+            matches!(&retry, Err(CoreError::Invalid(why)) if why.contains("base moved")),
+            "{retry:?}"
+        );
+        assert_eq!(audit_rows(&s, &head), 0);
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_forge_merge(&head)
+                .unwrap()
+                .unwrap()
+                .phase,
+            ForgePhase::NeedsPerson
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_queues_own_reject_of_a_forge_entry_writes_the_resolve_audit_row() {
+    let s = setup().await;
+    let (_state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        let (head, _) = stuck_head(&s).await;
+        s.w.core
+            .crew_reject_merge(&head, "No longer wanted.")
+            .unwrap();
+        assert_eq!(audit_rows(&s, &head), 1);
+        assert_eq!(
+            s.w.core
+                .store
+                .crew_forge_merge(&head)
+                .unwrap()
+                .unwrap()
+                .phase,
+            ForgePhase::NeedsPerson
+        );
     })
     .await;
 }

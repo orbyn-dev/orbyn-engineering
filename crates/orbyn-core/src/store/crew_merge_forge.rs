@@ -44,19 +44,25 @@ pub enum ForgeResolution {
     Retry,
     /// The forge already has the merge (a person merged the PR by hand). The merge record follows from the receipt.
     Merged { merge_commit: String },
+    /// A rejected intent whose merge request may have been sent: the forge shows it closed unmerged, so nothing is left to wait for.
+    Settle,
 }
 
-/// The only way out of `needs_person`. Deliberately not part of [`Store::save_crew_forge_merge`]'s table: the pipeline can enter
-/// `needs_person` but can never leave it on its own, so a stuck intent changes only by a person's audited answer or a forge receipt.
+/// The only way out of `needs_person`, and out of a `rejected` intent whose merge request may still land. Deliberately not part of
+/// [`Store::save_crew_forge_merge`]'s table: the pipeline can enter `needs_person` but never leave it on its own, so a stuck intent
+/// changes only by a person's audited answer or a forge receipt.
 fn resolves(from: ForgePhase, to: ForgePhase) -> bool {
-    from == ForgePhase::NeedsPerson
-        && matches!(
+    match from {
+        ForgePhase::NeedsPerson => matches!(
             to,
             ForgePhase::Prepared
                 | ForgePhase::AwaitingCi
                 | ForgePhase::Merged
                 | ForgePhase::Rejected
-        )
+        ),
+        ForgePhase::Rejected => matches!(to, ForgePhase::Merged | ForgePhase::Rejected),
+        _ => false,
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +81,10 @@ pub struct ForgeMerge {
     pub merge_commit: Option<String>,
     pub evidence: Vec<String>,
     pub note: Option<String>,
+    /// A merge request may have reached the forge (saved just before it is sent, never cleared by the pipeline). A request can
+    /// outlive the call (a merge queue, auto-merge), so such an intent can never be retried, and a reject stays reconcilable.
+    #[serde(default)]
+    pub merge_sent: bool,
     pub revision: i64,
 }
 
@@ -130,7 +140,7 @@ impl Store {
     /// The bound refuses excess work rather than silently leaving records out of recovery.
     pub fn crew_forge_unfinished(&self) -> Result<Vec<ForgeMerge>> {
         let conn = self.reader();
-        let mut statement = conn.prepare("SELECT body FROM crew_forge_merges AS intent WHERE json_extract(body,'$.phase') IN ('publishing','merge_requested') OR (json_extract(body,'$.phase')='merged' AND NOT EXISTS(SELECT 1 FROM crew_merges AS merged WHERE merged.task_id=intent.task_id)) ORDER BY rowid LIMIT 129")?;
+        let mut statement = conn.prepare("SELECT body FROM crew_forge_merges AS intent WHERE json_extract(body,'$.phase') IN ('publishing','merge_requested') OR (json_extract(body,'$.phase')='rejected' AND json_extract(body,'$.merge_sent')=1) OR (json_extract(body,'$.phase')='merged' AND NOT EXISTS(SELECT 1 FROM crew_merges AS merged WHERE merged.task_id=intent.task_id)) ORDER BY rowid LIMIT 129")?;
         let bodies = statement
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -191,14 +201,17 @@ impl Store {
             .ok_or_else(|| CoreError::Invalid("forge revision exhausted".into()))?;
         let mut next = intent.clone();
         next.revision = revision;
-        let body = serde_json::to_string(&next)?;
-        self.commit(|tx, _| {
+        let next = self.commit(|tx, _| {
             let old: String = tx.query_row(
                 "SELECT body FROM crew_forge_merges WHERE task_id=?1 AND revision=?2",
                 params![intent.task_id, expected],
                 |r| r.get(0),
             )?;
             let old: ForgeMerge = serde_json::from_str(&old)?;
+            let mut next = next.clone();
+            // The pipeline can set the flag but never clear it.
+            next.merge_sent |= old.merge_sent;
+            let body = serde_json::to_string(&next)?;
             let transition = old.phase == next.phase
                 || matches!(
                     (old.phase, next.phase),
@@ -236,21 +249,23 @@ impl Store {
             if changed != 1 {
                 return Err(CoreError::Invalid("forge intent changed".into()));
             }
-            Ok(())
+            Ok(next)
         })?;
         *intent = next;
         Ok(())
     }
 
-    /// Leaves `needs_person`, audit row first, in one transaction with the intent and its queue entry, so a crash leaves either
-    /// the old state (still resolvable) or the whole new one. `seen_revision` is the intent as the caller saw it; a different
-    /// revision or phase is `stale`. `actor` is `user` for a person's answer and `core` for a merge read from the forge.
+    /// Leaves `needs_person` (or settles a rejected intent whose merge request may still land), audit row first, in one transaction
+    /// with the intent and its queue entry, so a crash leaves either the old state (still resolvable) or the whole new one.
+    /// `seen_revision` is the intent as the caller saw it; a different revision or phase is `stale`. `actor` is `user` for a
+    /// person's answer and `core` for a merge read from the forge; `via` says which path drove it, and goes in the audit row.
     pub fn resolve_crew_forge_merge(
         &self,
         task_id: &str,
         seen_revision: i64,
         resolution: &ForgeResolution,
         actor: &str,
+        via: &str,
     ) -> Result<ForgeMerge> {
         self.commit(|tx, _| {
             let found: Option<(i64, String)> = tx
@@ -263,19 +278,36 @@ impl Store {
             let (revision, body) =
                 found.ok_or_else(|| CoreError::NotFound(format!("forge intent {task_id}")))?;
             let old: ForgeMerge = serde_json::from_str(&body)?;
-            if revision != seen_revision || old.phase != ForgePhase::NeedsPerson {
-                return Err(CoreError::Stale(
-                    "this merge changed since you saw it; look again".into(),
-                ));
+            let waiting = old.phase == ForgePhase::NeedsPerson;
+            let pending = old.phase == ForgePhase::Rejected && old.merge_sent;
+            let stale = || {
+                CoreError::Stale("this merge changed since you saw it; look again".into())
+            };
+            if revision != seen_revision || !(waiting || pending) {
+                return Err(stale());
             }
             let mut next = old.clone();
             let (entry_state, entry_note): (Option<&str>, Option<&str>) = match resolution {
-                ForgeResolution::Reject => {
+                ForgeResolution::Reject if waiting => {
                     next.phase = ForgePhase::Rejected;
-                    next.note = Some("rejected by a person; nothing was sent to the forge".into());
+                    next.note = Some(
+                        if old.pull.is_some() {
+                            "rejected by a person; its PR is left as it is on the forge"
+                        } else if old.combined.is_some() {
+                            "rejected by a person; the candidate branch may have been pushed to the forge"
+                        } else {
+                            "rejected by a person; nothing was sent to the forge"
+                        }
+                        .into(),
+                    );
                     (Some("rejected"), Some("rejected by a person"))
                 }
-                ForgeResolution::Retry => {
+                ForgeResolution::Retry if waiting => {
+                    if old.merge_sent {
+                        return Err(CoreError::Invalid(
+                            "a merge request may already be on the forge, so it cannot be sent again; reject it, or finish or close the PR on the forge".into(),
+                        ));
+                    }
                     next.phase = if old.pull.is_some() {
                         ForgePhase::AwaitingCi
                     } else if old.combined.is_none() {
@@ -293,24 +325,32 @@ impl Store {
                     next.merge_commit = Some(merge_commit.clone());
                     (None, None)
                 }
+                ForgeResolution::Settle if pending => {
+                    next.merge_sent = false;
+                    (None, None)
+                }
+                _ => return Err(stale()),
             };
-            if !resolves(old.phase, next.phase) {
+            if next.phase != old.phase && !resolves(old.phase, next.phase) {
                 return Err(CoreError::Invalid("invalid forge intent transition".into()));
             }
             next.validate()?;
             if !old.same_identity(&next) || old.pull.is_some_and(|p| Some(p) != next.pull) {
                 return Err(CoreError::Invalid("a forge intent keeps its identity".into()));
             }
-            let queued: Option<String> = tx
-                .query_row(
-                    "SELECT state FROM crew_merge_queue WHERE task_id=?1",
-                    [task_id],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let queued = queued.ok_or_else(|| CoreError::NotFound(format!("queued merge {task_id}")))?;
-            if queued == "merged" || queued == "rejected" {
-                return Err(CoreError::Invalid("this merge already ended".into()));
+            if waiting {
+                let queued: Option<String> = tx
+                    .query_row(
+                        "SELECT state FROM crew_merge_queue WHERE task_id=?1",
+                        [task_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let queued =
+                    queued.ok_or_else(|| CoreError::NotFound(format!("queued merge {task_id}")))?;
+                if queued == "merged" || queued == "rejected" {
+                    return Err(CoreError::Invalid("this merge already ended".into()));
+                }
             }
             next.revision = revision
                 .checked_add(1)
@@ -327,10 +367,13 @@ impl Store {
                     thread_id: None,
                     run_id: None,
                     detail: serde_json::json!({
-                        "from": "needs_person",
-                        "to": serde_json::to_value(next.phase)?,
+                        "from": old.phase,
+                        "to": next.phase,
+                        "settled": matches!(resolution, ForgeResolution::Settle),
+                        "via": via,
                         "revision": revision,
                         "pull": old.pull,
+                        "merge_sent": old.merge_sent,
                         "reason": old.note,
                     }),
                 },
@@ -349,6 +392,44 @@ impl Store {
                 )?;
             }
             Ok(next)
+        })
+    }
+
+    /// The queue's own reject (`crew_reject_merge`) turned an entry down without going through the intent. Writes the same audit
+    /// row, naming that path, and leaves the intent as it is: an intent that was `merge_requested` stays in the reconcile set.
+    pub fn note_crew_forge_entry_rejected(&self, task_id: &str, why: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            let body: Option<String> = tx
+                .query_row(
+                    "SELECT body FROM crew_forge_merges WHERE task_id=?1",
+                    [task_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(body) = body else { return Ok(()) };
+            let intent: ForgeMerge = serde_json::from_str(&body)?;
+            insert_audit(
+                tx,
+                &AuditRecord {
+                    actor: "core".to_owned(),
+                    action: "crew.merge.forge.resolve".to_owned(),
+                    target: task_id.to_owned(),
+                    decision: None,
+                    source: "core".to_owned(),
+                    thread_id: None,
+                    run_id: None,
+                    detail: serde_json::json!({
+                        "from": intent.phase,
+                        "to": intent.phase,
+                        "via": "queue reject: the entry was turned down and the intent was left as it was",
+                        "revision": intent.revision,
+                        "pull": intent.pull,
+                        "merge_sent": intent.merge_sent,
+                        "reason": why,
+                    }),
+                },
+            )?;
+            Ok(())
         })
     }
 

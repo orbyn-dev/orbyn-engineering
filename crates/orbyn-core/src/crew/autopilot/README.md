@@ -106,23 +106,33 @@ The separate local compatibility API keeps its no-checked-out-branch and compare
 authentication failure never selects it. Ordinary agent main-push and forge-merge commands remain N5 denied.
 
 **A forge merge that needs a person.** A forge intent reaches `needs_person` when the pipeline cannot go on safely (the target or PR
-changed, publication is unknown, the combined-state check failed, a withdrawn escape check was found late). Nothing of it is in
-flight then, so the lane **skips it** and goes on with the later entries; the order rule is: merges are ordered per repository, a
-published or uncertain entry keeps the lane, and an entry waiting on a person does not. Skipping is safe because each entry pins its
-own base and is checked against the forge's base, so no later entry depends on it; a later merge only moves the base, which the stuck
-entry would have to rebuild on anyway. Blocked entries that wait on CI, a hold or a Gate still keep their place. The pipeline never
-leaves `needs_person` by itself. Three things do: a PR merged by hand on the forge (the lane reads it and records the merge, with an
-audit row by `core`), and a person's `POST /api/crew/autopilot/merge-queue/{id}/resolve` with `{action, seen_revision}`:
-`reject` (intent `rejected`, entry `rejected`, nothing sent to the forge, an open PR is the person's to close on the forge) or `retry`
-(back to `awaiting_ci` for a PR that is still open with the pinned identity, or `prepared` when nothing was published; the guards,
-`merge_blocker` and the escape-check guard, run again on the next pass; a publication that may have happened without a PR number
-cannot be retried, only rejected). The route reads the forge first: a PR already merged is recorded as merged and the answer asked for
-is not applied; an unreadable PR refuses the answer. It is a Person route (key enforced), local only, behind the Preview flag, in
-`STATE_CHANGING`; no tool, CLI command or browser path reaches it. The audit row `crew.merge.forge.resolve` is written first, in the
-same transaction as the intent and the queue entry, so a crash leaves the old, still resolvable state or the whole new one; a crash
-after the `merged` write is finished by startup recovery. The queue view lists each entry's `forge` phase and `revision` (the token
-a person's answer names). The transition table of `save_crew_forge_merge` is unchanged: the way out lives in
-`resolve_crew_forge_merge` alone.
+changed, publication is unknown, the combined-state check failed, a withdrawn escape check was found late). The lane **skips** it
+and goes on with later entries. Ordering rule: merges are ordered per repository, a published or uncertain entry keeps the lane, an
+entry waiting on a person does not. Skipping is safe because each entry pins its own base and is checked against the forge's base,
+so no later entry depends on it; a later merge only moves the base, which the stuck entry would have to rebuild on anyway. Entries
+waiting on CI, a hold or a Gate keep their place. **What is and is not guaranteed.** The pipeline never leaves `needs_person`
+by itself and never sends a second merge request. An intent that reached it with no request sent (`merge_sent` false) has nothing
+of it in flight. One that reached it after a merge request (`merge_sent`, saved just before the request) may still have that request
+on the forge (a GitHub merge queue; `merge_in` never passes `--auto`/`--auto-merge`, but whether `glab` queues a merge while a
+pipeline runs is not verified here, so it is treated as possible). Such an intent can only be rejected, never retried, and a reject
+keeps it in the reconcile set (`rejected` with `merge_sent`): a merge that lands later is read from the forge and recorded, and a
+PR seen closed without a merge settles it. With a publication attempt but no PR number the forge is searched first (found and
+merged: recorded as merged; found open: kept; none: the reject note says the branch may have been pushed).
+
+Ways out of `needs_person`: a PR merged by hand (read-only from the forge, audit `actor` `core`, `via` "lane reconcile", for the
+lane's own crew scope only; the lead's `crew_process_merges` can therefore record a merge the forge already shows, nothing else),
+and a person's `POST /api/crew/autopilot/merge-queue/{id}/resolve` with `{action, seen_revision}`: `reject` (intent and entry
+`rejected`; an open PR is the person's to close) or `retry` (back to `awaiting_ci` for a PR still open with the pinned identity and
+the pinned base still the forge's, or `prepared` when nothing was published; the guards, `merge_blocker` and the escape-check guard,
+run again; refused after a merge request, after a publication that may have happened without a PR number, and after the base moved:
+reject and queue again). The route reads the forge first: a PR already merged is recorded and the asked-for answer is not applied;
+an unreadable PR refuses the answer. It is a Person route (key enforced), local only, behind the Preview flag, in `STATE_CHANGING`;
+no tool, CLI command or browser path can reject or retry. The audit row `crew.merge.forge.resolve` (with `via`) is written first,
+in the same transaction as the intent and the queue entry; a crash leaves the old, still resolvable state or the whole new one, and a
+crash after the `merged` write is finished by recovery. The queue's own `crew_reject_merge` (used by the escape-check guard) turns
+an entry down without touching its intent; it writes a `crew.merge.forge.resolve` row naming that path and leaves the intent as it
+was. The queue view lists each entry's `forge` phase and `revision`. The transition table of `save_crew_forge_merge` is unchanged:
+the way out lives in `resolve_crew_forge_merge` alone.
 
 - **Risk.** `merge::score` reads paths (CI, migrations, dependency files, and auth, keys or crypto as whole words in a path),
   size (over 20 files or 400 lines is large) and the 60-day revert rate of each area and of the engine, which counts from 10
