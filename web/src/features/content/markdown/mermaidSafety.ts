@@ -46,21 +46,14 @@ const FORBIDDEN = new Set([
   "animate", "animatecolor", "animatetransform", "animatemotion", "set", "handler", "listener",
 ]);
 
-/** Lower-cases, strips comments and decodes CSS escapes so `\69mport` and `u\72l(` read as written. */
-function normaliseCss(value: string): string {
-  return value
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?/g, (_, hex: string) => {
-      const code = parseInt(hex, 16);
-      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
-    })
-    .replace(/\\([\s\S])/g, "$1")
-    .toLowerCase();
-}
-
-/** True when CSS (a style element or any attribute value) could load or run something outside this document. */
+/**
+ * True when CSS (a style element or any attribute value) could load or run something outside this document.
+ * A backslash or comment marker anywhere is refused outright: browsers and a regex read escapes, comments and
+ * strings differently, and Mermaid's own output has none of them.
+ */
 function unsafeCss(raw: string): boolean {
-  const css = normaliseCss(raw);
+  if (/\\|\/\*/.test(raw)) return true;
+  const css = raw.toLowerCase();
   if (/@import|image-set\(|image\(|src\(|expression\(|javascript:|vbscript:|behavior:|-moz-binding|cross-fade\(|element\(/.test(css)) return true;
   for (const match of css.matchAll(/url\(\s*(['"]?)\s*(.?)/g)) if (match[2] !== "#") return true;
   return false;
@@ -68,7 +61,9 @@ function unsafeCss(raw: string): boolean {
 
 /** Splits CSS into its top-level statements (original text), or null when it cannot be parsed with confidence. */
 function topLevelRules(css: string): string[] | null {
-  const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  // CSS strings end at a newline and escapes/comments change where they end: none of that is accepted here.
+  if (/[\\\n\r\f]|\/\*/.test(css)) return null;
+  const text = css;
   const rules: string[] = [];
   let start = 0;
   let depth = 0;
@@ -76,8 +71,7 @@ function topLevelRules(css: string): string[] | null {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
     if (quote) {
-      if (ch === "\\") i++;
-      else if (ch === quote) quote = "";
+      if (ch === quote) quote = "";
     } else if (ch === '"' || ch === "'") quote = ch;
     else if (ch === "{") depth++;
     else if (ch === "}") {
@@ -104,12 +98,20 @@ function scopeCss(css: string, rootId: string): string | null {
   const kept = rules.filter((rule) => {
     const open = rule.indexOf("{");
     const prelude = rule.slice(0, open).trim();
-    if (/^@keyframes\s+[\w-]+$/i.test(prelude)) {
+    const frames = /^@keyframes\s+([\w-]+)$/i.exec(prelude);
+    if (frames) {
+      // Keyframe names are page-global: only Mermaid's own, or ones prefixed with this diagram's id.
+      const name = frames[1]!;
+      if (name !== "dash" && name !== "edge-animation-frame" && !(rootId !== "" && name.startsWith(`${rootId}-`))) return false;
       // Keyframe steps are only `from`, `to` or percentages.
       const inner = topLevelRules(rule.slice(open + 1, -1));
       return inner !== null && inner.every((step) => /^\s*(from|to|[\d.]+%)(\s*,\s*(from|to|[\d.]+%))*\s*\{[^{}]*\}$/i.test(step));
     }
-    return rootId !== "" && !prelude.startsWith("@") && prelude.split(",").every((selector) => own.test(selector.trim()));
+    return (
+      rootId !== "" &&
+      !prelude.startsWith("@") &&
+      prelude.split(",").every((selector) => own.test(selector.trim()) && !/[\\~+]/.test(selector))
+    );
   });
   return kept.length === rules.length ? css : kept.join("");
 }
@@ -138,10 +140,11 @@ function cleanChildren(parent: Element, rootId: string): void {
       if (el.namespaceURI !== SVG_NS || FORBIDDEN.has(tag) || (tag === "style" && unsafeCss(el.textContent ?? ""))) {
         el.remove();
       } else if (tag === "style") {
-        const scoped = scopeCss(el.textContent ?? "", rootId);
+        // CSS text only: an element inside <style> is foreign-content markup the rule check never sees.
+        const scoped = el.children.length === 0 ? scopeCss(el.textContent ?? "", rootId) : null;
         if (!scoped?.trim()) el.remove();
         else {
-          if (scoped !== el.textContent) el.textContent = scoped;
+          el.textContent = scoped; // also drops comment nodes
           cleanAttributes(el);
         }
       } else if (tag === "a") {

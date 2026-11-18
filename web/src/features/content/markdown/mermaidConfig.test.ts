@@ -44,6 +44,11 @@ describe("real Mermaid output through the sanitiser", () => {
     state: "stateDiagram-v2\n [*] --> S\n S --> [*]",
     gantt: "gantt\n dateFormat YYYY-MM-DD\n section S\n T :a1, 2024-01-01, 3d",
     pie: 'pie\n "a":1\n "b":2',
+    er: "erDiagram\n A ||--o{ B : has",
+    gitGraph: "gitGraph\n commit\n branch x\n commit",
+    journey: "journey\n title t\n section s\n  task: 5: Me",
+    quadrant: "quadrantChart\n title t\n x-axis l --> r\n y-axis l --> h\n A: [0.3, 0.6]",
+    timeline: "timeline\n title t\n 2020 : a",
   };
   for (const [name, source] of Object.entries(diagrams)) {
     it(`leaves a normal ${name} diagram byte-identical, style block included`, async () => {
@@ -51,7 +56,10 @@ describe("real Mermaid output through the sanitiser", () => {
       const { svg } = await mermaid.render(`m${name}`, source);
       const original = new DOMParser().parseFromString(svg, "text/html").body.querySelector("svg")!;
       expect(original.querySelector("style")?.textContent).toContain(`#m${name}`);
-      expect(sanitizeSvg(svg)?.outerHTML).toBe(original.outerHTML);
+      const cleaned = sanitizeSvg(svg)!;
+      expect(cleaned.querySelector("style")?.textContent).toBe(original.querySelector("style")?.textContent);
+      // Journey draws its section labels in <foreignObject>, which is removed on purpose (its <switch> text stays).
+      if (name !== "journey") expect(cleaned.outerHTML).toBe(original.outerHTML);
     });
   }
 });

@@ -179,6 +179,49 @@ describe("sanitizeSvg", () => {
     expect(noId).not.toContain("fill:red");
   });
 
+  it("removes a <style> that holds elements, which the HTML parser makes real children", () => {
+    const hostile = [
+      '<style>#s{fill:red}<image href="x" onerror="alert(1)"/></style><g/>',
+      '<style>#s{fill:red}<animate onbegin="alert(1)" attributeName="x" dur="1s"/></style><g/>',
+    ];
+    for (const markup of hostile) {
+      const out = clean(SVG(markup));
+      expect(out, markup).not.toMatch(/<style|image|animate|onerror|onbegin|alert/i);
+    }
+  });
+
+  it("drops a style block where a comment marker, escape or newline hides a rule from a simple reader", () => {
+    const blocks = [
+      '#s{content:"/*"}body{display:none}#s{content:"*/"}',
+      '#s{content:"/*"}body{background:url(https://evil.test/x)}#s{content:"*/"}',
+      '#s{a:\\"}body{display:none}#s{b:"}',
+      '#s{a:"\n}body{display:none}#s{b:"}',
+      '#s{a:"\r}body{display:none}#s{b:"}',
+    ];
+    for (const css of blocks) {
+      const markup = `<svg xmlns="http://www.w3.org/2000/svg" id="s"><style>${css}</style><g/></svg>`;
+      const out = sanitizeSvg(markup)?.outerHTML ?? "";
+      expect(out, JSON.stringify(css)).not.toMatch(/<style|body|evil/);
+    }
+  });
+
+  it("keeps only Mermaid's own keyframes names or ones prefixed with the root id", () => {
+    const frames = (name: string) => clean(SVG(`<style>@keyframes ${name}{to{opacity:0}}</style><g/>`));
+    expect(frames("spin")).not.toContain("<style");
+    expect(frames("dash")).toContain("@keyframes dash");
+    expect(frames("edge-animation-frame")).toContain("@keyframes edge-animation-frame");
+    expect(frames("s-fade")).toContain("@keyframes s-fade");
+    const noId = clean('<svg xmlns="http://www.w3.org/2000/svg"><style>@keyframes spin{to{opacity:0}}</style></svg>');
+    expect(noId).not.toContain("@keyframes");
+  });
+
+  it("rejects selectors with an escape in the id part or a sibling combinator", () => {
+    for (const selector of ["#s\\31 ", "#s ~ *", "#s + *", "#s .a, #s ~ b"]) {
+      expect(clean(SVG(`<style>${selector}{fill:red}</style><g/>`)), selector).not.toContain("<style");
+    }
+    expect(clean(SVG("<style>#s .a > .b{fill:red}</style><g/>"))).toContain("<style");
+  });
+
   it("drops CSS image() and the animateColor, animateMotion and uppercase animate elements", () => {
     expect(clean(SVG('<style>#x{background:image("https://x/a.png")}</style>'))).not.toContain("<style");
     expect(clean(SVG('<rect style="background:image(\'https://x/a.png\')"/>'))).not.toContain("style=");
