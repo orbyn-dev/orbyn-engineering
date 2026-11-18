@@ -1,7 +1,7 @@
 // Settings › Crew › Worker provider (Crew Designs v75, frames `settings-crew-worker-provider`, `-any` and `-narrow`): where Crew looks for
 // a worker's engine for this project. Same as lead is the default. Nothing is drawn while there is no project to save it for, like the
 // path classes beside it. The choice shown is the one the service stored: a write that fails leaves it as it was.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toFailure, useAsync } from "../../../../lib/useAsync";
 import { Segmented } from "../../../../ui/Segmented";
 import type { CrewWorkerProvider } from "../../../../generated/CrewWorkerProvider";
@@ -17,17 +17,19 @@ function Row({ project }: { project: string }) {
   const read = useAsync(`crew-worker-provider:${project}`, (signal) => crewApi.workerProvider(project, signal));
   const [saved, setSaved] = useState<CrewWorkerProvider | null>(null);
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false);
   const [failed, setFailed] = useState<string | null>(null);
   const shown = saved ?? read.data?.worker_provider ?? null;
   const choose = (next: CrewWorkerProvider) => {
-    if (busy || next === shown) return;
+    if (inflight.current || next === shown) return;
+    inflight.current = true;
     setBusy(true);
     setFailed(null);
     // The row is keyed by project, so a project change unmounts it and a late answer lands nowhere.
     crewApi.setWorkerProvider(project, next).then(
       (view) => setSaved(view.worker_provider),
       (error) => setFailed(toFailure(error).message),
-    ).finally(() => setBusy(false));
+    ).finally(() => { inflight.current = false; setBusy(false); });
   };
   return (
     <section className="wp-row" aria-label="Worker provider" data-frame="settings-crew-worker-provider">

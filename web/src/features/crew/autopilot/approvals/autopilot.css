@@ -319,12 +319,11 @@ h4.ap-sub { margin: 0; }
 
 /* Settings › Crew › Worker provider (Crew Designs v75, frames `settings-crew-worker-provider*`): the row's own values. The design's Planned pill
    marked a row that was not built and is not drawn now that it works. At 640 px and below the control sits under the text. */
-.wp-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 18px; padding: 12px 0; align-items: center; font-size: 12.5px; color: var(--color-textSoft); }
+.wp-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 18px; padding: 12px 0; border-top: 1px solid var(--color-border); align-items: center; font-size: 12.5px; color: var(--color-textSoft); }
 .wp-row b { font-weight: 500; color: var(--color-text); }
 .wp-row small { display: block; margin-top: 2px; color: var(--color-muted); font-size: 12px; line-height: 1.4; }
-.wp-seg .segmented { border-radius: 9px; background: var(--color-sunken); }
+.wp-seg .segmented { border-radius: var(--radius-9); }
 .wp-seg .segmented button { font-size: 12px; }
-.wp-seg .segmented button[aria-checked="true"] { background: var(--color-surface); }
 .wp-seg[aria-busy="true"] { opacity: 0.6; }
 .wp-error { grid-column: 1 / -1; margin: 0; color: var(--color-danger); font-size: 12px; line-height: 1.4; }
 @media (max-width: 640px) {
