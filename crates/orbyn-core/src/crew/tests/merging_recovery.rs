@@ -158,7 +158,12 @@ async fn a_merge_that_is_live_in_this_process_is_not_touched() {
     crash(&m.w, &id);
     // The lane's lock is held for the whole of a live merge.
     let lane = m.w.core.crew_merges.lock().await;
-    assert_eq!(m.w.core.recover_crew_merging(NOW + 5).await.unwrap(), 0);
+    let waiting = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        m.w.core.recover_crew_merging(NOW + 5),
+    )
+    .await;
+    assert!(waiting.is_err(), "recovery waits behind a live merge");
     assert_eq!(
         m.w.core.store.merge_entry(&id).unwrap().unwrap().state,
         "merging"
