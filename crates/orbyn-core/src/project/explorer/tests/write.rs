@@ -670,3 +670,92 @@ fn a_file_system_without_exclusive_rename_gets_a_clear_error_and_no_fallback() {
     let other = unsupported(std::io::Error::from_raw_os_error(libc::EEXIST));
     assert_eq!(other.raw_os_error(), Some(libc::EEXIST));
 }
+
+/// Where names fold case, a folder moved into itself under another spelling is refused by the
+/// file system; the answer names that, not an unsupported file system.
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test]
+async fn moving_a_folder_into_itself_by_another_spelling_says_so() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    std::fs::create_dir(root.join("Dir")).unwrap();
+    if !root.join("dIR").exists() {
+        return; // a case-sensitive volume: the spellings are two folders
+    }
+    let moved = act(
+        &core,
+        &project,
+        &id,
+        Action::Move {
+            path: "Dir".into(),
+            destination: "dIR/inner".into(),
+        },
+    )
+    .await;
+    match moved {
+        Err(CoreError::Invalid(message)) => assert!(message.contains("inside itself"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(root.join("Dir").is_dir());
+}
+
+#[tokio::test]
+async fn a_folder_into_itself_is_refused_and_into_a_sibling_of_a_similar_name_is_not() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    std::fs::create_dir_all(root.join("Dir/child")).unwrap();
+    std::fs::create_dir(root.join("Dir2")).unwrap();
+    for destination in ["Dir/inner", "Dir/child/inner"] {
+        let moved = act(
+            &core,
+            &project,
+            &id,
+            Action::Move {
+                path: "Dir".into(),
+                destination: destination.into(),
+            },
+        )
+        .await;
+        match moved {
+            Err(CoreError::Invalid(message)) => {
+                assert!(
+                    message.contains("inside itself"),
+                    "{destination}: {message}"
+                )
+            }
+            other => panic!("{destination}: {other:?}"),
+        }
+    }
+    assert!(root.join("Dir/child").is_dir());
+    // `Dir2` only starts with the letters of `Dir`: it is another folder.
+    act(
+        &core,
+        &project,
+        &id,
+        Action::Move {
+            path: "Dir".into(),
+            destination: "Dir2/x".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(root.join("Dir2/x/child").is_dir());
+}
+
+#[test]
+fn the_case_blind_inside_check_compares_whole_components() {
+    use super::super::write::inside_ignoring_case;
+    let outer = Path::new("/r/Dir");
+    assert!(inside_ignoring_case(Path::new("/r/dIR/x"), outer));
+    assert!(inside_ignoring_case(Path::new("/r/DIR/x/y"), outer));
+    assert!(!inside_ignoring_case(Path::new("/r/Dir2/x"), outer));
+    assert!(
+        !inside_ignoring_case(Path::new("/r/dir"), outer),
+        "the same entry is not inside"
+    );
+    assert!(!inside_ignoring_case(Path::new("/r"), outer));
+}

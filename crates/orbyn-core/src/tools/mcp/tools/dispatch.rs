@@ -13,7 +13,8 @@ use crate::governance::approvals::{ActionAsk, Verdict};
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, CreateThread, DelegateTask, TaskSchedule, Thread, UpdateThread, UpsertTask,
+    ActionKind, CreateThread, DelegateTask, PermissionMode, TaskSchedule, Thread, UpdateThread,
+    UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -386,12 +387,27 @@ impl Core {
             "orbyn_thread_configure" => {
                 let thread = thread_arg()?;
                 let string = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
-                let mode = args
+                let mode: Option<PermissionMode> = args
                     .get("permission_mode")
                     .filter(|value| !value.is_null())
                     .map(|value| serde_json::from_value(value.clone()))
                     .transpose()
                     .map_err(|_| CoreError::Invalid("That is not a permission mode.".into()))?;
+                // A looser mode grants an engine more, so only the person may choose it, in the app (#441).
+                if let Some(wanted) = mode {
+                    let current = thread
+                        .lifecycle
+                        .as_ref()
+                        .map_or(PermissionMode::Supervised, |lifecycle| {
+                            lifecycle.permission_mode
+                        });
+                    if wanted.looser_than(current) {
+                        return Err(CoreError::Invalid(
+                            "An agent can't loosen a thread's permission mode. Ask the person to change it in the app."
+                                .into(),
+                        ));
+                    }
+                }
                 let patch = UpdateThread {
                     model: string("model"),
                     effort: string("effort"),

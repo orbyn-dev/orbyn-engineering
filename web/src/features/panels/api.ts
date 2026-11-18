@@ -135,6 +135,6 @@ export function listThreadScripts(threadId: string, signal?: AbortSignal) {
 export { ApiFailure, api, authHeaders } from "../../api/client";
 export { serviceSocketUrl, serviceUrl } from "../../api/origin";
 export { pullsApi } from "../../api/pulls";
-export { personKeyProtocols } from "../../api/personKey";
+export { forgetPersonKey, personKeyProtocols } from "../../api/personKey";
 export { inDesktopApp } from "../../api/shell";
 export { readToken } from "../../api/token";

@@ -35,7 +35,7 @@ async fn start_run(
 ) -> ApiResult<impl IntoResponse> {
     // A run may ask for a looser permission mode. Raising it grants an engine more, so it needs the person key (#441,
     // docs/worker-token-isolation.md); keeping or lowering the mode stays `Local`.
-    if let Some(wanted) = body.permission_mode {
+    let needs_key = |wanted: PermissionMode| -> ApiResult<()> {
         let current = state
             .core
             .store
@@ -44,9 +44,13 @@ async fn start_run(
             .map_or(PermissionMode::Supervised, |lifecycle| {
                 lifecycle.permission_mode
             });
-        if looser(wanted, current) {
+        if wanted.looser_than(current) {
             state.access.person_check(&headers)?;
         }
+        Ok(())
+    };
+    if let Some(wanted) = body.permission_mode {
+        needs_key(wanted)?;
     }
     let wanted = ModelSelection {
         model: body.model.clone(),
@@ -55,6 +59,11 @@ async fn start_run(
     };
     state.core.check_turn(&id, &wanted).await?;
     if body.permission_mode.is_some() || !selection::is_empty(&wanted) {
+        // `check_turn` awaited, so a person may have lowered the mode meanwhile: check again with no await before the write,
+        // or a token-only request that sent the old, equal mode would restore the looser one.
+        if let Some(mode) = body.permission_mode {
+            needs_key(mode)?;
+        }
         let patch = UpdateThread {
             permission_mode: body.permission_mode,
             model: wanted.model,
@@ -69,12 +78,6 @@ async fn start_run(
         .runs
         .admit_with(&id, &body.prompt, &body.attachment_ids, LOCAL_USER)?;
     Ok((StatusCode::ACCEPTED, Json(run)))
-}
-
-/// Whether `wanted` accepts more than `current` without asking (`PermissionMode::ALL` lists the modes loosest last).
-fn looser(wanted: PermissionMode, current: PermissionMode) -> bool {
-    let rank = |mode| PermissionMode::ALL.iter().position(|one| *one == mode);
-    rank(wanted) > rank(current)
 }
 
 async fn cancel_run(
@@ -114,11 +117,11 @@ mod tests {
     #[test]
     fn only_a_looser_mode_counts_as_raising_it() {
         use PermissionMode::*;
-        assert!(looser(AutoEdits, Supervised));
-        assert!(looser(FullAccess, Auto));
-        assert!(looser(FullAccess, Supervised));
-        assert!(!looser(Auto, Auto));
-        assert!(!looser(Supervised, FullAccess));
-        assert!(!looser(AutoEdits, Auto));
+        assert!(AutoEdits.looser_than(Supervised));
+        assert!(FullAccess.looser_than(Auto));
+        assert!(FullAccess.looser_than(Supervised));
+        assert!(!Auto.looser_than(Auto));
+        assert!(!Supervised.looser_than(FullAccess));
+        assert!(!AutoEdits.looser_than(Auto));
     }
 }

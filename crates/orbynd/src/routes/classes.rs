@@ -118,6 +118,25 @@ pub const ENFORCED: &[(&str, &str)] = &[
     // Projects, approvals and questions.
     ("POST", "/api/approvals/{id}/decide"),
     ("POST", "/api/projects/{id}/publish"),
+    ("POST", "/api/projects/{id}/pulls/close"),
+    ("PATCH", "/api/projects/{id}/pulls/{number}"),
+    ("POST", "/api/projects/{id}/pulls/{number}/action"),
+    ("POST", "/api/projects/{id}/pulls/{number}/comments"),
+    (
+        "PATCH",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}/react",
+    ),
+    ("POST", "/api/projects/{id}/pulls/{number}/labels"),
+    ("POST", "/api/projects/{id}/pulls/{number}/reviewers"),
+    ("POST", "/api/projects/{id}/pulls/{number}/stack"),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve",
+    ),
     ("POST", "/api/projects/{id}/pulls/{number}/merge"),
     ("POST", "/api/projects/{id}/pulls/{number}/review"),
     ("POST", "/api/projects/{id}/trust"),
@@ -502,6 +521,56 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/publish",
         "publishes the project to the forge",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/close",
+        "closes pull requests on the forge as the person",
+    ),
+    (
+        "PATCH",
+        "/api/projects/{id}/pulls/{number}",
+        "edits a pull request on the forge as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/action",
+        "closes, reopens, reverts or deletes the branch of a pull request as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/comments",
+        "posts a comment on the forge as the person",
+    ),
+    (
+        "PATCH",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}",
+        "edits the person's comment on the forge",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/comments/{comment}/react",
+        "reacts on the forge as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/labels",
+        "changes a pull request's labels on the forge",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/reviewers",
+        "requests or removes reviewers on the forge as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/stack",
+        "merges or updates a stack of pull requests as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve",
+        "resolves a review thread on the forge as the person",
     ),
     (
         "POST",

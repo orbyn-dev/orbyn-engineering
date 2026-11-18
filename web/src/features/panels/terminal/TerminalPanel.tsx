@@ -2,7 +2,7 @@ import { RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isTerminalShortcut } from "../../../product/shell/shortcuts";
 import { readingKey } from "./terminalKeys";
-import { api, personKeyProtocols } from "../api";
+import { api, forgetPersonKey, personKeyProtocols } from "../api";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
@@ -189,11 +189,16 @@ export function TerminalPanel({
         }
       };
 
+      let opened = false;
       socket.onopen = () => {
+        opened = true;
         setConnection("open");
         resize();
       };
       socket.onclose = () => {
+        // A browser reports a refused upgrade (403 person_required, a stale key) only as a close with no open before it, so forget
+        // the cached key: the reconnect then asks the shell for a fresh one.
+        if (!opened) forgetPersonKey();
         if (!disposed) setConnection("closed");
       };
       socket.onmessage = (message: MessageEvent<ArrayBuffer | string>) => {

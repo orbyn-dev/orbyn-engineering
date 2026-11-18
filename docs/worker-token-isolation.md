@@ -196,7 +196,7 @@ workspace and account routes, is closed by step 3.
 ### What browser mode and the CLI lose now
 
 Everything `Person`, which is now every write that grants authority: no sign-in, preferences, policy rules, approvals,
-trust, terminals, console, scripts, file writes, updates or Crew writes from a browser tab or a remote session, and a run
+trust, terminals, console, scripts, file writes, updates, forge writes (comments, labels, reviewers, edits, close, reopen, revert, delete branch, stack actions) or Crew writes from a browser tab or a remote session, and a run
 cannot raise its permission mode there. The `orbyn` CLI loses `orbyn theme set` and `orbyn theme clear` (`PUT /api/preferences`)
 and `orbyn update` (`POST /api/updates/app/apply`); each answers `403 desktop_required` or `person_required`. Reads,
 thread runs, queueing and every other `Local` route work as before.
@@ -212,5 +212,11 @@ The `Person` routes are closed to a token-only worker. This is what #441 still h
 - [ ] **`.git` closure on macOS.** The confinement does not close the repository's `.git` (`crew/classes/mod.rs`).
 - [ ] **`Local` routes stay open to a token holder.** Among them `POST /api/threads/{id}/git/action` (push), which is `Local`
   on purpose, runs without a raised mode, and the CLI's. Per-worker tokens (item 4) are the answer when a worker needs the API.
+- [ ] **Agent tool `orbyn_thread_configure`** refuses a looser `permission_mode` than the thread has; lowering or keeping it works.
+- [ ] **`POST /api/diagnostics/processes/{pid}/stop`** is `Local`. It can stop any process in the service's own tree, so a
+  token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
+- [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
+  .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: it links, watches or reads, and
+  writes nothing to the forge.
 - [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).
 - [ ] **Remote sessions** have no key, so they are read and `Local` only. A remote approve flow needs its own design.

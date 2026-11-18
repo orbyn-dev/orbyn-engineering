@@ -95,6 +95,16 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Projects, approvals and questions.
   ["POST", "/api/approvals/{id}/decide"],
   ["POST", "/api/projects/{id}/publish"],
+  ["POST", "/api/projects/{id}/pulls/close"],
+  ["PATCH", "/api/projects/{id}/pulls/{number}"],
+  ["POST", "/api/projects/{id}/pulls/{number}/action"],
+  ["POST", "/api/projects/{id}/pulls/{number}/comments"],
+  ["PATCH", "/api/projects/{id}/pulls/{number}/comments/{comment}"],
+  ["POST", "/api/projects/{id}/pulls/{number}/comments/{comment}/react"],
+  ["POST", "/api/projects/{id}/pulls/{number}/labels"],
+  ["POST", "/api/projects/{id}/pulls/{number}/reviewers"],
+  ["POST", "/api/projects/{id}/pulls/{number}/stack"],
+  ["POST", "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve"],
   ["POST", "/api/projects/{id}/pulls/{number}/merge"],
   ["POST", "/api/projects/{id}/pulls/{number}/review"],
   ["POST", "/api/projects/{id}/trust"],
@@ -117,11 +127,10 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/threads/{id}/pulls/{number}/review"],
   ["POST", "/api/threads/{id}/scripts"],
   ["POST", "/api/threads/{id}/terminals"],
-  /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
-  /// "field-level"): `(method, path, field)`. A test fails for an entry that is not a `local` row of `tests/routes.json`, and
-  /// the web client sends the key on these routes too (`web/src/api/personKey.ts`).
+  // Field-level routes (`FIELD_LEVEL` in classes.rs): `Local` as a whole, and the service reads the key for part of the body only.
+  // File actions: the key is read for every action except a plain read.
   ["POST", "/api/projects/{id}/worktrees/{worktree}/file-actions"],
-  // Field-level: the service reads the key only when the body raises `permission_mode` (or has a non-empty `resume`).
+  // Runs and AG-UI resume: only when the body raises `permission_mode` (or has a non-empty `resume`).
   ["POST", "/api/threads/{id}/runs"],
   ["POST", "/agui/threads/{id}"],
 ];
