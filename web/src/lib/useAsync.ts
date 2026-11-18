@@ -69,18 +69,19 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
     foreground.current = false;
     if (eventWaiting.current) {
       eventWaiting.current = false;
-      void runRef.current({ background: true, force: false });
+      // The follow-up holds the lane like a person's read: a tick during it waits for it instead of cutting it short.
+      void runRef.current({ background: true, force: false }, true);
     }
   };
-  const runRef = useRef<(context: LoadContext) => Promise<void>>(() => Promise.resolve());
-  const run = useCallback((context: LoadContext) => {
+  const runRef = useRef<(context: LoadContext, holdsLane?: boolean) => Promise<void>>(() => Promise.resolve());
+  const run = useCallback((context: LoadContext, holdsLane = false) => {
     // A person's read is on its way and will show its own result; an event must not cut it short,
     // but it may mean that result is already old, so one read follows it.
     if (context.background && foreground.current) {
       eventWaiting.current = true;
       return Promise.resolve();
     }
-    foreground.current = !context.background;
+    foreground.current = holdsLane || !context.background;
     const id = ++generation.current;
     const asked = keyRef.current;
     controller.current?.abort();

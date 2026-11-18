@@ -55,6 +55,86 @@ describe("useAsync", () => {
     await waitFor(() => expect(result.current.status).toBe("ready"));
   });
 
+  describe("refreshQuietly", () => {
+    type Reads = { signal: AbortSignal; resolve: (value: string) => void; reject: (error: unknown) => void }[];
+    const deferred = () => {
+      const reads: Reads = [];
+      const load = (signal: AbortSignal) =>
+        new Promise<string>((resolve, reject) => {
+          reads.push({ signal, resolve, reject });
+        });
+      return { reads, load };
+    };
+    const shown = async (reads: Reads, result: { current: { data: string | null } }) => {
+      await waitFor(() => expect(reads.length).toBeGreaterThan(0));
+      await act(async () => reads[0]?.resolve("one"));
+      expect(result.current.data).toBe("one");
+    };
+
+    it("replaces the data without a loading state or a refreshing flash", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      let pending!: Promise<void>;
+      act(() => { pending = result.current.refreshQuietly(); });
+      expect(result.current).toMatchObject({ status: "ready", data: "one", refreshing: false });
+      await act(async () => reads[1]?.resolve("two"));
+      await pending;
+      expect(result.current).toMatchObject({ status: "ready", data: "two", refreshing: false });
+    });
+
+    it("never puts an error over the data on screen", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.refreshQuietly(); });
+      await act(async () => reads[1]?.reject(new Error("down")));
+      expect(result.current).toMatchObject({ status: "ready", data: "one", error: null, refreshing: false });
+    });
+
+    it("waits behind a person's read and reads once more after it", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => { void result.current.refreshQuietly(); });
+      expect(reads).toHaveLength(2);
+      expect(reads[1]?.signal.aborted).toBe(false);
+      await act(async () => reads[1]?.resolve("mine"));
+      expect(result.current.data).toBe("mine");
+      expect(reads).toHaveLength(3);
+      await act(async () => reads[2]?.resolve("newer"));
+      expect(result.current.data).toBe("newer");
+    });
+
+    it("is cut short by a person's read, and its late answer is ignored", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.refreshQuietly(); });
+      act(() => { void result.current.reload(); });
+      expect(reads[1]?.signal.aborted).toBe(true);
+      await act(async () => reads[2]?.resolve("mine"));
+      await act(async () => reads[1]?.resolve("late"));
+      expect(result.current.data).toBe("mine");
+    });
+
+    it("does not abort the follow-up that runs after a person's read", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("q", load));
+      await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => { void result.current.refreshQuietly(); });
+      await act(async () => reads[1]?.resolve("mine"));
+      expect(reads).toHaveLength(3);
+      act(() => { void result.current.refreshQuietly(); });
+      expect(reads[2]?.signal.aborted).toBe(false);
+      expect(reads).toHaveLength(3);
+      await act(async () => reads[2]?.resolve("follow-up"));
+      expect(result.current.data).toBe("follow-up");
+    });
+  });
+
   describe("revisiting a key", () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
