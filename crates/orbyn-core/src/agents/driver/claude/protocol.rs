@@ -48,7 +48,14 @@ pub(super) async fn run_protocol(
         tracing::debug!(%error, "could not write the prompt");
     }
     let mut stdin = process.stdin;
-    let mut mapper = StreamMapper::answering(&uuid);
+    // A slash command or skill expands into messages with uuids of their own, so no echo of ours
+    // is promised; only a plain prompt is told apart from leftovers this way.
+    let plain = matches!(spec.kind, RunKind::Turn) && !spec.prompt.trim_start().starts_with('/');
+    let mut mapper = if plain {
+        StreamMapper::answering(&uuid)
+    } else {
+        StreamMapper::default()
+    };
     let mut stream = lines(process.stdout);
     let mut outcome = None;
     let mut grace = None;

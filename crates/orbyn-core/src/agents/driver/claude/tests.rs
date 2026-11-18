@@ -120,6 +120,29 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
 }
 
 #[test]
+fn a_leftover_turn_that_fails_before_streaming_does_not_fail_the_prompt() {
+    let mut mapper = StreamMapper::answering("mine");
+    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
+        "task_id": "a1", "status": "completed" }));
+    mapper.on_frame(
+        &json!({ "type": "result", "subtype": "error_during_execution",
+        "is_error": true, "errors": ["overloaded"] }),
+    );
+    assert!(mapper.outcome.is_none());
+}
+
+#[test]
+fn a_foreground_agent_does_not_hold_the_run() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(
+        &json!({ "type": "system", "subtype": "task_started", "task_id": "f1",
+        "task_type": "local_agent", "is_backgrounded": false }),
+    );
+    mapper.on_frame(&done());
+    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+}
+
+#[test]
 fn a_failed_leftover_turn_does_not_fail_the_prompt() {
     let failure = json!({ "type": "result", "subtype": "error_during_execution",
         "is_error": true, "errors": ["leftover failed"] });

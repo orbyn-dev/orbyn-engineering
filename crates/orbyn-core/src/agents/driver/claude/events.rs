@@ -113,6 +113,10 @@ impl StreamMapper {
         if kind == "local_workflow" {
             return;
         }
+        // A subagent the model waits on ends with its tool result, not with a notification.
+        if frame.get("is_backgrounded").and_then(Value::as_bool) == Some(false) {
+            return;
+        }
         let description = text_of(frame, "description");
         self.background
             .insert(id, BackgroundTask { kind, description });
@@ -156,7 +160,12 @@ impl StreamMapper {
                 && frame.get("uuid").and_then(Value::as_str) == self.awaiting.as_deref()
             {
                 self.awaiting = None;
-            } else if matches!(kind, Some("assistant" | "stream_event")) {
+            } else if matches!(kind, Some("assistant" | "stream_event"))
+                || (kind == Some("system")
+                    && frame.get("subtype").and_then(Value::as_str) == Some("task_notification"))
+            {
+                // A notification ahead of the prompt starts a turn of its own, which may fail before
+                // it streams anything.
                 self.leftover = true;
             }
         }
