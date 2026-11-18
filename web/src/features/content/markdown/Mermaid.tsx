@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useUi } from "../../../product/state/ui";
 import { CodeBlock } from "../code/CodeBlock";
 import { MAX_DIAGRAM_CHARS, mermaidConfig, sanitizeSvg } from "./mermaidSafety";
@@ -10,7 +10,7 @@ const dark = (theme: string) =>
 export function Mermaid({ code }: { code: string }) {
   const theme = useUi((state) => state.theme);
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
-  const [drawn, setDrawn] = useState<{ code: string; svg: string } | null>(null);
+  const [drawn, setDrawn] = useState<{ code: string; svg: SVGElement } | null>(null);
   useEffect(() => {
     let current = true;
     // Settles after streaming; a broken diagram simply keeps its source showing.
@@ -34,5 +34,14 @@ export function Mermaid({ code }: { code: string }) {
     };
   }, [code, id, theme]);
   if (drawn?.code !== code) return <CodeBlock code={code} lang="mermaid" />;
-  return <div className="md-diagram" role="img" aria-label="Diagram" dangerouslySetInnerHTML={{ __html: drawn.svg }} />;
+  return <Drawing svg={drawn.svg} />;
+}
+
+/** Inserts the already-cleaned SVG nodes directly, so what was checked is what the page gets. */
+function Drawing({ svg }: { svg: SVGElement }) {
+  const host = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    host.current?.replaceChildren(document.importNode(svg, true));
+  }, [svg]);
+  return <div ref={host} className="md-diagram" role="img" aria-label="Diagram" />;
 }

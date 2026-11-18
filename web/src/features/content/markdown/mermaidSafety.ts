@@ -12,7 +12,7 @@ export const SECURE_KEYS = [
   "maxTextSize",
   "maxEdges",
   "htmlLabels",
-  "flowchart",
+  "suppressErrorRendering",
   "theme",
   "themeCSS",
   "themeVariables",
@@ -30,44 +30,93 @@ export function mermaidConfig(dark: boolean) {
     startOnLoad: false,
     securityLevel: "strict" as const,
     theme: dark ? ("dark" as const) : ("neutral" as const),
+    // The root setting wins over the deprecated per-diagram ones in this Mermaid version.
     htmlLabels: false,
-    flowchart: { htmlLabels: false },
+    suppressErrorRendering: true,
     maxTextSize: MAX_DIAGRAM_CHARS,
     maxEdges: MAX_DIAGRAM_EDGES,
     secure: SECURE_KEYS,
   };
 }
 
-const FORBIDDEN = new Set(["script", "foreignobject", "iframe", "object", "embed", "image", "use", "a", "animate", "set", "handler", "listener"]);
-const UNSAFE_CSS = /@import|url\(\s*['"]?\s*(?!#)|javascript:|expression\(|behavior:|-moz-binding/i;
-const SAFE_URL = /^\s*#/;
+const SVG_NS = "http://www.w3.org/2000/svg";
+/** Elements removed with their content. This is a denylist (plus the namespace check), not an allowlist. */
+const FORBIDDEN = new Set([
+  "script", "foreignobject", "iframe", "object", "embed", "image", "audio", "video", "canvas",
+  "animate", "animatetransform", "animatemotion", "set", "handler", "listener",
+]);
+
+/** Lower-cases, strips comments and decodes CSS escapes so `\69mport` and `u\72l(` read as written. */
+function normaliseCss(value: string): string {
+  return value
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?/g, (_, hex: string) => {
+      const code = parseInt(hex, 16);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "";
+    })
+    .replace(/\\([\s\S])/g, "$1")
+    .toLowerCase();
+}
+
+/** True when CSS (a style element or any attribute value) could load or run something outside this document. */
+function unsafeCss(raw: string): boolean {
+  const css = normaliseCss(raw);
+  if (/@import|image-set\(|src\(|expression\(|javascript:|vbscript:|behavior:|-moz-binding|cross-fade\(|element\(/.test(css)) return true;
+  for (const match of css.matchAll(/url\(\s*(['"]?)\s*(.?)/g)) if (match[2] !== "#") return true;
+  return false;
+}
+
+function cleanAttributes(el: Element): void {
+  for (const attr of Array.from(el.attributes)) {
+    const name = attr.name.toLowerCase();
+    const reference = name === "href" || name.endsWith(":href") || name === "src";
+    const bad =
+      name.startsWith("on") ||
+      (reference && !/^\s*#/.test(attr.value)) ||
+      (name !== "d" && unsafeCss(attr.value)) ||
+      /^\s*(javascript|data|vbscript):/i.test(attr.value);
+    if (bad) el.removeAttribute(attr.name);
+  }
+}
+
+/** Removes everything unsafe from `parent`'s subtree, in place. */
+function cleanChildren(parent: Element): void {
+  let child = parent.firstChild;
+  while (child) {
+    let next = child.nextSibling;
+    if (child.nodeType === 1) {
+      const el = child as Element;
+      const tag = el.localName.toLowerCase();
+      if (el.namespaceURI !== SVG_NS || FORBIDDEN.has(tag) || (tag === "style" && unsafeCss(el.textContent ?? ""))) {
+        el.remove();
+      } else if (tag === "a") {
+        // Mermaid wraps a clickable node's shape and label in <a>: keep them, lose the link.
+        const kids = Array.from(el.childNodes);
+        el.replaceWith(...kids);
+        next = kids[0] ?? next;
+      } else {
+        cleanAttributes(el);
+        cleanChildren(el);
+      }
+    } else if (child.nodeType !== 3) {
+      child.remove(); // comments, processing instructions, CDATA
+    }
+    child = next;
+  }
+}
 
 /**
- * Allowlist-style clean-up of Mermaid's SVG before it enters the page. Returns "" when the markup is not one SVG
- * document, so the caller falls back to the source. Removes script, foreignObject, frames, embeds, `on*` handlers,
- * `style` elements and any external or `javascript:` or `data:` reference (only same-document `#id` references stay).
+ * Cleans Mermaid's SVG before it enters the page. It parses as HTML (what an innerHTML insert would do, so `&nbsp;`
+ * and friends are accepted), keeps only the SVG-namespace root, removes denylisted elements, non-element nodes,
+ * `on*` handlers, `javascript:`/`data:` values and any reference or CSS URL that is not a same-document `#id`, and
+ * unwraps `<a>` links. Returns the cleaned element itself (insert it directly; do not re-serialise), or null when the
+ * markup holds no SVG root.
  */
-export function sanitizeSvg(markup: string): string {
-  const doc = new DOMParser().parseFromString(markup, "image/svg+xml");
-  const root = doc.documentElement;
-  if (!root || root.localName !== "svg" || doc.getElementsByTagName("parsererror").length > 0) return "";
-  const walk = (node: Element) => {
-    for (const child of Array.from(node.children)) {
-      const tag = child.localName.toLowerCase();
-      // Mermaid's own theme lives in a <style> element; keep it unless it reaches outside the document.
-      if (FORBIDDEN.has(tag) || (tag === "style" && UNSAFE_CSS.test(child.textContent ?? ""))) child.remove();
-      else walk(child);
-    }
-    for (const attr of Array.from(node.attributes)) {
-      const name = attr.name.toLowerCase();
-      const value = attr.value;
-      const reference = name === "href" || name.endsWith(":href") || name === "src";
-      const externalUrl = /url\(\s*['"]?\s*(?!#)/i.test(value) || /javascript:|data:|expression\(/i.test(value);
-      if (name.startsWith("on") || (reference && !SAFE_URL.test(value)) || (name === "style" && externalUrl) || (externalUrl && name !== "d")) {
-        node.removeAttribute(attr.name);
-      }
-    }
-  };
-  walk(root);
-  return new XMLSerializer().serializeToString(root);
+export function sanitizeSvg(markup: string): SVGElement | null {
+  const doc = new DOMParser().parseFromString(markup, "text/html");
+  const root = doc.body.querySelector("svg");
+  if (!root || root.namespaceURI !== SVG_NS) return null;
+  cleanAttributes(root);
+  cleanChildren(root);
+  return root as SVGElement;
 }

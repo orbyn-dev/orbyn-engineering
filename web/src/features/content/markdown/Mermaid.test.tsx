@@ -32,10 +32,11 @@ describe("Mermaid", () => {
       startOnLoad: false,
       securityLevel: "strict",
       htmlLabels: false,
-      flowchart: { htmlLabels: false },
+      suppressErrorRendering: true,
       maxTextSize: MAX_DIAGRAM_CHARS,
     });
     expect(config.maxEdges).toBeGreaterThan(0);
+    expect(config).not.toHaveProperty("flowchart");
     expect(config).not.toHaveProperty("themeCSS");
     expect(config).not.toHaveProperty("themeVariables");
   });
@@ -45,7 +46,7 @@ describe("Mermaid", () => {
     await waitFor(() => expect(initialize).toHaveBeenCalled());
     const config = initialize.mock.calls[0]![0] as { secure: string[]; securityLevel: string };
     expect(config.securityLevel).toBe("strict");
-    for (const key of ["securityLevel", "htmlLabels", "startOnLoad", "maxTextSize", "maxEdges", "theme", "themeCSS", "themeVariables", "flowchart"]) {
+    for (const key of ["securityLevel", "htmlLabels", "startOnLoad", "maxTextSize", "maxEdges", "theme", "themeCSS", "themeVariables", "suppressErrorRendering"]) {
       expect(config.secure).toContain(key);
     }
     expect(SECURE_KEYS).toBe(config.secure);
@@ -97,18 +98,71 @@ describe("Mermaid", () => {
   });
 });
 
+const SVG = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+const clean = (markup: string) => sanitizeSvg(markup)?.outerHTML ?? "";
+
 describe("sanitizeSvg", () => {
-  it("removes frames, embeds, external references and style URLs but keeps same-document ones", () => {
-    const out = sanitizeSvg(
-      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><style>.a{fill:red}</style><style>@import url(http://x/y.css)</style><iframe/><object/><embed/><image href="http://x/i.png"/><path marker-end="url(#m)" d="M0 0"/><rect style="fill:url(http://x)"/><use xlink:href="data:text/xml,x"/></svg>',
-    );
-    expect(out).not.toMatch(/iframe|object|embed|image|http:\/\/x|data:|@import|<use/i);
-    expect(out).toContain("fill:red");
-    expect(out).toContain("url(#m)");
+  it("keeps a label written with a non-breaking space entity", () => {
+    expect(sanitizeSvg(SVG("<text>a&nbsp;b</text>"))?.textContent).toBe("a\u00a0b");
   });
 
-  it("returns an empty string for malformed or non-SVG input", () => {
-    expect(sanitizeSvg("<svg><g></svg>")).toBe("");
-    expect(sanitizeSvg("<html/>")).toBe("");
+  it("unwraps a link, keeping the node and label but not the link", () => {
+    const out = clean(SVG('<a xlink:href="https://evil.test" href="javascript:alert(1)" target="_blank"><rect id="n"/><text>Label</text></a>'));
+    expect(out).toContain('<rect id="n">');
+    expect(out).toContain("Label");
+    expect(out).not.toMatch(/<a[ >]|href|evil|javascript/i);
+  });
+
+  it("drops processing instructions, CDATA and comments (mXSS payload)", () => {
+    const hostile = [
+      '<svg xmlns="http://www.w3.org/2000/svg"><?x > <img src=x onerror=window.__pwn1=1> ?></svg>',
+      SVG("<![CDATA[<img src=x onerror=window.__pwn2=1>]]>"),
+      SVG("<!-- <img src=x onerror=window.__pwn3=1> --><g/>"),
+    ];
+    for (const markup of hostile) {
+      const out = sanitizeSvg(markup);
+      const holder = document.createElement("div");
+      if (out) holder.append(out);
+      expect(holder.querySelector("img")).toBeNull();
+      for (const el of Array.from(holder.querySelectorAll("*"))) {
+        expect(el.getAttributeNames().filter((n) => n.startsWith("on"))).toEqual([]);
+      }
+      expect(holder.innerHTML).not.toMatch(/<!--|<\?/);
+    }
+  });
+
+  it("rejects CSS reached through escapes, comments and image-set in style elements and attributes", () => {
+    for (const css of [
+      '@\\69mport "https://x/a.css";',
+      "a{fill:u\\72l(https://x/a)}",
+      'a{background:image-set("https://x/a.png" 1x)}',
+      "a{background:u/**/rl(https://x/a)}",
+      "a{background:SRC(https://x/a)}",
+      "a{width:expression(alert(1))}",
+    ]) {
+      expect(clean(SVG(`<style>${css}</style><g/>`)), css).not.toContain("<style");
+    }
+    for (const css of ["fill:u\\72l(https://x/a)", 'background:image-set("https://x/a.png" 1x)', "fill:url( 'https://x/a' )"]) {
+      expect(clean(SVG(`<rect style="${css.replace(/"/g, "&quot;")}"/>`)), css).not.toContain("style=");
+    }
+  });
+
+  it("removes script, frames, embeds, external references and handlers but keeps theme CSS and #id references", () => {
+    const out = clean(
+      SVG(
+        '<style>.a{fill:red}</style><iframe/><object/><image href="http://x/i.png"/><path marker-end="url(#m)" d="M0 0" onclick="x()"/><rect style="fill:url(#g)"/><use xlink:href="data:text/xml,x"/><script>1</script>',
+      ),
+    );
+    expect(out).not.toMatch(/iframe|object|embed|image|http:\/\/x|data:|<script|onclick/i);
+    expect(out).toContain("fill:red");
+    // <embed> ends foreign content in the HTML parser; it can never survive into the result either way.
+    expect(clean(SVG("<embed/><g/>"))).not.toMatch(/embed/i);
+    expect(out).toContain("url(#m)");
+    expect(out).toContain("url(#g)");
+  });
+
+  it("returns null when there is no SVG root", () => {
+    expect(sanitizeSvg("<div>no</div>")).toBeNull();
+    expect(sanitizeSvg("")).toBeNull();
   });
 });
