@@ -640,6 +640,52 @@ async fn claude_launches_reach(file: &std::path::Path, wanted: usize) {
     panic!("{} launches, wanted {wanted}", claude_run_launches(file));
 }
 
+/// The CLI leaves the modern task tools out on newer and unrecognized models unless a
+/// run asks for them. The driver projects `TaskCreate`, `TaskUpdate` and `TaskList` into
+/// the same plan activity as `TodoWrite`, so a run must carry the opt-in; without it no
+/// Tasks row can appear. The seeded `0` proves the run overrides an inherited value
+/// instead of passing through whatever the service was started with.
+#[tokio::test]
+async fn a_claude_run_opts_into_the_task_tools_the_plan_row_projects() {
+    let dir = TempDir::new();
+    let file = dir.path().join("launches");
+    let options = Options {
+        env: vec![
+            (
+                "ORBYN_FAKE_LAUNCH_FILE".into(),
+                file.to_string_lossy().into_owned(),
+            ),
+            ("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "0".into()),
+        ],
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options, "claude").await;
+    service.admit(&thread, "say hi").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let launches: Vec<Value> = std::fs::read_to_string(&file)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|entry| entry["mode"] == "claude")
+        .collect();
+    // The capability probe and the one-shot title call are Claude launches too, and the
+    // opt-in belongs to runs alone.
+    let (runs, others): (Vec<&Value>, Vec<&Value>) = launches.iter().partition(|entry| {
+        entry["args"]
+            .as_array()
+            .is_some_and(|args| args.iter().any(|arg| arg == "--permission-prompt-tool"))
+    });
+    assert_eq!(runs.len(), 1, "{launches:?}");
+    assert_eq!(runs[0]["task_tools"], "1");
+    assert!(!others.is_empty(), "{launches:?}");
+    for entry in others {
+        assert_ne!(
+            entry["task_tools"], "1",
+            "a non-run launch took the driver's opt-in: {entry}"
+        );
+    }
+}
+
 /// The thread's events through the end of its `runs`th run.
 async fn events_through(service: &Service, thread: &str, runs: usize) -> Vec<Value> {
     let ended = std::cell::Cell::new(0);

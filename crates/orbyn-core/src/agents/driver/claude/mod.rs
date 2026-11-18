@@ -42,7 +42,7 @@ use crate::agents::engines::maintenance;
 use crate::agents::engines::probe::{probe_cli, read_login};
 use crate::error::{CoreError, Result};
 use crate::util::write_private;
-use args::CAPABILITY_ENV;
+use args::{CAPABILITY_ENV, RUN_ENV};
 use catalog::{documented_catalog, probe_failed, read_control};
 use mcp::{SERVERS_LEARNED, claude_tools, learn_servers, list_mcp};
 use protocol::{Inputs, run_protocol};
@@ -430,7 +430,7 @@ impl ClaudeDriver {
             write_private(&run_settings_path(spec), settings.to_string().as_bytes())?;
         }
         let args = run_args(spec, &mcp_path);
-        spawn_engine_confined(&command, &args, &spec.cwd, &[], spec.confine.as_ref())
+        spawn_engine_confined(&command, &args, &spec.cwd, RUN_ENV, spec.confine.as_ref())
     }
 
     /// Reads the CLI's `initialize` response from a process that never gets a

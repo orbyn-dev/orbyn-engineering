@@ -1835,9 +1835,10 @@ Delivery to clients is a projection of the log; a client that reconnects loses
 nothing.
 
 A plan has two forms. Steps are a `plan` activity, from Codex's `turn/plan/updated` and
-Claude's `TodoWrite`. A proposed plan is an assistant message holding
-`<proposed_plan>...</proposed_plan>`, from Codex's finished `plan` item and Claude's
-`ExitPlanMode`, so it also reaches a handoff and search. A subagent's stay out.
+Claude's `TodoWrite`, `TaskCreate`, `TaskUpdate` and `TaskList`. A proposed plan is an
+assistant message holding `<proposed_plan>...</proposed_plan>`, from Codex's finished
+`plan` item and Claude's `ExitPlanMode`, so it also reaches a handoff and search. A
+subagent's stay out.
 
 Activity types are `approval` (content is the `Approval`), `plan`
 (`{steps: [{title, status}]}`), `diff` (`{files: [{path, additions, deletions}]}`)
