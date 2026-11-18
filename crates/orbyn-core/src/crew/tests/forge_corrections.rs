@@ -243,23 +243,25 @@ async fn a_core_correction_earns_its_review_gate_and_reconciles_one_published_pr
         assert_eq!(reverted.review_state, "reverted");
         assert_eq!(reverted.reverted_commit, state.lock().unwrap().merged);
         // Crash after the corrective merge record, before projecting the original parent.
-        let conn = s.w.core.store.reader();
-        conn.execute(
-            "UPDATE crew_forge_corrections SET completed_commit=NULL WHERE task_id=?1",
-            [&correction.task_id],
-        )
-        .unwrap();
-        conn.execute(
-            "UPDATE crew_merges SET review_state='waiting',reverted_commit=NULL WHERE task_id=?1",
-            [&s.task],
-        )
-        .unwrap();
-        conn.execute(
-            "DELETE FROM crew_autopilot_events WHERE task_id=?1 AND kind='reverted'",
-            [&s.task],
-        )
-        .unwrap();
-        drop(conn);
+        {
+            let conn = s.w.core.store.reader();
+            conn.execute(
+                "UPDATE crew_forge_corrections SET completed_commit=NULL WHERE task_id=?1",
+                [&correction.task_id],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE crew_merges SET review_state='waiting',reverted_commit=NULL WHERE task_id=?1",
+                [&s.task],
+            )
+            .unwrap();
+            conn.execute(
+                "DELETE FROM crew_autopilot_events WHERE task_id=?1 AND kind='reverted'",
+                [&s.task],
+            )
+            .unwrap();
+
+        }
         let merge_owner=s.w.core.crew_merges.lock().await;
         let mut recovery=Box::pin(s.w.core.resume_forge_corrections(NOW+5));
         tokio::select! {
@@ -288,20 +290,22 @@ async fn a_core_correction_earns_its_review_gate_and_reconciles_one_published_pr
         );
 
         // Crash after parent projection, with area projection unavailable. Completion must remain pending.
-        let conn = s.w.core.store.reader();
-        conn.execute(
-            "UPDATE crew_forge_corrections SET completed_commit=NULL WHERE task_id=?1",
-            [&correction.task_id],
-        )
-        .unwrap();
-        conn.execute(
-            "DELETE FROM crew_autopilot_events WHERE task_id=?1 AND kind='reverted'",
-            [&s.task],
-        )
-        .unwrap();
-        conn.execute_batch("ALTER TABLE crew_area_modes RENAME TO correction_held_area_modes")
+        {
+            let conn = s.w.core.store.reader();
+            conn.execute(
+                "UPDATE crew_forge_corrections SET completed_commit=NULL WHERE task_id=?1",
+                [&correction.task_id],
+            )
             .unwrap();
-        drop(conn);
+            conn.execute(
+                "DELETE FROM crew_autopilot_events WHERE task_id=?1 AND kind='reverted'",
+                [&s.task],
+            )
+            .unwrap();
+            conn.execute_batch("ALTER TABLE crew_area_modes RENAME TO correction_held_area_modes")
+                .unwrap();
+
+        }
         s.w.core
             .run_crew_merge_watch(tokio_util::sync::CancellationToken::new())
             .await
@@ -662,6 +666,17 @@ async fn a_certain_forge_watch_prepares_a_reviewable_correction_without_moving_m
                 .is_some_and(|g| g.decision == orbyn_contracts::GateDecision::Pass)
         })
         .await;
+        // This synthetic verifier explicitly reads the changed file. Preserve the existing
+        // check-input hold: normal review cannot waive it, only a person's release can.
+        let held =
+            s.w.core
+                .store
+                .merge_entry(&correction.task_id)
+                .unwrap()
+                .unwrap();
+        assert_eq!(held.state, "waiting");
+        assert!(held.note.unwrap().contains("checks runs or reads"));
+        s.w.core.crew_release_merge(&correction.task_id).unwrap();
         let correction_intent =
             s.w.core
                 .store
