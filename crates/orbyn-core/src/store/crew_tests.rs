@@ -365,6 +365,7 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_finding_repros",
             "crew_findings",
             "crew_fixes",
+            "crew_forge_corrections",
             "crew_forge_merges",
             "crew_gates",
             "crew_guard_targets",
