@@ -53,7 +53,16 @@ export function ApprovalCard({ approval, onChanged, onBack }: { approval: Accoun
 
   const leave = async (to: "sign-in" | "home") => {
     setBusy(true);
-    await accountApi.cancelSignIn().catch(() => undefined);
+    try {
+      await accountApi.cancelSignIn();
+    } catch {
+      if (open) {
+        setFailures(LOOK_FAILURES);
+        return;
+      }
+    } finally {
+      setBusy(false);
+    }
     onBack(to);
   };
 
