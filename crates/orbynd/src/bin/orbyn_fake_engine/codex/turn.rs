@@ -23,15 +23,18 @@ pub(super) fn codex_finish(state: &CodexState, status: &str) {
     }}));
 }
 
-/// Sends a server request and waits for its answer, as app-server does.
 const AGENT_THREAD: &str = "codex-agent-thread";
 
 /// Scenario tags where the parent's turn completes while a sub-agent still runs.
-const BACKGROUND_TAGS: [&str; 4] = [
+const BACKGROUND_TAGS: [&str; 8] = [
     "bg-agent-finish",
     "bg-agent-quiet",
     "bg-agent-hang",
     "bg-agent-exit",
+    "bg-agent-crash",
+    "bg-agent-error",
+    "bg-agent-closed",
+    "bg-agent-stale",
 ];
 
 fn agent_status(status: &str) {
@@ -67,10 +70,14 @@ fn codex_spawn_agent(state: &CodexState) {
 fn codex_background_end(state: &CodexState, lines: &mut impl Iterator<Item = Value>) {
     let prompt = &state.prompt;
 
-    if has(prompt, "bg-agent-exit") {
+    // Said after the turn completed: a driver that held the run reads it, and one
+    // that ended the run never does.
+    send(&json!({ "method": "warning", "params": { "message": "agent still running" } }));
+
+    if has(prompt, "bg-agent-exit") || has(prompt, "bg-agent-crash") {
         std::thread::sleep(std::time::Duration::from_millis(200));
 
-        std::process::exit(0);
+        std::process::exit(if has(prompt, "bg-agent-crash") { 3 } else { 0 });
     }
 
     if has(prompt, "bg-agent-hang") {
@@ -86,7 +93,27 @@ fn codex_background_end(state: &CodexState, lines: &mut impl Iterator<Item = Val
 
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    agent_status("idle");
+    if has(prompt, "bg-agent-error") {
+        agent_status("systemError");
+    } else if has(prompt, "bg-agent-closed") {
+        send(&json!({ "method": "thread/closed", "params": { "threadId": AGENT_THREAD } }));
+    } else {
+        agent_status("idle");
+    }
+
+    if has(prompt, "bg-agent-stale") {
+        // A call's state, delivered after the thread's own status said it ended.
+        codex_note(
+            state,
+            "item/completed",
+            json!({ "item": {
+                "type": "collabAgentToolCall", "id": "collab1", "tool": "spawnAgent",
+                "status": "completed", "senderThreadId": state.thread,
+                "receiverThreadIds": [AGENT_THREAD], "prompt": "probe",
+                "agentsStates": { AGENT_THREAD: { "status": "running", "message": null } },
+            }}),
+        );
+    }
 
     if has(prompt, "bg-agent-finish") {
         // The agent's result reaches the parent, which answers in a turn of its own.
@@ -113,6 +140,7 @@ fn codex_background_end(state: &CodexState, lines: &mut impl Iterator<Item = Val
     }
 }
 
+/// Sends a server request and waits for its answer, as app-server does.
 fn codex_request(method: &str, params: Value, lines: &mut impl Iterator<Item = Value>) -> Value {
     send(&json!({ "id": 900, "method": method, "params": params }));
 
@@ -572,6 +600,15 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
 
     if background {
         codex_spawn_agent(state);
+    }
+
+    if has(prompt, "bg-internal") {
+        // An agent the engine runs for itself, still active when the turn ends.
+        send(&json!({ "method": "thread/started", "params": { "thread": {
+            "id": "codex-review-thread", "parentThreadId": state.thread,
+            "status": { "type": "active", "activeFlags": [] },
+            "source": { "subAgent": "review" },
+        }}}));
     }
 
     if has(prompt, "fail") {

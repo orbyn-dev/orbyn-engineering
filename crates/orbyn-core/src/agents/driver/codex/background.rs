@@ -5,6 +5,11 @@
 //! "Codex run end"). The signals are those of the app-server protocol (generated
 //! with `codex app-server generate-json-schema`, Codex 0.166.0):
 //!
+//! A thread's own status is the authority: an item's state may mark an agent running,
+//! but never one that a `thread/status/changed` or `thread/closed` has ended; only a
+//! later `active` status revives it. Sub-agents the engine runs for itself (review,
+//! compact, memory consolidation, `other`) are not the person's work and are not held.
+//!
 //! - `thread/started`: `thread.parentThreadId`, or `thread.source.subAgent.thread_spawn
 //!   .parent_thread_id`, names the parent; `thread.status.type` is the first state.
 //! - `thread/status/changed`: `threadId` and `status.type`, `active` while it runs
@@ -13,8 +18,8 @@
 //! - an `item/started` or `item/completed` of type `collabAgentToolCall`:
 //!   `receiverThreadIds` and `agentsStates.<id>.status` (`pendingInit` and `running`
 //!   are live; `completed`, `errored`, `interrupted`, `shutdown`, `notFound` are not).
-//! - an item of type `subAgentActivity`: `agentThreadId` and `kind` (`started` and
-//!   `interacted` are live; `completed`, `interrupted` are not).
+//! - an item of type `subAgentActivity`: `agentThreadId` and `kind` (`started` is
+//!   live; `completed` and `interrupted` are not; `interacted` changes nothing).
 //!
 //! Background shells have no such signal: a `commandExecution` item that has not
 //! completed looks the same whether a dev server or an interrupted command left it,
@@ -25,9 +30,14 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// How long a held run waits for its background work, when the person does not
-/// cancel first. Overridden in tests by `ORBYN_CODEX_BACKGROUND_LIMIT_MS`.
-const BACKGROUND_LIMIT: Duration = Duration::from_secs(60 * 60);
+/// How long a held run waits for its background work in all, when the person does
+/// not cancel first. Overridden in tests by `ORBYN_CODEX_BACKGROUND_LIMIT_MS`.
+const BACKGROUND_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// How long a held run waits with no notification from its thread or any agent it
+/// tracks: a finish signal that never came must not hold the run for the whole limit.
+/// Overridden in tests by `ORBYN_CODEX_BACKGROUND_IDLE_MS`.
+const IDLE_LIMIT: Duration = Duration::from_secs(5 * 60);
 
 /// After the last agent ends, how long to wait for the turn its result starts.
 pub(super) const FOLLOW_UP_GRACE: Duration = Duration::from_secs(2);
@@ -39,9 +49,18 @@ pub(super) fn limit() -> Duration {
         .map_or(BACKGROUND_LIMIT, Duration::from_millis)
 }
 
+pub(super) fn idle_limit() -> Duration {
+    std::env::var("ORBYN_CODEX_BACKGROUND_IDLE_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .map_or(IDLE_LIMIT, Duration::from_millis)
+}
+
 /// A sub-agent thread, the run's own or a descendant's.
 struct Agent {
     running: bool,
+    /// Its thread status or `thread/closed` said it ended; an item cannot revive it.
+    ended: bool,
     label: Option<String>,
 }
 
@@ -106,18 +125,43 @@ impl Background {
         thread == self.session || self.agents.contains_key(thread)
     }
 
-    fn mark(&mut self, id: &str, running: bool, label: Option<String>) {
-        let agent = self.agents.entry(id.to_owned()).or_insert(Agent {
-            running,
+    fn agent(&mut self, id: &str) -> &mut Agent {
+        self.agents.entry(id.to_owned()).or_insert(Agent {
+            running: false,
+            ended: false,
             label: None,
-        });
+        })
+    }
+
+    /// The thread's own word: running or ended.
+    fn thread_says(&mut self, id: &str, running: bool) {
+        let agent = self.agent(id);
+        agent.running = running;
+        agent.ended = !running;
+        if running {
+            self.followed = false;
+        }
+    }
+
+    /// An item's word: it may say an agent runs only if its thread has not ended.
+    fn item_says(&mut self, id: &str, running: bool) {
+        let agent = self.agent(id);
+        if running && agent.ended {
+            return;
+        }
         agent.running = running;
         if running {
             self.followed = false;
         }
-        if label.is_some() {
-            agent.label = label;
-        }
+    }
+
+    /// The notification is about this run's thread or an agent it tracks.
+    pub(super) fn involves(&self, params: &Value) -> bool {
+        let thread = params
+            .get("threadId")
+            .or_else(|| params.pointer("/thread/id"))
+            .and_then(Value::as_str);
+        thread.is_some_and(|thread| self.ours(thread))
     }
 
     /// Reads one notification. `ours` is the turn started for the person's prompt.
@@ -130,14 +174,14 @@ impl Background {
                 if let (Some(thread), Some(status)) = (thread, status)
                     && self.agents.contains_key(thread)
                 {
-                    self.mark(thread, status == "active", None);
+                    self.thread_says(thread, status == "active");
                 }
             }
             "thread/closed" => {
                 if let Some(thread) = params.get("threadId").and_then(Value::as_str)
                     && self.agents.contains_key(thread)
                 {
-                    self.mark(thread, false, None);
+                    self.thread_says(thread, false);
                 }
             }
             "item/started" | "item/completed" => {
@@ -171,12 +215,27 @@ impl Background {
         if parent.is_none_or(|parent| !self.ours(parent)) {
             return;
         }
+        // Review, compaction, memory and other agents the engine runs for itself.
+        let internal = thread
+            .pointer("/source/subAgent")
+            .is_some_and(|source| source.is_string() || source.get("other").is_some());
+        if internal {
+            return;
+        }
         let status = thread.pointer("/status/type").and_then(Value::as_str);
         let label = thread
             .pointer("/source/subAgent/thread_spawn/agent_nickname")
             .and_then(Value::as_str)
             .map(str::to_owned);
-        self.mark(id, status == Some("active"), label);
+        let agent = self.agent(id);
+        agent.running = status == Some("active");
+        agent.ended = status == Some("systemError");
+        if label.is_some() {
+            agent.label = label;
+        }
+        if agent.running {
+            self.followed = false;
+        }
     }
 
     fn item(&mut self, item: &Value) {
@@ -207,7 +266,7 @@ impl Background {
                         },
                     };
                     if let Some(running) = running {
-                        self.mark(id, running, None);
+                        self.item_says(id, running);
                     }
                 }
             }
@@ -215,7 +274,11 @@ impl Background {
                 let id = item.get("agentThreadId").and_then(Value::as_str);
                 let kind = item.get("kind").and_then(Value::as_str);
                 if let (Some(id), Some(kind)) = (id, kind) {
-                    self.mark(id, matches!(kind, "started" | "interacted"), None);
+                    match kind {
+                        "started" => self.item_says(id, true),
+                        "completed" | "interrupted" => self.item_says(id, false),
+                        _ => {}
+                    }
                 }
             }
             _ => {}

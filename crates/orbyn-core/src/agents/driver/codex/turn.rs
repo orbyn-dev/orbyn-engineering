@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::background::{Background, FOLLOW_UP_GRACE, limit};
+use super::background::{Background, FOLLOW_UP_GRACE, idle_limit, limit};
 use super::events::{TurnMapper, parse_goal};
 use super::protocol::{answer_request, is_missing_thread, read_app};
 use super::sandbox::{
@@ -64,6 +64,7 @@ pub(super) async fn run_protocol(
     let mut background = Background::new(&session);
     let mut held: Option<EngineOutcome> = None;
     let mut limit_at: Option<tokio::time::Instant> = None;
+    let mut idle_at: Option<tokio::time::Instant> = None;
     let mut settle_at: Option<tokio::time::Instant> = None;
     let mut reason = "run ended";
     let outcome = loop {
@@ -90,10 +91,21 @@ pub(super) async fn run_protocol(
                 reason = "limit";
                 break held.take().unwrap_or(EngineOutcome::Completed);
             }
+            () = sleep_until(idle_at), if idle_at.is_some() => {
+                reason = "idle";
+                break held.take().unwrap_or(EngineOutcome::Completed);
+            }
             () = sleep_until(settle_at), if settle_at.is_some() => {
                 break held.take().unwrap_or(EngineOutcome::Completed);
             }
             Some(text) = steering.recv() => {
+                if held.is_some() {
+                    // The parent's turn is over, so there is none to steer. The
+                    // message ends the hold and is requeued as the next turn.
+                    reason = "new message";
+                    let _ = events.send(EngineEvent::SteerFailed(text)).await;
+                    break held.take().unwrap_or(EngineOutcome::Completed);
+                }
                 if let Some(turn) = &turn_id {
                     let rpc = rpc.clone();
                     let params = json!({
@@ -118,10 +130,9 @@ pub(super) async fn run_protocol(
                     let status = tokio::time::timeout(EXIT_WAIT, process.child.wait()).await;
                     let status = status.ok().and_then(Result::ok);
                     reason = "engine exited";
-                    // The parent had answered; only its background work went with the process.
-                    if let Some(outcome) = held.take()
-                        && status.is_some_and(|status| status.success())
-                    {
+                    // The parent had answered; only its background work went with the
+                    // process, whatever the exit status.
+                    if let Some(outcome) = held.take() {
                         break outcome;
                     }
                     break EngineOutcome::Failed(exit_message(status, &process.stderr).await);
@@ -139,6 +150,9 @@ pub(super) async fn run_protocol(
                             }
                         }
                         background.observe(&method, &params, turn_id.as_deref());
+                        if held.is_some() && background.involves(&params) {
+                            idle_at = Some(tokio::time::Instant::now() + idle_limit());
+                        }
                         let step = mapper.on_notification(&method, &params);
                         for event in step.events {
                             if events.send(event).await.is_err() {
@@ -158,6 +172,7 @@ pub(super) async fn run_protocol(
                             {
                                 held = Some(outcome);
                                 limit_at = Some(tokio::time::Instant::now() + limit());
+                                idle_at = Some(tokio::time::Instant::now() + idle_limit());
                             } else {
                                 reason = "turn ended";
                                 break outcome;

@@ -918,3 +918,112 @@ fn a_follow_up_turn_is_one_that_is_not_the_prompts() {
     background.observe("turn/completed", &turn("thread", "turn-2"), Some("turn-1"));
     assert!(!background.follow_up_open() && background.followed());
 }
+
+#[test]
+fn an_item_cannot_revive_an_agent_its_thread_status_ended() {
+    for ended in [
+        json!({ "type": "idle" }),
+        json!({ "type": "systemError" }),
+        json!({ "type": "notLoaded" }),
+    ] {
+        let mut background = Background::new("thread");
+        spawned(&mut background, "child");
+        background.observe(
+            "thread/status/changed",
+            &json!({ "threadId": "child", "status": ended }),
+            None,
+        );
+        // Late, out of order: the call still says the agent runs.
+        let stale = json!({ "threadId": "thread", "item": {
+            "type": "collabAgentToolCall", "id": "c", "tool": "spawnAgent",
+            "status": "completed", "receiverThreadIds": ["child"],
+            "agentsStates": { "child": { "status": "running" } } }});
+        background.observe("item/completed", &stale, None);
+        let activity = json!({ "threadId": "thread", "item": {
+            "type": "subAgentActivity", "id": "s", "kind": "started",
+            "agentThreadId": "child", "agentPath": "root/child" }});
+        background.observe("item/started", &activity, None);
+        assert!(!background.running(), "{ended}");
+        // Only the thread's own word revives it.
+        background.observe(
+            "thread/status/changed",
+            &json!({ "threadId": "child", "status": { "type": "active", "activeFlags": [] } }),
+            None,
+        );
+        assert!(background.running(), "{ended}");
+    }
+}
+
+#[test]
+fn a_closed_thread_stays_ended_against_a_late_running_state() {
+    let mut background = Background::new("thread");
+    spawned(&mut background, "child");
+    background.observe("thread/closed", &json!({ "threadId": "child" }), None);
+    let stale = json!({ "threadId": "thread", "item": {
+        "type": "collabAgentToolCall", "id": "c", "tool": "wait", "status": "inProgress",
+        "receiverThreadIds": ["child"], "agentsStates": { "child": { "status": "running" } } }});
+    background.observe("item/started", &stale, None);
+    assert!(!background.running());
+}
+
+#[test]
+fn an_errored_agent_state_ends_it() {
+    let mut background = Background::new("thread");
+    spawned(&mut background, "child");
+    let call = json!({ "threadId": "thread", "item": {
+        "type": "collabAgentToolCall", "id": "c", "tool": "wait", "status": "completed",
+        "receiverThreadIds": ["child"], "agentsStates": { "child": { "status": "errored" } } }});
+    background.observe("item/completed", &call, None);
+    assert!(!background.running());
+}
+
+#[test]
+fn an_interaction_does_not_make_an_agent_run() {
+    let mut background = Background::new("thread");
+    let activity = |kind: &str| {
+        json!({ "threadId": "thread", "item": {
+            "type": "subAgentActivity", "id": "s", "kind": kind,
+            "agentThreadId": "a", "agentPath": "root/a" }})
+    };
+    background.observe("item/started", &activity("interacted"), None);
+    assert!(!background.running());
+    background.observe("item/started", &activity("started"), None);
+    background.observe("item/completed", &activity("completed"), None);
+    background.observe("item/completed", &activity("interacted"), None);
+    assert!(!background.running());
+}
+
+#[test]
+fn the_engines_own_sub_agents_are_not_held() {
+    let mut background = Background::new("thread");
+    for source in [
+        json!({ "subAgent": "review" }),
+        json!({ "subAgent": "compact" }),
+        json!({ "subAgent": "memory_consolidation" }),
+        json!({ "subAgent": { "other": "guardian" } }),
+    ] {
+        background.observe(
+            "thread/started",
+            &json!({ "thread": { "id": "internal", "parentThreadId": "thread",
+                "status": { "type": "active", "activeFlags": [] }, "source": source }}),
+            None,
+        );
+        background.observe(
+            "thread/status/changed",
+            &json!({ "threadId": "internal", "status": { "type": "active", "activeFlags": [] } }),
+            None,
+        );
+        assert!(!background.running(), "{source}");
+    }
+}
+
+#[test]
+fn a_notification_involves_the_thread_or_a_tracked_agent() {
+    let mut background = Background::new("thread");
+    spawned(&mut background, "child");
+    assert!(background.involves(&json!({ "threadId": "thread" })));
+    assert!(background.involves(&json!({ "threadId": "child" })));
+    assert!(background.involves(&json!({ "thread": { "id": "child" } })));
+    assert!(!background.involves(&json!({ "threadId": "stranger" })));
+    assert!(!background.involves(&json!({})));
+}
