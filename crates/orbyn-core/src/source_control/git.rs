@@ -167,14 +167,30 @@ pub(crate) async fn git_hardened_capped(cwd: &Path, args: &[&str], cap: usize) -
         }
         Ok::<_, std::io::Error>(())
     };
-    let bytes = read
-        .await
-        .map_err(|error| CoreError::Git(format!("Could not read git: {error}")))?;
+    // stdout and stderr are drained together: a chatty stderr must not stop git from finishing its stdout. The cap is checked as
+    // soon as stdout ends (at the cap or at EOF), whatever stderr is doing; an over-cap call drops the child, which stops the tree.
+    tokio::pin!(read, drain);
+    let mut drained = false;
+    let bytes = loop {
+        tokio::select! {
+            bytes = &mut read => {
+                break bytes.map_err(|error| CoreError::Git(format!("Could not read git: {error}")))?;
+            }
+            result = &mut drain, if !drained => {
+                result.map_err(|error| CoreError::Git(format!("Could not read git: {error}")))?;
+                drained = true;
+            }
+        }
+    };
     if bytes.len() > cap {
-        // Dropping the child stops the whole tree.
         return Err(CoreError::Git("git output is too large".into()));
     }
-    let (_, status) = tokio::join!(drain, child.wait());
+    let finish = async {
+        if !drained {
+            let _ = (&mut drain).await;
+        }
+    };
+    let (_, status) = tokio::join!(finish, child.wait());
     let status = status.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
     if !status.success() {
         return Err(CoreError::Git("git failed".into()));

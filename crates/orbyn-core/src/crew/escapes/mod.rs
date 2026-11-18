@@ -13,7 +13,8 @@ mod thresholds;
 mod view;
 
 pub use scan::{
-    COMMITS_PER_MERGE, GIT_CALLS_PER_SCAN, Limits, MERGES_PER_SCAN, SCAN_SECONDS, ScanOutcome,
+    COMMITS_PER_MERGE, CURSOR_KEY, GIT_CALLS_PER_SCAN, Limits, MERGES_PER_SCAN, SCAN_SECONDS,
+    ScanOutcome,
 };
 pub use thresholds::{
     DEFAULTS, THRESHOLDS_KEY, escape_thresholds, stored_thresholds, validate_thresholds,

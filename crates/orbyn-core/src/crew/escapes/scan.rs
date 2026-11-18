@@ -65,6 +65,8 @@ pub const CURSOR_KEY: &str = "crew_escape_scan_cursor";
 pub struct Limits {
     pub merges: u32,
     pub calls: u32,
+    /// The scan's wall-clock bound, in seconds.
+    pub seconds: u64,
 }
 
 impl Default for Limits {
@@ -72,6 +74,7 @@ impl Default for Limits {
         Self {
             merges: MERGES_PER_SCAN,
             calls: GIT_CALLS_PER_SCAN,
+            seconds: SCAN_SECONDS,
         }
     }
 }
@@ -108,8 +111,10 @@ impl Later {
 
 #[derive(Debug)]
 enum Stop {
-    /// The call, merge or time bound is spent.
-    Budget,
+    /// The scan's git call count is spent.
+    Calls,
+    /// The scan's time is spent, or this call ran past it.
+    Deadline,
     /// Git could not answer for this merge.
     Git,
 }
@@ -121,8 +126,11 @@ struct Budget {
 
 impl Budget {
     fn take(&mut self) -> std::result::Result<(), Stop> {
-        if self.calls == 0 || Instant::now() >= self.deadline {
-            return Err(Stop::Budget);
+        if self.calls == 0 {
+            return Err(Stop::Calls);
+        }
+        if Instant::now() >= self.deadline {
+            return Err(Stop::Deadline);
         }
         self.calls -= 1;
         Ok(())
@@ -140,7 +148,7 @@ impl Budget {
         let mut full: Vec<&str> = vec!["--literal-pathspecs"];
         full.extend_from_slice(args);
         match tokio::time::timeout(left, git_hardened_capped(repo, &full, cap)).await {
-            Err(_) => Err(Stop::Budget),
+            Err(_) => Err(Stop::Deadline),
             Ok(Err(_)) => Err(Stop::Git),
             Ok(Ok(bytes)) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
         }
@@ -291,7 +299,19 @@ async fn later_commits(
             LOG_BYTES,
         )
         .await?;
-    Ok(parse_log(&out))
+    // A commit object can carry a NUL in its message, so the parsed ids are only trusted when git itself lists them as later commits.
+    let listed = budget
+        .out(
+            repo,
+            &["rev-list", "--no-merges", &count, &range, "--"],
+            LIST_BYTES,
+        )
+        .await?;
+    let real: BTreeSet<&str> = listed.lines().map(str::trim).collect();
+    Ok(parse_log(&out)
+        .into_iter()
+        .filter(|c| real.contains(c.id.as_str()))
+        .collect())
 }
 
 /// Signal 2: a later `fix` commit changed a line the merge added. `Ok(None)` when none did.
@@ -528,7 +548,7 @@ impl Core {
         let since = now - i64::from(thresholds.report_days) * 86_400;
         // Resume after the last merge the previous scan looked at, so merges with no signal (which never get a row) are not looked
         // at again and again while older ones starve. When the rest of the list is shorter than a scan, wrap to the newest.
-        let cursor = self.scan_cursor()?;
+        let (cursor, damaged) = self.scan_cursor()?;
         let want = limits.merges + 1;
         let mut candidates = self
             .store
@@ -551,10 +571,11 @@ impl Core {
         let mut full: BTreeMap<String, bool> = BTreeMap::new();
         let mut budget = Budget {
             calls: limits.calls,
-            deadline: Instant::now() + Duration::from_secs(SCAN_SECONDS),
+            deadline: Instant::now() + Duration::from_secs(limits.seconds),
         };
         let mut found: BTreeMap<String, Vec<PossibleEscape>> = BTreeMap::new();
-        let mut last: Option<&MergeRecord> = None;
+        // Every merge passed over, in order, with its project: the cursor only ever moves past these.
+        let mut done: Vec<(&MergeRecord, &String)> = Vec::new();
         for (record, project) in candidates.iter().take(limits.merges as usize) {
             let is_full = match full.get(project) {
                 Some(known) => *known,
@@ -571,32 +592,26 @@ impl Core {
             };
             if is_full {
                 outcome.refused += 1;
+                done.push((record, project));
                 continue;
             }
             match look(&mut budget, record, project, thresholds.follow_up_days).await {
                 Ok(Look::Found(item)) => found.entry(project.clone()).or_default().push(item),
                 Ok(Look::Nothing) => {}
                 Ok(Look::Unread) => outcome.skipped += 1,
+                // The very first merge of a scan that cannot finish in the time there is would be the first merge of the next scan
+                // too: count it as unread and move on, so one merge can never pin the scan.
+                Err(Stop::Deadline) if done.is_empty() => outcome.skipped += 1,
                 Err(_) => {
                     outcome.truncated = true;
                     break;
                 }
             }
             outcome.scanned += 1;
-            last = Some(record);
+            done.push((record, project));
         }
-        // Everything in reach was looked at: start again from the newest next time. Otherwise carry on after the last one.
-        let finished = !outcome.truncated && outcome.scanned as usize == candidates.len();
-        let next = match (finished, last) {
-            (true, _) => Some(String::new()),
-            (false, Some(record)) => Some(format!("{}:{}", record.merged_unix, record.id)),
-            (false, None) => None,
-        };
-        if let Some(next) = next
-            && self.store.setting(CURSOR_KEY)?.unwrap_or_default() != next
-        {
-            self.store.set_setting(CURSOR_KEY, &next)?;
-        }
+        // Rows first, then the cursor: a crash between them only rescans merges that already have a row.
+        let mut blocked: BTreeSet<&str> = BTreeSet::new();
         for (project, items) in found {
             match self.store.record_possible_escapes(&project, &items, now) {
                 Ok(added) => {
@@ -606,24 +621,45 @@ impl Core {
                 Err(CoreError::Invalid(why)) => {
                     tracing::warn!(project = %project, %why, "the escape scan wrote nothing for a project");
                     outcome.refused += u32::try_from(items.len()).unwrap_or(u32::MAX);
+                    if let Some((_, p)) = done.iter().find(|(_, p)| **p == project) {
+                        blocked.insert(p.as_str());
+                    }
                 }
                 Err(other) => return Err(other),
             }
         }
+        // Never past a merge of a project whose batch was refused: it is looked at again.
+        let reach = done
+            .iter()
+            .position(|(_, p)| blocked.contains(p.as_str()))
+            .unwrap_or(done.len());
+        let finished = !outcome.truncated && reach == done.len() && done.len() == candidates.len();
+        let next = if finished {
+            Some(String::new())
+        } else {
+            reach
+                .checked_sub(1)
+                .map(|i| format!("{}:{}", done[i].0.merged_unix, done[i].0.id))
+                .or_else(|| damaged.then(String::new))
+        };
+        if let Some(next) = next
+            && self.store.setting(CURSOR_KEY)?.unwrap_or_default() != next
+        {
+            self.store.set_setting(CURSOR_KEY, &next)?;
+        }
         Ok(outcome)
     }
 
-    /// Where the last truncated scan stopped. Absent or empty means start from the newest; a damaged value fails closed.
-    fn scan_cursor(&self) -> Result<Option<(i64, i64)>> {
+    /// Where the last truncated scan stopped, and whether the stored value was damaged. Absent or empty means start from the newest;
+    /// a damaged value reads as absent and is overwritten by this scan.
+    fn scan_cursor(&self) -> Result<(Option<(i64, i64)>, bool)> {
         let Some(text) = self.store.setting(CURSOR_KEY)?.filter(|t| !t.is_empty()) else {
-            return Ok(None);
+            return Ok((None, false));
         };
-        text.split_once(':')
-            .and_then(|(at, id)| Some((at.parse().ok()?, id.parse().ok()?)))
-            .map(Some)
-            .ok_or_else(|| {
-                CoreError::Unreadable("The escape scan cursor could not be read.".into())
-            })
+        let parsed = text
+            .split_once(':')
+            .and_then(|(at, id)| Some((at.parse().ok()?, id.parse().ok()?)));
+        Ok((parsed, parsed.is_none()))
     }
 
     /// The service's scan: once at start, then on every Crew watch interval (the watch's tick; none when the interval is off).
@@ -728,7 +764,7 @@ mod tests {
         };
         assert!(matches!(
             spent.out(&path, &["log"], 1 << 20).await,
-            Err(Stop::Budget)
+            Err(Stop::Deadline)
         ));
         let mut roomy = Budget {
             calls: 10,
@@ -753,8 +789,34 @@ mod tests {
         };
         assert!(matches!(
             none.out(&path, &["log"], 1 << 20).await,
-            Err(Stop::Budget)
+            Err(Stop::Calls)
         ));
+    }
+
+    /// A call that fills the stderr pipe many times over still returns: stdout and stderr are read together.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_chatty_stderr_does_not_stall_the_call() {
+        let (_dir, path) = repo();
+        let mut budget = Budget {
+            calls: 10,
+            deadline: Instant::now() + Duration::from_secs(20),
+        };
+        let started = Instant::now();
+        let out = budget
+            .out(
+                &path,
+                &[
+                    "-c",
+                    "alias.flood=!head -c 400000 /dev/zero >&2; echo ok",
+                    "flood",
+                ],
+                1 << 20,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.trim(), "ok");
+        assert!(started.elapsed() < Duration::from_secs(15));
     }
 
     #[test]

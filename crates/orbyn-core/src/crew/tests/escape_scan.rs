@@ -11,7 +11,7 @@ use serde_json::json;
 use super::autopilot_areas::{DAY, Rig, rig};
 use super::harness::{Turn, brief, key, world};
 use crate::crew::Page;
-use crate::crew::escapes::{Limits, ScanOutcome};
+use crate::crew::escapes::{CURSOR_KEY, Limits, ScanOutcome};
 use crate::store::MergeRecord;
 use crate::util::unix_now;
 use orbyn_contracts as wire;
@@ -99,6 +99,38 @@ impl Repo {
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
         self.git(&["add", "-A"]);
         self.git(&["commit", "-q", "-m", message]);
+    }
+
+    /// Writes a commit object whose message may hold bytes git itself would not let `commit` write (a NUL), on top of HEAD, and moves
+    /// `main` to it.
+    fn raw_commit(&self, message: &[u8]) -> String {
+        use std::io::Write;
+        let tree = self.out(&["rev-parse", "HEAD^{tree}"]);
+        let mut body = format!(
+            "tree {tree}\nparent {}\nauthor t <t@example.test> 1700000000 +0000\ncommitter t <t@example.test> 1700000000 +0000\n\n",
+            self.head()
+        )
+        .into_bytes();
+        body.extend_from_slice(message);
+        let mut child = self
+            .command(&[
+                "hash-object",
+                "-t",
+                "commit",
+                "-w",
+                "--stdin",
+                "--literally",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&body).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        let id = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        self.git(&["update-ref", "refs/heads/main", &id]);
+        id
     }
 
     /// A feature branch that changes `line` of `src/a.txt`, merged into `main` with a merge commit. Returns (before, merge).
@@ -415,6 +447,98 @@ async fn a_commit_message_cannot_forge_or_split_log_entries() {
 }
 
 #[tokio::test]
+async fn a_nul_in_a_commit_object_cannot_forge_a_revert() {
+    let mut s = scan_rig().await;
+    let (_, merge) = s.merge(3, 3).await;
+    // The message holds what would parse as a second entry: a made-up id that reverts the merge. Git does not list that id.
+    let fake = "f".repeat(40);
+    let message =
+        format!("docs: tidy\0{fake}\01700000001\0Revert \"M\"\n\nThis reverts commit {merge}.");
+    s.repo.raw_commit(message.as_bytes());
+    nothing_found(&s.scan().await, 1);
+}
+
+#[tokio::test]
+async fn a_damaged_cursor_reads_as_none_and_is_overwritten() {
+    let mut s = scan_rig().await;
+    let (_, merge) = s.merge(3, 3).await;
+    s.repo.git(&["revert", "-m", "1", "--no-edit", &merge]);
+    s.rig
+        .w
+        .core
+        .store
+        .set_setting(CURSOR_KEY, "not a cursor")
+        .unwrap();
+    let out = s.scan().await;
+    assert_eq!((out.scanned, out.found), (1, 1), "{out:?}");
+    assert_eq!(
+        s.rig.w.core.store.setting(CURSOR_KEY).unwrap().as_deref(),
+        Some("")
+    );
+}
+
+#[tokio::test]
+async fn a_merge_whose_work_never_fits_the_time_does_not_pin_the_scan() {
+    let mut s = scan_rig().await;
+    let mut merges = Vec::new();
+    for (i, line) in [3, 8, 13].into_iter().enumerate() {
+        merges.push(s.merge(line, 3 - i as i64).await);
+    }
+    // No time at all: every git call is past the deadline.
+    let limits = Limits {
+        merges: 50,
+        calls: 300,
+        seconds: 0,
+    };
+    let cursor = |s: &Scan| {
+        s.rig
+            .w
+            .core
+            .store
+            .setting(CURSOR_KEY)
+            .unwrap()
+            .unwrap_or_default()
+    };
+    let key = |s: &Scan, task: &str| {
+        let m = s.rig.w.core.store.crew_merge(task).unwrap().unwrap();
+        format!("{}:{}", m.merged_unix, m.id)
+    };
+    // Newest first: merges[2], merges[1], merges[0]. Each scan counts the first merge as unread and moves past it.
+    let first = s
+        .rig
+        .w
+        .core
+        .crew_escape_scan_within(unix_now(), limits)
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.scanned, first.skipped, first.found, first.truncated),
+        (1, 1, 0, true),
+        "{first:?}"
+    );
+    assert_eq!(cursor(&s), key(&s, &merges[2].0));
+    s.rig
+        .w
+        .core
+        .crew_escape_scan_within(unix_now(), limits)
+        .await
+        .unwrap();
+    assert_eq!(cursor(&s), key(&s, &merges[1].0));
+    s.rig
+        .w
+        .core
+        .crew_escape_scan_within(unix_now(), limits)
+        .await
+        .unwrap();
+    assert_eq!(cursor(&s), key(&s, &merges[0].0));
+    // With time again the later merges are reached: a revert of the oldest is found on the next scan.
+    s.repo
+        .git(&["revert", "-m", "1", "--no-edit", &merges[0].1]);
+    let after = s.scan().await;
+    assert_eq!(after.found, 1, "{after:?}");
+}
+
+#[tokio::test]
 async fn a_tag_named_like_the_branch_does_not_stand_in_for_it() {
     let mut s = scan_rig().await;
     let base = s.repo.head();
@@ -436,6 +560,7 @@ async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_succe
     let limits = Limits {
         merges: 2,
         calls: 200,
+        ..Limits::default()
     };
     async fn scan(s: &Scan, limits: Limits) -> Result<ScanOutcome, crate::error::CoreError> {
         s.rig
@@ -639,6 +764,7 @@ async fn a_scan_looks_at_the_newest_merges_only_up_to_its_bound() {
     let limits = Limits {
         merges: 2,
         calls: 100,
+        ..Limits::default()
     };
     let out = s
         .rig
@@ -687,6 +813,7 @@ async fn a_scan_stops_at_its_git_call_bound_and_leaves_the_rest_for_the_next() {
     let limits = Limits {
         merges: 50,
         calls: 1,
+        ..Limits::default()
     };
     let out = s
         .rig
