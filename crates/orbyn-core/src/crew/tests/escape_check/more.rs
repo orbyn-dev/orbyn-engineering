@@ -259,7 +259,11 @@ async fn a_failed_check_is_not_queueable_and_an_unreadable_one_fails_closed() {
     }
     assert!(r.w.core.store.merge_entry(&task).unwrap().is_none());
     // A task that is no check's is not affected.
-    assert!(r.w.core.refuse_unproven_escape_check(&r.merge_task).is_ok());
+    assert!(
+        r.w.core
+            .refuse_unproven_escape_check(&r.merge_task, None)
+            .is_ok()
+    );
 }
 
 #[tokio::test]
@@ -510,27 +514,44 @@ fn the_guard_judges_the_task_against_the_escapes_current_check() {
         updated_unix: 0,
     };
     // Not a check's task at all.
-    assert_eq!(blocks("t9", false, None), None);
+    assert_eq!(blocks("t9", false, None, None), None);
     // Recorded, but its check is gone, names another task, or has none.
     assert!(
-        blocks("t1", true, None)
+        blocks("t1", true, None, None)
             .unwrap()
             .contains("no longer exists")
     );
     assert!(
-        blocks("t1", true, Some(&check))
+        blocks("t1", true, Some(&check), None)
             .unwrap()
             .contains("earlier attempt")
     );
     check.task_id = None;
     assert!(
-        blocks("t1", true, Some(&check))
+        blocks("t1", true, Some(&check), None)
             .unwrap()
             .contains("earlier attempt")
     );
     // The current task: only while proven.
     check.task_id = Some("t2".into());
-    assert_eq!(blocks("t2", true, Some(&check)), None);
+    assert_eq!(blocks("t2", true, Some(&check), None), None);
+    // The change queued must be the one that was proven.
+    check.diff_commit = Some("a".repeat(40));
+    assert_eq!(
+        blocks("t2", true, Some(&check), Some(&"a".repeat(40))),
+        None
+    );
+    assert!(
+        blocks("t2", true, Some(&check), Some(&"b".repeat(40)))
+            .unwrap()
+            .contains("different commit")
+    );
+    check.diff_commit = None;
+    assert!(
+        blocks("t2", true, Some(&check), Some(&"a".repeat(40)))
+            .unwrap()
+            .contains("different commit")
+    );
     for state in [
         EscapeCheckState::Proposed,
         EscapeCheckState::Writing,
@@ -540,7 +561,7 @@ fn the_guard_judges_the_task_against_the_escapes_current_check() {
     ] {
         check.state = state;
         assert!(
-            blocks("t2", true, Some(&check))
+            blocks("t2", true, Some(&check), None)
                 .unwrap()
                 .contains("not proven"),
             "{state:?}"

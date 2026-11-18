@@ -15,7 +15,7 @@
 //!   Only both together prove it. A check that passes on both is refused (`failed`, "passes on both"); a command that could not run is
 //!   not a failure of the test and is `failed` too, with that reason. The proof stores two commit ids and two booleans, never output.
 //!   **It never runs unrestricted and unreviewed.** Where the machine can restrict it (macOS: no network, no reading of the data
-//!   folder, no clipboard or launchd job, writes only in its own tree), it runs after the worker's task passes. Anywhere else the check stays `writing` with the
+//!   folder, no clipboard, launchd job or settings change, file writes only in its own tree), it runs after the worker's task passes. Anywhere else the check stays `writing` with the
 //!   change's commit, hash and paths shown, and a person approves exactly that commit and hash (`check/approve`) before it runs; a
 //!   different change needs a new approval.
 //! - **The merge queue.** A proven check is queued through [`Core::crew_merge_request`], the same entry the Review queue's merge route
@@ -115,9 +115,11 @@ fn line(check: &EscapeCheckRecord) -> String {
                 "Proposed: add {path}. Nothing runs until a person accepts. Accepting starts a worker that writes only this file. \
                  Then `{}` runs that file, and the file is code nobody has reviewed. It gets a short environment (no tokens or keys of \
                  yours) and a copy of the repository without its history. On a Mac it runs inside a restriction: no network, no clipboard, \
-                 no launchd jobs, no reading Orbyn's data, other programs' environment or Claude's saved conversations, and it can write \
-                 only in its own copy and /dev/null; it can still read the rest of what your account can read. On any other machine nothing \
-                 restricts it, so it runs only after a person approves the exact files shown here.",
+                 no launchd jobs, no changing any app's settings, no reading Orbyn's data, other programs' environment, Claude's saved \
+                 conversations or your credential folders (~/.ssh, ~/.aws, ~/.gnupg and similar), and it can write files only in its own \
+                 copy and /dev/null. That restriction is the broad macOS sandbox, not a wall: it can still read the rest of what your \
+                 account can read, and system services it does not name stay reachable. On any other machine nothing restricts it, so it \
+                 runs only after a person approves the exact files shown here.",
                 check.run
             )
         }
@@ -1036,6 +1038,7 @@ pub fn escape_check_blocks_queue(
     task_id: &str,
     recorded: bool,
     check: Option<&EscapeCheckRecord>,
+    commit: Option<&str>,
 ) -> Option<String> {
     if !recorded && check.is_none() {
         return None;
@@ -1051,7 +1054,15 @@ pub fn escape_check_blocks_queue(
         );
     }
     let state = match check.state {
-        EscapeCheckState::Proven => return None,
+        EscapeCheckState::Proven => {
+            // The change being queued or merged must be the one that was proven, not a later commit on the same task.
+            return match (commit, check.diff_commit.as_deref()) {
+                (Some(queued), proven) if proven != Some(queued) => Some(
+                    "This task's check was proven on a different commit than the one being queued, so it cannot be merged.".into(),
+                ),
+                _ => None,
+            };
+        }
         EscapeCheckState::Proposed => "only proposed",
         EscapeCheckState::Writing => "still being written or proven",
         EscapeCheckState::Failed => "failed",
@@ -1066,9 +1077,13 @@ pub fn escape_check_blocks_queue(
 impl Core {
     /// Refuses to queue or merge a task whose escape check is not `proven` for it. **Fails closed**: a check that cannot be read
     /// refuses too, with a plain reason. The one helper every merge-queue and merge-processing entry calls.
-    pub(crate) fn refuse_unproven_escape_check(&self, task_id: &str) -> Result<()> {
+    pub(crate) fn refuse_unproven_escape_check(
+        &self,
+        task_id: &str,
+        commit: Option<&str>,
+    ) -> Result<()> {
         match self.store.crew_escape_check_task_status(task_id) {
-            Ok((recorded, check)) => match escape_check_blocks_queue(task_id, recorded, check.as_ref()) {
+            Ok((recorded, check)) => match escape_check_blocks_queue(task_id, recorded, check.as_ref(), commit) {
                 None => Ok(()),
                 Some(why) => Err(CoreError::Invalid(why)),
             },

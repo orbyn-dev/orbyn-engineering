@@ -13,8 +13,11 @@
 //!   command, never a token, key or session marker of the person's.
 //! - **Confined where the machine can.** On macOS the command runs under `sandbox-exec` with the profile a crew worker gets (the
 //!   data folder denied, Claude's saved conversations denied, no reading of other processes' command lines or environment, no task
-//!   port, Apple events, LaunchServices or signals to others), and in addition no network, no launchd job, no clipboard, and writes
-//!   only inside the proof's own folder and `/dev/null`: not the shared temporary folders.
+//!   port, Apple events, LaunchServices or signals to others), and in addition no network, no launchd job, no writing of any app's
+//!   preferences, no clipboard, no reading of the person's credential folders (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`,
+//!   `~/.docker`, `~/.kube`, `Library/Keychains`), and file writes only inside the proof's own folder and `/dev/null`: not the shared
+//!   temporary folders. This is the broad macOS sandbox (everything not named stays allowed), so it is a mitigation, not a boundary: other
+//!   system services than those named stay reachable.
 //!   Anywhere else no such restriction exists, so [`confined`] is false and the core does not run the proof until a person has approved
 //!   the exact change (its commit and a hash over its paths and bytes).
 
@@ -431,7 +434,7 @@ mod tests {
     }
 
     /// On a Mac that can restrict: everything the worker's profile denies, and in addition no network, no other process's environment,
-    /// no launchd job, no clipboard, and writes only in its own scratch folder (and `/dev/null`). Where an unrestricted run has the
+    /// no launchd job, no preference write, no clipboard, unreadable credential folders, and file writes only in its own scratch folder (and `/dev/null`). Where an unrestricted run has the
     /// ability, the same command is run unrestricted first, so the test proves the restriction and not a broken command.
     #[cfg(target_os = "macos")]
     #[tokio::test]
@@ -518,6 +521,62 @@ mod tests {
             .args(["remove", &label])
             .output();
         assert!(!marker.exists(), "a launchd job ran");
+        // No writing of an application's preferences (`defaults write` goes through cfprefsd; a changed setting of another app can later
+        // start a program outside the sandbox). The unrestricted run is the positive control; it removes what it wrote.
+        let domain = format!("dev.orbyn.proofprobe{}", crate::util::new_id());
+        let write = format!("/usr/bin/defaults write {domain} probe -int 1");
+        assert_eq!(go(write.clone(), true).await, Some(false));
+        assert_eq!(
+            go(format!("/usr/bin/defaults read {domain}"), false).await,
+            Some(false),
+            "nothing was written"
+        );
+        assert_eq!(
+            go(write, false).await,
+            Some(true),
+            "the probe works unrestricted"
+        );
+        let _ = std::process::Command::new("/usr/bin/defaults")
+            .args(["delete", &domain])
+            .output();
+        // The person's credential folders are unreadable; the toolchain folders are not.
+        if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+            for secret in [
+                ".ssh",
+                ".aws",
+                ".gnupg",
+                ".config/gh",
+                ".netrc",
+                ".docker",
+                ".kube",
+                "Library/Keychains",
+            ] {
+                let path = home.join(secret);
+                if path.exists() {
+                    let list = format!("/bin/ls {}", path.display());
+                    assert_eq!(
+                        go(list.clone(), false).await,
+                        Some(true),
+                        "{secret}: the probe works unrestricted"
+                    );
+                    assert_eq!(
+                        go(list, true).await,
+                        Some(false),
+                        "{secret} must be unreadable"
+                    );
+                }
+            }
+            for toolchain in [".cargo", ".rustup"] {
+                let path = home.join(toolchain);
+                if path.exists() {
+                    assert_eq!(
+                        go(format!("/bin/ls {}", path.display()), true).await,
+                        Some(true),
+                        "{toolchain} stays readable"
+                    );
+                }
+            }
+        }
         // No clipboard.
         assert_eq!(
             go("echo orbyn | /usr/bin/pbcopy".into(), true).await,

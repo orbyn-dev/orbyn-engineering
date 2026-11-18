@@ -90,7 +90,7 @@ impl Core {
         target: &MergeTarget,
         now: i64,
     ) -> Result<MergeEntry> {
-        self.refuse_unproven_escape_check(task_id)?;
+        self.refuse_unproven_escape_check(task_id, None)?;
         let task = self
             .store
             .crew_task(task_id)?
@@ -110,6 +110,7 @@ impl Core {
             .and_then(|r| r.commit.as_ref())
             .map(|c| c.as_str().to_owned())
             .ok_or_else(|| CoreError::Invalid("the passed task names no commit to merge".into()))?;
+        self.refuse_unproven_escape_check(task_id, Some(&candidate))?;
         // A lowered area whose way back is met returns here or when a merge is recorded (at most one merge late). Never waits for the
         // merge lock: a long check or bisect holds it, and the check is skipped then. No GET does this.
         if let Err(error) = self.area_restore_if_free(task_id, now) {
@@ -268,7 +269,9 @@ impl Core {
                 .set_merge_entry_state(&entry.task_id, "merging", None)?;
             // Re-read the escape check now `merging` is written: a withdraw either committed before this (blocked here) or sees `merging` and
             // is refused, so a withdrawn check never lands.
-            if let Err(error) = self.refuse_unproven_escape_check(&entry.task_id) {
+            if let Err(error) =
+                self.refuse_unproven_escape_check(&entry.task_id, Some(&entry.candidate))
+            {
                 let why = error.public_message();
                 self.store
                     .set_merge_entry_state(&entry.task_id, "blocked", Some(&why))?;

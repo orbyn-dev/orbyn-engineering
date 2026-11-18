@@ -123,7 +123,7 @@ impl Core {
         branch: &str,
     ) -> crate::error::Result<MergeTarget> {
         self.crew_preview_only()?;
-        self.refuse_unproven_escape_check(task_id)?;
+        self.refuse_unproven_escape_check(task_id, None)?;
         if let Some(intent) = self.store.crew_forge_merge(task_id)? {
             if branch != intent.branch {
                 return Err(crate::error::CoreError::Invalid(
