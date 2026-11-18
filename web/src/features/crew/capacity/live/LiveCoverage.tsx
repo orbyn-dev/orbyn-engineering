@@ -1,20 +1,57 @@
+import { useState } from "react";
+import type { Project } from "../../../../api/types";
 import type { ReviewCoverage } from "../../../../generated/ReviewCoverage";
 import { Loading } from "../../../../product/ui/states";
 import { NETWORK_ERROR, type ApiFailure } from "../../../../api/client";
+import { Menu, type MenuItem } from "../../../../ui/Menu";
+import { Presence } from "../../../../ui/Presence";
 import { Frame } from "../../shared/Frame";
-import { Ic, Seg } from "../../shared/parts";
+import { Btn, Ic, Seg } from "../../shared/parts";
+import { Planned, WHY } from "../Planned";
 import { count, dateOf, engineLabel, merges, momentOf, NOT_MEASURED, share, split } from "./model";
 import { useCoverage } from "./useCapacity";
 
 const TABLE = "minmax(0,1.1fr) minmax(0,1.2fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,1.1fr)";
 const ENGINE_TABLE = "minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,1.1fr)";
 
+/** The project chip. With several projects it opens a short menu: the one shown is checked, and choosing another reads that project. */
+function ProjectChip({ name, projects, current, onPick }: { name: string; projects: readonly Project[]; current: string; onPick(id: string): void }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  if (projects.length < 2) return <span className="cx-t10sel"><Ic n="folder" sm />{name}</span>;
+  const items: MenuItem[] = projects.map((entry) => ({
+    label: entry.name,
+    icon: <Ic n="folder" sm />,
+    selected: entry.id === current,
+    leadCheck: true,
+    onSelect: () => onPick(entry.id),
+  }));
+  return (
+    <>
+      <button
+        type="button"
+        className="cx-t10sel"
+        aria-haspopup="menu"
+        aria-expanded={at !== null}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          setAt(at ? null : { x: rect.left, y: rect.bottom + 4 });
+        }}
+      >
+        <Ic n="folder" sm />
+        {name}
+        <Ic n="down" sm />
+      </button>
+      <Presence>{at ? <Menu x={at.x} y={at.y} label="Project" items={items} minWidth={230} onClose={() => setAt(null)} /> : null}</Presence>
+    </>
+  );
+}
+
 /**
- * Crew Designs v21, `capacity-coverage` and its empty, gaps and error states, on the real coverage read. Coverage is counted
+ * Crew Designs v77, `capacity-coverage` and its empty, not-begun, gaps, low, error, loading and picker states, on the real coverage read. Coverage is counted
  * at merge level: a line is reviewed when the merge that wrote it was marked Looks good or commented, never per line. Anything
  * the read could not measure says Not measured and adds no number. Nothing here sends a write.
  */
-export function LiveCoverage({ project, name }: { project: string; name: string }) {
+export function LiveCoverage({ project, name, projects, onPick }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void }) {
   const read = useCoverage(project);
   return (
     <Frame live>
@@ -24,7 +61,7 @@ export function LiveCoverage({ project, name }: { project: string; name: string 
             <b>Review coverage</b>
             <span className="cx-rtag cx-lo">This device only</span>
             <span className="cx-t10sp">
-              <span className="cx-t10sel"><Ic n="folder" sm />{name}</span>
+              <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />
               <Seg kind="cwseg" on={0} items={["Since provenance began"]} />
             </span>
           </div>
@@ -75,6 +112,12 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
             : `Crew records which lines an agent wrote when it merges. No merge in ${name} since recording began has lines to count, so there is nothing to show.`}
         </p>
         {coverage.not_measured_merges > 0 ? <p>{`${merges(coverage.not_measured_merges)} ${coverage.not_measured_merges === 1 ? "is" : "are"} ${NOT_MEASURED}.`}</p> : null}
+        {since != null ? (
+          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Planned why={WHY.queue} style={{ marginLeft: "0" }} />
+            <Btn className="cx-ghost" style={{ height: "28px" }}>Open the Review queue</Btn>
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -86,13 +129,29 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
         {`As of ${momentOf(coverage.as_of_unix)} · ${count(coverage.agent_lines)} agent-written lines from ${merges(coverage.merges)} since ${dateOf(since)}`}
       </span>
       {coverage.not_measured_merges > 0 ? (
-        <div className="cx-cwbn" style={{ margin: "0" }}>
-          <Ic n="info" sm />
-          <span>
-            <b>{`${coverage.not_measured_merges} of ${total} merges aren’t in the map.`}</b>
-            {` They are from before ${dateOf(since)}, had no stored hunks or had no note written. Their lines are ${NOT_MEASURED}, not counted as read or unread.`}
-          </span>
-        </div>
+        <>
+          <div className="cx-cwbn" style={{ margin: "0", flexWrap: "wrap" }}>
+            <Ic n="info" sm />
+            <span style={{ flex: 1, minWidth: "200px" }}>
+              <b>{`${coverage.not_measured_merges} of ${total} merges aren’t in the map.`}</b>
+              {` They are from before ${dateOf(since)}, had no stored hunks or had no note written. Their lines are ${NOT_MEASURED}, not counted as read or unread.`}
+            </span>
+            <span className="cx-acts">
+              <Planned why={WHY.gaps} />
+              <Btn className="cx-btn">Try again</Btn>
+            </span>
+          </div>
+          {["Merges with no provenance note", "Before provenance began"].map((title) => (
+            <div className="cx-t15list" key={title}>
+              <div className="cx-hd">
+                <b>
+                  {title}
+                  <Planned why={WHY.gaps} />
+                </b>
+              </div>
+            </div>
+          ))}
+        </>
       ) : null}
       <div className="cx-t15map">
         {coverage.areas.map((area) => {
@@ -114,7 +173,13 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
           );
         })}
       </div>
-      <h5 className="cx-t10h5">By area</h5>
+      <h5 className="cx-t10h5">
+        By area
+        <span className="cx-t10r">
+          Open an area for its files
+          <Planned why={WHY.files} />
+        </span>
+      </h5>
       <div className="cx-aptb" style={{ gridTemplateColumns: TABLE }}>
         <div className="cx-h">Area</div>
         <div className="cx-h">Agent-written lines</div>

@@ -1,7 +1,8 @@
 import type { CapacityState } from "../../../../generated/CapacityState";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { Frame } from "../../shared/Frame";
-import { Ic } from "../../shared/parts";
+import { Btn, Ic } from "../../shared/parts";
+import { Planned, WHY } from "../Planned";
 import { changes, notSampled } from "./model";
 import { useCapacityState } from "./useCapacity";
 
@@ -12,9 +13,9 @@ function pauseValue(state: CapacityState): string {
 }
 
 /**
- * Crew Designs v21, `capacity-settings`, `capacity-settings-unset` and the banner of `capacity-over`, on the real
- * capacity read. Read only: the frames draw no editor for the limit, the sampling or the pause switch, so none exists here
- * and nothing on this screen sends a write.
+ * Crew Designs v77, `capacity-settings` and its saved-off, paused, loading, error and no-plan states, `capacity-settings-unset` and the banner of `capacity-over`, on the real
+ * capacity read. Read only: the editor for the limit, the sampling and the pause switch is Planned, so the two buttons that
+ * would open it are drawn disabled beside a Planned pill, and nothing on this screen sends a write.
  */
 export function LiveSettings({ project }: { project: string }) {
   const read = useCapacityState(project);
@@ -57,6 +58,10 @@ function Body({ state }: { state: CapacityState }) {
             <b>No limit is set.</b>
             {` ${state.waiting} High and Medium ${state.waiting === 1 ? "change is" : "changes are"} waiting for your review now. Crew keeps starting work whatever the queue holds.`}
           </span>
+          <span className="cx-acts">
+            <Planned why={WHY.editor} />
+            <Btn className="cx-btn">Set a limit</Btn>
+          </span>
         </div>
       ) : null}
       <div>
@@ -69,13 +74,24 @@ function Body({ state }: { state: CapacityState }) {
                 : "Not set. Until you set it, Crew never pauses a start because of your review queue. Crew counts the High and Medium changes that merged and are waiting for you; Low-risk changes don’t count."}
             </small>
           </div>
-          <span className="cx-sv">{state.settings_saved ? changes(state.limit) : "Not set"}</span>
+          {state.settings_saved ? (
+            <span style={{ display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" }}>
+              <span className="cx-sv">{changes(state.limit)}</span>
+              <span style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+                <Planned why={WHY.editor} />
+                <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px", padding: "0 10px" }}>Change the limit</Btn>
+              </span>
+            </span>
+          ) : (
+            <span className="cx-sv">Not set</span>
+          )}
         </div>
         <div className="cx-setrow">
           <div>
             <b>When the queue passes it</b>
             <small>
-              Crew doesn’t begin new Low-priority tasks it started itself. Tasks you start, High-priority work and everything already running carry on. Paused starts begin by themselves when the queue is back at the limit or under it.
+              Crew doesn’t begin new Low-priority tasks it started itself. Tasks you start, High-priority work and everything already running carry on.
+              {state.settings_saved ? " Paused starts begin by themselves when the queue is back at the limit or under it." : ""}
             </small>
           </div>
           <span className="cx-sv cx-ro">{pauseValue(state)}</span>
@@ -83,7 +99,11 @@ function Body({ state }: { state: CapacityState }) {
         <div className="cx-setrow">
           <div>
             <b>Low-risk changes</b>
-            <small>Review every low-risk batch (the default), or review a sample. A sample is sized to the batch. The changes not sampled are listed in the digest.</small>
+            <small>
+              {state.settings_saved
+                ? "Review every low-risk batch (the default), or review a sample. A sample is sized to the batch. The changes not sampled are listed in the digest."
+                : "Review every low-risk batch, or review a sample sized to the batch. The changes not sampled are listed in the digest."}
+            </small>
           </div>
           <span className="cx-sv">{sampled ? "Review a sample" : state.settings_saved ? "Review every batch" : "Review every batch · default"}</span>
         </div>

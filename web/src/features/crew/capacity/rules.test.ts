@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { openFrame } from "../shared/test-support";
 
 /** The Designer's final rules for review capacity (U3), shown as drawn. Values marked Proposed are Engineering's to set. */
-describe("Review capacity rules (Crew Designs v21)", () => {
-  it("the limit counts High and Medium changes only, and is 8 as a Proposed value", async () => {
+describe("Review capacity rules (Crew Designs v77)", () => {
+  it("the limit counts High and Medium changes only, and 8 is an example limit", async () => {
     const { container } = await openFrame("capacity-settings");
     const text = container.textContent ?? "";
-    expect(text).toContain("8 changes · Proposed");
+    expect(text).toContain("8 changes");
+    expect(text).not.toContain("Proposed");
     expect(text).toContain("Crew counts the High and Medium changes that merged and are waiting for you. Low-risk changes are batched, have no deadline and don’t count.");
   });
 
@@ -33,5 +34,17 @@ describe("Review capacity rules (Crew Designs v21)", () => {
   it("the limit never stops a merge or running work", async () => {
     const { container } = await openFrame("capacity-over");
     expect(container.textContent).toContain("Running work carries on, and tasks you start and High-priority work are not paused.");
+  });
+
+  it("a failed coverage read draws one dash tile, not one per area", async () => {
+    const { container } = await openFrame("capacity-coverage-error");
+    expect(container.querySelectorAll(".cx-t15tile")).toHaveLength(1);
+    expect(container.querySelector(".cx-t15tile")?.textContent).toContain("—");
+  });
+
+  it("a map of a few merges draws the gaps banner and no invented “rests on” line", async () => {
+    const { container } = await openFrame("capacity-coverage-low");
+    expect(container.textContent).toContain("2 of 5 merges aren’t in the map.");
+    expect(container.textContent).not.toMatch(/rests on|\bthin\b/i);
   });
 });
