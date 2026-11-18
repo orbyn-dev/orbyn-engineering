@@ -89,6 +89,54 @@ it("reconnects a failed stream without issuing freshness reads and cancels retry
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
+it("does not retry on its own after a 4xx refusal", async () => {
+  fetcher.mockResolvedValue(new Response("nope", { status: 400 }));
+  stop = followExplorer(pair);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("backs off exponentially after repeated server failures, capped at one minute", async () => {
+  fetcher.mockResolvedValue(new Response("down", { status: 503 }));
+  stop = followExplorer(pair);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(2999);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(5999);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(12_000 + 24_000 + 48_000);
+  expect(fetcher).toHaveBeenCalledTimes(6);
+  await vi.advanceTimersByTimeAsync(59_999);
+  expect(fetcher).toHaveBeenCalledTimes(6);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetcher).toHaveBeenCalledTimes(7);
+});
+
+it("starts the backoff over after a stream that delivered its ready frame", async () => {
+  const ready = () => new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(new TextEncoder().encode('data: {"type":"data_changed","what":"explorer:p"}\n\n'));
+    controller.close();
+  } }));
+  fetcher.mockResolvedValueOnce(new Response("down", { status: 503 }));
+  fetcher.mockResolvedValueOnce(new Response("down", { status: 503 }));
+  fetcher.mockImplementationOnce(async () => ready());
+  fetcher.mockResolvedValue(new Response("down", { status: 503 }));
+  stop = followExplorer(pair);
+  await vi.advanceTimersByTimeAsync(3000 + 6000);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(2999);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetcher).toHaveBeenCalledTimes(4);
+});
+
 it("turns a ready frame into the existing explorer refresh hint", async () => {
   fetcher.mockResolvedValue(new Response(new ReadableStream({ start(controller) {
     controller.enqueue(new TextEncoder().encode('data: {"type":"data_changed","what":"explorer:p"}\n\n'));
@@ -105,7 +153,10 @@ it("a focus retry replaces the pending reconnect instead of starting a second ti
   window.dispatchEvent(new Event("focus"));
   await vi.advanceTimersByTimeAsync(2000);
   expect(fetcher).toHaveBeenCalledTimes(2);
-  await vi.advanceTimersByTimeAsync(1000);
+  // The focus retry was the second failure, so the one live timer waits 6 s from it.
+  await vi.advanceTimersByTimeAsync(3999);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
