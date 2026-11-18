@@ -80,6 +80,7 @@ describe("Autopilot review frames (Crew Designs v19)", () => {
     const { container } = await open("mergequeue-forecast");
     const chip = [...container.querySelectorAll(".crew-phd .crew-pv")].find((el) => el.textContent === "Planned");
     expect(chip).toBeDefined();
+    expect(chip).toHaveClass("crew-pv-planned");
     expect(chip).toHaveAttribute("title", "Planned: the service finds a conflict when a merge is tried; it has no forecast from the dependency graph yet");
   });
 

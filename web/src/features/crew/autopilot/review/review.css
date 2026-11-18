@@ -51,6 +51,11 @@
   font-size: var(--text-caption);
   font-weight: 500;
 }
+/* The forecast header's Planned chip is drawn 16 px high, level with the heading's middle. */
+.crew-pv-planned {
+  height: 16px;
+  vertical-align: middle;
+}
 .crew-sub {
   flex: 1 1 0;
   min-width: 0;
