@@ -24,6 +24,28 @@ impl Core {
         actor: &str,
         before_start: impl FnOnce(&Thread) -> Result<()>,
     ) -> Result<Thread> {
+        self.delegate_then_selected(parent, task, actor, None, before_start)
+    }
+
+    pub(crate) fn delegate_then_in_checkout(
+        &self,
+        parent: &str,
+        task: &DelegateTask,
+        actor: &str,
+        checkout: &str,
+        before_start: impl FnOnce(&Thread) -> Result<()>,
+    ) -> Result<Thread> {
+        self.delegate_then_selected(parent, task, actor, Some(checkout), before_start)
+    }
+
+    fn delegate_then_selected(
+        &self,
+        parent: &str,
+        task: &DelegateTask,
+        actor: &str,
+        checkout: Option<&str>,
+        before_start: impl FnOnce(&Thread) -> Result<()>,
+    ) -> Result<Thread> {
         let owner = self.store.thread(parent)?;
         if !self.store.project(&owner.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
@@ -42,8 +64,14 @@ impl Core {
                 .unwrap_or_else(|| "Delegated task".to_owned()),
             engine,
             model: task.model.clone().or(inherited(&owner.model)),
-            cwd: owner.cwd.clone(),
-            worktree: owner.worktree.clone(),
+            cwd: checkout
+                .map(str::to_owned)
+                .unwrap_or_else(|| owner.cwd.clone()),
+            worktree: if checkout.is_some() {
+                None
+            } else {
+                owner.worktree.clone()
+            },
             skill_profile: owner.skill_profile.clone(),
             parent_thread_id: Some(owner.id.clone()),
             relation: Some("subagent".to_owned()),

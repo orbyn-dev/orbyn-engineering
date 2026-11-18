@@ -469,6 +469,7 @@ impl Core {
                 prefix: "worker",
                 prompt: None,
                 links: Links {
+                    correction_subject: None,
                     review: None,
                     fix: None,
                     crew_started: true,

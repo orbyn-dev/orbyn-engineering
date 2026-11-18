@@ -13,6 +13,10 @@ impl Core {
             .crew_run(subject)?
             .ok_or_else(|| CoreError::NotFound("crew run".into()))?;
         let thread = self.store.thread(&run.lead_thread_id)?;
+        let thread = self
+            .correction_review_thread(&thread, subject)
+            .await
+            .map_err(|error| CoreError::Invalid(error.message))?;
         let (task, _) = self
             .review_subject(&thread, subject)
             .map_err(|e| CoreError::Invalid(e.message))?;

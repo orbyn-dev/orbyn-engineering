@@ -396,6 +396,19 @@ pub async fn world_forge(script: Script) -> World {
     .await
 }
 
+pub async fn world_forge_review(script: Script) -> World {
+    world_full(
+        true,
+        script,
+        &[("alpha", false), ("beta", false)],
+        true,
+        false,
+        vec!["ci".into()],
+        None,
+    )
+    .await
+}
+
 async fn world_full(
     preview: bool,
     script: Script,

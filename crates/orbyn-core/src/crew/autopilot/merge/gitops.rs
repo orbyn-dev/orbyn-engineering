@@ -48,8 +48,19 @@ impl Drop for Scratch {
 impl Scratch {
     pub async fn at(repo: &Path, root: &Path, rev: &str) -> Result<Self> {
         std::fs::create_dir_all(root)?;
-        let dir = root.join(new_id());
-        let _ = git(repo, &["worktree", "prune"]).await;
+        Self::named(repo, &root.join(new_id()), rev).await
+    }
+
+    pub(super) async fn named(repo: &Path, dir: &Path, rev: &str) -> Result<Self> {
+        let dir = dir.to_owned();
+        if dir.exists() {
+            return Err(CoreError::Invalid(
+                "the corrective checkout path already exists".into(),
+            ));
+        }
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         git(
             repo,
             &["worktree", "add", "--detach", &dir.to_string_lossy(), rev],
@@ -60,6 +71,11 @@ impl Scratch {
             repo: repo.to_owned(),
             removed: false,
         })
+    }
+
+    /// Ownership passes to the durable correction binding while its review and queue remain active.
+    pub(super) fn retain(mut self) {
+        self.removed = true;
     }
 
     pub async fn finish(mut self) {

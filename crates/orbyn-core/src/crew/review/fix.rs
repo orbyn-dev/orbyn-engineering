@@ -94,6 +94,16 @@ impl Core {
         subject: &CrewTask,
         repro: Option<CrewCheck>,
     ) -> Result<Value, CrewError> {
+        if self
+            .store
+            .crew_correction_for_task(&subject.id)
+            .map_err(internal)?
+            .is_some()
+        {
+            return Err(invalid(
+                "a deterministic corrective candidate with a confirmed finding needs a person's new task",
+            ));
+        }
         let finding = &found.finding;
         let path = finding.path.as_str();
         // The guard is keyed on the lane and the file, so rewording a claim is no way to a second fix.
@@ -268,6 +278,7 @@ impl Core {
                 prefix: "worker",
                 prompt: None,
                 links: Links {
+                    correction_subject: None,
                     review: None,
                     fix: Some(fix),
                     crew_started: true,

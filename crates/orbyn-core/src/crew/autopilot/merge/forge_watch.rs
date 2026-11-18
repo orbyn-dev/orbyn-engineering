@@ -1,13 +1,10 @@
 //! Bounded watch after confirmed forge merges; durable notices reuse the existing digest computation.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-use orbyn_contracts::CheckOutcome;
+use std::time::Duration;
 
 use super::{MergeTarget, gitops::Scratch};
 use crate::app::Core;
-use crate::crew::checks::run_line;
 use crate::crew::guard::{redact, refuse_secret};
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::crew::{CrewRepository, crew_base};
@@ -32,15 +29,15 @@ impl Drop for WatchClaim<'_> {
 }
 
 impl Core {
-    /// Checks the actual remote tip without moving any local branch. Failures ask the person;
-    /// the local compatibility watch's automatic update-ref/revert is never used for a forge.
+    /// Checks the remote tip without moving local branches. A certain Crew culprit requests
+    /// a normal reviewed corrective task; uncertainty or Off asks the person.
     pub async fn crew_watch_forge_main(
         self: &Arc<Self>,
         target: &MergeTarget,
         now: i64,
     ) -> Result<()> {
         self.crew_preview_only()?;
-        let _serial = self.crew_merges.lock().await;
+        let serial = self.crew_merges.lock().await;
         let records = self
             .store
             .crew_merges(&target.repo.to_string_lossy(), &target.branch)?;
@@ -80,38 +77,90 @@ impl Core {
             identity: &identity,
             completed: false,
         };
-        let watched: Result<()> = async {
+        let watched: Result<Option<String>> = async {
             git(&target.repo, &["fetch", "--no-tags", &intent.remote, &tip]).await?;
             let commands = super::gitops::repo_checks(&target.repo, &first.before_commit).await?;
-            if commands.is_empty() { return Err(CoreError::Invalid("NoChecks: the forge watch has no repository checks".into())); }
-            let scratch = Scratch::at(&target.repo, &self.config.data_dir.join("crew-merge"), &tip).await?;
-            let checked: Result<bool> = async {
-                // A rewritten target must not clear records that no longer belong to its history.
+            if commands.is_empty() {
+                return Err(CoreError::Invalid(
+                    "NoChecks: the forge watch has no repository checks".into(),
+                ));
+            }
+            let scratch =
+                Scratch::at(&target.repo, &self.config.data_dir.join("crew-merge"), &tip).await?;
+            let checked = async {
                 for record in &records {
                     if self.store.crew_forge_merge(&record.task_id)?.is_some() {
-                        git(&scratch.dir, &["merge-base", "--is-ancestor", &record.merge_commit, &tip]).await?;
+                        git(
+                            &scratch.dir,
+                            &["merge-base", "--is-ancestor", &record.merge_commit, &tip],
+                        )
+                        .await?;
                     }
                 }
-                let deadline = Instant::now() + Duration::from_secs(30 * 60);
-                for command in commands {
-                    if run_line(&command, &scratch.dir, deadline).await.outcome != CheckOutcome::Pass { return Ok(false); }
-                }
-                Ok(true)
-            }.await;
+                self.find_break(
+                    &scratch,
+                    &target.repo,
+                    &first.before_commit,
+                    &tip,
+                    &commands,
+                    &records,
+                )
+                .await
+            }
+            .await;
             scratch.finish().await;
-            let healthy = checked?;
-            for record in &records {
-                if self.store.crew_forge_merge(&record.task_id)?.is_none() { continue; }
-                self.store.set_merge_watch(&record.task_id, if healthy { "green" } else { "broken" })?;
-                if !healthy {
-                    self.store.set_merge_needs_person(&record.task_id, Some("repository checks fail on the actual forge tip; a person must review a corrective PR"))?;
+            let found = checked?;
+            let culprit = match found {
+                super::watch::Found::Healthy => {
+                    for record in &records {
+                        self.store.set_merge_watch(&record.task_id, "green")?;
+                    }
+                    None
+                }
+                super::watch::Found::Unsure { why, culprit, .. } => {
+                    for record in &records {
+                        if culprit.as_ref().is_none_or(|task| task == &record.task_id) {
+                            self.store.set_merge_watch(&record.task_id, "broken")?;
+                            self.store
+                                .set_merge_needs_person(&record.task_id, Some(&why))?;
+                        }
+                    }
+                    None
+                }
+                super::watch::Found::Certain(record) => {
+                    self.store.set_merge_watch(&record.task_id, "broken")?;
+                    if self.merge_mode(&record.task_id)? == crate::crew::Mode::Off {
+                        self.store.set_merge_needs_person(
+                            &record.task_id,
+                            Some("Autopilot is Off. A person must request the corrective PR."),
+                        )?;
+                        None
+                    } else {
+                        Some(record.task_id)
+                    }
+                }
+            };
+            Ok(culprit)
+        }
+        .await;
+        let culprit = watched?;
+        drop(serial);
+        if let Some(parent) = culprit {
+            match self.prepare_forge_correction(&parent, target, now).await {
+                Ok(_) => {
+                    self.process_forge_lane(target, None, now, true).await?;
+                }
+                Err(error) => {
+                    self.store.set_merge_needs_person(
+                        &parent,
+                        Some("The corrective PR needs a person. Open the corrective task proof."),
+                    )?;
+                    tracing::warn!(%error,"a proven forge break could not prepare its corrective PR");
                 }
             }
-            self.store.finish_crew_merge_watch(&identity)?;
-            claim.completed = true;
-            Ok(())
-        }.await;
-        watched?;
+        }
+        self.store.finish_crew_merge_watch(&identity)?;
+        claim.completed = true;
         self.crew_deliver_merge_notices(now)
     }
 
@@ -158,6 +207,8 @@ impl Core {
         {
             tracing::warn!(%error, "Crew forge intent reconciliation needs another observation");
         }
+        self.resume_forge_corrections(crate::util::unix_now())
+            .await?;
         let mut targets = std::collections::BTreeSet::new();
         for record in self.store.crew_all_merges()? {
             if self.store.crew_forge_merge(&record.task_id)?.is_some() {
@@ -175,6 +226,12 @@ impl Core {
                 branch,
                 owed: None,
             };
+            if let Err(error) = self
+                .process_forge_lane(&target, None, crate::util::unix_now(), true)
+                .await
+            {
+                tracing::warn!(%error,"the forge correction lane needs another observation");
+            }
             if let Err(error) = self
                 .crew_watch_forge_main(&target, crate::util::unix_now())
                 .await

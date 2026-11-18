@@ -42,7 +42,9 @@ mod crew_escapes;
 mod crew_escapes_tests;
 mod crew_flow;
 mod crew_guard;
+mod crew_merge_corrections;
 mod crew_merge_forge;
+pub(crate) use crew_merge_corrections::ForgeCorrection;
 mod crew_merges;
 mod crew_provenance;
 #[cfg(test)]

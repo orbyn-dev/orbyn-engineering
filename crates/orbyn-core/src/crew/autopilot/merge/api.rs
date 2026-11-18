@@ -647,12 +647,11 @@ impl Core {
             .await?;
         Ok(wire::AutopilotAnswered {
             task_id: task_id.to_owned(),
-            review_state: match answering {
-                Answering::LooksGood => "looks_good",
-                Answering::Comment => "commented",
-                Answering::Revert => "reverted",
-            }
-            .to_owned(),
+            review_state: self
+                .store
+                .crew_merge(task_id)?
+                .ok_or_else(|| CoreError::NotFound("merge".into()))?
+                .review_state,
             revert_commit: commit,
         })
     }

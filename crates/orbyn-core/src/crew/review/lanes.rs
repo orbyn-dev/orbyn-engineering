@@ -185,6 +185,7 @@ impl Core {
             }
             Some(_) => return Err(invalid("lanes: a list of words")),
         }
+        let thread = self.correction_review_thread(&thread, &task.id).await?;
         let cwd = std::path::PathBuf::from(&thread.cwd);
         let commit = self.review_commit(&task, &cwd).await?;
         let touched = self.review_changed(&run, &cwd).await;
@@ -247,6 +248,8 @@ impl Core {
         commit: &str,
         kind: Run<'_>,
     ) -> Result<Value, CrewError> {
+        let selected_thread = self.correction_review_thread(thread, &subject.id).await?;
+        let thread = &selected_thread;
         let history = self.store.crew_reviews_of(&subject.id).map_err(internal)?;
         let second = matches!(kind, Run::Second { .. });
         let role = if second { "finding_check" } else { "review" };
@@ -422,6 +425,11 @@ impl Core {
                 review: Some(review),
                 fix: None,
                 crew_started: false,
+                correction_subject: self
+                    .store
+                    .crew_correction_for_task(&subject.id)
+                    .map_err(internal)?
+                    .map(|_| subject.id.clone()),
             },
         })
         .await
