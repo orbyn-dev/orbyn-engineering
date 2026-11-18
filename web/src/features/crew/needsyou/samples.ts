@@ -111,7 +111,7 @@ export const STOP_ITEMS: NeedsItem[] = [STOP_DENIALS, STOP_INJECTED];
 
 /** needsyou-background: a background run waiting on the person, paused for its budget or needing approval. */
 export const BACKGROUND_ITEMS: NeedsItem[] = [
-  item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly", cost: "The run stopped at its budget. Raise the budget, or leave it paused.", actions: [{ key: "open", label: "Open", primary: true }] }),
+  item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly", cost: "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", actions: [{ key: "open", label: "Open", primary: true }] }),
   item({ id: "s-bg-approval", kind: "background", title: "Needs approval", from: "Background crew · Update the docs index", cost: "A command is held for your approval before the run can go on.", actions: [{ key: "open", label: "Open", primary: true }] }),
 ];
 

@@ -56,7 +56,7 @@ describe("the Needs you inbox on live data", () => {
     expect(items[0]).toHaveTextContent("Watch on main · 9be4410");
     expect(items[0]).toHaveTextContent("Nothing has been reverted. Main stays as it is until you choose.");
     expect(items[1]).toHaveTextContent("Paused: budget reached");
-    expect(items[1]).toHaveTextContent("The run stopped at its budget. Raise the budget, or leave it paused.");
+    expect(items[1]).toHaveTextContent("The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.");
     expect(items[1]).toHaveTextContent("Background crew · Fix failing CI");
     expect(items[2]).toHaveTextContent("DELETE FROM sessions");
     expect(items[3]).toHaveTextContent("aws s3 rb");
