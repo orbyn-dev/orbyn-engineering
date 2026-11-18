@@ -260,7 +260,7 @@ async fn a_broken_stored_row_and_a_failed_write_block_instead_of_opening() {
     assert!(!error, "{answer}");
     let texts = refused(&answer);
     says(&texts, "cannot be read");
-    says(&texts, "reset it, then confirm the default branch again");
+    says(&texts, "reset it or confirm the default branch again");
     says(&texts, "cannot tell whether a ref was weakened");
 
     // A failed write is the same: the task does not start on a ref it could not remember.
@@ -299,7 +299,7 @@ async fn a_stored_commit_that_is_not_a_full_object_id_is_a_broken_row() {
     assert!(!error, "{answer}");
     let texts = refused(&answer);
     says(&texts, "cannot be read");
-    says(&texts, "reset it, then confirm the default branch again");
+    says(&texts, "reset it or confirm the default branch again");
 }
 
 /// Writes a raw `crew_pinned_ref` row, as a writer other than this code could.
@@ -324,7 +324,7 @@ fn assert_damaged(error: &CoreError) {
     let text = error.public_message();
     assert!(
         text.contains("damaged")
-            && text.contains("reset it, then confirm the default branch again"),
+            && text.contains("reset it or confirm the default branch again"),
         "{text}"
     );
     for leaked in ["upload-pack", "origin/secret", "not json"] {
@@ -368,7 +368,7 @@ async fn a_reset_recovers_from_a_damaged_row_and_a_fresh_start_remembers_again()
         r#"{"reference":"origin/main","commit":"--upload-pack=x","remote":true}"#,
     );
     assert_damaged(&w.core.crew_pinned_ref_view(&project).await.unwrap_err());
-    // A confirm is not the way out: the damaged row is read first.
+    // A start is not the way out: it reads the damaged row first. A reset or a confirm is.
     let (answer, _) = w.start(brief_writing(1), key()).await;
     assert_eq!(answer["routed"], false, "{answer}");
 
@@ -377,6 +377,24 @@ async fn a_reset_recovers_from_a_damaged_row_and_a_fresh_start_remembers_again()
     routed(&w, 2).await;
     let view = w.core.crew_pinned_ref_view(&project).await.unwrap();
     assert_eq!(view.stored_commit.as_deref(), Some(head(&w.repo).as_str()));
+}
+
+#[tokio::test]
+async fn confirming_the_default_branch_also_replaces_a_damaged_row() {
+    let w = two().await;
+    commit_crew(&w.repo, &file(vec![rule("keep", &["src/**"], &["bravo"])]));
+    pin_origin_here(&w.repo);
+    let project = project_of(&w);
+    store_row(&w, &project, "not json");
+    assert_damaged(&w.core.crew_pinned_ref_view(&project).await.unwrap_err());
+    // Confirming does not read the damaged row: it names the commit the checkout's ref has now.
+    let view = w
+        .core
+        .crew_confirm_pinned_ref(&project, &head(&w.repo))
+        .await
+        .unwrap();
+    assert_eq!(view.stored_commit.as_deref(), Some(head(&w.repo).as_str()));
+    routed(&w, 1).await;
 }
 
 #[tokio::test]
