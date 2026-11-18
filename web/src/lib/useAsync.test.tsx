@@ -192,14 +192,18 @@ describe("useAsync", () => {
       expect(reads).toHaveLength(2);
     });
 
-    it("lets setData land after the screen has gone without reading or throwing", async () => {
+    it("forgets a parked read when the screen goes, so setData after that starts none", async () => {
       const { reads, load } = deferred();
       const { result, unmount } = renderHook(() => useAsync("q", load));
       await shown(reads, result);
+      act(() => { void result.current.reload(); });
+      act(() => { void result.current.refreshQuietly(); });
       const setData = result.current.setData;
+      expect(reads).toHaveLength(2);
       unmount();
-      expect(() => setData("late save")).not.toThrow();
-      expect(reads).toHaveLength(1);
+      // The parked read died with the screen: the late save must not wake it.
+      act(() => setData("late save"));
+      expect(reads).toHaveLength(2);
     });
   });
 
