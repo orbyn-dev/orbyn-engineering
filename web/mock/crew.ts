@@ -513,7 +513,7 @@ export function createCrewMock() {
     if (head === "projects" && id && seg[4] === "pinned-ref") {
       const current = "b".repeat(40);
       const stored = "a".repeat(40);
-      const reason = "the default branch origin/main now points at bbbbbbbbbbbb, which does not descend from the commit Orbyn remembered, aaaaaaaaaaaa";
+      const reason = "the default branch origin/main now points at bbbbbbbbbbbb, which does not descend from the commit Orbyn remembered, aaaaaaaaaaaa. Ask a person to confirm the new default branch before a task starts.";
       if (method === "GET") return { status: 200, body: { project: id, current_ref: "origin/main", current_commit: current, stored_ref: "origin/main", stored_commit: stored, accepted: classes !== "pinned", missing: false, blocked: classes === "pinned" ? reason : null } };
       if (method === "POST" && (seg[5] === "confirm" || seg[5] === "reset")) {
         if (seg[5] === "confirm" && (body as { commit?: string }).commit !== current) return { status: 400, body: { code: "invalid", message: "the default branch is not the commit that was shown; reload and confirm the commit it has now" } };
@@ -595,7 +595,7 @@ export function createCrewMock() {
         built_in: "Everything else",
         rules: bad ? [] : RULES,
         problems: bad ? PROBLEMS : [],
-        notes: classes === "pinned" ? ["default branch changed: the default branch origin/main now points at bbbbbbbbbbbb, which does not descend from the commit Orbyn remembered, aaaaaaaaaaaa. Every engine is blocked until a person confirms or resets the remembered default branch."] : [],
+        notes: classes === "pinned" ? ["default branch changed: the default branch origin/main now points at bbbbbbbbbbbb, which does not descend from the commit Orbyn remembered, aaaaaaaaaaaa. Ask a person to confirm the new default branch before a task starts.. Every engine is blocked until a person confirms or resets the remembered default branch."] : [],
         working_copy_differs: classes === "note",
         working_copy_note: classes === "note" ? "This checkout's copy of the file differs from the committed one. An edit is not in force until it is committed." : null,
       };

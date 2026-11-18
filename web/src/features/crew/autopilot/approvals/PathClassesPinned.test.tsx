@@ -17,7 +17,7 @@ vi.mock("../../../../api/personKey", async (importOriginal) => ({
 
 const oldCommit = "a".repeat(40);
 const newCommit = "b".repeat(40);
-const reason = "The default branch was rewritten.";
+const reason = "The default branch was rewritten. Ask a person to confirm the new default branch before a task starts.";
 const view: CrewClassesView = {
   built_in: "Everything else", rules: [], problems: [],
   notes: [`default branch changed: ${reason}. Every engine is blocked until a person confirms or resets the remembered default branch.`],
@@ -57,6 +57,9 @@ describe("pinned default-branch recovery", () => {
     render(<PathClasses />);
     const confirm = await screen.findByRole("button", { name: "Confirm this commit" });
     expect(screen.getByText(reason, { exact: false })).toBeVisible();
+    expect(screen.getByText("Every engine is blocked until a person confirms or resets the remembered default branch.")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Default branch changed" }).textContent).not.toContain("..");
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(newCommit)).toBeVisible();
     expect(within(screen.getByRole("table", { name: "Path classes" })).getByText("No engine")).toBeVisible();
     const original = vi.mocked(fetch).getMockImplementation()!;
@@ -91,7 +94,7 @@ describe("pinned default-branch recovery", () => {
     setup();
     useConnection.setState({ remote: true, crewPreview: true });
     render(<PathClasses />);
-    expect(await screen.findByText("Change the remembered default branch on the local connection.")).toBeVisible();
+    expect(await screen.findByText("Only a person on this computer can confirm or forget the remembered default branch.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Forget it" })).toBeNull();
   });
 
@@ -101,6 +104,14 @@ describe("pinned default-branch recovery", () => {
     expect(await screen.findByText("Couldn’t check the remembered default branch.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Confirm this commit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Forget it" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Default branch changed" }).textContent).not.toContain("..");
+  });
+
+  it("still allows writes when only the trailing sentence of the note is reworded", async () => {
+    setup(pin, { ...view, notes: [`default branch changed: ${reason}. Every engine stays blocked until someone confirms the new default branch.`] });
+    render(<PathClasses />);
+    expect(await screen.findByRole("button", { name: "Confirm this commit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Forget it" })).toBeEnabled();
   });
 
   it("withholds writes when the two reads describe different blocks", async () => {
@@ -146,6 +157,7 @@ describe("pinned default-branch recovery", () => {
     vi.mocked(readPersonKey).mockResolvedValue(null);
     render(<PathClasses />);
     expect(await screen.findByText(newCommit)).toBeVisible();
+    expect(screen.getByText("Only a person on this computer can confirm or forget the remembered default branch.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Confirm this commit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Forget it" })).toBeNull();
   });
@@ -194,10 +206,10 @@ describe("pinned default-branch recovery", () => {
     const user = userEvent.setup();
     const first = render(<PathClasses />);
     await user.click(await screen.findByRole("button", { name: "Forget it" }));
-    expect(screen.getByRole("button", { name: "Forget it" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Forgetting…" })).toBeDisabled();
     first.unmount();
     render(<PathClasses />);
-    expect(await screen.findByRole("button", { name: "Forget it" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Forgetting…" })).toBeDisabled();
     finish(new Response(JSON.stringify({ ...pin, stored_ref: null, stored_commit: null, accepted: true, blocked: null }), { status: 200 }));
     expect(await screen.findByText("Remembered default branch forgotten.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Forget it" })).toBeNull();
@@ -231,5 +243,50 @@ describe("pinned default-branch recovery", () => {
     expect(await screen.findByText("Remembered default branch forgotten.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Check again" }));
     expect(await screen.findByRole("button", { name: "Forget it" })).toBeEnabled();
+  });
+
+  it("shows the error again when a later foreground read fails", async () => {
+    setup(pin, { ...view, problems: ["Rule 3 has no engines listed."], notes: [] });
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    const user = userEvent.setup();
+    render(<PathClasses />);
+    expect(await screen.findByRole("table", { name: "What is wrong in the file" })).toBeVisible();
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input).includes("/api/crew/classes?") ? new Response(JSON.stringify({ code: "boom", message: "nope" }), { status: 500 }) : original(input, init),
+    );
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByText("Can't read the path classes")).toBeVisible();
+    expect(screen.queryByRole("table", { name: "Path classes" })).toBeNull();
+  });
+
+  it("drops a stale failed-write notice when fresh data arrives after a remount", async () => {
+    setup();
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    let fail: (value: Response) => void = () => {};
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/pinned-ref/confirm")) return new Promise<Response>((resolve) => { fail = resolve; });
+      return original(input, init);
+    });
+    const user = userEvent.setup();
+    const first = render(<PathClasses />);
+    await user.click(await screen.findByRole("button", { name: "Confirm this commit" }));
+    first.unmount();
+    await act(async () => { fail(new Response(JSON.stringify({ code: "invalid", message: "the default branch moved" }), { status: 400 })); });
+    render(<PathClasses />);
+    expect(await screen.findByRole("button", { name: "Confirm this commit" })).toBeEnabled();
+    expect(screen.queryByText(/the default branch moved/)).toBeNull();
+    expect(screen.queryByText("Couldn’t check the remembered default branch.")).toBeNull();
+  });
+
+  it("moves focus to Check again after a failed write", async () => {
+    setup();
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input).endsWith("/pinned-ref/confirm") ? new Response(JSON.stringify({ code: "invalid", message: "the default branch moved" }), { status: 400 }) : original(input, init),
+    );
+    const user = userEvent.setup();
+    render(<PathClasses />);
+    await user.click(await screen.findByRole("button", { name: "Confirm this commit" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Check again" })).toHaveFocus());
   });
 });

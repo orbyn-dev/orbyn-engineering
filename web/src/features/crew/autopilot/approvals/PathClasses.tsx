@@ -4,7 +4,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { readPersonKey } from "../../../../api/personKey";
-import { serviceUrl } from "../../../../api/origin";
 import { toFailure, useAsync } from "../../../../lib/useAsync";
 import { useRoute } from "../../../../product/state/route";
 import { useWorkspace } from "../../../../product/state/workspace";
@@ -45,17 +44,14 @@ const usePinWrites = create<{ writes: Record<string, PinWrite>; put(scope: strin
 }));
 
 const blockedNote = (view: CrewClassesView) => view.notes.find((note) => note.startsWith(BLOCKED_PREFIX));
-const serviceScope = () => new URL(serviceUrl("/api/crew/classes"), window.location.href).origin;
+const BLOCKED_TAIL = "Every engine is blocked until a person confirms or resets the remembered default branch.";
+const PERSON_ONLY = "Only a person on this computer can confirm or forget the remembered default branch.";
 
-async function readClasses(project: string, origin: string, signal?: AbortSignal): Promise<PinSnapshot> {
-  if (serviceScope() !== origin) throw new Error("Connection changed");
+async function readClasses(project: string, signal?: AbortSignal): Promise<PinSnapshot> {
   const classes = await crewApi.classes(project, signal);
-  if (serviceScope() !== origin) throw new Error("Connection changed");
   if (!blockedNote(classes)) return { classes, pin: null, pinError: false };
   try {
-    if (serviceScope() !== origin) throw new Error("Connection changed");
     const pin = await crewApi.pinnedRef(project, signal);
-    if (serviceScope() !== origin) throw new Error("Connection changed");
     return { classes, pin, pinError: false };
   } catch {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -245,9 +241,8 @@ function CommandBox() {
 }
 
 function Loaded({ project }: { project: { id: string; name: string } }) {
-  const origin = serviceScope();
-  const scope = JSON.stringify([origin, project.id]);
-  const read = useAsync(`crew-classes:${scope}`, (signal) => readClasses(project.id, origin, signal));
+  const scope = project.id;
+  const read = useAsync(`crew-classes:${scope}`, (signal) => readClasses(project.id, signal));
   const write = usePinWrites((state) => state.writes[scope]);
   const remote = useConnection((state) => state.remote);
   const preview = useConnection((state) => state.crewPreview);
@@ -264,26 +259,39 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
     setPerson(false);
     if (preview && !remote) void readPersonKey().then((key) => { if (current) setPerson(key !== null); });
     return () => { current = false; };
-  }, [origin, preview, remote]);
+  }, [preview, remote]);
+  // Only a pending write or a confirmed receipt survives a remount: fresh data replaces a leftover failed-write notice.
+  useEffect(() => {
+    const left = usePinWrites.getState().writes[scope];
+    if (read.data && left?.phase === "check" && !left.receipt) usePinWrites.getState().put(scope, null);
+  }, [read.data, scope]);
+  const banner = useRef<HTMLDivElement>(null);
+  const focusCheck = useRef(false);
+  const failed = write?.phase === "check";
+  useEffect(() => {
+    if (failed && focusCheck.current) {
+      focusCheck.current = false;
+      banner.current?.querySelector<HTMLElement>("[data-check-again]")?.focus();
+    }
+  }, [failed]);
   const [selected, setSelected] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [answered, setAnswered] = useState(false);
   if (read.status === "loading") return <Loading label="Reading the path classes" rows={4} />;
-  if (read.status === "error" && !read.data) return <ErrorState title="Can't read the path classes" failure={read.error} onRetry={read.reload} />;
-  if (!read.data) return <Loading label="Reading the path classes" rows={4} />;
+  if (read.status === "error") return <ErrorState title="Can't read the path classes" failure={read.error} onRetry={read.reload} />;
   const { classes: view, pin, pinError } = read.data;
   const note = blockedNote(view);
-  const agrees = !!note && !pinError && !!pin && pin.project === project.id && !pin.accepted && !!pin.blocked && note === `${BLOCKED_PREFIX}${pin.blocked}. Every engine is blocked until a person confirms or resets the remembered default branch.` && !!pin.stored_ref && !!pin.stored_commit && (pin.missing || (!!pin.current_ref && !!pin.current_commit));
-  const writable = preview && !remote && person && serviceScope() === origin;
+  const agrees = !!note && !pinError && !!pin && pin.project === project.id && !pin.accepted && !!pin.blocked && note.includes(pin.blocked.replace(/\.$/, "")) && !!pin.stored_ref && !!pin.stored_commit && (pin.missing || (!!pin.current_ref && !!pin.current_commit));
+  const writable = preview && !remote && person;
   const check = async () => {
     const previous = usePinWrites.getState().writes[scope];
     if (previous?.phase === "pending") return;
     const savedReceipt = previous?.receipt;
     usePinWrites.getState().put(scope, { phase: "pending", receipt: savedReceipt });
     try {
-      const snapshot = await readClasses(project.id, origin);
+      const snapshot = await readClasses(project.id);
       if (snapshot.pinError) throw new Error("Pin read failed");
-      if (alive.current && serviceScope() === origin) {
+      if (alive.current) {
         read.setData(snapshot);
         usePinWrites.getState().put(scope, null);
       } else {
@@ -295,11 +303,11 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
   };
   const change = async (action: "confirm" | "reset") => {
     const current = useConnection.getState();
-    if (!agrees || !writable || !current.crewPreview || current.remote || usePinWrites.getState().writes[scope] || read.status !== "ready" || read.refreshing || serviceScope() !== origin || (action === "confirm" && !pin.current_commit)) return;
+    if (!agrees || !writable || !current.crewPreview || current.remote || usePinWrites.getState().writes[scope] || read.status !== "ready" || read.refreshing || (action === "confirm" && !pin.current_commit)) return;
     usePinWrites.getState().put(scope, { phase: "pending", action });
     try {
       const result = action === "confirm" ? await crewApi.confirmPinnedRef(project.id, pin.current_commit!) : await crewApi.resetPinnedRef(project.id);
-      if (result.project !== project.id || serviceScope() !== origin || (action === "confirm" && result.stored_commit !== pin.current_commit) || (action === "reset" && result.stored_commit)) throw new Error("Unverified result");
+      if (result.project !== project.id || (action === "confirm" && result.stored_commit !== pin.current_commit) || (action === "reset" && result.stored_commit)) throw new Error("Unverified result");
       const message = action === "confirm" ? "Default branch confirmed." : "Remembered default branch forgotten.";
       if (!alive.current) {
         usePinWrites.getState().put(scope, { phase: "check", receipt: message });
@@ -309,8 +317,8 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
       setReceipt(message);
       heading.current?.focus();
       try {
-        const snapshot = await readClasses(project.id, origin);
-        if (snapshot.pinError || serviceScope() !== origin) throw new Error("Pin read failed");
+        const snapshot = await readClasses(project.id);
+        if (snapshot.pinError) throw new Error("Pin read failed");
         if (alive.current) {
           read.setData(snapshot);
           usePinWrites.getState().put(scope, null);
@@ -323,6 +331,7 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
     } catch (error) {
       const failure = toFailure(error);
       const message = failure.status > 0 && failure.status < 500 ? failure.message : "Couldn’t check the remembered default branch.";
+      focusCheck.current = alive.current;
       usePinWrites.getState().put(scope, { phase: "check", message });
     }
   };
@@ -340,22 +349,23 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
       {view.working_copy_note ? <div className="ap-banner ap-banner-plain" role="note"><p>{view.working_copy_note}</p></div> : null}
       {receipt || write?.receipt ? <p role="status">{receipt ?? write?.receipt}</p> : null}
       {note ? (
-        <div className="ap-banner ap-banner-am" role="alert" data-frame="classes-pinned-ref-blocked">
-          <p><b>default branch changed</b><br />{agrees ? pin.blocked : note.slice(BLOCKED_PREFIX.length)}</p>
+        <div ref={banner} className="ap-banner ap-banner-am" role="region" aria-label="Default branch changed" data-frame="classes-pinned-ref-blocked">
+          <p><b>default branch changed</b><br />{agrees ? pin.blocked : note.slice(BLOCKED_PREFIX.length).replace(/\.\.(\s|$)/, ".$1")}</p>
+          {agrees ? <p>{BLOCKED_TAIL}</p> : null}
           {agrees ? <dl className="ap-facts">
             <div><dt>Remembered ref</dt><dd>{pin.stored_ref}</dd></div>
             <div><dt>Remembered commit</dt><dd><code>{pin.stored_commit}</code></dd></div>
             <div><dt>Current ref</dt><dd>{pin.current_ref ?? "No default-branch ref"}</dd></div>
             <div><dt>Current commit</dt><dd><code>{pin.current_commit ?? "—"}</code></dd></div>
           </dl> : null}
-          {remote ? <p>Change the remembered default branch on the local connection.</p> : null}
-          {write?.message || ((!agrees || read.status === "error") && !write) ? <p>{write?.message ?? "Couldn’t check the remembered default branch."}</p> : null}
-          {write?.phase === "check" || ((!agrees || read.status === "error") && !write) ? <Button small onClick={() => void check()}>Check again</Button> : null}
+          {agrees && !writable ? <p>{PERSON_ONLY}</p> : null}
+          {write?.message || (!agrees && !write) ? <p>{write?.message ?? "Couldn’t check the remembered default branch."}</p> : null}
+          {write?.phase === "check" || (!agrees && !write) ? <Button small data-check-again onClick={() => void check()}>Check again</Button> : null}
           {agrees && writable && write?.phase !== "check" && read.status === "ready" ? <div className="ap-banner-acts">
-            {pin.current_ref && pin.current_commit ? <Button small tone="primary" disabled={read.refreshing || !!write} onClick={() => void change("confirm")}>Confirm this commit</Button> : null}
-            <Button small disabled={read.refreshing || !!write} onClick={() => void change("reset")}>Forget it</Button>
+            {pin.current_ref && pin.current_commit ? <Button small tone="primary" disabled={read.refreshing || !!write} onClick={() => void change("confirm")}>{write?.action === "confirm" ? "Confirming…" : "Confirm this commit"}</Button> : null}
+            <Button small disabled={read.refreshing || !!write} onClick={() => void change("reset")}>{write?.action === "reset" ? "Forgetting…" : "Forget it"}</Button>
           </div> : null}
-          {write?.phase === "pending" ? <p role="status">{write.action === "confirm" ? "Confirming…" : write.action === "reset" ? "Forgetting…" : "Checking…"}</p> : null}
+          {write?.phase === "pending" && !write.action ? <p role="status">Checking…</p> : null}
           {agrees && writable ? <p>{pin.current_ref ? "The next start reads the default branch the checkout has then." : "If there’s still no default branch, the next start reads the checkout’s current commit (HEAD)."}</p> : null}
         </div>
       ) : write?.phase === "check" ? <div className="ap-banner ap-banner-am" role="alert"><p>{write.message ?? "Couldn’t check the remembered default branch."}</p><Button small onClick={() => void check()}>Check again</Button></div> : null}
@@ -376,5 +386,5 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
 /** Settings › Crew › Path classes. Nothing is drawn while there is no project to read the file for. */
 export function PathClasses() {
   const project = useClassProject();
-  return project ? <Loaded key={JSON.stringify([serviceScope(), project.id])} project={project} /> : null;
+  return project ? <Loaded key={project.id} project={project} /> : null;
 }

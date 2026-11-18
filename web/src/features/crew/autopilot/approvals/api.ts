@@ -1,7 +1,6 @@
 // The one door the Autopilot screens use: the Crew routes of `orbynd`, with the generated wire types.
 // Every Crew route answers 404 while Crew Preview is off.
 import { request } from "../../../../api/client";
-import { serviceUrl } from "../../../../api/origin";
 import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewCreate";
 import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
@@ -90,11 +89,11 @@ export const crewApi = {
   pinnedRef: (project: string, signal?: AbortSignal) => request<CrewPinnedRefView>("GET", `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref`, undefined, signal),
   confirmPinnedRef: (project: string, commit: string) => {
     const path = `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref/confirm`;
-    return request<CrewPinnedRefView>("POST", path, { commit }, undefined, { expectedServiceUrl: serviceUrl(path) });
+    return request<CrewPinnedRefView>("POST", path, { commit });
   },
   resetPinnedRef: (project: string) => {
     const path = `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref/reset`;
-    return request<CrewPinnedRefView>("POST", path, {}, undefined, { expectedServiceUrl: serviceUrl(path) });
+    return request<CrewPinnedRefView>("POST", path, {});
   },
   /** 1 to 10 paths against those rules. Nothing is saved. */
   classesTest: (project: string, paths: string[], signal?: AbortSignal) => {
