@@ -56,7 +56,7 @@ describe("the Needs you inbox on live data", () => {
     expect(items[0]).toHaveTextContent("Watch on main · 9be4410");
     expect(items[0]).toHaveTextContent("Nothing has been reverted. Main stays as it is until you choose.");
     expect(items[1]).toHaveTextContent("Paused: budget reached");
-    expect(items[1]).toHaveTextContent("The run stopped at its budget. Raise the budget, or leave it paused.");
+    expect(items[1]).toHaveTextContent("The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.");
     expect(items[1]).toHaveTextContent("Background crew · Fix failing CI");
     expect(items[2]).toHaveTextContent("DELETE FROM sessions");
     expect(items[3]).toHaveTextContent("aws s3 rb");
@@ -153,6 +153,37 @@ describe("the Needs you inbox on live data", () => {
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull();
   });
 
+  it("offers Open the Flow view when nothing needs you, and it only changes the tab", async () => {
+    const { user } = await open("crew-empty");
+    await user.click(await screen.findByRole("button", { name: "Open the Flow view" }));
+    expect(window.location.hash).toBe("#/crew/flow");
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("says the service is not running when no source can be reached, with Retry", async () => {
+    mock.reset("crew");
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/crew/preview")) return real(input, init);
+      throw new TypeError("Failed to fetch");
+    });
+    render(<NeedsYouInbox />);
+    expect(await screen.findByText("Can’t read what needs you")).toBeVisible();
+    expect(screen.getByText("Check that the Orbyn service is running.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("announces the wait while the sources are read", async () => {
+    mock.reset("crew");
+    const real = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes("/api/crew/preview")) return real(input, init);
+      return new Promise<Response>(() => undefined);
+    });
+    render(<NeedsYouInbox />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Reading what needs you");
+  });
+
   it("names the source it could not read, keeps the rest, and Try again reads again", async () => {
     mock.reset("crew");
     mock.fail("/api/crew/stops", 1, 503, "unavailable");
@@ -171,7 +202,7 @@ describe("the Needs you inbox on live data", () => {
     for (const path of ["/api/crew/stops", "/api/crew/autopilot/review", "/api/crew/background", "/api/crew/approvals/held", "/api/crew/approvals/second-engine"]) mock.fail(path, 1, 503, "unavailable");
     const user = userEvent.setup();
     render(<NeedsYouInbox />);
-    expect(await screen.findByText("Can't read what needs you")).toBeVisible();
+    expect(await screen.findByText("Can’t read what needs you")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /retry/i }));
     expect(await list()).toBeVisible();
   });

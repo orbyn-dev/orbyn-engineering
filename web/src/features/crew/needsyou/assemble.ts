@@ -113,7 +113,7 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
         risk: null,
         undo: null,
         from: `Background crew · ${crew.name}`,
-        cost: run.stop_reason === "budget" ? "The run stopped at its budget. Raise the budget, or leave it paused." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
+        cost: run.stop_reason === "budget" ? "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
         since: time(run.ended_at ?? run.updated_at),
         actions: [{ key: "open" as const, label: "Open", primary: true }],
         ref: crew.id,

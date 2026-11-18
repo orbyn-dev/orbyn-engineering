@@ -329,12 +329,22 @@ provider keys, join tokens and any secret (D5).
   surfaced conflict. Test devices use an in-memory `KeyStore`, never the real keychain. A separate macOS-only manual
   check covers the real keychain item ([threat model](account-threat-model.md#checks)).
 - **Skips cleanly.** The test probes `ORBYN_E2E_ENGINE_URL` (default `http://127.0.0.1:8080`) and, when nothing answers,
-  prints why and passes. With `ORBYN_E2E_REQUIRE_ENGINE=1` (to be set in CI once the job exists) a missing Engine fails instead, so a broken
-  job cannot hide behind a skip.
-- It runs first on the owner's Mac, then as a path-filtered CI job. Whether that job becomes a required check is a
-  decision for the lead; adding it removes no existing check.
-- **Local stack hygiene.** The test leaves no Docker volume or image behind. Nobody runs a global Docker cleanup
-  without asking Products Research first.
+  prints why and passes. With `ORBYN_E2E_REQUIRE_ENGINE=1` a missing Engine fails instead, so a broken job cannot hide
+  behind a skip. The CI job below sets it, and only that job does.
+- **Where it is.** The two-device test is merged (#635): `crates/orbyn-core/src/account/tests/e2e_engine.rs`, behind the
+  cargo feature `engine-client`. It runs against the Engine's `scripts/local.sh` stack at `http://127.0.0.1:8080`;
+  `ORBYN_E2E_ENGINE_URL` overrides the address and `ORBYN_E2E_ENGINE_REPO` names the Engine checkout.
+- **CI job.** `.github/workflows/account-e2e.yml` runs it with `ORBYN_E2E_REQUIRE_ENGINE=1` on an `ubuntu-24.04` runner: it
+  checks out the public `orbyn-dev/orbyn-engine` at the tag `crates/orbyn-core/Cargo.toml` pins (`engine-v0.2.4`), runs
+  `scripts/local.sh setup` and `up` (Docker only, no secrets), then
+  `cargo test -p orbyn-core --features engine-client account::tests::e2e_engine`. It runs only on a pull request that
+  changes `crates/orbyn-core/src/account/**`, that manifest (the pin) or the workflow, and by hand. It is not a required
+  check and reuses no existing check's name. It has run green on a GitHub-hosted `ubuntu-24.04` runner in about 6 minutes
+  (workflow run 44217028818, 2026-11-18), and the Engine image builds there. Whether it becomes a required check is a
+  decision for the lead.
+- **Local stack hygiene.** The test leaves no Docker volume or image behind, but it does leave its throwaway invite and
+  account in the Engine stack's own database (`orbyn_local`); `scripts/local.sh reset` drops that database and clears
+  them. Nobody runs a global Docker cleanup without asking Products Research first.
 
 ## No escalation across devices
 
@@ -433,9 +443,22 @@ now and does not wait for them.
    release check shows hardened runtime without `get-task-allow` or `disable-library-validation`.
 6. Windows: the Account page says any program you run can act as this device, and the Designer's frames for that note
    and for "Confirm it's you" are merged.
+   - *Status: the note is built; the frames are drawn but marked "After the beta"; placement is unchecked.* `DevicesNote`
+     (`web/src/features/account/DeviceRows.tsx`) adds "On Windows, any program you run can act as this device. Keep this
+     account protected." under the all-devices note when the platform is `windows`, and the Devices page and the signed-in
+     Account page both render it. A web test (`devices.test.tsx`, "adds the Windows note only on Windows") checks that
+     macOS has no such note. The frames `devices-list-windows` and `acct-settings-signed-in-windows` exist in
+     `engineer-designs.html` and carry the label "After the beta". **Not checked:** that the note sits where those frames
+     put it on screen, and the state of the "Confirm it's you" frames, which this status does not cover.
 7. Every engine on the receiving machine runs under that machine's own permission mode, whatever engine the synced
    `default_engine` picks.
+   - *Status: covered by the pull request #615 test* `a_synced_permission_mode_never_becomes_this_devices_default_or_a_new_threads_mode`
+     (`crates/orbyn-core/src/account/tests/engine.rs`). A peer record carrying `default_permission_mode: full_access` and
+     `default_engine` is received and not applied, nothing is stored or queued for either key, and a thread started
+     afterwards opens in this device's own mode. **Unverified:** the test uses one stand-in engine; it does not start each
+     real engine to check the mode it runs under.
 8. The Engine reviewer approves these documents once more, this time against the built code.
+   - *Status: pending.* The Engine reviewer's second approval has not been given.
 
 **Distributed builds are unsigned for now, so the gate stays `Off`.** There is no Apple Developer account, so no build we
 distribute is signed with a Developer ID or notarized. Item 5 is therefore not met and stays a hard condition: real

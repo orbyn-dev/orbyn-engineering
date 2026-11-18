@@ -58,7 +58,7 @@ describe("each source becomes one inbox row", () => {
   it("a background run waiting on you is Paused: budget reached, or Needs approval with its reason; a run not waiting is not an item", () => {
     const items = backgroundItems([{ crew, runs: [bgRun({ stop_reason: "budget" }), bgRun({ id: "r2", review_reason: null }), bgRun({ id: "r4", review_reason: "Checks failed twice" }), bgRun({ id: "r3", review_waiting: false })] }]);
     expect(items.map((one) => [one.id, one.kind, one.title, one.cost, one.from, one.ref])).toEqual([
-      ["background:r1", "background", "Paused: budget reached", "The run stopped at its budget. Raise the budget, or leave it paused.", "Background crew · Fix failing CI", "bg"],
+      ["background:r1", "background", "Paused: budget reached", "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", "Background crew · Fix failing CI", "bg"],
       ["background:r2", "background", "Needs approval", "A command is held for your approval before the run can go on.", "Background crew · Fix failing CI", "bg"],
       ["background:r4", "background", "Needs approval", "Checks failed twice", "Background crew · Fix failing CI", "bg"],
     ]);

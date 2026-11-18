@@ -107,7 +107,7 @@ fn side_names(side: &PathClasses) -> Vec<String> {
 }
 
 /// A ref name is repository data: it is redacted and kept short wherever it is shown.
-fn redacted_ref(name: &str) -> String {
+pub(super) fn redacted_ref(name: &str) -> String {
     crate::crew::redact(name).chars().take(80).collect()
 }
 

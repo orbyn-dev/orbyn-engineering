@@ -27,6 +27,7 @@ use orbyn_contracts::CrewToken;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
 
+use super::autopilot::hidden;
 use super::background;
 use super::{injection_in, redact};
 
@@ -162,12 +163,6 @@ fn kind_of(value: &Value) -> &'static str {
     }
 }
 
-/// Characters that hide text from a person: the same set the Autopilot tripwire refuses (zero-width, bidirectional
-/// controls and the tag block). A character-only test, so quoting never runs the phrase check once per character.
-fn hidden(c: char) -> bool {
-    matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}' | '\u{e0000}'..='\u{e007f}')
-}
-
 /// Characters that cannot appear in a one-line problem: control, hidden, and the line and paragraph separators
 /// U+2028, U+2029 and U+0085.
 fn unshowable(c: char) -> bool {
@@ -201,24 +196,29 @@ fn instruction_like(text: &str) -> bool {
 }
 
 /// Cuts and redacts a value quoted back in a problem, so a refusal never repeats a credential, a whole file, a control
-/// character, a hidden character or a line separator that would break the one-line `field: reason` shape. A value that
-/// reads as an instruction is withheld whole, so a refusal never carries the phrase.
-fn quoted(text: &str) -> String {
+/// character, a hidden character or a line separator that would break the one-line `field: reason` shape. `None` when
+/// the raw value or the shown cut reads as an instruction (the cut is the redacted text, which can differ from the raw
+/// one), so a refusal never carries the phrase. Each form is checked once.
+fn quote(text: &str) -> Option<String> {
     if instruction_like(text) {
-        return "(value withheld: instruction-like)".to_owned();
+        return None;
     }
     let cut: String = flattened(&redact(text)).0.chars().take(80).collect();
-    cut.replace('`', "'")
+    if instruction_like(&cut) {
+        return None;
+    }
+    Some(cut.replace('`', "'"))
+}
+
+/// A value quoted back in a problem, or withheld whole when it reads as an instruction.
+fn quoted(text: &str) -> String {
+    quote(text).unwrap_or_else(|| "(value withheld: instruction-like)".to_owned())
 }
 
 /// A key of the file as it may appear in a problem's field: cut, redacted and free of control and hidden characters, or
 /// withheld when it reads as an instruction. A repository chooses its keys, so they get the treatment its values get.
 fn safe_key(key: &str) -> String {
-    if instruction_like(key) {
-        "(key withheld: instruction-like)".to_owned()
-    } else {
-        quoted(key)
-    }
+    quote(key).unwrap_or_else(|| "(key withheld: instruction-like)".to_owned())
 }
 
 /// An object at `field`, with every key it carries other than `known` reported.
@@ -791,7 +791,7 @@ fn walk_trigger(
 /// `Ok` with no triggers covers a file with no `background` section: another slice's sections are not this parser's to
 /// refuse. An empty or oversized file, invalid JSON, an unknown field, trigger kind or template, a missing or over-cap
 /// budget, a schedule closer than [`SCHEDULE_MIN_MINUTES`], a name that collides with an earlier one after
-/// [`normalized`], hidden, credential-shaped or instruction-shaped text, a key written twice and a template that tries to
+/// [`normalized`], hidden, credential-shaped or instruction-shaped text, a key written twice inside `background` and a template that tries to
 /// allow commands are all refused. At most [`PROBLEMS_MAX`] problems are listed, then one line counts the rest.
 pub fn parse_and_validate(text: &str) -> Result<Vec<TriggerDef>, Vec<Problem>> {
     check(text).map_err(|mut problems| {

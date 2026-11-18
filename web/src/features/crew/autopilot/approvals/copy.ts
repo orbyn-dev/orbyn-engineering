@@ -69,9 +69,9 @@ export const GUARD_WORKERS = "Workers run as you, with your machine’s permissi
 
 export const TEMPLATES: { id: TemplateId; name: string; short: string; starts: string; does: string; trigger: TriggerId }[] = [
   { id: "fix_ci", name: "Fix failing CI", short: "fix failing CI", starts: "CI fails on main", does: "Finds the failing check, fixes it in its own worktree and proves the fix on the queue’s state.", trigger: "ci_fails" },
-  { id: "flaky_test", name: "Flaky test", short: "flaky test", starts: "A test fails and passes on the same commit", does: "Reruns it, finds the cause and fixes or quarantines it, with the evidence.", trigger: "schedule" },
-  { id: "dependency_bump", name: "Dependency bump", short: "dependency bump", starts: "A dependency update opens", does: "Updates it, runs the repo’s checks and reads the changelog for breaking changes.", trigger: "dependency_update" },
-  { id: "security_advisory", name: "Security advisory", short: "security advisory", starts: "An advisory is published for a dependency", does: "Checks whether the repo is affected, and bumps or patches it. It is High risk by default.", trigger: "dependency_update" },
+  { id: "flaky_test", name: "Flaky test", short: "flaky test", starts: "an issue gets a label, or every N hours", does: "Reruns it, finds the cause and fixes or quarantines it, with the evidence.", trigger: "schedule" },
+  { id: "dependency_bump", name: "Dependency bump", short: "dependency bump", starts: "a dependency update opens", does: "Updates it, runs the repo’s checks and reads the changelog for breaking changes.", trigger: "dependency_update" },
+  { id: "security_advisory", name: "Security advisory", short: "security advisory", starts: "a dependency update opens, or an issue gets a label", does: "Checks whether the repo is affected, and bumps or patches it. It is High risk by default.", trigger: "dependency_update" },
 ];
 
 export const TRIGGERS: { id: TriggerId; name: string; repeats: string }[] = [

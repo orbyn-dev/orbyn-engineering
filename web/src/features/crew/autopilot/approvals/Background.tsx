@@ -15,26 +15,30 @@ import { Chip } from "./parts";
 import { useBackground } from "./useBackground";
 
 const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.short ?? id;
+/** A crew's state as the design draws it: Needs review, Running, Idle, and a stopped crew with its reason. */
+// The designs draw Needs review as a warning, Running as an info chip with a spinner and Idle as neutral. The shared Chip has no info
+// tone or spinner, so Running takes the closest existing tone (dim, like Idle) until the design system gains one.
+export const statusTone = (status: string): "am" | "dim" => (status.startsWith("Stopped") || status === "Needs review" ? "am" : "dim");
 const hasMode = (rows: { mode: Mode | null }[]) => rows.length > 0 && rows.every((row) => row.mode !== null);
 
 function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void; busy?: ReadonlySet<string> }) {
   const mode = hasMode(crews);
   return (
-    <div className={mode ? "ap-bg" : "ap-bg ap-bg-solo"} role="table" aria-label="Background crews">
+    <div className={mode ? "ap-bg ap-bg-crews" : "ap-bg ap-bg-solo ap-bg-crews"} role="table" aria-label="Background crews">
       <div className="ap-bg-row ap-head" role="row">
-        {["Crew", "Starts when", "Last run", "State", ...(mode ? ["Autopilot"] : [])].map((name) => <span key={name} role="columnheader">{name}</span>)}
+        {["Crew", "Starts when", "Last run", "State", "Switch", ...(mode ? ["Autopilot"] : [])].map((name) => <span key={name} role="columnheader">{name}</span>)}
       </div>
       {crews.map((crew) => (
         <div key={crew.id} className="ap-bg-row" role="row">
           <span role="cell"><b>{crew.name}</b><small>Template: {templateName(crew.template)}</small></span>
           <span role="cell" className="ap-clip">{crew.startsWhen}</span>
           <span role="cell" className="ap-clip">{crew.lastRun ?? "Never run"}</span>
-          <span role="cell" className="ap-state">
+          <span role="cell">{crew.status ? <Chip tone={statusTone(crew.status)}>{crew.status}</Chip> : null}</span>
+          <span role="cell">
             {/* aria-disabled, not disabled: the switch keeps focus while its write is in flight. */}
-            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} state`} className="ap-switch" disabled={!onToggle} aria-disabled={busy?.has(crew.id) || undefined} onClick={() => { if (!busy?.has(crew.id)) onToggle?.(crew, !crew.enabled); }}>
+            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} on`} className="ap-switch" disabled={!onToggle} aria-disabled={busy?.has(crew.id) || undefined} onClick={() => { if (!busy?.has(crew.id)) onToggle?.(crew, !crew.enabled); }}>
               {crew.enabled ? "On" : "Off"}
             </button>
-            {crew.status ? <small>{crew.status}</small> : null}
           </span>
           {mode && crew.mode ? <span role="cell"><Chip tone="plain">{MODE_COPY[crew.mode].name}</Chip></span> : null}
         </div>
@@ -52,7 +56,7 @@ export function BackgroundCards({ crews, onOpen }: { crews: BackgroundCrew[]; on
       {crews.map((crew) => (
         <li key={crew.id}>
           <button type="button" className="ap-card" onClick={() => onOpen?.(crew)}>
-            <span className="ap-card-top"><b>{crew.name}</b><Chip tone="plain">{crew.enabled ? "On" : "Off"}</Chip></span>
+            <span className="ap-card-top"><b>{crew.name}</b><Chip tone={crew.status ? statusTone(crew.status) : "plain"}>{crew.status ?? (crew.enabled ? "On" : "Off")}</Chip></span>
             <small>{crew.startsWhen}</small>
           </button>
         </li>
@@ -144,20 +148,20 @@ export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice,
   const none = view.crews.length === 0;
   return (
     <section className="ap-page" aria-label="Background crews">
-      {repo ? <p className="ap-muted ap-repo">Repo: {repo}</p> : null}
       {noRepo ? (
         <Empty title="No git project">
           <p>Background crews belong to a git project, so Create and the templates are off until one is open.</p>
         </Empty>
       ) : none ? (
         <Empty title="No background crews yet">
-          <p>A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and lands its change in your Review queue. Triggers are not built yet.</p>
+          <p>A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and waits for your review. Triggers are not built yet.</p>
           <Button small onClick={() => templates.current?.scrollIntoView?.({ block: "start" })}>See the templates</Button>
         </Empty>
       ) : (
         <>
           <header className="ap-set-head">
             <h2>Background crews<span className="ap-num"> {view.total ?? view.crews.length}</span></h2>
+            {repo ? <span className="ap-muted ap-repo">{repo}</span> : null}
             <Chip tone="plain">Preview</Chip>
             <Chip tone="plain">This device</Chip>
             <Chip tone="plain">Triggers not built yet</Chip>
@@ -168,8 +172,8 @@ export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice,
           <CrewRows crews={view.crews} onToggle={onToggle} busy={busy} />
           {hasMode(view.crews) ? null : <p className="ap-bg-note">Per-crew Autopilot is Planned.</p>}
           <section className="ap-box">
-            <h4>Every run lands in the Review queue</h4>
-            <p>A background crew never merges outside the flow: its changes are checked, reviewed and merged like any other, and you review them after the merge. Its budget is set when the crew is created.</p>
+            <h4>Each run has a budget</h4>
+            <p>A background crew’s budget is set when it is created: a number of turns and a number of minutes for each run. A run that reaches either one is Stopped with the reason Budget.</p>
           </section>
           {view.runs.length ? <Runs runs={view.runs} /> : null}
         </>
