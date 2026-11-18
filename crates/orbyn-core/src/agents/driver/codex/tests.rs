@@ -517,6 +517,7 @@ fn turn_spec() -> RunSpec {
         mcp_url: Some("http://127.0.0.1:1/mcp/x".into()),
         run_dir: "/run".into(),
         confine: None,
+        crew_task: None,
     }
 }
 

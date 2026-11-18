@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub(crate) mod pipes;
 pub mod rpc;
 pub mod terminal;
+pub mod worker_identity;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -111,6 +112,9 @@ pub struct RunSpec {
     /// Set for a crew worker: the engine process starts under this restriction. A driver
     /// that cannot apply it must not start the run.
     pub confine: Option<crate::host::confine::Confinement>,
+    /// Set for a crew worker: the task it works. Its engine process carries a git identity that names the task
+    /// (`worker_identity`), so a commit it makes can be told from a person's.
+    pub crew_task: Option<String>,
 }
 
 /// A separate, ephemeral approval turn. It has no checkout, session, attachments,

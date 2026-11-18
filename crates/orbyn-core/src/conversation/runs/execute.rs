@@ -220,6 +220,7 @@ impl RunManager {
                 .runs_dir
                 .join(format!("warm-{}", crate::util::new_id())),
             confine: None,
+            crew_task: None,
         };
         // No update may begin while this process starts and is parked: it would hold
         // the binary being replaced, which Windows refuses.
