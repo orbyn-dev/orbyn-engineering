@@ -1,6 +1,7 @@
 // The one door the Autopilot screens use: the Crew routes of `orbynd`, with the generated wire types.
 // Every Crew route answers 404 while Crew Preview is off.
 import { request } from "../../../../api/client";
+import { serviceUrl } from "../../../../api/origin";
 import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewCreate";
 import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
@@ -22,6 +23,7 @@ import type { AutopilotModes } from "../../../../generated/AutopilotModes";
 import type { AutopilotTripwires } from "../../../../generated/AutopilotTripwires";
 import type { AutopilotTrust } from "../../../../generated/AutopilotTrust";
 import type { CrewClassesView } from "../../../../generated/CrewClassesView";
+import type { CrewPinnedRefView } from "../../../../generated/CrewPinnedRefView";
 import type { CrewClassTest } from "../../../../generated/CrewClassTest";
 import type { CrewPreviewState } from "../../../../generated/CrewPreviewState";
 import type { CrewRouteView } from "../../../../generated/CrewRouteView";
@@ -85,6 +87,15 @@ export const crewApi = {
    * merges; until then it answers 400 "thread is required" and the panel shows that error.
    */
   classes: (project: string, signal?: AbortSignal) => request<CrewClassesView>("GET", `/api/crew/classes?${new URLSearchParams({ project })}`, undefined, signal),
+  pinnedRef: (project: string, signal?: AbortSignal) => request<CrewPinnedRefView>("GET", `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref`, undefined, signal),
+  confirmPinnedRef: (project: string, commit: string) => {
+    const path = `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref/confirm`;
+    return request<CrewPinnedRefView>("POST", path, { commit }, undefined, { expectedServiceUrl: serviceUrl(path) });
+  },
+  resetPinnedRef: (project: string) => {
+    const path = `/api/crew/projects/${encodeURIComponent(project)}/pinned-ref/reset`;
+    return request<CrewPinnedRefView>("POST", path, {}, undefined, { expectedServiceUrl: serviceUrl(path) });
+  },
   /** 1 to 10 paths against those rules. Nothing is saved. */
   classesTest: (project: string, paths: string[], signal?: AbortSignal) => {
     const params = new URLSearchParams({ project });

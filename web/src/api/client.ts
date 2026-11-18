@@ -85,6 +85,7 @@ export class ApiFailure extends Error {
 }
 
 export const NETWORK_ERROR = "network_error";
+export const SERVICE_CHANGED = "service_changed";
 
 /** Used by the shell to swap to sign-in when the session stops being accepted. */
 let onUnauthorized: () => void = () => undefined;
@@ -131,12 +132,17 @@ async function send<T>(
   body?: unknown,
   signal?: AbortSignal,
   extra?: Record<string, string>,
+  expectedServiceUrl?: string,
 ): Promise<T> {
   let response: Response;
   // Only a person route asks the shell for the key; every other request is unchanged.
   const person = await personKeyHeaders(method, path);
   try {
-    response = await fetch(serviceUrl(path), {
+    const destination = serviceUrl(path);
+    if (expectedServiceUrl !== undefined && destination !== expectedServiceUrl) {
+      throw new ApiFailure(SERVICE_CHANGED, "The service changed. Check again before continuing.", 0);
+    }
+    response = await fetch(destination, {
       method,
       credentials: "same-origin",
       signal,
@@ -150,6 +156,7 @@ async function send<T>(
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (error instanceof ApiFailure && error.code === SERVICE_CHANGED) throw error;
     throw new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
   }
   if (!response.ok) {
@@ -169,6 +176,8 @@ export interface RequestOptions {
   priority?: "foreground";
   /** Extra headers, such as the nonce a confirmed account action sends back. */
   headers?: Record<string, string>;
+  /** Reject if the destination changes before a guarded write is sent. */
+  expectedServiceUrl?: string;
 }
 
 const unreachable = () => new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
@@ -186,7 +195,7 @@ export function request<T>(
 ): Promise<T> {
   const slow = setTimeout(() => onSlowRequest(), SLOW_REQUEST_MS);
   const lane = options.priority === "foreground" ? "interactive" : laneFor(method, path);
-  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned, options.headers), unreachable, inBackground());
+  const sent = inLane(lane, signal, (laned) => send<T>(method, path, body, laned, options.headers, options.expectedServiceUrl), unreachable, inBackground());
   return sent.finally(() => clearTimeout(slow));
 }
 

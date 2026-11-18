@@ -1,10 +1,14 @@
 // Settings › Crew › Path classes (Crew Designs frames `classes-*`): what `.orbyn/crew.json` says about which engines may take which
-// paths, read at the commit a task would start from. Read-only: Orbyn never writes the file, so there is no Save, Add or Delete, and
+// paths, read at the commit a task would start from. Orbyn never writes the rules file, so there is no Save, Add or Delete, and
 // the service sends no lock flag, no sensitivity label and no worktree owner, so none is drawn.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { create } from "zustand";
+import { readPersonKey } from "../../../../api/personKey";
+import { serviceUrl } from "../../../../api/origin";
 import { toFailure, useAsync } from "../../../../lib/useAsync";
 import { useRoute } from "../../../../product/state/route";
 import { useWorkspace } from "../../../../product/state/workspace";
+import { useConnection } from "../../../../product/state/connection";
 import type { ApiFailure } from "../../../../api/client";
 import type { CrewClassEngine } from "../../../../generated/CrewClassEngine";
 import type { CrewClassRule } from "../../../../generated/CrewClassRule";
@@ -12,6 +16,8 @@ import type { CrewClassTest } from "../../../../generated/CrewClassTest";
 import type { GuardTest } from "../../../../generated/GuardTest";
 import type { GuardVerdict } from "../../../../generated/GuardVerdict";
 import type { CrewClassTestPath } from "../../../../generated/CrewClassTestPath";
+import type { CrewClassesView } from "../../../../generated/CrewClassesView";
+import type { CrewPinnedRefView } from "../../../../generated/CrewPinnedRefView";
 import { Button } from "../../../../ui/controls";
 import { ErrorState, Loading } from "../../../../product/ui/states";
 import { crewApi } from "./api";
@@ -24,6 +30,38 @@ const INTRO =
 /** The most paths one test takes (the service refuses more). */
 export const TEST_PATHS = 10;
 const DEBOUNCE_MS = 300;
+const BLOCKED_PREFIX = "default branch changed: ";
+
+type PinSnapshot = { classes: CrewClassesView; pin: CrewPinnedRefView | null; pinError: boolean };
+type PinWrite = { phase: "pending" | "check"; action?: "confirm" | "reset"; message?: string; receipt?: string };
+const usePinWrites = create<{ writes: Record<string, PinWrite>; put(scope: string, value: PinWrite | null): void }>((set) => ({
+  writes: {},
+  put: (scope, value) => set((state) => {
+    const writes = { ...state.writes };
+    if (value) writes[scope] = value;
+    else delete writes[scope];
+    return { writes };
+  }),
+}));
+
+const blockedNote = (view: CrewClassesView) => view.notes.find((note) => note.startsWith(BLOCKED_PREFIX));
+const serviceScope = () => new URL(serviceUrl("/api/crew/classes"), window.location.href).origin;
+
+async function readClasses(project: string, origin: string, signal?: AbortSignal): Promise<PinSnapshot> {
+  if (serviceScope() !== origin) throw new Error("Connection changed");
+  const classes = await crewApi.classes(project, signal);
+  if (serviceScope() !== origin) throw new Error("Connection changed");
+  if (!blockedNote(classes)) return { classes, pin: null, pinError: false };
+  try {
+    if (serviceScope() !== origin) throw new Error("Connection changed");
+    const pin = await crewApi.pinnedRef(project, signal);
+    if (serviceScope() !== origin) throw new Error("Connection changed");
+    return { classes, pin, pinError: false };
+  } catch {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return { classes, pin: null, pinError: true };
+  }
+}
 
 /** An engine as the service names it, by its id. One this machine does not have is kept in the file and said so. */
 export const engineName = (engine: CrewClassEngine) => (engine.on_this_machine ? engine.id : `${engine.id} (not on this machine)`);
@@ -44,7 +82,7 @@ function Patterns({ paths }: { paths: string[] }) {
   return <span className="ap-glyphs">{paths.map((path, at) => <code key={`${at}-${path}`}>{path}</code>)}</span>;
 }
 
-function Table({ view, selected, onSelect }: { view: { built_in: string; rules: CrewClassRule[]; problems: string[] }; selected: string | null; onSelect(name: string): void }) {
+function Table({ view, selected, onSelect, pinBlocked }: { view: { built_in: string; rules: CrewClassRule[]; problems: string[] }; selected: string | null; onSelect(name: string): void; pinBlocked: boolean }) {
   return (
     <div className="ap-targets" role="table" aria-label="Path classes">
       <div className="ap-class-row ap-head" role="row">
@@ -56,23 +94,23 @@ function Table({ view, selected, onSelect }: { view: { built_in: string; rules: 
         <div key={`${at}-${rule.name}`} className={`ap-class-row${selected === rule.name ? " ap-sel" : ""}`} role="row">
           <span role="cell"><button type="button" className="ap-open" aria-pressed={selected === rule.name} onClick={() => onSelect(rule.name)}><b>{rule.name}</b></button></span>
           <span role="cell"><Patterns paths={rule.paths} /></span>
-          <span role="cell" data-label="Allowed">{enginesText(rule.engines)}</span>
+          <span role="cell" data-label="Allowed">{pinBlocked ? "No engine" : enginesText(rule.engines)}</span>
         </div>
       ))}
       <div className="ap-class-row" role="row">
         <span role="cell"><b>{view.built_in}</b><small>Built in</small></span>
         <span role="cell">Any path not matched above</span>
         {/* With a file that can't be used every engine is blocked, built-in class included. */}
-        <span role="cell" data-label="Allowed">{view.problems.length ? "No engine" : "Any signed-in engine"}</span>
+        <span role="cell" data-label="Allowed">{view.problems.length || pinBlocked ? "No engine" : "Any signed-in engine"}</span>
       </div>
     </div>
   );
 }
 
-function Detail({ rule, at, onClose }: { rule: CrewClassRule; at: number; onClose(): void }) {
+function Detail({ rule, at, onClose, pinBlocked }: { rule: CrewClassRule; at: number; onClose(): void; pinBlocked: boolean }) {
   const ref = useRef<HTMLElement>(null);
   useEffect(() => ref.current?.focus(), [rule.name]);
-  const engines = enginesText(rule.engines);
+  const engines = pinBlocked ? "No engine" : enginesText(rule.engines);
   return (
     <aside ref={ref} tabIndex={-1} className="ap-drawer ap-class-detail" aria-label={`The class ${rule.name}`} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
       <header className="ap-drawer-head"><h3>The class {rule.name}</h3></header>
@@ -207,33 +245,128 @@ function CommandBox() {
 }
 
 function Loaded({ project }: { project: { id: string; name: string } }) {
-  const read = useAsync(`crew-classes:${project.id}`, (signal) => crewApi.classes(project.id, signal));
+  const origin = serviceScope();
+  const scope = JSON.stringify([origin, project.id]);
+  const read = useAsync(`crew-classes:${scope}`, (signal) => readClasses(project.id, origin, signal));
+  const write = usePinWrites((state) => state.writes[scope]);
+  const remote = useConnection((state) => state.remote);
+  const preview = useConnection((state) => state.crewPreview);
+  const [person, setPerson] = useState(false);
+  const [receipt, setReceipt] = useState<string | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  useEffect(() => {
+    let current = true;
+    setPerson(false);
+    if (preview && !remote) void readPersonKey().then((key) => { if (current) setPerson(key !== null); });
+    return () => { current = false; };
+  }, [origin, preview, remote]);
   const [selected, setSelected] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [answered, setAnswered] = useState(false);
   if (read.status === "loading") return <Loading label="Reading the path classes" rows={4} />;
-  if (read.status === "error") return <ErrorState title="Can't read the path classes" failure={read.error} onRetry={read.reload} />;
-  const view = read.data;
+  if (read.status === "error" && !read.data) return <ErrorState title="Can't read the path classes" failure={read.error} onRetry={read.reload} />;
+  if (!read.data) return <Loading label="Reading the path classes" rows={4} />;
+  const { classes: view, pin, pinError } = read.data;
+  const note = blockedNote(view);
+  const agrees = !!note && !pinError && !!pin && pin.project === project.id && !pin.accepted && !!pin.blocked && note === `${BLOCKED_PREFIX}${pin.blocked}. Every engine is blocked until a person confirms or resets the remembered default branch.` && !!pin.stored_ref && !!pin.stored_commit && (pin.missing || (!!pin.current_ref && !!pin.current_commit));
+  const writable = preview && !remote && person && serviceScope() === origin;
+  const check = async () => {
+    const previous = usePinWrites.getState().writes[scope];
+    if (previous?.phase === "pending") return;
+    const savedReceipt = previous?.receipt;
+    usePinWrites.getState().put(scope, { phase: "pending", receipt: savedReceipt });
+    try {
+      const snapshot = await readClasses(project.id, origin);
+      if (snapshot.pinError) throw new Error("Pin read failed");
+      if (alive.current && serviceScope() === origin) {
+        read.setData(snapshot);
+        usePinWrites.getState().put(scope, null);
+      } else {
+        usePinWrites.getState().put(scope, { phase: "check", message: "Couldn’t check the remembered default branch.", receipt: savedReceipt });
+      }
+    } catch {
+      usePinWrites.getState().put(scope, { phase: "check", message: "Couldn’t check the remembered default branch.", receipt: savedReceipt });
+    }
+  };
+  const change = async (action: "confirm" | "reset") => {
+    const current = useConnection.getState();
+    if (!agrees || !writable || !current.crewPreview || current.remote || usePinWrites.getState().writes[scope] || read.status !== "ready" || read.refreshing || serviceScope() !== origin || (action === "confirm" && !pin.current_commit)) return;
+    usePinWrites.getState().put(scope, { phase: "pending", action });
+    try {
+      const result = action === "confirm" ? await crewApi.confirmPinnedRef(project.id, pin.current_commit!) : await crewApi.resetPinnedRef(project.id);
+      if (result.project !== project.id || serviceScope() !== origin || (action === "confirm" && result.stored_commit !== pin.current_commit) || (action === "reset" && result.stored_commit)) throw new Error("Unverified result");
+      const message = action === "confirm" ? "Default branch confirmed." : "Remembered default branch forgotten.";
+      if (!alive.current) {
+        usePinWrites.getState().put(scope, { phase: "check", receipt: message });
+        return;
+      }
+      usePinWrites.getState().put(scope, { phase: "pending", receipt: message });
+      setReceipt(message);
+      heading.current?.focus();
+      try {
+        const snapshot = await readClasses(project.id, origin);
+        if (snapshot.pinError || serviceScope() !== origin) throw new Error("Pin read failed");
+        if (alive.current) {
+          read.setData(snapshot);
+          usePinWrites.getState().put(scope, null);
+        } else {
+          usePinWrites.getState().put(scope, { phase: "check", receipt: message });
+        }
+      } catch {
+        usePinWrites.getState().put(scope, { phase: "check", message: "Couldn’t check the remembered default branch.", receipt: message });
+      }
+    } catch (error) {
+      const failure = toFailure(error);
+      const message = failure.status > 0 && failure.status < 500 ? failure.message : "Couldn’t check the remembered default branch.";
+      usePinWrites.getState().put(scope, { phase: "check", message });
+    }
+  };
   const rule = view.rules.find((one) => one.name === selected) ?? null;
   const broken = view.problems.length > 0;
   const frame = broken ? "classes-error" : rule ? "classes-edit" : answered ? "classes-test" : "classes-list";
   return (
     <section className="ap-set" aria-labelledby="ap-classes-title" data-frame={frame}>
       <header className="ap-set-head">
-        <h2 id="ap-classes-title">Crew › Path classes</h2>
+        <h2 id="ap-classes-title" ref={heading} tabIndex={-1}>Crew › Path classes</h2>
         <Chip tone="plain">Preview</Chip>
       </header>
       <p className="ap-muted">Read for the project {project.name}.</p>
       <p className="ap-muted">{INTRO}</p>
       {view.working_copy_note ? <div className="ap-banner ap-banner-plain" role="note"><p>{view.working_copy_note}</p></div> : null}
+      {receipt || write?.receipt ? <p role="status">{receipt ?? write?.receipt}</p> : null}
+      {note ? (
+        <div className="ap-banner ap-banner-am" role="alert" data-frame="classes-pinned-ref-blocked">
+          <p><b>default branch changed</b><br />{agrees ? pin.blocked : note.slice(BLOCKED_PREFIX.length)}</p>
+          {agrees ? <dl className="ap-facts ap-pin-facts">
+            <div><dt>Remembered ref</dt><dd>{pin.stored_ref}</dd></div>
+            <div><dt>Remembered commit</dt><dd><code>{pin.stored_commit}</code></dd></div>
+            <div><dt>Current ref</dt><dd>{pin.current_ref ?? "No default-branch ref"}</dd></div>
+            <div><dt>Current commit</dt><dd><code>{pin.current_commit ?? "—"}</code></dd></div>
+          </dl> : null}
+          {remote ? <p>Change the remembered default branch on the local connection.</p> : null}
+          {write?.message || ((!agrees || read.status === "error") && !write) ? <p>{write?.message ?? "Couldn’t check the remembered default branch."}</p> : null}
+          {write?.phase === "check" || ((!agrees || read.status === "error") && !write) ? <Button small onClick={() => void check()}>Check again</Button> : null}
+          {agrees && writable && write?.phase !== "check" && read.status === "ready" ? <div className="ap-banner-acts">
+            {pin.current_ref && pin.current_commit ? <Button small tone="primary" disabled={read.refreshing || !!write} onClick={() => void change("confirm")}>Confirm this commit</Button> : null}
+            <Button small disabled={read.refreshing || !!write} onClick={() => void change("reset")}>Forget it</Button>
+          </div> : null}
+          {write?.phase === "pending" ? <p role="status">{write.action === "confirm" ? "Confirming…" : write.action === "reset" ? "Forgetting…" : "Checking…"}</p> : null}
+          {agrees && writable ? <p>{pin.current_ref ? "The next start reads the default branch the checkout has then." : "If there’s still no default branch, the next start reads the checkout’s current commit (HEAD)."}</p> : null}
+        </div>
+      ) : write?.phase === "check" ? <div className="ap-banner ap-banner-am" role="alert"><p>{write.message ?? "Couldn’t check the remembered default branch."}</p><Button small onClick={() => void check()}>Check again</Button></div> : null}
       {broken ? <Problems problems={view.problems} onCheck={read.reload} /> : null}
       <div className="ap-class-split">
         <div className="ap-class-main">
-          <Table view={view} selected={rule?.name ?? null} onSelect={(name) => setSelected(name === selected ? null : name)} />
+          <Table view={view} pinBlocked={!!note} selected={rule?.name ?? null} onSelect={(name) => setSelected(name === selected ? null : name)} />
           <div className="ap-class-acts"><Button small onClick={() => setTesting((now) => !now)} aria-expanded={testing}>Test a path</Button></div>
           {testing ? <><TestBox project={project.id} onResult={setAnswered} /><CommandBox /></> : null}
         </div>
-        {rule ? <Detail rule={rule} at={view.rules.indexOf(rule) + 1} onClose={() => setSelected(null)} /> : null}
+        {rule ? <Detail rule={rule} at={view.rules.indexOf(rule) + 1} onClose={() => setSelected(null)} pinBlocked={!!note} /> : null}
       </div>
       <p className="ap-muted">{GUARD_WORKERS}</p>
     </section>
@@ -243,5 +376,5 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
 /** Settings › Crew › Path classes. Nothing is drawn while there is no project to read the file for. */
 export function PathClasses() {
   const project = useClassProject();
-  return project ? <Loaded project={project} /> : null;
+  return project ? <Loaded key={JSON.stringify([serviceScope(), project.id])} project={project} /> : null;
 }

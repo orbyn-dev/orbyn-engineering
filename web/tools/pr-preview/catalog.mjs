@@ -632,6 +632,7 @@ export const FRAMES = {
   "guard-approved-person-unknown": { route: "#/crew/approvals", scenario: "crew-guard-unknown", steps: [click("button", 'psql "$PROD_DATABASE_URL" -c "DELETE FROM audit_log', { prefix: true })] },
   "guard-settings": { route: "#/settings/crew", scenario: "crew-guard" },
   "classes-list": { route: "#/settings/crew", scenario: "crew-classes" },
+  "classes-pinned-ref-blocked": { route: "#/settings/crew", scenario: "crew-classes-pinned", steps: [click("heading", "Crew › Path classes")] },
   "classes-error": { route: "#/settings/crew", scenario: "crew-classes-invalid" },
   "classes-test": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "Test a path"), { do: "fill", label: "Paths to test, one per line", value: "auth/redirect.ts" }] },
   "classes-edit": { route: "#/settings/crew", scenario: "crew-classes", steps: [click("button", "billing", { exact: true })] },
