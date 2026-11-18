@@ -8,6 +8,7 @@ use super::sandbox::{
     approval_policy, collaboration_mode, sandbox_policy, thread_config, tier_param,
 };
 use super::tools::codex_tools;
+use super::turn::started_turn;
 use crate::agents::driver::{EngineOutcome, RunKind};
 use crate::agents::selection::SERVICE_TIER;
 use crate::governance::approvals::Verdict;
@@ -312,10 +313,39 @@ fn only_the_matching_turn_reports_an_interrupt_or_failure() {
 }
 
 #[test]
-fn a_completed_turn_without_an_id_waits_when_ours_is_known() {
+fn a_completed_turn_without_an_id_is_ours() {
     let mut mapper = mapper();
     mapper.set_turn("turn-mine");
-    assert!(finished(&mut mapper, json!({ "status": "completed" })).is_none());
+    assert!(matches!(
+        finished(&mut mapper, json!({ "status": "completed" })),
+        Some(EngineOutcome::Completed)
+    ));
+}
+
+#[test]
+fn a_sub_agent_turn_started_does_not_become_this_runs_turn() {
+    // No id from the turn/start reply (compact): the run learns it from
+    // `turn/started`, but only from its own thread.
+    let sub = json!({ "threadId": "subagent", "turn": { "id": "turn-sub" } });
+    let own = json!({ "threadId": "thread", "turn": { "id": "turn-mine" } });
+    assert_eq!(started_turn("thread", &sub), None);
+    assert_eq!(started_turn("thread", &own).as_deref(), Some("turn-mine"));
+    assert_eq!(
+        started_turn("thread", &json!({ "turn": { "id": "turn-x" } })).as_deref(),
+        Some("turn-x")
+    );
+    let mut mapper = mapper();
+    let mut known = started_turn("thread", &sub);
+    assert!(known.is_none());
+    known = known.or_else(|| started_turn("thread", &own));
+    mapper.set_turn(&known.unwrap());
+    assert!(matches!(
+        finished(
+            &mut mapper,
+            json!({ "id": "turn-mine", "status": "completed" })
+        ),
+        Some(EngineOutcome::Completed)
+    ));
 }
 
 #[test]

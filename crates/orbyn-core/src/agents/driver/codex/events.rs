@@ -201,20 +201,18 @@ impl TurnMapper {
             "turn/completed" => {
                 let turn = params.get("turn").cloned().unwrap_or(Value::Null);
                 // Only the turn started for the person's prompt ends the run. A
-                // previous or engine-started turn on this thread is not ours.
-                // With our id known, a frame must carry the same id; a frame
-                // without one is not ours to trust. With no id ever known, the
-                // first completed turn ends the run.
+                // previous or engine-started turn on this thread is not ours, so
+                // a frame with a different id is ignored. A frame with no id
+                // cannot be told apart and counts as ours, so a protocol that
+                // omits it never hangs the run.
                 let theirs = turn
                     .get("id")
                     .and_then(Value::as_str)
                     .or_else(|| params.get("turnId").and_then(Value::as_str));
-                if self
-                    .turn
-                    .as_deref()
-                    .is_some_and(|ours| theirs != Some(ours))
+                if let (Some(ours), Some(theirs)) = (self.turn.as_deref(), theirs)
+                    && theirs != ours
                 {
-                    tracing::debug!(?theirs, "ignored a completed turn that is not this run's");
+                    tracing::debug!(theirs, "ignored a completed turn that is not this run's");
                     return step;
                 }
                 step.outcome = Some(match turn.get("status").and_then(Value::as_str) {

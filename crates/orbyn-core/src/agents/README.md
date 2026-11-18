@@ -25,4 +25,11 @@ The crate's [group table](../../README.md#groups) lists every group.
 
 ## Codex run end
 
-A Codex run ends only on `turn/completed` for the turn started for the person's prompt. A previous or engine-started turn on the same thread does not end it. The turn id comes from the `turn/start` reply, or from the first `turn/started` when the reply had none. With the id known, a `turn/completed` must carry the same id (`turn.id`, or `turnId`); a frame without one is ignored. With no id ever known (compact), the first completed turn ends the run. The Codex protocol schema is not vendored, so these frame shapes are inferred from observed traffic.
+A Codex run ends only on `turn/completed` for the turn started for the person's prompt. A previous or engine-started turn on the same thread does not end it.
+
+- The turn id comes from the `turn/start` reply, or from the first `turn/started` when the reply had none. A `turn/started` counts only when it is on this thread (or names none), so a sub-agent's turn is never learned.
+- A `turn/completed` with the same id (`turn.id`, or `turnId`) ends the run.
+- A `turn/completed` with a different id is ignored.
+- A `turn/completed` with no id ends the run, so an engine that omits it never hangs the run.
+
+The Codex protocol schema is not vendored, so these frame shapes are inferred from observed traffic.
