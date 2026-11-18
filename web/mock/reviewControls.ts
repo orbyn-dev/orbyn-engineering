@@ -14,8 +14,10 @@ export const exampleTierView = (): CrewAcpTierView => ({ writable: true, setting
 export function createReviewControlsMock() {
   let view = exampleTierView();
   let receipts: Record<string, CrewLaneRemovalReceipt> = {};
+  // `crew-worker-provider-any` starts on Any provider; `crew-worker-provider-fail` refuses the write.
+  let providers: Record<string, "same_as_lead" | "any"> = {};
   return {
-    reset() { view = exampleTierView(); receipts = {}; },
+    reset() { view = exampleTierView(); receipts = {}; providers = {}; },
     handle(scenario: string, method: string, path: string, body: unknown): MockResponse | null {
       if (!scenario.startsWith("crew")) return null;
       const fail = (message: string, status = 400) => ({ status, body: { code: "invalid", message } });
@@ -40,6 +42,20 @@ export function createReviewControlsMock() {
         const key = `${remove}|${input.lane}`;
         receipts[key] ??= { id: `synthetic-removal-${remove}`, lane: input.lane, reason };
         return { status: 200, body: { task: decodeURIComponent(remove), receipt: receipts[key] } };
+      }
+      const provider = /^\/api\/crew\/projects\/([^/]+)\/worker-provider(\/set)?$/.exec(path);
+      if (provider) {
+        const project = decodeURIComponent(provider[1]!);
+        if (!["p-app", "p-site", "p-new"].includes(project)) return { status: 404, body: { code: "not_found", message: "Project" } };
+        const current = () => providers[project] ?? (scenario === "crew-worker-provider-any" ? "any" : "same_as_lead");
+        if (!provider[2] && method === "GET") return { status: 200, body: { project, worker_provider: current() } };
+        if (provider[2] && method === "POST") {
+          const choice = (body as { worker_provider?: string } | null)?.worker_provider;
+          if (choice !== "same_as_lead" && choice !== "any") return fail("Worker provider must be same_as_lead or any.");
+          if (scenario === "crew-worker-provider-fail") return { status: 500, body: { code: "internal", message: "Could not save the worker provider." } };
+          providers[project] = choice;
+          return { status: 200, body: { project, worker_provider: choice } };
+        }
       }
       if (path === "/api/crew/settings/engine-tiers" && method === "GET") return { status: 200, body: structuredClone(view) };
       if (path === "/api/crew/settings/engine-tiers/save" && method === "POST") {
