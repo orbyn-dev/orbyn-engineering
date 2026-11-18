@@ -132,6 +132,23 @@ pub(crate) fn agui_connection(mut stream: TcpStream) {
         return;
     }
 
+    // Lifecycle frames of another run and thread, before this run's own end.
+    if has(prompt, "stray") {
+        frame(json!({
+            "type": "RUN_FINISHED", "threadId": "other-thread", "runId": "other-run",
+            "outcome": { "type": "success" },
+        }));
+
+        frame(json!({ "type": "RUN_ERROR", "message": "other run failed", "runId": "other-run" }));
+
+        frame(json!({
+            "type": "RUN_FINISHED", "threadId": thread, "runId": "other-run",
+            "outcome": { "type": "success" },
+        }));
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
     if has(prompt, "fail") {
         frame(json!({ "type": "RUN_ERROR", "message": "fake failure", "code": "fake" }));
 

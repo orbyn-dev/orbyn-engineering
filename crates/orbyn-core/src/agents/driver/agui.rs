@@ -186,6 +186,7 @@ async fn stream_run(
             response.status()
         )));
     }
+    mapper.expect(input);
     let mut body = response.bytes_stream();
     let mut parser = SseParser::default();
     while let Some(chunk) = body.next().await {
@@ -263,9 +264,32 @@ enum Mapped {
 #[derive(Default)]
 struct FrameMapper {
     open_text: HashSet<String>,
+    /// The thread and run of the request being streamed.
+    thread_id: Option<String>,
+    run_id: Option<String>,
 }
 
 impl FrameMapper {
+    /// Names the run whose end this stream is waiting for.
+    fn expect(&mut self, input: &Value) {
+        let id = |key: &str| input.get(key).and_then(Value::as_str).map(str::to_owned);
+        self.thread_id = id("threadId");
+        self.run_id = id("runId");
+    }
+
+    /// An end frame is ours unless it names another run or thread. A frame that names
+    /// neither is accepted, so an agent that leaves the ids out still ends its run.
+    fn is_ours(&self, frame: &Value) -> bool {
+        let same = |key: &str, expected: &Option<String>| match (
+            frame.get(key).and_then(Value::as_str),
+            expected,
+        ) {
+            (Some(got), Some(want)) => got == want,
+            _ => true,
+        };
+        same("runId", &self.run_id) && same("threadId", &self.thread_id)
+    }
+
     fn on_frame(&mut self, mut frame: Value) -> Mapped {
         let kind = frame
             .get("type")
@@ -274,6 +298,7 @@ impl FrameMapper {
             .to_owned();
         match kind.as_str() {
             "RUN_STARTED" => Mapped::Nothing,
+            "RUN_FINISHED" | "RUN_ERROR" if !self.is_ours(&frame) => Mapped::Nothing,
             "RUN_FINISHED" => {
                 let outcome = frame.get("outcome").cloned().unwrap_or(Value::Null);
                 Mapped::End(match outcome.get("type").and_then(Value::as_str) {
@@ -401,6 +426,42 @@ mod tests {
         assert!(matches!(
             mapped,
             Mapped::End(RemoteEnd::Finished(EngineOutcome::Completed))
+        ));
+    }
+
+    fn mapper_for(thread: &str, run: &str) -> FrameMapper {
+        let mut mapper = FrameMapper::default();
+        mapper.expect(&json!({"threadId": thread, "runId": run}));
+        mapper
+    }
+
+    #[test]
+    fn an_end_frame_of_another_run_or_thread_is_ignored() {
+        let mut mapper = mapper_for("t", "r");
+        for frame in [
+            json!({"type":"RUN_FINISHED","threadId":"t","runId":"other"}),
+            json!({"type":"RUN_FINISHED","threadId":"other","runId":"r"}),
+            json!({"type":"RUN_ERROR","message":"x","runId":"other"}),
+            json!({"type":"RUN_ERROR","message":"x","threadId":"other"}),
+        ] {
+            assert!(matches!(mapper.on_frame(frame), Mapped::Nothing));
+        }
+    }
+
+    #[test]
+    fn an_end_frame_of_this_run_or_with_no_ids_ends_it() {
+        let mut mapper = mapper_for("t", "r");
+        assert!(matches!(
+            mapper.on_frame(json!({"type":"RUN_FINISHED","threadId":"t","runId":"r"})),
+            Mapped::End(RemoteEnd::Finished(EngineOutcome::Completed))
+        ));
+        assert!(matches!(
+            mapper.on_frame(json!({"type":"RUN_ERROR","message":"boom"})),
+            Mapped::End(RemoteEnd::Finished(EngineOutcome::Failed(_)))
+        ));
+        assert!(matches!(
+            mapper.on_frame(json!({"type":"RUN_FINISHED","runId":"r"})),
+            Mapped::End(_)
         ));
     }
 }

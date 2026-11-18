@@ -211,3 +211,41 @@ fn a_handshake_records_and_clears_the_engine_sign_in() {
     slot.record(&json!({"authMethods": []}));
     assert_eq!(known_sign_in("sign-in-slot-test"), None);
 }
+
+#[test]
+fn only_this_sessions_updates_reach_the_run() {
+    assert!(about_session(&json!({"sessionId":"s","update":{}}), "s"));
+    assert!(!about_session(
+        &json!({"sessionId":"other","update":{}}),
+        "s"
+    ));
+    assert!(about_session(&json!({"update":{}}), "s"));
+}
+
+#[test]
+fn a_turn_that_stopped_early_or_without_a_reason_is_not_success() {
+    use super::permissions::stop_outcome;
+    let stop = |reply: Value| stop_outcome(&reply);
+    assert_eq!(
+        stop(json!({"stopReason":"end_turn"})),
+        EngineOutcome::Completed
+    );
+    assert_eq!(
+        stop(json!({"stopReason":"cancelled"})),
+        EngineOutcome::Cancelled
+    );
+    for reply in [
+        json!({"stopReason":"refusal"}),
+        json!({"stopReason":"max_tokens"}),
+        json!({"stopReason":"max_turn_requests"}),
+        json!({"stopReason":"something_new"}),
+        json!({"stopReason":7}),
+        json!({}),
+        Value::Null,
+    ] {
+        assert!(
+            matches!(stop(reply.clone()), EngineOutcome::Failed(_)),
+            "{reply}"
+        );
+    }
+}

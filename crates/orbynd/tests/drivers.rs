@@ -469,6 +469,48 @@ async fn acp_cancel_reaches_the_agent() {
 }
 
 #[tokio::test]
+async fn an_acp_run_ignores_another_sessions_updates_and_unknown_replies() {
+    let dir = TempDir::new();
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "acp", FAKE, json!(["acp"])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    // The run stayed open past the stray frames and kept only its own answer.
+    assert_eq!(text_of(&events), "hello from acp");
+}
+
+#[tokio::test]
+async fn an_acp_turn_that_stopped_early_or_unexplained_is_not_success() {
+    for (tag, expected) in [
+        ("refusal", "it refused to continue"),
+        ("max_tokens", "it ran out of tokens"),
+        ("no-stop-reason", "it did not say why"),
+    ] {
+        let dir = TempDir::new();
+        let (service, _) = setup(&dir, Options::default(), "codex").await;
+        custom_engine(&service, "acp", FAKE, json!(["acp"])).await;
+        let projects = service.json("/api/projects").await;
+        let thread = service
+            .thread(projects[0]["id"].as_str().unwrap(), "custom")
+            .await;
+        service.admit(&thread, &format!("[{tag}]")).await;
+        assert_eq!(service.finished(&thread).await, "failed", "{tag}");
+        let events = service.all_events(&thread).await;
+        assert!(
+            events
+                .iter()
+                .any(|event| event.to_string().contains(expected)),
+            "{tag}: {events:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_acp_agent_without_http_mcp_reaches_tools_through_the_stdio_bridge() {
     let dir = TempDir::new();
     let options = Options {
@@ -563,6 +605,22 @@ async fn agui_interrupt_becomes_an_approval_and_resumes() {
     assert_eq!(service.finished(&thread).await, "completed");
     let events = service.all_events(&thread).await;
     assert_eq!(text_of(&events), "resumed approved=false");
+}
+
+#[tokio::test]
+async fn an_agui_run_ignores_another_runs_end_frames() {
+    let dir = TempDir::new();
+    let (_agent, url) = spawn_agui(&dir);
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "agui", &url, json!([])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "hello from agui");
 }
 
 #[tokio::test]

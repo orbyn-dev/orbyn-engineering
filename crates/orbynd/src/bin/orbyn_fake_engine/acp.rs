@@ -347,6 +347,22 @@ pub(crate) fn acp() {
                     answer = format!("option {outcome}");
                 }
 
+                // Another session's update and a reply to a request of nobody's here,
+                // before this prompt's own answer.
+                if has(&prompt, "stray") {
+                    acp_update(
+                        "other-session",
+                        json!({
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": { "type": "text", "text": "STRAY" },
+                        }),
+                    );
+
+                    acp_send(json!({ "id": 9999, "result": { "stopReason": "end_turn" } }));
+
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+
                 if has(&prompt, "hang") {
                     if lines
                         .by_ref()
@@ -369,7 +385,18 @@ pub(crate) fn acp() {
                     }),
                 );
 
-                acp_send(json!({ "id": id, "result": { "stopReason": "end_turn" } }));
+                // A reply that ends the turn badly, or without saying how.
+                let reason = ["refusal", "max_tokens"]
+                    .into_iter()
+                    .find(|reason| has(&prompt, reason));
+
+                if has(&prompt, "no-stop-reason") {
+                    acp_send(json!({ "id": id, "result": {} }));
+                } else if let Some(reason) = reason {
+                    acp_send(json!({ "id": id, "result": { "stopReason": reason } }));
+                } else {
+                    acp_send(json!({ "id": id, "result": { "stopReason": "end_turn" } }));
+                }
             }
 
             _ => {}
