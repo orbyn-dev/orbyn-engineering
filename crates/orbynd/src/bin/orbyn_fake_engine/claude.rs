@@ -518,11 +518,13 @@ pub(crate) fn claude(args: &[String]) {
 
     record_launch("claude-prompt", std::slice::from_ref(&prompt));
 
-    block(2, json!({ "type": "text", "text": "" }));
+    if !has(&prompt, "silent") {
+        block(2, json!({ "type": "text", "text": "" }));
 
-    delta(2, json!({ "type": "text_delta", "text": answer }));
+        delta(2, json!({ "type": "text_delta", "text": answer }));
 
-    stop(2);
+        stop(2);
+    }
 
     if has(&prompt, "fail") {
         send(&json!({
