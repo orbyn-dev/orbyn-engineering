@@ -403,11 +403,24 @@ fn scenario(known: &str, ghost: &str) -> Repo {
     git(&repo, &["checkout", "-q", "main"]);
     let before = git(&repo, &["rev-parse", "HEAD"]);
     let status = std::process::Command::new("git")
-        .args(["merge", "--no-ff", "--no-commit", "feature"])
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "merge",
+            "--no-ff",
+            "--no-commit",
+            "feature",
+        ])
         .current_dir(&repo)
         .output()
         .unwrap();
-    assert!(!status.status.success(), "the merge conflicts on c.txt");
+    // Without an identity git refuses for another reason and the feature files never come in, so check the reason.
+    assert!(
+        String::from_utf8_lossy(&status.stdout).contains("CONFLICT"),
+        "the merge conflicts on c.txt: {status:?}"
+    );
     std::fs::write(repo.join("c.txt"), "resolved line\nsecond\n").unwrap();
     git(&repo, &["add", "c.txt"]);
     git(
