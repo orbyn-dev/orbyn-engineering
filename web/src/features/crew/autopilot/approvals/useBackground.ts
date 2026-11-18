@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { ApiFailure } from "../../../../api/client";
 import { useAsync } from "../../../../lib/useAsync";
 import type { BackgroundCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../../generated/BackgroundRun";
-import { FLOW_REFRESH_MS } from "../../flow/live/useFlow";
+import { useRefresh } from "../../flow/live/useFlow";
 import { crewApi } from "./api";
 import { RECENT_RUNS, type BackgroundRead } from "./backgroundModel";
 
@@ -42,32 +42,22 @@ async function readBackground(project: string, signal: AbortSignal): Promise<Bac
 
 /**
  * The background crews of one repository, by name, each with its newest runs (read four crews at a time). No service topic names a
- * background run, so while the window is shown the read repeats every `FLOW_REFRESH_MS` like the Flow lists. That read shows nothing
- * while it runs, never replaces the list with an error, never starts while another read is on its way, and stops with the screen.
+ * background run, so while the window is shown the read repeats like the Flow lists. It takes `useAsync`'s quiet path: no loading
+ * state, never an error over the list, behind a person's own read, and not started while an earlier one is on its way.
  */
 export function useBackground(project: string) {
   const read = useAsync<BackgroundRead>(`crew-background:${project}`, (signal) => readBackground(project, signal), { keep: true });
-  const { setData, refreshing } = read;
-  const busy = useRef(refreshing);
-  useEffect(() => {
-    busy.current = refreshing;
-  });
-  useEffect(() => {
-    let inFlight: AbortController | null = null;
-    const timer = setInterval(() => {
-      if (document.visibilityState === "hidden" || inFlight || busy.current) return;
-      const abort = new AbortController();
-      inFlight = abort;
-      readBackground(project, abort.signal).then(
-        (data) => { if (inFlight === abort) setData(data); },
-        () => undefined,
-      ).finally(() => { if (inFlight === abort) inFlight = null; });
-    }, FLOW_REFRESH_MS);
-    return () => {
-      clearInterval(timer);
-      inFlight?.abort();
-      inFlight = null;
-    };
-  }, [project, setData]);
+  const { refreshQuietly } = read;
+  const inFlight = useRef(false);
+  const guarded = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await refreshQuietly();
+    } finally {
+      inFlight.current = false;
+    }
+  }, [refreshQuietly]);
+  useRefresh(guarded, read.status !== "ready");
   return read;
 }

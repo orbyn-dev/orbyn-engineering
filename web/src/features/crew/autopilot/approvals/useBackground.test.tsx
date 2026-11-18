@@ -85,4 +85,35 @@ describe("Background crews refresh", () => {
     await tick();
     expect(crewsRead.mock.calls.length).toBe(calls);
   });
+
+  it("keeps a person's own read when a timer read that started earlier lands after it", async () => {
+    const { result } = renderHook(() => useBackground("p"));
+    await settle();
+    const waiting: ((name: string) => void)[] = [];
+    crewsRead.mockImplementation(() => new Promise((resolve) => {
+      waiting.push((name) => resolve({ crews: [{ ...crew("idle"), name }], total: 1, next_offset: null } as never));
+    }));
+    await tick();
+    expect(waiting).toHaveLength(1);
+    let reloaded: Promise<void> = Promise.resolve();
+    act(() => { reloaded = result.current.reload(); });
+    expect(waiting).toHaveLength(2);
+    await act(async () => { waiting[1]!("Mine"); await reloaded; });
+    expect(result.current.data!.crews[0]!.name).toBe("Mine");
+    await act(async () => { waiting[0]!("Stale"); await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.data!.crews[0]!.name).toBe("Mine");
+    expect(result.current.refreshing).toBe(false);
+  });
+
+  it("skips the poll while the window is hidden", async () => {
+    renderHook(() => useBackground("p"));
+    await settle();
+    const calls = crewsRead.mock.calls.length;
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await tick();
+    expect(crewsRead.mock.calls.length).toBe(calls);
+    hidden.mockReturnValue("visible");
+    await tick();
+    expect(crewsRead.mock.calls.length).toBe(calls + 1);
+  });
 });
