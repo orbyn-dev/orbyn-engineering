@@ -155,3 +155,28 @@ async fn cancelling_a_held_run_reports_its_workflow_stopped() {
     let events = service.all_events(&thread).await;
     assert_eq!(workflow_states(&events), ["running", "stopped"]);
 }
+
+#[tokio::test]
+async fn a_background_agent_keeps_the_run_open_until_its_follow_up_turn() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "claude").await;
+    service.admit(&thread, "go [agent-finish]").await;
+    // The agent's notification starts a follow-up turn; closing stdin at the first
+    // result would have killed the agent and lost that turn.
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    assert_eq!(text_of(&events), "launched an agent workflow finished");
+}
+
+#[tokio::test]
+async fn a_turn_the_engine_ran_for_its_leftovers_does_not_answer_the_prompt() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "claude").await;
+    service.admit(&thread, "go [leftover]").await;
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    let text = text_of(&events);
+    // The prompt's own turn ran and was shown, not only the leftover one.
+    assert!(text.contains("the old agent finished"), "{text}");
+    assert!(text.ends_with("hello from claude"), "{text}");
+}

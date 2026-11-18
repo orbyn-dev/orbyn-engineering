@@ -17,6 +17,9 @@ pub fn run_args(spec: &RunSpec, mcp_config: &Path) -> Vec<OsString> {
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        // Echoes the prompt as the CLI takes it up, which is how a run tells its own turn from one
+        // the CLI ran for a finished background agent.
+        "--replay-user-messages",
         "--permission-mode",
         if spec.plan { "plan" } else { "default" },
         "--mcp-config",

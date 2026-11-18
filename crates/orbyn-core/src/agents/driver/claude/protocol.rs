@@ -36,7 +36,8 @@ pub(super) async fn run_protocol(
     } = inputs;
     // The prompt goes over stdin, never argv: it can exceed ARG_MAX and argv is
     // visible to other processes.
-    let prompt = user_message(&spec);
+    let uuid = prompt_uuid();
+    let prompt = user_message(&spec, &uuid);
     let wrote = async {
         process.stdin.write_all(prompt.as_bytes()).await?;
         process.stdin.write_all(b"\n").await?;
@@ -47,7 +48,7 @@ pub(super) async fn run_protocol(
         tracing::debug!(%error, "could not write the prompt");
     }
     let mut stdin = process.stdin;
-    let mut mapper = StreamMapper::default();
+    let mut mapper = StreamMapper::answering(&uuid);
     let mut stream = lines(process.stdout);
     let mut outcome = None;
     let mut grace = None;
@@ -112,6 +113,9 @@ pub(super) async fn run_protocol(
     for event in mapper.workflows.end_all() {
         let _ = events.send(event).await;
     }
+    for event in mapper.end_background() {
+        let _ = events.send(event).await;
+    }
     let cancelled = cancel.is_cancelled();
     let status = match tokio::time::timeout(EXIT_GRACE, process.child.wait()).await {
         Ok(status) => status.ok(),
@@ -139,11 +143,28 @@ pub(super) async fn run_protocol(
 pub(super) const NO_SESSION: &str = "No conversation found";
 
 /// Slash commands reach the CLI bare, or it would read them as ordinary text.
-fn user_message(spec: &RunSpec) -> String {
-    match spec.kind {
-        RunKind::Turn => user_frame(&spec.prompt),
-        _ => user_frame(&spec.user_prompt),
-    }
+fn user_message(spec: &RunSpec, uuid: &str) -> String {
+    let text = match spec.kind {
+        RunKind::Turn => &spec.prompt,
+        _ => &spec.user_prompt,
+    };
+    json!({ "type": "user", "uuid": uuid, "message": { "role": "user", "content": text } })
+        .to_string()
+}
+
+/// The CLI asks for a UUID, and echoes it back with `--replay-user-messages` when it takes the
+/// prompt up.
+fn prompt_uuid() -> String {
+    let n = ulid::Ulid::generate().0;
+    // Version 4, variant 1: the shape the CLI validates.
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        (n >> 96) as u32,
+        (n >> 80) as u16,
+        (n >> 68) as u16 & 0x0fff,
+        0x8000 | ((n >> 52) as u16 & 0x3fff),
+        n & 0xffff_ffff_ffff
+    )
 }
 
 fn user_frame(text: &str) -> String {
