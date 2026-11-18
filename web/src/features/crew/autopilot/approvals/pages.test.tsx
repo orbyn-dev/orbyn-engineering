@@ -240,10 +240,10 @@ describe("Background crews", () => {
     const toggled = vi.fn();
     const user = userEvent.setup();
     const { unmount } = render(<BackgroundPageView view={view} />);
-    expect(screen.getByRole("switch", { name: "Security advisories state" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Security advisories on" })).toBeDisabled();
     unmount();
     render(<BackgroundPageView view={view} onToggle={toggled} />);
-    await user.click(screen.getByRole("switch", { name: "Security advisories state" }));
+    await user.click(screen.getByRole("switch", { name: "Security advisories on" }));
     expect(toggled).toHaveBeenCalledWith(crews[1], true);
   });
 

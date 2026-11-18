@@ -5,7 +5,7 @@ import type { MockApi } from "../../../../../mock/api";
 import type { Project } from "../../../../generated/Project";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { installMockFetch } from "../../../../test-support";
-import { BackgroundTab } from "./Background";
+import { BackgroundTab, statusTone } from "./Background";
 import { fieldOf } from "./BackgroundCreate";
 import { backgroundView, configuredAs, startsWhen } from "./backgroundModel";
 
@@ -29,9 +29,15 @@ describe("Background crews on the Crew routes", () => {
     expect(within(crewsTable()).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Crew", "Starts when", "Last run", "State", "Switch"]);
     expect(within(crewsTable()).getAllByRole("row").slice(1).map((row) => within(row).getByText(/^Template:/).previousSibling?.textContent)).toEqual(["Dependency bump", "Fix failing CI", "Flaky test finder", "Security advisories"]);
     expect(rowOf("Fix failing CI")).toHaveTextContent(/Template: fix failing CIWhen CI fails on main\w{3} \d{1,2} Nov, \d\d:\d\d · 12 turns, 9 minNeeds reviewOn/);
-    expect(rowOf("Dependency bump")).toHaveTextContent(/Sat 7 Nov, \d\d:\d\d · running, 6 minRunningOn/);
+    expect(rowOf("Dependency bump")).toHaveTextContent(/\w{3} \d{1,2} Nov, \d\d:\d\d · running, 6 minRunningOn/);
     expect(rowOf("Flaky test finder")).toHaveTextContent("Every 24 hours");
     expect(rowOf("Security advisories")).toHaveTextContent("Security advisoriesTemplate: security advisoryWhen a dependency update opensNever runIdleOff");
+    const stateChip = (crew: string, text: string) => within(rowOf(crew)).getByText(text, { selector: ".ap-chip" });
+    expect(stateChip("Fix failing CI", "Needs review")).toHaveClass("ap-chip-am");
+    expect(stateChip("Dependency bump", "Running")).toHaveClass("ap-chip-dim");
+    expect(stateChip("Flaky test finder", "Idle")).toHaveClass("ap-chip-dim");
+    expect(statusTone("Stopped · Budget")).toBe("am");
+    expect(within(rowOf("Fix failing CI")).getByRole("switch", { name: "Fix failing CI on" })).toHaveTextContent("On");
     expect(screen.getByText("Per-crew Autopilot is Planned.")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Each run has a budget" })).toBeVisible();
     expect(screen.getByText("A background crew’s budget is set when it is created: a number of turns and a number of minutes for each run. A run that reaches either one is Stopped with the reason Budget.")).toBeVisible();
@@ -52,7 +58,7 @@ describe("Background crews on the Crew routes", () => {
     mock.reset("crew-background");
     const user = userEvent.setup();
     render(<BackgroundTab />);
-    const switchOf = async () => await screen.findByRole("switch", { name: "Security advisories state" });
+    const switchOf = async () => await screen.findByRole("switch", { name: "Security advisories on" });
     expect(await switchOf()).toHaveAttribute("aria-checked", "false");
     await user.click(await switchOf());
     await waitFor(async () => expect(await switchOf()).toHaveAttribute("aria-checked", "true"));
@@ -66,9 +72,9 @@ describe("Background crews on the Crew routes", () => {
     mock.reset("crew-background");
     const user = userEvent.setup();
     render(<BackgroundTab />);
-    await user.click(await screen.findByRole("switch", { name: "Security advisories state" }));
+    await user.click(await screen.findByRole("switch", { name: "Security advisories on" }));
     mock.fail("/api/crew/background/bg-ci/runs", 1, 500, "internal", "The store is busy.");
-    await user.click(await screen.findByRole("switch", { name: "Fix failing CI state" }));
+    await user.click(await screen.findByRole("switch", { name: "Fix failing CI on" }));
     expect(await screen.findByText("Can’t refresh background crews")).toBeVisible();
     expect(crewsTable()).toBeVisible();
   });

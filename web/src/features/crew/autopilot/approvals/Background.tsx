@@ -16,7 +16,9 @@ import { useBackground } from "./useBackground";
 
 const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.short ?? id;
 /** A crew's state as the design draws it: Needs review, Running, Idle, and a stopped crew with its reason. */
-const statusTone = (status: string) => (status.startsWith("Stopped") ? "am" : status === "Running" ? "dim" : status === "Needs review" ? "plain" : "dim");
+// The designs draw Needs review as a warning, Running as an info chip with a spinner and Idle as neutral. The shared Chip has no info
+// tone or spinner, so Running takes the closest existing tone (dim, like Idle) until the design system gains one.
+export const statusTone = (status: string): "am" | "dim" => (status.startsWith("Stopped") || status === "Needs review" ? "am" : "dim");
 const hasMode = (rows: { mode: Mode | null }[]) => rows.length > 0 && rows.every((row) => row.mode !== null);
 
 function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void; busy?: ReadonlySet<string> }) {
@@ -34,7 +36,7 @@ function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle
           <span role="cell">{crew.status ? <Chip tone={statusTone(crew.status)}>{crew.status}</Chip> : null}</span>
           <span role="cell">
             {/* aria-disabled, not disabled: the switch keeps focus while its write is in flight. */}
-            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} state`} className="ap-switch" disabled={!onToggle} aria-disabled={busy?.has(crew.id) || undefined} onClick={() => { if (!busy?.has(crew.id)) onToggle?.(crew, !crew.enabled); }}>
+            <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} on`} className="ap-switch" disabled={!onToggle} aria-disabled={busy?.has(crew.id) || undefined} onClick={() => { if (!busy?.has(crew.id)) onToggle?.(crew, !crew.enabled); }}>
               {crew.enabled ? "On" : "Off"}
             </button>
           </span>
