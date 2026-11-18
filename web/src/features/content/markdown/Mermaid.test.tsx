@@ -6,7 +6,7 @@ const draw = vi.fn(async (..._args: unknown[]) => ({ svg: '<svg xmlns="http://ww
 vi.mock("mermaid", () => ({ default: { initialize: (config: unknown) => initialize(config), render: draw } }));
 
 import { Mermaid } from "./Mermaid";
-import { MAX_DIAGRAM_CHARS, sanitizeSvg, SECURE_KEYS } from "./mermaidSafety";
+import { MAX_DIAGRAM_CHARS, sanitizeSvg } from "./mermaidSafety";
 
 beforeEach(() => {
   initialize.mockClear();
@@ -49,7 +49,8 @@ describe("Mermaid", () => {
     for (const key of ["securityLevel", "htmlLabels", "startOnLoad", "maxTextSize", "maxEdges", "theme", "themeCSS", "themeVariables", "suppressErrorRendering"]) {
       expect(config.secure).toContain(key);
     }
-    expect(SECURE_KEYS).toBe(config.secure);
+    // Every setting the app makes is itself locked, so a directive cannot change what the app chose.
+    for (const key of Object.keys(config)) if (key !== "secure") expect(config.secure, key).toContain(key);
   });
 
   it("shows the source while a diagram is not drawn", () => {
@@ -98,7 +99,7 @@ describe("Mermaid", () => {
   });
 });
 
-const SVG = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+const SVG = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg" id="s">${inner}</svg>`;
 const clean = (markup: string) => sanitizeSvg(markup)?.outerHTML ?? "";
 
 describe("sanitizeSvg", () => {
@@ -150,7 +151,7 @@ describe("sanitizeSvg", () => {
   it("removes script, frames, embeds, external references and handlers but keeps theme CSS and #id references", () => {
     const out = clean(
       SVG(
-        '<style>.a{fill:red}</style><iframe/><object/><image href="http://x/i.png"/><path marker-end="url(#m)" d="M0 0" onclick="x()"/><rect style="fill:url(#g)"/><use xlink:href="data:text/xml,x"/><script>1</script>',
+        '<style>#s .a{fill:red}</style><iframe/><object/><image href="http://x/i.png"/><path marker-end="url(#m)" d="M0 0" onclick="x()"/><rect style="fill:url(#g)"/><use xlink:href="data:text/xml,x"/><script>1</script>',
       ),
     );
     expect(out).not.toMatch(/iframe|object|embed|image|http:\/\/x|data:|<script|onclick/i);
@@ -159,6 +160,50 @@ describe("sanitizeSvg", () => {
     expect(clean(SVG("<embed/><g/>"))).not.toMatch(/embed/i);
     expect(out).toContain("url(#m)");
     expect(out).toContain("url(#g)");
+  });
+
+  it("keeps Mermaid's own scoped rules and keyframes but drops rules outside the root id", () => {
+    const mermaidCss = '#d{font-family:sans-serif;fill:#000;}#d .node rect,#d .node circle{fill:#eee;}@keyframes dash{to{stroke-dashoffset:0;}}';
+    const svg = (css: string) => `<svg xmlns="http://www.w3.org/2000/svg" id="d"><style>${css}</style><g/></svg>`;
+    expect(sanitizeSvg(svg(mermaidCss))?.querySelector("style")?.textContent).toBe(mermaidCss);
+    const mixed = sanitizeSvg(svg(`${mermaidCss}body{display:none}*{opacity:0}#d,body{color:red}#dx{fill:red}.a{fill:red}`))?.querySelector("style")?.textContent;
+    expect(mixed).toBe(mermaidCss);
+    expect(clean(svg("body{display:none}"))).not.toContain("<style");
+  });
+
+  it("drops a style block it cannot parse, and any rule when the root has no id", () => {
+    for (const css of ["#d{fill:red", "#d{fill:red}}", '#d{content:"x}', "#d{fill:red};@charset 'x';", "#d{fill:red}body"]) {
+      expect(clean(`<svg xmlns="http://www.w3.org/2000/svg" id="d"><style>${css}</style></svg>`), css).not.toContain("<style");
+    }
+    const noId = clean('<svg xmlns="http://www.w3.org/2000/svg"><style>#d{fill:red}</style></svg>');
+    expect(noId).not.toContain("fill:red");
+  });
+
+  it("drops CSS image() and the animateColor, animateMotion and uppercase animate elements", () => {
+    expect(clean(SVG('<style>#x{background:image("https://x/a.png")}</style>'))).not.toContain("<style");
+    expect(clean(SVG('<rect style="background:image(\'https://x/a.png\')"/>'))).not.toContain("style=");
+    const out = clean(
+      SVG(
+        '<rect id="r"/><animateColor attributeName="fill" to="red"/><animateMotion href="#r" path="M0 0"/><ANIMATE attributeName="href" to="https://evil.test/x"/><g/>',
+      ),
+    );
+    expect(out).not.toMatch(/animate/i);
+    expect(out).toContain('<rect id="r">');
+  });
+
+  it("drops HTML-namespace children of desc and title (integration points)", () => {
+    const out = clean(
+      SVG('<desc><img src="x" onerror="window.__pwn=1"><iframe src="javascript:alert(1)"></iframe></desc><title><img src="x" onerror="window.__pwn=2"></title><g/>'),
+    );
+    expect(out).not.toMatch(/<img|iframe|onerror|javascript/i);
+    expect(out).toContain("<desc>");
+  });
+
+  it("drops <set> and external references on use and feImage", () => {
+    expect(clean(SVG('<a id="a"/><set attributeName="href" to="https://evil.test/x"/><g/>'))).not.toMatch(/<set|evil/i);
+    expect(clean(SVG('<set attributeName="href" to="javascript:alert(1)"/><g/>'))).not.toMatch(/<set|javascript/i);
+    expect(clean(SVG('<use href="data:image/svg+xml,x"/>'))).not.toMatch(/data:/);
+    expect(clean(SVG('<filter id="f"><feImage href="https://evil.test/x.png"/></filter>'))).not.toMatch(/evil/);
   });
 
   it("returns null when there is no SVG root", () => {
