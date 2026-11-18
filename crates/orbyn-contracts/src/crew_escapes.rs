@@ -123,6 +123,20 @@ pub struct EscapeLog {
 }
 
 wire! {
+/// The possible escapes of one project (`GET /api/crew/escapes/possible`), newest found first: what the scan found and a person has
+/// not decided. Each row says why in its `line` and `reason`; none is confirmed, and none counts as an escape until a person confirms it.
+/// A dismissed escape is not listed and is not offered again.
+pub struct EscapePossible {
+    pub project: String,
+    #[ts(type = "number")]
+    pub as_of: i64,
+    /// Possible escapes in all, whatever the page.
+    pub total: u32,
+    pub rows: Vec<EscapeRow>,
+}
+}
+
+wire! {
 /// One row of an escape's audit trail, oldest first.
 pub struct EscapeEventRow {
     #[ts(type = "number")]

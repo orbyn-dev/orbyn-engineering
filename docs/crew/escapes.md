@@ -175,6 +175,38 @@ On `Store` (`store/crew_escapes.rs`), over `EscapeRecord` and `EscapeEventRecord
 PR from the merge's forge record and the files from git. **Count `state = confirmed` as an escape and keep `possible` apart** (decision 1); a rate
 needs at least `min_merges` merges (`crew::escapes::escape_thresholds`). Field and enum names are stable; new columns are additive.
 
+## As built: PR 3, possible-escape scan
+
+No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix`). `crew/escapes/scan.rs` (the scan), `crew/escapes/possible.rs` (the read),
+`store/crew_escape_scan.rs` (candidates and the one writer), one route in `routes/crew_escapes.rs`, one contract (`EscapePossible`).
+
+- **`GET /api/crew/escapes/possible?project=&limit=&offset=`** (Preview-gated, class **Local**, in `READS`): `{ project, as_of, total, rows }`, the project's `possible`
+  escapes, newest found first, the same `EscapeRow` as the log (`line` and `reason` say why). A confirmed or dismissed escape is not listed. It reads only; it
+  never runs the scan, so a GET writes nothing. The existing read shapes are unchanged.
+- **Writes `possible` only.** The scan writes `state = 'possible'` with decided by nobody and one `detected` event (`decided_by` core, `cause` the evidence: `revert:<commit>`,
+  `follow_up_fix:<commit>`, `post_merge_check:<merge commit>`). It cannot write `person_marked` or a confirm; the store refuses it. One escape per merge: the first signal
+  that fires keeps the row, in the order 1, 3, 2 below. `model` and `lane` stay empty (the merge does not record them).
+- **Signals** (the design's three):
+  1. *Revert outside the crew.* A later commit on the merge's branch whose message names the merge commit and is a revert (`Revert ` subject or `This reverts commit <merge>`).
+     Not offered when that revert was itself reverted or reapplied (a re-land) or its message says `bisect`. The crew's own revert already has its row from the schema.
+  2. *Follow-up fix.* A later non-merge commit within `follow_up_days` (the stored threshold, 14) of the merge whose subject starts with the word `fix`, `fixes` or `fixed`
+     (not `fixture`), not a revert, on a file the merge changed, and that changes a **line the merge added**: `git blame` at the fix's parent names a commit the merge brought in.
+     A fix next to those lines, on other lines, on another file, called something else, or after the window is not offered. The reason says it may be ordinary follow-up work.
+  3. *Post-merge check.* `watch = broken`, not reverted: the device's own repository checks only (forge CI status stays Planned). No git.
+- **Candidates.** Merges of a project with **no escape row of any state**, made within the report window (60 days, stored), newest first. A dismissed escape therefore is never a
+  candidate and the writer's `INSERT OR IGNORE` on the unique merge would keep it dismissed anyway; a repeat scan adds nothing.
+- **Git, read-only.** Hardened git on the merge's own checkout (`merge-base --is-ancestor`, `log`, `diff`, `rev-list`, `blame`): no worker, no engine, no network, no repository write,
+  no filter or diff converter. A missing repository, a merge no longer on its branch, or an unreadable object is **skipped** (counted, never guessed).
+- **When it runs.** The doc says after a merge, a revert and the watch's tick. Those hooks sit in the merge code, which this PR does not touch, so the scan is a **bounded
+  background step of its own**: `Core::run_crew_escape_scan`, started by the service (Preview only) once at start and then on every Crew watch interval
+  (`ORBYN_CREW_WATCH_INTERVAL_SECS`; none when that is off). No route, tool or CLI command runs it. A later PR may also call `crew_escape_scan` from the merge and revert paths.
+- **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Beyond that the rest stays a candidate for the next scan (`truncated`; newest first).
+  A project at 5,000 escapes or 20,000 events is refused whole before any git runs, and a batch that would pass either limit is refused whole by the writer: nothing is
+  partly written, the scan reports `refused` and logs a plain sentence. Pruning is still not built.
+- **Choices where the note is silent:** the order of signals when several fire, the bisect and re-land filters, blame (not a line-number overlap) as the meaning of "overlapping
+  hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
+- **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
+
 ## Decisions (owner)
 
 1. A revert is a possible escape at once, labelled so; confirmed only by a person. Counts are shown separately.
