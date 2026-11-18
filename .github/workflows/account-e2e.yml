@@ -1,0 +1,70 @@
+name: Account end-to-end
+# Runs the two-device account test (crates/orbyn-core/src/account/tests/e2e_engine.rs) against the
+# Engine's own local stack (docs/account.md, "Testing"). The stack is the public Engine repository at
+# the tag the app pins, started with its scripts/local.sh: Docker only, no secrets, no private access.
+# Not a required check and not part of ci.yml: nothing in branch protection waits for it, and it runs
+# only when the account code, the Engine pin or this file changes, or by hand.
+on:
+  pull_request:
+    paths:
+      - "crates/orbyn-core/src/account/**"
+      - "crates/orbyn-core/Cargo.toml"
+      - ".github/workflows/account-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: account-e2e-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    name: Account end-to-end (Engine stack)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The tag comes from the manifest, so a bump of the pin is the only edit and the job follows it.
+      - name: Read the Engine pin
+        id: pin
+        shell: bash
+        run: |
+          tag="$(sed -n 's|^orbyn-device-client = .*tag = "\(engine-v[0-9][0-9.]*\)".*|\1|p' crates/orbyn-core/Cargo.toml)"
+          [ -n "$tag" ] || { echo "no engine-v tag for orbyn-device-client in crates/orbyn-core/Cargo.toml" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: orbyn-dev/orbyn-engine
+          ref: ${{ steps.pin.outputs.tag }}
+          path: orbyn-engine
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: account-e2e
+      - name: Start the Engine stack
+        working-directory: orbyn-engine
+        shell: bash
+        run: |
+          bash scripts/local.sh setup
+          bash scripts/local.sh up
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "the Engine did not answer /health within two minutes" >&2
+          exit 1
+      - name: Two-device test
+        env:
+          ORBYN_E2E_REQUIRE_ENGINE: "1"
+          ORBYN_E2E_ENGINE_REPO: ${{ github.workspace }}/orbyn-engine
+        run: cargo test -p orbyn-core --features engine-client account::tests::e2e_engine
+      # The server log only: the worker log holds the throwaway email codes.
+      - name: Engine server log
+        if: failure()
+        working-directory: orbyn-engine
+        run: docker compose --env-file .env.local -f compose.yaml -f compose.local.yaml logs --no-color --tail 200 server
