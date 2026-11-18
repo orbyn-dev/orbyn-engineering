@@ -86,6 +86,10 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/update"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
+    ("POST", "/api/crew/escapes/mark"),
+    ("POST", "/api/crew/escapes/{id}/confirm"),
+    ("POST", "/api/crew/escapes/{id}/dismiss"),
+    ("POST", "/api/crew/escapes/{id}/gap"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -447,6 +451,26 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/backtest/{id}/stop",
         "Crew write behind local_only: the person asks a running reviewer backtest to stop",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/mark",
+        "Crew write behind local_only: the person marks a merge as an escape, which confirms it at once",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/confirm",
+        "Crew write behind local_only: the person confirms a possible escape; only a person can",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/dismiss",
+        "Crew write behind local_only: the person dismisses a possible escape",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/gap",
+        "Crew write behind local_only: the person sets an escape's test gap or tooling gap",
     ),
     (
         "POST",

@@ -213,6 +213,26 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/escapes/mark",
+        "core crew_escape_mark: a person's mark of a merge of the named project as an escape, confirmed at once (the mark is the confirm); an existing possible escape is confirmed, a confirmed one returned unchanged, a dismissed one refused; the escape, its events and the audit row (first) in one transaction; bounded at 5,000 escapes; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/confirm",
+        "core crew_escape_confirm: the only way an escape becomes confirmed; possible to confirmed only, the escape as seen (else stale), the same act twice writes nothing, the audit row first in the same transaction as the state and its event; confirmed escapes feed no breaker or router; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/dismiss",
+        "core crew_escape_dismiss: possible to dismissed only, the escape as seen (else stale), the same act twice writes nothing, the audit row first in the same transaction as the state and its event; a dismissed escape is not offered again; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/gap",
+        "core crew_escape_set_gap: a test gap or a tooling gap on a possible or confirmed escape, the escape as seen (else stale), the same gap twice writes nothing, a reclassified event and the audit row in one transaction; changes no count and starts nothing; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
@@ -273,6 +293,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .merge(super::crew_areas::routes())
         .merge(super::crew_backtest::writes())
         .merge(super::crew_capacity::writes())
+        .merge(super::crew_escapes::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route(
             "/api/crew/tasks/{id}/retry-elsewhere",

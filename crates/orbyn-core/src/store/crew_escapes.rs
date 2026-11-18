@@ -1,5 +1,5 @@
-//! The escape log at rest (slice 4k, PR 1; docs/crew/escapes.md): merges that got past review and checks and were later found
-//! defective. This slice only reads. The `revert` source is written by the schema itself: migration 51 back-fills it and a trigger
+//! The escape log at rest (slice 4k; docs/crew/escapes.md): merges that got past review and checks and were later found
+//! defective. This file only reads; a person's writes are in `crew_escape_person.rs` (PR 2). The `revert` source is written by the schema itself: migration 51 back-fills it and a trigger
 //! on `crew_merges` adds one possible escape, and its first audit row, in the same transaction as the revert, so a repeat adds
 //! nothing and no caller can forget it. Ids, commit ids, enums, areas, engine and model names and one short reason of at most 200
 //! characters are stored; never a diff, a test body, command output, a prompt or a secret.
@@ -96,7 +96,7 @@ fn areas(text: String) -> rusqlite::Result<Vec<String>> {
     serde_json::from_str(&text).map_err(bad)
 }
 
-fn escape_row(row: &Row<'_>) -> rusqlite::Result<EscapeRecord> {
+pub(super) fn escape_row(row: &Row<'_>) -> rusqlite::Result<EscapeRecord> {
     Ok(EscapeRecord {
         id: row.get("id")?,
         project_id: row.get("project_id")?,
@@ -131,7 +131,7 @@ fn event_row(row: &Row<'_>) -> rusqlite::Result<EscapeEventRecord> {
     })
 }
 
-const SELECT: &str = "SELECT e.*, m.merged_unix FROM crew_escapes e JOIN crew_merges m ON m.task_id = e.merge_task_id";
+pub(super) const SELECT: &str = "SELECT e.*, m.merged_unix FROM crew_escapes e JOIN crew_merges m ON m.task_id = e.merge_task_id";
 
 fn state_name(state: EscapeState) -> &'static str {
     match state {
@@ -329,6 +329,23 @@ impl Store {
                 "INSERT INTO crew_escape_events (escape_id, project_id, kind, from_state, to_state, decided_by, cause, at)
                  VALUES (?1, ?2, 'detected', NULL, 'possible', 'core', 'test', 1)",
                 params![id, project_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Gives a merge a lead thread in `project_id`, as a real crew run does, so a person can mark it as an escape.
+    pub fn link_merge_to_project_for_test(&self, project_id: &str, task_id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "INSERT OR IGNORE INTO threads (id, project_id, title, engine, cwd, created_at, updated_at)
+                 VALUES ('lead-test', ?1, 'lead', 'fake', '/p', 't', 't')",
+                [project_id],
+            )?;
+            tx.execute(
+                "INSERT INTO crew_runs (task_id, lead_thread_id, member) VALUES (?1, 'lead-test', 'lead-01')
+                 ON CONFLICT(task_id) DO UPDATE SET lead_thread_id = 'lead-test'",
+                [task_id],
             )?;
             Ok(())
         })

@@ -162,3 +162,55 @@ pub struct EscapeThresholds {
     pub stored: bool,
 }
 }
+
+wire! {
+/// The escape as the person saw it when they acted: its state and its gap. An action on an escape that has since changed is refused
+/// with `stale`. An action that is already the escape's state is not stale: repeating it changes nothing.
+pub struct EscapeSeen {
+    pub state: EscapeState,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gap: Option<EscapeGap>,
+}
+}
+
+wire! {
+/// A person confirms or dismisses one escape (`POST /api/crew/escapes/{id}/confirm` and `/dismiss`). Only a possible escape can
+/// move; the same action twice changes nothing.
+pub struct EscapeDecide {
+    /// The project the escape belongs to; an escape of another project is not found.
+    pub project: String,
+    pub seen: EscapeSeen,
+    /// At most 200 characters, redacted; kept in the audit row only.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub note: Option<String>,
+}
+}
+
+wire! {
+/// A person marks one merge as an escape (`POST /api/crew/escapes/mark`). The mark is the confirm: the escape is confirmed at once.
+/// A merge that already has a possible escape is confirmed; one already confirmed is returned unchanged; a dismissed one is refused.
+pub struct EscapeMark {
+    pub project: String,
+    /// The merge, a Review queue item's task id.
+    pub merge_task_id: String,
+    /// What the person saw of the merge's escape, if it had one; a possible escape that changed since is `stale`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub seen: Option<EscapeSeen>,
+    /// At most 200 characters, redacted. Becomes the escape's reason when the mark creates it.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub note: Option<String>,
+}
+}
+
+wire! {
+/// A person sets the gap of a possible or confirmed escape (`POST /api/crew/escapes/{id}/gap`).
+pub struct EscapeGapSet {
+    pub project: String,
+    pub seen: EscapeSeen,
+    pub gap: EscapeGap,
+}
+}
