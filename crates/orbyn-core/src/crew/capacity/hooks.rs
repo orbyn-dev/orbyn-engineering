@@ -91,9 +91,8 @@ pub(crate) async fn record_provenance(
     agent: Author,
     now: i64,
 ) -> Result<(), CoreError> {
-    // Person commits: EMPTY for now, so every line reads as the agent's. A later change passes only commits it
-    // positively identified as a person's (for example commits made through the app), never a guess.
-    let (stage, error) = match record_at_merge(store, merge, &agent, &[], now).await {
+    let person = person_commits(store, merge);
+    let (stage, error) = match record_at_merge(store, merge, &agent, &person, now).await {
         Ok(recorded) => match recorded.note {
             Ok(()) => return Ok(()),
             Err(error) => ("note", error),
@@ -103,6 +102,17 @@ pub(crate) async fn record_provenance(
     tracing::warn!(%error, stage, task = %merge.task_id, "the merge's provenance was not recorded");
     write_failure(store, merge, stage).await;
     Err(error)
+}
+
+/// The commits the app recorded as a person's for the project that led the merge's task (`crew_person_commits`). A read
+/// failure gives the empty list: no line is then a person's, which is the safe side.
+fn person_commits(store: &Store, merge: &MergeRecord) -> Vec<String> {
+    store
+        .crew_person_commits_for_task(&merge.task_id)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, task = %merge.task_id, "person commits could not be read, so none count");
+            Vec::new()
+        })
 }
 
 /// The most unresolved failures one retry pass looks at.
@@ -128,7 +138,9 @@ pub(crate) async fn retry_provenance(store: &Store) {
             continue;
         };
         let agent = agent_of(store, &merge);
-        let retried = match record_at_merge(store, &merge, &agent, &[], merge.merged_unix).await {
+        let person = person_commits(store, &merge);
+        let retried = match record_at_merge(store, &merge, &agent, &person, merge.merged_unix).await
+        {
             Ok(recorded) => recorded.note,
             Err(error) => Err(error),
         };

@@ -71,3 +71,4 @@ mod starts;
 mod tier_settings;
 mod triggers;
 mod verify;
+mod worker_identity;

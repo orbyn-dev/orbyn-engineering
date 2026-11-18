@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use crate::agents::driver::worker_identity::{TASK_TRAILER, is_task_id, task_of_address};
 use crate::error::{CoreError, Result};
 use crate::source_control::git::{git, git_byte_exact, text};
 use crate::store::{MergeRecord, Store};
@@ -23,6 +24,9 @@ const NOTE_IDENTITY: [&str; 4] = [
     "user.email=crew@orbyn.invalid",
 ];
 
+/// The address of the app's own commits (merges, notes, reverts). Such a commit is never a worker's and never a person's.
+const APP_EMAIL: &str = "crew@orbyn.invalid";
+
 /// A run of lines in the merged (new) file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hunk {
@@ -35,6 +39,12 @@ pub struct Hunk {
 }
 
 /// Who wrote a hunk.
+///
+/// `Agent` is positive evidence: the commit's author or committer is a worker address of an existing task, or its
+/// message carries that task's trailer. `Person` is positive evidence too: the commit id is in the project's recorded
+/// person commits. `Unknown` is everything else (a person's manual commit, history from before worker identities, a
+/// bot, the app's own conflict resolution). It carries the merge task's engine and model so coverage can count it
+/// with the agent's lines: an unconfirmed line is never credited as human-written.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Author {
     Agent {
@@ -42,6 +52,25 @@ pub enum Author {
         model: Option<String>,
     },
     Person,
+    Unknown {
+        engine: String,
+        model: Option<String>,
+    },
+}
+
+impl Author {
+    /// The same engine and model as an `Unknown` author: what a line nobody confirmed reads as.
+    fn unconfirmed(&self) -> Author {
+        match self {
+            Author::Agent { engine, model } | Author::Unknown { engine, model } => {
+                Author::Unknown {
+                    engine: engine.clone(),
+                    model: model.clone(),
+                }
+            }
+            Author::Person => Author::Person,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,21 +236,90 @@ pub fn parse_blame(blame: &[u8]) -> BTreeMap<u32, String> {
     lines
 }
 
-/// Splits one merged hunk into contiguous runs of the same author. A line is a person's only if blame names a commit
-/// in `person`; a line blame did not name is the agent's.
+/// The author and committer email of one commit, as `git blame --porcelain` printed them, without the angle brackets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommitMails {
+    pub author: Option<String>,
+    pub committer: Option<String>,
+}
+
+impl CommitMails {
+    fn is_app(&self) -> bool {
+        [&self.author, &self.committer]
+            .into_iter()
+            .flatten()
+            .any(|mail| mail == APP_EMAIL)
+    }
+}
+
+/// The emails of each commit in `git blame --porcelain` output. Git prints a commit's metadata once, after the first
+/// header line that names it; content lines start with a tab and are never read, so file text cannot forge a row.
+/// These are read only to find a worker's address: an email can make a line `agent` or leave it `unknown`, and can
+/// never make it a person's.
+pub fn parse_blame_mails(blame: &[u8]) -> HashMap<String, CommitMails> {
+    let mut mails: HashMap<String, CommitMails> = HashMap::new();
+    let mut current: Option<String> = None;
+    for line in blame.split(|b| *b == b'\n') {
+        if line.first() == Some(&b'\t') {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(line) else {
+            continue;
+        };
+        let mut parts = text.split(' ');
+        if let (Some(id), Some(_), Some(fin)) = (parts.next(), parts.next(), parts.next())
+            && is_revision(id)
+            && fin.parse::<u32>().is_ok()
+        {
+            let id = id.to_ascii_lowercase();
+            mails.entry(id.clone()).or_default();
+            current = Some(id);
+            continue;
+        }
+        let Some(id) = &current else {
+            continue;
+        };
+        let strip = |rest: &str| {
+            rest.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_owned()
+        };
+        if let Some(rest) = text.strip_prefix("author-mail ") {
+            mails.entry(id.clone()).or_default().author = Some(strip(rest));
+        } else if let Some(rest) = text.strip_prefix("committer-mail ") {
+            mails.entry(id.clone()).or_default().committer = Some(strip(rest));
+        }
+    }
+    mails
+}
+
+/// Whether either email of a commit is the address of a worker of an existing task.
+fn worker_mail(mails: &CommitMails, known_task: &dyn Fn(&str) -> bool) -> bool {
+    [&mails.author, &mails.committer]
+        .into_iter()
+        .flatten()
+        .filter_map(|mail| task_of_address(mail))
+        .any(known_task)
+}
+
+/// Splits one merged hunk into contiguous runs of the same author. A line whose commit is in `agent_commits` is the
+/// agent's, whatever else is said of it; otherwise it is a person's only if blame names a commit in `person`;
+/// otherwise it is `Unknown`, including a line blame did not name. `agent` gives the engine and model.
 pub fn split_by_author(
     hunk: &Hunk,
     blame: &BTreeMap<u32, String>,
     person: &HashSet<String>,
+    agent_commits: &HashSet<String>,
     agent: &Author,
 ) -> Vec<AuthoredHunk> {
     let mut out: Vec<AuthoredHunk> = Vec::new();
     for line in hunk.start..hunk.start + hunk.len {
-        let is_person = blame.get(&line).is_some_and(|id| person.contains(id));
-        let author = if is_person {
-            Author::Person
-        } else {
-            agent.clone()
+        let commit = blame.get(&line);
+        let author = match commit {
+            Some(id) if agent_commits.contains(id) => agent.clone(),
+            Some(id) if person.contains(id) => Author::Person,
+            _ => agent.unconfirmed(),
         };
         match out.last_mut() {
             Some(last) if last.author == author => last.hunk.len += 1,
@@ -239,7 +337,7 @@ pub fn split_by_author(
 }
 
 /// The Agent Trace-shaped note body: version, the revision, and per file the ranges by contributor. Contributor
-/// `type` is `agent` or `person`, with the engine and model ids for an agent. Nothing else goes in.
+/// `type` is `agent`, `person` or `unknown`, with the engine and model ids for an agent. Nothing else goes in.
 pub fn trace_note(merge_commit: &str, hunks: &[AuthoredHunk], now: i64) -> Value {
     let mut paths: Vec<&str> = hunks.iter().map(|h| h.hunk.path.as_str()).collect();
     paths.sort_unstable();
@@ -261,6 +359,7 @@ pub fn trace_note(merge_commit: &str, hunks: &[AuthoredHunk], now: i64) -> Value
                             json!({ "type": "agent", "engine": engine, "model": model })
                         }
                         Author::Person => json!({ "type": "person" }),
+                        Author::Unknown { .. } => json!({ "type": "unknown" }),
                     };
                     let ranges: Vec<Value> = hunks
                         .iter()
@@ -338,31 +437,82 @@ fn person_set(person_commits: &[String]) -> HashSet<String> {
         .collect()
 }
 
-/// Gives each hunk its author by `git blame` of the merge commit: a line is a person's only when the commit that last
-/// changed it is one of `person`. Anything else is the agent's: an unknown commit, a rewritten id, a conflict
-/// resolution, a line blame did not name and a file whose blame failed. One blame runs per file, without `-L`, and
-/// the result is sliced, so the number of hunks cannot grow the command line. Repository config cannot reattribute
-/// lines: the ignore-revs list is cleared.
+/// The most commits whose message is read for a task trailer in one merge, and how many go in one `git log`. A commit
+/// past the cap is not read and stays `unknown`, so a huge history cannot grow the work without bound.
+const TRAILER_COMMITS_MAX: usize = 1024;
+const TRAILER_CHUNK: usize = 64;
+
+/// The task ids named by `Orbyn-Task` trailers, by commit, for the commits given (full ids). A commit whose message
+/// cannot be read has no entry. Trailer text is whatever the committer wrote: the caller checks each id exists.
+async fn trailer_tasks(repo: &Path, commits: &[String]) -> HashMap<String, Vec<String>> {
+    let mut found = HashMap::new();
+    // A message can hold any byte but a NUL, so a fixed separator could be forged into a fake record. Each record
+    // starts with a nonce no message can know, and only ids this call asked about are kept.
+    let nonce = crate::util::new_id();
+    let format = format!(
+        "--format={nonce}%H%x1f%(trailers:key={},valueonly,unfold,separator=%x2C)",
+        TASK_TRAILER
+    );
+    let asked: HashSet<&str> = commits.iter().map(String::as_str).collect();
+    for chunk in commits
+        .iter()
+        .take(TRAILER_COMMITS_MAX)
+        .collect::<Vec<_>>()
+        .chunks(TRAILER_CHUNK)
+    {
+        let mut args: Vec<&str> = vec![
+            "-c",
+            "log.showSignature=false",
+            "log",
+            "--no-walk=unsorted",
+            "--no-color",
+            &format,
+        ];
+        args.extend(chunk.iter().map(|id| id.as_str()));
+        args.push("--");
+        let Ok(out) = git_byte_exact(repo, &args).await else {
+            continue;
+        };
+        for record in String::from_utf8_lossy(&out).split(nonce.as_str()).skip(1) {
+            let Some((id, values)) = record.split_once('\u{1f}') else {
+                continue;
+            };
+            let id = id.trim().to_ascii_lowercase();
+            if is_revision(&id) && asked.contains(id.as_str()) {
+                let tasks = values
+                    .split(',')
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+                    .collect();
+                found.insert(id, tasks);
+            }
+        }
+    }
+    found
+}
+
+/// Gives each hunk its author by `git blame` of the merge commit. A line is the agent's when the commit that last
+/// changed it has a worker address (author or committer) of an existing task, or an `Orbyn-Task` trailer naming one
+/// (`known_task` says whether a task exists). It is a person's only when that commit is one of `person`, and the
+/// agent's mark wins if a commit has both. Anything else is `Unknown`: an unlisted commit, a rewritten id, the app's
+/// own conflict resolution, a line blame did not name and a file whose blame failed. Reading an email can only give
+/// `agent` or leave `unknown`. One blame runs per file, without `-L`, and the result is sliced, so the number of
+/// hunks cannot grow the command line. Repository config cannot reattribute lines: the ignore-revs list is cleared. A
+/// `.mailmap` can rewrite an email git prints; that can only hide a worker address (unknown) or invent one (agent),
+/// never produce a person.
 pub(crate) async fn attribute_by_blame(
     repo: &Path,
     merge: &str,
     hunks: Vec<Hunk>,
     person: &HashSet<String>,
     agent: &Author,
+    known_task: &(dyn Fn(&str) -> bool + Sync),
 ) -> Vec<AuthoredHunk> {
-    if person.is_empty() {
-        return hunks
-            .into_iter()
-            .map(|hunk| AuthoredHunk {
-                hunk,
-                author: agent.clone(),
-            })
-            .collect();
-    }
     let mut paths: Vec<&str> = hunks.iter().map(|h| h.path.as_str()).collect();
     paths.sort_unstable();
     paths.dedup();
     let mut blamed: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+    let mut mails: HashMap<String, CommitMails> = HashMap::new();
     for path in paths {
         let args = [
             "-c",
@@ -377,13 +527,44 @@ pub(crate) async fn attribute_by_blame(
         ];
         if let Ok(out) = git_byte_exact(repo, &args).await {
             blamed.insert(path.to_owned(), parse_blame(&out));
+            for (id, found) in parse_blame_mails(&out) {
+                mails.entry(id).or_insert(found);
+            }
+        }
+    }
+    let mut agent_commits: HashSet<String> = mails
+        .iter()
+        .filter(|(_, found)| worker_mail(found, known_task))
+        .map(|(id, _)| id.clone())
+        .collect();
+    // The trailer corroborates the identity. Not read for a commit already marked, a person's, or the app's own.
+    let mut unread: Vec<String> = mails
+        .iter()
+        .filter(|(id, found)| {
+            !agent_commits.contains(*id) && !person.contains(*id) && !found.is_app()
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    unread.sort_unstable();
+    for (id, tasks) in trailer_tasks(repo, &unread).await {
+        if tasks
+            .iter()
+            .any(|task| is_task_id(task) && known_task(task))
+        {
+            agent_commits.insert(id);
         }
     }
     let none = BTreeMap::new();
     hunks
         .iter()
         .flat_map(|hunk| {
-            split_by_author(hunk, blamed.get(&hunk.path).unwrap_or(&none), person, agent)
+            split_by_author(
+                hunk,
+                blamed.get(&hunk.path).unwrap_or(&none),
+                person,
+                &agent_commits,
+                agent,
+            )
         })
         .collect()
 }
@@ -498,11 +679,12 @@ async fn write_note(repo: &Path, merge: &str, body: &Value) -> Result<()> {
 
 /// Records a merge's hunks and its local git note. Hunks come from the diff of `before..merge`.
 ///
-/// `person_commits` are full commit ids positively known to be a person's (for example commits the person made
-/// through the app). `git blame` of the merge commit gives each line to the commit that last changed it; a line is
-/// a person's only if that commit is in the list. Anything not positively a person's is the agent's: an empty list,
-/// an unknown or rewritten id, a conflict resolution, a failed blame. Author emails are never read. The caller must
-/// pass only commits it positively identified, never a guess.
+/// `person_commits` are full commit ids positively known to be a person's (the project's `crew_person_commits`).
+/// `git blame` of the merge commit gives each line to the commit that last changed it. A line is the agent's when
+/// that commit's author or committer email is a worker address of an existing task, or its message has that task's
+/// `Orbyn-Task` trailer (see `attribute_by_blame`); a person's only if the commit is in the list; otherwise
+/// `Unknown`, which coverage counts with the agent's lines. Emails are read to find worker addresses and can never
+/// make a line a person's. The caller must pass only commits it positively identified, never a guess.
 ///
 /// The store write is one transaction and its error is returned. The note is written after it, and a failure there
 /// is returned inside `Recorded` for the caller to log, because the merge has already happened. A merge with no hunk
@@ -517,7 +699,9 @@ pub async fn record_at_merge(
     let repo = Path::new(&merge.repo);
     let hunks = hunks_of(repo, &merge.before_commit, &merge.merge_commit).await?;
     let person = person_set(person_commits);
-    let authored = attribute_by_blame(repo, &merge.merge_commit, hunks, &person, agent).await;
+    let known = |id: &str| store.crew_task(id).is_ok_and(|task| task.is_some());
+    let authored =
+        attribute_by_blame(repo, &merge.merge_commit, hunks, &person, agent, &known).await;
     store.record_crew_hunks(merge.id, &merge.repo, now, &authored)?;
     if authored.is_empty() {
         return Ok(Recorded {

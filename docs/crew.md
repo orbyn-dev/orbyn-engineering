@@ -1145,8 +1145,8 @@ path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_star
 
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
-note in a detached task (the merge path is synchronous, git is async), with an empty person-commit list, so every line reads
-as the agent until a later change passes positively identified person commits. A failure never fails or delays a merge: it is
+note in a detached task (the merge path is synchronous, git is async), against the project's `crew_person_commits` (empty until
+an app path records a person's commit: see the person signal below). A failure never fails or delays a merge: it is
 logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling runs in the same
 detached task, off by default: see `crew/README.md`, `capacity`.
 
@@ -1156,9 +1156,9 @@ and binary files and unsafe paths do not) and `store/crew_provenance.rs` keeps t
 task's engine and model for the agent, or a person for the lines whose last-changing commit (by `git blame` of the merge
 commit, one blame per file, repository ignore-revs lists cleared) is in the positive `person_commits` list the caller
 passes. Anything not positively a person's is the agent's: an empty list, an unknown or rewritten id, a conflict
-resolution, a failed blame. An author email is never read, and a merged hunk is split into runs of one author. The merge
-hook must pass only positively identified person commits (for example commits the person made through the app or
-pressed Looks good on), never a guess. The first time provenance is recorded for a repository is kept once in
+resolution, a failed blame (this paragraph is the first build; the person signal below replaces its agent default with a
+third value, `unknown`, and reads author and committer emails). A merged hunk is split into runs of one author. The merge
+hook must pass only positively identified person commits, never a guess. The first time provenance is recorded for a repository is kept once in
 `crew_provenance_start`, first write wins and never moves, so an older merge recorded late reads as "Not measured" (as does a
 merge with no hunk, which has no note and no `note_ref`); coverage built on this is merge-level, not line-level review. Hunks and that start go in one
 transaction. Then a note in the Agent Trace shape (version, revision, per file the ranges by contributor `agent` or
@@ -1166,6 +1166,32 @@ transaction. Then a note in the Agent Trace shape (version, revision, per file t
 local only: the app's push is `git push -u origin <branch>` and its fetches name explicit refs, so no push or fetch
 carries it, and a test keeps it so. A note that fails is returned for the caller to log; the merge is not failed.
 Nothing calls this from the merge queue yet; the hook is a separate PR.
+
+**As built (slice 4l, person signal, migration 55; design: `docs/crew/provenance-person-signal.md`):** a line's author is one of three
+values. `agent`: the commit that last changed it (`git blame` of the merge commit) has an author or committer email that is exactly
+`worker+<task id>@orbyn.invalid` for a task that exists in `crew_tasks` (the id must be the app's `sha256:` and 64 lowercase hex form), or a
+message trailer `Orbyn-Task: <task id>` naming such a task. `person`: the commit id is in `crew_person_commits` for the project that led the
+merge's task, and the commit has no worker address. `unknown`: everything else (a person's manual commit, history from before this change,
+a bot, the app's own `Orbyn Crew <crew@orbyn.invalid>` merge, so a conflict resolution is `unknown` even if its message carries a trailer).
+Reading an email can only produce `agent` or leave `unknown`, never `person`. The service stores all three values (`crew_hunks.author_kind`;
+migration 55 rebuilds the table to allow `unknown` and copies old rows as they were). Coverage counts `unknown` with the agent's lines (the
+wire shape is unchanged: `agent_lines` is "Agent or unconfirmed", and the screens say so). A wrong `person` label is worse than a missing one,
+so nothing infers a person from a name or an email, a look-alike or upper-case address never matches, a repository `.mailmap` can only hide or
+invent a worker address, and a listed commit that also carries a worker address stays `agent`.
+
+Where the identity comes from: `RunSpec.crew_task` is set for a run whose thread is a Crew worker's, and the Claude, OpenCode (ACP) and Codex
+drivers add `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` (`Orbyn Crew worker (<engine>/<model>)
+<worker+<task id>@orbyn.invalid>`) to that process's own environment after `host::child_env::for_engine` (`agents/driver/worker_identity.rs`).
+The engine and model in the name are cleaned (outside `[A-Za-z0-9._:/-]` becomes `_`, 64 characters at most) and are never matched on. A
+process started ahead of the turn is not used for a worker, because it would lack the identity. The worker brief asks for the
+`Orbyn-Task: <task id>` trailer, best effort: the person owns the repository's hooks and the app cannot enforce it. The identity is a label,
+not a boundary: a worker can override it in its own command, and a shell profile that exports `GIT_*_EMAIL` wins over it for commands the
+engine's shell runs (probe results are in the design note). Such a commit reads `unknown`, which counts as agent.
+
+`crew_person_commits` (project, full commit id, time, action) is written only by `Store::record_person_commit`, in the same transaction as
+its `crew.person_commit` audit row. No app path commits on a person's action today (the README "Initial commit" at project creation is not
+recorded), so nothing calls it and the list is empty: no line is `person`. A future path must refuse a commit that contains a worker-written
+change; workers write into the person's own checkout, and only the path knows what it staged. No route was added.
 
 **As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run; the store and replay follow below.
 

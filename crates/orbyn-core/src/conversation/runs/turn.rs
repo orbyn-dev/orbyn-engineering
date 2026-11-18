@@ -134,7 +134,16 @@ impl RunManager {
             },
         )?;
         // A process started ahead of this turn was not started under the restriction.
-        let warm = if confine.is_some() { None } else { warm };
+        let crew_task = self
+            .store
+            .crew_task_for_worker(&thread.id)?
+            .map(|(task, _)| task.id);
+        // A worker's identity is set when its process starts, which a process started ahead of the turn missed.
+        let warm = if confine.is_some() || crew_task.is_some() {
+            None
+        } else {
+            warm
+        };
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -203,6 +212,7 @@ impl RunManager {
             mcp_url,
             run_dir: run_dir.to_path_buf(),
             confine,
+            crew_task,
         };
         let (sender, receiver) = mpsc::channel(EVENT_BUFFER);
         let mut warm = warm;
