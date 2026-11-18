@@ -14,12 +14,14 @@ impl RunManager {
     ) -> EngineOutcome {
         // A slash command or a goal may have nothing to say; an ordinary message must get an answer.
         // A Crew lead or worker, or a delegated run is judged by what it leaves behind, not by what it says.
+        // A slash command expands into work of its own or answers locally.
         let expects_reply = RunKind::parse(&message.0) == RunKind::Turn
+            && !message.0.trim_start().starts_with('/')
             && thread
                 .lifecycle
                 .as_ref()
                 .is_none_or(|l| l.relation.as_deref() != Some("subagent"))
-            && !self.store.is_crew_thread(&thread.id).unwrap_or(false);
+            && !self.store.is_crew_thread(&thread.id).unwrap_or(true);
         match self
             .start(thread, scope, message, run_dir, token, &stops.cancel, retry)
             .await
@@ -329,6 +331,7 @@ impl RunManager {
     ) -> EngineOutcome {
         let cancel = &stops.cancel;
         let mut replied = false;
+        let mut user_messages = std::collections::HashSet::new();
         let mut cancelling = false;
         let whole = crate::settings::preferences::stored_preference(
             &self.store,
@@ -413,7 +416,7 @@ impl RunManager {
                     {
                         break outcome;
                     }
-                    replied |= shows_work(&event);
+                    replied |= shows_work(&event, &mut user_messages);
                     match event {
                         EngineEvent::Agui(event) => {
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
@@ -568,18 +571,77 @@ impl RunManager {
 pub(super) const NO_REPLY: &str =
     "No reply: the engine finished without answering. Send your message again.";
 
-/// Whether an engine event is the engine answering: words, a tool, a command, a plan, or a question
-/// for the person. Thinking alone is not.
-fn shows_work(event: &EngineEvent) -> bool {
+/// Whether an engine event is the engine answering: words, a tool, a command, a plan, a state change
+/// or a question for the person. Thinking alone is not, nor is an echo of the person's own message.
+fn shows_work(event: &EngineEvent, user_messages: &mut std::collections::HashSet<String>) -> bool {
     match event {
-        EngineEvent::Agui(AgUiEvent::TextMessageContent { delta, .. }) => !delta.trim().is_empty(),
-        EngineEvent::Agui(AgUiEvent::ToolCallStart { .. } | AgUiEvent::ActivitySnapshot { .. }) => {
-            true
+        EngineEvent::Agui(AgUiEvent::TextMessageStart { message_id, role }) => {
+            if role == "user" {
+                user_messages.insert(message_id.clone());
+            }
+            false
         }
-        EngineEvent::Item(_)
-        | EngineEvent::Question(_)
-        | EngineEvent::Permission(_)
-        | EngineEvent::McpApp(_) => true,
+        EngineEvent::Agui(AgUiEvent::TextMessageContent { message_id, delta }) => {
+            !user_messages.contains(message_id) && !delta.trim().is_empty()
+        }
+        EngineEvent::Agui(
+            AgUiEvent::ToolCallStart { .. }
+            | AgUiEvent::ActivitySnapshot { .. }
+            | AgUiEvent::Raw { .. },
+        ) => true,
+        // The engine's own record of the prompt and of its thinking is not an answer.
+        EngineEvent::Item(item) => !matches!(item.kind.as_str(), "userMessage" | "reasoning"),
+        EngineEvent::Question(_) | EngineEvent::Permission(_) | EngineEvent::McpApp(_) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use crate::agents::driver::ItemRecord;
+
+    fn item(kind: &str) -> EngineEvent {
+        EngineEvent::Item(ItemRecord {
+            id: "i".into(),
+            kind: kind.into(),
+            raw: serde_json::Value::Null,
+            exit_code: None,
+        })
+    }
+
+    fn agui(event: AgUiEvent) -> EngineEvent {
+        EngineEvent::Agui(event)
+    }
+
+    #[test]
+    fn only_the_engines_own_words_and_work_are_a_reply() {
+        let mut users = std::collections::HashSet::new();
+        let mut shows = |event: EngineEvent| shows_work(&event, &mut users);
+        assert!(!shows(item("reasoning")));
+        assert!(!shows(item("userMessage")));
+        assert!(shows(item("commandExecution")));
+        // An echo of the person's own message is not an answer.
+        assert!(!shows(agui(AgUiEvent::TextMessageStart {
+            message_id: "u".into(),
+            role: "user".into(),
+        })));
+        assert!(!shows(agui(AgUiEvent::TextMessageContent {
+            message_id: "u".into(),
+            delta: "hello".into(),
+        })));
+        assert!(!shows(agui(AgUiEvent::TextMessageContent {
+            message_id: "a".into(),
+            delta: "  ".into(),
+        })));
+        assert!(shows(agui(AgUiEvent::TextMessageContent {
+            message_id: "a".into(),
+            delta: "hi".into(),
+        })));
+        // An AG-UI agent may answer only through frames outside the subset.
+        assert!(shows(agui(AgUiEvent::Raw {
+            event: serde_json::json!({ "type": "MESSAGES_SNAPSHOT" }),
+            source: None,
+        })));
     }
 }
