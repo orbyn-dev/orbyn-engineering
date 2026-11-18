@@ -86,6 +86,10 @@ async fn crew_launch(
             prompt: None,
             links: Links {
                 crew_started,
+                trigger: crew_started.then(|| crate::crew::capacity::PausedTrigger {
+                    kind: crate::crew::capacity::PausedKind::CommentFix,
+                    key: path.to_owned(),
+                }),
                 ..Links::default()
             },
         })
@@ -231,7 +235,7 @@ async fn a_high_task_is_never_paused_even_marked_crew_started_over_the_limit() {
     // A task stored High and Crew-started: the check reads its stored pair and lets it go.
     assert!(
         w.core
-            .capacity_start_check(&project(&w), Some((Priority::High, true)))
+            .capacity_start_check(&project(&w), Some((Priority::High, true)), None)
             .is_ok()
     );
     // And through the start path: a person's start (the only kind that is not Low) goes over the limit.
@@ -260,6 +264,6 @@ async fn a_high_task_is_never_paused_even_marked_crew_started_over_the_limit() {
         "the queue is over, so a Low Crew start would pause"
     );
     w.core
-        .capacity_start_check(&project(&w), Some((Priority::High, true)))
+        .capacity_start_check(&project(&w), Some((Priority::High, true)), None)
         .unwrap();
 }

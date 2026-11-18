@@ -22,6 +22,7 @@ const state = (over: Partial<CapacityState> = {}): CapacityState => ({
     { from: 1, to: 4, sampled: 1 },
     { from: 5, to: 8, sampled: 2 },
   ],
+  held: [],
   ...over,
 });
 const coverage = (over: Partial<ReviewCoverage> = {}): ReviewCoverage => ({
