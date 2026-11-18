@@ -198,6 +198,14 @@ impl Core {
         let context = CrewRepository::from_remote(&intent.remote)?;
         let receipt = crew_pull(&context, Path::new(&intent.repo), number).await?;
         if !identity_matches(intent, &receipt) {
+            // The request named the pinned head (`--match-head-commit`), so a PR that is no longer that one cannot be merged by it.
+            *intent = self.store.resolve_crew_forge_merge(
+                &intent.task_id,
+                intent.revision,
+                &ForgeResolution::Settle,
+                "core",
+                "lane reconcile: the PR is no longer the one that was requested",
+            )?;
             return Ok(None);
         }
         if receipt.state == "merged"
@@ -230,20 +238,22 @@ impl Core {
     /// Every rejected intent of this target that may still merge. A failure to read one never fails the pass.
     pub(super) async fn reconcile_rejected_requests(
         &self,
-        target: &MergeTarget,
+        target: Option<&MergeTarget>,
         crew_id: Option<&str>,
         now: i64,
         outcomes: &mut Vec<MergeOutcome>,
     ) {
-        let pending = self.store.crew_forge_unfinished().unwrap_or_else(|error| {
-            tracing::warn!(%error, "forge intents awaiting reconciliation could not be listed");
-            Vec::new()
-        });
+        let pending = self
+            .store
+            .crew_forge_rejected_pending()
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "forge intents awaiting reconciliation could not be listed");
+                Vec::new()
+            });
         for mut intent in pending {
-            if intent.phase != ForgePhase::Rejected
-                || intent.repo != target.repo.to_string_lossy()
-                || intent.branch != target.branch
-            {
+            if target.is_some_and(|target| {
+                intent.repo != target.repo.to_string_lossy() || intent.branch != target.branch
+            }) {
                 continue;
             }
             let Ok(Some(entry)) = self.store.merge_entry(&intent.task_id) else {

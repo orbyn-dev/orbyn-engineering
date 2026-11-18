@@ -129,9 +129,13 @@ reject and queue again). The route reads the forge first: a PR already merged is
 an unreadable PR refuses the answer. It is a Person route (key enforced), local only, behind the Preview flag, in `STATE_CHANGING`;
 no tool, CLI command or browser path can reject or retry. The audit row `crew.merge.forge.resolve` (with `via`) is written first,
 in the same transaction as the intent and the queue entry; a crash leaves the old, still resolvable state or the whole new one, and a
-crash after the `merged` write is finished by recovery. The queue's own `crew_reject_merge` (used by the escape-check guard) turns
-an entry down without touching its intent; it writes a `crew.merge.forge.resolve` row naming that path and leaves the intent as it
-was. The queue view lists each entry's `forge` phase and `revision`. The transition table of `save_crew_forge_merge` is unchanged:
+crash after the `merged` write is finished by recovery. The queue's own `crew_reject_merge` (used by the escape-check guard) sends
+a waiting intent through the same audited reject (`via` "queue reject"), so one with a merge request stays reconcilable too; for an
+intent in any other phase it only turns the entry down and writes an audit row naming that path (`merge_requested` is already in
+recovery). A rejected intent with `merge_sent` is read each lane pass and at startup (kept apart from the unfinished-effects list, so
+a long list of them never stops other recovery, and bounded at 128): a merge that landed is recorded; a PR closed without a merge, or
+no longer the pinned one (the request named the pinned head), settles it; a PR that stays open is read again each pass until a person
+closes it on the forge. The queue view lists each entry's `forge` phase and `revision`. The transition table of `save_crew_forge_merge` is unchanged:
 the way out lives in `resolve_crew_forge_merge` alone.
 
 - **Risk.** `merge::score` reads paths (CI, migrations, dependency files, and auth, keys or crypto as whole words in a path),

@@ -140,7 +140,7 @@ impl Store {
     /// The bound refuses excess work rather than silently leaving records out of recovery.
     pub fn crew_forge_unfinished(&self) -> Result<Vec<ForgeMerge>> {
         let conn = self.reader();
-        let mut statement = conn.prepare("SELECT body FROM crew_forge_merges AS intent WHERE json_extract(body,'$.phase') IN ('publishing','merge_requested') OR (json_extract(body,'$.phase')='rejected' AND json_extract(body,'$.merge_sent')=1) OR (json_extract(body,'$.phase')='merged' AND NOT EXISTS(SELECT 1 FROM crew_merges AS merged WHERE merged.task_id=intent.task_id)) ORDER BY rowid LIMIT 129")?;
+        let mut statement = conn.prepare("SELECT body FROM crew_forge_merges AS intent WHERE json_extract(body,'$.phase') IN ('publishing','merge_requested') OR (json_extract(body,'$.phase')='merged' AND NOT EXISTS(SELECT 1 FROM crew_merges AS merged WHERE merged.task_id=intent.task_id)) ORDER BY rowid LIMIT 129")?;
         let bodies = statement
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -157,6 +157,25 @@ impl Store {
                 intent.validate()?;
                 Ok(intent)
             })
+            .collect()
+    }
+
+    /// Rejected intents whose merge request may still land. Apart from [`Self::crew_forge_unfinished`] so that a long list of them
+    /// can never stop the recovery of the unfinished effects.
+    pub fn crew_forge_rejected_pending(&self) -> Result<Vec<ForgeMerge>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare("SELECT body FROM crew_forge_merges WHERE json_extract(body,'$.phase')='rejected' AND json_extract(body,'$.merge_sent')=1 ORDER BY rowid LIMIT 129")?;
+        let bodies = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if bodies.len() > 128 {
+            return Err(CoreError::Invalid(
+                "more than 128 rejected forge merges may still land; a person must close those PRs on the forge".into(),
+            ));
+        }
+        bodies
+            .into_iter()
+            .map(|body| Ok(serde_json::from_str(&body)?))
             .collect()
     }
 

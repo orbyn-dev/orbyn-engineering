@@ -218,10 +218,28 @@ impl Core {
                 "this merge is no longer in the queue".into(),
             ));
         }
-        self.store
-            .set_merge_entry_state(task_id, "rejected", Some(why))?;
-        // A forge intent is left as it is (its escape-check and recovery rules are unchanged); this writes the audit row of that.
-        self.store.note_crew_forge_entry_rejected(task_id, why)?;
+        // A forge intent waiting on a person ends through the same audited resolve as a person's reject, so one whose merge
+        // request may still land stays reconcilable. Any other phase keeps its own recovery (merge_requested is already in it).
+        match self
+            .store
+            .crew_forge_merge(task_id)?
+            .filter(|intent| intent.phase == crate::store::ForgePhase::NeedsPerson)
+        {
+            Some(intent) => {
+                self.store.resolve_crew_forge_merge(
+                    task_id,
+                    intent.revision,
+                    &crate::store::ForgeResolution::Reject,
+                    "core",
+                    "queue reject",
+                )?;
+            }
+            None => {
+                self.store
+                    .set_merge_entry_state(task_id, "rejected", Some(why))?;
+                self.store.note_crew_forge_entry_rejected(task_id, why)?;
+            }
+        }
         self.merge_event(
             task_id,
             "merge_rejected",

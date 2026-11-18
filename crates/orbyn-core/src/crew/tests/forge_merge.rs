@@ -82,6 +82,8 @@ pub(super) struct RemoteState {
     pub(super) unknown_merge: bool,
     /// The forge accepts the merge request but does not merge yet (a merge queue, auto-merge).
     pub(super) queued_merge: bool,
+    /// The PR was closed without a merge.
+    pub(super) closed: bool,
     pub(super) unknown_create: bool,
     pub(super) unreadable_once: bool,
     pub(super) wrong_merge_commit: bool,
@@ -199,7 +201,7 @@ pub(super) async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
                     s.unreadable_once = false;
                     return Err(CoreError::Git("fake read interrupted".into()));
                 }
-                json!({"number":7,"state": if s.merged.is_some() {"closed"} else {"open"},"merged":s.merged.is_some(),"merge_commit_sha":s.merged,"head":{"ref":s.source,"sha":s.head,"repo":{"full_name":"fixture/repo"}},"base":{"ref":s.branch,"sha":s.base,"repo":{"full_name":"fixture/repo"}}})
+                json!({"number":7,"state": if s.merged.is_some() || s.closed {"closed"} else {"open"},"merged":s.merged.is_some(),"merge_commit_sha":s.merged,"head":{"ref":s.source,"sha":s.head,"repo":{"full_name":"fixture/repo"}},"base":{"ref":s.branch,"sha":s.base,"repo":{"full_name":"fixture/repo"}}})
             }
             ["api", path, ..] if path.contains("/check-runs?") => {
                 json!({"check_runs":[{"name":"ci","head_sha":s.head,"status":if s.pending {"in_progress"} else {"completed"},"conclusion":if s.pending {Value::Null} else {json!("success")}}]})

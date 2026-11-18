@@ -194,7 +194,7 @@ impl Core {
                 }
             }
             // A rejected intent whose merge request may still land is read for its PR, once per pass.
-            self.reconcile_rejected_requests(target, crew_id, now, &mut outcomes)
+            self.reconcile_rejected_requests(Some(target), crew_id, now, &mut outcomes)
                 .await;
         }
         // The watch owns its own lock. It runs only after confirmed merges and retries read-only work on restart.
@@ -450,11 +450,6 @@ impl Core {
                     branch: intent.branch.clone(),
                     owed: None,
                 };
-                if intent.phase == ForgePhase::Rejected {
-                    self.reconcile_rejected_intent(&entry, &mut intent, now)
-                        .await?;
-                    return Ok(());
-                }
                 if text(&git(&target.repo, &["remote", "get-url", "origin"]).await?)
                     != intent.remote
                 {
@@ -473,6 +468,9 @@ impl Core {
                 }
             }
         }
+        // Rejected intents whose merge request may still land: a failure here never blocks the work above.
+        self.reconcile_rejected_requests(None, None, now, &mut Vec::new())
+            .await;
         first_error.map_or(Ok(()), Err)
     }
 

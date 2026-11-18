@@ -338,7 +338,13 @@ async fn a_crash_after_the_merged_write_leaves_a_state_recovery_finishes() {
             .await
             .unwrap();
         assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_some());
-        assert!(s.w.core.store.crew_forge_unfinished().unwrap().is_empty());
+        assert!(
+            s.w.core
+                .store
+                .crew_forge_rejected_pending()
+                .unwrap()
+                .is_empty()
+        );
     })
     .await;
 }
@@ -455,7 +461,7 @@ async fn an_intent_with_a_merge_request_cannot_be_retried_and_a_reject_still_rec
         );
         assert!(intent.note.unwrap().contains("left as it is"));
         assert_eq!(
-            s.w.core.store.crew_forge_unfinished().unwrap().len(),
+            s.w.core.store.crew_forge_rejected_pending().unwrap().len(),
             1,
             "still in the reconcile set"
         );
@@ -483,7 +489,13 @@ async fn an_intent_with_a_merge_request_cannot_be_retried_and_a_reject_still_rec
             s.w.core.store.merge_entry(&s.task).unwrap().unwrap().state,
             "merged"
         );
-        assert!(s.w.core.store.crew_forge_unfinished().unwrap().is_empty());
+        assert!(
+            s.w.core
+                .store
+                .crew_forge_rejected_pending()
+                .unwrap()
+                .is_empty()
+        );
     })
     .await;
 }
@@ -597,7 +609,13 @@ async fn a_reject_with_no_pr_found_says_the_branch_may_have_been_pushed() {
                 .note
                 .unwrap();
         assert!(note.contains("may have been pushed"), "{note}");
-        assert!(s.w.core.store.crew_forge_unfinished().unwrap().is_empty());
+        assert!(
+            s.w.core
+                .store
+                .crew_forge_rejected_pending()
+                .unwrap()
+                .is_empty()
+        );
     })
     .await;
 }
@@ -689,7 +707,7 @@ async fn a_retry_after_the_base_moved_is_refused_up_front() {
 }
 
 #[tokio::test]
-async fn the_queues_own_reject_of_a_forge_entry_writes_the_resolve_audit_row() {
+async fn the_queues_own_reject_of_a_waiting_forge_entry_ends_it_through_the_audited_resolve() {
     let s = setup().await;
     let (_state, fixture) = fake(&s).await;
     with_crew_fixture(fixture, async {
@@ -705,8 +723,158 @@ async fn the_queues_own_reject_of_a_forge_entry_writes_the_resolve_audit_row() {
                 .unwrap()
                 .unwrap()
                 .phase,
-            ForgePhase::NeedsPerson
+            ForgePhase::Rejected
         );
+        assert_eq!(
+            s.w.core.store.merge_entry(&head).unwrap().unwrap().state,
+            "rejected"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_queue_reject_of_an_intent_with_a_merge_request_still_records_a_late_merge() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        requested_then_stuck(&s, &state).await;
+        // What the escape-check withdraw does to a queued merge of the check.
+        s.w.core
+            .crew_reject_merge(&s.task, "The check is no longer proven for this task.")
+            .unwrap();
+        let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        assert_eq!(
+            (intent.phase, intent.merge_sent),
+            (ForgePhase::Rejected, true)
+        );
+        assert_eq!(
+            s.w.core.store.merge_entry(&s.task).unwrap().unwrap().state,
+            "rejected"
+        );
+        assert_eq!(
+            s.w.core.store.crew_forge_rejected_pending().unwrap().len(),
+            1
+        );
+        merge_by_hand(&s, &state);
+        let outcomes =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 3)
+                .await
+                .unwrap();
+        assert!(
+            matches!(outcomes.as_slice(), [MergeOutcome::Merged { .. }]),
+            "{outcomes:?}"
+        );
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_some());
+    })
+    .await;
+}
+
+fn settled_rows(s: &Setup) -> usize {
+    s.w.core
+        .store
+        .list_audit(None, 500)
+        .unwrap()
+        .iter()
+        .filter(|r| r.action == "crew.merge.forge.resolve" && r.detail["settled"] == true)
+        .count()
+}
+
+#[tokio::test]
+async fn a_rejected_request_whose_pr_closed_unmerged_or_changed_leaves_the_reconcile_set() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        let revision = requested_then_stuck(&s, &state).await;
+        s.w.core
+            .crew_forge_resolve(
+                &s.task,
+                &answer(orbyn_contracts::CrewForgeAction::Reject, revision),
+            )
+            .await
+            .unwrap();
+        // Still open: it keeps waiting, pass after pass.
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW + 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            s.w.core.store.crew_forge_rejected_pending().unwrap().len(),
+            1
+        );
+        assert_eq!(settled_rows(&s), 0);
+        // Closed without a merge: settled, no merge recorded, and the flag is cleared.
+        state.lock().unwrap().closed = true;
+        let outcomes =
+            s.w.core
+                .crew_process_forge_merges(&s.target, NOW + 3)
+                .await
+                .unwrap();
+        assert!(outcomes.is_empty(), "{outcomes:?}");
+        let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        assert_eq!(
+            (intent.phase, intent.merge_sent),
+            (ForgePhase::Rejected, false)
+        );
+        assert!(
+            s.w.core
+                .store
+                .crew_forge_rejected_pending()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_none());
+        assert_eq!(settled_rows(&s), 1);
+    })
+    .await;
+    // A PR that is no longer the pinned one cannot be merged by the request, so it settles too.
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        let revision = requested_then_stuck(&s, &state).await;
+        s.w.core
+            .crew_forge_resolve(
+                &s.task,
+                &answer(orbyn_contracts::CrewForgeAction::Reject, revision),
+            )
+            .await
+            .unwrap();
+        state.lock().unwrap().head = "d".repeat(40);
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW + 2)
+            .await
+            .unwrap();
+        assert!(
+            s.w.core
+                .store
+                .crew_forge_rejected_pending()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(settled_rows(&s), 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_lane_error_after_the_merge_was_saved_reports_the_merge_not_needs_person() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    let head = state.lock().unwrap().head.clone();
+    make_proven_check(&s, &head);
+    with_crew_fixture(fixture, async {
+        stuck_with_pr(&s, &state).await;
+        // The forge says merged with a commit this checkout cannot fetch: recording the merge fails after it is saved.
+        state.lock().unwrap().merged = Some("e".repeat(40));
+        let outcomes = s.w.core.crew_process_forge_merges(&s.target, NOW + 2).await.unwrap();
+        assert!(
+            matches!(outcomes.as_slice(), [MergeOutcome::Blocked { why, .. }] if why.contains("recording the merge failed")),
+            "{outcomes:?}"
+        );
+        assert_eq!(s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap().phase, ForgePhase::Merged);
+        assert!(s.w.core.store.crew_merge(&s.task).unwrap().is_none());
+        assert_eq!(s.w.core.store.crew_forge_unfinished().unwrap().len(), 1, "recovery still has it");
     })
     .await;
 }

@@ -550,6 +550,51 @@ fn needs_person_has_no_way_out_for_the_pipeline_but_a_person_can_resolve_it() {
 }
 
 #[test]
+fn the_pipeline_can_set_merge_sent_but_never_clear_it() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    let mut intent = queued_forge(&store, &id, ForgePhase::MergeRequested);
+    assert!(!intent.merge_sent);
+    intent.merge_sent = true;
+    store.save_crew_forge_merge(&mut intent).unwrap();
+    let mut clearing = intent.clone();
+    clearing.merge_sent = false;
+    store.save_crew_forge_merge(&mut clearing).unwrap();
+    assert!(clearing.merge_sent, "the saved intent keeps it");
+    assert!(store.crew_forge_merge(&id).unwrap().unwrap().merge_sent);
+    // Into needs_person and on: still set, and a reject keeps the intent in the rejected-pending set.
+    clearing.phase = ForgePhase::NeedsPerson;
+    store.save_crew_forge_merge(&mut clearing).unwrap();
+    let rejected = store
+        .resolve_crew_forge_merge(
+            &id,
+            clearing.revision,
+            &ForgeResolution::Reject,
+            "user",
+            "test",
+        )
+        .unwrap();
+    assert!(rejected.merge_sent);
+    assert_eq!(store.crew_forge_rejected_pending().unwrap().len(), 1);
+    assert!(
+        store.crew_forge_unfinished().unwrap().is_empty(),
+        "never starves the other recovery"
+    );
+    // Only a settle clears it, and only for a rejected intent.
+    let settled = store
+        .resolve_crew_forge_merge(
+            &id,
+            rejected.revision,
+            &ForgeResolution::Settle,
+            "core",
+            "test",
+        )
+        .unwrap();
+    assert!(!settled.merge_sent);
+    assert!(store.crew_forge_rejected_pending().unwrap().is_empty());
+}
+
+#[test]
 fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
     let (_dir, store) = open();
     let id = task(&store);
