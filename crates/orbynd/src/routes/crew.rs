@@ -67,6 +67,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/capacity/settings",
+        "core crew_set_capacity_settings: Preview, limit of at least 1, sampling, pause_enabled (off by default); audit row in the same transaction; no agent tool; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/capacity/tasks/{id}",
+        "core crew_set_task_capacity: Preview, an existing task, priority and/or crew_started, nothing else; no agent tool; local only",
+    ),
+    (
+        "POST",
         "/api/crew/review/{id}/consent",
         "core crew_review_consent: local only, person transport, exact pending request id with pinned head and round, once or wait, ten-minute expiry, atomic single consumption; no client actor or grant flag; no model tool",
     ),
@@ -236,6 +246,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
+        .merge(super::crew_capacity::writes())
         .route("/api/crew/tasks/{id}/rerun-checks", post(rerun_checks))
         .route("/api/crew/tasks/{id}/merge", post(merge_request))
         .route_layer(from_fn_with_state(state.clone(), local_only));
@@ -274,6 +285,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/route/{task_id}", get(route_view))
         .route("/api/crew/review/{task_id}/controls", get(review_controls))
         .route("/api/crew/settings/engine-tiers", get(engine_tiers))
+        .merge(super::crew_capacity::reads())
         .merge(writes)
         .merge(super::crew_tasks::routes())
         .merge(super::crew_board::routes())

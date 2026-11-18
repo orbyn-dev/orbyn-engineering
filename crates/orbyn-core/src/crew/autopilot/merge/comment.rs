@@ -119,7 +119,10 @@ impl Core {
             author_engine: None,
             prefix: "worker",
             prompt: None,
-            links: Links::default(),
+            links: Links {
+                crew_started: true,
+                ..Links::default()
+            },
         })
         .await
     }

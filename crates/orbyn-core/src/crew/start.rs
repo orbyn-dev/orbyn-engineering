@@ -11,6 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
+use super::capacity::Priority;
 use super::classes::Routed;
 use super::guard::{key_labeled, refuse_leak, refuse_leak_in, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
@@ -26,6 +27,8 @@ use crate::tools::mcp::McpBinding;
 pub(super) struct Links {
     pub review: Option<crate::store::CrewReview>,
     pub fix: Option<crate::store::CrewFix>,
+    /// Crew began this task itself (a review fix, a merge-comment fix), so it is Low priority and can be paused.
+    pub crew_started: bool,
 }
 
 /// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
@@ -236,11 +239,15 @@ impl Core {
         let _one_at_a_time = self.crew_starts.lock().await;
         let now = crate::util::unix_now();
         self.refuse_lease_conflict(&brief, &member, now)?;
-        self.capacity_start_check(&thread.project_id, None)?;
+        self.capacity_start_check(
+            &thread.project_id,
+            links.crew_started.then_some((Priority::Low, true)),
+        )?;
         let task = self
             .store
             .create_crew_task(&brief, &key, run_id.as_str())
             .map_err(internal)?;
+        self.capacity_mark_started(&task.id, links.crew_started);
         self.store
             .add_crew_run(&task.id, &thread.id, member.as_str())
             .map_err(internal)?;

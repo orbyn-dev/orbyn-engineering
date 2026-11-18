@@ -47,6 +47,7 @@ fn limit(w: &World, n: u32) {
             CapacitySettings {
                 limit: n,
                 sampling: Sampling::Off,
+                pause_enabled: true,
             },
         )
         .unwrap();
