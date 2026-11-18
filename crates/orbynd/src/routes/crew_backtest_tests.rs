@@ -324,7 +324,8 @@ async fn a_started_run_is_reported_with_each_lane_not_measured_and_no_total() {
         .crew_backtest_use(Arc::new(ScriptedRunner::default()), None);
     let (status, started) = app.post(START, app.request()).await;
     assert_eq!(status, 200, "{started}");
-    assert_eq!(started["state"], "running");
+    // A scripted replay ends at once, so the answer may already read finished.
+    assert!(["running", "finished"].contains(&started["state"].as_str().unwrap()));
     app.core.crew_backtest_join().await;
 
     let id = started["id"].as_str().unwrap();

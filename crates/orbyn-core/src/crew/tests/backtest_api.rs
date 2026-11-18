@@ -177,7 +177,11 @@ async fn a_run_reports_not_measured_and_never_a_zero_and_keeps_each_engines_budg
         &[("a", 100), ("b", 50)],
     );
     let started = core.crew_backtest_start(&input).await.unwrap();
-    assert_eq!(started.state, wire::BacktestState::Running);
+    // The replay goes on in the background and a fake finishes at once, so the answer may already read finished.
+    assert!(matches!(
+        started.state,
+        wire::BacktestState::Running | wire::BacktestState::Finished
+    ));
     core.crew_backtest_join().await;
 
     let run = core.crew_backtest_report(&started.id).unwrap();
