@@ -1,7 +1,8 @@
 import { Frame } from "../shared/Frame";
-import { Ic } from "../shared/parts";
+import { Btn, Ic } from "../shared/parts";
+import { Planned, WHY } from "./Planned";
 
-/** Crew Designs v21, frame `capacity-settings`. */
+/** Crew Designs v77, frame `capacity-settings`. */
 export function CapacitySettings() {
   return (
     <Frame sheet>
@@ -18,16 +19,22 @@ export function CapacitySettings() {
             <div>
               <b>How many changes you can review</b>
               <small>
-                Crew counts the High and Medium changes that merged and are waiting for you. Low-risk changes are batched, have no deadline and don’t count. Set the number you are comfortable having waiting.
+                Crew counts the High and Medium changes that merged and are waiting for you. Low-risk changes are batched, have no deadline and don’t count.
               </small>
             </div>
-            <span className="cx-sv">8 changes · Proposed</span>
+            <span style={{ display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" }}>
+              <span className="cx-sv">8 changes</span>
+              <span style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}>
+                <Planned why={WHY.editor} />
+                <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px", padding: "0 10px" }}>Change the limit</Btn>
+              </span>
+            </span>
           </div>
           <div className="cx-setrow">
             <div>
               <b>When the queue passes it</b>
               <small>
-                Crew doesn’t begin new Low-priority tasks it started itself: background crews, cleanups and checks from escapes. Tasks you start, High-priority work and everything already running carry on. Paused starts begin by themselves when the queue is back at the limit or under it.
+                Crew doesn’t begin new Low-priority tasks it started itself. Tasks you start, High-priority work and everything already running carry on. Paused starts begin by themselves when the queue is back at the limit or under it.
               </small>
             </div>
             <span className="cx-sv cx-ro">Pause new Low-priority starts</span>
@@ -36,16 +43,16 @@ export function CapacitySettings() {
             <div>
               <b>Low-risk changes</b>
               <small>
-                Review every low-risk batch (the default), or review a sample. A sample is sized to the batch (see the plan below). The changes not sampled are listed in the digest, and you can add any of them to your queue.
+                Review every low-risk batch (the default), or review a sample. A sample is sized to the batch. The changes not sampled are listed in the digest.
               </small>
             </div>
-            <span className="cx-sv">Review a sample · Proposed</span>
+            <span className="cx-sv">Review a sample</span>
           </div>
           <div className="cx-setrow">
             <div>
               <b>Review coverage</b>
               <small>
-                When Crew merges it records which lines an agent wrote as a git note on the merge commit, in a form tools that use Agent Trace can read. The map counts the lines no person has reviewed.
+                When Crew merges it records which lines an agent wrote as a git note on the merge commit. The map counts the lines no person has reviewed.
               </small>
             </div>
             <span className="cx-sv cx-ro">Recorded at merge</span>
@@ -83,7 +90,6 @@ export function CapacitySettings() {
         </div>
         <div className="cx-t13row">
           <span className="cx-t13mk">Sample data</span>
-          <span className="cx-t13mk">Proposed: Engineering sets the real values</span>
         </div>
         <p style={{ margin: "2px 0 0", display: "flex", gap: "6px", alignItems: "flex-start", color: "var(--color-muted)", fontSize: "12px", lineHeight: 1.45 }}>
           <Ic n="info" sm />
