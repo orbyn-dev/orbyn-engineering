@@ -4,8 +4,10 @@
 //! batch, the choice is kept in `crew_review_samples` and is never given to the worker. With sampling off nothing is
 //! read from the batch and nothing is written (two reads: the merge's project, then its sampling setting). The oldest
 //! four close first, so a merge is never skipped whatever order the hooks finish in. Low merges that landed before
-//! sampling was turned on are not left out: the first close takes them in batches of four too. There is no digest in the app yet, so a batch that never reaches four
-//! Low merges stays open until it does.
+//! sampling was turned on are never sampled: the boundary is the time of the latest settings change that turned
+//! sampling on (turning it off and on again starts a new one), and older merges are never batched or recorded, so
+//! turning sampling on does not surface the whole backlog at once. There is no digest in the app yet, so a batch that
+//! never reaches four Low merges stays open until it does.
 
 use std::sync::Mutex;
 
@@ -71,11 +73,13 @@ pub(crate) fn sample_after_merge(
     if sampling == Sampling::Off {
         return Ok(Vec::new());
     }
+    // Sampling is on, so a start time exists; one that cannot be read is treated as "now": nothing older is sampled.
+    let since = store.crew_sampling_since(&project)?.unwrap_or(now);
     let _one_at_a_time = CLOSING.lock().unwrap_or_else(|p| p.into_inner());
     // Oldest first, and again while four remain: hooks finish in any order, so whichever one runs first closes
     // every full batch up to its own merge and no merge is skipped. Fewer than four stay open for a later merge.
     let mut picked = Vec::new();
-    let mut open = store.crew_open_low_merges(&project, merge.id)?;
+    let mut open = store.crew_open_low_merges(&project, merge.id, since)?;
     while open.len() >= BATCH_SIZE {
         let rest = open.split_off(BATCH_SIZE);
         let seed = u64::from_le_bytes(crate::util::random_bytes::<8>()?);
