@@ -154,7 +154,7 @@ fn budget_wire(turns: u32, minutes: u32) -> wire::BackgroundBudget {
     wire::BackgroundBudget { turns, minutes }
 }
 
-fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
+pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     Ok(wire::BackgroundRun {
         state: parse_wire(&run.state)?,
         stop_reason: run.stop_reason.as_deref().map(parse_wire).transpose()?,
@@ -213,7 +213,7 @@ impl Core {
         })
     }
 
-    fn background_row(&self, id: &str) -> Result<BackgroundRow> {
+    pub(super) fn background_row(&self, id: &str) -> Result<BackgroundRow> {
         valid_id(id)?;
         self.store
             .background_crew(id)?

@@ -223,6 +223,14 @@ impl Store {
         })
     }
 
+    /// Removes the mode stored for exactly this scope, so a start that was refused leaves no row behind.
+    pub fn clear_crew_autopilot_mode(&self, scope: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute("DELETE FROM crew_autopilot_modes WHERE scope = ?1", [scope])?;
+            Ok(())
+        })
+    }
+
     /// The mode stored for exactly this scope.
     pub fn crew_autopilot_mode_of(&self, scope: &str) -> Result<Option<String>> {
         Ok(self

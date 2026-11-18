@@ -130,6 +130,11 @@ impl Core {
             .set_crew_autopilot_mode(&scope_key(scope), mode.name())
     }
 
+    /// Forgets the person's choice for a scope, so it reads as unset again.
+    pub fn clear_crew_autopilot_mode(&self, scope: &ModeScope) -> Result<()> {
+        self.store.clear_crew_autopilot_mode(&scope_key(scope))
+    }
+
     /// The mode in force: the crew's, else the repository's, else the default, else `Full`.
     pub fn crew_autopilot_mode(&self, project_id: &str, crew_id: &str) -> Mode {
         self.mode_in(&[

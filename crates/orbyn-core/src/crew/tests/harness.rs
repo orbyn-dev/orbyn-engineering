@@ -43,6 +43,9 @@ pub enum Turn {
     Steps(Vec<(&'static str, Value)>),
     /// Reports, then keeps its turn open until told, as a worker that goes on working would.
     Linger(Value, Arc<tokio::sync::Notify>),
+    /// Says something first, as a real engine does, then reports. A background crew's worker must be heard to answer; the other
+    /// turns above produce no assistant output at all.
+    Say(Value),
 }
 
 /// The worker's work: given the turn's number (from 0) and the checkout, do it and say what
@@ -259,6 +262,25 @@ impl EngineDriver for Fake {
                         for (tool, args) in steps {
                             send_tool(&core, &spec, tool, args, &answers).await;
                         }
+                        EngineOutcome::Completed
+                    }
+                    Turn::Say(args) => {
+                        for event in [
+                            orbyn_contracts::AgUiEvent::TextMessageStart {
+                                message_id: "say".into(),
+                                role: "assistant".into(),
+                            },
+                            orbyn_contracts::AgUiEvent::TextMessageContent {
+                                message_id: "say".into(),
+                                delta: "Working on it.".into(),
+                            },
+                            orbyn_contracts::AgUiEvent::TextMessageEnd {
+                                message_id: "say".into(),
+                            },
+                        ] {
+                            let _ = events.send(event.into()).await;
+                        }
+                        send_report(&core, &spec, args, &answers).await;
                         EngineOutcome::Completed
                     }
                     Turn::Linger(args, release) => {

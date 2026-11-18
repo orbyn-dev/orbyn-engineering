@@ -458,7 +458,13 @@ impl Store {
     /// Opens a run for an enabled crew, with the crew's budget. A crew that is off, or already running, is refused. The trigger
     /// that calls this is slice 4h.
     pub fn start_background_run(&self, crew: &str) -> Result<BackgroundRunRow> {
-        let id = new_id();
+        self.start_background_run_as(crew, &new_id())
+    }
+
+    /// `start_background_run` with the run's id given. A run that has a lead thread of its own takes that thread's id, so the run, the
+    /// thread and the Crew tasks of the thread (whose crew id is the thread's id) find each other with no extra column.
+    pub fn start_background_run_as(&self, crew: &str, id: &str) -> Result<BackgroundRunRow> {
+        let id = id.to_owned();
         self.commit(|tx, _| {
             let current = crew_in(tx, crew)?;
             if !current.enabled {
@@ -558,8 +564,83 @@ impl Store {
         })
     }
 
+    /// One run by id.
+    pub fn background_run(&self, id: &str) -> Result<Option<BackgroundRunRow>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT * FROM crew_background_runs WHERE id = ?1",
+                [id],
+                run_row,
+            )
+            .optional()?)
+    }
+
+    /// Whether `thread_id` is the worker of a task whose lead thread is a background run's (a run's id is its lead thread's id).
+    pub fn is_background_worker(&self, thread_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS(SELECT 1 FROM crew_runs r JOIN crew_background_runs b ON b.id = r.lead_thread_id
+             WHERE r.worker_thread_id = ?1)",
+            [thread_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// How many turns a task's worker has had: the runs of its worker thread. A task with no worker has had none.
+    pub fn crew_worker_turns(&self, task_id: &str) -> Result<u32> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM runs WHERE thread_id = (SELECT worker_thread_id FROM crew_runs WHERE task_id = ?1)",
+                [task_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    /// Takes back a run that was opened and then refused before any work began (for example held by review capacity): the row is removed
+    /// and the removal is audited, so a refused start leaves no run that reads as running. A run that is not running is left alone.
+    pub fn unwind_background_run(&self, run: &str, why: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            let Some(current) = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?
+            else {
+                return Ok(());
+            };
+            if current.state != "running" {
+                return Ok(());
+            }
+            audit(
+                tx,
+                "crew",
+                "crew.background.run.refused",
+                &current.background_id,
+                json!({ "run": run, "why": why }),
+            )?;
+            tx.execute("DELETE FROM crew_background_runs WHERE id = ?1", [run])?;
+            Ok(())
+        })
+    }
+
     /// Ends a running run: stopped for a reason, or finished with work for review. Audited in the same transaction.
     pub fn end_background_run(&self, run: &str, end: RunEnd<'_>) -> Result<BackgroundRunRow> {
+        self.end_background_run_spent(run, end, None)
+    }
+
+    /// `end_background_run`, recording what the run spent in the same write: `(turns, minutes)` replace the totals. Unlike
+    /// `add_background_spend` it never stops the run by itself, so a run that passed on its last turn is not recorded as over budget.
+    pub fn end_background_run_spent(
+        &self,
+        run: &str,
+        end: RunEnd<'_>,
+        spent: Option<(u32, u32)>,
+    ) -> Result<BackgroundRunRow> {
         self.commit(|tx, _| {
             let current = tx
                 .query_row(
@@ -572,6 +653,14 @@ impl Store {
             if current.state != "running" {
                 return Err(CoreError::RunClosed);
             }
+            let current = match spent {
+                Some((turns_spent, minutes_spent)) => BackgroundRunRow {
+                    turns_spent,
+                    minutes_spent,
+                    ..current
+                },
+                None => current,
+            };
             let review = match end {
                 RunEnd::NeedsReview(reason) => Some(reason),
                 // A run that stopped for its budget always waits for the person, whoever ended it.
