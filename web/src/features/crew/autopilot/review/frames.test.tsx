@@ -14,7 +14,7 @@ const SHOWS: Record<ReviewFrameId, string[]> = {
   "risk-raised": ["Raised from Medium", "Same engine as author · lead tier", "Sign in to another engine"],
   "risk-board-card": ["Low · Full", "High · On", "Waiting for you before the merge (On)", "implement", "updated now", "2 of 2 checks passed", "3 of 3 checks passed", "5 of 5 checks passed", "Opus 5.5 · Medium"],
   "risk-demoted": ["Area web/auth is on On: 2 reverts in 14 days · 9 merges", "Area docs/guides is on Full: 0 reverts in 14 days · 12 merges", "web/auth is on On after 2 reverts in 14 days, so a High risk diff in web/auth waits for you at the merge gate. The risk tier is unchanged: it stays Medium.", "docs/guides follows your ceiling, Full.", "Where the area mode comes from (Planned)", "Override… (its row in Settings › Crew is Planned)"],
-  "mergequeue-main": ["Re-checking combined", "Merging is code", "How the queue works"],
+  "mergequeue-main": ["Re-checking combined", "Merging is code", "How the queue works", "Merged onto 1 · re-running 2 of 3 checks on the combined state", "Waiting for 2 · will be merged onto the result", "merged onto the branch tip in a scratch checkout"],
   "mergequeue-forecast": ["Conflict forecast", "Run them in order, the rename, then the move", "Why ordered, not parallel"],
   "mergequeue-removed": ["Left the queue", "What happens next"],
   "mergequeue-empty": ["Nothing in the merge queue"],
@@ -74,6 +74,13 @@ describe("Autopilot review frames (Crew Designs v19)", () => {
   it.each(REVIEW_FRAMES)("#/preview/crew/%s: no frame of the group offers Approve and merge; merging stays with the person-only review routes", async (name) => {
     const { container } = await open(name);
     expect(container.textContent).not.toContain("Approve and merge");
+  });
+
+  it("mergequeue-forecast: the header carries the Planned chip with the frame's title", async () => {
+    const { container } = await open("mergequeue-forecast");
+    const chip = [...container.querySelectorAll(".crew-phd .crew-pv")].find((el) => el.textContent === "Planned");
+    expect(chip).toBeDefined();
+    expect(chip).toHaveAttribute("title", "Planned: the service finds a conflict when a merge is tried; it has no forecast from the dependency graph yet");
   });
 
   const PLANNED = "Planned: after the autonomy-by-area slice";

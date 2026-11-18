@@ -538,8 +538,8 @@ engine. It is shown with its reasons.
 
 **Merge queue for agents.** Nobody ships this yet.
 
-- Parallel branches are merged in order. Each candidate is rebased on the queue and its required checks run again on the
-  combined state before main moves.
+- Parallel branches are merged in order. Each candidate is merged onto the branch tip in a scratch checkout, one at a time, and
+  its required checks run again on that combined state before main moves.
 - Conflicts are forecast from the dependency graph before work starts, and the router orders tasks to avoid them.
 
 **After-merge Review queue (the person's stage):**
