@@ -22,6 +22,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/confirm"),
     ("POST", "/api/crew/autopilot/areas/override"),
     ("POST", "/api/crew/autopilot/areas/follow"),
+    ("POST", "/api/crew/autopilot/merge-queue/{id}/resolve"),
     ("POST", "/api/crew/autopilot/review/{id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{id}/comment"),
     ("POST", "/api/crew/autopilot/review/{id}/revert"),

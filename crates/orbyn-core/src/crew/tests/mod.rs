@@ -44,6 +44,7 @@ mod flow;
 mod flow_board;
 mod flow_map;
 mod forge_merge;
+mod forge_resolve;
 mod hardening;
 mod harness;
 mod lifecycle;

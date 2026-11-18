@@ -14,16 +14,16 @@ use crate::source_control::forge::{Forge, with_crew_fixture};
 use crate::store::ForgePhase;
 use crate::testing::{TempDir, run_git};
 
-const NOW: i64 = 1_800_000_000;
+pub(super) const NOW: i64 = 1_800_000_000;
 
-struct Setup {
-    w: World,
-    remote: TempDir,
-    target: MergeTarget,
-    task: String,
+pub(super) struct Setup {
+    pub(super) w: World,
+    pub(super) remote: TempDir,
+    pub(super) target: MergeTarget,
+    pub(super) task: String,
 }
 
-async fn setup() -> Setup {
+pub(super) async fn setup() -> Setup {
     setup_with_rules(r#"{"checks":[{"run":"echo repository-check"}]}"#).await
 }
 
@@ -69,30 +69,34 @@ async fn setup_with_rules(rules: &str) -> Setup {
 }
 
 #[derive(Default)]
-struct RemoteState {
-    base: String,
-    head: String,
-    source: String,
-    branch: String,
-    pending: bool,
-    published: bool,
-    merged: Option<String>,
-    creates: usize,
-    merges: usize,
-    unknown_merge: bool,
-    unknown_create: bool,
-    unreadable_once: bool,
-    wrong_merge_commit: bool,
+pub(super) struct RemoteState {
+    pub(super) base: String,
+    pub(super) head: String,
+    pub(super) source: String,
+    pub(super) branch: String,
+    pub(super) pending: bool,
+    pub(super) published: bool,
+    pub(super) merged: Option<String>,
+    pub(super) creates: usize,
+    pub(super) merges: usize,
+    pub(super) unknown_merge: bool,
+    /// The forge accepts the merge request but does not merge yet (a merge queue, auto-merge).
+    pub(super) queued_merge: bool,
+    /// The PR was closed without a merge.
+    pub(super) closed: bool,
+    pub(super) unknown_create: bool,
+    pub(super) unreadable_once: bool,
+    pub(super) wrong_merge_commit: bool,
     /// The pull reads so far, and the read after which the fixture withdraws the escape check of the task (0: never). Reads belong to
     /// the pass that is running, so a test arms it for the pass it wants to interrupt.
-    pull_reads: usize,
-    withdraw_on_read: usize,
+    pub(super) pull_reads: usize,
+    pub(super) withdraw_on_read: usize,
 }
 
 type Fake =
     Arc<dyn Fn(Forge, &std::path::Path, &[&str]) -> crate::error::Result<String> + Send + Sync>;
 
-async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
+pub(super) async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
     let state = Arc::new(Mutex::new(RemoteState {
         base: gitq(
             setup.remote.path(),
@@ -152,6 +156,9 @@ async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
                     args.windows(2)
                         .any(|pair| pair == ["--match-head-commit", s.head.as_str()])
                 );
+                if s.queued_merge {
+                    return Ok(String::new());
+                }
                 let intent = core.store.crew_forge_merge(&task).unwrap().unwrap();
                 let merged = if s.wrong_merge_commit {
                     intent.candidate
@@ -194,7 +201,7 @@ async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
                     s.unreadable_once = false;
                     return Err(CoreError::Git("fake read interrupted".into()));
                 }
-                json!({"number":7,"state": if s.merged.is_some() {"closed"} else {"open"},"merged":s.merged.is_some(),"merge_commit_sha":s.merged,"head":{"ref":s.source,"sha":s.head,"repo":{"full_name":"fixture/repo"}},"base":{"ref":s.branch,"sha":s.base,"repo":{"full_name":"fixture/repo"}}})
+                json!({"number":7,"state": if s.merged.is_some() || s.closed {"closed"} else {"open"},"merged":s.merged.is_some(),"merge_commit_sha":s.merged,"head":{"ref":s.source,"sha":s.head,"repo":{"full_name":"fixture/repo"}},"base":{"ref":s.branch,"sha":s.base,"repo":{"full_name":"fixture/repo"}}})
             }
             ["api", path, ..] if path.contains("/check-runs?") => {
                 json!({"check_runs":[{"name":"ci","head_sha":s.head,"status":if s.pending {"in_progress"} else {"completed"},"conclusion":if s.pending {Value::Null} else {json!("success")}}]})
@@ -729,7 +736,7 @@ async fn person_comment_admits_a_scoped_fix_through_the_normal_fake_engine() {
 
 /// A check row for the task, as a proven check of its own escape (the foreign key to the escape log is off on this connection: the
 /// merge side reads only the check and the task record).
-fn make_proven_check(s: &Setup, commit: &str) {
+pub(super) fn make_proven_check(s: &Setup, commit: &str) {
     let conn = s.w.core.store.reader();
     conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
     conn.execute(
@@ -805,4 +812,4 @@ async fn a_check_proven_on_another_commit_cannot_merge_on_the_forge() {
 }
 
 /// Which pull read of the second pass the withdraw follows: the receipt read comes first, then (after the re-check) the fresh one.
-const WITHDRAW_AT: usize = 2;
+pub(super) const WITHDRAW_AT: usize = 2;

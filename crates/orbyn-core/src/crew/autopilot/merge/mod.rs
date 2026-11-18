@@ -5,6 +5,7 @@ mod api;
 mod comment;
 mod evidence;
 mod forge;
+mod forge_resolve;
 mod forge_watch;
 mod gitops;
 mod guard;

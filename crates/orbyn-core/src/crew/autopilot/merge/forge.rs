@@ -85,6 +85,7 @@ impl Core {
             merge_commit: None,
             evidence: Vec::new(),
             note: None,
+            merge_sent: false,
             revision: 0,
         };
         // The intent pins the trusted base used by the normal holds and risk computation.
@@ -126,6 +127,53 @@ impl Core {
                 let Some(mut intent) = self.store.crew_forge_merge(&entry.task_id)? else {
                     continue;
                 };
+                // Ordering rule: merges are ordered per repository, and a published or uncertain entry keeps the lane. An intent in
+                // `needs_person` is different: it is not progressing, each entry pins its own base and is checked against the
+                // forge's base, so no later entry depends on it, and a later merge only moves the base, which that intent would have
+                // to rebuild on anyway. It waits for a person and the lane goes on past it, whichever crew owns it. What this does
+                // not promise: an intent that reached `needs_person` after a merge request (`merge_sent`) may still have that
+                // request on the forge; it is never sent again, and its PR is read below and recorded if it merged. A scoped lead
+                // reads only its own crew's entries; another crew's is skipped without a forge read.
+                if intent.phase == ForgePhase::NeedsPerson {
+                    let own = crew_id.is_none_or(|crew| entry.crew_id == crew);
+                    let waiting = MergeOutcome::NeedsPerson {
+                        task_id: entry.task_id.clone(),
+                        why: intent
+                            .note
+                            .clone()
+                            .unwrap_or_else(|| "reconcile the forge intent".into()),
+                    };
+                    if !own {
+                        outcomes.push(waiting);
+                        continue;
+                    }
+                    match self
+                        .settle_hand_merged(&entry, &mut intent, "core", "lane reconcile", now)
+                        .await
+                    {
+                        Ok(Some(outcome)) => outcomes.push(outcome),
+                        Ok(None) => outcomes.push(waiting),
+                        Err(error) => {
+                            tracing::warn!(task = %entry.task_id, %error, "a forge intent waiting on a person could not be settled; the lane goes on");
+                            // The forge's merge may already be saved: say what is true, recovery finishes it.
+                            let merged = self
+                                .store
+                                .crew_forge_merge(&entry.task_id)
+                                .ok()
+                                .flatten()
+                                .is_some_and(|saved| saved.phase == ForgePhase::Merged);
+                            outcomes.push(if merged {
+                                blocked(
+                                    &entry.task_id,
+                                    &format!("the forge merged it; recording the merge failed and is retried: {}", error.public_message()),
+                                )
+                            } else {
+                                waiting
+                            });
+                        }
+                    }
+                    continue;
+                }
                 // The repository lane outlives one caller/turn. A scoped lead cannot overtake another
                 // crew's earlier intent, especially an effect whose remote result is still unknown.
                 if crew_id.is_some_and(|crew| entry.crew_id != crew) {
@@ -145,6 +193,9 @@ impl Core {
                     break;
                 }
             }
+            // A rejected intent whose merge request may still land is read for its PR, once per pass.
+            self.reconcile_rejected_requests(Some(target), crew_id, now, &mut outcomes)
+                .await;
         }
         // The watch owns its own lock. It runs only after confirmed merges and retries read-only work on restart.
         self.crew_watch_forge_main(target, now).await?;
@@ -175,6 +226,7 @@ impl Core {
         {
             return Ok(outcome);
         }
+        // A `needs_person` intent never reaches here: the lane skips it and a person's answer is the only way out.
         if intent.phase == ForgePhase::NeedsPerson {
             return Ok(MergeOutcome::NeedsPerson {
                 task_id: task.into(),
@@ -332,6 +384,10 @@ impl Core {
                 .set_merge_entry_state(&intent.task_id, "blocked", Some(&why))?;
             return Ok(blocked(task, &why));
         }
+        // Durable before the request: from here on a merge request may be on the forge, so a person can never retry it, and a
+        // reject stays reconcilable. A request that was never sent (the check above) leaves this false.
+        intent.merge_sent = true;
+        self.store.save_crew_forge_merge(intent)?;
         self.merge_event(task, "merge_queued", &json!({"forge_merge_requested": true, "actor": actor, "pull": number, "head": intent.candidate, "base": intent.base}));
         let options = MergePull {
             method: "merge".into(),
@@ -412,6 +468,9 @@ impl Core {
                 }
             }
         }
+        // Rejected intents whose merge request may still land: a failure here never blocks the work above.
+        self.reconcile_rejected_requests(None, None, now, &mut Vec::new())
+            .await;
         first_error.map_or(Ok(()), Err)
     }
 
@@ -603,7 +662,7 @@ impl Core {
         self.store.save_crew_forge_merge(intent)
     }
 
-    async fn finish_forge_merge(
+    pub(super) async fn finish_forge_merge(
         &self,
         entry: &MergeEntry,
         intent: &mut ForgeMerge,
@@ -665,7 +724,10 @@ impl Core {
     }
 }
 
-fn identity_matches(intent: &ForgeMerge, receipt: &forge::crew::CrewPullReceipt) -> bool {
+pub(super) fn identity_matches(
+    intent: &ForgeMerge,
+    receipt: &forge::crew::CrewPullReceipt,
+) -> bool {
     CrewRepository::from_remote(&intent.remote).is_ok_and(|context| {
         context.host == receipt.host && context.repository == receipt.repository
     }) && intent.pull == Some(receipt.number)
