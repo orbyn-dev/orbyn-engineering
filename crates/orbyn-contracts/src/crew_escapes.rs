@@ -158,6 +158,10 @@ pub struct EscapeDetail {
     pub events: Vec<EscapeEventRow>,
     /// More events exist than listed.
     pub truncated: bool,
+    /// The escape's created check (PR 4), when it has one. Additive: absent for an escape with no check.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub check: Option<EscapeCheckRow>,
 }
 }
 
@@ -226,5 +230,134 @@ pub struct EscapeGapSet {
     pub project: String,
     pub seen: EscapeSeen,
     pub gap: EscapeGap,
+}
+}
+
+wire_enum! {
+/// Where a created check stands (slice 4k, PR 4). `proposed` is only a proposal: nothing runs until a person accepts. `writing` is a
+/// worker writing the test files, or, when the worker is done on a machine that cannot restrict the proof, the proof waiting for a
+/// person to approve the files. `proven` passed the proof (it fails on the escaped merge and passes on the fix or revert) and has
+/// gone to the merge queue like any change. `failed` is a worker that stopped, a diff outside the test files, or a proof that did not
+/// hold (including a check that passes on both commits). `withdrawn` and `merged` are final.
+pub enum EscapeCheckState {
+    Proposed,
+    Writing,
+    Proven,
+    Failed,
+    Withdrawn,
+    Merged,
+}
+}
+
+wire! {
+/// What the proof found: the two commits it ran the new test files on and whether each result was the one that counts. Only a
+/// check with both `true` is proven. Commit ids and two booleans: never a test body or command output.
+pub struct EscapeCheckProof {
+    /// The merge commit that escaped; the check must fail here.
+    pub escaped_commit: String,
+    /// The revert or fix commit; the check must pass here.
+    pub fix_commit: String,
+    pub fails_on_escape: bool,
+    pub passes_on_fix: bool,
+}
+}
+
+wire! {
+/// The check of one escape. Paths, a short statement of what it asserts, the command that runs it, ids and enums only.
+pub struct EscapeCheckRow {
+    pub state: EscapeCheckState,
+    /// The one new test file the check adds.
+    pub path: String,
+    /// What the check asserts, at most 300 characters, redacted.
+    pub asserts: String,
+    /// The command that runs the test, at most 300 characters.
+    pub run: String,
+    /// The commit the proof must pass on: the revert or fix.
+    pub fix_commit: String,
+    /// The crew task of the worker writing it, once a person accepted.
+    pub task_id: Option<String>,
+    /// Absent until the proof ran.
+    pub proof: Option<EscapeCheckProof>,
+    /// Why it failed, or what is left to do, at most 200 characters.
+    pub note: Option<String>,
+    /// How many times a person accepted it.
+    pub attempts: u32,
+    /// The worker's change as the core read it: the commit, a SHA-256 over its paths and bytes, and its paths (added test files only).
+    /// Present once the worker's task passed.
+    pub diff_commit: Option<String>,
+    pub diff_hash: Option<String>,
+    pub diff_paths: Vec<String>,
+    /// True while the proof waits for a person to approve exactly this commit and hash (a machine that cannot restrict the proof).
+    pub awaiting_approval: bool,
+    /// True when a person approved exactly `diff_commit` and `diff_hash`.
+    pub approved: bool,
+    /// One plain sentence that says where the check stands.
+    pub line: String,
+    #[ts(type = "number")]
+    pub proposed_unix: i64,
+    #[ts(type = "number")]
+    pub updated_unix: i64,
+}
+}
+
+wire! {
+/// The escape and its check as the person saw them: the escape's state and gap and the check's state (absent when it has none). An
+/// act on a check that has since changed is refused with `stale`; an act that is already the check's state changes nothing.
+pub struct EscapeCheckSeen {
+    pub state: EscapeState,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub gap: Option<EscapeGap>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub check: Option<EscapeCheckState>,
+}
+}
+
+wire! {
+/// A person asks Crew to propose a check for a confirmed escape (`POST /api/crew/escapes/{id}/check`). Nothing runs: the proposal
+/// waits for the person's accept. A tooling gap has no proposal.
+pub struct EscapeCheckPropose {
+    pub project: String,
+    pub seen: EscapeCheckSeen,
+    /// The one new test file to add: a relative path of a test file (a `tests`, `test`, `__tests__`, `spec`, `specs` or `e2e`
+    /// folder, or a name such as `test_x`, `x.test.y`, `x_test.y`), never a policy or manifest file.
+    pub path: String,
+    /// What the check must assert, in plain words, at most 300 characters.
+    pub asserts: String,
+    /// The command that runs the test, at most 300 characters. The proof runs it on the escaped merge and on the fix.
+    pub run: String,
+    /// The commit the check must pass on. Absent: the revert or fix the escape recorded; an escape with none needs one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub fix_commit: Option<String>,
+}
+}
+
+wire! {
+/// A person accepts, retries or withdraws a check (`POST /api/crew/escapes/{id}/check/accept`, `/retry`, `/withdraw`). Only accept
+/// starts a worker.
+pub struct EscapeCheckAct {
+    pub project: String,
+    pub seen: EscapeCheckSeen,
+}
+}
+
+wire! {
+/// A person approves the worker's change so the proof may run it (`POST /api/crew/escapes/{id}/check/approve`), on a machine that
+/// cannot restrict the proof. The approval names the commit and the hash the person saw; a different change needs a new approval.
+pub struct EscapeCheckApprove {
+    pub project: String,
+    pub seen: EscapeCheckSeen,
+    pub commit: String,
+    pub diff_hash: String,
+}
+}
+
+wire! {
+/// What a check route answers: the escape as it now stands and its check.
+pub struct EscapeCheckAnswer {
+    pub escape: EscapeRow,
+    pub check: EscapeCheckRow,
 }
 }

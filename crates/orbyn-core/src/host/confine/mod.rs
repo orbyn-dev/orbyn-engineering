@@ -188,6 +188,12 @@ impl Confinement {
         platform::wrap(self, command)
     }
 
+    /// Puts the escape-check proof's restriction in front of `command`: every rule a worker gets, and in addition no network, no
+    /// launchd job, no clipboard and writes only in the run folder (`docs/crew/escapes.md`). Refused where nothing can restrict.
+    pub fn wrap_proof(&self, command: &mut ResolvedCommand) -> Result<()> {
+        platform::wrap_proof(self, command)
+    }
+
     /// What a restricted child must not inherit: the service's data folder variable would
     /// point its `orbyn` command at the folder it cannot read.
     pub fn scrub_env(&self, command: &mut Command) {

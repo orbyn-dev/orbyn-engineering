@@ -28,6 +28,9 @@ mod crew_cancel;
 mod crew_capacity;
 #[cfg(test)]
 mod crew_capacity_tests;
+mod crew_escape_checks;
+#[cfg(test)]
+mod crew_escape_checks_tests;
 mod crew_escape_person;
 #[cfg(test)]
 mod crew_escape_person_tests;
@@ -90,6 +93,7 @@ pub use crew_backtest::{
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;
 pub use crew_capacity::{SampleBatch, SampledTask};
+pub use crew_escape_checks::{CheckFinish, CheckProposal, EscapeCheckRecord};
 pub use crew_escape_person::{EVENTS_PER_PROJECT_MAX, EscapeDecision};
 pub use crew_escape_scan::{EscapesAdded, PossibleEscape};
 pub use crew_escapes::{

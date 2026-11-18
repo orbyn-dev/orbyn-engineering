@@ -233,6 +233,31 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/escapes/{id}/check",
+        "core crew_escape_check_propose: a proposal of one new test file for a confirmed escape with a test gap (never a tooling gap), the escape and check as seen (else stale), the audit row first in the same transaction as the row and its check_proposed event; it writes no task and starts no worker; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/accept",
+        "core crew_escape_check_accept: the only route that starts a worker; the audit row and writing first, then the crew task through the router like crew_start; the worker may add test files only (its diff is judged against the test globs) and the proof must fail on the escaped merge and pass on the fix before the merge queue sees it; no lane is removed; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/retry",
+        "core crew_escape_check_retry: a failed check goes back to proposed, the audit row first in the same transaction; it starts nothing, only accept starts a worker; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/withdraw",
+        "core crew_escape_check_withdraw: withdraws a check that is not merged, the audit row first, then a worker still writing it is cancelled and a queued merge of it is turned down; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
+        "/api/crew/escapes/{id}/check/approve",
+        "core crew_escape_check_approve: a person approves exactly the commit and the hash over the paths and bytes the core read from the worker's change, audit row first; only then does a proof that cannot be restricted run it; a different change needs a new approval; no agent tool reaches it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),

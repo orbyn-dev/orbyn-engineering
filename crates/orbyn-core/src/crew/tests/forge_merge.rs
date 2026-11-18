@@ -83,6 +83,10 @@ struct RemoteState {
     unknown_create: bool,
     unreadable_once: bool,
     wrong_merge_commit: bool,
+    /// The pull reads so far, and the read after which the fixture withdraws the escape check of the task (0: never). Reads belong to
+    /// the pass that is running, so a test arms it for the pass it wants to interrupt.
+    pull_reads: usize,
+    withdraw_on_read: usize,
 }
 
 type Fake =
@@ -175,6 +179,17 @@ async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
                 }
             }
             ["api", path, ..] if path.ends_with("/pulls/7") => {
+                s.pull_reads += 1;
+                if s.withdraw_on_read != 0 && s.pull_reads == s.withdraw_on_read {
+                    // The person withdraws the check at this exact point of the merge, straight in the store.
+                    core.store
+                        .reader()
+                        .execute(
+                            "UPDATE crew_escape_checks SET state = 'withdrawn' WHERE task_id = ?1",
+                            [&task],
+                        )
+                        .unwrap();
+                }
                 if s.unreadable_once {
                     s.unreadable_once = false;
                     return Err(CoreError::Git("fake read interrupted".into()));
@@ -711,3 +726,83 @@ async fn person_comment_admits_a_scoped_fix_through_the_normal_fake_engine() {
     })
     .await;
 }
+
+/// A check row for the task, as a proven check of its own escape (the foreign key to the escape log is off on this connection: the
+/// merge side reads only the check and the task record).
+fn make_proven_check(s: &Setup, commit: &str) {
+    let conn = s.w.core.store.reader();
+    conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+    conn.execute(
+        "INSERT INTO crew_escape_check_tasks (task_id, escape_id, created_unix) VALUES (?1, 'esc_forge', 1)",
+        [&s.task],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_escape_checks (escape_id, project_id, path, asserts, run, fix_commit, task_id, state, attempts, diff_commit, diff_hash, diff_paths, proposed_unix, updated_unix)
+         VALUES ('esc_forge', 'p', 'tests/a.txt', 'a', 'r', ?1, ?2, 'proven', 1, ?3, ?4, '[\"tests/a.txt\"]', 1, 1)",
+        rusqlite::params!["f".repeat(40), s.task, commit, "0".repeat(64)],
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_check_withdrawn_just_before_the_merge_request_is_saved_never_reaches_the_forge() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    let head = state.lock().unwrap().head.clone();
+    make_proven_check(&s, &head);
+    with_crew_fixture(fixture, async {
+        s.w.core.crew_queue_forge_merge(&s.task, &s.target, NOW).await.unwrap();
+        // The first pass publishes and waits for CI. The second runs to the final write, and the check is withdrawn after the
+        // re-check that comes before it (the last pull read of the pass).
+        state.lock().unwrap().pending = true;
+        s.w.core.crew_process_forge_merges(&s.target, NOW).await.unwrap();
+        {
+            let mut remote = state.lock().unwrap();
+            remote.pending = false;
+            remote.withdraw_on_read = remote.pull_reads + WITHDRAW_AT;
+        }
+        let outcomes = s.w.core.crew_process_forge_merges(&s.target, NOW + 1).await;
+        let outcomes = outcomes.expect("a failed re-check answers Blocked, never an error");
+        assert!(
+            matches!(outcomes.as_slice(), [MergeOutcome::Blocked { why, .. }] if why.contains("withdrawn")),
+            "{outcomes:?}"
+        );
+        assert_eq!(state.lock().unwrap().merges, 0, "the forge was never asked to merge");
+        let intent = s.w.core.store.crew_forge_merge(&s.task).unwrap().unwrap();
+        assert_eq!(intent.phase, ForgePhase::NeedsPerson);
+        assert!(intent.note.unwrap().contains("withdrawn"));
+        assert_eq!(s.w.core.store.merge_entry(&s.task).unwrap().unwrap().state, "blocked");
+        let check_state: String = s.w.core.store.reader()
+            .query_row("SELECT state FROM crew_escape_checks WHERE task_id = ?1", [&s.task], |r| r.get(0))
+            .unwrap();
+        assert_eq!(check_state, "withdrawn");
+        // Another pass stays blocked and still asks the forge for nothing.
+        let again = s.w.core.crew_process_forge_merges(&s.target, NOW + 2).await.unwrap();
+        assert!(!matches!(again.as_slice(), [MergeOutcome::Merged { .. }]));
+        assert_eq!(state.lock().unwrap().merges, 0);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_check_proven_on_another_commit_cannot_merge_on_the_forge() {
+    let s = setup().await;
+    let (state, fixture) = fake(&s).await;
+    make_proven_check(&s, &"a".repeat(40));
+    with_crew_fixture(fixture, async {
+        let queued =
+            s.w.core
+                .crew_queue_forge_merge(&s.task, &s.target, NOW)
+                .await;
+        let why = queued
+            .expect_err("the queued commit is not the proven one")
+            .public_message();
+        assert!(why.contains("different commit"), "{why}");
+        assert_eq!(state.lock().unwrap().creates, 0);
+    })
+    .await;
+}
+
+/// Which pull read of the second pass the withdraw follows: the receipt read comes first, then (after the re-check) the fresh one.
+const WITHDRAW_AT: usize = 2;

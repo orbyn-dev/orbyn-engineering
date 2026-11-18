@@ -356,6 +356,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_bus_events",
             "crew_capacity_settings",
             "crew_deliveries",
+            "crew_escape_check_tasks",
+            "crew_escape_checks",
             "crew_escape_events",
             "crew_escapes",
             "crew_evidence",
