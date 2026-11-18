@@ -63,3 +63,12 @@ How the held run ends:
 Whenever the run ends with an agent still running, the driver emits one `background.stopped` custom event per agent: `taskId` (the thread id), `taskType: "codex_subagent"`, `description` (the agent's nickname, when known) and `reason` (`cancelled`, `new message`, `limit`, `idle`, `engine exited` or `turn ended`). A force stop aborts the task and cannot say it. The app does not show `background.stopped` yet: it is in the run's event log only, and showing it is a follow-up for the core and UI owners.
 
 Not held: background shells. A `commandExecution` item that has not completed looks the same for a dev server and for a command an interrupt left behind, and `process/exited` is only sent for processes this client started with `process/spawn`. The schema has no reliable "background terminal still running" signal, so shells are neither held nor reported.
+
+## When a run ends: ACP and AG-UI
+
+A run ends only on the turn that answered the person's prompt.
+
+- **ACP** (also `opencode acp`): the run ends on the `session/prompt` reply, matched by request id. A `session/update` that names another session is dropped, and a reply to any other request id is ignored. A `stopReason` of `end_turn` completes the run and `cancelled` cancels it. `refusal`, `max_tokens`, `max_turn_requests`, an unknown reason and a reply with no `stopReason` fail the run with a plain message, because the protocol requires the field and a missing one is not proof of success. A reply with no assistant output is reported by the run pump as `No reply`, not hidden here.
+- **AG-UI**: the run ends on `RUN_FINISHED` or `RUN_ERROR`. A frame that carries a `runId` or `threadId` other than this run's is ignored; a frame with neither id is accepted. A stream that ends first fails the run.
+
+Neither protocol subset the drivers use has a signal that separates an engine's own background work from the turn. So when the prompt's turn completes, the run ends and the process is stopped (ACP) or the stream is closed (AG-UI); work the engine had still running is not waited for. The person sees the run as finished, with whatever the engine had streamed by then. The driver can only see tool calls still open at the stop, and it closes those without a notice; no background-work signal exists in the protocol, and Orbyn does not invent one.

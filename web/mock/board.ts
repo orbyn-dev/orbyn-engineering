@@ -31,6 +31,7 @@ const card = (column: FlowColumnId, id: string, kind: string, name: string, engi
   effort,
   state,
   updated_at: at(minutes),
+  could_not_start: false,
   can_cancel: !["passed", "stopped", "cancelled"].includes(state),
   can_rerun: state === "passed",
   ...extra,
@@ -51,6 +52,16 @@ function sample(): Row[] {
   ];
 }
 
+/** `crew-could-not-start`: two implement tasks whose Codex workers were refused at their start, beside one task that really waits. */
+function couldNotStart(): Row[] {
+  const refused = "Crew workers on Codex are not available yet.";
+  return [
+    card("needs_you", "b-refused1", "implement", "Rename returnTo to next in the session code", "codex", "GPT-5.5", "medium", "needs_person", 2, { could_not_start: true, reason: refused }),
+    card("needs_you", "b-refused2", "implement", "Use next in the auth redirect when it points inside the app", "codex", "GPT-5.5", "medium", "needs_person", 3, { could_not_start: true, reason: refused }),
+    card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 5, { reason: "No check this version can run decided the task, so a person decides." }),
+  ];
+}
+
 function many(): Row[] {
   return Array.from({ length: 12 }, (_, i) => card("running", `b-m${i}`, i % 2 ? "test" : "implement", `Running task ${i + 1}`, i % 3 ? "claude" : "codex", "Sonnet 5.5", "medium", "running", i));
 }
@@ -67,7 +78,7 @@ const facet = (rows: Row[], pick: (row: Row) => string | null | undefined): Flow
 
 const invalid = (message: string): MockResponse => ({ status: 422, body: { code: "invalid", message } });
 
-const WRITE = /^\/api\/crew\/tasks\/([^/]+)\/(cancel|rerun-checks)$/;
+const WRITE = /^\/api\/crew\/tasks\/([^/]+)\/(cancel|rerun-checks|retry-elsewhere)$/;
 const KNOWN = /^(b-|task-)/;
 const fail = (status: number, code: string, message: string): MockResponse => ({ status, body: { code, message } });
 
@@ -89,6 +100,10 @@ function writeMock(scenario: string, path: string): MockResponse | null {
     if (scenario === "crew-write-engine-cancelled") return fail(502, "engine_unavailable", "The task is cancelled, but its worker could not be stopped. Try again.");
     return { status: 200, body: { task: id, state: "cancelled", already: scenario === "crew-write-already" } };
   }
+  if (found[2] === "retry-elsewhere") {
+    if (scenario === "crew-could-not-start-no-engine") return fail(409, "task_busy", "No other engine is set up to run crew workers. Turn one on in Settings, or dismiss this task.");
+    return { status: 200, body: { task: id, lead_told: scenario !== "crew-could-not-start-lead-away" } };
+  }
   if (scenario === "crew-write-busy") return fail(409, "task_busy", "Another re-run is running. Try again in 7 seconds.");
   return { status: 200, body: { task: id, state: "passed", total: 4, ran: 3, passed: 2, refused: 1, skipped: 1, gate: "fail", refused_checks: ["check-2"] } };
 }
@@ -101,7 +116,7 @@ export function boardMock(scenario: string, method: string, path: string, query:
   const crew = query.get("crew");
   if (!crew) return invalid("crew is required");
   if (crew !== MOCK_CREW && crew !== MOCK_CREW_TWO) return { status: 404, body: { code: "not_found", message: "crew not found" } };
-  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? [] : scenario === "crew-board-many" ? many() : sample();
+  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? [] : scenario === "crew-board-many" ? many() : scenario.startsWith("crew-could-not-start") ? couldNotStart() : sample();
   const engine = query.get("engine");
   const kind = query.get("kind");
   const only = query.get("column") as FlowColumnId | null;

@@ -5,6 +5,7 @@ import type { AutopilotSecondEngineNotice } from "../../../generated/AutopilotSe
 import type { AutopilotReviewItem } from "../../../generated/AutopilotReviewItem";
 import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
+import type { FlowCard } from "../../../generated/FlowCard";
 import { stopOf } from "../autopilot/approvals/ledger";
 import type { ApprovalRow, Risk } from "../autopilot/approvals/model";
 import { KIND_FILTER, NEEDS_KINDS, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
@@ -49,6 +50,32 @@ export function heldItems(rows: ApprovalRow[], now: number): NeedsItem[] {
       },
     ];
   });
+}
+
+/** What the card says when the service gave no reason. */
+export const NEVER_RAN = "The worker never ran.";
+
+/**
+ * Tasks refused at their start, from the Needs you column of each crew's board. Not an approval: nothing is asked of the person but
+ * to retry the task on another engine or dismiss it, so the item has no Approve or Deny. The reason is the service's own redacted
+ * text, drawn as text.
+ */
+export function couldNotStartItems(cards: FlowCard[]): NeedsItem[] {
+  return cards
+    .filter((card) => card.could_not_start)
+    .map((card) => ({
+      id: `task:${card.id}`,
+      kind: "could_not_start" as const,
+      title: "Could not start",
+      risk: null,
+      undo: null,
+      from: `Task ${card.name || card.id}${card.engine ? ` · ${card.engine}` : ""}`,
+      cost: card.reason?.trim() || NEVER_RAN,
+      since: time(card.updated_at),
+      engine: card.engine ?? undefined,
+      actions: [{ key: "retry" as const, label: "Retry on another engine", primary: true }, { key: "dismiss" as const, label: "Dismiss" }],
+      ref: card.id,
+    }));
 }
 
 /** Dismissing a stop is local to this device: nothing is sent to the service. */

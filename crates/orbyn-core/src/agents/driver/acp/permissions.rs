@@ -8,13 +8,24 @@ use crate::agents::driver::rpc::RpcClient;
 use crate::agents::driver::{EngineEvent, EngineOutcome, ask_paths};
 use crate::governance::approvals::Verdict;
 
+/// How the turn that answered our prompt ended. `stopReason` is required by the
+/// protocol, so a reply without a known one is not proof of success: the run fails
+/// plainly instead of looking finished. A reply with no output at all is
+/// the run pump's to report ("No reply"), never hidden here.
 pub(super) fn stop_outcome(reply: &Value) -> EngineOutcome {
     match reply.get("stopReason").and_then(Value::as_str) {
         Some("end_turn") => EngineOutcome::Completed,
         Some("cancelled") => EngineOutcome::Cancelled,
-        Some(reason) => EngineOutcome::Failed(format!("The agent stopped: {reason}.")),
-        None => EngineOutcome::Completed,
+        Some("max_tokens") => stopped("it ran out of tokens"),
+        Some("max_turn_requests") => stopped("it reached its limit of model requests for one turn"),
+        Some("refusal") => stopped("it refused to continue"),
+        Some(reason) => stopped(&format!("it gave the reason \"{reason}\"")),
+        None => stopped("it did not say why"),
     }
+}
+
+fn stopped(why: &str) -> EngineOutcome {
+    EngineOutcome::Failed(format!("The agent stopped before finishing: {why}."))
 }
 
 pub(super) fn answer_request(

@@ -4,6 +4,7 @@
 import { ApiFailure, request } from "../../../api/client";
 import type { CrewTaskCancel } from "../../../generated/CrewTaskCancel";
 import type { CrewTaskCancelled } from "../../../generated/CrewTaskCancelled";
+import type { CrewTaskRetried } from "../../../generated/CrewTaskRetried";
 import type { CrewTaskRerun } from "../../../generated/CrewTaskRerun";
 import type { CrewTaskRerunDone } from "../../../generated/CrewTaskRerunDone";
 
@@ -23,13 +24,15 @@ export function bodyOf(reason: string): CrewTaskCancel | CrewTaskRerun | undefin
  */
 export const validTaskId = (id: string): boolean => id.length <= 96 && /^[A-Za-z0-9:_-][A-Za-z0-9:_.-]*$/.test(id);
 
-function path(id: string, what: "cancel" | "rerun-checks"): string {
+function path(id: string, what: "cancel" | "rerun-checks" | "retry-elsewhere"): string {
   if (!validTaskId(id)) throw new ApiFailure("invalid", "That task’s id is not valid.", 0);
   return `/api/crew/tasks/${encodeURIComponent(id)}/${what}`;
 }
 
 export const writesApi = {
   cancel: (id: string, reason: string): Promise<CrewTaskCancelled> => request<CrewTaskCancelled>("POST", path(id, "cancel"), bodyOf(reason)),
+  /** A task that could not start: cancelled, and its lead asked to start it again. No body. */
+  retry: (id: string): Promise<CrewTaskRetried> => request<CrewTaskRetried>("POST", path(id, "retry-elsewhere")),
   /** Can take up to 30 minutes: nothing times it out, retries it or polls it. */
   rerun: (id: string, reason: string): Promise<CrewTaskRerunDone> => request<CrewTaskRerunDone>("POST", path(id, "rerun-checks"), bodyOf(reason)),
 };

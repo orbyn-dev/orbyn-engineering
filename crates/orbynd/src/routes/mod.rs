@@ -76,6 +76,8 @@ mod crew_map_tests;
 #[cfg(all(test, unix))]
 mod crew_rerun_tests;
 #[cfg(test)]
+mod crew_retry_tests;
+#[cfg(test)]
 mod crew_tasks_tests;
 #[cfg(test)]
 mod crew_tests;

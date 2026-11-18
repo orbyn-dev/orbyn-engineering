@@ -1,16 +1,18 @@
 import { create } from "zustand";
 import { ApiFailure } from "../../../api/client";
 import type { CrewTaskCancelled } from "../../../generated/CrewTaskCancelled";
+import type { CrewTaskRetried } from "../../../generated/CrewTaskRetried";
 import type { CrewTaskRerunDone } from "../../../generated/CrewTaskRerunDone";
 import { toFailure } from "../../../lib/useAsync";
 import { writesApi } from "./api";
 
-export type WriteKind = "cancel" | "rerun";
+export type WriteKind = "cancel" | "rerun" | "retry";
 
 export type Op =
   | { kind: WriteKind; phase: "busy" }
   | { kind: "cancel"; phase: "done"; answer: CrewTaskCancelled }
   | { kind: "rerun"; phase: "done"; answer: CrewTaskRerunDone }
+  | { kind: "retry"; phase: "done"; answer: CrewTaskRetried }
   | { kind: WriteKind; phase: "failed"; message: string; status: number; code: string };
 
 interface Writes {
@@ -61,6 +63,7 @@ export async function runWrite(kind: WriteKind, id: string, reason: string, onDo
   put(id, { kind, phase: "busy" });
   try {
     if (kind === "cancel") put(id, { kind, phase: "done", answer: await writesApi.cancel(id, reason) });
+    else if (kind === "retry") put(id, { kind, phase: "done", answer: await writesApi.retry(id) });
     else put(id, { kind, phase: "done", answer: await writesApi.rerun(id, reason) });
   } catch (error) {
     const failure = toFailure(error);

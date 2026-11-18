@@ -139,6 +139,7 @@ impl Core {
                 stop_reason: task.stop_reason.clone(),
                 updated_at: task.updated_at.clone(),
                 reason,
+                could_not_start: facts.could_not_start(),
                 can_cancel: can_cancel(&task.state),
                 can_rerun: can_rerun(
                     &task.state,
@@ -288,6 +289,7 @@ mod tests {
             stop_reason: None,
             updated_at: at.to_owned(),
             reason: None,
+            could_not_start: false,
             can_cancel: true,
             can_rerun: false,
             checks: None,

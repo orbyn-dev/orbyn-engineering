@@ -27,6 +27,7 @@ mod protect;
 mod recover;
 mod report;
 pub mod rerun;
+mod retry_start;
 mod review;
 mod router;
 mod score;

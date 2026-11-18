@@ -26,6 +26,12 @@ updated_at: string,
  */
 reason?: string | null, 
 /**
+ * The worker never ran: the task was refused at its start (an engine the app cannot restrict, no route, a setting that
+ * blocks it) and waits in Needs you only so the person can retry or dismiss it. Not an approval: nothing is asked of the
+ * person but that choice. `reason` holds the refusal in the core's words.
+ */
+could_not_start: boolean, 
+/**
  * The task has not ended, so a cancel may apply.
  */
 can_cancel: boolean, 

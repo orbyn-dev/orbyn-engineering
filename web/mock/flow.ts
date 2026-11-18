@@ -48,6 +48,7 @@ const row = (id: string, name: string, kind: string, engine: string | null, stat
   engine,
   owner: "Lead",
   state,
+  could_not_start: false,
   round,
   cells,
   created_at: `2026-11-07T${at}:00Z`,

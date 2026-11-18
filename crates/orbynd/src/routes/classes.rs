@@ -94,6 +94,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
     ("POST", "/api/engines/custom"),
@@ -495,6 +496,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "Crew write behind local_only: the person's re-run of a task's checks",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/retry-elsewhere",
+        "Crew write behind local_only: the person's retry of a task that could not start, on another engine",
     ),
     (
         "POST",
