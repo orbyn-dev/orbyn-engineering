@@ -25,7 +25,32 @@ pub enum AppMode {
 }
 }
 
+wire_enum! {
+pub enum AppUpdatePhase {
+    Idle,
+    Available,
+    Downloading,
+    Preparing,
+    Ready,
+    Installing,
+}
+}
+
+impl Default for AppUpdatePhase {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
 wire! {
+pub struct AppUpdateRequest {
+    pub release_id: String,
+    pub operation: u32,
+}
+}
+
+wire! {
+/// Phase-owned readiness; downloaded and total describe transfer progress only.
 pub struct AppUpdateStatus {
     pub current: String,
     pub latest: Option<String>,
@@ -34,7 +59,23 @@ pub struct AppUpdateStatus {
     pub can_apply: bool,
     pub blocked_reason: Option<String>,
     pub unconfigured: bool,
-    /// Bytes fetched so far while the shell downloads, when it reports them.
+    #[serde(default)]
+    pub phase: AppUpdatePhase,
+    #[serde(default)]
+    #[ts(optional)]
+    pub release_id: Option<String>,
+    #[serde(default)]
+    pub operation: u32,
+    #[serde(default)]
+    #[ts(optional)]
+    pub update_error: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub failed_phase: Option<AppUpdatePhase>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub failed_version: Option<String>,
+    // Bytes fetched so far while the shell downloads, when it reports them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub downloaded: Option<u64>,

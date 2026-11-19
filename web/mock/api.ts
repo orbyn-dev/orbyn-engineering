@@ -589,8 +589,21 @@ export function createMockApi(options: MockOptions = {}) {
         }
         if (seg[2] === "apply-all") return applyAll();
         if (seg[2] === "app") {
-          finishStep("app");
-          return { status: 202 };
+          if (updates.app.release_id !== data.release_id || updates.app.operation !== data.operation) {
+            return err(422, "update_unavailable", "The available update changed. Review the new version before downloading.");
+          }
+          if (activeRuns() > 0) return err(409, "runs_active", "Finish or stop active runs first.");
+          if (seg[3] === "download" && updates.app.phase === "available") {
+            // The deterministic fake models a verified download; consent never installs.
+            updates = { ...updates, app: { ...updates.app, phase: "ready", operation: updates.app.operation + 1 } };
+            return { status: 202 };
+          }
+          if (seg[3] === "apply" && updates.app.phase === "ready") {
+            finishStep("app");
+            updates = { ...updates, app: { ...updates.app, phase: "idle" } };
+            return { status: 202 };
+          }
+          return err(422, "update_unavailable", "No update is ready.");
         }
         break;
       case "GET /api/preferences": {

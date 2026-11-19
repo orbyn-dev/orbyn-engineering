@@ -45,14 +45,19 @@ async fn shell_channel_survives_junk_and_install_holds_admission() {
     say(&mut service, r#"{"type":"from_the_future","x":1}"#);
     say(
         &mut service,
-        r#"{"type":"app_update_available","version":"99.0.0","notes":"n"}"#,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0","notes":"n"}"#,
     );
     until_can_apply(&service).await;
     assert_eq!(app(&service).await["latest"], "99.0.0");
 
     let run = service.admit(&thread, "[hang]").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let (code, body) = service.send("/api/updates/app/apply", json!({})).await;
+    let (code, body) = service
+        .send(
+            "/api/updates/app/download",
+            json!({"release_id":"r1","operation":0}),
+        )
+        .await;
     assert_eq!(code, 409);
     assert_eq!(body["code"], "runs_active");
     service
@@ -60,17 +65,22 @@ async fn shell_channel_survives_junk_and_install_holds_admission() {
         .await;
     service.finished(&thread).await;
 
-    let (code, _) = service.send("/api/updates/app/apply", json!({})).await;
+    let (code, _) = service
+        .send(
+            "/api/updates/app/download",
+            json!({"release_id":"r1","operation":0}),
+        )
+        .await;
     assert_eq!(code, 202);
     let mut line = String::new();
-    while !line.contains("install_app_update") {
+    while !line.contains("download_app_update") {
         line.clear();
         service.stdout.read_line(&mut line).unwrap();
         assert!(!line.is_empty(), "stdout closed");
     }
     assert_eq!(
         serde_json::from_str::<Value>(&line).unwrap()["type"],
-        "install_app_update"
+        "download_app_update"
     );
     let (code, body) = service
         .send(
@@ -98,14 +108,19 @@ async fn a_check_failure_cannot_release_an_install_through_the_shell_channel() {
     service.finished(&thread).await;
     say(
         &mut service,
-        r#"{"type":"app_update_available","version":"99.0.0","notes":"new"}"#,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0","notes":"new"}"#,
     );
     until_can_apply(&service).await;
-    let (code, _) = service.send("/api/updates/app/apply", json!({})).await;
+    let (code, _) = service
+        .send(
+            "/api/updates/app/download",
+            json!({"release_id":"r1","operation":0}),
+        )
+        .await;
     assert_eq!(code, 202);
     say(
         &mut service,
-        r#"{"type":"app_update_progress","downloaded":5,"total":10}"#,
+        r#"{"type":"app_update_progress","release_id":"r1","operation":1,"downloaded":5,"total":10}"#,
     );
     say(
         &mut service,
@@ -127,7 +142,7 @@ async fn a_check_failure_cannot_release_an_install_through_the_shell_channel() {
 
     say(
         &mut service,
-        r#"{"type":"app_update_failed","message":"install failed"}"#,
+        r#"{"type":"app_update_failed","release_id":"r1","operation":1,"message":"install failed"}"#,
     );
     let status = wait_update_error(&service, "install failed").await;
     assert!(status["app"]["downloaded"].is_null());
@@ -143,7 +158,7 @@ async fn wait_update_error(service: &Service, error: &str) -> Value {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let status = service.json("/api/updates").await;
-            if status["error"] == error {
+            if status["error"] == error || status["app"]["update_error"] == error {
                 return status;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -196,7 +211,12 @@ async fn server_compares_a_release_manifest_and_keeps_it_when_it_disappears() {
     assert_eq!(code, 200);
     assert_eq!(after["app"]["latest"], "99.0.0");
     assert!(after["error"].as_str().unwrap().contains("manifest"));
-    let (code, _) = service.send("/api/updates/app/apply", json!({})).await;
+    let (code, _) = service
+        .send(
+            "/api/updates/app/download",
+            json!({"release_id":"r1","operation":0}),
+        )
+        .await;
     assert_eq!(code, 422);
 }
 
@@ -216,7 +236,7 @@ async fn update_events_send_the_status_then_each_change() {
     use futures_util::StreamExt;
     say(
         &mut service,
-        r#"{"type":"app_update_available","version":"99.0.0"}"#,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#,
     );
     let found = tokio::time::timeout(Duration::from_secs(10), async {
         while let Some(Ok(chunk)) = body.next().await {
@@ -370,4 +390,126 @@ async fn the_shell_hears_when_work_starts_and_ends() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn only_verified_readiness_allows_install_and_a_new_run_can_still_refuse_it() {
+    let dir = TempDir::new();
+    let (mut service, thread) = setup(&dir, desktop(), "codex").await;
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#,
+    );
+    until_can_apply(&service).await;
+    let action = json!({"release_id":"r1","operation":0});
+    assert_eq!(
+        service
+            .send("/api/updates/app/apply", action.clone())
+            .await
+            .0,
+        422
+    );
+    assert_eq!(
+        service
+            .send("/api/updates/app/download", action.clone())
+            .await
+            .0,
+        202
+    );
+    // Duplicate consent is accepted without another transfer; bytes do not prove readiness.
+    assert_eq!(
+        service.send("/api/updates/app/download", action).await.0,
+        202
+    );
+    say(
+        &mut service,
+        r#"{"type":"app_update_progress","release_id":"r1","operation":1,"downloaded":100,"total":100}"#,
+    );
+    say(
+        &mut service,
+        r#"{"type":"app_update_preparing","release_id":"r1","operation":1}"#,
+    );
+    let action = json!({"release_id":"r1","operation":1});
+    assert_eq!(
+        service
+            .send("/api/updates/app/apply", action.clone())
+            .await
+            .0,
+        422
+    );
+    say(
+        &mut service,
+        r#"{"type":"app_update_ready","release_id":"r1","operation":1}"#,
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while app(&service).await["phase"] != "ready" {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let run = service.admit(&thread, "[hang]").await;
+    assert_eq!(
+        service
+            .send("/api/updates/app/apply", action.clone())
+            .await
+            .0,
+        409
+    );
+    service
+        .send(&format!("/api/runs/{run}/cancel"), json!({}))
+        .await;
+    service.finished(&thread).await;
+    assert_eq!(service.send("/api/updates/app/apply", action).await.0, 202);
+    let mut commands = Vec::new();
+    loop {
+        let mut line = String::new();
+        service.stdout.read_line(&mut line).unwrap();
+        assert!(!line.is_empty());
+        let message: Value = serde_json::from_str(&line).unwrap();
+        commands.push(message["type"].as_str().unwrap().to_owned());
+        if commands.last().unwrap() == "install_app_update" {
+            break;
+        }
+    }
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|kind| kind.as_str() == "download_app_update")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn download_consent_requires_this_launch_person_key() {
+    let dir = TempDir::new();
+    let mut options = desktop();
+    options
+        .env
+        .push(("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()));
+    let (mut service, _thread) = setup(&dir, options, "codex").await;
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#,
+    );
+    until_can_apply(&service).await;
+    let body = json!({"release_id":"r1","operation":0});
+    for key in [None, Some("wrong-launch-key")] {
+        let mut request = service
+            .client
+            .post(format!("{}/api/updates/app/download", service.url))
+            .bearer_auth(&service.token)
+            .json(&body);
+        if let Some(key) = key {
+            request = request.header("x-orbyn-person", key);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(
+            response.status(),
+            403,
+            "a service token or another launch's key cannot reserve update admission"
+        );
+    }
+    assert_eq!(service.send("/api/updates/app/download", body).await.0, 202);
 }
