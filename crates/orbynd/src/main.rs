@@ -94,6 +94,22 @@ fn known_engine_ids(raw: Option<&std::ffi::OsStr>) -> Result<Option<Vec<String>>
     .transpose()
 }
 
+/// The background listeners' periodic pass, local startup policy only: 60 seconds to 24 hours, or unset for one
+/// startup pass. Neither HTTP nor a tool can change it.
+fn background_watch_interval(raw: Option<&std::ffi::OsStr>) -> Result<Option<Duration>, String> {
+    raw.map(|raw| {
+        let seconds = raw
+            .to_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|n| (60..=86400).contains(n))
+            .ok_or(
+                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for one startup pass.",
+            )?;
+        Ok(Duration::from_secs(seconds))
+    })
+    .transpose()
+}
+
 /// Local startup policy only. Neither HTTP nor a tool can change these values.
 fn crew_merge_config(
     preview: bool,
@@ -192,6 +208,13 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         std::env::var_os("ORBYN_CREW_REQUIRED_CHECKS").as_deref(),
         std::env::var_os("ORBYN_CREW_WATCH_INTERVAL_SECS").as_deref(),
     )?;
+    config.crew_background_watch_interval = if config.crew_preview {
+        background_watch_interval(
+            std::env::var_os("ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS").as_deref(),
+        )?
+    } else {
+        None
+    };
     Ok(config)
 }
 
@@ -456,6 +479,14 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         None
     };
+    let crew_background = if core.config.crew_preview {
+        let (core, background_stop) = (core.clone(), stop.child_token());
+        Some(tokio::spawn(async move {
+            core.run_crew_background_listeners(background_stop).await
+        }))
+    } else {
+        None
+    };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { activity.run_shell_activity(quit).await });
@@ -502,6 +533,15 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "Crew escape scan stopped with an error"),
             Err(error) => tracing::warn!(%error, "Crew escape scan task did not complete"),
+        }
+    }
+    if let Some(background) = crew_background {
+        match background.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "Crew background listeners stopped with an error")
+            }
+            Err(error) => tracing::warn!(%error, "Crew background listeners task did not complete"),
         }
     }
     checks.abort();

@@ -4,6 +4,7 @@
 
 mod autopilot;
 mod background;
+mod background_listeners;
 mod background_start;
 pub mod backtest;
 mod bus;

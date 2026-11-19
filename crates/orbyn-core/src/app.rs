@@ -91,6 +91,9 @@ pub struct CoreConfig {
     pub crew_merge_required_checks: Vec<String>,
     /// Explicit in-service watch schedule, never publication/merging. None is off; 60s..24h only.
     pub crew_merge_watch_interval: Option<Duration>,
+    /// The background listeners' periodic pass (schedule buckets due and CI heads watched), behind the Crew Preview
+    /// flag. None is off: one startup pass only; 60s..24h only.
+    pub crew_background_watch_interval: Option<Duration>,
     /// Whether a crew worker's process starts under the restriction (and is refused where
     /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
     pub crew_confine_workers: bool,
@@ -117,6 +120,7 @@ impl CoreConfig {
             crew_tiers: None,
             crew_merge_required_checks: Vec::new(),
             crew_merge_watch_interval: None,
+            crew_background_watch_interval: None,
             crew_confine_workers: true,
         }
     }
