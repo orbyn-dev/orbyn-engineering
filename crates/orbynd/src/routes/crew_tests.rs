@@ -753,6 +753,8 @@ async fn the_review_queue_and_the_log_page() {
     assert_eq!(queue["items"].as_array().unwrap().len(), 1);
     assert_eq!(queue["total"], 1);
     assert!(queue["next_offset"].is_null());
+    // No background run waits, and the field is still served: the join is read-only and additive.
+    assert_eq!(queue["background_runs"], json!([]));
     let (_, first) = app.call("GET", "/api/crew/approvals?limit=2", None).await;
     assert_eq!(first["rows"].as_array().unwrap().len(), 2);
     assert_eq!(first["total"], 5);
