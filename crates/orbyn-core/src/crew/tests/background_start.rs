@@ -1001,7 +1001,10 @@ async fn a_held_task_gives_up_its_leases() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let id = crew(&w);
     // The lead thread of this harness stands for a run's lead: the task started under it has a lease and a worker.
-    w.core.store.start_background_run_as(&id, &w.lead).unwrap();
+    w.core
+        .store
+        .start_background_run_as(&id, &w.lead, "user")
+        .unwrap();
     let (answer, error) = w
         .start(
             brief(json!({ "files": [{ "path": "src/**", "mode": "write" }] })),
