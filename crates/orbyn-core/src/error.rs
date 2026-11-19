@@ -61,6 +61,10 @@ pub enum CoreError {
     PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
+    /// A service limit or the operating system's file watching is busy or failing right
+    /// now; the same request can succeed later.
+    #[error("{0}")]
+    WatchUnavailable(String),
     /// A model, effort or option the chosen model does not offer.
     #[error("{0}")]
     UnsupportedOption(String),
@@ -179,6 +183,7 @@ impl CoreError {
             Self::ProjectHasWork { .. } => "project_has_work",
             Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
+            Self::WatchUnavailable(_) => "watch_unavailable",
             Self::UnsupportedOption(_) => "unsupported_option",
             Self::UpdateUnavailable(_) => "update_unavailable",
             Self::UpdateFailed(_) => "update_failed",
@@ -267,6 +272,7 @@ impl CoreError {
             | Self::Unsupported(_)
             | Self::UnsupportedOption(_)
             | Self::PatternRefused { .. } => 422,
+            Self::WatchUnavailable(_) => 503,
             Self::EngineUnavailable(_) | Self::Computer(_) | Self::UpdateFailed(_) => 502,
             _ => 500,
         }
@@ -316,6 +322,7 @@ impl CoreError {
             },
             Self::PullHeadChanged => Self::PullHeadChanged,
             Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::WatchUnavailable(s) => Self::WatchUnavailable(s.clone()),
             Self::UnsupportedOption(s) => Self::UnsupportedOption(s.clone()),
             Self::UpdateUnavailable(s) => Self::UpdateUnavailable(s.clone()),
             Self::UpdateFailed(s) => Self::UpdateFailed(s.clone()),

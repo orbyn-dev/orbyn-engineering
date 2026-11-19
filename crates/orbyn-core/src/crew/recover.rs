@@ -26,6 +26,16 @@ impl Core {
             return;
         };
         for (task, run) in tasks {
+            if self
+                .store
+                .crew_correction_for_task(&task.id)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                // The forge correction owner resumes deterministic work without a worker or provider timer.
+                continue;
+            }
             if let Ok(Some(brief)) = self.store.crew_brief(&task.id) {
                 let left = budget_left(
                     &task.created_at,

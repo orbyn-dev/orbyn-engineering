@@ -456,7 +456,7 @@ it("writes nothing for a locked worktree: the file reads, says Read-only and has
   const box = await screen.findByRole("textbox", { name: "Read auth/redirect.ts" });
   expect(box).toHaveAttribute("readonly");
   expect(screen.getByText("This worktree is locked. Files open read-only.")).toBeInTheDocument();
-  expect(screen.getByText("Read-only", { selector: ".ed-pill" })).toBeInTheDocument();
+  expect(await screen.findByText("Read-only", { selector: ".ed-pill" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   expect(useEditorSessions.getState().sessions).toEqual({});
 });

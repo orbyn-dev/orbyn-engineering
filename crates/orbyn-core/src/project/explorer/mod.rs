@@ -8,7 +8,10 @@ mod guard;
 mod member;
 mod status;
 mod tree;
+mod watch;
 mod write;
+
+pub use watch::ExplorerWatch;
 
 #[cfg(test)]
 mod tests;
@@ -57,6 +60,7 @@ const ANNOUNCE_GAP: Duration = Duration::from_millis(200);
 
 /// The kept answers: each project's worktree list and each worktree's status.
 pub struct ExplorerReads {
+    watches: watch::Watches,
     /// Serializes user file actions, including their authorization and audit.
     writer: Arc<tokio::sync::Mutex<()>>,
     lists: Swr<Vec<WorktreeRecord>>,
@@ -68,6 +72,7 @@ pub struct ExplorerReads {
 impl Default for ExplorerReads {
     fn default() -> Self {
         Self {
+            watches: watch::Watches::default(),
             writer: Arc::default(),
             lists: Swr::new(LIST_FRESH, LIST_MAX_AGE, 32),
             statuses: Swr::new(STATUS_FRESH, STATUS_MAX_AGE, 128),
@@ -133,11 +138,16 @@ impl ExplorerReads {
     /// A run ended or files moved in this project: forgets its answers and tells the
     /// windows showing it, since they did not make the change.
     pub fn changed(&self, project_id: &str) {
+        self.forget(project_id);
+        self.lists.announce(&topic(project_id));
+    }
+
+    /// Drops what is kept for a project without telling the windows.
+    pub fn forget(&self, project_id: &str) {
         let prefix = key(&[project_id]);
         self.lists.invalidate(&prefix);
         self.statuses.invalidate(&prefix);
         locked(&self.misses).remove(project_id);
-        self.lists.announce(&topic(project_id));
     }
 
     fn gate(&self, project_id: &str) -> Arc<Semaphore> {

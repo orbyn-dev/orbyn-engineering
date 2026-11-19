@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NETWORK_ERROR, request } from "./client";
-import { LANE_TIMEOUT_MS, asBackground, SLOW_LANE_CAP, laneFor, resetLanesForTests } from "./lanes";
+import { LANE_TIMEOUT_MS, asBackground, SLOW_LANE_CAP, laneFor, reserveStreamConnection, resetLanesForTests } from "./lanes";
 
 interface Pending {
   path: string;
@@ -74,6 +74,34 @@ describe("laneFor", () => {
 });
 
 describe("request lanes", () => {
+  it("reserves a slow slot for an extra stream and restores it after disconnect", async () => {
+    const { pending, inFlight } = holdFetch();
+    const release = await reserveStreamConnection(new AbortController().signal);
+    const slow = ["/api/pulls", "/api/limits", "/api/usage"].map((path) => request("GET", path));
+    const fast = request("GET", "/api/projects");
+    await tick();
+    expect(inFlight().filter((entry) => entry.path !== "/api/projects")).toHaveLength(SLOW_LANE_CAP - 1);
+    expect(pending.some((entry) => entry.path === "/api/projects")).toBe(true);
+    release();
+    await tick();
+    expect(inFlight().filter((entry) => entry.path !== "/api/projects")).toHaveLength(SLOW_LANE_CAP);
+    await finishAll(pending);
+    await Promise.all([...slow, fast]);
+  });
+
+  it("a stream aborted while waiting never consumes a connection", async () => {
+    const first = await reserveStreamConnection(new AbortController().signal);
+    const second = await reserveStreamConnection(new AbortController().signal);
+    const controller = new AbortController();
+    const waiting = reserveStreamConnection(controller.signal);
+    controller.abort();
+    await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
+    first();
+    second();
+    const release = await reserveStreamConnection(new AbortController().signal);
+    release();
+  });
+
   it("does not delay a fast request behind four slow ones", async () => {
     const { pending, inFlight } = holdFetch();
     const slow = [

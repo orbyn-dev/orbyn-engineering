@@ -320,6 +320,8 @@ mod tests {
         let repo = dir.path().join("repo");
         std::fs::create_dir_all(repo.join("src")).unwrap();
         run_git(&repo, &["init", "-q"]);
+        // The fixture asserts the exact bytes extracted from the commit.
+        run_git(&repo, &["config", "core.autocrlf", "false"]);
         std::fs::write(repo.join("src/a.txt"), "one\n").unwrap();
         run_git(&repo, &["add", "-A"]);
         run_git(

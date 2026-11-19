@@ -74,7 +74,7 @@ fn change_prompt(reason: &str) -> String {
 
 impl Core {
     /// Builds the result of the task as it stands, stores it and returns it.
-    fn record_result(
+    pub(in crate::crew) fn record_result(
         &self,
         task: &CrewTask,
         state: ResultState,

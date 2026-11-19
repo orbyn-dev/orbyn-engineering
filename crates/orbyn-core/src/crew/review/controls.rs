@@ -85,6 +85,10 @@ impl Core {
             .ok_or_else(|| CoreError::NotFound("crew run".into()))?;
         let thread = self.store.thread(&run.lead_thread_id)?;
         let (task, _) = self.review_subject(&thread, subject).map_err(core_error)?;
+        let thread = self
+            .correction_review_thread(&thread, subject)
+            .await
+            .map_err(core_error)?;
         let latest = self
             .store
             .crew_reviews_of(subject)?

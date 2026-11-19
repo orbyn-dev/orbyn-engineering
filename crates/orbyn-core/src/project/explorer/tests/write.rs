@@ -759,3 +759,39 @@ fn the_case_blind_inside_check_compares_whole_components() {
     );
     assert!(!inside_ignoring_case(Path::new("/r"), outer));
 }
+
+#[tokio::test]
+async fn watched_nested_folders_do_not_block_moving_or_deleting_their_ancestor() {
+    let dir = TempDir::new();
+    let core = std::sync::Arc::new(core(&dir).await);
+    let (project, root) = project(&core, &dir, "app").await;
+    let id = main_id(&core, &project).await;
+    write(&root.join("a/b/c/f.txt"), "x");
+    let watches = core
+        .explorer_watch(&[(project.id.clone(), id.clone())])
+        .await
+        .unwrap();
+    act(
+        &core,
+        &project,
+        &id,
+        Action::Move {
+            path: "a/b".into(),
+            destination: "a/moved".into(),
+        },
+    )
+    .await
+    .unwrap();
+    for path in ["a/moved/c/f.txt", "a/moved/c", "a/moved"] {
+        act(&core, &project, &id, Action::Delete { path: path.into() })
+            .await
+            .unwrap();
+    }
+    assert!(!root.join("a/moved").exists());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), watches[0].stopped())
+            .await
+            .is_err(),
+        "the watch stays live"
+    );
+}
