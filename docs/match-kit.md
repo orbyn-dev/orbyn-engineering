@@ -74,6 +74,8 @@ Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-s
 Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`. Crew, Settings › Worker provider (Crew Designs v75): `settings-crew-worker-provider`, `settings-crew-worker-provider-any`, `settings-crew-worker-provider-narrow`.
 These retain the beta stage list; the planned graph and PR cards are not drawn.
 
+Crew, the escape log (Crew Designs v79), on the real escape routes: `escape-log`, `escape-empty`, `escape-low-sample`, `escape-error`. The check, report, counts, thresholds and narrow frames stay drawn sample data until their own pull requests.
+
 1. If the screen needs data the mock does not have, add a scenario to `web/mock/api.ts` (and its fixtures to `web/mock/fixtures.ts`).
 2. Add an entry to `catalog.mjs`: `route`, `scenario`, `pre` (requests to hold or fail before the page opens), `steps` (click, fill, press, route, offline) and `wait` for states that show only after a delay.
 3. List the id here (a test fails until you do), render it locally and look at all three themes.

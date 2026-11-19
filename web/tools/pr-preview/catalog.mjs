@@ -640,4 +640,11 @@ export const FRAMES = {
   "classes-narrow": { route: "#/settings/crew", scenario: "crew-classes", width: 640 },
   "route-log-none": { route: "#/crew/approvals", scenario: "crew-route-none", steps: [click("button", "Routing", { prefix: true })] },
   "route-log": { route: "#/crew/approvals", scenario: "crew-route-blocked", steps: [click("button", "Routing", { prefix: true })] },
+
+  /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
+   *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */
+  "escape-log": { route: "#/preview/crew/escape-log", scenario: "crew-escapes", wait: 2500 },
+  "escape-empty": { route: "#/preview/crew/escape-empty", scenario: "crew-escapes-empty" },
+  "escape-low-sample": { route: "#/preview/crew/escape-low-sample", scenario: "crew-escapes-low" },
+  "escape-error": { route: "#/preview/crew/escape-error", scenario: "crew-escapes-unreadable" },
 };

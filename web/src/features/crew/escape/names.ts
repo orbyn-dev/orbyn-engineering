@@ -1,4 +1,7 @@
-/** Frame ids of Crew Designs v20 built here. Each opens at `#/preview/crew/<id>`. */
+/**
+ * The escape frame ids built here, each opening at its Preview hash. The log, its states, the possible list and the
+ * escape pages are Crew Designs v79 on the real routes (./live/screens); the rest are still the v20 drawn frames.
+ */
 export const ESCAPE_FRAMES = [
   "escape-log",
   "escape-possible",
