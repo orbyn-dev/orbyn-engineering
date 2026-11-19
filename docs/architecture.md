@@ -1687,7 +1687,11 @@ a person's create, move (including rename), or delete request without a thread.
   (a folder created, removed or renamed, a change on the root, or a backend rescan request)
   also rebuilds the watched set, at most once a second with one trailing run, and only the
   difference from the watched set reaches the backend (a folder replaced under the same name
-  counts as a difference, found by its file identity).
+  counts as a difference: a removal or rename event marks it, and its file identity is a
+  second check). On Windows one recursive handle on the worktree root replaces the
+  per-folder handles, which would block moving a watched folder's ancestor; events inside
+  guarded folders are dropped before they announce, and only the root itself cannot be
+  renamed or deleted while it is watched.
   These are native notifications, without freshness polling. Failed watches invalidate
   and announce the project before closing the subscription; reconnecting invalidates
   and rereads the subscribed projects through the stream's ready frame. The client retries

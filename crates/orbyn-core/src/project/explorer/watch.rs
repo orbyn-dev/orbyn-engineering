@@ -95,6 +95,8 @@ struct Resources {
     native: RecommendedWatcher,
     /// Each watched directory with the permit it holds on the service-wide budget.
     directories: BTreeMap<PathBuf, Watched>,
+    /// Folders to watch again at the next scan; filled by the worker from native events.
+    rewatch: BTreeSet<PathBuf>,
     budget: Arc<Semaphore>,
     _slot: OwnedSemaphorePermit,
     #[cfg(test)]
@@ -106,6 +108,7 @@ impl Resources {
         Self {
             native,
             directories: BTreeMap::new(),
+            rewatch: BTreeSet::new(),
             budget,
             _slot: slot,
             #[cfg(test)]
@@ -166,6 +169,34 @@ struct Pending {
     /// A directory may have appeared, vanished or moved: the watched set needs a rebuild.
     structure: AtomicBool,
     failed: AtomicBool,
+    /// Where a folder was removed or renamed. Some backends drop their own watch on such
+    /// a folder, so the next rebuild watches it again whatever its identity says.
+    removed: Mutex<BTreeSet<PathBuf>>,
+}
+
+/// More removed paths than this stand for "everything under the root".
+const MAX_REMOVED: usize = 1024;
+
+/// On Windows one recursive handle covers the tree and events name paths inside it,
+/// including ones the view never shows. They are dropped here, before they announce.
+fn event_allowed(guard: &Guard, root: &Path, event: &Event) -> bool {
+    event.paths.is_empty()
+        || event.paths.iter().any(|path| {
+            let Ok(inside) = path.strip_prefix(root) else {
+                return true;
+            };
+            let mut dir = root.to_path_buf();
+            for part in inside.components() {
+                let Some(name) = part.as_os_str().to_str() else {
+                    return false;
+                };
+                if !guard.lists(&dir, name) {
+                    return false;
+                }
+                dir.push(part);
+            }
+            true
+        })
 }
 
 /// Plain file content changes never alter which directories exist.
@@ -218,12 +249,16 @@ fn register(
     resources: &mut Resources,
     dirs: &[(&Path, Identity)],
     root: &Path,
+    mode: RecursiveMode,
+    marks: &BTreeSet<PathBuf>,
 ) -> Result<Vec<bool>> {
     let mut batch = Vec::new();
     let mut replaced = Vec::new();
     for (dir, identity) in dirs {
         match resources.directories.get(*dir) {
-            Some(watched) if watched.identity == *identity => {}
+            Some(watched)
+                if watched.identity == *identity
+                    && !dir.ancestors().any(|above| marks.contains(above)) => {}
             Some(_) => {
                 // Keep its permit: the replacement takes the place of the old watch.
                 if let Some(old) = resources.directories.remove(*dir) {
@@ -247,7 +282,7 @@ fn register(
             let _ = paths.remove(dir);
         }
         for (dir, identity, permit) in batch {
-            match paths.add(dir, RecursiveMode::NonRecursive) {
+            match paths.add(dir, mode) {
                 Ok(()) => {
                     resources.directories.insert(
                         dir.to_path_buf(),
@@ -305,6 +340,10 @@ fn scan(
     {
         resources.stats.reconciles += 1;
     }
+    let marks = std::mem::take(&mut resources.rewatch);
+    if cfg!(windows) {
+        return scan_root(resources, guard, root, cancel, &marks);
+    }
     // Free what is gone first: after a large rename the old names would otherwise
     // count against the bound next to the new ones.
     let gone: Vec<PathBuf> = resources
@@ -333,7 +372,7 @@ fn scan(
                 .iter()
                 .map(|(dir, handle)| (*dir, identity(handle)))
                 .collect();
-            let watched = register(resources, &dirs, root)?;
+            let watched = register(resources, &dirs, root, RecursiveMode::NonRecursive, &marks)?;
             for ((dir, handle), watched) in open.into_iter().zip(watched) {
                 if cancel.is_cancelled() {
                     return Ok(());
@@ -389,6 +428,40 @@ fn scan(
     release(resources, &stale)
 }
 
+/// Windows reads a folder through a handle that blocks renaming or deleting it, so one
+/// handle per folder would block moving any watched ancestor. One recursive handle on
+/// the root covers the tree instead; only the root itself stays locked while watched.
+fn scan_root(
+    resources: &mut Resources,
+    guard: &Guard,
+    root: &Path,
+    cancel: &CancellationToken,
+    marks: &BTreeSet<PathBuf>,
+) -> Result<()> {
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    let handle = guard.open_dir(root)?;
+    let watched = register(
+        resources,
+        &[(root, identity(&handle))],
+        root,
+        RecursiveMode::Recursive,
+        marks,
+    )?;
+    if !watched[0] {
+        return Err(unavailable());
+    }
+    guard.confirm_dir(&handle, root)?;
+    let others: Vec<PathBuf> = resources
+        .directories
+        .keys()
+        .filter(|dir| dir.as_path() != root)
+        .cloned()
+        .collect();
+    release(resources, &others)
+}
+
 impl Core {
     /// Names are ids, never paths. At most 32 pairs belong to one window connection.
     pub async fn explorer_watch(
@@ -426,18 +499,39 @@ impl Core {
             let root = target.path;
             let real_root = crate::util::canonicalize(&root).unwrap_or_else(|_| root.clone());
             let (callback_root, callback_real) = (root.clone(), real_root);
+            let event_guard = guard.clone();
             let native = RecommendedWatcher::new(
                 move |event: notify::Result<Event>| {
                     match &event {
                         Err(_) => callback_pending.failed.store(true, Ordering::Release),
                         // Reading a folder must not wake its own watcher forever.
                         Ok(event) if matches!(event.kind, EventKind::Access(_)) => return,
+                        Ok(event)
+                            if cfg!(windows)
+                                && !event_allowed(&event_guard, &callback_real, event) =>
+                        {
+                            return;
+                        }
                         Ok(event) => {
                             if changes_structure(
                                 event,
                                 &[callback_root.as_path(), callback_real.as_path()],
                             ) {
                                 callback_pending.structure.store(true, Ordering::Release);
+                                if event.need_rescan()
+                                    || matches!(
+                                        event.kind,
+                                        EventKind::Remove(RemoveKind::Folder | RemoveKind::Any)
+                                            | EventKind::Modify(ModifyKind::Name(_))
+                                    )
+                                {
+                                    let mut removed = locked(&callback_pending.removed);
+                                    if event.need_rescan() || removed.len() >= MAX_REMOVED {
+                                        removed.insert(callback_real.clone());
+                                    } else {
+                                        removed.extend(event.paths.iter().cloned());
+                                    }
+                                }
                             }
                         }
                     }
@@ -532,6 +626,7 @@ async fn follow(
             return;
         };
         let rebuild = pending.structure.swap(false, Ordering::AcqRel);
+        let removed = std::mem::take(&mut *locked(&pending.removed));
         if pending.failed.load(Ordering::Acquire) {
             core.explorer.changed(&project);
             lease.revoke();
@@ -549,6 +644,7 @@ async fn follow(
                 tokio::task::spawn_blocking(move || {
                     let mut held = locked(&lease.resources);
                     let resources = held.as_mut().ok_or_else(unavailable)?;
+                    resources.rewatch.extend(removed);
                     let done = reconcile(resources, &guard, &target.path, &lease.stopped);
                     if lease.stopped.is_cancelled() {
                         // The lease was dropped mid-scan; its handles go with this thread.
@@ -811,6 +907,7 @@ mod tests {
                     .unwrap()
                     .directories
                     .contains_key(&root.join("new folder"))
+                    || cfg!(windows)
                 {
                     break;
                 }
@@ -862,6 +959,7 @@ mod tests {
         assert_eq!(core.explorer.watches.slots.available_permits(), MAX_WATCHES);
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn guarded_roots_and_links_are_never_watched_and_directory_count_is_bounded() {
         let dir = TempDir::new();
@@ -911,6 +1009,7 @@ mod tests {
         assert!(reconcile(&mut resources, &denied, &root.join("data"), &cancel).is_err());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn an_unchanged_tree_costs_no_native_call_and_a_change_costs_one_restart() {
         let dir = TempDir::new();
@@ -965,6 +1064,7 @@ mod tests {
         assert_eq!(resources.directories.len(), 3);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_folder_that_vanished_or_cannot_be_read_is_skipped_but_the_root_is_not() {
         let dir = TempDir::new();
@@ -1041,6 +1141,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn the_service_wide_directory_budget_caps_every_watch_and_returns_on_release() {
         let dir = TempDir::new();
@@ -1094,6 +1195,7 @@ mod tests {
         assert!(locked(&state.resources).is_none());
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn a_burst_of_new_folders_rebuilds_at_most_twice_and_loses_no_folder() {
         let dir = TempDir::new();
@@ -1154,8 +1256,9 @@ mod tests {
         assert_eq!(reconciles(&watches[0]), before);
     }
 
+    #[cfg(not(windows))]
     #[test]
-    fn a_folder_deleted_and_recreated_under_the_same_name_is_watched_again() {
+    fn a_folder_the_backend_reported_removed_is_watched_again_even_with_the_same_identity() {
         let dir = TempDir::new();
         let root = crate::util::canonicalize(dir.path()).unwrap();
         std::fs::create_dir_all(root.join("dist/inner")).unwrap();
@@ -1165,18 +1268,66 @@ mod tests {
         reconcile(&mut resources, &guard, &root, &cancel).unwrap();
         let stats = |r: &Resources| (r.stats.added, r.stats.removed, r.stats.commits);
         let before = stats(&resources);
-        // The decoy takes the freed inode so the new folder cannot share the old one.
+        // Deleted and recreated within one rebuild window: the inode may be reused, so
+        // only the removal event says that the backend dropped its watch.
         std::fs::remove_dir_all(root.join("dist")).unwrap();
-        std::fs::create_dir(root.join("decoy")).unwrap();
         std::fs::create_dir_all(root.join("dist/inner")).unwrap();
+        resources.rewatch.insert(root.join("dist"));
         reconcile(&mut resources, &guard, &root, &cancel).unwrap();
         let after = stats(&resources);
-        // dist and dist/inner are both new folders; decoy is also new.
-        assert_eq!(after.0 - before.0, 3, "added");
-        assert_eq!(after.1 - before.1, 2, "the stale watches were replaced");
-        assert!(resources.directories.contains_key(&root.join("dist/inner")));
+        assert_eq!(
+            after.0 - before.0,
+            2,
+            "dist and dist/inner are watched again"
+        );
+        assert_eq!(after.1 - before.1, 2, "their old watches were replaced");
+        assert!(resources.rewatch.is_empty(), "the marks are used up");
         reconcile(&mut resources, &guard, &root, &cancel).unwrap();
         assert_eq!(stats(&resources), after, "settled");
+    }
+
+    #[test]
+    fn a_recursive_root_watch_is_one_handle_and_costs_nothing_when_unchanged() {
+        let dir = TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+        let guard = Guard::new(&root, &root.join("data"), None).unwrap();
+        let cancel = CancellationToken::new();
+        let budget = Arc::new(Semaphore::new(4));
+        let mut resources = unwatched(&budget);
+        let marks = BTreeSet::new();
+        scan_root(&mut resources, &guard, &root, &cancel, &marks).unwrap();
+        assert_eq!(resources.directories.len(), 1);
+        assert_eq!(budget.available_permits(), 3);
+        assert_eq!((resources.stats.added, resources.stats.commits), (1, 1));
+        scan_root(&mut resources, &guard, &root, &cancel, &marks).unwrap();
+        assert_eq!((resources.stats.added, resources.stats.commits), (1, 1));
+        assert!(
+            scan_root(
+                &mut resources,
+                &guard,
+                &root.join("missing"),
+                &cancel,
+                &marks
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn events_inside_denied_folders_are_not_announced_by_the_recursive_watch() {
+        let dir = TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let guard = Guard::new(&root, &root.join("data"), Some(root.join("repo"))).unwrap();
+        let at =
+            |path: &str| Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.join(path));
+        assert!(event_allowed(&guard, &root, &at("src/a.rs")));
+        assert!(event_allowed(&guard, &root, &at(".env")));
+        for denied in [".git/index", "data/token", "repo/x/y", "src/.git/HEAD"] {
+            assert!(!event_allowed(&guard, &root, &at(denied)), "{denied}");
+        }
+        assert!(event_allowed(&guard, &root, &Event::new(EventKind::Any)));
     }
 
     #[tokio::test]
@@ -1193,7 +1344,6 @@ mod tests {
         let mut events = core.shell.watch();
         let before = reconciles(&watches[0]);
         std::fs::remove_dir_all(root.join("dist")).unwrap();
-        std::fs::create_dir(root.join("decoy")).unwrap();
         std::fs::create_dir(root.join("dist")).unwrap();
         tokio::time::timeout(Duration::from_secs(8), async {
             while reconciles(&watches[0]) == before {
