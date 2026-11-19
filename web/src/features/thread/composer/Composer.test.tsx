@@ -301,6 +301,7 @@ describe("Composer", () => {
     setup();
     await userEvent.type(box(), "@ma");
     await screen.findByRole("option", { name: "@src/main.rs" });
+    expect(screen.getByText("ma", { selector: ".mention-name b" })).toBeInTheDocument();
     await userEvent.keyboard("{Tab}");
     expect(box()).toHaveValue("@src/main.rs ");
     await userEvent.clear(box());

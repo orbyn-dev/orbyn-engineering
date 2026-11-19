@@ -476,6 +476,7 @@ export function Composer({
               matches={matches}
               active={active}
               marker={trigger?.char ?? ""}
+              mark={trigger?.char === "@" ? trigger.query : undefined}
               onPick={pick}
             />
           ) : null}
