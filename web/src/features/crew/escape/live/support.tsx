@@ -109,7 +109,7 @@ export type Call = { url: string; init?: RequestInit };
 
 /** One fetch stub for the escape screens: answer each route from `answers` and record every call. */
 export function stubFetch(
-  answers: { preview: Answer; projects: Answer; log: Answer; logConfirmed: Answer; possible: Answer; detail: Answer; decide: Answer; gap: Answer; check?: Answer },
+  answers: { preview: Answer; projects: Answer; log: Answer; logConfirmed: Answer; possible: Answer; detail: Answer; decide: Answer; gap: Answer; check?: Answer; thresholds?: Answer },
   calls: Call[],
 ) {
   vi.stubGlobal(
@@ -119,6 +119,8 @@ export function stubFetch(
       calls.push({ url, init });
       if (url.startsWith("/api/projects")) return json(answers.projects);
       if (url.includes("/api/crew/preview")) return json(answers.preview);
+      if (url.includes("/api/crew/escapes/thresholds"))
+        return json(answers.thresholds ?? { status: 200, body: { report_days: 60, follow_up_days: 14, min_merges: 10, rate_multiple: 2, stored: false } });
       if (url.includes("/api/crew/escapes/possible")) return json(answers.possible);
       if (url.includes("/api/crew/escapes?") && url.includes("state=confirmed")) return json(answers.logConfirmed);
       if (url.includes("/api/crew/escapes?")) return json(answers.log);
