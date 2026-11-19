@@ -668,4 +668,10 @@ export const FRAMES = {
   "escape-narrow-panel": { route: "#/preview/crew/escape-narrow-panel", scenario: "crew-escapes", width: 320 },
   /** The settings sheet on the real thresholds read (the defaults; `crew-escapes-stored` draws a person's stored values). */
   "escape-settings": { route: "#/preview/crew/escape-settings", scenario: "crew-escapes" },
+  /** Drawn samples with no read behind them, matched to Crew Designs v79: the mark dialog (no Review queue to open it from),
+   *  the dashboard (no report route) and the Route escape counts (no per-area counts route). */
+  "escape-report": { route: "#/preview/crew/escape-report" },
+  "escape-dashboard": { route: "#/preview/crew/escape-dashboard" },
+  "escape-route-counts": { route: "#/preview/crew/escape-route-counts" },
+  "escape-route-shifted": { route: "#/preview/crew/escape-route-shifted" },
 };

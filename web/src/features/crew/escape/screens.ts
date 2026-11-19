@@ -9,9 +9,11 @@ import { ESCAPE_LIVE_FRAMES } from "./live/screens";
 import type { EscapeFrameId } from "./names";
 
 /**
- * The escape frames still on drawn sample data (Crew Designs v20): the proposal form, the mark dialog, the report and
- * counts slices. The log and its states, the possible list, the escape pages, the check frames, the settings sheet and
- * the log's narrow variants are on the real routes instead (./live/screens).
+ * The escape frames still on drawn sample data: the create-check proposal form is Crew Designs v20, and the mark dialog,
+ * the dashboard and the counts cards were redrawn to v79. They stay drawn because no read carries their data: the mark is
+ * reached from a Review queue the beta does not have, and the report and per-area counts routes are not built. The log and
+ * its states, the possible list, the escape pages, the check frames, the settings sheet and the log's narrow variants are
+ * on the real routes instead (./live/screens).
  */
 type EscapeDrawnFrameId = Exclude<EscapeFrameId, (typeof ESCAPE_LIVE_FRAMES)[number]>;
 
