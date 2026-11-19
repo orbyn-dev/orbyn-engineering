@@ -409,6 +409,41 @@ pub struct AutopilotWatchRow {
 }
 
 wire! {
+/// A watch on main bisecting now, as it stood when the read was made. Progress is kept in memory only, so it lasts while the
+/// watch runs: the outcome is stored as the merge rows and the ledger, and a restart keeps the outcome but not the progress.
+pub struct AutopilotBisect {
+    /// `checking_tip`, `checking_boundary`, `bisecting`, `confirming` or `checking_parent`.
+    pub phase: String,
+    /// The check runs that have finished, and the most this bisect can run. Each one is a real run of the repository's
+    /// checks at that commit.
+    pub tested: u32,
+    pub steps: u32,
+    /// While bisecting, the last commit known to pass and the first known to fail, which bound the cause.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub after: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub before: Option<String>,
+    /// The commit whose checks are running now, while one is in flight.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub testing: Option<String>,
+    /// Each finished run, oldest first: the commit and whether the checks passed there.
+    pub checked: Vec<AutopilotBisectCheck>,
+}
+}
+
+wire! {
+/// One finished check run of a bisect in progress.
+pub struct AutopilotBisectCheck {
+    pub commit: String,
+    /// Whether the repository's checks passed at that commit.
+    pub passes: bool,
+}
+}
+
+wire! {
 pub struct AutopilotWatch {
     pub rows: Vec<AutopilotWatchRow>,
     pub total: u32,
@@ -419,8 +454,10 @@ pub struct AutopilotWatch {
     pub unwatched: u32,
     /// The latest breaks, reverts and notices, newest first.
     pub recent: Vec<AutopilotLogRow>,
-    /// Bisect progress is not stored; the outcome is, as the rows above and `recent`.
-    pub bisect_progress: bool,
+    /// The bisect a watch is running now, or none. It is kept in memory only.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub bisect: Option<AutopilotBisect>,
 }
 }
 

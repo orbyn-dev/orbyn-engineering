@@ -2649,7 +2649,9 @@ An unknown publication or merge only read-reconciles its existing intent. Target
 admitting a second one. The original merge remains standing until an exact corrective merge receipt projects its reverted state
 and area breaker once. Completion remains pending after parent projection until the idempotent area effect succeeds; the final receipt and revert ledger event commit together. Startup resumes this projector even when the corrective merge record already exists. HTTP Revert reports the actual persisted review state and no revert commit while the correction waits.
 The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and the periodic tick only read effects that already reached publishing and never run the lane. Queueing publishes nothing; the person's merge route does, pushing the verified candidate by its commit id (never forced) with fixed code-written pull request text. A completed correction's checkout and object reference are removed once no review reads them; the pushed branch on the forge is left for the person. No local main ref is moved.
-Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+Local compatibility watch retains its verified bisect/revert behavior. While it bisects, the watch read serves the progress it
+keeps in memory (the phase, the runs made and the bound, the window the cause is between and each answer), cleared when the
+watch ends; the outcome stays the stored rows and ledger. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
 without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
 24 hours, observes at most 32 confirmed forge targets. Corrective tasks use the same guarded forge lane; no separate writer schedules effects. With Preview enabled, startup

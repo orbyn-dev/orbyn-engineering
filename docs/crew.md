@@ -591,6 +591,14 @@ cannot be read locally, and a forge intent (its merge is tried on the forge), is
 run at read time, not the dependency-graph forecast the plan draws: it says that a merge would conflict now, not that two
 tasks overlap before work starts.
 
+**As built (slice 4f, bisect progress):** the watch read serves the bisect a watch is running now as `bisect`; the old
+`bisect_progress` boolean is gone. It carries `phase` (`checking_tip`, `checking_boundary`, `bisecting`, `confirming` or
+`checking_parent`), `tested` and `steps` (the runs finished and the most this history can need), `after` and `before` (the
+last commit known to pass and the first known to fail, while bisecting), `testing` (the commit whose checks are in flight) and
+`checked` (each finished run and whether the checks passed there). Each entry is a real run of the repository's checks at that
+commit. It is in memory only, cleared when the watch ends, so a restart keeps the stored outcome (the merge rows and the
+ledger) and shows no stale bisect.
+
 **A local merge a crash interrupted.** A queue write names the state it expects (a compare-and-set), so a person's reject or a recovery is
 never overwritten: a changed row is left as it is and each caller decides (the lane skips the entry; a reject of an entry already
 `merging` is refused). A crash while a local entry is `merging` would leave it so for good, so the watch's first tick at startup, and each tick
@@ -759,7 +767,7 @@ class only. The risk, review and queue views read the whole table and then page,
 comment is kept and is not yet a fix brief.
 
 Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g),
-bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
 
 **As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
 a second key, even in Full, and the person can always approve it alone, once. It extends the always-denied list (N8 stays above it) and the

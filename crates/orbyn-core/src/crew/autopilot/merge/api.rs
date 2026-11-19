@@ -791,7 +791,8 @@ impl Core {
         (checked, conflicts)
     }
 
-    /// The watch on main: what it found for each merge, newest first, and the latest breaks and reverts.
+    /// The watch on main: what it found for each merge, newest first, the latest breaks and reverts, and the bisect a watch
+    /// is running now, if any.
     pub fn autopilot_watch(&self, page: Page) -> Result<wire::AutopilotWatch> {
         self.crew_preview_only()?;
         let (records, total) = self.store.crew_merges_page(page.limit, page.offset)?;
@@ -817,6 +818,12 @@ impl Core {
             broken: of("broken"),
             unwatched: of("unknown"),
             recent,
+            // In memory and written only while a watch runs, so a restart shows no stale bisect.
+            bisect: self
+                .crew_bisect
+                .lock()
+                .ok()
+                .and_then(|progress| progress.clone()),
         })
     }
 
