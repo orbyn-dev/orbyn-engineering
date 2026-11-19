@@ -33,7 +33,7 @@ fn an_engine_that_is_not_installed_or_turned_off_is_rejected_with_its_name() {
         why(&decision, "codex").text.as_str(),
         "Codex isn't installed."
     );
-    assert_eq!(why(&decision, "opencode").why, RejectionWhy::NotInstalled);
+    assert_eq!(why(&decision, "opencode").why, RejectionWhy::Disabled);
     assert!(
         why(&decision, "opencode")
             .text

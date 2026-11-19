@@ -117,8 +117,10 @@ definitions.
 The `Error` schema describes a tool refusal. It is a tool result, not a ledger object, and
 has no id.
 
-**RouteDecision.** `rejected` lists every engine the router refused with one reason each. The `why` codes are
-`not_installed`, `not_signed_in`, `compatibility_broken`, `not_managed`, `no_approvals`, `missing_capability`,
+**RouteDecision.** `rejected` lists every engine the router refused with one reason each. In this unpublished v0 draft,
+`disabled` means the person turned the engine off; older recorded `not_installed` reasons remain valid and unchanged.
+The `why` codes are
+`disabled`, `not_installed`, `not_signed_in`, `compatibility_broken`, `not_managed`, `no_approvals`, `missing_capability`,
 `quota_exhausted`, `tier_below_lead`, `same_engine_refused` and `path_class`. `path_class` means a rule of the
 repository's data classes (`classes` in `.orbyn/crew.json`, read at the commit the task starts from) does not allow the
 engine for the paths in the brief's `files`. It is a hard filter that runs before scoring, so an explicit `engine` that
