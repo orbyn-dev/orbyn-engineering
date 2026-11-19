@@ -643,3 +643,25 @@ mod crew_merge_config_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod background_watch_interval_tests {
+    use super::background_watch_interval;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn background_interval_is_off_by_default_and_bounded() {
+        assert_eq!(background_watch_interval(None).unwrap(), None);
+        assert_eq!(
+            background_watch_interval(Some(OsStr::new("60"))).unwrap(),
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert_eq!(
+            background_watch_interval(Some(OsStr::new("86400"))).unwrap(),
+            Some(std::time::Duration::from_secs(86400))
+        );
+        for bad in ["0", "59", "86401", "invalid", "-1"] {
+            assert!(background_watch_interval(Some(OsStr::new(bad))).is_err());
+        }
+    }
+}
