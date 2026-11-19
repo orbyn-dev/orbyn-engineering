@@ -6,7 +6,9 @@ use orbyn_contracts::{GateDecider, GateDecision, GateStage, RouteRole, RouteTier
 use serde_json::json;
 
 use super::harness::{KEY_MARKER, Turn, bind};
-use super::review_support::{arc, built, commit_all, crew, finding, fixed, repro, reviewed};
+use super::review_support::{
+    arc, built, commit_all, crew, finding, fixed, lead_binding, repro, reviewed,
+};
 
 fn passing_repro() -> serde_json::Value {
     json!({ "id": "repro-ok", "kind": "command", "params": { "run": "exit 0" }, "proves": "The claim does not hold." })
@@ -251,7 +253,8 @@ async fn a_lane_added_after_a_pass_runs() {
     let first = w.review(&subject, &["correctness"]).await;
     w.until_state(&first[0], "passed").await;
     // Later, with the task long final, more lanes. Each call starts its lanes one after the other inside the tool's
-    // 45 second budget, and a lane takes seconds on a slow Windows runner, so the five come in short calls.
+    // 45 second budget, and a call that runs out is an error naming its lanes (#628); a lane takes seconds on a slow
+    // Windows runner, so the five still come in short calls.
     let mut more = w.review(&subject, &["security", "performance"]).await;
     more.extend(w.review(&subject, &["accessibility", "design"]).await);
     more.extend(w.review(&subject, &["licence"]).await);
@@ -271,6 +274,77 @@ async fn a_lane_added_after_a_pass_runs() {
     w.until_state(&again[0], "passed").await;
     let review = w.core.store.crew_review(&again[0]).unwrap().unwrap();
     assert_eq!(review.round, 2);
+}
+
+/// Issue #628: a review call cut by the tool budget is an error that names the lanes that started and the lanes
+/// it did not reach, the lane it started keeps running, and a retry asks for only the missing ones.
+#[tokio::test]
+async fn a_budget_cut_review_call_names_its_lanes() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    // The deadline already reached: the first lane still starts, so a call makes progress on any machine, and the
+    // loop answers before the MCP layer would drop it, naming what it started and what it did not reach.
+    let binding = lead_binding(&w);
+    let answer = w
+        .core
+        .crew_lanes_tool(
+            &binding,
+            &json!({ "task": subject, "lanes": ["correctness", "security", "performance"] }),
+            std::time::Instant::now(),
+        )
+        .await;
+    let Err(cut) = answer else {
+        panic!("a cut review call is an error, not {answer:?}");
+    };
+    assert_eq!(cut.code, orbyn_contracts::ErrorCode::InvalidObject, "{cut}");
+    assert_eq!(
+        cut.message,
+        "lanes: the tool budget ran out. Started: correctness. Not started: security, performance. Ask again for the lanes that did not start."
+    );
+    // The lane that started was never lost: it runs, and the others never did.
+    let one = w
+        .core
+        .store
+        .crew_reviews_of(&subject)
+        .unwrap()
+        .into_iter()
+        .find(|review| review.lane == "correctness")
+        .expect("the cut call's first lane started");
+    w.until_state(&one.task_id, "passed").await;
+    assert!(
+        w.core
+            .store
+            .crew_reviews_of(&subject)
+            .unwrap()
+            .iter()
+            .all(|review| review.lane != "security" && review.lane != "performance")
+    );
+    // A retry asks for the missing lanes and starts only those; the cut lane gains no second round.
+    let (retried, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["security", "performance"] }),
+        )
+        .await;
+    assert!(!error, "{retried}");
+    for lane in retried["lanes"].as_array().unwrap() {
+        let task = lane["task"].as_str().unwrap();
+        w.until_state(task, "passed").await;
+    }
+    let reviews = w.core.store.crew_reviews_of(&subject).unwrap();
+    assert_eq!(
+        reviews.iter().filter(|r| r.lane == "correctness").count(),
+        1
+    );
+    assert_eq!(reviews.iter().filter(|r| r.lane == "security").count(), 1);
+    assert_eq!(
+        reviews.iter().filter(|r| r.lane == "performance").count(),
+        1
+    );
 }
 
 fn commit_rules(w: &super::harness::World, text: &str) {

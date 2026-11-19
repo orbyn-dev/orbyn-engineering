@@ -1,4 +1,6 @@
-//! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. A lane named after the
+//! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. The lanes start one after
+//! another inside the call's tool budget, and a call the budget cuts short is an error naming the lanes it started
+//! and the ones it did not, so a retry asks for only the missing ones. A lane named after the
 //! work has passed runs like any other, and a lane the repo's rules ask for runs without being named. A lane
 //! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
 //! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
@@ -64,6 +66,33 @@ impl Core {
             _ => true,
         }
     }
+}
+
+/// The cut call's answer: which lanes started and which did not, none invented and none omitted. A lane whose
+/// start was refused or waits on a person has not started, so it is one to ask for again.
+fn cut_note(lanes: &[CrewToken], answers: &[Value]) -> String {
+    let begun: Vec<&str> = answers
+        .iter()
+        .filter(|answer| answer["task"].is_string())
+        .filter_map(|answer| answer["lane"].as_str())
+        .collect();
+    let rest: Vec<&str> = lanes
+        .iter()
+        .map(|lane| lane.as_str())
+        .filter(|lane| !begun.contains(lane))
+        .collect();
+    let named = |lanes: Vec<&str>| {
+        if lanes.is_empty() {
+            "none".to_owned()
+        } else {
+            lanes.join(", ")
+        }
+    };
+    format!(
+        "lanes: the tool budget ran out. Started: {}. Not started: {}. Ask again for the lanes that did not start.",
+        named(begun),
+        named(rest)
+    )
 }
 
 /// What a review run is for.
@@ -145,10 +174,11 @@ impl Core {
         .ok()
     }
 
-    pub(super) async fn crew_lanes_tool(
+    pub(in crate::crew) async fn crew_lanes_tool(
         self: &Arc<Self>,
         binding: &McpBinding,
         args: &Value,
+        deadline: std::time::Instant,
     ) -> Result<Value, CrewError> {
         let (thread, stamper) = self.review_lead(binding, "crew_review")?;
         let Some(fields) = args.as_object() else {
@@ -218,7 +248,13 @@ impl Core {
             ));
         }
         let mut started = Vec::new();
-        for lane in &lanes {
+        for (place, lane) in lanes.iter().enumerate() {
+            // The first lane always starts, so a call makes progress on any machine. A later lane starts only
+            // while the call is inside its tool budget (crates/orbyn-core/src/tools/mcp/mod.rs), and when that
+            // runs out the loop answers before the MCP layer drops the call, naming the lanes it started (#628).
+            if place > 0 && std::time::Instant::now() >= deadline {
+                return Err(invalid(cut_note(&lanes, &started)));
+            }
             let answer = match self
                 .start_review_run(&thread, &stamper, &task, lane, &commit, Run::Lane)
                 .await

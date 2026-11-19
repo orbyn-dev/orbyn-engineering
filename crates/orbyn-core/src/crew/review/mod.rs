@@ -71,7 +71,8 @@ pub fn specs() -> Vec<Value> {
         before it merges a task, so name them for work you mean to merge. There is no limit on lanes, and a lane can be added after a pass. Lanes \
                 the repo's rules (`.orbyn/crew.json`) ask for run as well. Every lane is a separate read-only run, \
                 routed to another vendor than the builder where one is configured. A lane named again runs again, as the \
-                next round.",
+                next round. A call starts lanes until its 45 second tool budget runs out, and is then an error naming the lanes \
+                that started and the ones to ask for again.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "task": { "type": "string" }, "lanes": { "type": "array" } },
@@ -150,7 +151,16 @@ impl Core {
         match tool {
             "crew_publish_review" => self.publish_review_tool(binding, args).await,
             FINDING_TOOL => self.crew_finding_tool(binding, args),
-            REVIEW_TOOL => self.crew_lanes_tool(binding, args).await,
+            // The lanes start inside the MCP layer's tool budget (the 45 seconds a call is given), so the
+            // loop answers before the layer drops it, naming the lanes it started (#628).
+            REVIEW_TOOL => {
+                self.crew_lanes_tool(
+                    binding,
+                    args,
+                    std::time::Instant::now() + crate::tools::mcp::TOOL_BUDGET,
+                )
+                .await
+            }
             CHECK_FINDING_TOOL => self.crew_check_finding_tool(binding, args).await,
             _ => self.crew_status_tool(binding, args),
         }

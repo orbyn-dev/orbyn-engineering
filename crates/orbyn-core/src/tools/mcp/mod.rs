@@ -28,8 +28,9 @@ const QUESTION_TOOL: &str = "AskUserQuestion";
 /// Tools this server provides. Each governs itself, so `approve` does not ask again.
 const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
 
-/// Engines give up on a tool call at about a minute, so a reply has to be sent first.
-const TOOL_BUDGET: Duration = Duration::from_secs(45);
+/// Engines give up on a tool call at about a minute, so a reply has to be sent first. `crew_review` keeps
+/// inside this itself: it stops starting lanes at the deadline and names the lanes it started.
+pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(45);
 /// A tool that can wait on a person gets longer, and a late answer does nothing: the
 /// wait is dropped, which expires the approval. Claude's `approve` is a run's own
 /// permission prompt, on the approval timeout rather than this.
