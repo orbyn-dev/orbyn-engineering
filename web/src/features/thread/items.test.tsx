@@ -1,10 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { api } from "../../api/client";
+import { api, ApiFailure } from "../../api/client";
 import type { AgUiEvent, Thread, WireThreadEvent } from "../../api/types";
 import { useThreadLogs } from "../../product/state/threadLogs";
 import { useWorkspace } from "../../product/state/workspace";
+import { useUi } from "../../product/state/ui";
+import { Toasts } from "../../product/ui/Toasts";
 import { applyEvents, emptyLog } from "../../product/timeline/projection";
 import { ThreadItemView } from "./items";
 import { TimelineThread } from "./timelineThread";
@@ -52,6 +54,19 @@ it("offers Resend on a no-reply failure and sends that run's prompt again", asyn
   view(failedLog(NO_REPLY));
   await user.click(screen.getByRole("button", { name: "Resend" }));
   expect(run).toHaveBeenCalledExactlyOnceWith("t", "Find out why login sends people back to /home.");
+});
+
+it("shows the error when Resend fails and lets the person try again", async () => {
+  const user = userEvent.setup();
+  const run = vi.spyOn(api, "startRun").mockRejectedValueOnce(new ApiFailure("unavailable", "The service is unavailable.", 503));
+  useUi.setState({ toasts: [] });
+  render(<Toasts />);
+  view(failedLog(NO_REPLY));
+  const resend = screen.getByRole("button", { name: "Resend" });
+  await user.click(resend);
+  expect(run).toHaveBeenCalledExactlyOnceWith("t", "Find out why login sends people back to /home.");
+  expect(await screen.findByText("Couldn't resend. The service is unavailable.")).toBeVisible();
+  expect(resend).toBeEnabled();
 });
 
 it("offers Resend on a lost-conversation failure", () => {
