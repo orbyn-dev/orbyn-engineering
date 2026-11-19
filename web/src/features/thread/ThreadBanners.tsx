@@ -9,6 +9,7 @@ import { useThreadLogs } from "../../product/state/threadLogs";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
+import { failureWantsResend } from "./runFailures";
 
 const dismissed = new Set<string>();
 
@@ -85,6 +86,9 @@ export function ThreadErrorBanner({ thread }: { thread: Thread }) {
   if (!failure || failure.kind !== "notice" || dismissed.has(failure.key)) return null;
   const prompt = items.findLast((item) => item.kind === "message" && item.role === "user");
   if (failure.code === "workspace_preparation_failed" || failure.code === "workspace_preparation_unavailable") return null;
+  // A no-reply or lost-conversation failure keeps only Resend, which sits on the
+  // failed run itself; every other failure keeps Retry on this line.
+  const resend = failureWantsResend(failure.text);
   const retry = () => {
     if (prompt?.kind !== "message") return;
     api.startRun(thread.id, prompt.text).then(
@@ -96,7 +100,7 @@ export function ThreadErrorBanner({ thread }: { thread: Thread }) {
     <div className="thread-error">
       <CircleAlert size={14} aria-hidden />
       <span>{failure.text}</span>
-      {prompt ? (
+      {prompt && !resend ? (
         <Button small tone="quiet" icon={<RotateCcw size={12} aria-hidden />} onClick={retry}>
           Retry
         </Button>
@@ -111,6 +115,43 @@ export function ThreadErrorBanner({ thread }: { thread: Thread }) {
         <X size={14} aria-hidden />
       </IconButton>
     </div>
+  );
+}
+
+/** Sends the person's last message before the failure again, as a new run. Disabled while it sends. */
+export function ResendButton({ threadId, seq }: { threadId: string; seq: number }) {
+  const items = useThreadLogs((state) => state.logs[threadId]?.items);
+  const thread = useWorkspace((state) => state.threads[threadId]);
+  const refreshThread = useWorkspace((state) => state.refreshThread);
+  const pushToast = useUi((state) => state.pushToast);
+  const [sending, setSending] = useState(false);
+  const pending = useRef(false);
+  const prompt = items?.findLast(
+    (item) => item.kind === "message" && item.role === "user" && item.seq < seq,
+  );
+  if (!prompt || prompt.kind !== "message") return null;
+  const send = () => {
+    if (pending.current) return;
+    pending.current = true;
+    setSending(true);
+    api.startRun(threadId, prompt.text).then(
+      () => void refreshThread(threadId),
+      (error: unknown) => pushToast(`Couldn't resend. ${toFailure(error).message}`),
+    ).finally(() => {
+      pending.current = false;
+      setSending(false);
+    });
+  };
+  return (
+    <Button
+      small
+      tone="quiet"
+      disabled={sending || thread?.active_run != null}
+      icon={<RotateCcw size={12} aria-hidden />}
+      onClick={send}
+    >
+      Resend
+    </Button>
   );
 }
 
