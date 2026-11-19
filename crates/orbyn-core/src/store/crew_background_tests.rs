@@ -234,6 +234,28 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
     );
 }
 #[test]
+fn the_table_keeps_the_daily_budget_and_the_persons_clock_within_their_bounds() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    // A crew made by the core is in bounds; the hand-made row past the widest real offset is
+    // refused by the table, exactly as the contract checks it.
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Clock", &settings), "user")
+        .unwrap();
+    assert_eq!(crew.utc_offset_minutes, 600);
+    for offset in [841, -841] {
+        let result = store.writer().execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, utc_offset_minutes, created_at, updated_at)
+             VALUES ('clock', 'p', 'n', 'flaky_test', 'schedule', '{}', 5, 5, ?1, 'a', 'a')",
+            [offset],
+        );
+        assert!(result.is_err(), "utc_offset_minutes {offset}");
+    }
+}
+
+#[test]
 fn the_daily_ledger_counts_per_run_day_and_engine() {
     let dir = TempDir::new();
     let store = store(&dir);

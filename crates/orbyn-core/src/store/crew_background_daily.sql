@@ -7,7 +7,7 @@
 ALTER TABLE crew_background ADD COLUMN daily_runs INTEGER NOT NULL DEFAULT 0 CHECK(daily_runs >= 0);
 ALTER TABLE crew_background ADD COLUMN daily_turns INTEGER NOT NULL DEFAULT 0 CHECK(daily_turns >= 0);
 ALTER TABLE crew_background ADD COLUMN utc_offset_minutes INTEGER NOT NULL DEFAULT 0
-    CHECK(utc_offset_minutes BETWEEN -1440 AND 1440);
+    CHECK(utc_offset_minutes BETWEEN -840 AND 840);
 DROP TRIGGER crew_background_budget_fixed;
 CREATE TRIGGER crew_background_budget_fixed BEFORE UPDATE OF
     project_id, template, budget_turns, budget_minutes, daily_runs, daily_turns, utc_offset_minutes
