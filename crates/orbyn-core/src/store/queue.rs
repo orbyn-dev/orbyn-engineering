@@ -44,6 +44,7 @@ fn enqueue_in(
     attachments: &[String],
     selection: &ModelSelection,
     force_hold: bool,
+    crew_note: bool,
 ) -> Result<String> {
     let id = new_id();
     let stamp = now();
@@ -61,8 +62,8 @@ fn enqueue_in(
     let held = force_hold || held || super::setup::failed(tx, thread_id)?;
     tx.execute(
         "INSERT INTO queued_messages (id, thread_id, prompt, attachment_ids, held,
-            created_at, model, effort, options, preparation_run_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            created_at, model, effort, options, preparation_run_id, crew_note)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             id,
             thread_id,
@@ -74,6 +75,7 @@ fn enqueue_in(
             selection.effort,
             options,
             preparation,
+            crew_note,
         ],
     )?;
     Ok(id)
@@ -147,8 +149,41 @@ impl Store {
         attachments: &[String],
         selection: &ModelSelection,
     ) -> Result<QueuedMessage> {
-        let id =
-            self.commit(|tx, _| enqueue_in(tx, thread_id, prompt, attachments, selection, false))?;
+        self.enqueue_asked(thread_id, prompt, attachments, selection, false)
+    }
+
+    /// Queues a message Crew itself asks the lead to read: a task's result, a review, or a start
+    /// it refused. The run that starts from it is judged by what the lead leaves behind, not by
+    /// what it says, because the person did not send it (docs/engine-run-contract.md).
+    pub fn enqueue_crew_note(
+        &self,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        selection: &ModelSelection,
+    ) -> Result<QueuedMessage> {
+        self.enqueue_asked(thread_id, prompt, attachments, selection, true)
+    }
+
+    fn enqueue_asked(
+        &self,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        selection: &ModelSelection,
+        crew_note: bool,
+    ) -> Result<QueuedMessage> {
+        let id = self.commit(|tx, _| {
+            enqueue_in(
+                tx,
+                thread_id,
+                prompt,
+                attachments,
+                selection,
+                false,
+                crew_note,
+            )
+        })?;
         self.queued(&id)
     }
 
@@ -180,6 +215,7 @@ impl Store {
                 &[],
                 &ModelSelection::default(),
                 stopped || state.is_terminal(),
+                false,
             )?;
             insert_event(
                 tx,
@@ -273,10 +309,12 @@ impl Store {
                     "SELECT * FROM queued_messages WHERE thread_id = ?1
                      ORDER BY urgent DESC, rowid LIMIT 1",
                     [thread_id],
-                    queued_row,
+                    |row| Ok((queued_row(row)?, row.get::<_, bool>("crew_note")?)),
                 )
                 .optional()?;
-            let Some(message) = next else { return Ok(None) };
+            let Some((message, crew_note)) = next else {
+                return Ok(None);
+            };
             if super::setup::failed(tx, thread_id)? {
                 tx.execute(
                     "UPDATE queued_messages SET preparation_run_id = CASE WHEN held = 0 THEN ?2 ELSE preparation_run_id END, held = 1 WHERE thread_id = ?1",
@@ -299,8 +337,8 @@ impl Store {
             )?;
             tx.execute("DELETE FROM queued_messages WHERE id = ?1", [&message.id])?;
             tx.execute(
-                "UPDATE runs SET queued_message_id = ?2 WHERE id = ?1",
-                params![run.id, message.id],
+                "UPDATE runs SET queued_message_id = ?2, crew_note = ?3 WHERE id = ?1",
+                params![run.id, message.id, crew_note],
             )?;
             apply_selection(
                 tx,

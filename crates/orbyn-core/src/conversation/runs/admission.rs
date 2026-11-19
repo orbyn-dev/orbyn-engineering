@@ -352,6 +352,35 @@ impl RunManager {
         attachments: &[String],
         wanted: &ModelSelection,
     ) -> Result<QueuedMessage> {
+        self.enqueue_asked(thread_id, prompt, attachments, wanted, false)
+    }
+
+    /// Queues a message Crew itself asks the lead to read: a task's result, a review, or a start
+    /// it refused. The run that starts from it is judged by what the lead leaves behind, not by
+    /// what it says, because the person did not send it (docs/engine-run-contract.md).
+    pub fn enqueue_crew_note(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+    ) -> Result<QueuedMessage> {
+        self.enqueue_asked(
+            thread_id,
+            prompt,
+            attachments,
+            &ModelSelection::default(),
+            true,
+        )
+    }
+
+    fn enqueue_asked(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        wanted: &ModelSelection,
+        crew_note: bool,
+    ) -> Result<QueuedMessage> {
         check_prompt(prompt)?;
         let thread = self.store.thread(thread_id)?;
         if thread
@@ -366,7 +395,12 @@ impl RunManager {
         self.attachment_files(thread_id, attachments)?;
         let chosen = selection::merged(&selection::of_thread(&thread), wanted);
         self.engines.check_selection(&thread.engine, &chosen)?;
-        let message = self.store.enqueue(thread_id, prompt, attachments, wanted)?;
+        let message = if crew_note {
+            self.store
+                .enqueue_crew_note(thread_id, prompt, attachments, wanted)?
+        } else {
+            self.store.enqueue(thread_id, prompt, attachments, wanted)?
+        };
         self.drain(thread_id);
         Ok(message)
     }

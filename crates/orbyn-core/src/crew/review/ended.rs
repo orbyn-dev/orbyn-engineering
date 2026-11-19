@@ -23,7 +23,10 @@ impl Core {
         if refuse_secret(&serde_json::json!({ "notice": notice })).is_err() {
             return;
         }
-        if let Err(error) = self.runs.enqueue(&run.lead_thread_id, &notice, &[]) {
+        if let Err(error) = self
+            .runs
+            .enqueue_crew_note(&run.lead_thread_id, &notice, &[])
+        {
             tracing::warn!(%error, "could not tell the lead about a review");
         }
     }

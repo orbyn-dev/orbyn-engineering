@@ -108,6 +108,21 @@ impl Store {
             .ok_or_else(|| CoreError::NotFound("run".into()))
     }
 
+    /// Whether the run was admitted from a message Crew queued for a lead: a task's result, a
+    /// review, or a start it refused. Such a run is judged by what the lead leaves behind, not by
+    /// what it says; the person did not send the prompt.
+    pub fn run_is_crew_note(&self, run_id: &str) -> Result<bool> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT crew_note != 0 FROM runs WHERE id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
     pub fn mark_starting(&self, run_id: &str) -> Result<()> {
         self.commit(|tx, _| {
             guard_active(tx, &self.epoch, run_id)?;

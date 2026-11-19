@@ -113,7 +113,7 @@ impl Core {
             "Task {task_id} could not start{on}: {why} The person cancelled it and asks you to start it again with crew_start; \
              the router now picks an engine that can run a crew worker."
         );
-        let lead_told = match self.runs.enqueue(lead_thread_id, &note, &[]) {
+        let lead_told = match self.runs.enqueue_crew_note(lead_thread_id, &note, &[]) {
             Ok(_) => true,
             Err(error) => {
                 tracing::warn!(%error, "could not ask the lead to start a task again");
