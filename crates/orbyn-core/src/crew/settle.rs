@@ -309,6 +309,35 @@ impl Core {
             }
             return;
         }
+        // No engine takes a hard limit, so a run whose engine reached the crew's daily cap is cancelled here, at the
+        // cap, instead of being retried: the run ends 'budget' waiting for the person, with what the engine spent
+        // today shown and when the day turns (docs/crew/background-engine-start.md, PR 2).
+        if let Some(cap) = self.crew_background_daily_at_cap(task) {
+            let why = format!(
+                "Engine {} reached this crew's daily budget: {} of its {} turns today. The budget resets at {}.",
+                cap.engine, cap.turns, cap.cap, cap.reset
+            );
+            if let Some(run) = self.store.background_run(&task.crew_id).ok().flatten()
+                && run.state == "running"
+                && let Err(error) = self.store.end_background_run_daily(
+                    &run.id,
+                    &why,
+                    self.crew_background_run_spent(task),
+                )
+            {
+                tracing::warn!(%error, run = %run.id, "could not stop a background run at its daily cap");
+            }
+            if let Some(task) = self.step_crew_task(&task.id, "stopped", Some("budget")) {
+                self.end_crew_task(
+                    &task,
+                    ResultState::Stopped,
+                    Some(StopReason::Budget),
+                    &why,
+                    judged,
+                );
+            }
+            return;
+        }
         let (moved, next) = match self.store.fail_crew_verification(&task.id, fingerprint) {
             Ok(done) => done,
             Err(error) => {
@@ -453,6 +482,9 @@ impl Core {
         let Ok(ended) = self.store.run(&run_id) else {
             return;
         };
+        // One engine turn of a background run counts as it happens: on the run, and on the engine's day when the crew has a
+        // daily budget (docs/crew/background-engine-start.md, PR 2).
+        self.crew_background_turn_ended(&task, &thread_id);
         let reported = run.last_report_run.as_deref() == Some(run_id.as_str());
         if task.state == "verifying" && reported {
             match ended.state {

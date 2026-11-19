@@ -149,7 +149,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/create",
-        "core background_create: a live project, bounded name, budget and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
+        "core background_create: a live project, bounded name, run budget, daily per-engine budget with the person's UTC offset, and trigger settings of the trigger's own kind, redacted, created off, audited in the same transaction; local only",
     ),
     (
         "POST",

@@ -46,7 +46,9 @@ fn create_body(project: &str, name: &str) -> wire::BackgroundCrewCreate {
         "name": name,
         "template": "fix_failing_ci",
         "trigger": { "kind": "ci_failure", "branch": "main" },
-        "budget": { "turns": 10, "minutes": 30 }
+        "budget": { "turns": 10, "minutes": 30 },
+        "daily": { "runs": 2, "turns": 40 },
+        "utc_offset_minutes": 600
     }))
     .unwrap()
 }
@@ -102,6 +104,10 @@ fn a_crew_is_created_off_and_audited() {
             minutes: 30
         }
     );
+    assert_eq!(
+        crew.daily,
+        wire::BackgroundDailyBudget { runs: 2, turns: 40 }
+    );
     assert_eq!(f.core.background_get(&crew.id).unwrap(), crew);
     let listed = f.core.background_list(Some(&f.project), page()).unwrap();
     assert_eq!((listed.total, listed.crews.len()), (1, 1));
@@ -122,7 +128,9 @@ fn input_is_checked_strictly() {
             "name": "Crew",
             "template": "flaky_test",
             "trigger": { "kind": "ci_failure" },
-            "budget": { "turns": 5, "minutes": 5 }
+            "budget": { "turns": 5, "minutes": 5 },
+            "daily": { "runs": 2, "turns": 40 },
+            "utc_offset_minutes": 600
         });
         for (key, value) in patch.as_object().unwrap() {
             body[key] = value.clone();
@@ -548,7 +556,9 @@ fn hidden_characters_are_refused_in_names_and_trigger_text() {
             "name": "Trigger",
             "template": "fix_failing_ci",
             "trigger": { "kind": "issue_label", "label": format!("bug{c}") },
-            "budget": { "turns": 5, "minutes": 5 }
+            "budget": { "turns": 5, "minutes": 5 },
+            "daily": { "runs": 2, "turns": 40 },
+            "utc_offset_minutes": 600
         }))
         .unwrap();
         assert!(
