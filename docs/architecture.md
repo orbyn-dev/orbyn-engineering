@@ -104,6 +104,13 @@ admitted -> starting -> running <-> awaiting_approval
   since a child caught mid-exec can hold it briefly after a crash.
 - Pending approvals expire in the same transaction that ends a run.
 
+A refused background start removes its run and lead thread
+only while no Crew task exists, and does so in one transaction with the refusal
+audit, so a crash leaves none of them behind. After task creation, refusal holds the
+task for a person and ends the background run `needs_review`, retaining its lead;
+the run is returned, not an error. The refusal audit, task hold and run end
+share one transaction; a failed unwind transaction is returned to the caller. After the commit each held task gives up its leases and gets one `NeedsPerson` result, best effort and only logged; a task with no run row gets none and the run's `review_reason` carries the reason.
+
 ## Thread lifecycle
 
 Settling removes a pin and ends a snooze; it needs no active run and closes the

@@ -93,7 +93,7 @@ pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
     BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
-    RunEnd,
+    RunEnd, Unwound,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
@@ -598,41 +598,7 @@ impl Store {
     /// of them has a run, because that owner still has effects in flight. Audit
     /// rows outlive the threads. Returns every deleted id.
     pub fn delete_thread(&self, id: &str, actor: &str) -> Result<Vec<String>> {
-        let deleted = self.commit(|tx, _| {
-            let family = thread_family(tx, id)?;
-            for member in &family {
-                let active: i64 = tx.query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM runs WHERE thread_id = ?1
-                         AND state IN {ACTIVE_STATES}"
-                    ),
-                    [member],
-                    |row| row.get(0),
-                )?;
-                if active > 0 {
-                    return Err(CoreError::ThreadBusy);
-                }
-            }
-            insert_audit(
-                tx,
-                &AuditRecord {
-                    actor: actor.to_owned(),
-                    action: "thread.delete".into(),
-                    target: id.to_owned(),
-                    decision: None,
-                    source: "user".into(),
-                    thread_id: Some(id.to_owned()),
-                    run_id: None,
-                    detail: serde_json::json!({ "family": family }),
-                },
-            )?;
-            let deleted = tx.execute("DELETE FROM threads WHERE id = ?1", [id])?;
-            if deleted == 0 {
-                return Err(CoreError::NotFound("thread".into()));
-            }
-            prune_scratch(tx)?;
-            Ok(family)
-        })?;
+        let deleted = self.commit(|tx, _| delete_thread_in(tx, id, actor))?;
         for member in &deleted {
             self.hub.remove(member);
         }
@@ -762,6 +728,44 @@ fn refuse_newer(conn: &Connection) -> Result<()> {
         return Err(CoreError::DatabaseTooNew { found, supported });
     }
     Ok(())
+}
+
+/// `Store::delete_thread` inside the caller's transaction, so a larger change can delete a thread in the same commit. Keeps the
+/// active-run check and the audit row. The caller removes each returned id from the hub after the commit.
+pub(crate) fn delete_thread_in(tx: &Transaction<'_>, id: &str, actor: &str) -> Result<Vec<String>> {
+    let family = thread_family(tx, id)?;
+    for member in &family {
+        let active: i64 = tx.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM runs WHERE thread_id = ?1
+                 AND state IN {ACTIVE_STATES}"
+            ),
+            [member],
+            |row| row.get(0),
+        )?;
+        if active > 0 {
+            return Err(CoreError::ThreadBusy);
+        }
+    }
+    insert_audit(
+        tx,
+        &AuditRecord {
+            actor: actor.to_owned(),
+            action: "thread.delete".into(),
+            target: id.to_owned(),
+            decision: None,
+            source: "user".into(),
+            thread_id: Some(id.to_owned()),
+            run_id: None,
+            detail: serde_json::json!({ "family": family }),
+        },
+    )?;
+    let deleted = tx.execute("DELETE FROM threads WHERE id = ?1", [id])?;
+    if deleted == 0 {
+        return Err(CoreError::NotFound("thread".into()));
+    }
+    prune_scratch(tx)?;
+    Ok(family)
 }
 
 /// Forgets scratch projects with no thread left. The folders stay on disk.

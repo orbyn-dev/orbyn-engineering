@@ -855,3 +855,229 @@ async fn a_background_merge_waits_for_a_person_even_when_autopilot_is_full() {
         "the person's merge landed"
     );
 }
+
+#[tokio::test]
+async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    // Use an existing tracked file regardless of the harness fixture's names.
+    let listed = gitq(&w.repo, &["ls-files"]).await;
+    let path = listed.lines().next().unwrap();
+    run_git(&w.repo, &["update-index", "--assume-unchanged", path]);
+    let before = (threads(&w), mode_rows(&w));
+    // A refusal after the task exists keeps the run for review and returns it, like a route refusal does.
+    let returned = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    assert!(
+        returned
+            .review_reason
+            .as_deref()
+            .is_some_and(|why| why.contains("git index")),
+        "{returned:?}"
+    );
+    let run = run_of(&w, &id);
+    assert_eq!(returned.id, run.id);
+    assert_eq!(run.state, wire::BackgroundRunState::NeedsReview);
+    assert!(run.review_waiting);
+    let task = task_of(&w, &run);
+    assert_eq!(
+        w.core.store.crew_task(&task).unwrap().unwrap().state,
+        "needs_person"
+    );
+    // The task was moved to waiting by the start itself, which wrote no result: the unwind writes exactly one.
+    let results = w.core.store.crew_results(&task).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert_eq!(results[0].state, wire::ResultState::NeedsPerson);
+    assert!(w.core.store.thread(&run.id).is_ok());
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
+    let saved = w.core.store.background_run(&run.id).unwrap();
+    w.core
+        .store
+        .unwind_background_run(&run.id, "retry")
+        .unwrap();
+    assert_eq!(w.core.store.background_run(&run.id).unwrap(), saved);
+    let refusals: i64 = w.core.store.reader().query_row(
+        "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.refused' AND json_extract(detail, '$.run') = ?1",
+        [&run.id], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(refusals, 1);
+    assert!(w.sent_to(&run.id).is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_refusal_transaction_preserves_the_lead_and_reports_the_store_error() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    let listed = gitq(&w.repo, &["ls-files"]).await;
+    run_git(
+        &w.repo,
+        &[
+            "update-index",
+            "--assume-unchanged",
+            listed.lines().next().unwrap(),
+        ],
+    );
+    rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap().execute_batch(
+        "CREATE TRIGGER refuse_unwind BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.refused' BEGIN SELECT RAISE(ABORT, 'refusal audit unavailable'); END;",
+    ).unwrap();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("refusal audit unavailable"),
+        "{error}"
+    );
+    let run = run_of(&w, &id);
+    assert_eq!(run.state, wire::BackgroundRunState::Running);
+    assert!(w.core.store.thread(&run.id).is_ok());
+    assert_eq!(w.core.crew_autopilot_mode(&project(&w), &run.id), Mode::Off);
+    assert_eq!(w.core.store.crew_tasks_in_crew(&run.id).unwrap().len(), 1);
+}
+
+fn refusals(w: &World, run: &str) -> i64 {
+    w.core.store.reader().query_row(
+        "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.refused' AND json_extract(detail, '$.run') = ?1",
+        [run], |row| row.get(0),
+    ).unwrap()
+}
+
+#[tokio::test]
+async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_real_start() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    // The run row cannot be stored, so the start fails after the task exists and while it is still `briefed`.
+    rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap().execute_batch(
+        "CREATE TRIGGER no_crew_run BEFORE INSERT ON crew_runs BEGIN SELECT RAISE(ABORT, 'no crew run'); END;",
+    ).unwrap();
+    let before = (threads(&w), mode_rows(&w));
+    let returned = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let run = run_of(&w, &id);
+    assert_eq!(returned.id, run.id);
+    assert_eq!(run.state, wire::BackgroundRunState::NeedsReview);
+    assert!(run.review_waiting);
+    // The task has no run row (that insert is what failed), so read it by its crew, not through the run join.
+    let states: Vec<String> = {
+        let conn = w.core.store.reader();
+        let mut statement = conn
+            .prepare("SELECT state FROM crew_tasks WHERE crew_id = ?1")
+            .unwrap();
+        statement
+            .query_map([&run.id], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(states, ["needs_person"]);
+    assert!(w.core.store.thread(&run.id).is_ok());
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
+    assert_eq!(refusals(&w, &run.id), 1);
+    assert!(w.sent_to(&run.id).is_empty());
+}
+
+#[tokio::test]
+async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    let crew_row = w.core.background_row(&id).unwrap();
+    let thread = w
+        .core
+        .store
+        .create_thread(crate::store::NewThread {
+            project_id: project(&w),
+            title: "Background crew: crash".into(),
+            engine: "claude".into(),
+            model: None,
+            cwd: w.repo.to_string_lossy().into_owned(),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap();
+    w.core
+        .store
+        .start_background_run_as(&crew_row.id, &thread.id, "user")
+        .unwrap();
+    let before = (threads(&w), mode_rows(&w));
+    // The last step of the cleanup fails: the refusal audit and every earlier delete must go with it.
+    let connection = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    connection.execute_batch(
+        "CREATE TRIGGER no_thread_delete BEFORE DELETE ON threads BEGIN SELECT RAISE(ABORT, 'thread delete unavailable'); END;",
+    ).unwrap();
+    assert!(
+        w.core
+            .store
+            .unwind_background_run(&thread.id, "refused")
+            .is_err()
+    );
+    assert_eq!(
+        w.core
+            .store
+            .background_run(&thread.id)
+            .unwrap()
+            .unwrap()
+            .state,
+        "running"
+    );
+    assert_eq!((threads(&w), mode_rows(&w)), before);
+    assert_eq!(refusals(&w, &thread.id), 0);
+    // With the fault gone the same call finishes everything in one commit.
+    connection
+        .execute_batch("DROP TRIGGER no_thread_delete")
+        .unwrap();
+    let unwound = w
+        .core
+        .store
+        .unwind_background_run(&thread.id, "refused")
+        .unwrap();
+    assert!(unwound.discarded);
+    assert!(w.core.store.background_run(&thread.id).unwrap().is_none());
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 - 1, before.1));
+    assert_eq!(refusals(&w, &thread.id), 1);
+    assert!(
+        !w.core
+            .store
+            .unwind_background_run(&thread.id, "again")
+            .unwrap()
+            .discarded
+    );
+}
+
+#[tokio::test]
+async fn a_held_task_gives_up_its_leases() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    // The lead thread of this harness stands for a run's lead: the task started under it has a lease and a worker.
+    w.core
+        .store
+        .start_background_run_as(&id, &w.lead, "user")
+        .unwrap();
+    let (answer, error) = w
+        .start(
+            brief(json!({ "files": [{ "path": "src/**", "mode": "write" }] })),
+            json!({ "checks": [{ "id": "chk-ok", "kind": "command", "params": { "run": "echo background-lease-1" }, "proves": "It runs." }],
+                    "protected_paths": ["tests/**"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let task = answer["task"].as_str().unwrap().to_owned();
+    let live = |w: &World| {
+        w.core
+            .live_crew_leases(&w.lead, crate::util::unix_now())
+            .unwrap()
+            .len()
+    };
+    assert_eq!(live(&w), 1, "the running task holds its lease");
+
+    let held = w
+        .core
+        .unwind_background_start(&w.lead, CoreError::Invalid("start refused".into()))
+        .unwrap();
+    assert_eq!(held.state, wire::BackgroundRunState::NeedsReview);
+    assert_eq!(w.task(&task).state, "needs_person");
+    assert_eq!(live(&w), 0, "the held task released its lease");
+    let results = w.core.store.crew_results(&task).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+}

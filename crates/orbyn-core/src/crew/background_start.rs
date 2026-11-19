@@ -178,7 +178,11 @@ impl Core {
             .store
             .start_background_run_as(&crew.id, &thread.id, actor)
         {
-            self.discard_background_lead(&thread.id);
+            // No run row exists yet or it is still taskless, so this fails closed whatever the cleanup does. The person is owed the
+            // refusal, not a store error from the cleanup.
+            if let Err(cleanup) = self.store.discard_unopened_background_lead(&thread.id) {
+                tracing::error!(%cleanup, run = %thread.id, "could not take back a background start that failed to open");
+            }
             return Err(error);
         }
         let stamper = match self.review_stamper(&thread, &engine) {
@@ -246,7 +250,9 @@ impl Core {
             })
             .await;
         // A task that could not be routed or started ended the run itself (it waits for a person). A start refused before any task
-        // existed, such as one held by review capacity, left no run: the run is taken back and the reason goes to the person.
+        // existed, such as one held by review capacity, left no run: the run is taken back and the reason goes to the person as an
+        // error. A refusal after a task exists holds the task and ends the run `needs_review` with the reason; it returns that run
+        // like the route-refused path does, because the visible outcome is the same: a run waiting for a person, not an error.
         let mut run = self.store.background_run(&thread.id)?;
         // The person turned the crew off while the task was being made: the run is already `disabled`, and the worker that has just
         // started is stopped with it. A run that ended for any other reason leaves its task to the person.
@@ -330,25 +336,48 @@ impl Core {
             })
     }
 
-    /// Takes back what a refused start made: the run and the lead thread. Returns the refusal.
-    fn unwind_background_start(
+    /// Takes back a taskless start (run and lead thread, in one commit) and returns the refusal as an error, or retains a
+    /// task-backed start for review: its tasks are held and the retained run is returned. An error of the store unwind is returned
+    /// as it is, since the run is still `running` and the caller must know. What follows the commit is best effort and only logged:
+    /// each held task gives up its leases (a run that ended `needs_review` leaves none showing as granted, as `end_crew_task` does) and gets a `NeedsPerson` result with the reason
+    /// unless it already has one. A task with no run row (that insert is what failed) cannot be given a result, so it has none and
+    /// the run's `review_reason` carries the reason.
+    pub(super) fn unwind_background_start(
         &self,
         thread_id: &str,
         refusal: CoreError,
     ) -> Result<wire::BackgroundRun> {
-        if let Err(error) = self
-            .store
-            .unwind_background_run(thread_id, &redact(&refusal.public_message()))
-        {
-            tracing::warn!(%error, "could not take back a refused background run");
+        let why = redact(&refusal.public_message());
+        let unwound = self.store.unwind_background_run(thread_id, &why)?;
+        if unwound.discarded {
+            return Err(refusal);
         }
-        self.discard_background_lead(thread_id);
-        Err(refusal)
-    }
-
-    fn discard_background_lead(&self, thread_id: &str) {
-        if let Err(error) = self.store.delete_thread(thread_id, "crew") {
-            tracing::warn!(%error, "could not remove a refused background run's lead thread");
+        for task in unwound.held {
+            if let Err(error) = self.release_crew_leases(&task.id) {
+                tracing::warn!(%error, task = %task.id, "could not release a held background task's leases");
+            }
+            let has_result = self
+                .store
+                .crew_results(&task.id)
+                .map_or(true, |results| !results.is_empty());
+            if has_result {
+                continue;
+            }
+            let task = self
+                .store
+                .crew_task(&task.id)
+                .ok()
+                .flatten()
+                .unwrap_or(task);
+            if let Err(error) =
+                self.record_result(&task, ResultState::NeedsPerson, None, &why, None)
+            {
+                tracing::warn!(%error, task = %task.id, "could not write a held background task's result");
+            }
+        }
+        match self.store.background_run(thread_id)? {
+            Some(run) => run_wire(run),
+            None => Err(refusal),
         }
     }
 
