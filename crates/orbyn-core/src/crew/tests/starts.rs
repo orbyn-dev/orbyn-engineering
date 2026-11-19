@@ -13,6 +13,76 @@ async fn quiet() -> World {
 }
 
 #[tokio::test]
+async fn an_ordinary_launch_keeps_its_persisted_project_and_checkout_binding() {
+    use crate::crew::stamp::Stamper;
+    use crate::crew::start::{Launch, Links};
+    use crate::crew::tool::stamp_now;
+    use orbyn_contracts::{CrewId, CrewMember, CrewToken};
+
+    let w = quiet().await;
+    let lead = w.core.store.thread(&w.lead).unwrap();
+    let alternate = w._dir.path().join("alternate-checkout");
+    crate::testing::run_git(
+        &w.repo,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            &alternate.to_string_lossy(),
+            "HEAD",
+        ],
+    );
+    let mut wrong_checkout = lead.clone();
+    wrong_checkout.cwd = alternate.to_string_lossy().into_owned();
+    let other = w
+        .core
+        .new_project("other-project", false, None)
+        .await
+        .unwrap();
+    let mut wrong_project = lead.clone();
+    wrong_project.project_id = other.id;
+
+    for incoming in [wrong_checkout, wrong_project] {
+        let stamper = Stamper {
+            crew_id: CrewId::new(lead.id.clone()).unwrap(),
+            engine: CrewToken::new("alpha").unwrap(),
+            member: CrewMember::new("lead-01").unwrap(),
+            now: stamp_now().unwrap(),
+        };
+        let brief = stamper.brief(&brief(json!({}))).unwrap();
+        let key = stamper.answer_key(&key(), &brief.id).unwrap();
+        let error = w
+            .core
+            .launch_crew_task(Launch {
+                lead: &incoming,
+                now: stamper.now,
+                brief,
+                key,
+                role: None,
+                lane: None,
+                lane_keeps_lead: false,
+                author_engine: None,
+                prefix: "worker",
+                prompt: None,
+                links: Links::default(),
+            })
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("binding changed"), "{error:?}");
+        assert_eq!(count(&w, "crew_tasks"), 0);
+        assert!(w.prompts.lock().unwrap().is_empty());
+        assert!(w.crew_tasks.lock().unwrap().is_empty());
+    }
+
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error && answer["routed"] == true, "{answer}");
+    let task = answer["task"].as_str().unwrap();
+    let worker = w.core.store.crew_run(task).unwrap().unwrap();
+    assert_eq!(worker.worktree.as_deref(), Some(lead.cwd.as_str()));
+    w.core.shutdown().await;
+}
+
+#[tokio::test]
 async fn an_ordinary_task_cannot_install_a_core_fix_byte_check() {
     let w = quiet().await;
     let mut forged = key();
