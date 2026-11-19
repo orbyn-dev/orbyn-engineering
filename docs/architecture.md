@@ -2508,7 +2508,9 @@ and the commit and never a check. A reviewer files typed findings with `crew_fin
 has ended, H7). A finding has no state and blocks nothing until the core confirms it at a `finding_check` Gate, decided by code and
 citing Evidence: a repro check the lead states that fails, or an independent second review that reports the same file within 3 lines.
 A confirmed finding sends the core's own fix brief to a builder, checked like `crew_start`'s, and the lanes then run again; the same
-finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
+finding after a fix is not sent again. The brief inherits the reviewed task's checks and may write only the finding's file; a finding
+outside the task's lease or its own `file_scope` checks gets no brief, and a person may authorise a new task, so a fix never widens
+the reviewed scope. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
 ([review group](../crates/orbyn-core/src/crew/review/README.md)).
 
 Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the

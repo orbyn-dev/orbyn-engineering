@@ -44,7 +44,8 @@ its own. Code, not a model, decides whether a finding is true.
   (it files at most 10). Both write core Evidence and a Gate decided by `code` (naming the engines on each side), stored with the reviewed task and kept
   out of the task's own verification Evidence. One Gate per finding, written in one transaction. A model's review is never a pass or fail gate.
 - **The fix loop.** A confirmed finding sends a fix brief to a builder, written by the core and started through the same function as
-  `crew_start`. It is refused for a file the reviewed task could not write, a test or CI file, a protected path or a file that is not there.
+  `crew_start`. It is refused for a file the reviewed task could not write, a file outside the task's own `file_scope` checks,
+  a test or CI file, a protected path or a file that is not there.
   Its key is the reviewed task's checks, the repro, a check that the file now differs from the byte digest in the core's immutable key (a cheap guard that it was touched), and a scope
   check (the files changed when the fix began, and the finding's file). The files already changed (the work under review), bar the finding's file, are held by
   their bytes, as a reviewer's are. A fix that changes nothing fails and stops. The lanes run again when a fix passes, after the last fix still running.
@@ -107,7 +108,7 @@ records workflow completion, not proof of code correctness. A required-lane waiv
 | Reworded claims and fingerprints | Accepted: fingerprints label reports; blocking and the loop guard retain lane + file. A paraphrase or silent lane cannot clear a confirmed finding. Exact semantic claim identity is not implemented. |
 | Reviewer checkout at the commit | Deferred to #436: shared-checkout lease and byte checks provide no process or filesystem isolation. |
 | Second blind lane cost | Accepted whole-lane, cross-vendor blind confirmation. Anchoring it on the claim changes the independence rule. Cost remains unmeasured. |
-| Fix outside original scope | Accepted refusal requiring a person/new authorized task; the fix inherits the original checks. No automatic scope expansion. Check-defining manifests remain refused. |
+| Fix outside original scope | Changed: a confirmed finding outside the reviewed task's own `file_scope` checks now gets no fix brief, and the lead is told a person must authorise a new task; the fix still inherits the original checks. The residual is accepted: no automatic scope expansion, and check-defining manifests remain refused. Test: `a_fix_outside_the_tasks_scope_checks_is_refused`. |
 | Real Claude and Codex yield | Unqualified: only fake engines are tested here. Real provider runs and confirmed-finding yield remain outstanding. |
 | Hidden paths and index flags | Partially changed: all hiding flags refuse admission/fail checks; sparse checkouts with skip-worktree entries are intentionally unsupported. Ignored new files remain an accepted blind spot to preserve ordinary cached checkouts. Crafted index stat data remains a limit above; #436 isolation is still needed. |
 | Clearing repro at finding commit | Deferred: current-checkout repro is recorded as such; fail-before/pass-after at exact commits and isolated process lifetime remain outstanding with #436. |
