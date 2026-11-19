@@ -241,6 +241,14 @@ pub struct AutopilotAnswered {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub revert_commit: Option<String>,
+    /// For a revert of a forge merge: the exact commit the corrective PR will push.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub candidate: Option<String>,
+    /// For a revert of a forge merge: the forge main commit that candidate was built on and is pinned to.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub base: Option<String>,
 }
 }
 
@@ -286,6 +294,21 @@ pub struct AutopilotForgeIntent {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub pull: Option<u64>,
+    /// For a corrective PR: what Core keeps until the correction is complete. Core never deletes the pushed branch on the forge.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub correction: Option<AutopilotCorrectionLeftovers>,
+}
+}
+
+wire! {
+/// The local checkout, object reference and forge branch a corrective PR leaves behind until it is complete and nothing reads it.
+pub struct AutopilotCorrectionLeftovers {
+    pub checkout: String,
+    pub reference: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub branch: Option<String>,
 }
 }
 

@@ -111,7 +111,9 @@ fn migration_55_follows_54_keeps_old_hunks_and_adds_the_table() {
 
     let store = Store::open(&path, "upgrade").unwrap();
     let upgrade = store.upgrade().expect("55 applies on an old database");
-    assert_eq!((upgrade.from, upgrade.to), (54, 55));
+    // Later migrations (56 binds forge corrections) run in the same upgrade.
+    assert_eq!(upgrade.from, 54);
+    assert!(upgrade.to >= 55);
     let rows = store.crew_hunks_of_merge(1).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(

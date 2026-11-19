@@ -84,6 +84,7 @@
     ["GET","/api/engines/{id}/native-sessions/capabilities","local"],
     ["GET","/api/engines/{id}/native-sessions/count","local"],
     ["GET","/api/engines/{id}/tools","local"],
+    ["GET","/api/explorer/events","local"],
     ["GET","/api/forges","local"],
     ["GET","/api/fs/browse","local"],
     ["GET","/api/health/dependencies","local"],

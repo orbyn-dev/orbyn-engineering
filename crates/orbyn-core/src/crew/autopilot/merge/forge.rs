@@ -20,6 +20,24 @@ use crate::source_control::{
 };
 use crate::store::{ForgeMerge, ForgePhase, MergeEntry, OPEN_MERGE_STATES};
 
+/// Who asked for a forge lane pass, in the ledger's own words.
+#[derive(Clone, Copy)]
+pub(super) enum ForgeActor {
+    /// A lead's merge tool, scoped to its crew.
+    Lead,
+    /// The local HTTP caller of the service: no proof of who.
+    LocalCaller,
+}
+
+impl ForgeActor {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lead => "lead",
+            Self::LocalCaller => "local_caller",
+        }
+    }
+}
+
 fn blocked(task: &str, why: &str) -> MergeOutcome {
     MergeOutcome::Blocked {
         task_id: task.into(),
@@ -36,6 +54,7 @@ impl Core {
         now: i64,
     ) -> Result<MergeEntry> {
         self.crew_preview_only()?;
+        self.refuse_unrequested_correction(task_id)?;
         self.refuse_unproven_escape_check(task_id, None)?;
         if self.config.crew_merge_required_checks.is_empty() {
             return Err(CoreError::Invalid(
@@ -49,15 +68,80 @@ impl Core {
             {
                 return Err(CoreError::Invalid("the queued forge target differs".into()));
             }
-            return self.store.merge_entry(task_id)?.ok_or_else(|| {
-                CoreError::Invalid(
-                    "forge intent has no queue entry; a person must reconcile it".into(),
-                )
-            });
+            if let Some(entry) = self.store.merge_entry(task_id)? {
+                return Ok(entry);
+            }
+            let correction = self
+                .store
+                .crew_correction_for_task(task_id)?
+                .ok_or_else(|| {
+                    CoreError::Invalid(
+                        "forge intent has no queue entry; a person must reconcile it".into(),
+                    )
+                })?;
+            let remote = text(&git(&target.repo, &["remote", "get-url", "origin"]).await?);
+            let selected = CrewRepository::from_remote(&remote)?;
+            let candidate = self
+                .store
+                .crew_results(task_id)?
+                .into_iter()
+                .rfind(|result| result.state == orbyn_contracts::ResultState::Passed)
+                .and_then(|result| result.commit)
+                .map(|commit| commit.as_str().to_owned());
+            if intent.phase != ForgePhase::Prepared
+                || correction.remote != remote
+                || correction.repo != intent.repo
+                || correction.branch != intent.branch
+                || correction.base != intent.base
+                || correction.candidate != intent.candidate
+                || candidate.as_deref() != Some(intent.candidate.as_str())
+                || crew_base(&selected, &target.repo, &target.branch).await? != intent.base
+            {
+                return Err(CoreError::Invalid(
+                    "the interrupted corrective admission no longer matches its pinned target"
+                        .into(),
+                ));
+            }
+            self.correction_review_thread(
+                &self.store.thread(
+                    &self
+                        .store
+                        .crew_run(task_id)?
+                        .ok_or_else(|| CoreError::NotFound("corrective run".into()))?
+                        .lead_thread_id,
+                )?,
+                task_id,
+            )
+            .await
+            .map_err(|error| CoreError::Invalid(error.message))?;
+            return self.crew_queue_merge(task_id, target, now).await;
         }
         let remote = text(&git(&target.repo, &["remote", "get-url", "origin"]).await?);
         let selected = CrewRepository::from_remote(&remote)?;
         let base = crew_base(&selected, &target.repo, &target.branch).await?;
+        if let Some(correction) = self.store.crew_correction_for_task(task_id)? {
+            if correction.repo != target.repo.to_string_lossy()
+                || correction.remote != remote
+                || correction.branch != target.branch
+                || correction.base != base
+            {
+                return Err(CoreError::Invalid(
+                    "the corrective target moved; a person must reconcile the pinned task".into(),
+                ));
+            }
+            self.correction_review_thread(
+                &self.store.thread(
+                    &self
+                        .store
+                        .crew_run(task_id)?
+                        .ok_or_else(|| CoreError::NotFound("corrective run".into()))?
+                        .lead_thread_id,
+                )?,
+                task_id,
+            )
+            .await
+            .map_err(|error| CoreError::Invalid(error.message))?;
+        }
         let result = self
             .store
             .crew_results(task_id)?
@@ -108,13 +192,25 @@ impl Core {
         crew_id: Option<&str>,
         now: i64,
     ) -> Result<Vec<MergeOutcome>> {
-        self.crew_preview_only()?;
-        // The lead tool passes its crew; the local HTTP caller has none. Same names as the ledger's actor.
         let actor = if crew_id.is_some() {
-            "lead"
+            ForgeActor::Lead
         } else {
-            "local_caller"
+            ForgeActor::LocalCaller
         };
+        let outcomes = self.process_forge_lane(target, crew_id, actor, now).await?;
+        self.crew_watch_forge_main(target, crew_id, now).await?;
+        Ok(outcomes)
+    }
+
+    pub(super) async fn process_forge_lane(
+        self: &Arc<Self>,
+        target: &MergeTarget,
+        crew_id: Option<&str>,
+        actor: ForgeActor,
+        now: i64,
+    ) -> Result<Vec<MergeOutcome>> {
+        self.crew_preview_only()?;
+        let actor = actor.as_str();
         let mut outcomes = Vec::new();
         {
             let _serial = self.crew_merges.lock().await;
@@ -197,8 +293,6 @@ impl Core {
             self.reconcile_rejected_requests(Some(target), crew_id, now, &mut outcomes)
                 .await;
         }
-        // The watch owns its own lock. It runs only after confirmed merges and retries read-only work on restart.
-        self.crew_watch_forge_main(target, now).await?;
         Ok(outcomes)
     }
 
@@ -258,6 +352,10 @@ impl Core {
             return self.forge_needs_person(intent, "the target base moved; combined-state evidence must be rebuilt under a new reviewed task");
         }
         if intent.phase == ForgePhase::Prepared {
+            // Checked again right before the first forge write: a correction needs a person's Revert answer.
+            if let Err(error) = self.refuse_unrequested_correction(task) {
+                return Ok(blocked(task, &error.public_message()));
+            }
             let scratch = Scratch::at(
                 &target.repo,
                 &self.config.data_dir.join("crew-merge"),
@@ -291,15 +389,13 @@ impl Core {
                 ],
             )
             .await?;
+            let (title, body) = self.forge_pull_text(task)?;
             let url = forge::create_pull_in(
                 selected.forge,
                 &target.repo,
                 &intent.source,
-                &format!(
-                    "Merge crew task {}",
-                    task.chars().skip(7).take(12).collect::<String>()
-                ),
-                "Core-checked Crew task. Combined-state checks are recorded in the task proof.",
+                &title,
+                &body,
                 Some(&intent.branch),
                 &selected.selector(),
             )
@@ -421,6 +517,42 @@ impl Core {
         Ok(blocked(
             task,
             "merge requested; awaiting an exact merge receipt",
+        ))
+    }
+
+    /// The pull request text is written by code alone: fixed words, ids and numbers, never agent text or a mention.
+    fn forge_pull_text(&self, task: &str) -> Result<(String, String)> {
+        let Some(correction) = self.store.crew_correction_for_task(task)? else {
+            return Ok((
+                format!(
+                    "Merge crew task {}",
+                    task.chars().skip(7).take(12).collect::<String>()
+                ),
+                "Core-checked Crew task. Combined-state checks are recorded in the task proof."
+                    .into(),
+            ));
+        };
+        let original = self
+            .store
+            .crew_forge_merge(&correction.parent_task)?
+            .and_then(|intent| intent.pull)
+            .map_or_else(
+                || "the original Crew PR".to_owned(),
+                |number| format!("the original Crew PR #{number}"),
+            );
+        Ok((
+            format!(
+                "Revert crew merge {}",
+                correction
+                    .parent_commit
+                    .chars()
+                    .take(12)
+                    .collect::<String>()
+            ),
+            format!(
+                "Core-prepared rollback of {original}, merge commit {}. The exact rollback tree and the repository checks are recorded in the corrective task proof.",
+                correction.parent_commit
+            ),
         ))
     }
 
@@ -716,6 +848,7 @@ impl Core {
                 mismatch,
             )?;
         }
+        self.project_forge_correction(&entry.task_id, now)?;
         Ok(MergeOutcome::Merged {
             task_id: entry.task_id.clone(),
             merge_commit: commit,

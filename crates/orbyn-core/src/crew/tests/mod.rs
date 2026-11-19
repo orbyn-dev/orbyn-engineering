@@ -45,6 +45,7 @@ mod filters;
 mod flow;
 mod flow_board;
 mod flow_map;
+mod forge_corrections;
 mod forge_merge;
 mod forge_resolve;
 mod hardening;

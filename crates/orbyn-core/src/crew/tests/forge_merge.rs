@@ -28,17 +28,27 @@ pub(super) async fn setup() -> Setup {
 }
 
 async fn setup_with_rules(rules: &str) -> Setup {
-    let w = world_forge(Arc::new(|turn, repo| {
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(
-            repo.join("src/feature.txt"),
-            format!("implemented {turn}\n"),
-        )
-        .unwrap();
-        commit_all(repo, "feature");
-        Turn::Report(report("done"))
-    }))
-    .await;
+    setup_with_script(
+        rules,
+        Arc::new(|turn, repo| {
+            std::fs::create_dir_all(repo.join("src")).unwrap();
+            std::fs::write(
+                repo.join("src/feature.txt"),
+                format!("implemented {turn}\n"),
+            )
+            .unwrap();
+            commit_all(repo, "feature");
+            Turn::Report(report("done"))
+        }),
+    )
+    .await
+}
+
+async fn setup_with_script(rules: &str, script: super::harness::Script) -> Setup {
+    setup_world(rules, world_forge(script).await).await
+}
+
+pub(super) async fn setup_world(rules: &str, w: World) -> Setup {
     // The checks are committed before the task starts; the candidate cannot define its own verifier.
     std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
     std::fs::write(w.repo.join(".orbyn/crew.json"), rules).unwrap();
@@ -85,6 +95,8 @@ pub(super) struct RemoteState {
     /// The PR was closed without a merge.
     pub(super) closed: bool,
     pub(super) unknown_create: bool,
+    /// The arguments of the last `pr create`, so a test can read the title and body Core wrote.
+    pub(super) create_args: Vec<String>,
     pub(super) unreadable_once: bool,
     pub(super) wrong_merge_commit: bool,
     /// The pull reads so far, and the read after which the fixture withdraws the escape check of the task (0: never). Reads belong to
@@ -145,6 +157,7 @@ pub(super) async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
             ["pr", "create", ..] => {
                 s.creates += 1;
                 s.published = true;
+                s.create_args = args.iter().map(|arg| (*arg).to_owned()).collect();
                 if s.unknown_create {
                     return Err(CoreError::Git("unknown fake create response".into()));
                 }
@@ -159,7 +172,17 @@ pub(super) async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
                 if s.queued_merge {
                     return Ok(String::new());
                 }
-                let intent = core.store.crew_forge_merge(&task).unwrap().unwrap();
+                let actual_task = core
+                    .store
+                    .crew_pending_corrections()
+                    .unwrap()
+                    .into_iter()
+                    .find(|correction| {
+                        format!("crew/{}", correction.task_id.replace(':', "-")) == s.source
+                    })
+                    .map(|correction| correction.task_id)
+                    .unwrap_or_else(|| task.clone());
+                let intent = core.store.crew_forge_merge(&actual_task).unwrap().unwrap();
                 let merged = if s.wrong_merge_commit {
                     intent.candidate
                 } else {
@@ -315,7 +338,18 @@ async fn forge_merge_pending_ci_cannot_merge_and_unknown_response_reconciles_onc
             s.w.core
                 .crew_answer_review(&s.task, ReviewAnswer::Revert, &s.target, NOW + 5)
                 .await
-                .is_err()
+                .is_ok()
+        );
+        assert!(
+            s.w.core
+                .store
+                .crew_forge_correction(&s.task)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            gitq(&s.w.repo, &["rev-parse", &s.target.branch]).await,
+            local
         );
     })
     .await;

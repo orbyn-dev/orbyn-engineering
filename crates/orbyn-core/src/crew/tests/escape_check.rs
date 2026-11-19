@@ -95,6 +95,8 @@ async fn rig_with(confine: bool) -> Rig {
         world(true, script).await
     };
     let repo = w.repo.clone();
+    // Preserve the fixture's exact rules bytes across checkout and reset.
+    run_git(&repo, &["config", "core.autocrlf", "false"]);
     std::fs::create_dir_all(repo.join(".orbyn")).unwrap();
     std::fs::write(repo.join(".orbyn/crew.json"), "{\"lanes\":[]}\n").unwrap();
     std::fs::write(repo.join("src/value.txt"), "value: bug\n").unwrap();
