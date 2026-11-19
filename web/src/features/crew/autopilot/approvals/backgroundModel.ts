@@ -7,6 +7,7 @@ import type { BackgroundTemplate } from "../../../../generated/BackgroundTemplat
 import type { BackgroundTrigger } from "../../../../generated/BackgroundTrigger";
 import type { BackgroundTriggerKind } from "../../../../generated/BackgroundTriggerKind";
 import type { BackgroundBudget } from "../../../../generated/BackgroundBudget";
+import type { BackgroundDailyBudget } from "../../../../generated/BackgroundDailyBudget";
 import type { Mode, TemplateId, TriggerId } from "./model";
 
 // Background crews are kept on this device, in the service's data folder. The route serves the crews, their runs and the on/off
@@ -70,9 +71,11 @@ export const WIRE_TRIGGER: Record<TriggerId, BackgroundTriggerKind> = {
   dependency_update: "dependency_update",
 };
 
-/** What a new crew starts with, and the route's limits: agent turns 1 to 1000 and minutes 1 to 1440 for each run. */
+/** What a new crew starts with, and the route's limits: agent turns 1 to 1000 and minutes 1 to 1440 for each run, and for each
+ *  engine a day of runs 1 to 1000 and turns 1 to 10000 that resets at the person's midnight. */
 export const DEFAULT_BUDGET: BackgroundBudget = { turns: 40, minutes: 60 };
-export const LIMITS = { turns: 1000, minutes: 1440, hours: 720, text: 100, name: 80 } as const;
+export const DEFAULT_DAILY: BackgroundDailyBudget = { runs: 2, turns: 80 };
+export const LIMITS = { turns: 1000, minutes: 1440, dailyRuns: 1000, dailyTurns: 10_000, hours: 720, text: 100, name: 80 } as const;
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
