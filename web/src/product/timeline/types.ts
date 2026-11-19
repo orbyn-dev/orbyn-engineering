@@ -84,6 +84,18 @@ export interface NoticeItem extends ItemBase {
   text: string;
   code: string | null;
 }
+/** One task the engine stopped when its run ended, from a background.stopped event. */
+export interface StoppedTask {
+  taskId: string;
+  taskType: string;
+  /** The engine's own words for the task; null when it said nothing. */
+  description: string | null;
+}
+export interface StoppedItem extends ItemBase {
+  kind: "stopped";
+  /** One row per task, in the order the engine reported them. */
+  tasks: StoppedTask[];
+}
 
 export type ThreadItem =
   | MessageItem
@@ -93,7 +105,8 @@ export type ThreadItem =
   | PlanItem
   | DiffSummaryItem
   | ActivityItem
-  | NoticeItem;
+  | NoticeItem
+  | StoppedItem;
 
 export interface TimelineEntry {
   seq: number;

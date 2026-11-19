@@ -1,13 +1,16 @@
+import { threadToken } from "./skillMention";
+
 /**
  * Context a message carries as a chip instead of typed text: a file, a terminal
- * selection, a review comment, a picked page element, or a cited reply.
+ * selection, a review comment, a picked page element, a cited reply, or a thread
+ * picked from the @ menu.
  *
  * A chip is kept in the composer's own state. When the message is sent, each
  * chip becomes a readable block at the top of the prompt, so the engine sees
  * exactly what the person attached and the transcript shows it.
  */
 
-export type ChipKind = "file" | "terminal" | "review" | "annotation" | "citation";
+export type ChipKind = "file" | "terminal" | "review" | "annotation" | "citation" | "thread";
 
 interface ChipBase {
   id: string;
@@ -67,7 +70,14 @@ export interface CitationChip extends ChipBase {
   text: string;
 }
 
-export type ComposerChip = FileChip | TerminalChip | ReviewChip | AnnotationChip | CitationChip;
+/** A thread picked from the @ menu, read by the agent on demand. */
+export interface ThreadChip extends ChipBase {
+  kind: "thread";
+  threadId: string;
+  title: string;
+}
+
+export type ComposerChip = FileChip | TerminalChip | ReviewChip | AnnotationChip | CitationChip | ThreadChip;
 
 export const CHIP_MIME = "application/x-orbyn-composer+json";
 export const CHIP_ATTRIBUTE = "data-orbyn-composer";
@@ -140,6 +150,8 @@ export function chipLabel(chip: ComposerChip): string {
       const first = oneLine(chip.text);
       return first.length > 48 ? `${first.slice(0, 48)}…` : first || "Cited reply";
     }
+    case "thread":
+      return chip.title;
   }
 }
 
@@ -172,6 +184,10 @@ export function chipPrompt(chip: ComposerChip): string {
     }
     case "citation":
       return quote(excerptOf(chip.text.trim()));
+    case "thread":
+      // The link itself: the timeline renders it as a thread, and the agent
+      // reads the thread on demand instead of the chip carrying its text.
+      return `Thread: ${threadToken(chip.threadId, chip.title)}`;
   }
 }
 
@@ -294,6 +310,12 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
       const threadId = text(chip.threadId, 200);
       if (!cited?.trim() || !threadId) return null;
       return { id, kind: "citation", threadId, text: cited };
+    }
+    case "thread": {
+      const threadId = text(chip.threadId, 200);
+      const title = text(chip.title, 4096);
+      if (!threadId || !title) return null;
+      return { id, kind: "thread", threadId, title };
     }
     default:
       return null;
