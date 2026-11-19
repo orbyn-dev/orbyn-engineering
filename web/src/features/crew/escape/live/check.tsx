@@ -108,7 +108,7 @@ function WithdrawDialog({ check, busy, onClose, onWithdraw }: { check: EscapeChe
               <span>Now</span>
               <b>{check.state.charAt(0).toUpperCase()}{check.state.slice(1)}</b>
               <span>If the merge is landing</span>
-              <b>Crew refuses: “the merge is landing; withdraw after it ends”</b>
+              <b>Crew refuses: “The merge is landing right now. Withdraw the check after it ends.”</b>
               <span>If it already merged</span>
               <b>The answer says: “Already merged: the merge could not be stopped”</b>
             </div>

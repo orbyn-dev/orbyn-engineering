@@ -199,7 +199,7 @@ describe("the check frames of Crew Designs v79", () => {
     await user.click(await screen.findByRole("button", { name: "Withdraw" }));
     const dialog = screen.getByRole("dialog", { name: "Withdraw this check?" });
     expect(within(dialog).getByText(/a worker still writing is cancelled, a proof still running is stopped and a queued merge of it is turned down/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Crew refuses: “the merge is landing; withdraw after it ends”/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Crew refuses: “The merge is landing right now. Withdraw the check after it ends.”/)).toBeInTheDocument();
     expect(within(dialog).getByText(/“Already merged: the merge could not be stopped”/)).toBeInTheDocument();
     answers.check = { status: 200, body: { escape: row({ state: "confirmed", gap: "test_gap" }), check: checkRow({ state: "withdrawn" }) } };
     await user.click(within(dialog).getByRole("button", { name: "Withdraw the check" }));
