@@ -672,8 +672,10 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   - drive the desktop app's native dialog through Accessibility or SendInput, including a lead that is not confined;
   - read the shell's memory (on macOS the hardened runtime blocks `task_for_pid`, but signing is not checked here; on Windows `PROCESS_VM_READ`);
   - write into the shell's pipe to the service (on Linux `/proc/<pid>/fd/0`, on Windows `DuplicateHandle`).
-  The devtools feature is on in release builds (`desktop/src-tauri/Cargo.toml:15`): a script in the page can call `invoke` but cannot click the native
-  dialog. That is a known exposure, tracked in [issue #532](https://github.com/orbyn-dev/orbyn-engineering/issues/532).
+  Ordinary release builds omit devtools and its menu/shortcut; debug builds retain it, and technical testers can opt in at build time with the Cargo
+  `devtools` feature (see [setup](setup.md#developer-tools-for-technical-testers), issue #532). This removes the shipped inspector, not the page's IPC
+  authority: a hostile script in the product origin can still call its allowed `invoke` commands but cannot click the native dialog. The main window's
+  capability grants only the five app commands; runtime origin checks reserve retry/log/quit for the startup document and presence/person_key for the product.
   **Idea, not built (Linux only):** a per-launch HMAC key between the shell and the service, so a line written into the pipe by another process fails.
   **As built (PR2, the shell's dialog):** the command `crew_presence(hold_id)` in `desktop/src-tauri/src/presence.rs`. The bundled app's main window
   alone may call it (the capability is the `main` window's, and the command checks the window's label and address as well). It checks the hold id, sends
@@ -699,7 +701,7 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
 
   Why this is acceptable: the person opened the dialog by clicking Approve once in the page, the dialog shows the exact command, and Return approving
   adds no capability beyond what a same-user process that can click the dialog already has (stated above). The dialog may only open as the direct result of the
-  person's own click; the shell cannot tell a click from a script that calls `crew_presence` (devtools is on in release builds, issue #532), so PR3's card
+  person's own click; the shell cannot tell a click from a script in the product origin that calls `crew_presence`, so PR3's card
   must call it only from a trusted click (`event.isTrusted`, no keydown, no automatic retry) and wait for the Enter key to be released first. In the shell,
   `crew_presence` is the only way a dialog opens; nothing retries, reopens after a refusal or queues a second one (`approve_never_reopens_the_dialog`).
   If the plugin gains a default-button setting, we revisit and make Cancel the default.
@@ -733,7 +735,7 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   the Orbyn desktop app."; Deny and Dismiss still work. "Approve it myself" from a denied command or a Needs you item is the same flow, with no dialog of
   the page's own. The account password flow is gone from approve-once.
   **What the click check does not cover.** It covers the page's own code paths and synthetic events. It does not stop a hostile script running in the app's
-  origin (devtools stay on in release builds, issue #532): that script can call `window.__TAURI_INTERNALS__.invoke("crew_presence", {holdId})` directly and
+  origin, even with devtools disabled: that script can call `window.__TAURI_INTERNALS__.invoke("crew_presence", {holdId})` directly and
   open the native dialog. Because Return approves on macOS and Windows, a person pressing Enter elsewhere while such a dialog opens could approve. This is a
   known exposure. **Key repeat:** when the click came from the keyboard (`detail` 0), the page waits for the Enter key to be released (up to 2 seconds) before
   it asks the shell, so a held Enter's repeats are over before the dialog opens; mouse clicks are not delayed. "Approve it myself" is offered only for a

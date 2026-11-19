@@ -193,6 +193,34 @@ and profile and confirm that the native window renders the product UI. Service
 readiness and the packaged smoke tests alone do not establish that the UI rendered.
 Do not change the installed app or its data, and do not start a provider run.
 
+## Developer tools for technical testers
+
+Ordinary release and `ci-release` builds omit the webview inspector and the native
+Toggle Developer Tools menu item and shortcut. Debug builds (`npx tauri dev`)
+retain them automatically.
+
+After preparing the bundle as above, technical testers can deliberately opt in
+when building a release from `desktop`:
+
+```bash
+# macOS
+npx tauri build --features devtools --bundles app
+```
+
+```powershell
+# Windows
+npx.cmd tauri build --features devtools --bundles nsis
+```
+
+The Cargo feature forwards to `tauri/devtools`; it is off by default. There is no
+runtime setting or environment switch. Leave `--features devtools` out of normal
+release builds and label tester packages accordingly. In an opted-in build, use
+View > Toggle Developer Tools (`Alt+Cmd+I` on macOS, `Ctrl+Shift+I` on Windows).
+
+Disabling the inspector does not prevent hostile script already in the product
+origin from invoking its allowed shell commands. Runtime window/origin checks and
+the native approval dialog remain required.
+
 ## First run on an unsigned build
 
 Builds we distribute are not signed with a Developer ID or an Authenticode certificate yet, so the first run needs one
