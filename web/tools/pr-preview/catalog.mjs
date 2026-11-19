@@ -648,4 +648,9 @@ export const FRAMES = {
   "escape-low-sample": { route: "#/preview/crew/escape-low-sample", scenario: "crew-escapes-low" },
   "escape-error": { route: "#/preview/crew/escape-error", scenario: "crew-escapes-unreadable" },
   "escape-possible": { route: "#/preview/crew/escape-possible", scenario: "crew-escapes" },
+  "escape-detail": { route: "#/preview/crew/escape-detail?id=esc-returnto", scenario: "crew-escapes" },
+  "escape-detail-tooling": { route: "#/preview/crew/escape-detail?id=esc-next", scenario: "crew-escapes" },
+  "escape-confirmed": { route: "#/preview/crew/escape-confirmed?id=esc-session", scenario: "crew-escapes" },
+  "escape-dismissed": { route: "#/preview/crew/escape-dismissed?id=esc-docs", scenario: "crew-escapes" },
+  "escape-gap": { route: "#/preview/crew/escape-gap?id=esc-session", scenario: "crew-escapes", steps: [click("button", "Set the gap…")] },
 };

@@ -9,8 +9,6 @@ import { EscapeRouteShifted } from "./route-shifted";
 import { EscapeSettings } from "./settings";
 import { EscapeNarrowPanel } from "./narrow-panel";
 import { EscapeNarrowWindow } from "./narrow-window";
-import { EscapeDetail } from "./detail";
-import { EscapeDetailTooling } from "./detail-tooling";
 import { ESCAPE_LIVE_FRAMES } from "./live/screens";
 import type { EscapeFrameId } from "./names";
 
@@ -21,8 +19,6 @@ import type { EscapeFrameId } from "./names";
 type EscapeDrawnFrameId = Exclude<EscapeFrameId, (typeof ESCAPE_LIVE_FRAMES)[number]>;
 
 export const ESCAPE_SCREENS: Partial<Record<EscapeDrawnFrameId, ComponentType>> = {
-  "escape-detail": EscapeDetail,
-  "escape-detail-tooling": EscapeDetailTooling,
   "escape-create-check": EscapeCreateCheck,
   "escape-create-check-tooling": EscapeCreateCheckTooling,
   "escape-report": EscapeReport,

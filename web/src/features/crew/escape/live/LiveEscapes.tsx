@@ -3,6 +3,7 @@ import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { useVisibleProjects, useWorkspace } from "../../../../product/state/workspace";
 import { useCrewPreview } from "../../autopilot/approvals/useCrew";
 import { Frame } from "../../shared/Frame";
+import { LiveEscapeDetail } from "./LiveEscapeDetail";
 import { LiveEscapeLog } from "./LiveEscapeLog";
 import { LiveEscapePossible } from "./LiveEscapePossible";
 
@@ -18,7 +19,7 @@ function Card({ children }: { children: ReactNode }) {
  * a person chooses another from the page's project chip. The detail names its escape in the hash (`?id=`), so it needs
  * no project of its own: the escape says which project it belongs to.
  */
-export function LiveEscapes({ view }: { view: "log" | "possible" }) {
+export function LiveEscapes({ view, id }: { view: "log" | "possible" | "detail"; id?: string }) {
   const on = useCrewPreview();
   const projects = useVisibleProjects();
   const failure = useWorkspace((state) => state.projects.error);
@@ -33,5 +34,6 @@ export function LiveEscapes({ view }: { view: "log" | "possible" }) {
   const project = projects.find((entry) => entry.id === chosen) ?? projects[0];
   if (!project) return <Card><Empty title="No project to show" /></Card>;
   if (view === "log") return <LiveEscapeLog key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} />;
-  return <LiveEscapePossible key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} />;
+  if (view === "possible") return <LiveEscapePossible key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} />;
+  return <LiveEscapeDetail id={id ?? ""} />;
 }

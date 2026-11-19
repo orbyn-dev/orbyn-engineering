@@ -5,6 +5,9 @@
 export const ESCAPE_FRAMES = [
   "escape-log",
   "escape-possible",
+  "escape-confirmed",
+  "escape-dismissed",
+  "escape-gap",
   "escape-create-check",
   "escape-create-check-tooling",
   "escape-report",

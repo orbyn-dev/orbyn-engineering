@@ -12,6 +12,11 @@ export const ESCAPE_LIVE_FRAMES = [
   "escape-low-sample",
   "escape-error",
   "escape-possible",
+  "escape-detail",
+  "escape-detail-tooling",
+  "escape-confirmed",
+  "escape-dismissed",
+  "escape-gap",
 ] as const;
 
 export type EscapeLiveFrameId = (typeof ESCAPE_LIVE_FRAMES)[number];
@@ -25,4 +30,9 @@ export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-low-sample": () => <LiveEscapes view="log" />,
   "escape-error": () => <LiveEscapes view="log" />,
   "escape-possible": () => <LiveEscapes view="possible" />,
+  "escape-detail": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-detail-tooling": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-confirmed": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-dismissed": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-gap": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
 };
