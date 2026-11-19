@@ -27,6 +27,7 @@ export const ESCAPE_LIVE_FRAMES = [
   "escape-check-retry",
   "escape-check-withdraw",
   "escape-check-withdrawn",
+  "escape-limit",
 ] as const;
 
 export type EscapeLiveFrameId = (typeof ESCAPE_LIVE_FRAMES)[number];
@@ -53,4 +54,5 @@ export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-check-retry": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-check-withdraw": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-check-withdrawn": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-limit": () => <LiveEscapes view="log" />,
 };

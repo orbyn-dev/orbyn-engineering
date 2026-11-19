@@ -5,7 +5,7 @@ import type { EscapeLog } from "../../../../generated/EscapeLog";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
-import { asOf, count, merges, WHY } from "./model";
+import { asOf, count, ESCAPES_LIMIT, merges, WHY } from "./model";
 import { EscapeTable, ProjectChip } from "./parts";
 import { useEscapeLog } from "./useEscapes";
 
@@ -112,10 +112,12 @@ function Tiles({ log }: { log: EscapeLog }) {
 }
 
 /**
- * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, on the real escape log read. Counts are
- * shown apart and never added; there is no rate in this slice, so the tiles say so instead of inventing one. The window
- * is the stored one, so the header names it and offers no window of its own. Nothing here sends a write: the person's acts
- * are on the possible list and on the escape's own page.
+ * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, and `escape-limit` (the banner the
+ * writer's own refusal draws when a project holds its 5,000 escapes), on the real escape log read. The limit is the core's
+ * own cap and the read carries the count, so the page says it is reached only when the count does. Counts are shown apart
+ * and never added; there is no rate in this slice, so the tiles say so instead of inventing one. The window is the stored
+ * one, so the header names it and offers no window of its own. Nothing here sends a write: the person's acts are on the
+ * possible list and on the escape's own page.
  */
 export function LiveEscapeLog({ project, name, projects, onPick }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void }) {
   const read = useEscapeLog(project);
@@ -145,6 +147,18 @@ export function LiveEscapeLog({ project, name, projects, onPick }: { project: st
           {log ? (
             <>
               <span className="cx-t10f" style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>As of {asOf(log.as_of)}</span>
+              {log.total >= ESCAPES_LIMIT ? (
+                <div className="cx-cwbn cx-amber" role="status">
+                  <Ic n="alert" sm />
+                  <span>
+                    This project has reached the {count(ESCAPES_LIMIT)}-escape limit. A new escape is not recorded, and Mark as an
+                    escape is refused, until room is made. The same holds at 20,000 audit events. Confirmed escapes are never dropped.
+                  </span>
+                  <span className="cx-acts">
+                    <Planned why={WHY.pruning} />
+                  </span>
+                </div>
+              ) : null}
               {log.total === 0 ? (
                 <div className="cx-cwstate" style={{ margin: "48px auto 0" }}>
                   <b>No escapes in the last {log.window_days} days</b>
@@ -161,7 +175,12 @@ export function LiveEscapeLog({ project, name, projects, onPick }: { project: st
                 <>
                   <Tiles log={log} />
                   <h5 className="cx-t10h5">
-                    The escapes <span className="cx-t10r">{count(log.total)} in the last {log.window_days} days</span>
+                    The escapes{" "}
+                    <span className="cx-t10r">
+                      {log.total >= ESCAPES_LIMIT
+                        ? `Newest ${count(log.rows.length)} of ${count(log.total)}`
+                        : `${count(log.total)} in the last ${log.window_days} days`}
+                    </span>
                   </h5>
                   <EscapeTable rows={log.rows} onOpen={open} />
                 </>

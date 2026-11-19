@@ -22,6 +22,7 @@ export const ESCAPE_FRAMES = [
   "escape-check-retry",
   "escape-check-withdraw",
   "escape-check-withdrawn",
+  "escape-limit",
   "escape-dashboard",
   "escape-route-counts",
   "escape-route-shifted",

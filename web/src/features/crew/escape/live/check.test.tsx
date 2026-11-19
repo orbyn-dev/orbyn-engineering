@@ -18,6 +18,7 @@ const CHECK_FRAMES = [
   "escape-check-retry",
   "escape-check-withdraw",
   "escape-check-withdrawn",
+  "escape-limit",
 ] as const;
 
 let calls: Call[] = [];
@@ -227,5 +228,24 @@ describe("the check frames of Crew Designs v79", () => {
     await user.click(await screen.findByRole("button", { name: "Accept: start a worker" }));
     expect(await screen.findByText(/This check changed since you looked. Reload it and choose again. Look again./)).toBeInTheDocument();
     await waitFor(() => expect(calls.filter(({ url }) => /\/api\/crew\/escapes\/esc-1$/.test(url))).toHaveLength(2));
+  });
+});
+
+describe("the escape log at its limit", () => {
+  it("draws the refusal banner and the newest-of heading when the project holds 5,000 escapes", async () => {
+    answers.log = { status: 200, body: log({ total: 5000 }) };
+    render(<LiveEscapes view="log" />);
+    expect(await screen.findByText(/This project has reached the 5,000-escape limit\./)).toBeInTheDocument();
+    expect(screen.getByText(/The same holds at 20,000 audit events\. Confirmed escapes are never dropped\./)).toBeInTheDocument();
+    expect(screen.getByTitle("Planned: pruning the oldest dismissed and possible escapes is not built; the writer refuses instead")).toBeInTheDocument();
+    expect(screen.getByText("Newest 3 of 5,000")).toBeInTheDocument();
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("draws no banner below the limit", async () => {
+    render(<LiveEscapes view="log" />);
+    await screen.findByText("Escapes");
+    expect(screen.queryByText(/5,000-escape limit/)).toBeNull();
+    expect(screen.getByText(/6 in the last 60 days/)).toBeInTheDocument();
   });
 });

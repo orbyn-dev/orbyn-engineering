@@ -13,7 +13,12 @@ export const WHY = {
   queue: "the Review queue is not in the beta, so there is no button to open it",
   check: "the create-check screen (the form for the path, what it asserts and the run command) is still a drawn sample, so no live screen collects a proposal yet",
   tooling: "a created check only adds test files in v1; a tooling gap is logged with no proposal",
+  pruning: "pruning the oldest dismissed and possible escapes is not built; the writer refuses instead",
 } as const;
+
+/** The core’s own cap on one project’s escapes (ESCAPES_PER_PROJECT_MAX). The log read carries the count, so the page can
+ * say the limit is reached without inventing a state the read does not carry. */
+export const ESCAPES_LIMIT = 5000;
 
 /** A refused write in the service’s own words: a stale act adds “Look again.”, a network failure its own message. */
 export const refusalOf = (error: unknown): string => {
