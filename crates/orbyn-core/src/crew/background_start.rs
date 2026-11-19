@@ -61,12 +61,27 @@ fn outcome(template: &str, branch: Option<&str>) -> String {
     }
 }
 
-/// The top-level entries of `HEAD` a run may write: a folder as `name/**`, a file by its name. Hidden folders the run must not touch
-/// are left out, and so is anything the task format cannot name.
+/// The top-level entries of `HEAD` a run may write: a folder as `name/**`, a file by its name. `.git`, `.github` and `.orbyn` are
+/// left out, and so is anything the task format cannot name.
 async fn write_entries(root: &std::path::Path) -> Result<Vec<String>> {
-    let listing = crate::source_control::git::git_hardened(root, &["ls-tree", "-z", "HEAD"])
+    let listing = match crate::source_control::git::git_hardened(root, &["ls-tree", "-z", "HEAD"])
         .await
-        .map_err(|_| CoreError::Invalid("The project's files could not be listed.".into()))?;
+    {
+        Ok(listing) => listing,
+        Err(_) => {
+            // An unborn HEAD is a plain refusal, not a project that cannot be read.
+            let unborn =
+                crate::source_control::git::git_hardened(root, &["rev-parse", "--verify", "HEAD"])
+                    .await
+                    .is_err();
+            let why = if unborn {
+                "The project has nothing committed yet, so there is nothing for a background run to work on."
+            } else {
+                "The project's files could not be listed."
+            };
+            return Err(CoreError::Invalid(why.into()));
+        }
+    };
     let mut entries: Vec<String> = listing
         .split(|byte| *byte == 0)
         .filter_map(|entry| {
