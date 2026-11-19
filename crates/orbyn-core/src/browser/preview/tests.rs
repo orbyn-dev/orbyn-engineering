@@ -28,6 +28,12 @@ use super::snapshots::{
 };
 use super::*;
 
+#[path = "capture_tests.rs"]
+mod capture_tests;
+
+#[path = "recording_capture_tests.rs"]
+mod recording_capture_tests;
+
 fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
     let (frames, _) = broadcast::channel(8);
     let (pointers, _) = broadcast::channel(16);

@@ -12,6 +12,11 @@ The pages a person watches beside a thread, and everything that crosses into or 
 
 The old paths `browser::preview_bridge`, `preview_recording` and `preview_trace` still resolve as aliases in `mod.rs`, and the limits and types of `preview` are re-exported from its `mod.rs`. Tests sit in `preview/tests.rs`; the three small modules keep theirs inline.
 
+The preview pump owns a cancellable frame future outside the tab session mutex.
+CDP's connection reader dispatches replies by id and processes document events;
+the session still serializes page actions and owns the browser child. Tab close
+cancels a capture, and session drop stops the reader and wakes reply waiters.
+
 `remote_images` owns the shared fetch policy for browser-facing remote raster
 media. The HTTP adapter exposes it to both thread media and browser history icons;
 neither presentation caller owns the fetch policy.

@@ -2758,6 +2758,18 @@ four run at once, and they close when their thread settles, archives or is delet
 Frames are polled about five times a second, only while someone watches or records,
 and a frame that did not change is not sent. `/ws/preview` sends each as base64 JPEG
 text. Watching gives no control: input needs a person to take the page first.
+Each browser session owns one CDP reader task, which routes replies to bounded
+waiters by command id and records document and bridge events in receive order.
+The preview pump releases the tab's session mutex while awaiting a frame; title,
+history and page actions can use the connection during that capture. The existing
+pump ticks continue metadata refresh while a frame waits. Frames keep
+their three-second deadline, ordinary commands thirty seconds and navigation
+readiness twenty seconds. A timed-out or cancelled command removes its waiter;
+late and unknown reply ids are discarded. Repeated frame timeouts produce
+rate-limited count-only diagnostics. Dropping the session cancels its reader and
+wakes pending callers. Browser-child ownership stays with the session, and
+dedicated-profile cleanup stays with the tab.
+Closing a tab cancels a pending pump capture before the pump releases its tab.
 The separate authenticated `/ws/preview/:thread/:tab/pointer` feed carries only
 server-created ephemeral cues after successful agent click or scroll input.
 Each tab owns a monotonic sequence; positions are frame pixels, with zoom applied
@@ -2783,7 +2795,15 @@ check does not restrict human input. Overlays are drawn into saved JPEG pixels,
 without injecting UI into the page or changing streamed JPEGs.
 
 Each recording owns its captured cues, writer, successful frame/byte counts and
-summary. Stop cancels new frames and waits for the actual blocking writer before
+summary. Before dispatching a screenshot, the session lock protects a snapshot of
+the recording owner, cues, local request time, document generation and explicit
+input-clear generation. That time describes the application's request boundary,
+not Chrome's pixel-capture instant. Input remains available while capture waits;
+later input belongs to subsequent requests. Completion checks focus again and
+may suppress frozen keys, while navigation or an explicit clear suppresses all
+frozen cues. It never substitutes the newer live overlay or clears its newer
+input. A stopped or replaced recording cannot receive the older request's frame
+or cues. Stop cancels new frames and waits for the actual blocking writer before
 returning the saved path and frame count; cancelling an awaiting caller cannot
 release the writer's compositor permit early. The frame loop never waits on
 encoding: it hands each frame to a one-slot per-recording queue where the newest
