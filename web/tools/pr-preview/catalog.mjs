@@ -647,4 +647,5 @@ export const FRAMES = {
   "escape-empty": { route: "#/preview/crew/escape-empty", scenario: "crew-escapes-empty" },
   "escape-low-sample": { route: "#/preview/crew/escape-low-sample", scenario: "crew-escapes-low" },
   "escape-error": { route: "#/preview/crew/escape-error", scenario: "crew-escapes-unreadable" },
+  "escape-possible": { route: "#/preview/crew/escape-possible", scenario: "crew-escapes" },
 };

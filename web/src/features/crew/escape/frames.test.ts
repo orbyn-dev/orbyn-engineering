@@ -4,7 +4,6 @@ import { ESCAPE_FRAMES } from "./names";
 
 /** What each frame must show: text taken from its design. */
 const SHOWS: Record<string, string[]> = {
-  "escape-possible": ["1 later fix may be an escape.", "Rename the legacy returnTo helper", "The legacy login route lost its rate limit", "Added Tue 3 Nov, 17:05"],
   "escape-detail": ["Rename the legacy returnTo helper", "It fails on 8d41b7c and passes on the revert, which is required before it is added.", "Claude Code · Sonnet 5.5", "Open Autopilot by area"],
   "escape-detail-tooling": ["Use next in the auth redirect", "Classified: tooling gap", "Proof before it is added", "2 escapes in 9 merges · too few for a rate"],
   "escape-create-check": ["Main is healthy · watched since 09:00", "Merged by Crew at 14:32 · Claude Code · Sonnet 5.5 · crew/redirect-impl", "Claude Code · Sonnet 5.5 · auth/", "It must fail on 8d41b7c and pass on the revert. If it doesn’t, Crew doesn’t add it and asks you"],
