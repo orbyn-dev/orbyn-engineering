@@ -606,3 +606,71 @@ async fn under_off_a_person_is_asked_even_for_a_read_and_the_threads_accepting_m
     }
     assert_eq!(kinds(&w, &id), ["person", "person"]);
 }
+
+/// H10 at the boundary: a worker's file-change tool outside its lease is refused by the gate
+/// with the lease's own words, before the write, not only later by the verifier's `file_scope`.
+#[tokio::test]
+async fn a_workers_write_outside_its_lease_is_refused_at_the_gate() {
+    let (w, id) = running().await;
+    let inside = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert_eq!(
+        inside,
+        Verdict::Allow,
+        "a write inside the lease still goes"
+    );
+    let absolute = w.repo.join("docs/absolute.md");
+    for target in [
+        "docs/stray.md".to_owned(),
+        absolute.to_string_lossy().into_owned(),
+    ] {
+        let verdict = w
+            .core
+            .gate
+            .request(
+                &scope(&w, &id),
+                ask(ActionKind::FileChange, &target, &[&target]),
+            )
+            .await;
+        assert!(
+            words(&verdict).contains("outside the files the brief asked for"),
+            "the write to {target} was not refused by the lease: {}",
+            words(&verdict)
+        );
+    }
+    // As a real run sends it: an absolute path inside the checkout, with the run's write scope
+    // letting the path through before the lease refuses it.
+    let production = crate::governance::approvals::RunScope {
+        write_scope: Some(crate::governance::approvals::WriteScope {
+            checkout: w.repo.clone(),
+            engine_cwd: w.repo.clone(),
+            excluded: Vec::new(),
+        }),
+        ..scope(&w, &id)
+    };
+    let absolute = absolute.to_string_lossy().into_owned();
+    let refused = w
+        .core
+        .gate
+        .request(
+            &production,
+            ask(ActionKind::FileChange, &absolute, &[&absolute]),
+        )
+        .await;
+    assert!(
+        words(&refused).contains("outside the files the brief asked for"),
+        "{}",
+        words(&refused)
+    );
+    // The key's protected paths keep their stronger refusal, and a refused write does not stop
+    // the task: it is the write that is refused, not the run.
+    let protected = request(&w, &id, ActionKind::FileChange, "tests/check.rs").await;
+    assert!(words(&protected).contains("N7"), "{}", words(&protected));
+    assert_eq!(w.task(&id).state, "running");
+}

@@ -25,7 +25,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `start` | `crew_start`: validates the brief and key, routes, grants the leases and runs the worker through `delegate` |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
-| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use |
+| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
@@ -39,7 +39,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `escapes` | The escape log (slice 4k): reads (PR 1), a person's writes (PR 2, `person.rs`: mark, confirm, dismiss, gap; `Person` routes, audit first, `409 stale`, idempotent), a person's created check (PR 4, `check.rs`: propose, accept, approve, retry, withdraw; `Person` routes; only accept starts a worker, through the router; the worker may add exactly one test file (`check_paths.rs`); the proof (`check_proof.rs`) runs on a `git archive` tree, with output discarded and a time limit, confined on macOS and otherwise only after a person approves the exact change; it must fail on the escaped merge and pass on the fix; every task an accept created is recorded for good, and the merge queue's entries and `merge_blocker` refuse it unless the escape's current check names it, is `proven` and was proven on the commit being queued, through one shared guard; the tick unwinds stuck and withdrawn checks; migration 52) and the possible-escape scan (PR 3, `scan.rs`: three signals from read-only git on the project checkout, writes `possible` only, bounded, idempotent, run by the service's own tick; `possible.rs` reads `GET /escapes/possible`, which never writes). PR 1: merges that got past review and checks and were later found defective. A revert is a **possible** escape at once, written by the schema (migration 51 back-fills it and a trigger on `crew_merges` adds it with the revert); confirmed only when a person confirms or marks it (PR 2). Possible, confirmed and dismissed are always separate counts. Display only: the breaker, Router and gates never read it. Views for `GET /api/crew/escapes`, `/escapes/{id}` and `/escapes/thresholds`; thresholds (60 d, 14 d, 10 merges, 2x) are device config in `settings`. Stored by `store/crew_escapes.rs`, whose read functions are the stable API for the backtest's `EscapeSource`. See [docs/crew/escapes.md](../../../../docs/crew/escapes.md) |
 | `background` | Background crews' state: definition, strict validation, redaction, runs with spend against a budget set at creation, and the stop for the budget that queues a review. Stored in the data folder, audited, no trigger and no engine |
 | `triggers` | `.orbyn/crew.json` `background` triggers and templates, parsed and checked: kinds, budgets, engines, schedules, hidden text and name collisions. Pure policy: nothing starts, writes or calls a model |
-| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
+| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the budget stop for the brief's minutes or turns; the result for the lead; a worker's run ending |
 
 ## Rules to keep
 
@@ -70,6 +70,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   thread or messages to others (see the [bus](bus/README.md)).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
+  A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
 
 ## Known limits of Preview
 
@@ -81,6 +82,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   the app data folder (#441).
 - An attachment tool takes a thread id; a worker may name only its own. `computer_*` and every `orbyn_*` tool
   off the allow list are refused to a worker.
+- A worker's shell command is not read, so it can still write outside its lease; the gate sees the engine's
+  file-change tools, not files a command writes (#441).
 - A key with protected paths and no record of them from the start fails closed (`needs_person`).
 
 ## Follow-ups
@@ -89,7 +92,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - Evidence names HEAD as its commit; when the checkout had uncommitted changes, `does_not_prove` says so.
 - `budget.minutes` ends a task even in the middle of a turn, through a timer that holds the core weakly and
   is set again after a restart. A verification gets what is left of the budget and stops once the task has
-  been stopped. Turn limits are #438.
+  been stopped. `budget.turns` stops the next failed attempt once the worker's turns and the approvals reserved
+  against the same budget reach the brief's turns; a crew-wide budget is still #438.
 - Windows: the leak test (`a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker`) is
   Unix-only. On Windows a command's echo can differ in quotes and line endings, so the withholding needs its
   own test there, and a check's deadline must kill every process the check started (the process owner does;

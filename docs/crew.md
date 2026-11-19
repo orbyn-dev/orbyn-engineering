@@ -348,9 +348,11 @@ retries with the reason. The same failure twice means one change of approach, an
   - The failure fingerprint is the failing checks, how each ended and the names of what failed; the output is
     left out, since it changes between runs. The checks run after the worker's turn has ended. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
   - A turn that ends with no `crew_report` is a failed attempt with its own fingerprint. An engine that fails ends the
-    task (`engine_error`). `budget.minutes` ends a task even mid-turn. `budget.turns` is not enforced for worker turns yet, but with
-    Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`): with the default 30
-    turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
+    task (`engine_error`). `budget.minutes` ends a task even mid-turn. `budget.turns` is enforced on the next failed attempt:
+    the worker's turns and the approvals reserved against the same budget are counted (`crew_turns_spent`), and once they reach
+    the brief's turns the task stops with the same `budget` reason and a result that counts them; a turn that passes on the last
+    one still passes. With Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`):
+    with the default 30 turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
   - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
     `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report
@@ -399,7 +401,9 @@ Guards, all enforced in code:
 
 - **Planned:** a writing worker gets its own worktree through the existing worktree handoff.
 - **Today:** workers run in the lead's checkout. There is no merge gate for a single worker, and diff checks see the lead's uncommitted changes too.
-- The brief's file lease prevents two writers on the same files.
+- The brief's file lease prevents two writers on the same files, and a worker's file-change tool outside it is refused
+  at the gate with the lease's own words, before the write; the verifier's `file_scope` is no longer what catches it. A
+  shell command is not read, so a command can still write outside the lease (issue #441's sandbox).
 - The lead merges in order.
 - Read-only workers share the lead's checkout.
 

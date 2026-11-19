@@ -276,6 +276,11 @@ async fn approval_turn_reservations_are_idempotent_and_respect_the_existing_task
             .reserve_crew_approval(&id, attempt, &format!("more-{i}"), "alpha")
             .unwrap();
     }
+    assert_eq!(
+        w.core.store.crew_turns_spent(&id).unwrap(),
+        20,
+        "the approvals reserved count as the brief's turns, so the budget stop sees them"
+    );
     assert!(
         w.core
             .store

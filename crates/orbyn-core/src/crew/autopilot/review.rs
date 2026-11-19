@@ -258,6 +258,21 @@ impl Core {
             );
         }
 
+        // The lease (H10) at the boundary: a file change may name only paths the brief granted this
+        // worker. Refused here with the lease's own words, before the write, rather than left to the
+        // verifier's file_scope to notice afterwards. The always-denied list above keeps its own
+        // words for a protected path, and a refused write never stops the task.
+        match self.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, ask) {
+            Ok(None) => {}
+            Ok(Some(words)) => return Ok(Review::Deny(words)),
+            Err(error) => {
+                tracing::warn!(%error, "could not check a worker's write against its lease; denying");
+                return Ok(Review::Deny(
+                    "Orbyn could not check this write against the brief's lease.".to_owned(),
+                ));
+            }
+        }
+
         // The blast-radius guard: a destructive command against a production-linked target needs a second key, even in Full. It is
         // above the tier (a check command or a lease does not exempt it) and below N3 and N8, which have already refused.
         let guard = self.guard_of(&ctx, &worktree).await?;
