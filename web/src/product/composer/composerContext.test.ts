@@ -66,6 +66,20 @@ describe("composer context", () => {
     expect(chipPrompt(chip({ kind: "citation" }))).toBe("> Clicked save");
   });
 
+  it("carries a picked thread as a labelled block and refuses a half-known one", () => {
+    const thread = asChip({ kind: "thread", threadId: "t9", title: "Calendar feed token" }, "th")!;
+    expect(chipLabel(thread)).toBe("Calendar feed token");
+    expect(chipPrompt(thread)).toBe("Thread: [Calendar feed token](orbyn://thread/t9)");
+    expect(promptWithChips("also check", [thread])).toBe(
+      "Thread: [Calendar feed token](orbyn://thread/t9)\n\nalso check",
+    );
+    expect(chipsFromClipboard({ json: chipsClipboard([thread])!.json, html: "" })?.[0]).toMatchObject({
+      kind: "thread", threadId: "t9", title: "Calendar feed token",
+    });
+    expect(asChip({ kind: "thread", threadId: "t9", title: "" })).toBeNull();
+    expect(asChip({ kind: "thread", title: "No id" })).toBeNull();
+  });
+
   it("puts chips before the typed draft and keeps a fence inside an excerpt from closing the block", () => {
     const fenced = chip({ kind: "file", excerpt: "```js\ninner\n```" });
     expect(promptWithChips("Please fix this", [fenced])).toBe(
