@@ -424,6 +424,32 @@ impl Store {
         })
     }
 
+    /// Records that the project's folder is now a Git repository. The caller ran Git;
+    /// this only changes the row, keeping its metadata revision current for clients.
+    pub fn mark_project_git(&self, id: &str) -> Result<Project> {
+        self.commit(|tx, _| {
+            let project = tx
+                .query_row("SELECT * FROM projects WHERE id = ?1", [id], project_row)
+                .optional()?
+                .ok_or_else(|| CoreError::NotFound("project".into()))?;
+            ensure_live(tx, &project)?;
+            if project.is_git {
+                return Ok(project);
+            }
+            let revision =
+                crate::project::project_icon_override::revision(&project.metadata_revision)?
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        CoreError::Invalid("Project metadata revision is exhausted.".into())
+                    })?;
+            tx.execute(
+                "UPDATE projects SET is_git=1, metadata_revision=?2 WHERE id=?1",
+                params![id, revision],
+            )?;
+            Ok(tx.query_row("SELECT * FROM projects WHERE id=?1", [id], project_row)?)
+        })
+    }
+
     /// Every thread of a project, archived ones included.
     pub fn list_all_threads(&self, project_id: &str) -> Result<Vec<Thread>> {
         let mut threads = self.list_threads(Some(project_id), false)?;

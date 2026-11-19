@@ -361,6 +361,28 @@ impl Core {
         Ok(job)
     }
 
+    /// Starts a Git repository in a registered project folder that is not one yet, so a
+    /// folder added without Git can use the repository features. Only `.git` is written:
+    /// no file is touched and no commit is made. The person must have trusted the folder.
+    pub async fn init_project_git(&self, id: &str) -> Result<Project> {
+        let project = self.store.project(id)?;
+        if !project.trusted {
+            return Err(CoreError::FolderUntrustedInit);
+        }
+        let path = PathBuf::from(&project.path);
+        if !path.is_dir() {
+            return Err(CoreError::Invalid("The project's folder is gone.".into()));
+        }
+        if project.is_git || is_git_repo(&path) {
+            return Err(CoreError::Invalid(
+                "This project is already a Git repository.".into(),
+            ));
+        }
+        self.audit_project("project.git-init", &project.path, serde_json::Value::Null)?;
+        init_repository(&path).await?;
+        self.store.mark_project_git(id)
+    }
+
     /// Starts an empty repository, with a README and first commit when asked.
     pub async fn new_project(
         &self,
@@ -369,13 +391,12 @@ impl Core {
         chosen: Option<&str>,
     ) -> Result<Project> {
         let (slug, path) = self.slot(name, chosen).await?;
-        let path_text = path.to_string_lossy().into_owned();
         self.audit_project("project.create", &slug, serde_json::Value::Null)?;
         let parent = path
             .parent()
             .ok_or_else(|| CoreError::Invalid("Choose a folder.".into()))?;
         std::fs::create_dir_all(parent)?;
-        git(parent, &["init", "--quiet", "-b", "main", &path_text]).await?;
+        init_repository(&path).await?;
         let root = self.workspace.root()?;
         let resolved = resolve_project(&root, &path).await?;
         if readme {
@@ -467,6 +488,17 @@ impl Core {
             kept_path: None,
         })
     }
+}
+
+/// Starts a repository at `path` on `main`, with nothing in it. Project creation and
+/// Git init in an already registered folder share this one invocation.
+async fn init_repository(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| CoreError::Invalid("Choose a folder.".into()))?;
+    let target = path.to_string_lossy();
+    git(parent, &["init", "--quiet", "-b", "main", &target]).await?;
+    Ok(())
 }
 
 /// A clone's temporary folder. Dropping it removes whatever is still there, so a

@@ -3253,6 +3253,7 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/pulls/:number/revisions`, `GET /api/projects/:id/commits/:sha/files` | A pull request's commits, oldest first, and what one commit changed |
 | `GET /api/diagnostics`, `POST /api/diagnostics/processes/:pid/stop` | `Diagnostics`, in memory only; a stop reaches only this service's own descendants |
 | `GET /api/projects`, `POST /api/projects/:id/trust` | Projects and folder trust |
+| `POST /api/projects/:id/git/init` | `Project`: start Git in a trusted project folder added without one; `403 folder_untrusted`, `400 invalid_input` when it is already a repository or the folder is gone; only `.git` is written and no commit is made |
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
 | `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
