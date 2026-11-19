@@ -631,6 +631,10 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
         w.core.store.crew_task(&task).unwrap().unwrap().state,
         "needs_person"
     );
+    // The task was moved to waiting by the start itself, which wrote no result: the unwind writes exactly one, and a repeat no more.
+    let results = w.core.store.crew_results(&task).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert_eq!(results[0].state, wire::ResultState::NeedsPerson);
     assert!(w.core.store.thread(&run.id).is_ok());
     assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1 + 1));
     let saved = w.core.store.background_run(&run.id).unwrap();
@@ -785,4 +789,38 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
             .unwrap()
             .discarded
     );
+}
+
+#[tokio::test]
+async fn a_held_task_gives_up_its_leases_so_the_next_run_is_not_refused_for_them() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    // The lead thread of this harness stands for a run's lead: the task started under it has a lease and a worker.
+    w.core.store.start_background_run_as(&id, &w.lead).unwrap();
+    let (answer, error) = w
+        .start(
+            brief(json!({ "files": [{ "path": "src/**", "mode": "write" }] })),
+            json!({ "checks": [{ "id": "chk-ok", "kind": "command", "params": { "run": "echo background-lease-1" }, "proves": "It runs." }],
+                    "protected_paths": ["tests/**"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let task = answer["task"].as_str().unwrap().to_owned();
+    let live = |w: &World| {
+        w.core
+            .live_crew_leases(&w.lead, crate::util::unix_now())
+            .unwrap()
+            .len()
+    };
+    assert_eq!(live(&w), 1, "the running task holds its lease");
+
+    let held = w
+        .core
+        .unwind_background_start(&w.lead, CoreError::Invalid("start refused".into()))
+        .unwrap();
+    assert_eq!(held.state, wire::BackgroundRunState::NeedsReview);
+    assert_eq!(w.task(&task).state, "needs_person");
+    assert_eq!(live(&w), 0, "the held task released its lease");
+    let results = w.core.store.crew_results(&task).unwrap();
+    assert_eq!(results.len(), 1, "{results:?}");
 }

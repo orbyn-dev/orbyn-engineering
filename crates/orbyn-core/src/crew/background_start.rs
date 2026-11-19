@@ -302,10 +302,12 @@ impl Core {
     }
 
     /// Takes back a taskless start (run, mode row and lead thread, in one commit) and returns the refusal as an error, or retains a
-    /// task-backed start for review: its tasks are held, each gets a result with the reason, and the retained run is returned. An
-    /// error of the store unwind is returned as it is, since the run is still `running` and the caller must know. A failure to
-    /// write a held task's result is logged only: the hold itself is already committed.
-    fn unwind_background_start(
+    /// task-backed start for review: its tasks are held and the retained run is returned. An error of the store unwind is returned
+    /// as it is, since the run is still `running` and the caller must know. What follows the commit is best effort and only logged:
+    /// each held task gives up its leases (so the next run is not refused for them) and gets a `NeedsPerson` result with the reason
+    /// unless it already has one. A task with no run row (that insert is what failed) cannot be given a result, so it has none and
+    /// the run's `review_reason` carries the reason.
+    pub(super) fn unwind_background_start(
         &self,
         thread_id: &str,
         refusal: CoreError,
@@ -316,7 +318,22 @@ impl Core {
             return Err(refusal);
         }
         for task in unwound.held {
-            let task = self.store.crew_task(&task.id)?.unwrap_or(task);
+            if let Err(error) = self.release_crew_leases(&task.id) {
+                tracing::warn!(%error, task = %task.id, "could not release a held background task's leases");
+            }
+            let has_result = self
+                .store
+                .crew_results(&task.id)
+                .map_or(true, |results| !results.is_empty());
+            if has_result {
+                continue;
+            }
+            let task = self
+                .store
+                .crew_task(&task.id)
+                .ok()
+                .flatten()
+                .unwrap_or(task);
             if let Err(error) =
                 self.record_result(&task, ResultState::NeedsPerson, None, &why, None)
             {

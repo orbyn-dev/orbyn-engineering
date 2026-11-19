@@ -172,7 +172,8 @@ fn name_taken(
 pub struct Unwound {
     /// The run, its mode row and its lead thread were taken back: no task existed.
     pub discarded: bool,
-    /// The tasks moved to `needs_person` (as they stood before the move). A task already waiting is not listed.
+    /// Every task of the retained run that now waits for a person: the ones moved here and the ones already waiting (as they stood
+    /// before the move). The caller releases their leases and gives each a result if it has none.
     pub held: Vec<CrewTask>,
     deleted_threads: Vec<String>,
 }
@@ -217,6 +218,8 @@ pub(crate) fn hold_tasks_and_end_run(
     for task in tasks {
         if crate::crew::lifecycle::allowed(&task.state, "needs_person") {
             super::crew_runs::step(tx, &task, "needs_person", None, &[])?;
+            held.push(task);
+        } else if task.state == "needs_person" {
             held.push(task);
         }
     }
