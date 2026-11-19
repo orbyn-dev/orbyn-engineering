@@ -669,6 +669,11 @@ impl UpdateCenter {
         self.start_app(actor, request, AppIntent::Install)
     }
 
+    /// Explicit consent to download and then install this exact checked release/operation.
+    pub async fn complete_app(&self, actor: &str, request: AppUpdateRequest) -> Result<()> {
+        self.start_app(actor, request, AppIntent::Complete)
+    }
+
     /// Update everything and automatic mode explicitly select both phases.
     pub async fn apply_app(&self, actor: &str) -> Result<()> {
         let app = self.status().await.app;
@@ -697,18 +702,20 @@ impl UpdateCenter {
             AppUpdatePhase::Downloading | AppUpdatePhase::Preparing | AppUpdatePhase::Installing
         );
         if busy {
-            let same_action = if install {
-                known.phase == AppUpdatePhase::Installing
-            } else {
-                matches!(
+            let same_action = match intent {
+                // A Complete retry cannot upgrade a concurrent download-only consent.
+                AppIntent::Complete => known.install_after_download,
+                AppIntent::Install => known.phase == AppUpdatePhase::Installing,
+                AppIntent::Download => matches!(
                     known.phase,
                     AppUpdatePhase::Downloading | AppUpdatePhase::Preparing
-                )
+                ),
             };
             if same_action
                 && known.operation_release.as_deref() == Some(&request.release_id)
                 && (request.operation == known.operation
-                    || (!install && request.operation.checked_add(1) == Some(known.operation)))
+                    || (!matches!(intent, AppIntent::Install)
+                        && request.operation.checked_add(1) == Some(known.operation)))
             {
                 return Ok(());
             }

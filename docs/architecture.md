@@ -2264,6 +2264,18 @@ those events. An install error retains the verified payload for an explicit retr
 a download/verification error retains no stage and releases admission. Check errors preserve the
 candidate, operation and admission; operation errors have their own `update_error` and `failed_phase`.
 
+An explicit `POST /api/updates/app/apply?complete=true` requests download followed by install for the
+exact `AppUpdateRequest` release id and operation. The typed boolean defaults to false, preserving the
+UI's install-only request. Complete waits for explicit verified Ready and keeps admission held across
+both phases. It cannot upgrade a concurrent download-only operation's consent; that request is refused.
+A duplicate Complete for the same correlated operation starts no second effect. Stale release or
+operation consent is refused without substituting a newly checked candidate.
+`orbyn update` sends this complete request from its single checked status, after its existing version,
+channel and downgrade checks; missing/empty release ids or invalid operation generations are refused
+before POST. This does not grant new authority: the route remains enforced Person, and production CLI
+or browser callers without the desktop launch's person key still receive `403 desktop_required`.
+The CLI request contract is tested with a fake shell and development-authorized service only.
+
 The default notify mode requires separate Download update and Restart to update consent. Manual
 mode gains no background download. Automatic mode retains its two-minute idle/no-active-run gate;
 it and Update everything explicitly request download followed by install through this same lifecycle,
@@ -3340,7 +3352,7 @@ every method, path and which routes need a credential.
 | `GET /api/updates`, `POST /api/updates/check` | `UpdateStatus`; a check only reads |
 | `GET /api/updates/events` | SSE `UpdateStatus` on each change |
 | `POST /api/updates/app/download` | `AppUpdateRequest`: download and verify one release without installing (`202`, `409 runs_active`, `422` stale/unavailable) |
-| `POST /api/updates/app/apply` | `AppUpdateRequest`: install the verified staged release (`202`, `409 runs_active`, `422` stale/unavailable or server) |
+| `POST /api/updates/app/apply` | `AppUpdateRequest`: install the verified staged release; typed `?complete=true` explicitly requests download then install for that same correlation (`202`, `409 runs_active`, `422` stale/unavailable or server; enforced Person) |
 | `POST /api/updates/apply-all` | `ApplyAllResult`; engines, library, app; stops at the first failure |
 | `POST /api/threads/:id/runs` | Admit a run with an optional `model`, `effort` and `options` (`202`, `409 thread_busy`, `403 folder_untrusted`, `422 unsupported_option`) |
 | `GET, POST /api/threads/:id/queue` | `QueuedMessage[]`; queue a message, which starts at once if idle and can carry a selection (`422 unsupported_option`) |

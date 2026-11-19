@@ -8,6 +8,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use serde::Deserialize;
 
 use crate::http::{ApiResult, AppState, LOCAL_USER, to_the_end};
 
@@ -34,11 +35,22 @@ async fn check_updates(State(state): State<AppState>) -> Json<orbyn_contracts::U
     Json(state.core.updates.check().await)
 }
 
+#[derive(Deserialize)]
+struct AppApplyQuery {
+    #[serde(default)]
+    complete: bool,
+}
+
 async fn apply_app_update(
     State(state): State<AppState>,
+    Query(query): Query<AppApplyQuery>,
     Json(request): Json<orbyn_contracts::AppUpdateRequest>,
 ) -> ApiResult<StatusCode> {
-    state.core.updates.install_app(LOCAL_USER, request).await?;
+    if query.complete {
+        state.core.updates.complete_app(LOCAL_USER, request).await?;
+    } else {
+        state.core.updates.install_app(LOCAL_USER, request).await?;
+    }
     Ok(StatusCode::ACCEPTED)
 }
 

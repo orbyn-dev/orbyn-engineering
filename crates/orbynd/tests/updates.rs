@@ -513,3 +513,147 @@ async fn download_consent_requires_this_launch_person_key() {
     }
     assert_eq!(service.send("/api/updates/app/download", body).await.0, 202);
 }
+
+#[tokio::test]
+async fn complete_query_preserves_person_key_and_correlated_lifecycle() {
+    let dir = TempDir::new();
+    let mut options = desktop();
+    options
+        .env
+        .push(("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()));
+    let (mut service, _thread) = setup(&dir, options, "codex").await;
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#,
+    );
+    until_can_apply(&service).await;
+    let route = "/api/updates/app/apply?complete=true";
+    let body = json!({"release_id":"r1","operation":0});
+    for key in [None, Some("wrong-launch-key")] {
+        let mut request = service.post(route).json(&body);
+        if let Some(key) = key {
+            request = request.header("x-orbyn-person", key);
+        }
+        assert_eq!(request.send().await.unwrap().status(), 403);
+    }
+    assert_eq!(
+        service
+            .send(route, json!({"release_id":"stale","operation":0}))
+            .await
+            .0,
+        422
+    );
+    assert_eq!(
+        service
+            .send(route, json!({"release_id":"r1","operation":42}))
+            .await
+            .0,
+        422
+    );
+    assert_eq!(
+        service.send("/api/updates/app/apply", body.clone()).await.0,
+        422
+    );
+    assert_eq!(
+        service
+            .send("/api/updates/app/apply?complete=false", body.clone())
+            .await
+            .0,
+        422
+    );
+    assert_eq!(service.send(route, body.clone()).await.0, 202);
+    assert_eq!(
+        service
+            .send("/api/updates/app/apply?complete=invalid", body.clone())
+            .await
+            .0,
+        400
+    );
+    assert_eq!(service.send(route, body).await.0, 202);
+    say(
+        &mut service,
+        r#"{"type":"app_update_progress","release_id":"r1","operation":1,"downloaded":10,"total":10}"#,
+    );
+    say(
+        &mut service,
+        r#"{"type":"app_update_preparing","release_id":"r1","operation":1}"#,
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while app(&service).await["phase"] != "preparing" {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(app(&service).await["phase"], "installing");
+    say(
+        &mut service,
+        r#"{"type":"app_update_ready","release_id":"r1","operation":1}"#,
+    );
+    let mut downloads = Vec::new();
+    let install = loop {
+        let mut line = String::new();
+        service.stdout.read_line(&mut line).unwrap();
+        assert!(!line.is_empty(), "stdout closed");
+        let message: Value = serde_json::from_str(&line).unwrap();
+        if message["type"] == "download_app_update" {
+            downloads.push(message.clone());
+        }
+        if message["type"] == "install_app_update" {
+            break message;
+        }
+    };
+    assert_eq!(
+        downloads,
+        [json!({"type":"download_app_update","release_id":"r1","operation":1})]
+    );
+    assert_eq!(
+        install,
+        json!({"type":"install_app_update","release_id":"r1","operation":1})
+    );
+}
+
+#[tokio::test]
+async fn complete_query_refuses_a_competing_plain_download_without_installing() {
+    let dir = TempDir::new();
+    let (mut service, _thread) = setup(&dir, desktop(), "codex").await;
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"r1","version":"99.0.0"}"#,
+    );
+    until_can_apply(&service).await;
+    assert_eq!(
+        service
+            .send(
+                "/api/updates/app/download",
+                json!({"release_id":"r1","operation":0})
+            )
+            .await
+            .0,
+        202
+    );
+    for operation in [0, 1] {
+        assert_eq!(
+            service
+                .send(
+                    "/api/updates/app/apply?complete=true",
+                    json!({"release_id":"r1","operation":operation})
+                )
+                .await
+                .0,
+            422
+        );
+    }
+    say(
+        &mut service,
+        r#"{"type":"app_update_ready","release_id":"r1","operation":1}"#,
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while app(&service).await["phase"] != "ready" {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(app(&service).await["phase"], "ready");
+}

@@ -28,6 +28,109 @@ fn say(updates: &UpdateCenter, kind: &str, extra: Value) {
 fn phase(updates: &UpdateCenter) -> AppUpdatePhase {
     lock(&updates.known).phase
 }
+
+#[tokio::test]
+async fn complete_consent_waits_for_readiness_and_duplicate_requests_keep_one_operation() {
+    let (_dir, core, mut lines) = fixture();
+    let updates = &core.updates;
+    updates
+        .start_app("person", request("r1", 0), AppIntent::Complete)
+        .unwrap();
+    let download = lines.try_recv().unwrap();
+    assert_eq!(
+        download,
+        json!({"type":"download_app_update","release_id":"r1","operation":1})
+    );
+    updates
+        .start_app("person", request("r1", 0), AppIntent::Complete)
+        .unwrap();
+    assert!(lines.try_recv().is_err());
+    say(
+        updates,
+        "app_update_progress",
+        json!({"downloaded":100,"total":100}),
+    );
+    assert_eq!(phase(updates), AppUpdatePhase::Downloading);
+    assert!(
+        lines.try_recv().is_err(),
+        "complete bytes cannot authorize installation"
+    );
+    say(updates, "app_update_preparing", json!({}));
+    assert_eq!(phase(updates), AppUpdatePhase::Preparing);
+    updates
+        .start_app("person", request("r1", 1), AppIntent::Complete)
+        .unwrap();
+    assert!(lines.try_recv().is_err());
+    say(updates, "app_update_ready", json!({}));
+    assert_eq!(phase(updates), AppUpdatePhase::Installing);
+    let install = lines.try_recv().unwrap();
+    assert_eq!(
+        install,
+        json!({"type":"install_app_update","release_id":"r1","operation":1})
+    );
+    for operation in [0, 1] {
+        updates
+            .start_app("person", request("r1", operation), AppIntent::Complete)
+            .unwrap();
+    }
+    assert!(
+        lines.try_recv().is_err(),
+        "duplicate Complete never starts another effect"
+    );
+}
+
+#[tokio::test]
+async fn complete_cannot_upgrade_a_plain_download_that_won_admission() {
+    let (_dir, core, mut lines) = fixture();
+    let updates = &core.updates;
+    updates
+        .download_app("person", request("r1", 0))
+        .await
+        .unwrap();
+    assert_eq!(lines.try_recv().unwrap()["type"], "download_app_update");
+    for preparing in [false, true] {
+        if preparing {
+            say(updates, "app_update_preparing", json!({}));
+        }
+        for operation in [0, 1] {
+            assert!(
+                updates
+                    .start_app("person", request("r1", operation), AppIntent::Complete)
+                    .is_err()
+            );
+        }
+        assert!(!lock(&updates.known).install_after_download);
+        assert!(lines.try_recv().is_err());
+    }
+    say(updates, "app_update_ready", json!({}));
+    assert_eq!(phase(updates), AppUpdatePhase::Ready);
+    assert!(
+        lines.try_recv().is_err(),
+        "plain download must remain install-free"
+    );
+    assert!(core.workspace.admit_with(|| Ok(())).is_ok());
+}
+
+#[tokio::test]
+async fn complete_refuses_changed_release_and_operation_without_any_effect() {
+    let (_dir, core, mut lines) = fixture();
+    let updates = &core.updates;
+    updates
+        .on_shell_line(r#"{"type":"app_update_available","release_id":"r2","version":"100.0.0"}"#);
+    assert!(
+        updates
+            .start_app("person", request("r1", 0), AppIntent::Complete)
+            .is_err()
+    );
+    assert!(
+        updates
+            .start_app("person", request("r2", u32::MAX), AppIntent::Complete)
+            .is_err()
+    );
+    assert!(lines.try_recv().is_err());
+    assert!(core.workspace.admit_with(|| Ok(())).is_ok());
+    assert_eq!(phase(updates), AppUpdatePhase::Available);
+}
 #[tokio::test]
 async fn consent_downloads_once_and_verified_readiness_is_independent_of_bytes() {
     let (_dir, core, mut lines) = fixture();
