@@ -312,6 +312,35 @@ describe("Composer", () => {
     commands.mockRestore();
   });
 
+  it("picks a thread from @ as a labelled chip and sends its block with the draft", async () => {
+    const mentions = vi.spyOn(api, "mentions").mockResolvedValue({
+      skills: [], files: [], threads: [{ id: "t9", title: "Calendar feed token" }],
+    });
+    const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
+    setup();
+    await userEvent.type(box(), "also check @cal");
+    await screen.findByRole("option", { name: /Calendar feed token/ });
+    await userEvent.keyboard("{Enter}");
+    expect(box()).toHaveValue("also check ");
+    expect(useComposerChips.getState().chips.t1?.[0]).toMatchObject({
+      kind: "thread", threadId: "t9", title: "Calendar feed token",
+    });
+    expect(screen.getByTitle("Calendar feed token")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy thread chip" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove thread chip" })).toBeInTheDocument();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        "t1",
+        "Thread: [Calendar feed token](orbyn://thread/t9)\n\nalso check",
+        [],
+      ),
+    );
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    mentions.mockRestore();
+    start.mockRestore();
+  });
+
   it("sends attachments with the run and reports upload failure", async () => {
     const upload = vi
       .spyOn(api, "uploadAttachment")

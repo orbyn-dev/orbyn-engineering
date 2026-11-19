@@ -5,6 +5,8 @@ export interface Suggestion {
   detail: string | null;
   /** What goes in the prompt, when it isn't the trigger and the value. */
   insert?: string;
+  /** A thread this row picks: it waits above the draft as a chip, not inline text. */
+  thread?: { id: string; title: string };
 }
 
 /** The @ and # suggestions above the composer. Leaves by fading, so it takes its rows as a snapshot. */
