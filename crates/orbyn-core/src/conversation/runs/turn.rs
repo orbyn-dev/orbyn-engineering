@@ -16,12 +16,16 @@ impl RunManager {
         // A Crew lead or worker, or a delegated run is judged by what it leaves behind, not by what it says. The one exception is the
         // worker of a background crew's run: nobody reads its turn live, so a turn that produced nothing ends the run as an engine
         // error and is never taken for success (docs/engine-run-contract.md).
+        // The lead's thread is also the person's own chat. Only a note Crew queued there — a task's result, a review, a start it
+        // refused — is judged by the lead's work; a turn the person started still fails as "No reply", because the person is
+        // talking to it directly (docs/engine-run-contract.md rule 3).
         // A slash command expands into work of its own or answers locally.
         let judged_by_work = thread
             .lifecycle
             .as_ref()
             .is_some_and(|l| l.relation.as_deref() == Some("subagent"))
-            || self.store.is_crew_thread(&thread.id).unwrap_or(true);
+            || (self.store.is_crew_thread(&thread.id).unwrap_or(true)
+                && self.store.run_is_crew_note(&scope.run_id).unwrap_or(true));
         let expects_reply = RunKind::parse(&message.0) == RunKind::Turn
             && !message.0.trim_start().starts_with('/')
             && (!judged_by_work || self.store.is_background_worker(&thread.id).unwrap_or(false));
