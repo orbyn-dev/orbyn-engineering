@@ -16,7 +16,7 @@ import {
   STYLED_CHARS,
   WIDE,
 } from "./composerConstants";
-import { loadSuggestions } from "./suggestions";
+import { loadSuggestions, pickResult } from "./suggestions";
 import { handleComposerKey } from "./composerKeys";
 import { handleComposerPaste } from "./composerPaste";
 import { useAttachments } from "./useAttachments";
@@ -57,7 +57,7 @@ import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../product/state/modelStore";
 import { QueuedMessages } from "../QueuedMessages";
 import { openSideChat } from "../sideChat";
-import { FILE_MENTION_TYPE, insertToken, triggerAt } from "../../../product/composer/skillMention";
+import { FILE_MENTION_TYPE, triggerAt } from "../../../product/composer/skillMention";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
@@ -188,10 +188,11 @@ export function Composer({
   const pick = (suggestion: Suggestion) => {
     if (!trigger) return;
     if (runLocal(`/${suggestion.value}`)) return;
-    const next = insertToken(draft, caret, trigger, suggestion.value, suggestion.insert);
-    setDraft(thread.id, next.text);
-    setCaret(next.caret);
-    caretAfterEdit.current = next.caret;
+    const picked = pickResult(draft, caret, trigger, suggestion);
+    if (picked.chip) addChips(thread.id, [picked.chip]);
+    setDraft(thread.id, picked.text);
+    setCaret(picked.caret);
+    caretAfterEdit.current = picked.caret;
   };
 
   const { putThread, setPlanMode, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
@@ -475,6 +476,7 @@ export function Composer({
               matches={matches}
               active={active}
               marker={trigger?.char ?? ""}
+              mark={trigger?.char === "@" ? trigger.query : undefined}
               onPick={pick}
             />
           ) : null}
