@@ -421,6 +421,16 @@ impl Store {
             if running_in(tx, id)?.is_some() {
                 return Err(CoreError::RunsActive);
             }
+            // A run that ended while its task still runs (the crew was turned off) is not gone: the worker is still spending.
+            let live: u32 = tx.query_row(
+                "SELECT COUNT(*) FROM crew_tasks WHERE state NOT IN ('passed', 'stopped', 'cancelled')
+                   AND crew_id IN (SELECT id FROM crew_background_runs WHERE background_id = ?1)",
+                [id],
+                |row| row.get(0),
+            )?;
+            if live > 0 {
+                return Err(CoreError::RunsActive);
+            }
             let (runs, waiting): (u32, u32) = tx.query_row(
                 "SELECT COUNT(*), COALESCE(SUM(review_waiting), 0) FROM crew_background_runs WHERE background_id = ?1",
                 [id],
@@ -518,12 +528,17 @@ impl Store {
     /// Opens a run for an enabled crew, with the crew's budget. A crew that is off, or already running, is refused. The trigger
     /// that calls this is slice 4h.
     pub fn start_background_run(&self, crew: &str) -> Result<BackgroundRunRow> {
-        self.start_background_run_as(crew, &new_id())
+        self.start_background_run_as(crew, &new_id(), "crew")
     }
 
     /// `start_background_run` with the run's id given. A run that has a lead thread of its own takes that thread's id, so the run, the
     /// thread and the Crew tasks of the thread (whose crew id is the thread's id) find each other with no extra column.
-    pub fn start_background_run_as(&self, crew: &str, id: &str) -> Result<BackgroundRunRow> {
+    pub fn start_background_run_as(
+        &self,
+        crew: &str,
+        id: &str,
+        actor: &str,
+    ) -> Result<BackgroundRunRow> {
         let id = id.to_owned();
         self.commit(|tx, _| {
             let current = crew_in(tx, crew)?;
@@ -537,7 +552,7 @@ impl Store {
             }
             audit(
                 tx,
-                "crew",
+                actor,
                 "crew.background.run.start",
                 crew,
                 json!({

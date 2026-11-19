@@ -92,7 +92,11 @@ async fn until_run(w: &World, crew: &str, state: wire::BackgroundRunState) -> wi
 #[tokio::test]
 async fn with_the_flag_off_nothing_starts() {
     let w = world(false, good()).await;
-    let error = w.core.crew_background_run_now("x").await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now("x", "user")
+        .await
+        .unwrap_err();
     assert!(matches!(error, CoreError::NotFound(_)), "{error}");
 }
 
@@ -101,7 +105,7 @@ async fn an_enabled_crew_starts_one_low_priority_run_with_a_lead_thread_of_its_o
     let w = world(true, good()).await;
     let id = crew(&w);
     let threads_before = threads(&w);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(run.crew_id, id);
     let task = task_of(&w, &run);
 
@@ -158,7 +162,11 @@ async fn a_persons_start_is_not_low_and_never_paused() {
         (Priority::Medium, false)
     );
 
-    let run = w.core.crew_background_run_now(&crew(&w)).await.unwrap();
+    let run = w
+        .core
+        .crew_background_run_now(&crew(&w), "user")
+        .await
+        .unwrap();
     assert_eq!(
         w.core.store.crew_task_capacity(&task_of(&w, &run)).unwrap(),
         (Priority::Low, true)
@@ -170,7 +178,11 @@ async fn a_crew_that_is_off_is_refused_and_nothing_is_made() {
     let w = world(true, good()).await;
     let id = crew_with(&w, "Off", json!({ "kind": "ci_failure" }), 5, 5, false);
     let before = (threads(&w), mode_rows(&w));
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     assert!(
         matches!(&error, CoreError::PolicyDenied(why) if why.contains("is off")),
         "{error}"
@@ -178,7 +190,12 @@ async fn a_crew_that_is_off_is_refused_and_nothing_is_made() {
     assert_eq!((threads(&w), mode_rows(&w)), before);
     let page = crate::crew::Page::new(None, None).unwrap();
     assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
-    assert!(w.core.crew_background_run_now("missing").await.is_err());
+    assert!(
+        w.core
+            .crew_background_run_now("missing", "user")
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -201,15 +218,16 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
         true,
     );
     let before = threads(&w);
-    for (id, words) in [(label, "issue label"), (bump, "dependency update")] {
-        let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    for id in [label, bump] {
+        let error = w
+            .core
+            .crew_background_run_now(&id, "user")
+            .await
+            .unwrap_err();
         let CoreError::PolicyDenied(why) = &error else {
             panic!("{error}")
         };
-        assert!(
-            why.contains(words) && why.contains("cannot be started yet"),
-            "{why}"
-        );
+        assert!(why.contains("cannot run yet"), "{why}");
     }
     assert_eq!(threads(&w), before);
 }
@@ -218,10 +236,17 @@ async fn a_kind_nothing_can_start_is_refused_with_a_plain_reason() {
 async fn a_second_run_of_the_same_crew_waits_for_the_first() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let id = crew(&w);
-    w.core.crew_background_run_now(&id).await.unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
     let before = threads(&w);
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
-    assert!(matches!(error, CoreError::RunsActive), "{error}");
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, CoreError::PolicyDenied(why) if why == "This crew already has a run in progress."),
+        "{error}"
+    );
     assert_eq!(threads(&w), before);
 }
 
@@ -268,7 +293,11 @@ async fn review_capacity_pauses_a_background_start_and_leaves_nothing_behind() {
         w.core.store.crew_tasks_in_crew(&w.lead).unwrap().len(),
     );
 
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     let CoreError::PolicyDenied(why) = &error else {
         panic!("{error}")
     };
@@ -299,7 +328,10 @@ async fn review_capacity_pauses_a_background_start_and_leaves_nothing_behind() {
         (PausedKind::Background, 3, 2, false)
     );
     // A second press is the same held row, not another.
-    w.core.crew_background_run_now(&id).await.unwrap_err();
+    w.core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     assert_eq!(
         w.core.store.crew_paused_starts(&project(&w)).unwrap().len(),
         1
@@ -313,7 +345,7 @@ async fn review_capacity_pauses_a_background_start_and_leaves_nothing_behind() {
             "UPDATE crew_merges SET review_state = 'looks_good' WHERE review_state = 'waiting'",
         )
         .unwrap();
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(run.state, wire::BackgroundRunState::Running);
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
     assert!(rows.len() == 1 && rows[0].started, "{rows:?}");
@@ -324,7 +356,11 @@ async fn pausing_is_off_until_a_person_turns_it_on() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     waiting_merges(&w, 3).await;
     capacity(&w, 1, false);
-    let run = w.core.crew_background_run_now(&crew(&w)).await.unwrap();
+    let run = w
+        .core
+        .crew_background_run_now(&crew(&w), "user")
+        .await
+        .unwrap();
     assert_eq!(run.state, wire::BackgroundRunState::Running);
 }
 
@@ -341,7 +377,7 @@ fn outside() -> Script {
 async fn a_run_stops_for_its_budget_when_its_last_turn_did_not_pass() {
     let w = world(true, outside()).await;
     let id = crew_with(&w, "One turn", json!({ "kind": "ci_failure" }), 1, 30, true);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
         stopped.stop_reason,
@@ -365,7 +401,7 @@ async fn a_run_stops_for_its_budget_when_its_last_turn_did_not_pass() {
 async fn the_time_budget_cancels_a_running_worker_and_the_run_records_it() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let id = crew(&w);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     // What the minute timer calls when the budget runs out.
     w.core.crew_budget_ended(&task);
@@ -382,7 +418,7 @@ async fn the_time_budget_cancels_a_running_worker_and_the_run_records_it() {
 async fn a_worker_turn_with_no_reply_is_an_engine_error_not_a_finished_run() {
     let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
     let id = crew(&w);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
         stopped.stop_reason,
@@ -410,7 +446,7 @@ async fn the_same_failure_again_is_a_repeated_failure_stop() {
         30,
         true,
     );
-    w.core.crew_background_run_now(&id).await.unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
         stopped.stop_reason,
@@ -423,7 +459,7 @@ async fn the_same_failure_again_is_a_repeated_failure_stop() {
 async fn a_task_that_waits_for_a_person_ends_the_run_as_needs_review() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let id = crew(&w);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let task = task_of(&w, &run);
     w.core
         .crew_needs_person(&task, "No check could decide the task.", false);
@@ -456,7 +492,11 @@ async fn a_project_that_is_not_trusted_is_refused_and_nothing_is_made() {
         .execute_batch("UPDATE projects SET trusted = 0")
         .unwrap();
     let before = threads(&w);
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     assert!(matches!(error, CoreError::FolderUntrusted), "{error}");
     assert_eq!(threads(&w), before);
     let page = crate::crew::Page::new(None, None).unwrap();
@@ -475,7 +515,11 @@ async fn a_crew_with_no_engine_ready_is_refused_and_nothing_is_made() {
         )
         .unwrap();
     let before = threads(&w);
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     let CoreError::EngineUnavailable(why) = &error else {
         panic!("{error}")
     };
@@ -492,11 +536,15 @@ async fn a_project_with_nothing_committed_is_refused_with_a_plain_reason() {
     // An unborn HEAD: the checkout keeps its files but has nothing committed to list.
     run_git(&w.repo, &["checkout", "-q", "--orphan", "nothing"]);
     let before = threads(&w);
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     let CoreError::Invalid(why) = &error else {
         panic!("{error}")
     };
-    assert!(why.contains("nothing committed yet"), "{why}");
+    assert!(why.contains("no files committed yet"), "{why}");
     assert_eq!(threads(&w), before);
     let page = crate::crew::Page::new(None, None).unwrap();
     assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
@@ -519,11 +567,10 @@ async fn task_ends_without_a_stored_reason_wait_with_their_plain_sentence() {
             Some(wire::StopReason::InjectionSuspected),
             "tried to give it orders",
         ),
-        ("Cancelled", wire::ResultState::Cancelled, None, "cancelled"),
     ];
     for (name, state, stop, words) in cases {
         let id = crew_with(&w, name, json!({ "kind": "ci_failure" }), 5, 5, true);
-        let run = w.core.crew_background_run_now(&id).await.unwrap();
+        let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
         let task = w.core.store.crew_task(&task_of(&w, &run)).unwrap().unwrap();
         w.core.crew_background_task_ended(&task, state, stop);
         let waiting = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
@@ -536,6 +583,211 @@ async fn task_ends_without_a_stored_reason_wait_with_their_plain_sentence() {
         );
         assert!(waiting.review_waiting, "{name}");
     }
+}
+
+/// A person's cancel of the task, through the real cancel, ends the run `needs_review` with the plain sentence.
+#[tokio::test]
+async fn a_cancelled_task_ends_its_run_through_the_real_cancel() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let task = task_of(&w, &run);
+    w.core
+        .crew_cancel_task(&task, Some("Cancelled by a test."), "user")
+        .await
+        .unwrap();
+    let waiting = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    assert!(
+        waiting
+            .review_reason
+            .as_deref()
+            .is_some_and(|why| why.contains("cancelled")),
+        "{waiting:?}"
+    );
+}
+
+/// The run's actor is who pressed the button.
+#[tokio::test]
+async fn the_audit_names_who_pressed_run_now() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let rows = w.core.store.list_audit(None, 500).unwrap();
+    let start = rows
+        .iter()
+        .find(|row| row.action == "crew.background.run.start")
+        .expect("the start is audited");
+    assert_eq!(start.actor, "user");
+}
+
+/// A removed project cannot be started in: the refusal is plain and nothing is made.
+#[tokio::test]
+async fn a_removed_project_is_refused_and_nothing_is_made() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE projects SET removed_at = '2026-01-01T00:00:00Z'")
+        .unwrap();
+    let before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::ProjectRemoved(_)), "{error}");
+    assert_eq!(threads(&w), before);
+    let page = crate::crew::Page::new(None, None).unwrap();
+    assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
+}
+
+/// Turning the crew off stops the worker, not only the record.
+#[tokio::test]
+async fn turning_a_crew_off_cancels_the_worker_with_the_record() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let task = task_of(&w, &run);
+    w.until("the worker is running", |w| {
+        w.core
+            .store
+            .crew_run(&task)
+            .ok()
+            .flatten()
+            .and_then(|r| r.worker_thread_id)
+            .and_then(|t| w.core.store.thread(&t).ok())
+            .is_some_and(|t| t.active_run.is_some())
+    })
+    .await;
+    // A crew with a live worker cannot be deleted.
+    assert!(w.core.background_delete(&id).is_err());
+
+    let off = w.core.background_turn_off(&id).await.unwrap();
+    assert!(!off.enabled);
+    assert_eq!(w.task(&task).state, "cancelled");
+    let worker = w
+        .core
+        .store
+        .crew_run(&task)
+        .unwrap()
+        .unwrap()
+        .worker_thread_id
+        .unwrap();
+    assert!(w.core.store.thread(&worker).unwrap().active_run.is_none());
+    let stopped = run_of(&w, &id);
+    assert_eq!(stopped.state, wire::BackgroundRunState::Stopped);
+    assert_eq!(
+        stopped.stop_reason,
+        Some(wire::BackgroundStopReason::Disabled)
+    );
+    w.core.background_delete(&id).unwrap();
+}
+
+/// The lead thread of a run takes no message and is never retried into.
+#[tokio::test]
+async fn a_background_lead_takes_no_message_and_a_retry_never_prompts_it() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let error = w.core.runs.enqueue(&run.id, "hello", &[]).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Invalid(why) if why.contains("takes no messages")),
+        "{error}"
+    );
+    let error = w.core.runs.admit(&run.id, "hello", "user").unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Invalid(why) if why.contains("takes no messages")),
+        "{error}"
+    );
+    let task = task_of(&w, &run);
+    w.core
+        .store
+        .move_crew_task(&task, "needs_person", None)
+        .unwrap();
+    // The task derives as could-not-start, so the refusal is the background-lead guard and not the "did start" check.
+    let facts = w
+        .core
+        .flow_facts(w.core.store.crew_task(&task).unwrap().unwrap())
+        .unwrap();
+    assert!(
+        facts.could_not_start(),
+        "the stored shape of a refused start"
+    );
+    let answer = w.core.crew_retry_elsewhere(&task, "user").await;
+    assert!(
+        matches!(&answer, Err(CoreError::CrewTaskBusy(why)) if why.contains("background run is not retried")),
+        "{answer:?}"
+    );
+    assert!(w.sent_to(&run.id).is_empty());
+    assert_ne!(w.task(&task).state, "cancelled");
+}
+
+/// A cancel that failed leaves a `disabled` run with a live task: turning the crew off again cancels it, and then the crew can go.
+#[tokio::test]
+async fn turning_off_again_cancels_a_task_left_after_a_failed_cancel() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let task = task_of(&w, &run);
+    // The first press only ended the record, as when its cancel failed.
+    w.core.background_set_enabled(&id, false).unwrap();
+    assert_ne!(w.task(&task).state, "cancelled");
+    assert!(w.core.background_delete(&id).is_err());
+    w.core.background_turn_off(&id).await.unwrap();
+    assert_eq!(w.task(&task).state, "cancelled");
+    w.core.background_delete(&id).unwrap();
+}
+
+/// A stored row for the run's crew scope cannot widen what a background merge may do.
+#[tokio::test]
+async fn a_stored_full_mode_for_a_background_crew_is_ignored() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    let rows = mode_rows(&w);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    assert_eq!(mode_rows(&w), rows, "a run stores no mode row");
+    w.core
+        .set_crew_autopilot_mode(&ModeScope::Crew(run.id.clone()), Mode::Full)
+        .unwrap();
+    assert_eq!(w.core.crew_autopilot_mode(&project(&w), &run.id), Mode::Off);
+    // The settings neither list the stale row nor accept a new one.
+    let listed = w.core.autopilot_modes().unwrap();
+    assert!(
+        listed
+            .entries
+            .iter()
+            .all(|entry| entry.id.as_deref() != Some(run.id.as_str())),
+        "{listed:?}"
+    );
+    let change: wire::AutopilotModeChange =
+        serde_json::from_value(json!({ "scope": "crew", "id": run.id, "mode": "full" })).unwrap();
+    let error = w.core.autopilot_set_mode(&change).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::PolicyDenied(why) if why.contains("always wait for a person")),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_bad_branch_name_is_refused_and_nothing_is_made() {
+    let w = world(true, good()).await;
+    let bad_branch = crew_with(
+        &w,
+        "Branchy",
+        json!({ "kind": "ci_failure", "branch": "bad branch;rm" }),
+        5,
+        5,
+        true,
+    );
+    let before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&bad_branch, "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::Invalid(_)), "{error}");
+    assert_eq!(threads(&w), before);
 }
 
 #[tokio::test]
@@ -572,9 +824,9 @@ async fn a_background_merge_waits_for_a_person_even_when_autopilot_is_full() {
         .unwrap();
     assert_eq!(queued.state, "queued", "{queued:?}");
 
-    // The background run's merge is held as waiting, under the mode `off` pinned to its own crew.
+    // The background run's merge is held as waiting, under the mode `off` the code gives its crew.
     let id = crew(&w);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(w.core.crew_autopilot_mode(&project(&w), &run.id), Mode::Off);
     let task = task_of(&w, &run);
     w.until_state(&task, "passed").await;
@@ -614,7 +866,7 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
     run_git(&w.repo, &["update-index", "--assume-unchanged", path]);
     let before = (threads(&w), mode_rows(&w));
     // A refusal after the task exists keeps the run for review and returns it, like a route refusal does.
-    let returned = w.core.crew_background_run_now(&id).await.unwrap();
+    let returned = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert!(
         returned
             .review_reason
@@ -636,7 +888,7 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
     assert_eq!(results.len(), 1, "{results:?}");
     assert_eq!(results[0].state, wire::ResultState::NeedsPerson);
     assert!(w.core.store.thread(&run.id).is_ok());
-    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1 + 1));
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
     let saved = w.core.store.background_run(&run.id).unwrap();
     w.core
         .store
@@ -667,7 +919,11 @@ async fn a_failed_refusal_transaction_preserves_the_lead_and_reports_the_store_e
     rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap().execute_batch(
         "CREATE TRIGGER refuse_unwind BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.refused' BEGIN SELECT RAISE(ABORT, 'refusal audit unavailable'); END;",
     ).unwrap();
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     assert!(
         error.to_string().contains("refusal audit unavailable"),
         "{error}"
@@ -695,7 +951,7 @@ async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_re
         "CREATE TRIGGER no_crew_run BEFORE INSERT ON crew_runs BEGIN SELECT RAISE(ABORT, 'no crew run'); END;",
     ).unwrap();
     let before = (threads(&w), mode_rows(&w));
-    let returned = w.core.crew_background_run_now(&id).await.unwrap();
+    let returned = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let run = run_of(&w, &id);
     assert_eq!(returned.id, run.id);
     assert_eq!(run.state, wire::BackgroundRunState::NeedsReview);
@@ -714,7 +970,7 @@ async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_re
     };
     assert_eq!(states, ["needs_person"]);
     assert!(w.core.store.thread(&run.id).is_ok());
-    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1 + 1));
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
     assert_eq!(refusals(&w, &run.id), 1);
     assert!(w.sent_to(&run.id).is_empty());
 }
@@ -744,7 +1000,7 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
     w.core.set_crew_autopilot_mode(&scope, Mode::Off).unwrap();
     w.core
         .store
-        .start_background_run_as(&crew_row.id, &thread.id)
+        .start_background_run_as(&crew_row.id, &thread.id, "user")
         .unwrap();
     let before = (threads(&w), mode_rows(&w));
     // The last step of the cleanup fails: the refusal audit and every earlier delete must go with it.
@@ -796,7 +1052,10 @@ async fn a_held_task_gives_up_its_leases() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let id = crew(&w);
     // The lead thread of this harness stands for a run's lead: the task started under it has a lease and a worker.
-    w.core.store.start_background_run_as(&id, &w.lead).unwrap();
+    w.core
+        .store
+        .start_background_run_as(&id, &w.lead, "user")
+        .unwrap();
     let (answer, error) = w
         .start(
             brief(json!({ "files": [{ "path": "src/**", "mode": "write" }] })),
