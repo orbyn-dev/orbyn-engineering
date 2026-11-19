@@ -31,6 +31,13 @@ async function openMap(scenario: "crew" | `crew-${string}` = "crew") {
   await screen.findByRole("list", { name: "Crew" });
   return user;
 }
+async function openLanes(scenario: "crew" | `crew-${string}` = "crew") {
+  mock.reset(scenario);
+  const user = userEvent.setup();
+  render(<LanesView />);
+  await screen.findByRole("group", { name: "Swim lanes" });
+  return user;
+}
 const tree = () => within(screen.getByRole("list", { name: "Crew" }));
 const row = (name: RegExp) => tree().getByRole("button", { name });
 
@@ -53,15 +60,12 @@ describe("the Crew map on the map route", () => {
     expect(rows[0]).toHaveTextContent("Lead");
     expect(rows[1]).toHaveTextContent("Use next in the auth redirect when it points inside the app");
     expect(rows[1]).toHaveTextContent("Running");
-    expect(rows[1]).toHaveTextContent("1 unread");
-    expect(rows[1]).not.toHaveTextContent("Subagents not reported");
+    expect(rows[1]!.querySelector(".mp-unread")).toHaveAttribute("title", "1 unread");
     expect(rows[2]).toHaveTextContent("Verifying");
-    expect(rows[2]).toHaveTextContent("Subagents not reported");
-    expect(rows[3]).toHaveTextContent("Subagents not reported");
     // Only workers hang under the lead.
     expect(rows.map((one) => one.hasAttribute("data-worker"))).toEqual([false, true, true, true]);
-    // The routes carry no tokens, level or blocked state, so none is drawn.
-    expect(document.body.textContent).not.toMatch(/tokens|Blocked|\bL[0-2]\b|Open thread[^A]/);
+    // The map route carries no token count, branch, level or blocked state: those are Planned chips, never values.
+    expect(document.body.textContent).not.toMatch(/\d+k tokens|Blocked|\bL[0-2]\b|Open thread[^A]/);
     expect(nonGets()).toHaveLength(0);
   });
 
@@ -83,7 +87,7 @@ describe("the Crew map on the map route", () => {
 
   it("says a message with no delivery has none, and words held, failed and tool result", async () => {
     const user = await openMap();
-    await user.click(row(/claude\s*Opus/));
+    await user.click(row(/Opus 5.5/));
     const lines = within(await screen.findByRole("list", { name: "Messages" })).getAllByRole("listitem").map((one) => one.textContent ?? "");
     const answer = lines.find((line) => line.includes("an answer"))!;
     expect(answer).toMatch(/lead → all · an answer$/);
@@ -147,13 +151,16 @@ describe("the Crew map on the map route", () => {
 
   it("draws one worker, an ACP engine and a Claude worker that reports its subagents", async () => {
     await openMap("crew-map-acp");
-    expect(within(row(/Which target wins/)).getByText("Subagents not reported")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Subagent reports" })).getByText("Subagents not reported")).toBeVisible();
     expect(tree().getAllByRole("listitem")).toHaveLength(2);
   });
 
   it("draws a Claude worker, which reports its subagents, with no not-reported line", async () => {
     await openMap("crew-map-deep");
-    expect(within(row(/Use next in the auth redirect/)).queryByText("Subagents not reported")).toBeNull();
+    const subs = document.querySelectorAll(".mp-subcard");
+    expect(subs).toHaveLength(1);
+    expect(subs[0]).toHaveTextContent("Subagents reported");
+    expect(subs[0]).not.toHaveTextContent("Clear");
   });
 
   it("draws one worker beside the lead", async () => {
@@ -224,15 +231,118 @@ describe("the Crew map on the map route", () => {
   });
 });
 
-describe("the conversation lanes on the message and fact routes", () => {
-  async function openLanes(scenario: "crew" | `crew-${string}` = "crew") {
-    mock.reset(scenario);
-    const user = userEvent.setup();
-    render(<LanesView />);
-    await screen.findByRole("list", { name: "Lanes" });
-    return user;
-  }
+const swimEl = () => screen.getByRole("group", { name: "Swim lanes" });
+const swim = () => within(swimEl());
 
+describe("the wide Map tree from the map route", () => {
+  it("puts the lead in the first column and a card per worker in the second, with a solid line for who started whom", async () => {
+    await openMap();
+    const cards = [...document.querySelectorAll<HTMLElement>(".mp-node")];
+    expect(cards).toHaveLength(4);
+    expect(cards.map((card) => card.style.left)).toEqual(["0px", "290px", "290px", "290px"]);
+    expect(cards.map((card) => card.style.top)).toEqual(["160px", "0px", "160px", "320px"]);
+    expect(document.querySelectorAll(".mp-ed .mp-start")).toHaveLength(3);
+    expect(nonGets()).toHaveLength(0);
+  });
+
+  it("draws each message as a dashed line between its members, with the message's own label and how it arrived", async () => {
+    await openMap();
+    // Eight messages between members: seven between two, one to everyone drawn to each other lane.
+    expect(document.querySelectorAll(".mp-ed .mp-talk")).toHaveLength(10);
+    expect(document.querySelectorAll(".mp-elab")).toHaveLength(8);
+    const label = document.querySelector(".mp-elab")!;
+    expect(label).toHaveTextContent("implement → tests");
+    expect(label).toHaveTextContent("a fact");
+    expect(label).toHaveTextContent("live");
+    expect(label.getAttribute("title")).toBe("implement → tests: 1 message, a fact, newest live");
+  });
+
+  it("draws the design's legend for what the lines mean, and its words for how a message arrives", async () => {
+    await openMap();
+    const legend = document.querySelector(".mp-legend")!;
+    expect(legend).toHaveTextContent("started by");
+    expect(legend).toHaveTextContent("talking to");
+    expect(legend).toHaveTextContent("“live” means handed to a turn in progress");
+    expect(legend).toHaveTextContent("“next turn” means queued, or sent with the next prompt");
+  });
+
+  it("draws one subagent report beside each worker: reported without inventing the rows, not reported as not an empty tree", async () => {
+    await openMap();
+    const subs = [...document.querySelectorAll<HTMLElement>(".mp-subcard")];
+    expect(subs).toHaveLength(3);
+    expect(subs.map((sub) => sub.dataset.member)).toEqual(["implement", "tests", "review"]);
+    const reported = subs[0]!;
+    expect(reported).toHaveTextContent("Subagents reported");
+    expect(reported).not.toHaveTextContent("None running now");
+    expect(reported.querySelector(".mp-pl")?.getAttribute("title")).toBe("Planned: no Map route names a worker’s subagents");
+    const missing = subs[1]!;
+    expect(missing).toHaveTextContent("Subagents not reported");
+    expect(missing).toHaveTextContent("Not an empty tree: not reported.");
+  });
+
+  it("keeps per-worker tokens and the branch Planned, naming the reads the map does not carry", async () => {
+    await openMap();
+    const card = document.querySelector<HTMLElement>('.mp-node[data-worker] .mp-card')!;
+    const titles = [...card.querySelectorAll(".mp-pl")].map((pl) => pl.getAttribute("title"));
+    expect(titles).toContain("Planned: no Map route reports per-worker tokens yet");
+    expect(titles).toContain("Planned: no Map route reports a branch");
+    expect(card).toHaveTextContent("tokens");
+    expect(card).toHaveTextContent("branch");
+    expect(card.textContent).not.toMatch(/\d+k tokens/);
+    // The tree draws no lane level: no route reports one.
+    expect(document.body.textContent).not.toMatch(/\bL[0-2]\b/);
+  });
+});
+
+describe("the conversation lanes' swim lanes", () => {
+  it("draws one lane per member, the lead first, with the engine and model the map route carries", async () => {
+    await openLanes();
+    const lanes = swim().getAllByRole("listitem");
+    expect(lanes.map((lane) => lane.querySelector("b")?.textContent)).toEqual(["Lead", "implement", "tests", "review"]);
+    expect(lanes[0]).toHaveTextContent("claude · Opus 5.5");
+    expect(lanes[2]).toHaveTextContent("codex · GPT-5.5");
+    expect(nonGets()).toHaveLength(0);
+  });
+
+  it("draws each message as an arrow between its lanes, labelled with how it arrived and its kind", async () => {
+    await openLanes();
+    // Eight messages, one of them to everyone, which is drawn to each other lane.
+    expect(document.querySelectorAll(".mp-arrow")).toHaveLength(10);
+    const labels = [...document.querySelectorAll(".mp-lmk")].map((one) => one.textContent);
+    expect(labels).toContain("live · a fact");
+    expect(labels).toContain("next turn · a handoff");
+    expect(labels).toContain("tool result · a handoff");
+    expect(labels).toContain("held · a message");
+    expect(labels).toContain("failed · a fact");
+    // A message with no delivery row says nothing about it: only its kind is drawn.
+    expect(labels).toContain("an answer");
+    for (const one of labels) expect(one).not.toContain("undefined");
+  });
+
+  it("takes its time axis from the messages and marks the lane level it cannot read Planned", async () => {
+    await openLanes();
+    const ticks = [...document.querySelectorAll(".mp-tick")];
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    for (const tick of ticks) expect(tick.textContent).toMatch(/^\d\d:\d\d$/);
+    expect(swimEl().querySelector(".mp-pl")?.getAttribute("title")).toBe("Planned: no route reports a lane’s level");
+    expect(document.body.textContent).not.toMatch(/\bL[0-2]\b/);
+  });
+
+  it("draws the worker's outcome as a bar over its run, and no crew label the map does not carry", async () => {
+    await openLanes();
+    const bars = [...document.querySelectorAll<HTMLElement>(".mp-lbar")];
+    expect(bars.map((bar) => bar.textContent)).toEqual([
+      "Use next in the auth redirect when it points inside the app",
+      "Add tests for the redirect, including //evil.com",
+      "Which target wins when both next and returnTo are set?",
+    ]);
+    expect(bars.every((bar) => bar.style.width !== "0px")).toBe(true);
+    const lead = swim().getAllByRole("listitem")[0]!;
+    expect(lead.querySelector(".mp-lbar")).toBeNull();
+  });
+});
+
+describe("the conversation lanes on the message and fact routes", () => {
   it("draws draws nothing while Crew Preview is off", async () => {
     mock.reset("default");
     const { container } = render(<LanesView />);
@@ -254,7 +364,7 @@ describe("the conversation lanes on the message and fact routes", () => {
     expect(facts[0]).toHaveTextContent("contract · implement · rev 2");
     expect(facts[0]).toHaveTextContent("Verified");
     expect(facts[1]).not.toHaveTextContent("Verified");
-    expect(within(screen.getByRole("list", { name: "Lanes" })).getAllByRole("listitem")).toHaveLength(4);
+    expect(swim().getAllByRole("listitem")).toHaveLength(4);
     expect(nonGets()).toHaveLength(0);
   });
 
@@ -270,7 +380,7 @@ describe("the conversation lanes on the message and fact routes", () => {
     await openLanes("crew-map-no-messages");
     expect(await screen.findByText("No messages yet")).toBeVisible();
     expect(screen.getByText(/Workers talk to each other and to the lead through Crew/)).toBeVisible();
-    expect(within(screen.getByRole("list", { name: "Lanes" })).getAllByRole("listitem").length).toBeGreaterThan(1);
+    expect(swim().getAllByRole("listitem").length).toBeGreaterThan(1);
   });
 
   it("pages messages with +N more, and a double call sends one read", async () => {
@@ -299,7 +409,6 @@ describe("the conversation lanes on the message and fact routes", () => {
 
   it("does not offer a scrubbed member name as a filter", async () => {
     await openLanes("crew-map-scrubbed");
-    await screen.findByRole("list", { name: "Lanes" });
     const option = screen.getByRole("option", { name: "[redacted] (can’t be filtered)" });
     expect(option).toBeDisabled();
     expect(screen.getByRole("option", { name: "Withheld. (can’t be filtered)" })).toBeDisabled();
@@ -313,7 +422,7 @@ describe("the conversation lanes on the message and fact routes", () => {
     render(<LanesView />);
     expect(await screen.findByText("Can’t read the lanes")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("list", { name: "Lanes" })).toBeVisible();
+    expect(await screen.findByRole("group", { name: "Swim lanes" })).toBeVisible();
     expect(nonGets()).toHaveLength(0);
   });
 });
