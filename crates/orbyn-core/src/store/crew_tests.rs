@@ -376,6 +376,7 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_merges",
             "crew_messages",
             "crew_paused_starts",
+            "crew_person_commits",
             "crew_provenance_start",
             "crew_reports",
             "crew_results",

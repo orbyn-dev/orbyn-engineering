@@ -1261,16 +1261,19 @@ details[open] > summary > .chev {
   justify-content: center;
   gap: 6px;
   flex: none;
-  height: 28px;
+  min-height: 28px;
   margin: 0 8px 4px;
-  padding: 0 10px;
+  padding: 3px 10px;
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--color-sunken);
   color: var(--color-textSoft);
   font-size: var(--text-meta);
-  white-space: nowrap;
+  white-space: normal;
   cursor: pointer;
+}
+.update-pill > svg {
+  flex: none;
 }
 .update-pill:hover {
   background: var(--color-selected);

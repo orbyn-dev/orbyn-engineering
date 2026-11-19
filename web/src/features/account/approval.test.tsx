@@ -143,6 +143,35 @@ describe("a new device waiting for a trusted one", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps an open request retryable when cancellation fails", async () => {
+    const onBack = vi.fn();
+    const cancel = vi.spyOn(accountApi, "cancelSignIn")
+      .mockRejectedValueOnce(new ApiFailure("account_offline", "Couldn't reach Orbyn.", 503))
+      .mockResolvedValueOnce(undefined);
+    render(<ApprovalCard approval={{ state: "enter_digits", expires_in_secs: 500 }} onChanged={() => undefined} onBack={onBack} />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("heading", { name: "Couldn’t check this request." })).toBeVisible();
+    expect(screen.queryByText("Denied or cancelled.")).toBeNull();
+    expect(onBack).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(onBack).toHaveBeenCalledExactlyOnceWith("sign-in");
+    vi.restoreAllMocks();
+  });
+
+  it("leaves when the service refuses the cancellation for good, so Cancel cannot fail for ever", async () => {
+    const onBack = vi.fn();
+    vi.spyOn(accountApi, "cancelSignIn").mockRejectedValueOnce(new ApiFailure("account_disabled", "Accounts are off.", 409));
+    render(<ApprovalCard approval={{ state: "enter_digits", expires_in_secs: 500 }} onChanged={() => undefined} onBack={onBack} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(onBack).toHaveBeenCalledExactlyOnceWith("sign-in"));
+    vi.restoreAllMocks();
+  });
+
   it("when the service cannot be reached with the digits it says it cannot check, and nothing is closed", async () => {
     render(<ApprovalCard approval={{ state: "enter_digits", expires_in_secs: 500 }} onChanged={() => undefined} onBack={() => undefined} />);
     const user = userEvent.setup();

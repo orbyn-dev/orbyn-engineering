@@ -3,7 +3,8 @@
 //!
 //! Review here is **merge-level**: a hunk is reviewed when its merge was marked Looks good or Commented. Nothing says a
 //! person read a given line, and no count here claims it. A merge from before provenance began, one with no stored hunk
-//! and one whose hunks carry no note are "Not measured": they are counted as merges and add no line.
+//! and one whose hunks carry no note are "Not measured": they are counted as merges and add no line. Lines nobody
+//! confirmed (`Author::Unknown`) count as the agent's, never as a person's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -105,7 +106,10 @@ pub fn coverage(
         add(&mut map.merges, 1);
         let mut touched = BTreeSet::new();
         for stored in item.hunks {
-            let Author::Agent { engine, model } = &stored.hunk.author else {
+            // An `Unknown` line counts with the agent's: nobody confirmed it was written by a person.
+            let (Author::Agent { engine, model } | Author::Unknown { engine, model }) =
+                &stored.hunk.author
+            else {
                 continue;
             };
             let (len, area) = (stored.hunk.hunk.len, area_of(&stored.hunk.hunk.path));
@@ -276,6 +280,23 @@ mod tests {
             ),
             (0, 0, 0)
         );
+    }
+
+    #[test]
+    fn unknown_lines_count_with_the_agents_and_never_as_a_person() {
+        let unknown = Author::Unknown {
+            engine: "claude".to_owned(),
+            model: Some("sonnet".to_owned()),
+        };
+        let h = [
+            hunk("a/b/c.rs", 3, unknown, true),
+            hunk("a/b/d.rs", 5, agent(), true),
+            hunk("a/b/e.rs", 7, Author::Person, true),
+        ];
+        let c = run(&merge("t", "looks_good", "high", 100), &h, &began(50));
+        assert_eq!((c.agent_lines, c.reviewed_lines), (8, 8));
+        assert_eq!(c.engines.len(), 1);
+        assert_eq!(c.engines[0].agent_lines, 8);
     }
 
     #[test]

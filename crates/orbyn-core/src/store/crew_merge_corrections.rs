@@ -190,7 +190,7 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
-    fn correction_migration_preserves_schema54_and_reopens_idempotently() {
+    fn correction_migration_preserves_schema55_and_reopens_idempotently() {
         let dir = TempDir::new();
         let path = dir.path().join("correction.sqlite3");
         let conn = Connection::open(&path).unwrap();
@@ -200,7 +200,7 @@ mod tests {
         .unwrap();
         for (version, sql) in migrations::MIGRATIONS
             .iter()
-            .filter(|(version, _)| *version <= 54)
+            .filter(|(version, _)| *version <= 55)
         {
             conn.execute_batch(sql).unwrap();
             conn.execute(
@@ -241,7 +241,7 @@ mod tests {
             reopened
                 .reader()
                 .query_row(
-                    "SELECT COUNT(*) FROM schema_migrations WHERE version=55",
+                    "SELECT COUNT(*) FROM schema_migrations WHERE version=56",
                     [],
                     |r| r.get::<_, u32>(0)
                 )

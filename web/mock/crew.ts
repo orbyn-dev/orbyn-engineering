@@ -407,7 +407,7 @@ const guardHolds = (full: boolean): AutopilotHeld[] => full ? [
 
 export function createCrewMock() {
   let guardsEmpty = false;
-  let classes: "valid" | "invalid" | "note" = "valid";
+  let classes: "valid" | "invalid" | "note" | "pinned" = "valid";
   let route: "blocked" | "invalid" | "none" | null = null;
   let held: AutopilotHeld[] = [];
   let heldScenario = "";
@@ -438,7 +438,7 @@ export function createCrewMock() {
     tripped = Object.fromEntries(areas.rows.flatMap((one) => (one.since ? [[one.area_key, one.since] as const] : [])));
     staleOnce = scenario === "crew-areas-stale";
     guardsEmpty = scenario === "crew-guard-empty";
-    classes = scenario === "crew-classes-invalid" ? "invalid" : scenario === "crew-classes-note" ? "note" : "valid";
+    classes = scenario === "crew-classes-invalid" ? "invalid" : scenario === "crew-classes-note" ? "note" : scenario === "crew-classes-pinned" ? "pinned" : "valid";
     route = scenario === "crew-route-blocked" ? "blocked" : scenario === "crew-route-invalid" ? "invalid" : scenario === "crew-route-none" ? "none" : null;
     heldScenario = scenario.startsWith("crew-held") ? scenario : "";
     held = scenario === "crew-guard-full" ? guardHolds(true) : scenario === "crew-guard" || scenario === "crew-guard-unknown" ? guardHolds(false) : heldScenario ? holds() : [];
@@ -510,6 +510,17 @@ export function createCrewMock() {
     if (!on) return { status: 404, body: { code: "not_found", message: "Crew is not on." } };
     const seg = path.split("/").filter(Boolean); // api crew ...
     const [, , head, id] = seg;
+    if (head === "projects" && id && seg[4] === "pinned-ref") {
+      const current = "b".repeat(40);
+      const stored = "a".repeat(40);
+      const reason = "the default branch origin/main now points at bbbbbbbbbbbb, which does not descend from the commit Orbyn remembered, aaaaaaaaaaaa. Ask a person to confirm the new default branch before a task starts.";
+      if (method === "GET") return { status: 200, body: { project: id, current_ref: "origin/main", current_commit: current, stored_ref: "origin/main", stored_commit: stored, accepted: classes !== "pinned", missing: false, blocked: classes === "pinned" ? reason : null } };
+      if (method === "POST" && (seg[5] === "confirm" || seg[5] === "reset")) {
+        if (seg[5] === "confirm" && (body as { commit?: string }).commit !== current) return { status: 400, body: { code: "invalid", message: "the default branch is not the commit that was shown; reload and confirm the commit it has now" } };
+        classes = "valid";
+        return { status: 200, body: { project: id, current_ref: "origin/main", current_commit: current, stored_ref: seg[5] === "reset" ? null : "origin/main", stored_commit: seg[5] === "reset" ? null : current, accepted: true, missing: false, blocked: null } };
+      }
+    }
     if (head === "approvals" && id === "second-engine") {
       if (method === "POST" && seg[5] === "dismiss") {
         secondNotices = secondNotices.filter((one) => one.id !== Number(seg[4]));
@@ -584,7 +595,7 @@ export function createCrewMock() {
         built_in: "Everything else",
         rules: bad ? [] : RULES,
         problems: bad ? PROBLEMS : [],
-        notes: [],
+        notes: classes === "pinned" ? ["default branch changed: the default branch origin/main now points at bbbbbbbbbbbb, which does not descend from the commit Orbyn remembered, aaaaaaaaaaaa. Ask a person to confirm the new default branch before a task starts.. Every engine is blocked until a person confirms or resets the remembered default branch."] : [],
         working_copy_differs: classes === "note",
         working_copy_note: classes === "note" ? "This checkout's copy of the file differs from the committed one. An edit is not in force until it is committed." : null,
       };

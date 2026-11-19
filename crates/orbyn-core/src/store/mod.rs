@@ -49,6 +49,9 @@ mod crew_merges;
 mod crew_paused_starts;
 #[cfg(test)]
 mod crew_paused_starts_tests;
+mod crew_person_commits;
+#[cfg(test)]
+mod crew_person_commits_tests;
 mod crew_provenance;
 #[cfg(test)]
 mod crew_provenance_tests;
