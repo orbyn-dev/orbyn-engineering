@@ -15,6 +15,7 @@ the rest of [crew](../README.md): off, the four tools do not exist.
 | `deliver` | The data wrapper, the secret and leak checks on the way out, steering or queueing, and the delivery record |
 | `notify` | Telling the lead, once, when a guard refuses a member |
 | `rules` | What the guards count: exchanges between two members, who a message is for, the answer to a question. Pure |
+| `config` | The lead repository's committed `bus` limits, trusted caller/project binding and read-only default-branch pin check |
 
 ## Rules to keep
 
@@ -50,6 +51,25 @@ the rest of [crew](../README.md): off, the four tools do not exist.
   replaced by a plain notice. A worker's first prompt leaves out board facts and messages a key covers.
 - **Posts.** A board write counts as a post (H5), and a key has at most 16 revisions, so rewriting a key is no way
   round the limits.
+- **Repository limits.** Protected `.orbyn/crew.json` may contain `"bus":{"exchanges":1,"posts":10}`.
+  Both fields are optional nonnegative integers; zero refuses the first counted action. They can only
+  tighten the current host ceilings (normally 3 exchanges and 30 posts). Unknown fields and higher
+  limits are ignored with fixed diagnostics that quote no repository values. A present null, wrong
+  type, repeated recognized field or malformed JSON is refused. An absent file or section adds no limit.
+  Start refuses a malformed bus section before admitting a task. Existing whole-document, class and
+  default-branch failures keep the router's `needs_person` refusal and audit; no worker is launched.
+  Each post, ask's post and board write then captures
+  the lead checkout's current committed HEAD and accepted default-branch rules, using the stricter
+  values. Git's bounded plain-blob reader rejects links, submodules, oversized files and unreadable
+  policy; the remembered default-branch ancestry check never falls back past a damaged or missing pin.
+  Bus reads do not advance that pin. No worktree file or caller-supplied project/path is read as policy.
+  Worker and lead project bindings are checked again after Git reads.
+  A committed change affects a later operation, including an active task; uncommitted changes do not.
+  Removing a tighter rule may restore the host ceiling. Counts never reset on refresh or restart,
+  and lowering below the stored count refuses the next counted action. Restart rereads the same rules;
+  there is no migration or frozen policy record. Git reads precede the bus writer lock; the host ceiling
+  is applied again under that lock. Malformed policy refuses writes, while inbox/board reads and
+  cancellation remain available. These per-operation local Git reads add work to each bus mutation.
 - The lead is told once per distinct refusal (hop, post limit, board conflict; a conflict by key and writer, not by
   the revisions picked), and of at most 10 things a run, by a message from the core
   stored and queued like any other. The worker that keeps knocking does not fill the lead's queue.
@@ -76,5 +96,5 @@ as a pure rule.
 
 ## Limits of Preview
 
-- Limits come from `Bus::lower`, which applies to every crew in the process; no rule file is read yet and limits should be per crew (#445).
+- `Bus::lower` is a process-wide host ceiling only. Repository limits apply to their own caller's crew and never mutate it.
 - Fake engines only. No real Claude or Codex run has shown when a steered message is read (#444).

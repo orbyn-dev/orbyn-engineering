@@ -61,13 +61,14 @@ impl Core {
         args: &Value,
     ) -> Result<Value, CrewError> {
         let who = self.bus_sender(binding, BOARD_WRITE_TOOL)?;
-        let limits = self.crew_limits();
+        let repo_limits = self.crew_limits(&who).await?;
         let Some(fields) = args.as_object() else {
             return Err(invalid("arguments: an object"));
         };
         let mut draft = fields.clone();
         let named = draft.remove("task");
         let _bus = self.crew_bus.lock.lock().await;
+        let limits = repo_limits.apply(self.crew_bus.limits());
         let crew = who.crew_id.as_str();
         let members = self.store.crew_tasks_in_crew(crew).map_err(internal)?;
         // H5: a board write is a post, so rewriting a key is no way round the limit.

@@ -3,6 +3,7 @@
 //! only ever calls a tool with a draft.
 
 mod board;
+pub(in crate::crew) mod config;
 pub(super) mod deliver;
 mod ledger;
 mod notify;
@@ -29,7 +30,7 @@ pub const BOARD_WRITE_TOOL: &str = "crew_board_write";
 pub const BUS_TOOLS: [&str; 4] = [POST_TOOL, ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL];
 
 /// The limits the guards apply. A repo rule may lower the first two (SPEC.md H4, H5) through
-/// [`Bus::lower`]; nothing reads a rule from a repo yet, so a crew runs on the defaults.
+/// caller-scoped committed policy. [`Bus::lower`] supplies a process-wide host ceiling only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     /// Messages between two members before the lead is told (H4).
@@ -82,7 +83,7 @@ pub struct Bus {
 }
 
 impl Bus {
-    /// Applies a repo rule: the exchange and post limits can only go down (H4, H5).
+    /// Tightens the process-wide host ceiling. Repository rules never mutate this state.
     pub fn lower(&self, exchanges: Option<u32>, posts: Option<u32>) {
         if let Ok(mut limits) = self.limits.lock() {
             *limits = limits.lowered(exchanges, posts);
@@ -266,11 +267,6 @@ impl Core {
             ));
         }
         Ok(())
-    }
-
-    /// The limits a crew runs on.
-    pub(super) fn crew_limits(&self) -> Limits {
-        self.crew_bus.limits()
     }
 
     /// The caller of a bus tool. Off, the tools do not exist (`unknown_tool`); a worker whose

@@ -393,7 +393,12 @@ Guards, all enforced in code:
   - The hop count is H4 as written: a lead message to a member starts every pair of that member again. The count
     is read from the stored messages. The lead is told once per distinct refusal by a message from the core.
   - Sizes: a body up to 4000 characters, a fact value up to 8 KiB, 128 keys per board. A repo rule can lower the
-    exchange and post limits through the bus, but no rule file is read yet.
+    exchange and post limits through `bus: { exchanges, posts }` in protected `.orbyn/crew.json`.
+    Start validates it; each counted write reads committed HEAD and the accepted default branch of the
+    lead's checkout, taking the stricter limits without changing the host ceiling or another project.
+    Changes apply on later operations, including active tasks; uncommitted edits do not. Existing counts
+    survive refresh and restart. Invalid policy refuses writes, while read tools remain available.
+    See the [bus rules](../crates/orbyn-core/src/crew/bus/README.md#rules-to-keep) for bounds and failures.
 
 **Isolation**
 

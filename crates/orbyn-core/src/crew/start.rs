@@ -258,6 +258,7 @@ impl Core {
         let run_id = CrewId::new(crate::util::new_id()).map_err(invalid)?;
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
+        self.crew_start_bus_limits(thread).await?;
         let now = crate::util::unix_now();
         // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
         // start is refused here with the reason, and no task, lease, run or ledger row exists.

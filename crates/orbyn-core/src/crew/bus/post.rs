@@ -148,7 +148,7 @@ impl Core {
         tool: &str,
     ) -> Result<Sent, CrewError> {
         let who = self.bus_sender(binding, tool)?;
-        let limits = self.crew_limits();
+        let repo_limits = self.crew_limits(&who).await?;
         let Some(fields) = args.as_object() else {
             return Err(invalid("arguments: an object"));
         };
@@ -169,6 +169,7 @@ impl Core {
         }
         // One bus writer at a time: the counts below and the store they guard are one step.
         let guard = self.crew_bus.lock.lock().await;
+        let limits = repo_limits.apply(self.crew_bus.limits());
         let crew = who.crew_id.as_str();
         let members = self.store.crew_tasks_in_crew(crew).map_err(internal)?;
 
