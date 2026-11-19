@@ -460,6 +460,18 @@ impl EngineManager {
         change()
     }
 
+    /// Limits-only discovery must filter by family before any probe: warming the
+    /// general status cache would also start and await Claude and its instances.
+    pub(crate) async fn limits_statuses(&self) -> Result<Vec<EngineStatus>> {
+        let mut statuses = Vec::new();
+        for driver in self.all_drivers()? {
+            if driver.family() != "claude" {
+                statuses.push(self.status_of(driver.as_ref()).await);
+            }
+        }
+        Ok(statuses)
+    }
+
     pub async fn statuses(&self, refresh: bool) -> Result<Vec<EngineStatus>> {
         let mut cached = self.statuses.lock().await;
         if refresh || cached.is_none() {
