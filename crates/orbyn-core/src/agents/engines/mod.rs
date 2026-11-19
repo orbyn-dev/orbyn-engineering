@@ -665,7 +665,22 @@ impl EngineManager {
 
     async fn status_of(&self, driver: &dyn EngineDriver) -> EngineStatus {
         let descriptor = driver.descriptor();
-        let probe = driver.probe().await;
+        let instance = self
+            .instances()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|instance| instance.id == descriptor.id);
+        let family = instance
+            .as_ref()
+            .map_or_else(|| driver.family(), |one| one.driver.clone());
+        let mut probe = driver.probe().await;
+        if family == "opencode"
+            && let Some(path) = &probe.path
+        {
+            probe.version = probe::probe_cli(&path.to_string_lossy(), &["--version"])
+                .await
+                .version;
+        }
         let plan = driver.update_plan(&probe).await;
         let installed = probe.path.is_some();
         let installer = plan
@@ -678,13 +693,13 @@ impl EngineManager {
             }
             _ => None,
         };
-        let family = driver.family();
-        let support = if descriptor.tier == EngineTier::Native {
+        let has_manifest = descriptor.tier == EngineTier::Native || family == "opencode";
+        let support = if has_manifest {
             self.manifest.support(&family, probe.version.as_deref())
         } else {
             VersionSupport::Unknown
         };
-        let compatibility = if descriptor.tier == EngineTier::Native {
+        let compatibility = if has_manifest {
             probe.version.as_deref().and_then(|installed| {
                 compatibility(&self.manifest, &family, installed, plan.as_ref())
             })
@@ -698,11 +713,6 @@ impl EngineManager {
         };
         let (inherited_credentials, endpoint_origin) =
             crate::host::child_env::inherited_login(&family);
-        let instance = self
-            .instances()
-            .unwrap_or_default()
-            .into_iter()
-            .find(|instance| instance.id == descriptor.id);
         EngineStatus {
             instance_of: instance.as_ref().map(|one| one.driver.clone()),
             accent: instance.and_then(|one| one.accent),

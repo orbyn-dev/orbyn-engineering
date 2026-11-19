@@ -111,8 +111,18 @@ it("shows a row for an engine the list has not heard of yet, and keeps the insta
   ], [entry({ id: "work", name: "Claude Code · Work", labels: ["limited_support"], note: "Update to the supported version." })]);
   await switches();
   expect(rowOf("Fresh")).toBeVisible();
+  expect(within(rowOf("Fresh")).queryByRole("button", { name: "Fresh" })).toBeNull();
   const sub = within(rowOf("Claude Code")).getByText(/Update to the supported version\./);
   expect(sub.textContent).toContain("Work");
+});
+
+it("keeps a non-beta detail closed even when older catalog data says it opens", async () => {
+  show([engine({ id: "cline", name: "Cline", tier: "acp", auth: "not_applicable" })], [
+    entry({ id: "cline", name: "Cline", group: "more", openable: true, labels: ["not_verified"] }),
+  ]);
+  await switches();
+  expect(within(rowOf("Cline")).queryByRole("button", { name: "Cline" })).toBeNull();
+  expect(within(rowOf("Cline")).getByRole("switch", { name: "Use Cline" })).toBeVisible();
 });
 
 it("shows Signed out for a signed-out engine even with no sign-in command", async () => {
@@ -156,4 +166,16 @@ it("falls back to one flat table of the engines until the service answers", () =
   render(<ProviderTable store={store} onOpen={() => undefined} onEdit={() => undefined} engines={[engine({})]} />);
   expect(screen.getByRole("table", { name: "Providers" })).toBeVisible();
   expect(screen.queryAllByRole("rowgroup")).toHaveLength(0);
+});
+
+it("opens beta instances but keeps other families closed before catalog loading", async () => {
+  vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);
+  const open = vi.fn();
+  render(<ProviderTable store={store} onOpen={open} onEdit={() => undefined} engines={[
+    engine({ id: "work", name: "OpenCode · Work", instance_of: "opencode", tier: "acp" }),
+    engine({ id: "cline", name: "Cline", tier: "acp" }),
+  ]} />);
+  await userEvent.click(screen.getByRole("button", { name: "OpenCode · Work" }));
+  expect(open).toHaveBeenCalledExactlyOnceWith("work");
+  expect(screen.queryByRole("button", { name: "Cline" })).toBeNull();
 });

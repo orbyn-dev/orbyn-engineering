@@ -17,6 +17,7 @@ import { ProviderListActions, ProviderTable, useProviderList } from "./ProviderT
 import { SettingsBanner } from "../rows/SettingsBanner";
 import { followEngineUpdates } from "./engineUpdates";
 import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
+import { hasProviderDetail } from "./providerDetailFamily";
 
 const POLL_WHILE_UPDATING_MS = 1500;
 
@@ -93,7 +94,7 @@ export function ProvidersSection() {
   if (view.page === "history") return <HistoryImportView onBack={list} />;
   if (view.page === "registry") return <AcpRegistryView onBack={list} />;
   const detail = view.page === "detail" ? engines.data?.find((engine) => engine.id === view.id) : undefined;
-  if (detail) {
+  if (detail && hasProviderDetail(detail)) {
     return (
       <>
         <ProviderDetail engine={detail} store={store} onBack={list} onEdit={() => setEditing(detail.id)} />

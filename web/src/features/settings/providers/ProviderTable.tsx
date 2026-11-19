@@ -12,6 +12,7 @@ import { Button } from "../../../ui/controls";
 import type { InstanceStore } from "./ProviderInstances";
 import { PreferenceInheritance } from "../rows/PreferenceInheritance";
 import { useSettingsScope } from "../rows/SettingsScopeContext";
+import { hasProviderDetail } from "./providerDetailFamily";
 
 const KEY = "disabled_engines";
 
@@ -111,7 +112,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
   const engineRow = (engine: EngineStatus, entry?: ProviderEntry) => {
     const note = subtitle(engine, entry?.note);
     const instance = store.instances.find((candidate) => candidate.id === engine.id);
-    const openable = entry?.openable ?? true;
+    const openable = hasProviderDetail(engine) && (entry?.openable ?? true);
     return (
       <div key={engine.id} role="row" className={openable ? "set-tr set-tr-open" : "set-tr"} style={{ gridTemplateColumns: COLUMNS }} onClick={openable ? () => onOpen(engine.id) : undefined}>
         <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
@@ -141,7 +142,8 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
     </div>
   );
   // Every registered engine has a row, whether or not the list has heard of it yet: a newly added or
-  // misconfigured one must stay reachable. The list adds its labels and the rows that are not engines.
+  // misconfigured instance must stay editable. Only built detail pages may open.
+  // The list adds its labels and the rows that are not engines.
   const places = (() => {
     if (!catalog || catalog.providers.length === 0) return null;
     const rows: { place: PlaceKey; node: ReactNode }[] = [];

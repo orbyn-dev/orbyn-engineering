@@ -10,6 +10,38 @@ const engine = { id: "claude", name: "Claude Code", tier: "native", installed: t
   capabilities: {}, support: "tested", update_command: null, sign_in_command: null, updating: false, problem: null } as unknown as EngineStatus;
 const store = { instances: [], raw: [], disabled: false, save: async () => null } as never;
 
+it("limits the OpenCode detail page to its reported facts and models", async () => {
+  installMockFetch();
+  const opencode = { ...engine, id: "opencode", name: "OpenCode", tier: "acp", path: "/opt/opencode", version: "2.2.5", support: "unknown" } as EngineStatus;
+  render(<ProviderDetail engine={opencode} store={store} onBack={() => undefined} onEdit={() => undefined} />);
+  expect(screen.getByText("2.2.5")).toBeVisible();
+  expect(screen.getByText("/opt/opencode")).toBeVisible();
+  expect(screen.getByText("Models", { selector: "p" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Remove OpenCode" })).toBeNull();
+  expect(screen.getByText("Crew tier mapping")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Open Settings › Crew" })).toBeDisabled();
+  expect(screen.getByText("Planned")).toBeVisible();
+});
+
+it("puts only the service's OpenCode compatibility warning above its facts", () => {
+  installMockFetch();
+  const message = "OpenCode 1.13 runs with limited support: some of what Orbyn offers is left out.";
+  const opencode = { ...engine, id: "opencode", name: "OpenCode", tier: "acp", version: "1.13.2", support: "below_minimum",
+    compatibility: { status: "unsupported", message } } as EngineStatus;
+  render(<ProviderDetail engine={opencode} store={store} onBack={() => undefined} onEdit={() => undefined} />);
+  const warning = screen.getByText(message);
+  expect(warning.compareDocumentPosition(screen.getByText("Version")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getAllByText(message)).toHaveLength(1);
+});
+
+it("does not infer OpenCode support from its version alone", () => {
+  installMockFetch();
+  const opencode = { ...engine, id: "opencode", name: "OpenCode", tier: "acp", version: "1.13.2", support: "unknown" } as EngineStatus;
+  render(<ProviderDetail engine={opencode} store={store} onBack={() => undefined} onEdit={() => undefined} />);
+  expect(screen.getByText("1.13.2")).toBeVisible();
+  expect(screen.queryByText(/runs with limited support/)).toBeNull();
+});
+
 async function seedCustomModels(mock: ReturnType<typeof installMockFetch>) {
   const read = mock.handle("POST", "/api/settings/preferences/query", { scope: {}, keys: ["custom_models"] }).body as { catalog: { version: string }; rows: { revision: string }[] };
   mock.handle("PUT", "/api/settings/preferences", { scope: {}, membership_version: read.catalog.version, if_match: { custom_models: read.rows[0]?.revision },

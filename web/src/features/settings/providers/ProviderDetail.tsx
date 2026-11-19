@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ChevronLeft, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, Info, Plus } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api";
 import type { EngineStatus } from "../../../api/types";
@@ -104,6 +104,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
   // Remove is refused while a thread runs on this engine; the row says which one and links to it.
   const running = useWorkspace((state) => Object.values(state.threads).find((thread) => thread.engine === engine.id && thread.active_run !== null));
   const instance = store.instances.find((entry) => entry.id === engine.id);
+  const opencode = (engine.instance_of ?? engine.id) === "opencode";
   const removable = instance !== undefined || engine.tier !== "native";
   const hasNewer = engine.latest !== null && engine.latest !== engine.version;
   const recheck = async () => {
@@ -119,7 +120,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       <div className="set-back">
         <Button small tone="quiet" icon={<ChevronLeft size={13} aria-hidden />} onClick={onBack}>Providers</Button>
         <h2 className="set-back-title">{engine.name}</h2>
-        {instance ? <Button small className="set-back-end" onClick={onEdit}>Edit</Button> : null}
+        {instance && !opencode ? <Button small className="set-back-end" onClick={onEdit}>Edit</Button> : null}
       </div>
       {engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
         {engine.path ? `Couldn’t run ${engine.path}. ` : ""}{engine.problem}
@@ -128,10 +129,13 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       {!engine.installed ? <VendorInstall engine={engine} view={install} checking={checking} onCheck={() => void recheck()} /> : null}
       <InstallBanner engine={engine} view={install} />
       {failed && install.shown ? <InstallLog command={install.shown.command ?? null} lines={install.shown.output} failed /> : null}
+      {opencode && engine.compatibility ? <SettingsBanner icon={<Info size={16} aria-hidden />}>{engine.compatibility.message}</SettingsBanner> : null}
       <SettingGroup>
         <SettingRow title="Version" description={engine.version === null ? "Unknown" : install.running && engine.latest ? `${engine.version} · updating to ${engine.latest}` : hasNewer ? `${engine.version} · ${engine.latest} is available` : engine.version}>
-          <UpdateAction engine={engine} />
-          {hasNewer || install.running ? null : <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button>}
+          {opencode ? <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button> : <>
+            <UpdateAction engine={engine} />
+            {hasNewer || install.running ? null : <Button small busy={checking} onClick={() => void recheck()}>Check for update</Button>}
+          </>}
         </SettingRow>
         {failed ? null : <InstallBody view={install} />}
         <SettingRow title="Login" description={engine.auth === "logged_out" ? "Not signed in" : engine.auth === "logged_in" && engine.account ? `Signed in as ${engine.account}` : authLabels[engine.auth]}>
@@ -144,8 +148,13 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       {engine.installed ? (engine.auth === "logged_out"
         ? <><p className="set-grp">Models</p><div className="set-card"><span className="t3">Sign in to see the models this account can use.</span></div></>
         : <Models engine={engine} />) : null}
-      {engine.installed ? <NativeSessions engine={engine} /> : null}
-      <SettingGroup>
+      {opencode ? <SettingGroup>
+        <SettingRow title="Crew tier mapping" description="Crew maps its tiers to OpenCode models in Settings › Crew.">
+          <Button small disabled>Open Settings › Crew</Button><span className="set-pill planned dot">Planned</span>
+        </SettingRow>
+      </SettingGroup> : null}
+      {engine.installed && !opencode ? <NativeSessions engine={engine} /> : null}
+      {!opencode ? <SettingGroup>
         {hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
         {removable ? (
           <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this engine from Orbyn. Its sign-in and sessions stay with the engine."}>
@@ -153,7 +162,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
             {running ? <Button small onClick={() => navigate({ name: "thread", id: running.id })}>Open thread</Button> : null}
           </SettingRow>
         ) : null}
-      </SettingGroup>
+      </SettingGroup> : null}
       {removing ? (
         <ConfirmDialog title={`Remove ${engine.name}?`} confirmLabel="Remove" tone="danger" onClose={() => setRemoving(false)}
           onConfirm={async () => {

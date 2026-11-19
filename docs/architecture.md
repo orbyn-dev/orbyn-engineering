@@ -2018,6 +2018,14 @@ and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanage
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
 for are not verified on a real install.
 
+Provider detail pages in the beta are limited to Claude Code, Codex and OpenCode,
+including their named instances. Other registered providers retain their list and
+instance-edit controls, but cannot open an unbuilt detail page, including before
+the catalog arrives. OpenCode reports its version through the bounded CLI probe;
+compatibility still comes only from the authenticated manifest. Without an
+OpenCode entry its support stays Unknown. Its detail page shows reported version,
+login, location and models; Crew tier mapping remains Planned.
+
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
 version 1; a reply in version 2's own shape (`info`) is refused with a message saying so,
