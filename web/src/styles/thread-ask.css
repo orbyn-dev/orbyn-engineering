@@ -319,3 +319,10 @@
   color: var(--color-danger);
   font-weight: 500;
 }
+.notice-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
