@@ -151,13 +151,17 @@ impl Core {
         })?;
         let crew_scope = ModeScope::Crew(thread.id.clone());
         if let Err(error) = self.start_background_run_for(&crew, &thread, &crew_scope) {
-            self.discard_background_lead(&thread.id, &crew_scope)?;
+            // No run row exists yet or it is still taskless, so this fails closed whatever the cleanup does. The person is owed the
+            // refusal, not a store error from the cleanup.
+            if let Err(cleanup) = self.store.discard_unopened_background_lead(&thread.id) {
+                tracing::error!(%cleanup, run = %thread.id, "could not take back a background start that failed to open");
+            }
             return Err(error);
         }
         let stamper = match self.review_stamper(&thread, &engine) {
             Ok(stamper) => stamper,
             Err(error) => {
-                return self.unwind_background_start(&thread.id, &crew_scope, refusal(error));
+                return self.unwind_background_start(&thread.id, refusal(error));
             }
         };
         let draft = json!({
@@ -191,7 +195,7 @@ impl Core {
         let (brief, key) = match drafted {
             Ok(both) => both,
             Err(error) => {
-                return self.unwind_background_start(&thread.id, &crew_scope, refusal(error));
+                return self.unwind_background_start(&thread.id, refusal(error));
             }
         };
         let launched = self
@@ -219,11 +223,13 @@ impl Core {
             })
             .await;
         // A task that could not be routed or started ended the run itself (it waits for a person). A start refused before any task
-        // existed, such as one held by review capacity, left no run: the run is taken back and the reason goes to the person.
+        // existed, such as one held by review capacity, left no run: the run is taken back and the reason goes to the person as an
+        // error. A refusal after a task exists holds the task and ends the run `needs_review` with the reason; it returns that run
+        // like the route-refused path does, because the visible outcome is the same: a run waiting for a person, not an error.
         let run = self.store.background_run(&thread.id)?;
         match (launched, run) {
             (Err(error), Some(run)) if run.state == "running" => {
-                self.unwind_background_start(&thread.id, &crew_scope, refusal(error))
+                self.unwind_background_start(&thread.id, refusal(error))
             }
             (_, Some(run)) => run_wire(run),
             (Err(error), None) => Err(refusal(error)),
@@ -295,25 +301,32 @@ impl Core {
         Ok(())
     }
 
-    /// Takes back a taskless start, or retains a task-backed start for review. Cleanup errors keep their cause and preserve the lead.
+    /// Takes back a taskless start (run, mode row and lead thread, in one commit) and returns the refusal as an error, or retains a
+    /// task-backed start for review: its tasks are held, each gets a result with the reason, and the retained run is returned. An
+    /// error of the store unwind is returned as it is, since the run is still `running` and the caller must know. A failure to
+    /// write a held task's result is logged only: the hold itself is already committed.
     fn unwind_background_start(
         &self,
         thread_id: &str,
-        scope: &ModeScope,
         refusal: CoreError,
     ) -> Result<wire::BackgroundRun> {
-        self.store
-            .unwind_background_run(thread_id, &redact(&refusal.public_message()))?;
-        if self.store.background_run(thread_id)?.is_none() {
-            self.discard_background_lead(thread_id, scope)?;
+        let why = redact(&refusal.public_message());
+        let unwound = self.store.unwind_background_run(thread_id, &why)?;
+        if unwound.discarded {
+            return Err(refusal);
         }
-        Err(refusal)
-    }
-
-    fn discard_background_lead(&self, thread_id: &str, scope: &ModeScope) -> Result<()> {
-        self.clear_crew_autopilot_mode(scope)?;
-        self.store.delete_thread(thread_id, "crew")?;
-        Ok(())
+        for task in unwound.held {
+            let task = self.store.crew_task(&task.id)?.unwrap_or(task);
+            if let Err(error) =
+                self.record_result(&task, ResultState::NeedsPerson, None, &why, None)
+            {
+                tracing::warn!(%error, task = %task.id, "could not write a held background task's result");
+            }
+        }
+        match self.store.background_run(thread_id)? {
+            Some(run) => run_wire(run),
+            None => Err(refusal),
+        }
     }
 
     /// Whether `thread_id` is the lead thread of a background run.

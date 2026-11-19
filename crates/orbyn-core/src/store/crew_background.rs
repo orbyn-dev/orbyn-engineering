@@ -6,7 +6,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 
-use super::{AuditRecord, Store, insert_audit};
+use super::{AuditRecord, CrewTask, Store, insert_audit};
 use crate::error::{CoreError, Result};
 use crate::util::{new_id, now};
 
@@ -165,6 +165,63 @@ fn name_taken(
     Ok(names
         .iter()
         .any(|(id, other)| Some(id.as_str()) != except && other.to_lowercase() == folded))
+}
+
+/// What `Store::unwind_background_run` did.
+#[derive(Debug, Default)]
+pub struct Unwound {
+    /// The run, its mode row and its lead thread were taken back: no task existed.
+    pub discarded: bool,
+    /// The tasks moved to `needs_person` (as they stood before the move). A task already waiting is not listed.
+    pub held: Vec<CrewTask>,
+    deleted_threads: Vec<String>,
+}
+
+/// Deletes a run's crew mode row and its lead thread, in the caller's transaction. Returns the deleted thread ids; the caller
+/// removes them from the hub after the commit.
+fn discard_lead_in(tx: &Transaction<'_>, thread_id: &str) -> Result<Vec<String>> {
+    tx.execute(
+        "DELETE FROM crew_autopilot_modes WHERE scope = 'crew:' || ?1",
+        [thread_id],
+    )?;
+    let present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?1)",
+        [thread_id],
+        |row| row.get(0),
+    )?;
+    if present {
+        super::delete_thread_in(tx, thread_id, "crew")
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+/// Holds every task of the run's crew for a person and ends the run `needs_review` with `why`, inside the caller's transaction.
+/// `None` when the crew has no task at all (nothing was held and the run is untouched). Shared by every path that must retain a
+/// run whose start did not finish: the task hold and the run end commit together or not at all.
+pub(crate) fn hold_tasks_and_end_run(
+    tx: &Transaction<'_>,
+    run: &BackgroundRunRow,
+    why: &str,
+) -> Result<Option<Vec<CrewTask>>> {
+    let tasks = {
+        let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
+        statement
+            .query_map([&run.id], super::crew::task_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if tasks.is_empty() {
+        return Ok(None);
+    }
+    let mut held = Vec::new();
+    for task in tasks {
+        if crate::crew::lifecycle::allowed(&task.state, "needs_person") {
+            super::crew_runs::step(tx, &task, "needs_person", None, &[])?;
+            held.push(task);
+        }
+    }
+    end_run(tx, run, RunEnd::NeedsReview(why), Some(why), "crew")?;
+    Ok(Some(held))
 }
 
 /// Ends a run in the transaction, with the audit row first. The caller has checked that it is running. When this stop ends a spend, the
@@ -599,10 +656,12 @@ impl Store {
             .unwrap_or(0))
     }
 
-    /// Takes back a taskless refused start. Once a task exists, retain its run for review and hold the task for a person instead:
-    /// its crew id still names the run's lead thread. Refusal, task hold and run end commit together. Repeating this is harmless.
-    pub fn unwind_background_run(&self, run: &str, why: &str) -> Result<()> {
-        self.commit(|tx, _| {
+    /// Settles a refused start in one commit. With no task yet, the run, its Autopilot mode row and its lead thread are all taken
+    /// back, so a crash leaves nothing half done. Once a task exists the run is retained for review instead: the tasks are held for
+    /// a person and the run ends `needs_review` (`hold_tasks_and_end_run`). The refusal audit is in the same commit either way.
+    /// Repeating this is harmless: a missing or already ended run changes nothing.
+    pub fn unwind_background_run(&self, run: &str, why: &str) -> Result<Unwound> {
+        let unwound = self.commit(|tx, _| {
             let Some(current) = tx
                 .query_row(
                     "SELECT * FROM crew_background_runs WHERE id = ?1",
@@ -611,10 +670,10 @@ impl Store {
                 )
                 .optional()?
             else {
-                return Ok(());
+                return Ok(Unwound::default());
             };
             if current.state != "running" {
-                return Ok(());
+                return Ok(Unwound::default());
             }
             audit(
                 tx,
@@ -623,23 +682,51 @@ impl Store {
                 &current.background_id,
                 json!({ "run": run, "why": why }),
             )?;
-            let tasks = {
-                let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
-                statement
-                    .query_map([run], super::crew::task_row)?
-                    .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-            if !tasks.is_empty() {
-                for task in tasks {
-                    if crate::crew::lifecycle::allowed(&task.state, "needs_person") {
-                        super::crew_runs::step(tx, &task, "needs_person", None, &[])?;
-                    }
-                }
-                return end_run(tx, &current, RunEnd::NeedsReview(why), Some(why), "crew");
+            if let Some(held) = hold_tasks_and_end_run(tx, &current, why)? {
+                return Ok(Unwound {
+                    discarded: false,
+                    held,
+                    deleted_threads: Vec::new(),
+                });
             }
             tx.execute("DELETE FROM crew_background_runs WHERE id = ?1", [run])?;
-            Ok(())
-        })
+            let deleted_threads = discard_lead_in(tx, run)?;
+            Ok(Unwound {
+                discarded: true,
+                held: Vec::new(),
+                deleted_threads,
+            })
+        })?;
+        for id in &unwound.deleted_threads {
+            self.hub.remove(id);
+        }
+        Ok(unwound)
+    }
+
+    /// Takes back the lead thread and mode row of a start that failed before its run row existed, in one commit. A thread that has a
+    /// run or a task is left alone, and so is one that is already gone, so repeating this is harmless.
+    pub fn discard_unopened_background_lead(&self, thread_id: &str) -> Result<()> {
+        let deleted = self.commit(|tx, _| {
+            let used: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM crew_background_runs WHERE id = ?1)
+                    OR EXISTS(SELECT 1 FROM crew_tasks WHERE crew_id = ?1)",
+                [thread_id],
+                |row| row.get(0),
+            )?;
+            let present: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?1)",
+                [thread_id],
+                |row| row.get(0),
+            )?;
+            if used || !present {
+                return Ok(Vec::new());
+            }
+            discard_lead_in(tx, thread_id)
+        })?;
+        for id in &deleted {
+            self.hub.remove(id);
+        }
+        Ok(())
     }
 
     /// Ends a running run: stopped for a reason, or finished with work for review. Audited in the same transaction.
