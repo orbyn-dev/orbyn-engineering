@@ -248,6 +248,29 @@ async fn a_crew_from_before_the_daily_budget_has_none() {
 }
 
 #[tokio::test]
+async fn a_turn_that_reaches_the_cap_but_passes_ends_the_run_needs_review() {
+    let w = world(true, good()).await;
+    let id = crew_daily(&w, "Pass at the cap", 5, 1);
+    let run = w.core.crew_background_run_now(&id).await.unwrap();
+
+    // The engine's only turn is its last allowed one for the day, and it passes: the run ends
+    // finished and waiting for the person, the way a run that passes on its budget's last turn
+    // is not over budget. Nothing is cancelled.
+    let done = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    assert_eq!(done.stop_reason, None, "{done:?}");
+    assert!(done.review_waiting);
+    let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
+    assert_eq!(w.task(&tasks[0].0.id).state, "passed");
+
+    // The next event is the one the daily budget refuses.
+    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let CoreError::PolicyDenied(why) = &error else {
+        panic!("{error}")
+    };
+    assert!(why.starts_with("daily budget spent: alpha"), "{why}");
+}
+
+#[tokio::test]
 async fn the_daily_budget_is_set_at_creation_only() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let refused = |daily: Value, offset: Value| {
