@@ -1513,8 +1513,9 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 
 Decided 2026-11-11. The big beta ships everything together: one release carries all three of Crew (the cut below),
 every unfinished app row ([Appendix A](crew/beta-rows.md#appendix-a-every-unfinished-beta-row-app-parity), 137 rows from
-[parity.md](parity.md)) and every designed screen not yet built ([Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built),
-160 screens from [design-inventory.md](design-inventory.md)).
+[parity.md](parity.md)) and every designed screen not yet built ([Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built);
+its list is a 2026-11-11 snapshot, and the 2026-11-20 recount in [design-inventory.md](design-inventory.md)
+finds 44 of the 231 Phase 0 screens still unimplemented: 38 missing, 4 preview-only, 2 unverified).
 
 Rows the shell redesign replaces (for example C31's add-tab menu, and the Side panel tabs and Files screens) are built
 to the new shell designs (`engineer-designs.html` after the QA fixes merge), not the old frames. Excluded scope
@@ -1712,7 +1713,7 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 The row tables are in [crew/beta-rows.md](crew/beta-rows.md):
 
 - [Appendix A](crew/beta-rows.md#appendix-a-every-unfinished-beta-row-app-parity): every unfinished beta row (app parity), 137 rows.
-- [Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built): designed screens not yet built, 160 screens.
+- [Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built): designed screens not yet built, from a 2026-11-11 snapshot; the 2026-11-20 recount in [design-inventory.md](design-inventory.md) finds 44 still unimplemented.
 - [Appendix C](crew/beta-rows.md#appendix-c-unfinished-rows-that-have-no-design-yet): unfinished rows that have no design yet.
 
 **As built (slice 4l, coverage, contracts and routes, migration 50):** `crew/capacity/coverage.rs` counts the lines agents wrote in merges, reviewed when the merge is Looks good or Commented (merge-level, never line-level), in the queue when it waits with High or Medium risk. A merge before its repository's provenance start, with no hunk or no note, is Not measured and adds no line. Migration 50 adds `pause_enabled` (default off): `capacity_start_check` lets every start go until a person turns it on. Review fix tasks and merge-comment fixes set `Links::crew_started`, stored as Low and Crew-started; a person's start and review lanes stay Medium and person-started (background crews have no start path yet). Routes: `GET /api/crew/capacity` and `GET /api/crew/capacity/coverage` are Local reads; `POST /api/crew/capacity/settings` and `POST /api/crew/capacity/tasks/{id}` are Person writes behind `local_only`. The refused starts are listed since migration 54 (below). The screens are not wired yet.
