@@ -531,10 +531,17 @@ impl BrowserSession {
     }
 
     async fn evaluate(&mut self, expression: &str) -> Result<Value> {
+        self.evaluate_within(expression, CALL_TIMEOUT).await
+    }
+
+    /// A page-side read with its own limit, for a caller that must not hold its
+    /// page while a document swap drops the reply.
+    async fn evaluate_within(&mut self, expression: &str, limit: Duration) -> Result<Value> {
         let reply = self
-            .call(
+            .call_within(
                 "Runtime.evaluate",
                 json!({ "expression": expression, "returnByValue": true }),
+                limit,
             )
             .await?;
         if reply.get("exceptionDetails").is_some() {
@@ -626,7 +633,14 @@ impl BrowserSession {
     }
 
     pub async fn history(&mut self) -> Result<HistoryState> {
-        let reply = self.call("Page.getNavigationHistory", json!({})).await?;
+        self.history_within(CALL_TIMEOUT).await
+    }
+
+    /// A history read with its own limit; see `title_within`.
+    pub async fn history_within(&mut self, limit: Duration) -> Result<HistoryState> {
+        let reply = self
+            .call_within("Page.getNavigationHistory", json!({}), limit)
+            .await?;
         Ok(read_history(&reply))
     }
 
@@ -754,8 +768,15 @@ impl BrowserSession {
 
     /// The page's title.
     pub async fn title(&mut self) -> Result<String> {
+        self.title_within(CALL_TIMEOUT).await
+    }
+
+    /// The page's title with its own limit. A title read sent as the document swaps
+    /// can go unanswered, and the caller's page is held for the whole wait, so a
+    /// periodic reader gives it a short one and reads again on its next look.
+    pub async fn title_within(&mut self, limit: Duration) -> Result<String> {
         Ok(self
-            .evaluate("document.title")
+            .evaluate_within("document.title", limit)
             .await?
             .as_str()
             .unwrap_or_default()
@@ -764,7 +785,12 @@ impl BrowserSession {
 
     /// Runs a page-side read and hands back its value.
     pub async fn read(&mut self, expression: &str) -> Result<Value> {
-        self.evaluate(expression).await
+        self.read_within(expression, CALL_TIMEOUT).await
+    }
+
+    /// A page-side read with its own limit; see `title_within`.
+    pub async fn read_within(&mut self, expression: &str, limit: Duration) -> Result<Value> {
+        self.evaluate_within(expression, limit).await
     }
 
     /// Runs a read in a world of its own, which shares the page's DOM but not its

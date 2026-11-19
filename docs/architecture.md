@@ -2757,7 +2757,10 @@ browser agents use, and needs a trusted folder and an `http` or `https` URL. Up 
 four run at once, and they close when their thread settles, archives or is deleted.
 Frames are polled about five times a second, only while someone watches or records,
 and a frame that did not change is not sent. `/ws/preview` sends each as base64 JPEG
-text. Watching gives no control: input needs a person to take the page first.
+text. A tab refreshes its title and declared icon about once a second on its own, so a
+tab nobody watches still reads correctly; a read that a document swap drops skips that
+look and is retried on the next one. Watching gives no control: input needs a person to
+take the page first.
 The separate authenticated `/ws/preview/:thread/:tab/pointer` feed carries only
 server-created ephemeral cues after successful agent click or scroll input.
 Each tab owns a monotonic sequence; positions are frame pixels, with zoom applied
