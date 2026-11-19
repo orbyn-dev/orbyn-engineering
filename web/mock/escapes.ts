@@ -188,7 +188,7 @@ const checkSeeds = (): Seed[] => [
       state: "proven", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
       run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: "task-check-2",
       proof: { escaped_commit: "9be4410a1b2c3d4e5f60718293a4b5c6d7e8f90a", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", fails_on_escape: true, passes_on_fix: true },
-      note: null, attempts: 1, diff_commit: "4f1c9a07d3be5a6c218e0b97f5d2a43c6e81b09d",
+      note: "Queued for merge like any change.", attempts: 1, diff_commit: "4f1c9a07d3be5a6c218e0b97f5d2a43c6e81b09d",
       diff_hash: "b3a7f0c95e1d482a6f07c3d9e8b15a4720c6d8f3e91b5a07c4d2f86e30a1b97c", diff_paths: ["tests/auth/return-to.test.ts"],
       awaiting_approval: false, approved: true,
       line: "Proven: tests/auth/return-to.test.ts fails on the escaped merge and passes on the fix. It goes through the merge queue like any change.",
@@ -310,7 +310,7 @@ export function createEscapesMock() {
     dismissed: rows.filter((row) => row.state === "dismissed").length,
   });
 
-  /** The service answers a stale write with plain words; the same act twice changes nothing, whatever was seen. */
+  /** The service answers a stale write with plain words. It answers an unchanged repeat before it checks stale, so callers check that first. */
   const stale = (row: Seed, seen: { state: string; gap?: string | null }) => {
     if (seen.state !== row.state || (seen.gap ?? null) !== (row.gap ?? null)) {
       return { status: 409, body: { code: "stale", message: "This escape changed since you opened it." } };
@@ -427,7 +427,7 @@ export function createEscapesMock() {
       row.check = {
         state: "proposed", path, asserts, run,
         fix_commit: (write.fix_commit as string | undefined) ?? "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a",
-        task_id: null, proof: null, note: null, attempts: 1, diff_commit: null, diff_hash: null, diff_paths: [],
+        task_id: null, proof: null, note: null, attempts: 0, diff_commit: null, diff_hash: null, diff_paths: [],
         awaiting_approval: false, approved: false,
         line: `Proposed: add ${path}. Nothing runs until a person accepts.`,
         proposed_unix: T + hours(17), updated_unix: T + hours(17),
@@ -446,10 +446,10 @@ export function createEscapesMock() {
         return { status: 409, body: { code: "stale", message: "This escape changed since you opened it." } };
       }
       const seen = (write.seen ?? {}) as { state: string; gap?: string | null };
-      const refuse = stale(row, seen);
-      if (refuse) return refuse;
       if (suffix === "confirm") {
         if (row.state === "confirmed") return { status: 200, body: wire(row) };
+        const refuse = stale(row, seen);
+        if (refuse) return refuse;
         if (row.state === "dismissed") return { status: 400, body: { code: "invalid", message: "This escape is already dismissed, so it cannot be confirmed now." } };
         row.state = "confirmed";
         row.decided_by = "person";
@@ -459,6 +459,8 @@ export function createEscapesMock() {
       }
       if (suffix === "dismiss") {
         if (row.state === "dismissed") return { status: 200, body: wire(row) };
+        const refuse = stale(row, seen);
+        if (refuse) return refuse;
         if (row.state === "confirmed") return { status: 400, body: { code: "invalid", message: "This escape is already confirmed, so it cannot be dismissed now." } };
         row.state = "dismissed";
         row.decided_by = "person";
@@ -468,8 +470,10 @@ export function createEscapesMock() {
       }
       const gap = write.gap;
       if (gap !== "test_gap" && gap !== "tooling_gap") return { status: 400, body: { code: "invalid", message: "The gap is test_gap or tooling_gap." } };
+      if (row.gap === gap && row.gap_by === "person") return { status: 200, body: wire(row) };
+      const refuse = stale(row, seen);
+      if (refuse) return refuse;
       if (row.state === "dismissed") return { status: 400, body: { code: "invalid", message: "A dismissed escape’s gap cannot be set." } };
-      if (row.gap === gap) return { status: 200, body: wire(row) };
       row.gap = gap;
       row.gap_by = "person";
       row.events.push({ id: row.events.length + 1, kind: "reclassified", from_state: row.state, to_state: row.state, decided_by: "person", cause: "person:72", at: T + hours(17) });

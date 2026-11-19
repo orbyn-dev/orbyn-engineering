@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useWorkspace } from "../../../../product/state/workspace";
@@ -134,6 +134,7 @@ describe("the check frames of Crew Designs v79", () => {
       checkRow({
         state: "proven",
         task_id: "task-check-2",
+        note: "Queued for merge like any change.",
         proof: { escaped_commit: "9be4410a1b2c3d4e5f60718293a4b5c6d7e8f90a", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", fails_on_escape: true, passes_on_fix: true },
       }),
     );
@@ -146,6 +147,73 @@ describe("the check frames of Crew Designs v79", () => {
     expect(queue).toBeDisabled();
     expect(screen.getByRole("button", { name: "Withdraw" })).toBeEnabled();
     expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("a proven check the service did not queue says so in its own words, not the design sentence", async () => {
+    const note = "Proven, not queued: the repository has no merge queue. Queue it from the Review queue.";
+    answers.detail = confirmed(checkRow({ state: "proven", note }));
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    expect(await screen.findByText(note)).toBeInTheDocument();
+    expect(screen.queryByText(/Queued like any change/)).toBeNull();
+  });
+
+  it("a proven check with no note says it is not queued yet", async () => {
+    answers.detail = confirmed(checkRow({ state: "proven", note: null }));
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    expect(await screen.findByText("Not queued yet")).toBeInTheDocument();
+    expect(screen.queryByText(/Queued like any change/)).toBeNull();
+  });
+
+  it("a withdrawn check shows the service’s note, such as an already merged answer", async () => {
+    answers.detail = confirmed(checkRow({ state: "withdrawn", note: "Already merged: the merge could not be stopped" }));
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    expect(await screen.findByText("Note")).toBeInTheDocument();
+    expect(screen.getByText("Already merged: the merge could not be stopped")).toBeInTheDocument();
+  });
+
+  it("a stale message that already says again is not given a second Look again", async () => {
+    answers.detail = confirmed(checkRow({ state: "proposed" }));
+    answers.check = { status: 409, body: { code: "stale", message: "This check changed. Look again." } };
+    const user = userEvent.setup();
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    await user.click(await screen.findByRole("button", { name: "Accept: start a worker" }));
+    expect(await screen.findByText("This check changed. Look again.")).toBeInTheDocument();
+  });
+
+  it("closes the retry and withdraw dialogs on Escape without a write", async () => {
+    answers.detail = confirmed(checkRow({ state: "failed", proof: null }));
+    const user = userEvent.setup();
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    fireEvent(await screen.findByRole("dialog", { hidden: true }), new Event("cancel", { cancelable: true }));
+    await waitFor(() => expect(screen.queryByText(/Retry starts nothing/)).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Withdraw" }));
+    fireEvent(await screen.findByRole("dialog", { hidden: true }), new Event("cancel", { cancelable: true }));
+    await waitFor(() => expect(screen.queryByText(/a worker still writing is cancelled/)).toBeNull());
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("sends one write on a double click of Retry and keeps the dialog open while it is in flight", async () => {
+    answers.detail = confirmed(checkRow({ state: "failed", proof: null }));
+    answers.check = "never";
+    const user = userEvent.setup();
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    const dialog = await screen.findByRole("dialog", { hidden: true });
+    const send = within(dialog).getByRole("button", { name: "Retry", hidden: true });
+    await user.dblClick(send);
+    await waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(send).toBeDisabled();
+    expect(screen.getByText(/Retry starts nothing/)).toBeInTheDocument();
+  });
+
+  it("sends one write on a double click of Accept", async () => {
+    answers.detail = confirmed(checkRow({ state: "proposed" }));
+    answers.check = "never";
+    const user = userEvent.setup();
+    render(<LiveEscapes view="detail" id="esc-1" />);
+    await user.dblClick(await screen.findByRole("button", { name: "Accept: start a worker" }));
+    await waitFor(() => expect(posts(calls)).toHaveLength(1));
   });
 
   it("a failed check says why in the proof’s own answers and offers Retry and Withdraw", async () => {
@@ -226,19 +294,19 @@ describe("the check frames of Crew Designs v79", () => {
     const user = userEvent.setup();
     render(<LiveEscapes view="detail" id="esc-1" />);
     await user.click(await screen.findByRole("button", { name: "Accept: start a worker" }));
-    expect(await screen.findByText(/This check changed since you looked. Reload it and choose again. Look again./)).toBeInTheDocument();
+    expect(await screen.findByText(/This check changed since you looked. Reload it and choose again./)).toBeInTheDocument();
     await waitFor(() => expect(calls.filter(({ url }) => /\/api\/crew\/escapes\/esc-1$/.test(url))).toHaveLength(2));
   });
 });
 
 describe("the escape log at its limit", () => {
-  it("draws the refusal banner and the newest-of heading when the project holds 5,000 escapes", async () => {
+  it("draws the refusal banner and the showing-of heading when the project holds 5,000 escapes", async () => {
     answers.log = { status: 200, body: log({ total: 5000 }) };
     render(<LiveEscapes view="log" />);
     expect(await screen.findByText(/This project has reached the 5,000-escape limit\./)).toBeInTheDocument();
     expect(screen.getByText(/The same holds at 20,000 audit events\. Confirmed escapes are never dropped\./)).toBeInTheDocument();
     expect(screen.getByTitle("Planned: pruning the oldest dismissed and possible escapes is not built; the writer refuses instead")).toBeInTheDocument();
-    expect(screen.getByText("Newest 3 of 5,000")).toBeInTheDocument();
+    expect(screen.getByText(/Showing 3 of 5,000/)).toBeInTheDocument();
     expect(posts(calls)).toHaveLength(0);
   });
 
@@ -246,6 +314,6 @@ describe("the escape log at its limit", () => {
     render(<LiveEscapes view="log" />);
     await screen.findByText("Escapes");
     expect(screen.queryByText(/5,000-escape limit/)).toBeNull();
-    expect(screen.getByText(/6 in the last 60 days/)).toBeInTheDocument();
+    expect(screen.getByText(/6 in all/)).toBeInTheDocument();
   });
 });

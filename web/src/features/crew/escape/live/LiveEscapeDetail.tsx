@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { EscapeCheckRow } from "../../../../generated/EscapeCheckRow";
 import type { EscapeDetail } from "../../../../generated/EscapeDetail";
 import type { EscapeEventRow } from "../../../../generated/EscapeEventRow";
 import type { EscapeGap } from "../../../../generated/EscapeGap";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
+import { Button } from "../../../../ui/controls";
+import { Dialog } from "../../../../ui/Dialog";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
-import { checkStateLabel, eventMoment, gapLabel, nameOf, refusalOf, sourceLabel, stateLabel, WHY } from "./model";
+import { againstOf, checkStateLabel, eventMoment, gapLabel, gapText, nameOf, refusalOf, sourceLabel, stateLabel, WHY } from "./model";
 import { escapeApi } from "./api";
 import { CheckCard, CheckChip, Commit, short, type CheckAct } from "./check";
 import { StateChip } from "./parts";
@@ -29,13 +31,14 @@ function Timeline({ detail: one }: { detail: EscapeDetail }) {
       {one.events.map((event, index) => (
         <EventRow key={event.id} event={event} row={row} latestGap={index === lastReclassified} />
       ))}
+      {one.truncated ? <small style={{ color: "var(--color-muted)" }}>Older events are not listed.</small> : null}
     </div>
   );
 }
 
 function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: EscapeRow; latestGap: boolean }) {
   const time = eventMoment(event.at, row.found_unix);
-  const against = `${row.engine} · ${row.areas.join(" · ")}`;
+  const against = againstOf(row);
   const icon =
     event.kind === "detected"
       ? row.source === "revert"
@@ -65,7 +68,7 @@ function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: Escap
         : row.source === "post_merge_check"
           ? ["Detected: a check failed after the merge", `A repository check failed on this device and the merge was not reverted (cause ${event.cause}). It was a possible escape.`]
           : row.source === "person_marked"
-            ? ["Detected: you marked it", "From the merge’s menu in the Review queue. Your mark is the confirm."]
+            ? ["Detected: you marked it", "You marked this merge. Your mark is the confirm."]
             : ["Detected: a later fix", `A later fix commit changed lines this merge added (cause ${event.cause}). It may be ordinary follow-up work.`]
       : event.kind === "confirmed"
         ? row.source === "person_marked"
@@ -76,7 +79,7 @@ function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: Escap
           : event.kind === "reclassified"
             ? [
                 latestGap && row.gap ? `Gap set: ${gapLabel[row.gap]}` : "Gap set",
-                row.gap === "tooling_gap" ? "You set it. No cheap test could catch it." : "You set it. A plain input and output that a test could have caught.",
+                event.decided_by === "person" ? "You changed the gap." : "Crew suggested the gap.",
               ]
             : event.kind === "check_proposed"
               ? ["Check proposed", `Cause ${event.cause}.`]
@@ -103,7 +106,7 @@ function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: Escap
  * The escape's check, read as it stands. Its own frames (`escape-check-*`) draw each state with its acts in ./check; the
  * merged state keeps this card, whose proof row carries what the read says. The person's acts on a check are theirs.
  */
-function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct): void }) {
+function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct, done?: () => void): void }) {
   if (check) {
     if (check.state !== "merged") return <CheckCard row={row} check={check} busy={busy} onAct={act} />;
     return (
@@ -202,7 +205,7 @@ function CountedAgainst({ row }: { row: EscapeRow }) {
           {row.model ?? <>Not recorded <Planned why={WHY.model} /></>}
         </b>
         <span>Area</span>
-        <b>{row.areas.join(" · ")}</b>
+        <b>{row.areas.length ? row.areas.join(" · ") : "Not recorded"}</b>
         <span>This engine{days ? `, last ${days} days` : ""}</span>
         {engine ? (
           <b>
@@ -224,41 +227,42 @@ function CountedAgainst({ row }: { row: EscapeRow }) {
 }
 
 /** The gap dialog of `escape-gap`: a choice between a test gap and a tooling gap, sent only by the person's own click. */
-function GapDialog({ row, onClose, onSet }: { row: EscapeRow; onClose(): void; onSet(gap: EscapeGap): void }) {
+function GapDialog({ row, busy, onClose, onSet }: { row: EscapeRow; busy: boolean; onClose(): void; onSet(gap: EscapeGap): void }) {
   const [pick, setPick] = useState<EscapeGap>(row.gap ?? "test_gap");
   return (
-    <div className="cx-cwov">
-      <div>
-        <div className="cx-cwdlg" style={{ width: "600px" }} role="dialog" aria-modal="true" aria-label="Set the gap">
-          <h4>Set the gap</h4>
-          <p>What kind of gap was it? You can set it on a possible or a confirmed escape; Crew only suggests it. Not on a dismissed one.</p>
-          <div className="cx-fld2">
-            <span>Kind of gap</span>
-            <button type="button" className={`cx-t14opt${pick === "test_gap" ? " cx-on" : ""}`} aria-pressed={pick === "test_gap"} onClick={() => setPick("test_gap")}>
-              {pick === "test_gap" ? <Ic n="ok" sm /> : <span />}
-              <div>
-                <b>Test gap</b>
-                <small>A test can catch this: it is a plain input and output. Suggested by Crew. Allows a proposed check</small>
-              </div>
-            </button>
-            <button type="button" className={`cx-t14opt${pick === "tooling_gap" ? " cx-on" : ""}`} aria-pressed={pick === "tooling_gap"} onClick={() => setPick("tooling_gap")}>
-              {pick === "tooling_gap" ? <Ic n="ok" sm /> : <span />}
-              <div>
-                <b>Tooling gap</b>
-                <small>
-                  No cheap test could catch it. It is logged with no proposal in v1 <Planned why={WHY.tooling} />
-                </small>
-              </div>
-            </button>
+    <Dialog
+      title="Set the gap"
+      busy={busy}
+      onClose={onClose}
+      footer={
+        <>
+          <Button small disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button small tone="primary" disabled={busy} onClick={() => onSet(pick)}>Set the gap</Button>
+        </>
+      }
+    >
+      <p>What kind of gap was it? You can set it on a possible or a confirmed escape; Crew only suggests it. Not on a dismissed one.</p>
+      <div className="cx-fld2">
+        <span>Kind of gap</span>
+        <button type="button" data-dialog-focus className={`cx-t14opt${pick === "test_gap" ? " cx-on" : ""}`} aria-pressed={pick === "test_gap"} onClick={() => setPick("test_gap")}>
+          {pick === "test_gap" ? <Ic n="ok" sm /> : <span />}
+          <div>
+            <b>Test gap</b>
+            <small>A test can catch this: it is a plain input and output. Suggested by Crew. Allows a proposed check</small>
           </div>
-          <p>The change is recorded as “reclassified” in the trail with who set it. If the escape changed since you opened it (another window), Crew refuses and asks you to look again.</p>
-          <div className="cx-ra">
-            <button type="button" className="cx-ghost" onClick={onClose}>Cancel</button>
-            <button type="button" className="cx-btn" onClick={() => onSet(pick)}>Set the gap</button>
+        </button>
+        <button type="button" className={`cx-t14opt${pick === "tooling_gap" ? " cx-on" : ""}`} aria-pressed={pick === "tooling_gap"} onClick={() => setPick("tooling_gap")}>
+          {pick === "tooling_gap" ? <Ic n="ok" sm /> : <span />}
+          <div>
+            <b>Tooling gap</b>
+            <small>
+              No cheap test could catch it. It is logged with no proposal in v1 <Planned why={WHY.tooling} />
+            </small>
           </div>
-        </div>
+        </button>
       </div>
-    </div>
+      <p>The change is recorded as “reclassified” in the trail with who set it. If the escape changed since you opened it (another window), Crew refuses and asks you to look again.</p>
+    </Dialog>
   );
 }
 
@@ -296,17 +300,22 @@ function NamedEscape({ id }: { id: string }) {
         void read.reload();
       });
   };
+  const sending = useRef(false);
   const setGap = (gap: EscapeGap) => {
-    if (!row) return;
+    if (!row || sending.current) return;
+    sending.current = true;
     setBusy(true);
+    setRefused(null);
     void escapeApi
       .gap(id, { project: row.project, seen: { state: row.state, gap: row.gap }, gap })
       .then(() => {
+        sending.current = false;
         setBusy(false);
         setGapOpen(false);
         void read.reload();
       })
       .catch((error: unknown) => {
+        sending.current = false;
         setBusy(false);
         setRefused(refusalOf(error));
         setGapOpen(false);
@@ -315,9 +324,9 @@ function NamedEscape({ id }: { id: string }) {
   };
 
   /** A person's act on the check: accept, approve, retry or withdraw, each one write with what they saw. */
-  const act = (kind: CheckAct) => {
+  const act = (kind: CheckAct, done?: () => void) => {
     const one = read.status === "ready" ? read.data : null;
-    if (!row || !one) return;
+    if (!row || !one || sending.current) return;
     const seen = { state: row.state, gap: row.gap, check: one.check?.state ?? null };
     const send =
       kind === "accept"
@@ -330,16 +339,21 @@ function NamedEscape({ id }: { id: string }) {
               ? escapeApi.approve(id, { project: row.project, seen, commit: one.check.diff_commit, diff_hash: one.check.diff_hash })
               : null;
     if (!send) return;
+    sending.current = true;
     setBusy(true);
     setRefused(null);
     void send
       .then(() => {
+        sending.current = false;
         setBusy(false);
+        done?.();
         void read.reload();
       })
       .catch((error: unknown) => {
+        sending.current = false;
         setBusy(false);
         setRefused(refusalOf(error));
+        done?.();
         void read.reload();
       });
   };
@@ -367,16 +381,17 @@ function NamedEscape({ id }: { id: string }) {
             <b>{nameOf(escape)}</b>
             <StateChip row={escape} />
             <span className="cx-apchip">{sourceLabel(escape.source)}</span>
-            {escape.state !== "dismissed" ? <span className="cx-apchip">{escape.gap ? gapLabel[escape.gap] : "Gap not set"}</span> : null}
+            {escape.state !== "dismissed" ? <span className="cx-apchip">{escape.gap ? gapText(escape.gap, escape.gap_by) : "Gap not set"}</span> : null}
             {one.check ? <CheckChip check={one.check} /> : null}
             <span className="cx-t10sp">
               {escape.state === "possible" ? (
                 <>
                   <button type="button" className="cx-btn" disabled={busy} onClick={() => decide("confirm")}>Confirm</button>
                   <button type="button" className="cx-ghost" disabled={busy} onClick={() => decide("dismiss")}>Dismiss</button>
+                  <button type="button" className="cx-ghost" disabled={busy} onClick={() => setGapOpen(true)}>Set the gap…</button>
                 </>
               ) : escape.state === "confirmed" ? (
-                <button type="button" className="cx-ghost" onClick={() => setGapOpen(true)}>Set the gap…</button>
+                <button type="button" className="cx-ghost" disabled={busy} onClick={() => setGapOpen(true)}>Set the gap…</button>
               ) : null}
             </span>
           </div>
@@ -439,7 +454,7 @@ function NamedEscape({ id }: { id: string }) {
           </div>
         </div>
       </div>
-      {gapOpen && escape.state !== "dismissed" ? <GapDialog row={escape} onClose={() => setGapOpen(false)} onSet={setGap} /> : null}
+      {gapOpen && escape.state !== "dismissed" ? <GapDialog row={escape} busy={busy} onClose={() => setGapOpen(false)} onSet={setGap} /> : null}
     </Frame>
   );
 }

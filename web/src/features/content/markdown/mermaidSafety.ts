@@ -180,15 +180,18 @@ function scopeCss(css: string, rootId: string): string | null {
 }
 
 function cleanAttributes(el: Element): void {
-  for (const attr of Array.from(el.attributes)) {
-    const name = attr.name.toLowerCase();
+  // Walk a snapshot of the names (getAttributeNames), so removing as we go cannot skip an attribute. This reads more plainly
+  // than Array.from(el.attributes), which was already a snapshot; the checks and what is removed are unchanged.
+  for (const raw of el.getAttributeNames()) {
+    const value = el.getAttribute(raw) ?? "";
+    const name = raw.toLowerCase();
     const reference = name === "href" || name.endsWith(":href") || name === "src";
     const bad =
       name.startsWith("on") ||
-      (reference && !/^\s*#/.test(attr.value)) ||
-      (name !== "d" && unsafeCss(attr.value)) ||
-      /^\s*(javascript|data|vbscript):/i.test(attr.value);
-    if (bad) el.removeAttribute(attr.name);
+      (reference && !/^\s*#/.test(value)) ||
+      (name !== "d" && unsafeCss(value)) ||
+      /^\s*(javascript|data|vbscript):/i.test(value);
+    if (bad) el.removeAttribute(raw);
   }
 }
 

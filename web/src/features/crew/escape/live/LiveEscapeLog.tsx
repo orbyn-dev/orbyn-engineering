@@ -172,7 +172,7 @@ function EscapeCard({ row, onOpen }: { row: EscapeRow; onOpen(id: string): void 
       </button>
       <div className="cx-t14r">
         <StateChip row={row} />
-        <GapChip gap={row.gap} />
+        <GapChip gap={row.gap} by={row.gap_by} />
       </div>
       <small>{dayMoment(row.found_unix)}</small>
       <small>{sourceLabel(row.source)}</small>
@@ -319,6 +319,14 @@ export function LiveEscapeLog({
               {variant === "full" ? (
                 <span className="cx-t10f" style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>As of {asOf(log.as_of)}</span>
               ) : null}
+              {log.low_sample ? (
+                <div className="cx-cwbn">
+                  <Ic n="info" sm />
+                  <span>
+                    Fewer than {count(log.min_merges)} merges in the last {log.window_days} days ({count(log.merges)}). The log counts what is there; a rate would mostly say luck, and none is shown in v1 anyway <Planned why={WHY.report} />.
+                  </span>
+                </div>
+              ) : null}
               {log.total >= ESCAPES_LIMIT ? <LimitBanner /> : null}
               {log.total === 0 ? (
                 <LogEmpty log={log} />
@@ -326,12 +334,8 @@ export function LiveEscapeLog({
                 <>
                   <Tiles log={log} />
                   <h5 className="cx-t10h5">
-                    The escapes{" "}
-                    <span className="cx-t10r">
-                      {log.total >= ESCAPES_LIMIT
-                        ? `Newest ${count(log.rows.length)} of ${count(log.total)}`
-                        : `${count(log.total)} in the last ${log.window_days} days`}
-                    </span>
+                    The escapes <span className="cx-t10r">{count(log.total)} in all</span>
+                    {log.total > log.rows.length ? <span className="cx-t10r"> · Showing {count(log.rows.length)} of {count(log.total)}</span> : null}
                   </h5>
                   <EscapeTable rows={log.rows} onOpen={open} />
                   <WhatCounts log={log} />
