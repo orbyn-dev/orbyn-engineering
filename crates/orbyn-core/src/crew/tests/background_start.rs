@@ -2,6 +2,7 @@
 //! start that review capacity can pause, the budget, the run-end contract and the merge that waits for a person. A real `Core`, fake
 //! engines and real git; no trigger listener exists, so every run here is started by calling the function a person's button calls.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -443,6 +444,98 @@ fn committing(main: Arc<OnceLock<String>>) -> Script {
         commit_all(root, &format!("work {n}"));
         Turn::Say(report("done"))
     })
+}
+
+#[tokio::test]
+async fn a_project_that_is_not_trusted_is_refused_and_nothing_is_made() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE projects SET trusted = 0")
+        .unwrap();
+    let before = threads(&w);
+    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    assert!(matches!(error, CoreError::FolderUntrusted), "{error}");
+    assert_eq!(threads(&w), before);
+    let page = crate::crew::Page::new(None, None).unwrap();
+    assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
+}
+
+#[tokio::test]
+async fn a_crew_with_no_engine_ready_is_refused_and_nothing_is_made() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    // The one engine is turned off for the project, the way a person does in settings; no usable one is left.
+    w.core
+        .set_preferences(
+            Some(&project(&w)),
+            &BTreeMap::from([("disabled_engines".to_owned(), json!(["alpha"]))]),
+        )
+        .unwrap();
+    let before = threads(&w);
+    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let CoreError::EngineUnavailable(why) = &error else {
+        panic!("{error}")
+    };
+    assert!(why.starts_with("No engine is ready"), "{why}");
+    assert_eq!(threads(&w), before);
+    let page = crate::crew::Page::new(None, None).unwrap();
+    assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
+}
+
+#[tokio::test]
+async fn a_project_with_nothing_committed_is_refused_with_a_plain_reason() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    // An unborn HEAD: the checkout keeps its files but has nothing committed to list.
+    run_git(&w.repo, &["checkout", "-q", "--orphan", "nothing"]);
+    let before = threads(&w);
+    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let CoreError::Invalid(why) = &error else {
+        panic!("{error}")
+    };
+    assert!(why.contains("nothing committed yet"), "{why}");
+    assert_eq!(threads(&w), before);
+    let page = crate::crew::Page::new(None, None).unwrap();
+    assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
+}
+
+/// The task ends that carry no stored stop reason end the run `needs_review` with a plain sentence a person can read.
+#[tokio::test]
+async fn task_ends_without_a_stored_reason_wait_with_their_plain_sentence() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let cases = [
+        (
+            "Denials",
+            wire::ResultState::Stopped,
+            Some(wire::StopReason::TooManyDenials),
+            "too many refused actions",
+        ),
+        (
+            "Injection",
+            wire::ResultState::Stopped,
+            Some(wire::StopReason::InjectionSuspected),
+            "tried to give it orders",
+        ),
+        ("Cancelled", wire::ResultState::Cancelled, None, "cancelled"),
+    ];
+    for (name, state, stop, words) in cases {
+        let id = crew_with(&w, name, json!({ "kind": "ci_failure" }), 5, 5, true);
+        let run = w.core.crew_background_run_now(&id).await.unwrap();
+        let task = w.core.store.crew_task(&task_of(&w, &run)).unwrap().unwrap();
+        w.core.crew_background_task_ended(&task, state, stop);
+        let waiting = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+        assert!(
+            waiting
+                .review_reason
+                .as_deref()
+                .is_some_and(|why| why.contains(words)),
+            "{name}: {waiting:?}"
+        );
+        assert!(waiting.review_waiting, "{name}");
+    }
 }
 
 #[tokio::test]
