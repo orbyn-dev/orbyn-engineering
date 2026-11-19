@@ -114,8 +114,19 @@ impl Core {
         Ok(correction)
     }
 
-    /// A person's Revert answer: prepare, then queue the verified task. The only caller that queues a correction; queueing
-    /// publishes nothing, the person's merge route does that later.
+    /// A correction is queued or published only after a person's Revert answer marked it. Agent tools, the person's plain
+    /// Queue route and every later step stop here.
+    pub(super) fn refuse_unrequested_correction(&self, task: &str) -> Result<()> {
+        if self.store.crew_correction_person_requested(task)? == Some(false) {
+            return Err(CoreError::Invalid(
+                "a corrective task is queued only by a person's Revert answer".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A person's Revert answer: mark the request, prepare, then queue the verified task. The only caller that queues a
+    /// correction; queueing publishes nothing, the person's merge route does that later.
     pub(super) async fn prepare_forge_correction(
         self: &Arc<Self>,
         parent: &str,
@@ -125,6 +136,9 @@ impl Core {
         let correction = self
             .prepare_and_verify_forge_correction(parent, target, "person", now)
             .await?;
+        // The marker and its audit row commit together; nothing may queue or publish a correction without it.
+        self.store
+            .request_crew_correction(&correction.task_id, "person")?;
         // Ordinary queue admission owns its locks and revalidates the pinned binding and remote tip.
         self.crew_queue_forge_merge(&correction.task_id, target, now)
             .await?;
@@ -625,7 +639,7 @@ impl Core {
             .await
             .is_ok();
         if !present && !kept {
-            return Ok(());
+            return self.store.mark_crew_correction_retired(&correction.task_id);
         }
         if self.store.crew_correction_checkout_in_use(correction)? {
             return Ok(());
@@ -642,6 +656,6 @@ impl Core {
         if kept {
             git(repo, &["update-ref", "-d", &reference]).await?;
         }
-        Ok(())
+        self.store.mark_crew_correction_retired(&correction.task_id)
     }
 }

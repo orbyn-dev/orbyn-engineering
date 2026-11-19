@@ -66,10 +66,10 @@ impl Store {
             .collect()
     }
 
-    /// Completed corrections, newest first, so their checkout and reference can be retired once nothing reads them.
+    /// Completed corrections whose checkout and reference are not yet retired, oldest first.
     pub(crate) fn crew_completed_corrections(&self) -> Result<Vec<ForgeCorrection>> {
         let conn = self.reader();
-        let mut statement = conn.prepare("SELECT body FROM crew_forge_corrections WHERE completed_commit IS NOT NULL ORDER BY rowid DESC LIMIT 256")?;
+        let mut statement = conn.prepare("SELECT body FROM crew_forge_corrections WHERE completed_commit IS NOT NULL AND retired_unix IS NULL ORDER BY rowid LIMIT 256")?;
         let bodies = statement
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -84,16 +84,83 @@ impl Store {
         &self,
         correction: &ForgeCorrection,
     ) -> Result<bool> {
-        let count: i64 = self.reader().query_row(
-            "SELECT COUNT(*) FROM crew_runs r JOIN crew_tasks t ON t.id=r.task_id WHERE r.worktree=?1 AND r.task_id<>?2 AND t.state NOT IN ('passed','stopped','cancelled')",
-            params![correction.checkout, correction.task_id],
-            |row| row.get(0),
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.state FROM crew_runs r JOIN crew_tasks t ON t.id=r.task_id WHERE r.worktree=?1 AND r.task_id<>?2",
         )?;
-        Ok(count > 0)
+        let states = statement
+            .query_map(params![correction.checkout, correction.task_id], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(states
+            .iter()
+            .any(|state| !crate::crew::lifecycle::is_final(state)))
     }
 
-    /// `actor` is who asked: `person` for a Revert answer, `watch` for the code's own verification of a broken main. The audit
-    /// row is written first, in the same transaction as the binding, and only when the binding is new.
+    pub(crate) fn mark_crew_correction_retired(&self, task: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE crew_forge_corrections SET retired_unix=?2 WHERE task_id=?1 AND completed_commit IS NOT NULL AND retired_unix IS NULL",
+                params![task, crate::util::unix_now()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Whether a person asked for this correction to be published. `None`: the task is not a correction.
+    pub(crate) fn crew_correction_person_requested(&self, task: &str) -> Result<Option<bool>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT person_requested_unix IS NOT NULL FROM crew_forge_corrections WHERE task_id=?1",
+                [task],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?)
+    }
+
+    /// The person's Revert answer: the marker that lets the correction be queued and published, with its audit row first in the
+    /// same transaction. Naming the exact candidate and base the person is asking for. Idempotent.
+    pub(crate) fn request_crew_correction(&self, task: &str, actor: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            let (body, requested): (String, Option<i64>) = tx.query_row(
+                "SELECT body,person_requested_unix FROM crew_forge_corrections WHERE task_id=?1",
+                [task],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if requested.is_some() {
+                return Ok(());
+            }
+            let correction: ForgeCorrection = serde_json::from_str(&body)?;
+            let crew: String = tx.query_row(
+                "SELECT crew_id FROM crew_merges WHERE task_id=?1",
+                [&correction.parent_task],
+                |row| row.get(0),
+            )?;
+            let event = serde_json::json!({
+                "actor": actor,
+                "parent": correction.parent_task,
+                "parent_commit": correction.parent_commit,
+                "base": correction.base,
+                "candidate": correction.candidate,
+                "tree": correction.tree,
+            });
+            tx.execute(
+                "INSERT INTO crew_autopilot_events(crew_id,task_id,kind,body,at) VALUES(?1,?2,'correction_requested',?3,?4)",
+                params![crew, correction.parent_task, event.to_string(), crate::util::now()],
+            )?;
+            tx.execute(
+                "UPDATE crew_forge_corrections SET person_requested_unix=?2 WHERE task_id=?1",
+                params![task, crate::util::unix_now()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// `actor` is who caused the preparation: `person` for a Revert answer, `watch` for the code's own verification of a broken
+    /// main. Preparing is local and publishes nothing; its audit row (`correction_prepared`) is written first, in the same
+    /// transaction as the binding, and only when the binding is new.
     pub(crate) fn add_crew_forge_correction(
         &self,
         correction: &ForgeCorrection,
@@ -153,7 +220,7 @@ impl Store {
                 "tree": correction.tree,
             });
             tx.execute(
-                "INSERT INTO crew_autopilot_events(crew_id,task_id,kind,body,at) VALUES(?1,?2,'correction_requested',?3,?4)",
+                "INSERT INTO crew_autopilot_events(crew_id,task_id,kind,body,at) VALUES(?1,?2,'correction_prepared',?3,?4)",
                 params![crew, correction.parent_task, event.to_string(), crate::util::now()],
             )?;
             tx.execute(

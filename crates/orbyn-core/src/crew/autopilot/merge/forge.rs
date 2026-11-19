@@ -54,6 +54,7 @@ impl Core {
         now: i64,
     ) -> Result<MergeEntry> {
         self.crew_preview_only()?;
+        self.refuse_unrequested_correction(task_id)?;
         self.refuse_unproven_escape_check(task_id, None)?;
         if self.config.crew_merge_required_checks.is_empty() {
             return Err(CoreError::Invalid(
@@ -351,6 +352,10 @@ impl Core {
             return self.forge_needs_person(intent, "the target base moved; combined-state evidence must be rebuilt under a new reviewed task");
         }
         if intent.phase == ForgePhase::Prepared {
+            // Checked again right before the first forge write: a correction needs a person's Revert answer.
+            if let Err(error) = self.refuse_unrequested_correction(task) {
+                return Ok(blocked(task, &error.public_message()));
+            }
             let scratch = Scratch::at(
                 &target.repo,
                 &self.config.data_dir.join("crew-merge"),

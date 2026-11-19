@@ -671,7 +671,7 @@ async fn broken_world() -> Setup {
     .await;
     let good = gitq(&w.repo, &["rev-parse", "HEAD"]).await;
     let rules =
-        json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- src/feature.txt")}]});
+        json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- . ':!.orbyn'")}]});
     setup_world(&rules.to_string(), w).await
 }
 
@@ -775,22 +775,67 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
         );
         assert_eq!(gitq(&s.w.repo, &["rev-parse", "HEAD"]).await, local);
         let events = s.w.core.store.crew_autopilot_events(&s.task).unwrap();
+        let kind =
+            |kind: &str| -> Vec<_> { events.iter().filter(|event| event.kind == kind).collect() };
+        assert_eq!(kind("correction_prepared").len(), 1, "{events:?}");
+        assert_eq!(kind("correction_prepared")[0].body["actor"], "watch");
+        assert!(kind("correction_requested").is_empty(), "{events:?}");
+
+        // Nothing but a person's Revert can queue it: not the lead's tool, not the plain Queue route.
+        let (answer, error) =
+            s.w.call(
+                &s.w.lead_token,
+                "crew_queue_merge",
+                json!({"task": correction.task_id, "branch": s.target.branch}),
+            )
+            .await;
+        assert!(error, "a lead queued a correction: {answer}");
+        let refused =
+            s.w.core
+                .crew_queue_forge_merge(&correction.task_id, &target, NOW + 1)
+                .await
+                .unwrap_err();
+        assert!(refused.public_message().contains("Revert"), "{refused:?}");
+        assert!(
+            s.w.core
+                .crew_merge_request(
+                    &correction.task_id,
+                    &crate::crew::MergeRequest {
+                        operation: crate::crew::MergeOperation::Queue,
+                        branch: s.target.branch.clone(),
+                    },
+                )
+                .await
+                .is_err(),
+            "the plain Queue route skipped the Revert answer"
+        );
+        let (answer, error) =
+            s.w.call(
+                &s.w.lead_token,
+                "crew_process_merges",
+                json!({"task": s.task, "branch": s.target.branch}),
+            )
+            .await;
+        assert!(!error, "{answer}");
+        nothing_sent("after the refused queue attempts");
+
+        // Only the person's Revert queues it, audited first with the exact candidate and base.
+        s.w.core
+            .crew_answer_review(&s.task, ReviewAnswer::Revert, &target, NOW + 2)
+            .await
+            .unwrap();
+        let events = s.w.core.store.crew_autopilot_events(&s.task).unwrap();
         let requested: Vec<_> = events
             .iter()
             .filter(|event| event.kind == "correction_requested")
             .collect();
         assert_eq!(requested.len(), 1, "{events:?}");
-        assert_eq!(requested[0].body["actor"], "watch");
+        assert_eq!(requested[0].body["actor"], "person");
         assert_eq!(
             requested[0].body["candidate"],
             correction.candidate.as_str()
         );
-
-        // Only the person's Revert queues it.
-        s.w.core
-            .crew_answer_review(&s.task, ReviewAnswer::Revert, &target, NOW + 2)
-            .await
-            .unwrap();
+        assert_eq!(requested[0].body["base"], correction.base.as_str());
         assert!(
             s.w.core
                 .store
@@ -819,17 +864,6 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
                 .is_some_and(|g| g.decision == orbyn_contracts::GateDecision::Pass)
         })
         .await;
-        // This synthetic verifier explicitly reads the changed file. Preserve the existing
-        // check-input hold: normal review cannot waive it, only a person's release can.
-        let held =
-            s.w.core
-                .store
-                .merge_entry(&correction.task_id)
-                .unwrap()
-                .unwrap();
-        assert_eq!(held.state, "waiting");
-        assert!(held.note.unwrap().contains("checks runs or reads"));
-        s.w.core.crew_release_merge(&correction.task_id).unwrap();
         let correction_intent =
             s.w.core
                 .store
@@ -844,14 +878,15 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
             remote.merged = None;
             remote.pending = true;
         }
-        s.w.core
-            .crew_process_forge_merges(&target, NOW + 3)
-            .await
-            .unwrap();
+        let outcomes =
+            s.w.core
+                .crew_process_forge_merges(&target, NOW + 3)
+                .await
+                .unwrap();
         assert_eq!(
             state.lock().unwrap().creates,
             1,
-            "the person's route publishes the corrective PR"
+            "the person's route publishes the corrective PR: {outcomes:?}"
         );
         assert_ne!(
             s.w.core
@@ -877,10 +912,16 @@ async fn a_lead_in_another_crew_cannot_prepare_or_flag_a_break_it_does_not_own()
             branch: s.target.branch.clone(),
             owed: None,
         };
+        let watch_before = s.w.core.store.crew_merge(&s.task).unwrap().unwrap().watch;
         s.w.core
             .crew_watch_forge_main(&target, Some("another-crew"), NOW + 1)
             .await
             .unwrap();
+        assert_eq!(
+            s.w.core.store.crew_merge(&s.task).unwrap().unwrap().watch,
+            watch_before,
+            "another crew's watch recorded nothing about this merge"
+        );
         assert!(
             s.w.core
                 .store
@@ -963,6 +1004,79 @@ async fn corrective_startup_never_publishes_an_ordinary_prepared_task() {
                 .phase,
             ForgePhase::Prepared
         );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn cleanup_waits_for_an_unfinished_review_of_the_checkout() {
+    let s = setup().await;
+    let (_, fixture) = fake(&s).await;
+    with_crew_fixture(fixture, async {
+        s.w.core
+            .crew_queue_forge_merge(&s.task, &s.target, NOW)
+            .await
+            .unwrap();
+        s.w.core
+            .crew_process_forge_merges(&s.target, NOW)
+            .await
+            .unwrap();
+        s.w.core
+            .crew_answer_review(&s.task, ReviewAnswer::Revert, &s.target, NOW + 1)
+            .await
+            .unwrap();
+        let correction =
+            s.w.core
+                .store
+                .crew_forge_correction(&s.task)
+                .unwrap()
+                .unwrap();
+        let reference = format!("refs/orbyn/corrections/{}", &correction.task_id[7..]);
+        let kept = || async {
+            crate::source_control::git::git(
+                &s.w.repo,
+                &["rev-parse", "--verify", "--quiet", &reference],
+            )
+            .await
+            .is_ok()
+        };
+        // The correction is complete, and a review run is still working in its checkout.
+        let reviewer = passed(&s.w, &["src/**"], "A review still reading the checkout.").await;
+        {
+            let conn = s.w.core.store.reader();
+            conn.execute(
+                "UPDATE crew_forge_corrections SET completed_commit=?2 WHERE task_id=?1",
+                rusqlite::params![correction.task_id, correction.candidate],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE crew_runs SET worktree=?2 WHERE task_id=?1",
+                rusqlite::params![reviewer, correction.checkout],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE crew_tasks SET state='running' WHERE id=?1",
+                [&reviewer],
+            )
+            .unwrap();
+        }
+        s.w.core.resume_forge_corrections(NOW + 2).await.unwrap();
+        assert!(
+            std::path::Path::new(&correction.checkout).exists(),
+            "the checkout is still in use"
+        );
+        assert!(kept().await);
+        s.w.core
+            .store
+            .reader()
+            .execute(
+                "UPDATE crew_tasks SET state='passed' WHERE id=?1",
+                [&reviewer],
+            )
+            .unwrap();
+        s.w.core.resume_forge_corrections(NOW + 3).await.unwrap();
+        assert!(!std::path::Path::new(&correction.checkout).exists());
+        assert!(!kept().await);
     })
     .await;
 }

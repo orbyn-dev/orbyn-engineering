@@ -121,7 +121,9 @@ impl Core {
             let culprit = match found {
                 super::watch::Found::Healthy => {
                     for record in &records {
-                        self.store.set_merge_watch(&record.task_id, "green")?;
+                        if crew_id.is_none_or(|crew| record.crew_id == crew) {
+                            self.store.set_merge_watch(&record.task_id, "green")?;
+                        }
                     }
                     None
                 }
@@ -138,17 +140,18 @@ impl Core {
                     None
                 }
                 super::watch::Found::Certain(record) => {
-                    self.store.set_merge_watch(&record.task_id, "broken")?;
                     if crew_id.is_some_and(|crew| record.crew_id != crew) {
-                        // Another crew's merge: its own lead or the person decides. This caller touches nothing more.
+                        // Another crew's merge: its own lead or the person decides. This caller records nothing about it.
                         None
                     } else if self.merge_mode(&record.task_id)? == crate::crew::Mode::Off {
+                        self.store.set_merge_watch(&record.task_id, "broken")?;
                         self.store.set_merge_needs_person(
                             &record.task_id,
                             Some("Autopilot is Off. A person must request the corrective PR."),
                         )?;
                         None
                     } else {
+                        self.store.set_merge_watch(&record.task_id, "broken")?;
                         Some(record.task_id)
                     }
                 }

@@ -646,7 +646,11 @@ impl Core {
             .crew_answer_review(task_id, answer, &target, now)
             .await?;
         // A forge revert queues a corrective PR: show exactly which commit will be pushed onto which base.
-        let correction = self.store.crew_forge_correction(task_id)?;
+        let correction = if matches!(answering, Answering::Revert) {
+            self.store.crew_forge_correction(task_id)?
+        } else {
+            None
+        };
         Ok(wire::AutopilotAnswered {
             task_id: task_id.to_owned(),
             review_state: self
