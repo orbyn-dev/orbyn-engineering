@@ -663,4 +663,6 @@ export const FRAMES = {
   "escape-check-withdraw": { route: "#/preview/crew/escape-check-withdraw?id=esc-proven", scenario: "crew-escapes-checks", steps: [click("button", "Withdraw")] },
   "escape-check-withdrawn": { route: "#/preview/crew/escape-check-withdrawn?id=esc-withdrawn", scenario: "crew-escapes-checks" },
   "escape-limit": { route: "#/preview/crew/escape-limit", scenario: "crew-escapes-limit", wait: 2500 },
+  /** The settings sheet on the real thresholds read (the defaults; `crew-escapes-stored` draws a person's stored values). */
+  "escape-settings": { route: "#/preview/crew/escape-settings", scenario: "crew-escapes" },
 };

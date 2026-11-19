@@ -3,6 +3,7 @@ import type { EscapeEventRow } from "../src/generated/EscapeEventRow.ts";
 import type { EscapeLog } from "../src/generated/EscapeLog.ts";
 import type { EscapePossible } from "../src/generated/EscapePossible.ts";
 import type { EscapeRow } from "../src/generated/EscapeRow.ts";
+import type { EscapeThresholds } from "../src/generated/EscapeThresholds.ts";
 import type { MockResponse, Scenario } from "./api.ts";
 
 /**
@@ -12,8 +13,9 @@ import type { MockResponse, Scenario } from "./api.ts";
  * passed on the escaped merge too, and one withdrawn), "crew-escapes-limit" (the log answers 5,000 escapes in all, as a
  * project at the core's cap is), "crew-escapes-empty" (14 merges, nothing to count), "crew-escapes-low" (6 merges, one
  * confirmed, every group low sample), "crew-escapes-unreadable" (every read answers 500 "unreadable", as a damaged log
- * does) and "crew-escapes-stale" (the first person write is refused stale, as an escape that changed since it was opened
- * is). A write moves its escape and its check like the service does and answers with them as they now stand.
+ * does), "crew-escapes-stale" (the first person write is refused stale, as an escape that changed since it was opened
+ * is) and "crew-escapes-stored" (a person stored other thresholds, so the settings rows read their values, not the
+ * defaults). A write moves its escape and its check like the service does and answers with them as they now stand.
  */
 
 /** Sat 7 Nov 2026, 00:00 UTC: the day the design's sample rows live on. */
@@ -261,6 +263,8 @@ export function createEscapesMock() {
   let unreadable = false;
   let staleOnce = false;
   let atLimit = false;
+  // The thresholds the service would read from its settings table: the defaults, or a person's stored values.
+  let thresholds: EscapeThresholds = { report_days: 60, follow_up_days: 14, min_merges: 10, rate_multiple: 2, stored: false };
 
   function reset(scenario: Scenario) {
     if (scenario === "crew-escapes" || scenario === "crew-escapes-checks" || scenario === "crew-escapes-limit") {
@@ -289,6 +293,7 @@ export function createEscapesMock() {
     }
     unreadable = scenario === "crew-escapes-unreadable";
     staleOnce = scenario === "crew-escapes-stale";
+    if (scenario === "crew-escapes-stored") thresholds = { report_days: 30, follow_up_days: 21, min_merges: 20, rate_multiple: 3, stored: true };
   }
 
   const wire = (row: Seed & { line?: string }): EscapeRow => {
@@ -330,6 +335,10 @@ export function createEscapesMock() {
       // A project at the core's cap: the count in all is the limit, and the page rows are still the newest page.
       const total = atLimit ? 5000 : all.length;
       return { status: 200, body: { project: "p-app", as_of: T + hours(17), window_days: 60, merges, low_sample: merges < 10, min_merges: 10, engines, total, rows: page.map(wire), ...counts } satisfies EscapeLog };
+    }
+    if (method === "GET" && pathname === "/api/crew/escapes/thresholds") {
+      if (unreadable) return { status: 500, body: UNREADABLE };
+      return { status: 200, body: { ...thresholds } satisfies EscapeThresholds };
     }
     if (method === "GET" && pathname === "/api/crew/escapes/possible") {
       const known = project(search);

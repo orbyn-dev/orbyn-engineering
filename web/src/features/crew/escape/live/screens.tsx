@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import { LiveEscapes } from "./LiveEscapes";
+import { LiveEscapeSettings } from "./LiveEscapeSettings";
 
 /**
  * The escape frames of Crew Designs v79, built on the real escape routes. Each opens at '#/preview/crew/<id>'; a detail
@@ -28,6 +29,7 @@ export const ESCAPE_LIVE_FRAMES = [
   "escape-check-withdraw",
   "escape-check-withdrawn",
   "escape-limit",
+  "escape-settings",
 ] as const;
 
 export type EscapeLiveFrameId = (typeof ESCAPE_LIVE_FRAMES)[number];
@@ -55,4 +57,5 @@ export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-check-withdraw": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-check-withdrawn": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-limit": () => <LiveEscapes view="log" />,
+  "escape-settings": () => <LiveEscapeSettings />,
 };
