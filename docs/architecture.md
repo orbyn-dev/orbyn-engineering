@@ -105,10 +105,11 @@ admitted -> starting -> running <-> awaiting_approval
 - Pending approvals expire in the same transaction that ends a run.
 
 A refused background start removes its run, lead thread and pinned Autopilot mode
-only while no Crew task exists. After task creation, refusal holds the task for a
-person and ends the background run `needs_review`, retaining its lead and mode.
-The refusal audit, task hold and run end share one transaction; a failed store
-write is returned to the caller and cannot trigger lead cleanup.
+only while no Crew task exists, and does so in one transaction with the refusal
+audit, so a crash leaves none of them behind. After task creation, refusal holds the
+task for a person and ends the background run `needs_review`, retaining its lead and
+mode; the run is returned, not an error. The refusal audit, task hold and run end
+share one transaction; a failed store write is returned to the caller.
 
 ## Thread lifecycle
 
