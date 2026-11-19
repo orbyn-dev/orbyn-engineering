@@ -1226,7 +1226,9 @@ change; workers write into the person's own checkout, and only the path knows wh
 - **Digest:** 17:00 local by default (Settings, Crew), with a notification only when something happened.
 - **Trust rates:** shown from 10 merges, over a 60-day window, per repository, on this device.
 - **Background crews:** budget set at creation. Hitting it means Stopped, reason "budget", and the run goes to the
-  Review queue.
+  Review queue. Each engine also has a daily budget for the crew (runs and turns, set at creation, reset at the person's
+  midnight): a run in flight is cancelled at the cap with what the engine spent shown, and a new event is refused, never
+  queued, with an audit row naming the engine and the time the day turns.
 
 ## What keeps us ahead
 
