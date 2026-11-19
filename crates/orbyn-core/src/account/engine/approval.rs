@@ -61,6 +61,28 @@ impl Joining {
     }
 }
 
+/// If a cancel is dropped while the Engine is asked, its answer is unknown and its handle is
+/// spent: the request is marked as a cancel that was not sent, rather than as one on its way.
+struct CancelGuard<'a> {
+    slot: &'a tokio::sync::Mutex<Option<Joining>>,
+    serial: u64,
+    armed: bool,
+}
+
+impl Drop for CancelGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut slot) = self.slot.try_lock()
+            && let Some(joining) = slot.as_mut().filter(|j| j.serial == self.serial)
+        {
+            joining.cancelling = false;
+            joining.cancel_unsent = true;
+        }
+    }
+}
+
 fn only_digits(text: &str) -> String {
     text.chars().filter(char::is_ascii_digit).collect()
 }
@@ -162,7 +184,13 @@ where
         joining.cancelling = true;
         let serial = joining.serial;
         drop(slot);
+        let mut guard = CancelGuard {
+            slot: &self.joining,
+            serial,
+            armed: true,
+        };
         let result = self.shared.client.deny_joined(joined).await.map_err(map);
+        guard.armed = false;
         let mut slot = self.joining.lock().await;
         // Only the entry this cancel started is touched: a later request may hold the slot.
         if let Some(joining) = slot.as_mut().filter(|j| j.serial == serial) {

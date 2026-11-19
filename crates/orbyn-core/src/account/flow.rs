@@ -347,6 +347,8 @@ impl AccountCenter {
     pub async fn sign_in(&self, email: &str, password: Password) -> Result<AccountSignInOutcome> {
         let backend = self.backend()?;
         let email = clean_email(email)?;
+        // Not while a cancel is on its way: it must not meet the request this one starts.
+        let _one_at_a_time = self.cancelling.lock().await;
         self.status.update(|s| s.state = SyncState::SigningIn);
         let outcome = backend.account.sign_in(&email, &password).await;
         match outcome {
@@ -391,6 +393,7 @@ impl AccountCenter {
         if self.inner.lock().await.second_factor.is_none() {
             return Err(invalid("sign_in_closed", "Start signing in again."));
         }
+        let _one_at_a_time = self.cancelling.lock().await;
         match backend.account.second_factor(code).await {
             Ok(SignInOutcome::Signed(session)) => self.established(session, true).await,
             Ok(SignInOutcome::AwaitingApproval(pending)) => {
@@ -463,14 +466,17 @@ impl AccountCenter {
         // even when it reuses the id.
         let cleared = match (&open, &inner.approval) {
             (Some((_, serial)), Some(approval)) => approval.serial == *serial,
-            _ => true,
+            // Someone else ended the request meanwhile: this cancel cleared nothing.
+            (Some(_), None) => false,
+            (None, _) => true,
         };
         if cleared {
             inner.approval = None;
             inner.second_factor = None;
         }
+        let signed_out = cleared && inner.session.is_none();
         drop(inner);
-        if cleared {
+        if signed_out {
             self.status
                 .update(|s| s.state = SyncState::SignedOut { reason: None });
         }
@@ -567,6 +573,7 @@ impl AccountCenter {
     /// told once, and a failure changes nothing here.
     pub async fn sign_out(&self, discard_unsynced: bool) -> Result<()> {
         let backend = self.backend()?.clone();
+        let _one_at_a_time = self.cancelling.lock().await;
         let mut inner = self.inner.lock().await;
         if inner.session.is_none() {
             return Ok(());

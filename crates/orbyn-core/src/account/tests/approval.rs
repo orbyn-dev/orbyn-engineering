@@ -1001,3 +1001,43 @@ async fn a_failed_cancel_keeps_the_same_request_for_the_retry() {
     core.account.cancel_second_factor().await.unwrap();
     assert!(core.account.view("macos").await.approval.is_none());
 }
+
+#[tokio::test]
+async fn a_sign_in_that_reuses_the_id_is_not_touched_by_a_cancel_in_flight() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "reuse");
+    asking(&core, "late@example.com").await;
+    // Tab A cancels while tab B signs in again: B's request has the same id.
+    let (cancel, again) = tokio::join!(
+        core.account.cancel_second_factor(),
+        core.account.sign_in("late@example.com", pw(PASSWORD))
+    );
+    cancel.unwrap();
+    assert_eq!(again.unwrap(), AccountSignInOutcome::AwaitingApproval);
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Waiting
+    );
+    assert_eq!(core.account.stand_in().cancelled().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cancel_that_finds_the_sign_in_finished_does_not_sign_this_computer_out() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "finished");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    let (cancel, done) = tokio::join!(
+        core.account.cancel_second_factor(),
+        core.account.submit_digits(typed(&right))
+    );
+    cancel.unwrap();
+    done.unwrap();
+    assert!(core.account.view("macos").await.session.is_some());
+    assert!(!matches!(
+        core.account.status().state,
+        SyncState::SignedOut { .. }
+    ));
+}
