@@ -138,11 +138,16 @@ impl ExplorerReads {
     /// A run ended or files moved in this project: forgets its answers and tells the
     /// windows showing it, since they did not make the change.
     pub fn changed(&self, project_id: &str) {
+        self.forget(project_id);
+        self.lists.announce(&topic(project_id));
+    }
+
+    /// Drops what is kept for a project without telling the windows.
+    pub fn forget(&self, project_id: &str) {
         let prefix = key(&[project_id]);
         self.lists.invalidate(&prefix);
         self.statuses.invalidate(&prefix);
         locked(&self.misses).remove(project_id);
-        self.lists.announce(&topic(project_id));
     }
 
     fn gate(&self, project_id: &str) -> Arc<Semaphore> {

@@ -1675,15 +1675,23 @@ a person's create, move (including rename), or delete request without a thread.
   one slow-request lane slot until it closes, retaining two connections for interactive
   requests within WKWebView's six-connection budget. Core applies the read API's trust, membership and
   path guards before registering a watch. Windows share one native watcher per pair,
-  with at most 64 live watchers service-wide. Each watches at most 512 directories,
-  discovered through guarded, nonrecursive directory reads capped at 20,000 entries;
-  links, Git metadata, Orbyn data and the library's `repo/` are never traversed or watched.
-  Changes inside a directory beyond these bounds need an explicit refresh.
+  with at most 64 live watchers service-wide. Each watches at most 512 directories, and all
+  watchers together at most 4,096, so a busy service stays inside the operating system's
+  handle limits. Directories are discovered through guarded, nonrecursive directory reads
+  capped at 20,000 entries; links, Git metadata, Orbyn data and the library's `repo/` are
+  never traversed or watched. Changes inside a directory beyond these bounds need an
+  explicit refresh. One folder that vanishes or cannot be read is skipped; only the
+  worktree root failing ends a watch.
   File changes are coalesced for 200 ms, invalidate the project's kept list/status
-  before announcing `explorer:<project>`, and reconcile directory watches and membership.
+  before announcing `explorer:<project>`. Only a change that can alter which folders exist
+  (a folder created, removed or renamed, a change on the root, or a backend rescan request)
+  also rebuilds the watched set, at most once a second with one trailing run, and only the
+  difference from the watched set reaches the backend.
   These are native notifications, without freshness polling. Failed watches invalidate
   and announce the project before closing the subscription; reconnecting invalidates
-  and rereads the subscribed projects.
+  and rereads the subscribed projects through the stream's ready frame. The client retries
+  a failed stream after 3 s, doubling up to 60 s and starting over after a healthy stream;
+  it does not retry a 4xx.
   Blur, hiding, folding the worktree or leaving Files closes the client subscription;
   the last subscriber releases its native handles. Project removal or loss of trust
   revokes live subscriptions, and every notification rechecks authority before reading.
