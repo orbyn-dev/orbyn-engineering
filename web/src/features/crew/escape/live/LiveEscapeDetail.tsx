@@ -308,6 +308,7 @@ function NamedEscape({ id }: { id: string }) {
     if (!row || sending.current) return;
     sending.current = true;
     setBusy(true);
+    setRefused(null);
     void escapeApi
       .gap(id, { project: row.project, seen: { state: row.state, gap: row.gap }, gap })
       .then(() => {

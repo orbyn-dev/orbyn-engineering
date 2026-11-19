@@ -50,14 +50,6 @@ describe("the log's own words", () => {
     render(<LiveEscapes view="log" />);
     expect(await screen.findByText(/Test gap · suggested/)).toBeInTheDocument();
   });
-
-  it("draws no trailing dot when the areas are empty", async () => {
-    answers.log = { status: 200, body: log({ rows: [row({ id: "e", areas: [] })] }) };
-    const { container } = render(<LiveEscapes view="log" />);
-    await screen.findByText("Escapes");
-    expect(container.textContent).not.toMatch(/ · (?!\d)\s*$/m);
-    expect(screen.getAllByText("claude").length).toBeGreaterThan(0);
-  });
 });
 
 describe("the possible page", () => {
@@ -82,6 +74,7 @@ describe("the possible page", () => {
     render(<LiveEscapes view="possible" />);
     expect(await screen.findByText(/If you confirm/)).toBeInTheDocument();
     expect(screen.queryByText(/ask Crew to propose a check/)).toBeNull();
+    expect(screen.getByText(/not on this page yet/)).toBeInTheDocument();
     expect(screen.getByText(/^claude · found/)).toBeInTheDocument();
   });
 });

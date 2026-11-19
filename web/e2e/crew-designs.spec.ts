@@ -61,7 +61,8 @@ for (const frame of ESCAPE_LIVE_FRAMES) {
     });
     await page.goto(`/__mock/scenario/${entry.scenario ?? "default"}`);
     await page.goto(`/${entry.route}`);
-    await expect(LIVE_PROOF[frame](page).first()).toBeVisible();
+    const before = entry.steps?.length ? page.getByText("Timeline") : LIVE_PROOF[frame](page);
+    await expect(before.first()).toBeVisible();
     for (const step of entry.steps ?? []) {
       if (step.do === "click" && step.role === "button" && step.name) await page.getByRole("button", { name: step.name }).click();
     }

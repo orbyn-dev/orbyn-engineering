@@ -30,7 +30,7 @@ function Card({ row, busy, onDecide }: { row: EscapeRow; busy: boolean; onDecide
         <b>{row.reason ?? row.line}</b>
         <span>If you confirm</span>
         <b>
-          It becomes a confirmed escape and counts against {against}. You can then set its gap. Asking Crew to propose a check is not built <Planned why={WHY.check} />
+          It becomes a confirmed escape and counts against {against}. You can then set its gap. Asking Crew to propose a check is not on this page yet <Planned why={WHY.check} />
         </b>
         <span>If you dismiss</span>
         <b>Nothing is counted and this merge is not offered again. There is no undo in v1</b>
