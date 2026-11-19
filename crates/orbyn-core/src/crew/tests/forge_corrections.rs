@@ -670,8 +670,9 @@ async fn broken_world() -> Setup {
     }))
     .await;
     let good = gitq(&w.repo, &["rev-parse", "HEAD"]).await;
+    // No quote characters: the check runs under `cmd /C` on Windows, where `'` is a literal and a `"` is re-escaped.
     let rules =
-        json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- . ':!.orbyn'")}]});
+        json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- . :!.orbyn")}]});
     setup_world(&rules.to_string(), w).await
 }
 
