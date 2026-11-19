@@ -298,6 +298,27 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
 - **Limits.** The proof lays one file over a commit, so a test that needs the worker's source changes to compile fails on both and is refused. The test environment's fake worker works in the project's own checkout, so the
   tests reset it between attempts; a real worker has its own worktree. Off macOS there is no confinement: the approval is the control.
 
+## As built: PR 5, web screens
+
+No migration, no route, no read field and no write: the web binds the reads and person acts PR 1 to PR 4 already serve (5a, 5b, 5c).
+
+- **Live (real reads).** `escape-log`, `-empty`, `-low-sample`, `-error`, `-possible`, `-detail`, `-detail-tooling`,
+  `-confirmed`, `-dismissed`, `-gap` (5a) on `GET /escapes`, `/escapes/possible`, `/escapes/{id}`; the eight
+  `escape-check-*` frames and `escape-limit` (5b) on the same detail read and the person's check routes; `escape-settings`
+  on `GET /escapes/thresholds` (read only), and `escape-narrow-window` / `-narrow-panel`, which are the log at 640 px and 320 px
+  (5c). A check's retry, withdraw and approve are that page with its dialog opened by a click.
+- **Still drawn samples.** `escape-report` (the mark dialog: its figures need the report read and it opens from a Review item's
+  menu, which the beta has no queue for), `escape-dashboard`, `escape-route-counts` and `-shifted` (the report and counts routes
+  are not built; every figure is Not measured, never a zero), and `escape-create-check*` (the create form is a later batch).
+  They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
+- **Writes stay a person's.** Every act is a person's click carrying `seen`; a stale answer shows the service's own words and
+  reloads, and drawing a screen never writes. Settings save stays Planned (the thresholds read is bound; no write).
+- **Derived, not invented.** The log's limit banner appears only when the unfiltered read's total reaches the store's 5,000 cap,
+  and its heading names the count from the read; the narrow panel draws the frame's first four cards, the narrow window the page's
+  rows. Rate, gap and check counts read Not measured while the report route does not exist.
+- **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and an as-of line are absent because
+  no read carries them; the create-check form is a drawn sample.
+
 ## Decisions (owner)
 
 1. A revert is a possible escape at once, labelled so; confirmed only by a person. Counts are shown separately.
