@@ -5,15 +5,13 @@ import { EscapeReport } from "./report";
 import { EscapeDashboard } from "./dashboard";
 import { EscapeRouteCounts } from "./route-counts";
 import { EscapeRouteShifted } from "./route-shifted";
-import { EscapeNarrowPanel } from "./narrow-panel";
-import { EscapeNarrowWindow } from "./narrow-window";
 import { ESCAPE_LIVE_FRAMES } from "./live/screens";
 import type { EscapeFrameId } from "./names";
 
 /**
  * The escape frames still on drawn sample data (Crew Designs v20): the proposal form, the mark dialog, the report and
- * counts slices. The log and its states, the possible list, the escape pages, the check frames and the settings sheet
- * are on the real routes instead (./live/screens).
+ * counts slices. The log and its states, the possible list, the escape pages, the check frames, the settings sheet and
+ * the log's narrow variants are on the real routes instead (./live/screens).
  */
 type EscapeDrawnFrameId = Exclude<EscapeFrameId, (typeof ESCAPE_LIVE_FRAMES)[number]>;
 
@@ -24,6 +22,4 @@ export const ESCAPE_SCREENS: Partial<Record<EscapeDrawnFrameId, ComponentType>> 
   "escape-dashboard": EscapeDashboard,
   "escape-route-counts": EscapeRouteCounts,
   "escape-route-shifted": EscapeRouteShifted,
-  "escape-narrow-panel": EscapeNarrowPanel,
-  "escape-narrow-window": EscapeNarrowWindow,
 };

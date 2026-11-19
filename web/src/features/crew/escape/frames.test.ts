@@ -10,12 +10,10 @@ const SHOWS: Record<string, string[]> = {
   "escape-dashboard": ["Main is healthy · watched since 09:00", "Claude Code · Sonnet 5.5", "OpenCode · DeepSeek V4", "Why some rows have no percentage"],
   "escape-route-counts": ["Add a keyboard shortcut to the web client", "The task, as Crew read it", "Claude Code · Sonnet 5.5", "Workers run as you, with your machine’s permissions."],
   "escape-route-shifted": ["Add pagination to the list endpoint", "The task, as Crew read it", "1 escape in 14 merges · 7%", "Workers run as you, with your machine’s permissions."],
-  "escape-narrow-panel": ["Escaped in the last 60 days: 2 reverted, 1 found after the merge. 2 checks added, 1 being written.", "Check: Added Sat 7 Nov, 16:22", "Move session helpers to auth/session.ts", "Counts against Codex · GPT-5.5 · auth/"],
-  "escape-narrow-window": ["got past review and checks", "Check: Added Sat 7 Nov, 16:22", "Sat 7 Nov, 15:02 · merged 14:32", "Counts against Codex · GPT-5.5 · auth/"],
 };
 
-/** The frames still on drawn sample data: the log, its states, the possible list and the escape pages are the live
- * screens of Crew Designs v79, on the real routes, tested beside their own module (./live/live.test.tsx). */
+/** The frames still on drawn sample data: the log with its states and narrow variants, the possible list and the escape
+ * pages are the live screens of Crew Designs v79, on the real routes, tested beside their own module (./live/live.test.tsx). */
 const DRAWN: readonly string[] = ESCAPE_FRAMES.filter((name) => !(ESCAPE_LIVE_FRAMES as readonly string[]).includes(name));
 
 describeFrames("Escape frames still drawn (Crew Designs v20)", DRAWN, SHOWS);

@@ -7,10 +7,13 @@ import { LiveEscapeSettings } from "./LiveEscapeSettings";
  * frame names its escape in the hash's query ('?id=<escape id>'), so the same frame draws whichever escape it is asked
  * for. A check frame opens the escape's own page too: the check is drawn in whichever state the read carries, and the
  * retry and withdraw frames are that page with their dialog opened by a click. The log's empty, low-sample, unreadable
- * and at-limit states are the log read's own answers, not separate screens.
+ * and at-limit states are the log read's own answers, not separate screens, and its narrow variants (a 640 px window and
+ * the 320 px side panel) are the same read drawn with cards instead of the table.
  */
 export const ESCAPE_LIVE_FRAMES = [
   "escape-log",
+  "escape-narrow-window",
+  "escape-narrow-panel",
   "escape-empty",
   "escape-low-sample",
   "escape-error",
@@ -39,6 +42,8 @@ export const escapeIdOfHash = (): string => new URLSearchParams(window.location.
 
 export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-log": () => <LiveEscapes view="log" />,
+  "escape-narrow-window": () => <LiveEscapes view="log" variant="window" />,
+  "escape-narrow-panel": () => <LiveEscapes view="log" variant="panel" />,
   "escape-empty": () => <LiveEscapes view="log" />,
   "escape-low-sample": () => <LiveEscapes view="log" />,
   "escape-error": () => <LiveEscapes view="log" />,

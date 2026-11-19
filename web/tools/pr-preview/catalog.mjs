@@ -663,6 +663,9 @@ export const FRAMES = {
   "escape-check-withdraw": { route: "#/preview/crew/escape-check-withdraw?id=esc-proven", scenario: "crew-escapes-checks", steps: [click("button", "Withdraw")] },
   "escape-check-withdrawn": { route: "#/preview/crew/escape-check-withdrawn?id=esc-withdrawn", scenario: "crew-escapes-checks" },
   "escape-limit": { route: "#/preview/crew/escape-limit", scenario: "crew-escapes-limit", wait: 2500 },
+  /** The same log at a narrow width (Crew Designs v79): a 640 px window and the 320 px side panel, cards instead of the table. */
+  "escape-narrow-window": { route: "#/preview/crew/escape-narrow-window", scenario: "crew-escapes", width: 640 },
+  "escape-narrow-panel": { route: "#/preview/crew/escape-narrow-panel", scenario: "crew-escapes", width: 320 },
   /** The settings sheet on the real thresholds read (the defaults; `crew-escapes-stored` draws a person's stored values). */
   "escape-settings": { route: "#/preview/crew/escape-settings", scenario: "crew-escapes" },
 };
