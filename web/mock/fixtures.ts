@@ -329,6 +329,22 @@ export function threads(): Thread[] {
     baseThread("t-failed", "p-app", "Upgrade tokio and fix the fallout", "codex", -3600, {
       last_run_state: "failed",
     }),
+    baseThread("t-run-no-reply", "p-app", "Fix login redirect", "claude", -600, {
+      last_run_state: "failed",
+      model: "claude-opus-5-5",
+    }),
+    baseThread("t-run-session-lost", "p-app", "Fix login redirect", "claude", -540, {
+      last_run_state: "failed",
+      model: "claude-opus-5-5",
+    }),
+    baseThread("t-bg-stopped", "p-app", "Fix login redirect", "claude", -480, {
+      last_run_state: "completed",
+      model: "claude-opus-5-5",
+    }),
+    baseThread("t-bg-stopped-many", "p-app", "Keep the checks running", "claude", -420, {
+      last_run_state: "completed",
+      model: "claude-opus-5-5",
+    }),
     baseThread("t-interrupted", "p-app", "Backfill audit rows after crash", "claude", -5400, {
       last_run_state: "interrupted",
     }),
@@ -758,6 +774,44 @@ export function logs(): Record<string, WireThreadEvent[]> {
         ...user("u1", "Rewrite the hero copy to be shorter."),
         ...assistant("a1", "Done in the terminal session. See the Terminal panel for the output."),
         { type: "RUN_FINISHED", threadId: "t-unmanaged", runId: "r-un", outcome: { type: "success" } },
+      ]),
+    ),
+    "t-run-no-reply": sequence(
+      logOf("t-run-no-reply", "r-nr", -610, [
+        { type: "RUN_STARTED", threadId: "t-run-no-reply", runId: "r-nr" },
+        ...user("u1", "Find out why login sends people back to /home instead of the page they were on."),
+        { type: "RUN_ERROR", message: "No reply: the engine finished without answering. Send your message again.", code: "engine_failed" },
+      ]),
+    ),
+    "t-run-session-lost": sequence(
+      logOf("t-run-session-lost", "r-sl", -550, [
+        { type: "RUN_STARTED", threadId: "t-run-session-lost", runId: "r-sl" },
+        ...user("u1", "Find out why login sends people back to /home instead of the page they were on."),
+        { type: "RUN_ERROR", message: "The engine lost this conversation.", code: "engine_failed" },
+      ]),
+    ),
+    "t-bg-stopped": sequence(
+      logOf("t-bg-stopped", "r-bs", -490, [
+        { type: "RUN_STARTED", threadId: "t-bg-stopped", runId: "r-bs" },
+        ...user("u1", "Start the dev server, then fix the redirect."),
+        ...tool("c1", "Bash", '{"command":"pnpm dev --port 5173"}', "VITE v7 ready on http://localhost:5173"),
+        ...assistant("a1", "The redirect now uses next when it points inside the app. I left the dev server and a review running."),
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b1", taskType: "local_bash", description: "pnpm dev --port 5173" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b2", taskType: "local_agent", description: "Review every caller of after() in the auth module for open redirects and report any that pass the next parameter through unchecked" } },
+        { type: "RUN_FINISHED", threadId: "t-bg-stopped", runId: "r-bs", outcome: { type: "success" } },
+      ]),
+    ),
+    "t-bg-stopped-many": sequence(
+      logOf("t-bg-stopped-many", "r-bm", -430, [
+        { type: "RUN_STARTED", threadId: "t-bg-stopped-many", runId: "r-bm" },
+        ...user("u1", "Review the redirect, check the tests, and keep the dev server and type checker running."),
+        ...assistant("a1", "The redirect is fixed. The review and the other work were still running when I finished."),
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b1", taskType: "local_agent", description: "Review callers of after()" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b2", taskType: "local_agent", description: "Check the login tests for stale redirects" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b3", taskType: "local_bash", description: "pnpm dev --port 5173" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b4", taskType: "local_bash", description: "pnpm typecheck --watch" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b5", taskType: "local_workflow" } },
+        { type: "RUN_FINISHED", threadId: "t-bg-stopped-many", runId: "r-bm", outcome: { type: "success" } },
       ]),
     ),
   };
