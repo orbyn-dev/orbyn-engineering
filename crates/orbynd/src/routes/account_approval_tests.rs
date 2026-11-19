@@ -224,6 +224,43 @@ async fn a_new_device_waits_for_a_trusted_one_and_can_give_up() {
 }
 
 #[tokio::test]
+async fn a_sign_in_cancel_the_service_did_not_take_is_answered_and_tried_again() {
+    let served = serve("blip", AccountGate::LocalOnly, false).await;
+    let (status, body) = served
+        .call(
+            "POST",
+            "/api/account/sign-in",
+            json!({ "email": "blip@example.com", "password": SECRET }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["outcome"].as_str()),
+        (200, Some("awaiting_approval"))
+    );
+    // The Engine is unreachable: the cancel is refused, not answered as if the service had
+    // taken it, and the request stays open for a retry.
+    let (status, body) = served
+        .call("POST", "/api/account/sign-in/cancel", json!({}))
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (503, Some("account_offline"))
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(view["approval"]["state"], "waiting");
+    // The service answers again: the retry is taken and the sign-in ends.
+    assert_eq!(
+        served
+            .call("POST", "/api/account/sign-in/cancel", json!({}))
+            .await
+            .0,
+        204
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert!(view.get("approval").is_none());
+}
+
+#[tokio::test]
 async fn the_first_sync_asks_how_to_join_the_settings_once() {
     let served = serve("connect", AccountGate::LocalOnly, false).await;
     served.sign_in().await;

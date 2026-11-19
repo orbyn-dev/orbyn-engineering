@@ -35,7 +35,17 @@ pub(super) struct Joining {
     digits: Option<Issued>,
     /// The text the Engine gave, passed back to its own check once ours has passed.
     engine_text: Option<ApprovalDigits>,
+    /// A cancel is on its way to the Engine: the slot stays, so nothing else reads the request
+    /// as gone, and polls and digits wait for the answer.
+    cancelling: bool,
+    /// The Engine did not take a cancel and its handle is spent: the approval ends on its own
+    /// clock, so nothing is joined again and the next cancel only lets go.
+    cancel_unsent: bool,
+    /// Tells this request from a later one that reuses the id.
+    serial: u64,
 }
+
+static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Joining {
     pub(super) fn new(request_id: String) -> Self {
@@ -44,6 +54,31 @@ impl Joining {
             joined: None,
             digits: None,
             engine_text: None,
+            cancelling: false,
+            cancel_unsent: false,
+            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+/// If a cancel is dropped while the Engine is asked, its answer is unknown and its handle is
+/// spent: the request is marked as a cancel that was not sent, rather than as one on its way.
+struct CancelGuard<'a> {
+    slot: &'a tokio::sync::Mutex<Option<Joining>>,
+    serial: u64,
+    armed: bool,
+}
+
+impl Drop for CancelGuard<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut slot) = self.slot.try_lock()
+            && let Some(joining) = slot.as_mut().filter(|j| j.serial == self.serial)
+        {
+            joining.cancelling = false;
+            joining.cancel_unsent = true;
         }
     }
 }
@@ -74,6 +109,9 @@ where
         let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Err(DeviceError::RequestGone);
         };
+        if joining.cancelling || joining.cancel_unsent {
+            return Ok(ApprovalStatus::Waiting);
+        }
         let client = &self.shared.client;
         let view = match client.pending_approval().await {
             Ok(view) => view,
@@ -128,16 +166,47 @@ where
 
     pub(super) async fn cancel_joined(&self, request_id: &str) -> Result<(), DeviceError> {
         let mut slot = self.joining.lock().await;
-        if !slot.as_ref().is_some_and(|j| j.request_id == request_id) {
+        let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Ok(());
+        };
+        // Another cancel is on its way: its answer is not known yet.
+        if joining.cancelling {
+            return Err(DeviceError::Server { retryable: true });
         }
-        let taken = slot.take();
+        // Before the Engine's approval was joined there is nothing on the server to cancel;
+        // after a cancel it did not take, the handle is spent and the approval ends on its own.
+        let Some(joined) = joining.joined.take() else {
+            *slot = None;
+            return Ok(());
+        };
+        // The slot stays while the Engine is asked: a poll or the digits find the request
+        // still there and wait, instead of reading it as gone.
+        joining.cancelling = true;
+        let serial = joining.serial;
         drop(slot);
-        // Before the Engine's approval was joined there is nothing on the server to cancel.
-        if let Some(joined) = taken.and_then(|j| j.joined) {
-            let _ = self.shared.client.deny_joined(joined).await;
+        let mut guard = CancelGuard {
+            slot: &self.joining,
+            serial,
+            armed: true,
+        };
+        let result = self.shared.client.deny_joined(joined).await.map_err(map);
+        guard.armed = false;
+        let mut slot = self.joining.lock().await;
+        // Only the entry this cancel started is touched: a later request may hold the slot.
+        if let Some(joining) = slot.as_mut().filter(|j| j.serial == serial) {
+            match &result {
+                // An approval that is over needs nothing more.
+                Ok(()) | Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
+                    *slot = None;
+                }
+                // Told to the caller, and kept so the person is not shown it as cancelled.
+                Err(_) => {
+                    joining.cancelling = false;
+                    joining.cancel_unsent = true;
+                }
+            }
         }
-        Ok(())
+        result
     }
 
     pub(super) async fn finish_joined(
@@ -149,6 +218,11 @@ where
         let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Err(DeviceError::RequestGone);
         };
+        // A cancel is on its way, or the Engine did not take it: the request is neither
+        // finished nor gone, so these digits are not spent on it.
+        if joining.cancelling || joining.cancel_unsent {
+            return Err(DeviceError::Server { retryable: true });
+        }
         let Some(issued) = joining.digits.as_mut() else {
             return Err(DeviceError::RequestGone);
         };
