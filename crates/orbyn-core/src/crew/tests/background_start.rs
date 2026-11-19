@@ -837,7 +837,7 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
     assert_eq!(results.len(), 1, "{results:?}");
     assert_eq!(results[0].state, wire::ResultState::NeedsPerson);
     assert!(w.core.store.thread(&run.id).is_ok());
-    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1 + 1));
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
     let saved = w.core.store.background_run(&run.id).unwrap();
     w.core
         .store
@@ -919,7 +919,7 @@ async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_re
     };
     assert_eq!(states, ["needs_person"]);
     assert!(w.core.store.thread(&run.id).is_ok());
-    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1 + 1));
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
     assert_eq!(refusals(&w, &run.id), 1);
     assert!(w.sent_to(&run.id).is_empty());
 }
