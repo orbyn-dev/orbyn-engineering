@@ -64,6 +64,20 @@ pub struct BackgroundBudget {
 }
 }
 
+wire! {
+/// The most one engine may spend on this crew in a day, set when the crew is created and never changed after: runs and turns,
+/// counted per engine from the turns its runs ended with. The day is the person's (`utc_offset_minutes` of the create body), so the
+/// budget resets at their midnight. An engine at its cap refuses new runs of the crew; a run already going is cancelled at the cap
+/// with what the engine spent shown, never clamped.
+#[serde(deny_unknown_fields)]
+pub struct BackgroundDailyBudget {
+    /// Runs 1 to 1000.
+    pub runs: u32,
+    /// Turns 1 to 10000.
+    pub turns: u32,
+}
+}
+
 wire_enum! {
 /// Where a background crew stands, in this order: `running` while a run is in progress; `needs_review` when its newest run needs
 /// review; `stopped` when its newest run stopped for the budget or a failure (`budget`, `repeated_failure`, `engine_error`), even with
@@ -99,11 +113,16 @@ pub struct BackgroundCrewCreate {
     pub template: BackgroundTemplate,
     pub trigger: BackgroundTrigger,
     pub budget: BackgroundBudget,
+    /// What each engine may spend on this crew in a day, reset at the person's midnight.
+    pub daily: BackgroundDailyBudget,
+    /// The person's clock, in minutes east of UTC (-840 to 840): the daily budget resets at their midnight.
+    pub utc_offset_minutes: i32,
 }
 }
 
 wire! {
-/// The body that changes a background crew: its name and its trigger. The repository, template and budget are fixed at creation.
+/// The body that changes a background crew: its name and its trigger. The repository, template, budget and daily budget are fixed at
+/// creation.
 #[serde(deny_unknown_fields)]
 pub struct BackgroundCrewUpdate {
     #[serde(default)]
@@ -124,6 +143,8 @@ pub struct BackgroundCrew {
     pub template: BackgroundTemplate,
     pub trigger: BackgroundTrigger,
     pub budget: BackgroundBudget,
+    /// What each engine may spend on this crew in a day, fixed at creation like the run budget.
+    pub daily: BackgroundDailyBudget,
     pub enabled: bool,
     pub state: BackgroundState,
     /// Runs of this crew waiting for the person's review.
