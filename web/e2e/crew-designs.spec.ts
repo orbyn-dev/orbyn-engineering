@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { BACKTEST_FRAMES } from "../src/features/crew/backtest/names";
 import { CAPACITY_FRAMES } from "../src/features/crew/capacity/names";
 import { ESCAPE_FRAMES } from "../src/features/crew/escape/names";
+import { ESCAPE_LIVE_FRAMES } from "../src/features/crew/escape/live/screens";
 import { ORACLE_FRAMES } from "../src/features/crew/oracle/names";
 import { SETTINGS_FRAMES } from "../src/features/crew/settings/names";
 
@@ -9,7 +10,12 @@ import { SETTINGS_FRAMES } from "../src/features/crew/settings/names";
 const open = (page: Page, frame: string) => page.goto(`/#/preview/crew/${frame}`);
 const REASON = "Crew is not connected to this app yet";
 
-for (const frame of [...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES]) {
+/** Escape screens that read the dev mock instead of drawing sample data; the loop below covers every other frame. */
+const ESCAPE_DRAWN_FRAMES = ESCAPE_FRAMES.filter(
+  (frame) => !(ESCAPE_LIVE_FRAMES as readonly string[]).includes(frame),
+);
+
+for (const frame of [...ESCAPE_DRAWN_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES]) {
   test(`${frame} draws on sample data, makes no Crew request and has no live control`, async ({ page }) => {
     const requests: string[] = [];
     page.on("request", (request) => {
@@ -24,6 +30,13 @@ for (const frame of [...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...
       await expect(buttons.nth(index)).toHaveAttribute("aria-description", REASON);
     }
     expect(requests).toEqual([]);
+  });
+}
+
+for (const frame of ESCAPE_LIVE_FRAMES) {
+  test(`${frame} runs on the dev mock instead of drawing sample data`, async ({ page }) => {
+    await open(page, frame);
+    await expect(page.getByText("Sample data.")).toHaveCount(0);
   });
 }
 
