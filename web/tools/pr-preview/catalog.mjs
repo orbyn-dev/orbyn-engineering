@@ -663,4 +663,14 @@ export const FRAMES = {
   "backtest-estimate": { route: "#/preview/crew/backtest-estimate", scenario: "crew-backtest", wait: 2500 },
   "backtest-report": { route: "#/preview/crew/backtest-report?id=run-4n", scenario: "crew-backtest-report" },
   "backtest-stopped": { route: "#/preview/crew/backtest-stopped?id=run-stopped", scenario: "crew-backtest-stopped" },
+  /** Crew, the escape check frames (Crew Designs v79): one escape's own page with its check in the state the mock leaves it. */
+  "escape-check-proposed": { route: "#/preview/crew/escape-check-proposed?id=esc-proposed", scenario: "crew-escapes-checks" },
+  "escape-check-writing": { route: "#/preview/crew/escape-check-writing?id=esc-writing", scenario: "crew-escapes-checks" },
+  "escape-check-approve": { route: "#/preview/crew/escape-check-approve?id=esc-proof", scenario: "crew-escapes-checks" },
+  "escape-check-proven": { route: "#/preview/crew/escape-check-proven?id=esc-proven", scenario: "crew-escapes-checks" },
+  "escape-check-invalid": { route: "#/preview/crew/escape-check-invalid?id=esc-session", scenario: "crew-escapes-checks" },
+  "escape-check-retry": { route: "#/preview/crew/escape-check-retry?id=esc-session", scenario: "crew-escapes-checks", steps: [click("button", "Retry")] },
+  "escape-check-withdraw": { route: "#/preview/crew/escape-check-withdraw?id=esc-proven", scenario: "crew-escapes-checks", steps: [click("button", "Withdraw")] },
+  "escape-check-withdrawn": { route: "#/preview/crew/escape-check-withdrawn?id=esc-withdrawn", scenario: "crew-escapes-checks" },
+  "escape-limit": { route: "#/preview/crew/escape-limit", scenario: "crew-escapes-limit", wait: 2500 },
 };
