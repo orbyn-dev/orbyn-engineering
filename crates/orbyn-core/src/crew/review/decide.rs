@@ -170,9 +170,10 @@ impl Core {
                 | CheckKind::FileScope
                 | CheckKind::DiffSize
                 | CheckKind::Schema
+                | CheckKind::SecretScan
         ) {
             return Err(invalid(
-                "repro: this version runs command, test, lint, typecheck, custom_script, file_scope, diff_size and schema checks",
+                "repro: this version runs command, test, lint, typecheck, custom_script, file_scope, diff_size, schema and secret_scan checks",
             ));
         }
         let worktree = subject_run

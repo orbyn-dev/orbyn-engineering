@@ -269,6 +269,13 @@ async fn a_report_is_stamped_by_the_core() {
     assert_eq!(refusal["code"], "not_authorized");
 }
 
+/// A key with one more check after the shared three, so a kind can be driven end to end.
+fn key_with(check: serde_json::Value) -> serde_json::Value {
+    let mut key = key();
+    key["checks"].as_array_mut().unwrap().push(check);
+    key
+}
+
 async fn started_with(w: &World, key: serde_json::Value) -> String {
     let (answer, error) = w.start(brief(json!({})), key).await;
     assert!(!error, "{answer}");
@@ -317,4 +324,48 @@ async fn a_schema_check_runs_on_the_workers_instance_and_records_evidence() {
     // The failing Evidence names the place and never the value the worker wrote.
     assert!(schema[0].excerpt.contains("/name"), "{}", schema[0].excerpt);
     assert!(!schema[0].excerpt.contains('7'), "{}", schema[0].excerpt);
+}
+
+/// Issue #437: a `secret_scan` fails a changed file that holds a recognised secret, the worker
+/// retries without it, and the secret is never stored or handed to the worker.
+#[tokio::test]
+async fn a_secret_scan_fails_the_change_and_passes_after_the_retry() {
+    let secret = format!("ghp_{}", "x".repeat(36));
+    let leak = secret.clone();
+    let w = world(
+        true,
+        Arc::new(move |n, root| {
+            let body = if n == 0 {
+                format!("token = {leak}\n")
+            } else {
+                "clean\n".to_owned()
+            };
+            std::fs::write(root.join("src/lib.txt"), body).unwrap();
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    let scan = json!({ "id": "chk-secret", "kind": "secret_scan",
+        "proves": "The change holds no recognised secret.", "params": {} });
+    let id = started_with(&w, key_with(scan)).await;
+    w.until_state(&id, "passed").await;
+    let evidence = w.core.store.crew_evidence(&id).unwrap();
+    let scans: Vec<_> = evidence
+        .iter()
+        .filter(|e| e.check.as_str() == "chk-secret")
+        .collect();
+    assert_eq!(scans.len(), 2, "{evidence:?}");
+    assert_eq!(
+        (scans[0].outcome, scans[1].outcome),
+        (CheckOutcome::Fail, CheckOutcome::Pass)
+    );
+    assert_eq!(scans[0].command.as_str(), "secret_scan: chk-secret");
+    for stored in &scans {
+        assert!(!stored.excerpt.contains(&secret), "the secret was stored");
+    }
+    let prompts = w.sent_to(&w.worker(&id));
+    assert!(
+        prompts.iter().all(|prompt| !prompt.contains(&secret)),
+        "the secret reached the worker"
+    );
 }

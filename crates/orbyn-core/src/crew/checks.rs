@@ -3,23 +3,27 @@
 //! model, and it never decides pass or fail for the whole key: `verify` does that.
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
-//! `custom_script`), `file_scope`, `diff_size` and `schema`. Any other kind reports `skipped`, so
-//! the result lists it as not verified rather than passing or failing on a guess.
+//! `custom_script`), `file_scope`, `diff_size`, `schema` and `secret_scan`. Any other kind
+//! reports `skipped`, so the result lists it as not verified rather than passing or failing on a guess.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
-    CheckOutcome, CheckParams, CrewCheck, CrewPath, CrewPathPattern, SchemaParams,
+    CheckKind, CheckOutcome, CheckParams, CrewCheck, CrewPath, CrewPathPattern, SchemaParams,
 };
 use tokio::process::Command;
 
 use crate::error::CoreError;
+use crate::redaction::Redactor;
 
 /// No check runs longer than this.
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// The most a diff-size count reads of an untracked file.
 const COUNTED_BYTES: u64 = 2 * 1024 * 1024;
+/// The most a secret scan reads of one changed file: a larger one fails as an error, never as a
+/// pass over the part that was read.
+const SCANNED_BYTES: u64 = 8 * 1024 * 1024;
 /// The most instance locations a schema failure names.
 const SCHEMA_NAMES: usize = 20;
 /// Where a `schema` check's one file is registered while it is compiled. References to another
@@ -149,6 +153,13 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
             .await
         }
         Ok(CheckParams::Schema(params)) => schema(&params, site, description, started),
+        Ok(CheckParams::Empty(_)) => {
+            if check.kind == CheckKind::SecretScan {
+                secret_scan(site, description, started).await
+            } else {
+                skipped(check, started)
+            }
+        }
         Ok(_) => skipped(check, started),
         Err(why) => error(description, &why.message, started),
     }
@@ -652,4 +663,109 @@ fn schema(params: &SchemaParams, site: &Site<'_>, description: String, started: 
             result
         }
     }
+}
+
+/// Runs a `secret_scan` check: every changed file in the checkout is read for the recognised
+/// secret formats of the spec, all of them and always. The evidence names the path, the line and
+/// the class, never the secret. A changed file too large to read in full, or one the scan cannot
+/// read, is an error: the scan never passes over what it did not read.
+async fn secret_scan(site: &Site<'_>, description: String, started: Instant) -> Ran {
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    let files = match changed(site).await {
+        Ok(files) => files,
+        Err(why) => return error(description, &why.public_message(), started),
+    };
+    let mut found: Vec<(String, usize, &'static str)> = Vec::new();
+    let mut unreadable: Vec<String> = Vec::new();
+    let mut scanned = 0_usize;
+    for path in &files {
+        let full = site.worktree.join(path);
+        let meta = match std::fs::symlink_metadata(&full) {
+            Ok(meta) => meta,
+            // A path deleted in the change holds nothing to scan.
+            Err(why) if why.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                unreadable.push(path.clone());
+                continue;
+            }
+        };
+        // A symlink, a directory or a submodule has no bytes of its own in the change.
+        if !meta.is_file() {
+            continue;
+        }
+        if meta.len() > SCANNED_BYTES {
+            return error(
+                description,
+                &format!(
+                    "the changed file {path} is larger than the {SCANNED_BYTES}-byte limit of this scan"
+                ),
+                started,
+            );
+        }
+        let bytes = match std::fs::read(&full) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                unreadable.push(path.clone());
+                continue;
+            }
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        for (line, content) in text.lines().enumerate() {
+            if let Some(class) = Redactor::locked().class_of(content) {
+                found.push((path.clone(), line + 1, class));
+                break;
+            }
+        }
+        scanned += 1;
+    }
+    if !unreadable.is_empty() {
+        return error(
+            description,
+            &format!(
+                "changed files could not be read for the scan: {}",
+                unreadable.join(", ")
+            ),
+            started,
+        );
+    }
+    if found.is_empty() {
+        return ran(
+            CheckOutcome::Pass,
+            description,
+            format!("{scanned} changed file(s) scanned, no recognised secret\n"),
+            started,
+        );
+    }
+    let mut log = format!("{} changed file(s) hold a recognised secret\n", found.len());
+    let mut names: Vec<String> = Vec::new();
+    for (path, line, class) in &found {
+        log.push_str(&format!("{path}:{line}: {class}\n"));
+        if names.iter().all(|name| name != path) {
+            names.push(path.clone());
+        }
+    }
+    let listed: Vec<String> = found
+        .iter()
+        .take(5)
+        .map(|(path, line, class)| format!("{path} line {line} ({class})"))
+        .collect();
+    let more = found.len().saturating_sub(listed.len());
+    let mut result = ran(CheckOutcome::Fail, description, log, started);
+    result.reason = Some(format!(
+        "Changed files hold a recognised secret: {}{}. Remove it from the change, and rotate it if it was real.",
+        listed.join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    ));
+    result.names = names;
+    result
 }

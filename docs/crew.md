@@ -352,17 +352,21 @@ retries with the reason. The same failure twice means one change of approach, an
     Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`): with the default 30
     turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
-  - **Check kinds this version runs (#437):** besides the command kinds, `file_scope`, `diff_size` and
-    `schema`:
+  - **Check kinds this version runs (#437):** besides the command kinds, `file_scope` and `diff_size`,
+    `schema` and `secret_scan` run in the checkout and record their Evidence:
     - `schema`: `{schema, instance}` name two files in the checkout. The instance must be JSON that validates
       against the schema (draft 2020-12). A mismatch, or an instance that is not JSON, is a finding (fail) that
       names the instance locations and never the value; a missing or unreadable file, a schema that is not JSON,
       and a schema that references another file or a URL — the schema is one self-contained document, so only
       `#` references are allowed — are errors, never a pass.
-  - **Check kinds this version does not run** (`http_probe`, `preview`, `visual_compare`, `repo_required`,
-    `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`,
-    `licence_scan`) report `skipped` and are listed as not verified. A key with nothing it can run goes to
-    `needs_person`.
+    - `secret_scan`: reads every changed path (as `file_scope` and `diff_size` read them) for the secret
+      formats of the spec, all of them and always. The Evidence names the path, line and class, never the match. A
+      changed file over 8 MiB, or one the scan cannot read, is an error: the scan never passes over what it did not
+      read. Symlinks and other non-regular changed files hold no bytes of the change and are not scanned.
+  - **Check kinds this version does not run** (`http_probe`, `preview`, `visual_compare`,
+    `repo_required`, `manual`, `screenshot_only`, `accessibility_audit`,
+    `performance_budget`, `licence_scan`) report `skipped` and are listed as not verified. A key with
+    nothing it can run goes to `needs_person`.
 
 **Harness-to-harness communication** (the new part)
 
@@ -1570,8 +1574,8 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
   field that says "a person's re-run", which this PR does not change. So a re-run's record is its two audit rows, counts only; its
   logs are not kept. A later Flow route that shows a re-run needs its own table or a protocol field.
 - **What runs.** The key's checks only, in the task's own checkout: the command kinds, `file_scope`,
-  `diff_size` and `schema`; any other kind is `skipped`, as in a live verification. It does **not** run the
-  repository's own checks (`.orbyn/crew.json`), and it does not touch the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
+  `diff_size`, `schema` and `secret_scan`; any other kind is `skipped`, as in a live verification. It
+  does **not** run the repository's own checks (`.orbyn/crew.json`), and it does not touch the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
   files changed runs nothing, as a live verification does (N7, H9).
 - **Which tasks.** An unknown id is `404 not_found`. A task with no key or no checkout is `422 unsupported`. Allowed: a `passed` task,
   and a `stopped` task whose reason is `repeated_failure`, `budget` or `engine_error` **and** whose checks ran live at least once (it

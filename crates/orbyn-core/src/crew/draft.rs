@@ -180,7 +180,7 @@ pub(super) fn answer_key_schema() -> Value {
                                 http_probe: {url (loopback), expect_status}. \
                                 preview, screenshot_only, accessibility_audit: {url (loopback), screenshot?}. \
                                 visual_compare: {frame, tolerance_permille}. performance_budget: {metric, max}. \
-                                repo_required, manual: {name?, note?}. secret_scan, licence_scan: {}."
+                                repo_required, manual: {name?, note?}. secret_scan: {}: the changed files, for recognised secrets. licence_scan: {}."
                         },
                         "proves": { "type": "string", "minLength": 1, "maxLength": 1000 },
                         "does_not_prove": { "type": "string", "minLength": 1, "maxLength": 1000 }

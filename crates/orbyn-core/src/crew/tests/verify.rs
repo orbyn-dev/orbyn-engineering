@@ -456,3 +456,42 @@ async fn schema_checks_validate_the_instance_against_the_schema_in_the_checkout(
         CheckOutcome::Error
     );
 }
+
+/// Issue #437: `secret_scan` reads the changed paths, never the whole repository, and reports the
+/// path, line and class, never the secret itself. A file too large to read in full is an error,
+/// never a pass over the part that was read.
+#[tokio::test]
+async fn secret_scans_fail_a_changed_file_holding_a_recognised_secret() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    let scan = check(json!({ "id": "chk-secrets", "kind": "secret_scan",
+        "proves": "The change holds no recognised secret.", "params": {} }));
+    std::fs::write(root.join("clean.txt"), "nothing to hide\n").unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Pass);
+    let token = format!("ghp_{}", "x".repeat(36));
+    std::fs::write(root.join("leak.txt"), format!("token = {token}\n")).unwrap();
+    let leak = run_check(&scan, &site).await;
+    assert_eq!(leak.outcome, CheckOutcome::Fail);
+    assert_eq!(leak.names, ["leak.txt"]);
+    let reason = leak.reason.unwrap();
+    assert!(
+        reason.contains("leak.txt") && reason.contains("line 1"),
+        "{reason}"
+    );
+    assert!(!reason.contains(&token), "the secret reached the reason");
+    assert!(!leak.log.contains(&token), "the secret reached the log");
+    // A changed file that is gone (deleted in the change) is not read and does not fail.
+    std::fs::remove_file(root.join("leak.txt")).unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Pass);
+    std::fs::remove_file(root.join("base.txt")).unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Pass);
+    // A file too large to read in full is an error, never a pass over the part that was read.
+    let big = std::fs::File::create(root.join("big.bin")).unwrap();
+    big.set_len(9 * 1024 * 1024).unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Error);
+}
