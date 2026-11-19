@@ -3,13 +3,15 @@
 //! model, and it never decides pass or fail for the whole key: `verify` does that.
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
-//! `custom_script`), `file_scope` and `diff_size`. Any other kind reports `skipped`, so the
-//! result lists it as not verified rather than passing or failing on a guess.
+//! `custom_script`), `file_scope`, `diff_size` and `schema`. Any other kind reports `skipped`, so
+//! the result lists it as not verified rather than passing or failing on a guess.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use orbyn_contracts::{CheckOutcome, CheckParams, CrewCheck, CrewPathPattern};
+use orbyn_contracts::{
+    CheckOutcome, CheckParams, CrewCheck, CrewPath, CrewPathPattern, SchemaParams,
+};
 use tokio::process::Command;
 
 use crate::error::CoreError;
@@ -18,6 +20,11 @@ use crate::error::CoreError;
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// The most a diff-size count reads of an untracked file.
 const COUNTED_BYTES: u64 = 2 * 1024 * 1024;
+/// The most instance locations a schema failure names.
+const SCHEMA_NAMES: usize = 20;
+/// Where a `schema` check's one file is registered while it is compiled. References to another
+/// file or a URL cannot be resolved, so the check reads only the two files it was given.
+const SCHEMA_LOC: &str = "https://orbyn.dev/crew/check/schema.json";
 
 /// What one check did.
 #[derive(Clone, Debug)]
@@ -141,14 +148,20 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
             )
             .await
         }
-        Ok(_) => ran(
-            CheckOutcome::Skipped,
-            format!("{}: not run by this version", kind_name(check)),
-            String::new(),
-            started,
-        ),
+        Ok(CheckParams::Schema(params)) => schema(&params, site, description, started),
+        Ok(_) => skipped(check, started),
         Err(why) => error(description, &why.message, started),
     }
+}
+
+/// The result of a kind this version does not run: it says so, and it passes and fails nothing.
+fn skipped(check: &CrewCheck, started: Instant) -> Ran {
+    ran(
+        CheckOutcome::Skipped,
+        format!("{}: not run by this version", kind_name(check)),
+        String::new(),
+        started,
+    )
 }
 
 /// Runs one command line in `worktree`, as the answer key's command checks run: it passes on exit 0.
@@ -447,4 +460,196 @@ async fn diff_size(
         ));
     }
     result
+}
+
+/// A schema check reads one file: a reference to another file or a URL is refused rather than
+/// resolved, so nothing outside the two files the key names is ever read.
+struct NoExternal;
+
+/// The first reference in a schema that is not an internal `#` one, if there is one. A schema
+/// this check reads is one self-contained document; a reference to another file or URL is refused
+/// before it is compiled, so the check never reads or fetches anything the key did not name.
+fn external_reference(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for key in ["$ref", "$dynamicRef", "$recursiveRef"] {
+                if let Some(text) = map.get(key).and_then(serde_json::Value::as_str)
+                    && !text.starts_with('#')
+                {
+                    return Some(text.to_owned());
+                }
+            }
+            map.values().find_map(external_reference)
+        }
+        serde_json::Value::Array(items) => items.iter().find_map(external_reference),
+        _ => None,
+    }
+}
+
+impl boon::UrlLoader for NoExternal {
+    fn load(&self, _url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        Err("a schema check reads one self-contained schema file".into())
+    }
+}
+
+/// Reads one regular file of the checkout, as the checks that name files read it. A symlink,
+/// directory or file that cannot be read is an error, never an empty value.
+fn checkout_file(site: &Site<'_>, path: &CrewPath, what: &str) -> Result<String, String> {
+    let full = site.worktree.join(path.as_str());
+    let meta = std::fs::symlink_metadata(&full)
+        .map_err(|_| format!("the {what} file {} cannot be read", path.as_str()))?;
+    if !meta.is_file() {
+        return Err(format!(
+            "the {what} file {} is not a regular file",
+            path.as_str()
+        ));
+    }
+    std::fs::read_to_string(&full)
+        .map_err(|_| format!("the {what} file {} cannot be read", path.as_str()))
+}
+
+/// The instance locations a schema validation failed at, deduplicated and ordered.
+fn schema_locations(why: &boon::ValidationError<'_, '_>) -> Vec<String> {
+    let output = serde_json::to_value(why.basic_output()).unwrap_or(serde_json::Value::Null);
+    let mut names: Vec<String> = Vec::new();
+    let mut units = vec![&output];
+    while let Some(unit) = units.pop() {
+        if let Some(children) = unit["errors"].as_array() {
+            units.extend(children);
+        }
+        let Some(at) = unit["instanceLocation"].as_str() else {
+            continue;
+        };
+        let at = if at.is_empty() { "(root)" } else { at };
+        if names.iter().all(|name| name != at) {
+            names.push(at.to_owned());
+        }
+    }
+    names.sort();
+    names.truncate(SCHEMA_NAMES);
+    names
+}
+
+/// Runs a `schema` check: the instance file, read from the checkout, must validate against the
+/// schema file it names. Both are JSON, and the schema is one self-contained document. A mismatch
+/// is a finding (fail); a file that cannot be read or a schema that cannot be compiled is an error.
+fn schema(params: &SchemaParams, site: &Site<'_>, description: String, started: Instant) -> Ran {
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    let source = match checkout_file(site, &params.schema, "schema") {
+        Ok(text) => text,
+        Err(why) => return error(description, &why, started),
+    };
+    let schema: serde_json::Value = match serde_json::from_str(&source) {
+        Ok(value) => value,
+        Err(why) => {
+            return error(
+                description,
+                &format!(
+                    "the schema file {} is not valid JSON: {why}",
+                    params.schema.as_str()
+                ),
+                started,
+            );
+        }
+    };
+    if let Some(reference) = external_reference(&schema) {
+        return error(
+            description,
+            &format!(
+                "the schema file {} refers to {reference}; a schema check reads one self-contained schema file",
+                params.schema.as_str()
+            ),
+            started,
+        );
+    }
+    let instance = match checkout_file(site, &params.instance, "instance") {
+        Ok(text) => text,
+        Err(why) => return error(description, &why, started),
+    };
+    let instance: serde_json::Value = match serde_json::from_str(&instance) {
+        Ok(value) => value,
+        Err(why) => {
+            let mut result = ran(
+                CheckOutcome::Fail,
+                description,
+                format!("{} is not valid JSON: {why}\n", params.instance.as_str()),
+                started,
+            );
+            result.names.push(params.instance.as_str().to_owned());
+            result.reason = Some(format!(
+                "The instance {} is not valid JSON: {why}",
+                params.instance.as_str()
+            ));
+            return result;
+        }
+    };
+    let mut compiler = boon::Compiler::new();
+    compiler.set_default_draft(boon::Draft::V2020_12);
+    compiler.use_loader(Box::new(NoExternal));
+    if let Err(why) = compiler.add_resource(SCHEMA_LOC, schema) {
+        return error(
+            description,
+            &format!(
+                "the schema file {} cannot be read: {why}",
+                params.schema.as_str()
+            ),
+            started,
+        );
+    }
+    let mut schemas = boon::Schemas::new();
+    let index = match compiler.compile(SCHEMA_LOC, &mut schemas) {
+        Ok(index) => index,
+        Err(why) => {
+            return error(
+                description,
+                &format!(
+                    "the schema file {} is not a JSON Schema this version compiles: {why}",
+                    params.schema.as_str()
+                ),
+                started,
+            );
+        }
+    };
+    match schemas.validate(&instance, index) {
+        Ok(()) => ran(
+            CheckOutcome::Pass,
+            description,
+            format!(
+                "{} is valid against {}\n",
+                params.instance.as_str(),
+                params.schema.as_str()
+            ),
+            started,
+        ),
+        Err(why) => {
+            let names = schema_locations(&why);
+            let found = if names.is_empty() {
+                "(no location reported)".to_owned()
+            } else {
+                names.join(", ")
+            };
+            let mut result = ran(
+                CheckOutcome::Fail,
+                description,
+                format!(
+                    "{} does not match {}: {found}\n",
+                    params.instance.as_str(),
+                    params.schema.as_str()
+                ),
+                started,
+            );
+            result.reason = Some(format!(
+                "The instance {} does not match the schema at: {found}.",
+                params.instance.as_str()
+            ));
+            result.names = names;
+            result
+        }
+    }
 }

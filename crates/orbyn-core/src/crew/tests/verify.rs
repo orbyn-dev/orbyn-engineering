@@ -388,3 +388,71 @@ async fn no_check_runs_past_the_tasks_time_budget() {
     assert_eq!(ran.outcome, CheckOutcome::Error);
     assert!(ran.reason.unwrap().contains("time budget"));
 }
+
+/// Issue #437: a `schema` check validates the instance file against the schema file, both read
+/// from the checkout. A mismatch is a finding, never an error; an unreadable or invalid schema
+/// and a missing file are errors, and a schema is one file: it never reads another path.
+#[tokio::test]
+async fn schema_checks_validate_the_instance_against_the_schema_in_the_checkout() {
+    let dir = crate::testing::TempDir::new();
+    let root = dir.path();
+    std::fs::write(
+        root.join("schema.json"),
+        br#"{"type":"object","additionalProperties":false,"required":["name"],
+             "properties":{"name":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("ok.json"), br#"{"name":"orbyn"}"#).unwrap();
+    std::fs::write(root.join("bad.json"), br#"{"name":7}"#).unwrap();
+    std::fs::write(root.join("not-json.json"), b"name: orbyn\n").unwrap();
+    std::fs::write(root.join("other.json"), br#"{"type":"object"}"#).unwrap();
+    std::fs::write(root.join("ref.json"), br#"{"$ref":"other.json"}"#).unwrap();
+    std::fs::write(root.join("broken.json"), b"{").unwrap();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    let schema = |instance: &str| {
+        check(json!({ "id": "chk-schema", "kind": "schema",
+            "proves": "The instance matches its schema.",
+            "params": { "schema": "schema.json", "instance": instance } }))
+    };
+    let pass = run_check(&schema("ok.json"), &site).await;
+    assert_eq!(pass.outcome, CheckOutcome::Pass);
+    assert_eq!(pass.command, "schema: chk-schema");
+    let fail = run_check(&schema("bad.json"), &site).await;
+    assert_eq!(fail.outcome, CheckOutcome::Fail);
+    assert!(
+        fail.names.iter().any(|name| name == "/name"),
+        "{:?}",
+        fail.names
+    );
+    // The value that broke the schema never reaches the reason a worker reads.
+    let reason = fail.reason.unwrap();
+    assert!(
+        reason.contains("/name") && !reason.contains('7'),
+        "{reason}"
+    );
+    assert_eq!(
+        run_check(&schema("not-json.json"), &site).await.outcome,
+        CheckOutcome::Fail
+    );
+    // A missing file, a schema that is not JSON, and a schema that reaches for another file are
+    // errors: the check cannot run, so it never passes.
+    assert_eq!(
+        run_check(&schema("absent.json"), &site).await.outcome,
+        CheckOutcome::Error
+    );
+    let broken = check(json!({ "id": "chk-schema", "kind": "schema",
+        "proves": "The instance matches its schema.",
+        "params": { "schema": "broken.json", "instance": "ok.json" } }));
+    assert_eq!(run_check(&broken, &site).await.outcome, CheckOutcome::Error);
+    let external = check(json!({ "id": "chk-schema", "kind": "schema",
+        "proves": "The instance matches its schema.",
+        "params": { "schema": "ref.json", "instance": "ok.json" } }));
+    assert_eq!(
+        run_check(&external, &site).await.outcome,
+        CheckOutcome::Error
+    );
+}

@@ -176,7 +176,8 @@ pub(super) fn answer_key_schema() -> Value {
                             "type": "object",
                             "description": "By kind. command, test, lint, typecheck, custom_script: {run, expect_exit?}. \
                                 file_scope: {only: [path]}. diff_size: {max_files?, max_lines?}. \
-                                schema: {schema, instance}. http_probe: {url (loopback), expect_status}. \
+                                schema: {schema, instance}: one self-contained JSON Schema and the JSON instance to validate against it. \
+                                http_probe: {url (loopback), expect_status}. \
                                 preview, screenshot_only, accessibility_audit: {url (loopback), screenshot?}. \
                                 visual_compare: {frame, tolerance_permille}. performance_budget: {metric, max}. \
                                 repo_required, manual: {name?, note?}. secret_scan, licence_scan: {}."

@@ -268,3 +268,53 @@ async fn a_report_is_stamped_by_the_core() {
     let (refusal, _) = w.call(&w.lead_token, "crew_report", report("done")).await;
     assert_eq!(refusal["code"], "not_authorized");
 }
+
+async fn started_with(w: &World, key: serde_json::Value) -> String {
+    let (answer, error) = w.start(brief(json!({})), key).await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"], "running", "{answer}");
+    answer["task"].as_str().unwrap().to_owned()
+}
+
+/// Issue #437: a `schema` check runs on the instance the worker wrote in its checkout and stores
+/// its Evidence: the failing attempt retries with the reason, and the fixed one passes.
+#[tokio::test]
+async fn a_schema_check_runs_on_the_workers_instance_and_records_evidence() {
+    let w = world(
+        true,
+        Arc::new(|n, root| {
+            let instance = if n == 0 {
+                r#"{"name":7}"#
+            } else {
+                r#"{"name":"orbyn"}"#
+            };
+            std::fs::write(root.join("src/instance.json"), instance).unwrap();
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    std::fs::write(
+        w.repo.join("schema.json"),
+        br#"{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    let schema = json!({ "id": "chk-schema", "kind": "schema",
+        "proves": "The instance matches its schema.",
+        "params": { "schema": "schema.json", "instance": "src/instance.json" } });
+    let id = started_with(&w, json!({ "checks": [schema], "protected_paths": [] })).await;
+    w.until_state(&id, "passed").await;
+    let evidence = w.core.store.crew_evidence(&id).unwrap();
+    let schema: Vec<_> = evidence
+        .iter()
+        .filter(|e| e.check.as_str() == "chk-schema")
+        .collect();
+    assert_eq!(schema.len(), 2, "{evidence:?}");
+    assert_eq!(
+        (schema[0].outcome, schema[1].outcome),
+        (CheckOutcome::Fail, CheckOutcome::Pass)
+    );
+    assert_eq!(schema[0].command.as_str(), "schema: chk-schema");
+    // The failing Evidence names the place and never the value the worker wrote.
+    assert!(schema[0].excerpt.contains("/name"), "{}", schema[0].excerpt);
+    assert!(!schema[0].excerpt.contains('7'), "{}", schema[0].excerpt);
+}
