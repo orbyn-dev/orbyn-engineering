@@ -564,6 +564,31 @@ impl Store {
         })
     }
 
+    /// The background crews of one trigger kind, by name. The listeners' observation set; a kind nothing can start
+    /// (issue labels, dependency updates) has no listener and is never listed by one.
+    pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
+        let conn = self.reader();
+        let mut statement =
+            conn.prepare("SELECT * FROM crew_background WHERE trigger_kind = ?1 ORDER BY name COLLATE NOCASE, id")?;
+        let rows = statement
+            .query_map([kind], row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// First-write-wins claim of one background event: true when this firing is new, false when the same event has
+    /// already fired. The row is never removed, so a repeat of the same event starts nothing new, and a firing that
+    /// was refused keeps its row: nothing is retried on a timer (docs/crew/background-engine-start.md, section 2).
+    pub fn claim_background_event(&self, identity: &str) -> Result<bool> {
+        self.commit(|tx, _| {
+            let n = tx.execute(
+                "INSERT OR IGNORE INTO crew_background_events (identity, claimed_unix) VALUES (?1, ?2)",
+                params![identity, now()],
+            )?;
+            Ok(n == 1)
+        })
+    }
+
     /// One run by id.
     pub fn background_run(&self, id: &str) -> Result<Option<BackgroundRunRow>> {
         Ok(self
