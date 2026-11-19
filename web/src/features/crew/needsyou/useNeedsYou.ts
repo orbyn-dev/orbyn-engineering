@@ -4,7 +4,9 @@ import { serviceUrl } from "../../../api/origin";
 import { useAsync } from "../../../lib/useAsync";
 import { crewApi } from "../autopilot/approvals/api";
 import { useHeldCommands, type HoldControl } from "../autopilot/approvals/held";
-import { backgroundItems, couldNotStartItems, heldItems, mainItems, rank, secondEngineItems, stopItems } from "./assemble";
+import type { AutopilotAreaRow } from "../../../generated/AutopilotAreaRow";
+import type { AutopilotAreas } from "../../../generated/AutopilotAreas";
+import { autonomyItems, backgroundItems, couldNotStartItems, heldItems, mainItems, rank, secondEngineItems, stopItems } from "./assemble";
 import { useSecondEngineNotices } from "./secondEngines";
 import { needsApi } from "./api";
 import type { NeedsItem } from "./model";
@@ -12,14 +14,18 @@ import type { NeedsItem } from "./model";
 /** How often the inbox reads its routes again while the window is shown. Held commands refresh on their own timer. */
 export const NEEDS_REFRESH_MS = 30_000;
 
+/** No repository to read the areas of: the read resolves empty, so a repo-less service is not a failed source. */
+const NO_AREAS: AutopilotAreas = { project: "", ceiling: "full", as_of: 0, enforced: true, total: 0, rows: [] };
+
 /**
- * "Stop answered", for the beta, is client-side only: no route says a trip-wire stop was dealt with, so a stop the person dismisses is
- * remembered in this browser's local storage and hidden here. It changes nothing on the service and is not shared with other
- * windows or devices. A new route would replace this.
+ * "Stop answered" and "Autonomy row dismissed", for the beta, are client-side only: no route says a trip-wire stop was dealt with or
+ * that a person has seen a demotion, so a dismissal is remembered in this browser's local storage and hidden here. It changes nothing
+ * on the service and is not shared with other windows or devices. New routes would replace this.
  */
 const DISMISSED_KEY = "orbyn.needsyou.dismissedStops";
+const DISMISSED_AUTONOMY_KEY = "orbyn.needsyou.dismissedAutonomy";
 
-/** The service this window reaches: a stop's key is scoped to it, so another service, or a remote host, never hides this one's stops. */
+/** The service this window reaches: an id is scoped to it, so another service, or a remote host, never hides this one's rows. */
 const scope = () => {
   try {
     return new URL(serviceUrl("/"), window.location.href).origin;
@@ -27,36 +33,48 @@ const scope = () => {
     return window.location.origin;
   }
 };
-// The scope is the service origin. A desktop service that restarts on another port is another origin, so its dismissed stops come back:
-// that fails safe (a stop shows again, none is hidden). Pruning drops the old entries on the next load.
+// The scope is the service origin. A desktop service that restarts on another port is another origin, so its dismissed rows come back:
+// that fails safe (a row shows again, none is hidden). Pruning drops the old entries on the next load.
 const dismissKey = (id: string) => `${scope()}|${id}`;
 
-function readDismissed(): Set<string> {
+function readDismissed(key: string): Set<string> {
   try {
-    const list: unknown = JSON.parse(window.localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    const list: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
     return new Set(Array.isArray(list) ? list.filter((one): one is string => typeof one === "string") : []);
   } catch {
     return new Set();
   }
 }
 
+function writeDismissed(key: string, ids: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify([...ids]));
+  } catch {
+    // Storage is off: the row is hidden until the window is closed.
+  }
+}
+
 export type NeedsState =
   | { status: "loading" }
   | { status: "error"; failure: ApiFailure; retry(): void }
-  | { status: "ready"; items: NeedsItem[]; hold(id: string): HoldControl | null; partial: string[]; noticeFailure: ApiFailure | null; retry(): void; dismiss(id: string): void };
+  | { status: "ready"; items: NeedsItem[]; hold(id: string): HoldControl | null; partial: string[]; noticeFailure: ApiFailure | null; retry(): void; dismiss(id: string): void; areas: AutopilotAreaRow[] };
 
 /**
  * The inbox from the routes that exist. Mount it only while Crew Preview is on (`NeedsYouInbox` does): it reads at once. One source failing does not hide the others: the ones that read are listed, and the ones
- * that did not are named in `partial`. All sources failing is an error.
+ * that did not are named in `partial`. All sources failing is an error. The areas are read for `project` when there is one (the same
+ * first git project the Background tab reads); the demoted rows of any other repository are not in the inbox until a repo-scoped inbox
+ * exists (needsyou-many).
  */
-export function useNeedsYou(): NeedsState {
+export function useNeedsYou(project: string | null): NeedsState {
   // Approving a held command is the Approvals tab's own flow; the inbox only denies (and opens).
-  const [dismissed, setDismissed] = useState(readDismissed);
+  const [dismissed, setDismissed] = useState(() => readDismissed(DISMISSED_KEY));
+  const [dismissedAutonomy, setDismissedAutonomy] = useState(() => readDismissed(DISMISSED_AUTONOMY_KEY));
   const held = useHeldCommands(() => undefined);
   const stops = useAsync("needs-stops", (signal) => crewApi.stops(signal));
   const review = useAsync("needs-review", (signal) => needsApi.reviewQueue(signal));
   const background = useAsync("needs-background", (signal) => needsApi.backgroundWaiting(signal));
   const refused = useAsync("needs-could-not-start", (signal) => needsApi.couldNotStart(signal));
+  const areas = useAsync(`needs-areas:${project ?? "none"}`, (signal) => (project ? crewApi.areas(project, signal) : Promise.resolve(NO_AREAS)), { keep: true });
   const notices = useSecondEngineNotices();
   const reloadNotices = notices.reload;
   const quietNotices = notices.refreshQuietly;
@@ -64,10 +82,12 @@ export function useNeedsYou(): NeedsState {
   const quietReview = review.refreshQuietly;
   const quietBackground = background.refreshQuietly;
   const quietRefused = refused.refreshQuietly;
+  const quietAreas = areas.refreshQuietly;
   const reloadStops = stops.reload;
   const reloadReview = review.reload;
   const reloadBackground = background.reload;
   const reloadRefused = refused.reload;
+  const reloadAreas = areas.reload;
   const reloadHeld = held.reload;
 
   useEffect(() => {
@@ -79,9 +99,10 @@ export function useNeedsYou(): NeedsState {
       void quietBackground();
       void quietNotices();
       void quietRefused();
+      void quietAreas();
     }, NEEDS_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [quietStops, quietReview, quietBackground, quietNotices, quietRefused]);
+  }, [quietStops, quietReview, quietBackground, quietNotices, quietRefused, quietAreas]);
 
   const retry = useCallback(() => {
     void reloadHeld();
@@ -90,9 +111,11 @@ export function useNeedsYou(): NeedsState {
     void reloadBackground();
     void reloadNotices();
     void reloadRefused();
-  }, [reloadHeld, reloadStops, reloadReview, reloadBackground, reloadNotices, reloadRefused]);
+    void reloadAreas();
+  }, [reloadHeld, reloadStops, reloadReview, reloadBackground, reloadNotices, reloadRefused, reloadAreas]);
 
   const heldRows = held.rows;
+  const areaRows = areas.data?.rows;
   const items = useMemo(() => {
     const now = Date.now();
     return rank([
@@ -101,10 +124,11 @@ export function useNeedsYou(): NeedsState {
       ...(refused.data ? couldNotStartItems(refused.data) : []),
       ...(review.data ? mainItems(review.data) : []),
       ...(background.data ? backgroundItems(background.data) : []),
+      ...(areaRows ? autonomyItems(areaRows).filter((one) => !dismissedAutonomy.has(dismissKey(one.id))) : []),
       ...(notices.data ? secondEngineItems(notices.data) : []),
     ]);
-  }, [heldRows, stops.data, review.data, background.data, refused.data, notices.data, dismissed]);
-  // Keep only the dismissals whose stop is still in the service's list, so the stored list cannot grow without end.
+  }, [heldRows, stops.data, review.data, background.data, refused.data, notices.data, areaRows, dismissed, dismissedAutonomy]);
+  // Keep only the dismissals whose row is still in the service's list, so the stored lists cannot grow without end.
   const recent = stops.data?.recent;
   useEffect(() => {
     if (!recent) return;
@@ -114,24 +138,35 @@ export function useNeedsYou(): NeedsState {
     setDismissed((now) => {
       const kept = [...now].filter((key) => present.has(key));
       if (kept.length === now.size) return now;
-      try {
-        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify(kept));
-      } catch {
-        // Storage is off: nothing to prune.
-      }
+      writeDismissed(DISMISSED_KEY, new Set(kept));
       return new Set(kept);
     });
   }, [recent]);
+  // A dismissed demotion returns only if the area trips again (a new trip time is a new row).
+  useEffect(() => {
+    if (!project || !areaRows) return;
+    const present = new Set(autonomyItems(areaRows).map((one) => dismissKey(one.id)));
+    setDismissedAutonomy((now) => {
+      const kept = [...now].filter((key) => present.has(key));
+      if (kept.length === now.size) return now;
+      writeDismissed(DISMISSED_AUTONOMY_KEY, new Set(kept));
+      return new Set(kept);
+    });
+  }, [project, areaRows]);
   const dismissNotice = notices.dismiss;
   const dismiss = useCallback((id: string) => {
     if (id.startsWith("second-engine:")) { dismissNotice(Number(id.slice("second-engine:".length))); return; }
+    if (id.startsWith("autonomy:")) {
+      setDismissedAutonomy((now) => {
+        const next = new Set(now).add(dismissKey(id));
+        writeDismissed(DISMISSED_AUTONOMY_KEY, next);
+        return next;
+      });
+      return;
+    }
     setDismissed((now) => {
       const next = new Set(now).add(dismissKey(id));
-      try {
-        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
-      } catch {
-        // Storage is off: the stop is hidden until the window is closed.
-      }
+      writeDismissed(DISMISSED_KEY, next);
       return next;
     });
   }, [dismissNotice]);
@@ -147,12 +182,15 @@ export function useNeedsYou(): NeedsState {
     { name: "the Review queue", failed: review.status === "error", error: review.error },
     { name: "background crews", failed: background.status === "error", error: background.error },
     { name: "tasks that could not start", failed: refused.status === "error", error: refused.error },
+    // Without a repository there is no areas read: it is not a source that can fail, so it never keeps a failing service looking readable.
+    ...(project ? [{ name: "Autopilot areas", failed: areas.status === "error", error: areas.error }] : []),
     { name: "second-engine notices", failed: notices.status === "error", error: notices.error },
   ];
   const failed = reads.filter((one) => one.failed);
   // The held read has no loading flag of its own: the inbox waits for the other sources, and held commands join when they arrive.
-  const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && refused.status === "loading" && notices.status === "loading";
+  // Without a repository there is no areas read to wait for.
+  const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && refused.status === "loading" && notices.status === "loading" && (project === null || areas.status === "loading");
   if (failed.length === reads.length) return { status: "error", failure: failed[0]!.error as ApiFailure, retry };
   if (loading) return { status: "loading" };
-  return { status: "ready", items, hold, partial: failed.map((one) => one.name), noticeFailure: notices.failure, retry, dismiss };
+  return { status: "ready", items, hold, partial: failed.map((one) => one.name), noticeFailure: notices.failure, retry, dismiss, areas: areaRows ?? [] };
 }
