@@ -3,6 +3,7 @@
 
 mod api;
 mod comment;
+mod correction;
 mod evidence;
 mod forge;
 mod forge_resolve;
