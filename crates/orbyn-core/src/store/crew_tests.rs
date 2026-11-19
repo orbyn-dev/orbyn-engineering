@@ -359,6 +359,8 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_escape_check_tasks",
             "crew_escape_checks",
             "crew_escape_events",
+            "crew_escape_retention_grants",
+            "crew_escape_tombstones",
             "crew_escapes",
             "crew_evidence",
             "crew_facts",
