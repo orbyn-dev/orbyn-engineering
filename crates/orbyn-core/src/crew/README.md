@@ -96,10 +96,9 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   no Windows test shows it yet).
 - The worker runs in the lead's checkout, as `delegate` does. A writing worker's own worktree
   (docs/crew.md, "Isolation") is not created yet, so the diff checks see the lead's changes too.
-- The check kinds `http_probe`, `preview`, `visual_compare`, `repo_required`, `manual`,
-  `screenshot_only`, `accessibility_audit`, `performance_budget` and `licence_scan` report
-  `skipped` and are listed as not verified; `schema` and `secret_scan` run (docs/crew.md,
-  "Verification without limits").
+- The check kinds `http_probe`, `preview`, `visual_compare`, `manual`, `screenshot_only`,
+  `accessibility_audit`, `performance_budget` and `licence_scan` report `skipped` and are listed as
+  not verified; `schema`, `secret_scan` and `repo_required` run (docs/crew.md, "Verification without limits").
 - Tier words match whole words in a model's id or label; they are defaults to check against real ids.
 
 ## How it is tested

@@ -369,3 +369,36 @@ async fn a_secret_scan_fails_the_change_and_passes_after_the_retry() {
         "the secret reached the worker"
     );
 }
+
+/// Issue #437: a `repo_required` check runs the repository's own checks from `.orbyn/crew.json`
+/// and stores their Evidence.
+#[tokio::test]
+async fn a_repo_required_check_runs_the_repositorys_checks_and_records_evidence() {
+    let w = world(
+        true,
+        Arc::new(|_, root| {
+            good(root);
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
+    std::fs::write(
+        w.repo.join(".orbyn/crew.json"),
+        r#"{"checks":[{"run":"exit 0"}]}"#,
+    )
+    .unwrap();
+    super::review_support::commit_all(&w.repo, "repository check");
+    let repo = json!({ "id": "chk-repo", "kind": "repo_required",
+        "proves": "The repository's own checks pass.", "params": {} });
+    let id = started_with(&w, key_with(repo)).await;
+    w.until_state(&id, "passed").await;
+    let evidence = w.core.store.crew_evidence(&id).unwrap();
+    let repo: Vec<_> = evidence
+        .iter()
+        .filter(|e| e.check.as_str() == "chk-repo")
+        .collect();
+    assert_eq!(repo.len(), 1, "{evidence:?}");
+    assert_eq!(repo[0].outcome, CheckOutcome::Pass);
+    assert_eq!(repo[0].command.as_str(), "repo_required: chk-repo");
+}

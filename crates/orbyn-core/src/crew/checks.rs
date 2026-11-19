@@ -3,14 +3,16 @@
 //! model, and it never decides pass or fail for the whole key: `verify` does that.
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
-//! `custom_script`), `file_scope`, `diff_size`, `schema` and `secret_scan`. Any other kind
-//! reports `skipped`, so the result lists it as not verified rather than passing or failing on a guess.
+//! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan` and `repo_required`.
+//! Any other kind reports `skipped`, so the result lists it as not verified rather than passing
+//! or failing on a guess; `manual` is one of those until a person's Gate exists to wait for.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
-    CheckKind, CheckOutcome, CheckParams, CrewCheck, CrewPath, CrewPathPattern, SchemaParams,
+    CheckKind, CheckOutcome, CheckParams, CrewCheck, CrewPath, CrewPathPattern, NamedParams,
+    SchemaParams,
 };
 use tokio::process::Command;
 
@@ -77,8 +79,8 @@ fn kind_name(check: &CrewCheck) -> String {
     super::wire_name(&check.kind)
 }
 
-/// The core's fix guard. Only the verifier of a recorded fix task calls this;
-/// ordinary `repo_required` checks remain unimplemented.
+/// The core's fix guard. Only the verifier of a recorded fix task calls this; an ordinary
+/// `repo_required` check runs the repository's own checks instead.
 pub(super) fn fix_touched(path: &str, digest: &str, site: &Site<'_>) -> Ran {
     let started = Instant::now();
     let description = "byte comparison: chk-fix-touched".to_owned();
@@ -153,6 +155,13 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
             .await
         }
         Ok(CheckParams::Schema(params)) => schema(&params, site, description, started),
+        Ok(CheckParams::Named(params)) => {
+            if check.kind == CheckKind::RepoRequired {
+                repo_required(&params, site, description, started).await
+            } else {
+                skipped(check, started)
+            }
+        }
         Ok(CheckParams::Empty(_)) => {
             if check.kind == CheckKind::SecretScan {
                 secret_scan(site, description, started).await
@@ -767,5 +776,109 @@ async fn secret_scan(site: &Site<'_>, description: String, started: Instant) -> 
         }
     ));
     result.names = names;
+    result
+}
+
+/// Runs a `repo_required` check: the repository's own checks from `.orbyn/crew.json`, in order,
+/// as the merge queue reads them. The file is read at the commit the task started from, so a
+/// worker's edit in its checkout cannot lower the bar. Every check must exit 0; the check passes
+/// when the repository declares none.
+async fn repo_required(
+    params: &NamedParams,
+    site: &Site<'_>,
+    description: String,
+    started: Instant,
+) -> Ran {
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    let commit = match site.base {
+        Some(base) => base.to_owned(),
+        None => match super::classes::base_commit(site.worktree).await {
+            Some(commit) => commit,
+            None => {
+                return error(
+                    description,
+                    "The repository's commit cannot be read, so its own checks cannot run.",
+                    started,
+                );
+            }
+        },
+    };
+    let checks = match super::autopilot::merge::repo_checks(site.worktree, &commit).await {
+        Ok(checks) => checks,
+        Err(why) => return error(description, &why.public_message(), started),
+    };
+    let label = params
+        .name
+        .as_ref()
+        .map(|name| format!(" ({})", name.as_str()))
+        .or_else(|| {
+            params
+                .note
+                .as_ref()
+                .map(|note| format!(" ({})", note.as_str()))
+        })
+        .unwrap_or_default();
+    if checks.is_empty() {
+        return ran(
+            CheckOutcome::Pass,
+            description,
+            format!(".orbyn/crew.json{label} declares no checks\n"),
+            started,
+        );
+    }
+    let mut log = format!("{} repository check(s){label} at {commit}\n", checks.len());
+    let mut failed: Vec<String> = Vec::new();
+    let mut errored: Vec<String> = Vec::new();
+    for line in &checks {
+        if Instant::now() >= site.deadline {
+            return error(
+                description,
+                "The task's time budget ran out while the repository's own checks ran.",
+                started,
+            );
+        }
+        let one = run_line(line, site.worktree, site.deadline).await;
+        match one.outcome {
+            CheckOutcome::Pass => log.push_str(&format!("pass: {line}\n")),
+            CheckOutcome::Fail => {
+                log.push_str(&format!("fail: {line}\n{}\n", tail(&one.log, 800)));
+                failed.push(line.clone());
+            }
+            _ => {
+                log.push_str(&format!(
+                    "error: {line}: {}\n",
+                    one.reason.unwrap_or_default()
+                ));
+                errored.push(line.clone());
+            }
+        }
+    }
+    if failed.is_empty() && errored.is_empty() {
+        return ran(CheckOutcome::Pass, description, log, started);
+    }
+    let outcome = if errored.is_empty() {
+        CheckOutcome::Fail
+    } else {
+        CheckOutcome::Error
+    };
+    let mut result = ran(outcome, description, log, started);
+    let listed: Vec<String> = failed
+        .iter()
+        .chain(errored.iter())
+        .take(5)
+        .map(|line| format!("`{line}`"))
+        .collect();
+    result.reason = Some(format!(
+        "The repository's own checks did not pass: {}.",
+        listed.join(", ")
+    ));
+    result.names = failed;
+    result.names.extend(errored);
     result
 }

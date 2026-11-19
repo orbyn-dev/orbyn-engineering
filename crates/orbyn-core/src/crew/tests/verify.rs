@@ -11,6 +11,15 @@ fn check(value: serde_json::Value) -> orbyn_contracts::CrewCheck {
     serde_json::from_value(value).unwrap()
 }
 
+/// A check's site in a fixture checkout, with a deadline far enough away for a test.
+fn site_of<'a>(root: &'a std::path::Path, base: Option<&'a str>) -> Site<'a> {
+    Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base,
+    }
+}
+
 fn integrity_repo() -> crate::testing::TempDir {
     let dir = crate::testing::TempDir::new();
     crate::testing::run_git(dir.path(), &["init", "-q"]);
@@ -494,4 +503,58 @@ async fn secret_scans_fail_a_changed_file_holding_a_recognised_secret() {
     let big = std::fs::File::create(root.join("big.bin")).unwrap();
     big.set_len(9 * 1024 * 1024).unwrap();
     assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Error);
+}
+
+/// Issue #437: `repo_required` runs the repository's own checks from `.orbyn/crew.json`, read at
+/// the commit the task started from, so a worker's edit in its checkout cannot lower the bar.
+#[tokio::test]
+async fn repo_required_runs_the_repositorys_own_checks_at_the_starting_commit() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".orbyn")).unwrap();
+    let write_rules = |text: &str| std::fs::write(root.join(".orbyn/crew.json"), text).unwrap();
+    write_rules(r#"{"checks":[{"run":"exit 0"}]}"#);
+    super::review_support::commit_all(root, "rules pass");
+    let passing = crate::crew::classes::base_commit(root).await.unwrap();
+    let repo = check(json!({ "id": "chk-repo", "kind": "repo_required",
+        "proves": "The repository's own checks pass.", "params": {} }));
+    let pass = run_check(&repo, &site_of(root, Some(&passing))).await;
+    assert_eq!(pass.outcome, CheckOutcome::Pass);
+    assert_eq!(pass.command, "repo_required: chk-repo");
+    assert!(pass.log.contains("exit 0"), "{}", pass.log);
+    // The same file in the checkout says otherwise: the check keeps to the starting commit.
+    write_rules(r#"{"checks":[{"run":"exit 1"}]}"#);
+    assert_eq!(
+        run_check(&repo, &site_of(root, Some(&passing)))
+            .await
+            .outcome,
+        CheckOutcome::Pass
+    );
+    // Rules that really fail fail the check, and name the check that failed.
+    super::review_support::commit_all(root, "rules fail");
+    let failing = crate::crew::classes::base_commit(root).await.unwrap();
+    let fail = run_check(&repo, &site_of(root, Some(&failing))).await;
+    assert_eq!(fail.outcome, CheckOutcome::Fail);
+    assert!(
+        fail.names.iter().any(|n| n.contains("exit 1")),
+        "{:?}",
+        fail.names
+    );
+    // Rules that cannot be parsed are an error, never a pass.
+    write_rules("{");
+    super::review_support::commit_all(root, "rules broken");
+    let broken = crate::crew::classes::base_commit(root).await.unwrap();
+    assert_eq!(
+        run_check(&repo, &site_of(root, Some(&broken)))
+            .await
+            .outcome,
+        CheckOutcome::Error
+    );
+    // No file is no repository checks: the check runs and says so.
+    std::fs::remove_file(root.join(".orbyn/crew.json")).unwrap();
+    super::review_support::commit_all(root, "rules removed");
+    let absent = crate::crew::classes::base_commit(root).await.unwrap();
+    let none = run_check(&repo, &site_of(root, Some(&absent))).await;
+    assert_eq!(none.outcome, CheckOutcome::Pass);
+    assert!(none.log.contains("no checks"), "{}", none.log);
 }
