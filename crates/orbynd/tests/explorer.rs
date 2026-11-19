@@ -56,6 +56,64 @@ fn base(f: &Fixture) -> String {
 }
 
 #[tokio::test]
+async fn watch_stream_validates_ids_sends_ready_and_closes_when_the_project_is_removed() {
+    use std::time::Duration;
+    let f = fixture().await;
+    let pairs = serde_json::json!([[f.project, f.worktree]]).to_string();
+    let mut stream = f
+        .service
+        .get("/api/explorer/events")
+        .query(&[("worktrees", &pairs)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), 200);
+    let ready = tokio::time::timeout(Duration::from_secs(3), stream.chunk())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let ready = String::from_utf8(ready.to_vec()).unwrap();
+    assert!(ready.contains("data_changed") && ready.contains(&format!("explorer:{}", f.project)));
+    let response = f
+        .service
+        .client
+        .delete(format!("{}/api/projects/{}", f.service.url, f.project))
+        .bearer_auth(&f.service.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), stream.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn watch_stream_rejects_invalid_missing_foreign_and_excessive_pairs() {
+    let f = fixture().await;
+    for raw in [
+        "invalid".to_owned(),
+        "[]".to_owned(),
+        serde_json::json!([[f.project, "wt-0000000000000000"]]).to_string(),
+        serde_json::json!(vec![(f.project.clone(), f.worktree.clone()); 33]).to_string(),
+    ] {
+        let response = f
+            .service
+            .get("/api/explorer/events")
+            .query(&[("worktrees", raw)])
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error());
+    }
+}
+
+#[tokio::test]
 async fn worktrees_tree_and_file_answer_with_the_documented_shapes() {
     let f = fixture().await;
     let listed = f

@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { desktopPerson } from "./desktop-person";
 
 const web = resolve(import.meta.dirname, "../..");
 
@@ -62,9 +63,10 @@ test("project settings explain inheritance and reset only their own override", a
       ["serve", "--parent-stdin", "--data-dir", join(profile, "data"), "--workspace-url", library],
       { env, stdio: ["pipe", "pipe", "inherit"] });
     children.push(service);
-    const ready = JSON.parse(await firstLine(service, (line) => line.startsWith("{"))) as { url: string; token: string };
+    const ready = JSON.parse(await firstLine(service, (line) => line.startsWith("{"))) as { url: string; token: string; person_key: string };
+    const personHeaders = await desktopPerson(page, ready.person_key);
     async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-      const response = await fetch(ready.url + path, { method, headers: { Authorization: `Bearer ${ready.token}`, "Content-Type": "application/json" },
+      const response = await fetch(ready.url + path, { method, headers: { Authorization: `Bearer ${ready.token}`, ...personHeaders(method, path), "Content-Type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
       if (!response.ok) throw new Error(`${method} ${path}: ${response.status}`);
       return response.json() as Promise<T>;

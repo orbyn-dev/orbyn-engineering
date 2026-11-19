@@ -1669,6 +1669,42 @@ a person's create, move (including rename), or delete request without a thread.
   inspection cannot freeze descendants against another process changing them.
 - **A file action drops what is kept** and announces `explorer:<project>`; a run that ends drops
   the project's and announces `explorer:<project>`.
+- **External edits push changes.** A focused Files view holds one
+  `GET /api/explorer/events?worktrees=<JSON pairs of project and worktree ids>` stream,
+  with the first 32 unfolded worktrees (at most 32 distinct pairs). The stream reserves
+  one slow-request lane slot until it closes, retaining two connections for interactive
+  requests within WKWebView's six-connection budget. Core applies the read API's trust, membership and
+  path guards before registering a watch. Windows share one native watcher per pair,
+  with at most 64 live watchers service-wide. Each watches at most 512 directories, and all
+  watchers together at most 4,096, so a busy service stays inside the operating system's
+  handle limits. Directories are discovered through guarded, nonrecursive directory reads
+  capped at 20,000 entries; links, Git metadata, Orbyn data and the library's `repo/` are
+  never traversed or watched. Changes inside a directory beyond these bounds need an
+  explicit refresh. One folder that vanishes or cannot be read is skipped; only the
+  worktree root failing ends a watch.
+  File changes are coalesced for 200 ms, invalidate the project's kept list/status
+  before announcing `explorer:<project>`. Only a change that can alter which folders exist
+  (a folder created, removed or renamed, a change on the root, or a backend rescan request)
+  also rebuilds the watched set, at most once a second with one trailing run, and only the
+  difference from the watched set reaches the backend (a folder replaced under the same name
+  counts as a difference: a removal or rename event marks it, and its file identity is a
+  second check). On Windows one recursive handle on the worktree root replaces the
+  per-folder handles, which would block moving a watched folder's ancestor; events inside
+  guarded folders are dropped before they announce, and only the root itself cannot be
+  renamed or deleted while it is watched.
+  These are native notifications, without freshness polling. Failed watches invalidate
+  and announce the project before closing the subscription; reconnecting invalidates
+  and rereads the subscribed projects through the stream's ready frame. The client retries
+  a failed stream after 3 s, doubling up to 60 s and starting over after a healthy stream;
+  it does not retry a 4xx.
+  Blur, hiding, folding the worktree or leaving Files closes the client subscription;
+  the last subscriber releases its native handles. Project removal or loss of trust
+  revokes live subscriptions: a project change or a rebuild rechecks authority, and every read
+  checks it again on its own. A busy or failing watch answers 503 and the client retries with
+  backoff; a refused one answers 4xx.
+  The accepted project-trust boundary and `.env` visibility above stay unchanged.
+  An event received during a matching client read queues one reread after it settles;
+  bursts share that pending reread, newer questions supersede it, and reset discards it.
 
 **The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
 the saved prefs as `leftBarView`; `explorerOpen` holds the rows a person unfolded or folded). The

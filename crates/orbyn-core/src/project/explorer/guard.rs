@@ -71,6 +71,7 @@ pub(super) fn clean(raw: &str, windows: bool) -> Result<String> {
 }
 
 /// The folders a worktree read never reaches, canonicalized.
+#[derive(Clone)]
 pub(super) struct Guard {
     root: PathBuf,
     /// Orbyn's own data folder, when it sits inside the worktree.

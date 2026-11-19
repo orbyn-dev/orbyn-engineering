@@ -17,6 +17,7 @@ import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { arrangeThreads, attentionRank } from "../sidebar/groups";
 import { ExplorerRow, type RowHandlers } from "./ExplorerRow";
+import { useExplorerWatch } from "./watch";
 import { LeftBarSwitch } from "./LeftBarSwitch";
 import { buildRows, threadPathOf, type Row } from "./model";
 import { canStartThreadIn, startThreadIn } from "./startThread";
@@ -88,6 +89,8 @@ export function Explorer({ route }: { route: Route }) {
       buildRows({ projects, threads: byProject, currentThreadId, currentProjectId, worktrees, levels, shown, explorerOpen, needs }),
     [projects, byProject, currentThreadId, currentProjectId, worktrees, levels, shown, explorerOpen, needs],
   );
+
+  useExplorerWatch(rows);
 
   // A row that waits for its data asks for it: a folder is read when it is unfolded, not before.
   useEffect(() => {
