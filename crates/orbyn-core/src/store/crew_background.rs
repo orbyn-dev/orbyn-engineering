@@ -576,6 +576,34 @@ impl Store {
             .optional()?)
     }
 
+    /// The owner lock is held at startup: no live starter can still be creating a task. Settle only interrupted starts that never
+    /// stored one. Task-backed runs remain owned by Crew task recovery, and terminal runs never change. Audited and retryable.
+    pub(crate) fn recover_background_starts(&self) -> Result<usize> {
+        const WHY: &str = "The background run was interrupted before its task was created. Start another run when you are ready.";
+        self.commit(|tx, _| {
+            let runs = {
+                let mut statement = tx.prepare(
+                    "SELECT * FROM crew_background_runs b WHERE b.state = 'running'
+                     AND NOT EXISTS (SELECT 1 FROM crew_tasks t WHERE t.crew_id = b.id)",
+                )?;
+                statement
+                    .query_map([], run_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for run in &runs {
+                audit(
+                    tx,
+                    "core",
+                    "crew.background.run.recover",
+                    &run.background_id,
+                    json!({ "run": run.id, "why": WHY }),
+                )?;
+                end_run(tx, run, RunEnd::NeedsReview(WHY), Some(WHY), "core")?;
+            }
+            Ok(runs.len())
+        })
+    }
+
     /// Whether `thread_id` is the worker of a task whose lead thread is a background run's (a run's id is its lead thread's id).
     pub fn is_background_worker(&self, thread_id: &str) -> Result<bool> {
         Ok(self.reader().query_row(

@@ -205,6 +205,10 @@ impl Core {
         if recovery != Recovery::default() {
             tracing::info!(?recovery, "recovered runs from a previous process");
         }
+        let background_starts = store.recover_background_starts()?;
+        if background_starts > 0 {
+            tracing::info!(background_starts, "recovered interrupted background starts");
+        }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
         let terminals = Arc::new(TerminalManager::default());

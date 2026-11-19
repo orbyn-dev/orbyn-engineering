@@ -104,6 +104,13 @@ admitted -> starting -> running <-> awaiting_approval
   since a child caught mid-exec can hold it briefly after a crash.
 - Pending approvals expire in the same transaction that ends a run.
 
+While holding the data-directory owner lock, core startup ends a `running`
+background run that has no Crew task as `needs_review`, with an audited
+interrupted-start reason. It retains the lead thread, pinned mode and recorded
+budget/spend. Task-backed runs remain under normal Crew task recovery; existing
+terminal background runs stay unchanged. Recovery finishes before a starter or
+listener can run and never starts an engine or retries the interrupted start.
+
 ## Thread lifecycle
 
 Settling removes a pin and ends a snooze; it needs no active run and closes the

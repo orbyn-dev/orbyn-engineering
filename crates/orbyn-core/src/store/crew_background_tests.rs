@@ -227,3 +227,214 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
         ("stopped", 10, true)
     );
 }
+
+#[test]
+fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_backed_runs() {
+    use crate::{Core, CoreConfig};
+    let dir = TempDir::new();
+    let settings = json!({});
+    let (crew_id, interrupted, lead, preserved, modes) = {
+        let store = store(&dir);
+        let crew = store
+            .create_background_crew(&new_crew("Interrupted", &settings), "user")
+            .unwrap();
+        store
+            .set_background_enabled(&crew.id, true, "user")
+            .unwrap();
+        let project = store
+            .add_project(NewProject {
+                path: dir.path().to_str().unwrap(),
+                name: "Project",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        let lead = store
+            .create_thread(NewThread {
+                project_id: project.id,
+                title: "Interrupted background lead".into(),
+                engine: "alpha".into(),
+                model: None,
+                cwd: dir.path().to_string_lossy().into_owned(),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        let run = store.start_background_run_as(&crew.id, &lead.id).unwrap();
+        let interrupted = store.add_background_spend(&run.id, 2, 3).unwrap();
+        store
+            .set_crew_autopilot_mode(&format!("crew:{}", run.id), "off")
+            .unwrap();
+        let mut preserved = Vec::new();
+        for (n, state) in [
+            "briefed",
+            "routed",
+            "running",
+            "needs_person",
+            "stopped",
+            "passed",
+            "cancelled",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let crew = store
+                .create_background_crew(&new_crew(&format!("Task {state}"), &settings), "user")
+                .unwrap();
+            store
+                .set_background_enabled(&crew.id, true, "user")
+                .unwrap();
+            let run = store.start_background_run(&crew.id).unwrap();
+            let task = format!("sha256:{n:064x}");
+            store.writer().execute(
+                "INSERT INTO crew_tasks (id, crew_id, run_id, state, stop_reason, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'now', 'now')",
+                params![task, run.id, format!("task-run-{n}"), state, (state == "stopped").then_some("engine_error")],
+            ).unwrap();
+            store.add_crew_run(&task, &run.id, "worker").unwrap();
+            preserved.push((run, Some(store.crew_task(&task).unwrap().unwrap())));
+        }
+        for end in [
+            RunEnd::Stopped("disabled"),
+            RunEnd::NeedsReview("Already waiting"),
+        ] {
+            let crew = store
+                .create_background_crew(
+                    &new_crew(&format!("Terminal {}", preserved.len()), &settings),
+                    "user",
+                )
+                .unwrap();
+            store
+                .set_background_enabled(&crew.id, true, "user")
+                .unwrap();
+            let run = store.start_background_run(&crew.id).unwrap();
+            preserved.push((store.end_background_run(&run.id, end).unwrap(), None));
+        }
+        (
+            crew.id,
+            interrupted,
+            lead,
+            preserved,
+            store.crew_autopilot_modes_all(100).unwrap(),
+        )
+    };
+    // No Store guard, Core, Arc or engine task from the previous owner survives into startup.
+    let mut config = CoreConfig::new(dir.path().to_path_buf(), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
+    config.engines.claude_program = dir
+        .path()
+        .join("absent/claude.exe")
+        .to_string_lossy()
+        .into_owned();
+    config.engines.codex_program = dir
+        .path()
+        .join("absent/codex.exe")
+        .to_string_lossy()
+        .into_owned();
+    let recovered = {
+        let core = Core::open(config.clone()).unwrap();
+        let recovered = core.store.background_run(&interrupted.id).unwrap().unwrap();
+        assert_eq!(recovered.state, "needs_review");
+        assert!(recovered.review_waiting && recovered.ended_at.is_some());
+        assert!(
+            recovered
+                .review_reason
+                .as_deref()
+                .unwrap()
+                .contains("interrupted before its task was created")
+        );
+        assert_eq!(
+            (
+                recovered.turns_spent,
+                recovered.minutes_spent,
+                recovered.budget_turns,
+                recovered.budget_minutes
+            ),
+            (2, 3, 10, 30)
+        );
+        assert_eq!(core.store.crew_autopilot_modes_all(100).unwrap(), modes);
+        assert_eq!(core.store.thread(&lead.id).unwrap(), lead);
+        for (run, task) in &preserved {
+            assert_eq!(
+                core.store.background_run(&run.id).unwrap().as_ref(),
+                Some(run)
+            );
+            if let Some(task) = task {
+                assert_eq!(core.store.crew_task(&task.id).unwrap().as_ref(), Some(task));
+            }
+        }
+        recovered
+    };
+    let core = Core::open(config).unwrap();
+    assert_eq!(
+        core.store.background_run(&interrupted.id).unwrap().unwrap(),
+        recovered
+    );
+    let audit: i64 = core.store.reader().query_row(
+        "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.recover' AND json_extract(detail, '$.run') = ?1 AND json_extract(detail, '$.why') IS NOT NULL",
+        [&interrupted.id], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(audit, 1);
+    assert!(
+        core.store.start_background_run(&crew_id).is_ok(),
+        "recovery releases the active-run slot"
+    );
+}
+
+#[test]
+fn core_startup_does_not_hide_a_failed_background_recovery_audit() {
+    use crate::{Core, CoreConfig};
+    let dir = TempDir::new();
+    let settings = json!({});
+    let run = {
+        let store = store(&dir);
+        let crew = store
+            .create_background_crew(&new_crew("Audit failure", &settings), "user")
+            .unwrap();
+        store
+            .set_background_enabled(&crew.id, true, "user")
+            .unwrap();
+        let run = store.start_background_run(&crew.id).unwrap();
+        store.writer().execute_batch(
+            "CREATE TRIGGER refuse_recovery BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.recover' BEGIN SELECT RAISE(ABORT, 'recovery audit unavailable'); END;",
+        ).unwrap();
+        run
+    };
+    let mut config = CoreConfig::new(dir.path().to_path_buf(), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
+    config.engines.claude_program = dir
+        .path()
+        .join("absent/claude.exe")
+        .to_string_lossy()
+        .into_owned();
+    config.engines.codex_program = dir
+        .path()
+        .join("absent/codex.exe")
+        .to_string_lossy()
+        .into_owned();
+    match Core::open(config.clone()) {
+        Ok(_) => panic!("startup must report the failed recovery transaction"),
+        Err(error) => assert!(
+            error.to_string().contains("recovery audit unavailable"),
+            "{error}"
+        ),
+    }
+    {
+        let store = store(&dir);
+        assert_eq!(store.background_run(&run.id).unwrap().unwrap(), run);
+        store
+            .writer()
+            .execute_batch("DROP TRIGGER refuse_recovery")
+            .unwrap();
+    }
+    let core = Core::open(config).unwrap();
+    assert_eq!(
+        core.store.background_run(&run.id).unwrap().unwrap().state,
+        "needs_review"
+    );
+}
