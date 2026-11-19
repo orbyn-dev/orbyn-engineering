@@ -158,7 +158,12 @@ impl Core {
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
         // prompt is accepted; if it is refused with them, the result goes alone.
         let held = self.held_for_lead(run, result.crew_id.as_str());
-        let notice = lead_message(result);
+        let mut notice = lead_message(result);
+        if result.r#final
+            && let Ok(Some(task)) = self.store.crew_task(result.brief.as_str())
+        {
+            notice.push_str(&self.ended_worker_held_summary(&task, run));
+        }
         let full = format!("{notice}{}", held.text());
         match self.runs.enqueue(&run.lead_thread_id, &full, &[]) {
             Ok(_) => self.commit_held(&held),
@@ -401,14 +406,10 @@ impl Core {
         } else {
             text
         };
-        // Messages from other members that arrived while the worker was not in a turn go with
-        // this prompt, each already checked the way a live one is.
-        // They are recorded as sent only once the prompt is accepted; if it is refused with them,
-        // the prompt goes alone (a worker must not lose its retry) and they stay held.
+        // Held messages are added by the common turn launcher, not the person's queue.
+        // Enqueue acceptance alone cannot say an engine has received them.
         between();
-        let held = self.held_for_worker(task, &run);
-        let full = format!("{text}{}", held.text());
-        match self.runs.enqueue(&thread, &full, &[]) {
+        match self.runs.enqueue(&thread, text, &[]) {
             Ok(queued) => {
                 // A cancel that landed between the check and the queue: take the message back and stop what it started.
                 if ended() {
@@ -422,14 +423,8 @@ impl Core {
                     }
                     return Err(CrewError::new(ErrorCode::RunEnded, "the task has ended"));
                 }
-                self.commit_held(&held);
                 Ok(())
             }
-            Err(_) if !held.is_empty() => self
-                .runs
-                .enqueue(&thread, text, &[])
-                .map(|_| ())
-                .map_err(internal),
             Err(error) => Err(internal(error)),
         }
     }

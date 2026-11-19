@@ -11,7 +11,7 @@ pub(super) mod rules;
 mod wait;
 
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use orbyn_contracts::{CrewError, CrewId, CrewMember, CrewRole, CrewToken, ErrorCode};
 use serde_json::{Value, json};
@@ -20,6 +20,9 @@ use super::start::Caller;
 use super::tool::{LEAD_MEMBER, invalid};
 use crate::app::Core;
 use crate::tools::mcp::McpBinding;
+
+pub(super) type DeliveryKey = (String, String, String);
+pub(super) type DeliveryClaims = Arc<Mutex<HashSet<DeliveryKey>>>;
 
 pub const POST_TOOL: &str = "crew_post";
 pub const ASK_TOOL: &str = "crew_ask";
@@ -79,6 +82,9 @@ pub struct Bus {
     pub(super) lock: tokio::sync::Mutex<()>,
     pub(super) wake: tokio::sync::Notify,
     pub(super) waiting: Mutex<HashSet<String>>,
+    // A launch and an early inbox call must not both hand over the same message.
+    // These short claims hold no mutex guard across the engine's asynchronous start.
+    pub(super) deliveries: DeliveryClaims,
 }
 
 impl Bus {

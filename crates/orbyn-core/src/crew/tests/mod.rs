@@ -20,6 +20,7 @@ mod backtest_escapes;
 mod bus;
 mod bus_flood;
 mod bus_guards;
+mod bus_resume;
 mod bus_review;
 mod bus_support;
 mod cancel;

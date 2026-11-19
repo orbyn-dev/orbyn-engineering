@@ -193,6 +193,19 @@ impl RunManager {
             RunKind::Goal(GoalAction::Clear) => self.store.set_goal(&thread.id, None)?,
             _ => {}
         }
+        // Crew messages are engine context, never part of the person's queued prompt.
+        // The claim also keeps an engine's early MCP inbox read from taking them twice.
+        let crew = self.crew.get().and_then(std::sync::Weak::upgrade);
+        let held = match &crew {
+            Some(core) => core.held_for_worker_turn(&thread.id)?,
+            None => None,
+        };
+        if let Some(held) = &held {
+            context.push_str(&held.text());
+        }
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
         let spec = RunSpec {
             run_id: scope.run_id.clone(),
             thread_id: thread.id.clone(),
@@ -244,6 +257,11 @@ impl RunManager {
             handle.cancel.cancel();
             handle.task.abort();
             return Err(error);
+        }
+        if !cancel.is_cancelled()
+            && let (Some(core), Some(held)) = (&crew, &held)
+        {
+            core.accept_worker_held(&thread.id, held);
         }
         Ok(Some((handle, receiver)))
     }
