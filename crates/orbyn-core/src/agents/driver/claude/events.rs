@@ -90,7 +90,8 @@ impl StreamMapper {
         ended.sort_by(|a, b| a.0.cmp(&b.0));
         ended
             .into_iter()
-            // A workflow keeps its own stopped state; it never gets a background row.
+            // A guard only: `background_started` already skips workflows, which keep their own
+            // stopped state and never get a background row.
             .filter(|(_, task)| task.kind != "local_workflow")
             .map(|(id, task)| {
                 AgUiEvent::Custom {
