@@ -8,4 +8,12 @@ review_state: string,
 /**
  * The commit that reverted the merge, for a revert.
  */
-revert_commit?: string | null, };
+revert_commit?: string | null, 
+/**
+ * For a revert of a forge merge: the exact commit the corrective PR will push.
+ */
+candidate?: string | null, 
+/**
+ * For a revert of a forge merge: the forge main commit that candidate was built on and is pinned to.
+ */
+base?: string | null, };

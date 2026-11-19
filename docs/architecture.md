@@ -1669,6 +1669,42 @@ a person's create, move (including rename), or delete request without a thread.
   inspection cannot freeze descendants against another process changing them.
 - **A file action drops what is kept** and announces `explorer:<project>`; a run that ends drops
   the project's and announces `explorer:<project>`.
+- **External edits push changes.** A focused Files view holds one
+  `GET /api/explorer/events?worktrees=<JSON pairs of project and worktree ids>` stream,
+  with the first 32 unfolded worktrees (at most 32 distinct pairs). The stream reserves
+  one slow-request lane slot until it closes, retaining two connections for interactive
+  requests within WKWebView's six-connection budget. Core applies the read API's trust, membership and
+  path guards before registering a watch. Windows share one native watcher per pair,
+  with at most 64 live watchers service-wide. Each watches at most 512 directories, and all
+  watchers together at most 4,096, so a busy service stays inside the operating system's
+  handle limits. Directories are discovered through guarded, nonrecursive directory reads
+  capped at 20,000 entries; links, Git metadata, Orbyn data and the library's `repo/` are
+  never traversed or watched. Changes inside a directory beyond these bounds need an
+  explicit refresh. One folder that vanishes or cannot be read is skipped; only the
+  worktree root failing ends a watch.
+  File changes are coalesced for 200 ms, invalidate the project's kept list/status
+  before announcing `explorer:<project>`. Only a change that can alter which folders exist
+  (a folder created, removed or renamed, a change on the root, or a backend rescan request)
+  also rebuilds the watched set, at most once a second with one trailing run, and only the
+  difference from the watched set reaches the backend (a folder replaced under the same name
+  counts as a difference: a removal or rename event marks it, and its file identity is a
+  second check). On Windows one recursive handle on the worktree root replaces the
+  per-folder handles, which would block moving a watched folder's ancestor; events inside
+  guarded folders are dropped before they announce, and only the root itself cannot be
+  renamed or deleted while it is watched.
+  These are native notifications, without freshness polling. Failed watches invalidate
+  and announce the project before closing the subscription; reconnecting invalidates
+  and rereads the subscribed projects through the stream's ready frame. The client retries
+  a failed stream after 3 s, doubling up to 60 s and starting over after a healthy stream;
+  it does not retry a 4xx.
+  Blur, hiding, folding the worktree or leaving Files closes the client subscription;
+  the last subscriber releases its native handles. Project removal or loss of trust
+  revokes live subscriptions: a project change or a rebuild rechecks authority, and every read
+  checks it again on its own. A busy or failing watch answers 503 and the client retries with
+  backoff; a refused one answers 4xx.
+  The accepted project-trust boundary and `.env` visibility above stay unchanged.
+  An event received during a matching client read queues one reread after it settles;
+  bursts share that pending reread, newer questions supersede it, and reset discards it.
 
 **The web client** shows this as the left bar's Files view (the Threads | Files switch, remembered in
 the saved prefs as `leftBarView`; `explorerOpen` holds the rows a person unfolded or folded). The
@@ -2595,13 +2631,26 @@ Every applicable pinned-base rule and default owed lane needs its latest passing
 stand in for a nonlocked lane but never a locked lane. Reviewer commit and verification counts come from the last passed Result
 and its exact check/Evidence citations, so later merge or finding Gates/Evidence cannot change what work the reviewer reads.
 
-Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base,
-records `NoChecks` as unverified, and asks a person when checks break; it never uses a local branch revert as a forge repair.
+Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base
+and records `NoChecks` as unverified. A reproducible first-parent Crew culprit prepares a distinct corrective task unless the mode
+is Off, then asks the person to choose Revert; uncertain causes ask a person. The watch never queues, pushes, opens or merges: only a person's Revert queues the verified task. A lead's watch only prepares and flags its own crew's merges. The task has no model worker or fabricated
+route: Core creates the exact rollback in its registered sibling checkout, retains the original scope/effect grants and protected
+files, and verifies the rollback tree plus trusted repository checks through the ordinary Evidence/Gate/Result path.
+Schema 56 binds the original merge to one immutable corrective task/run, destination, base, candidate and checkout before admission.
+Older Store binaries reject that schema before writes; existing migrations and records remain intact. Restart reuses the binding
+and resumes code verification, then admits the passed task to the ordinary forge queue. All reviewer lane Gates, configured
+current-head CI, mode/area holds and locked lanes still apply. Normal review launches into the validated retained candidate
+checkout, with no provider-author identity asserted for Core work. Dirty, missing or retargeted checkouts hold for a person.
+A confirmed finding on a deterministic correction holds it for a person's new task rather than rewriting it behind its binding.
+An unknown publication or merge only read-reconciles its existing intent. Target drift holds the pinned correction without
+admitting a second one. The original merge remains standing until an exact corrective merge receipt projects its reverted state
+and area breaker once. Completion remains pending after parent projection until the idempotent area effect succeeds; the final receipt and revert ledger event commit together. Startup resumes this projector even when the corrective merge record already exists. HTTP Revert reports the actual persisted review state and no revert commit while the correction waits.
+The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and the periodic tick only read effects that already reached publishing and never run the lane. Queueing publishes nothing; the person's merge route does, pushing the verified candidate by its commit id (never forced) with fixed code-written pull request text. A completed correction's checkout and object reference are removed once no review reads them; the pushed branch on the forge is left for the person. No local main ref is moved.
 Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
 without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
-24 hours, observes at most 32 confirmed forge targets and never schedules publication or merging. With Preview enabled, startup
-first reconciles up to 128 unfinished effects/confirmed receipts and watches the resulting merges even when periodic work is off;
+24 hours, observes at most 32 confirmed forge targets. Corrective tasks use the same guarded forge lane; no separate writer schedules effects. With Preview enabled, startup
+first reconciles up to 128 unfinished effects/confirmed receipts, re-verifies at most 128 pending corrections locally and watches the resulting merges even when periodic work is off;
 only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local
 JSON list, never a tool or HTTP setting. A stored person's Comment becomes a deterministic ordinary task with the
 original write grants, effects and protected checks plus a scope check; a stale checkout or failed admission asks the person.

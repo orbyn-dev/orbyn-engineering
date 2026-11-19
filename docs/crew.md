@@ -569,7 +569,7 @@ engine. It is shown with its reasons.
   findings fixed), what was not verified, and the cost.
 - Actions: "Looks good", "Comment" (becomes a fix brief), "Revert" (the crew opens and verifies a revert).
 - **Watch on main:** if main's CI or a post-merge check breaks, the crew finds the merge that caused it by bisecting the
-  queue's merges. It reverts automatically when the cause is certain, and otherwise asks the person.
+  queue's merges. For a local merge it reverts automatically when the cause is certain. For a forge merge it prepares and verifies a corrective PR and asks the person to choose Revert, because only a person's answer publishes to the forge; otherwise it asks the person.
 - **Daily digest:** what merged, what is waiting for review, what was reverted.
 
 **As built (slice 4f, part 1):** the always-denied list N1 to N10 (including the account routes) in code, the approval

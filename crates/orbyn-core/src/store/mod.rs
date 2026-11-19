@@ -42,7 +42,9 @@ mod crew_escapes;
 mod crew_escapes_tests;
 mod crew_flow;
 mod crew_guard;
+mod crew_merge_corrections;
 mod crew_merge_forge;
+pub(crate) use crew_merge_corrections::ForgeCorrection;
 mod crew_merges;
 mod crew_paused_starts;
 #[cfg(test)]
@@ -69,6 +71,7 @@ mod hub;
 mod installs;
 mod migrations;
 mod native_sessions;
+mod project_changes;
 mod project_names;
 mod questions;
 mod queue;
@@ -147,6 +150,7 @@ pub struct Store {
     read: Mutex<Connection>,
     epoch: String,
     hub: EventHub,
+    project_changes: tokio::sync::watch::Sender<u64>,
     /// Counts runs starting and ending, for what shows whether a run is active.
     run_changes: tokio::sync::watch::Sender<u64>,
     /// Counts local changes that queued an account field, to wake the sync worker.
@@ -219,6 +223,7 @@ impl Store {
             read: Mutex::new(read),
             epoch: epoch.into(),
             hub: EventHub::default(),
+            project_changes: tokio::sync::watch::channel(0).0,
             run_changes: tokio::sync::watch::channel(0).0,
             account_changes: tokio::sync::watch::channel(0).0,
             upgrade,
@@ -416,35 +421,6 @@ impl Store {
                 )?;
             }
             Ok(tx.query_row("SELECT * FROM projects WHERE id = ?1", [id], project_row)?)
-        })
-    }
-
-    /// Forgets a project and keeps every thread of it, archived and labelled with the
-    /// project's name. The row stays hidden, so adding the same folder back restores
-    /// them. Rows that only make sense with a project go, as they did when the row
-    /// was deleted.
-    pub fn remove_project_keeping_threads(&self, id: &str, actor: &str) -> Result<Vec<String>> {
-        self.commit(|tx, appended| {
-            let project = tx
-                .query_row("SELECT * FROM projects WHERE id = ?1", [id], project_row)
-                .optional()?
-                .ok_or_else(|| CoreError::NotFound("project".into()))?;
-            let ids = tombstone_project(tx, appended, &project)?;
-            threads::audit(
-                tx,
-                actor,
-                "project.remove",
-                &project.path,
-                serde_json::json!({ "threads_kept": ids.len() }),
-            )?;
-            Ok(ids)
-        })
-    }
-
-    pub fn delete_project(&self, id: &str) -> Result<()> {
-        self.commit(|tx, _| {
-            tx.execute("DELETE FROM projects WHERE id = ?1", [id])?;
-            Ok(())
         })
     }
 

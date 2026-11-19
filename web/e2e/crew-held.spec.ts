@@ -19,6 +19,7 @@ async function open(page: Page, scenario: string, shell: "app" | "browser" | { r
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       invoke: async (command: string, args?: Record<string, unknown>) => {
         seen.calls.push([command, args]);
+        if (command === "person_key") return "mock-person-key";
         if (command !== "crew_presence") return undefined;
         if (typeof how === "object") throw how.refuse;
         return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -50,7 +51,7 @@ test("a click on Approve once asks the shell once with the hold id, then the car
   await expect(page.getByText("Needs you · 2")).toBeVisible();
   await expect(page.getByRole("table", { name: "Approval log" }).getByRole("row").filter({ hasText: ORDERS })).toContainText("Approved by you");
   const { calls, clicks } = await seen(page);
-  expect(calls).toEqual([["crew_presence", { holdId: "hold-orders" }]]);
+  expect(calls).toEqual([["crew_presence", { holdId: "hold-orders" }], ["person_key", undefined]]);
   // The browser's own click on a mouse press is trusted and counts a press.
   expect(clicks.some((click) => click.trusted && click.detail >= 1)).toBe(true);
   await page.getByRole("button", { name: ORDERS }).click();
@@ -82,7 +83,7 @@ test("pressing the focused button with the keyboard is a trusted click with deta
   await page.keyboard.press("Enter");
   await expect(page.getByText("Needs you · 2")).toBeVisible();
   const { calls, clicks } = await seen(page);
-  expect(calls).toHaveLength(1);
+  expect(calls).toEqual([["crew_presence", { holdId: "hold-orders" }], ["person_key", undefined]]);
   // How a keyboard press reports, measured here in Chromium: a real mouse press has detail 1 or more.
   expect(clicks.filter((click) => click.trusted).map((click) => click.detail)).toContain(0);
 });

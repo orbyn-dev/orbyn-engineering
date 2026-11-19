@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
 test.describe("tree keys", () => {
   test("ArrowDown and ArrowUp move focus between rows and stop at both ends", async ({ page }) => {
     const second = row(page, "Add approval timeout handling");
-    const third = row(page, "Tool call states");
+    const third = row(page, "Summaries, four outcomes");
     await second.focus();
     await page.keyboard.press("ArrowDown");
     await expect(third).toBeFocused();

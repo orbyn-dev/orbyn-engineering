@@ -119,7 +119,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/autopilot/review/{id}/revert",
-        "core crew_answer_review revert: scratch checkout removed after, the repository's own checks, later merges, branch held and not checked out, compare-and-swap, nothing pushed; local only",
+        "core crew_answer_review revert. Local merge: made in a scratch checkout that is removed after, the repository's own checks, later merges, branch held and not checked out, compare-and-swap, nothing pushed. Forge merge: queues the verified corrective PR for the person's merge route, which pushes that exact commit (never forced) and opens the PR; the correction checkout is kept until it completes and no review reads it; the audit row first; local only",
     ),
     (
         "POST",
