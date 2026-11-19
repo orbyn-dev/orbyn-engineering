@@ -556,6 +556,8 @@ impl AccountApi for DevAccount {
     }
 
     async fn cancel_approval(&self, request_id: &str) -> Result<(), DeviceError> {
+        // The request is still there while the Engine is asked, as it is over the network.
+        tokio::task::yield_now().await;
         let mut state = self.lock();
         let Some(mine) = state.mine.as_ref().filter(|m| m.id == request_id) else {
             return Ok(());

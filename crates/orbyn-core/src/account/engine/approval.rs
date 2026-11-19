@@ -35,6 +35,9 @@ pub(super) struct Joining {
     digits: Option<Issued>,
     /// The text the Engine gave, passed back to its own check once ours has passed.
     engine_text: Option<ApprovalDigits>,
+    /// The Engine did not take a cancel and its handle is spent: the approval ends on its own
+    /// clock, so nothing is joined again and the next cancel only lets go.
+    cancel_unsent: bool,
 }
 
 impl Joining {
@@ -44,6 +47,7 @@ impl Joining {
             joined: None,
             digits: None,
             engine_text: None,
+            cancel_unsent: false,
         }
     }
 }
@@ -74,6 +78,9 @@ where
         let Some(joining) = slot.as_mut().filter(|j| j.request_id == request_id) else {
             return Err(DeviceError::RequestGone);
         };
+        if joining.cancel_unsent {
+            return Ok(ApprovalStatus::Waiting);
+        }
         let client = &self.shared.client;
         let view = match client.pending_approval().await {
             Ok(view) => view,
@@ -131,13 +138,32 @@ where
         if !slot.as_ref().is_some_and(|j| j.request_id == request_id) {
             return Ok(());
         }
-        let taken = slot.take();
+        let Some(mut taken) = slot.take() else {
+            return Ok(());
+        };
         drop(slot);
-        // Before the Engine's approval was joined there is nothing on the server to cancel.
-        if let Some(joined) = taken.and_then(|j| j.joined) {
-            let _ = self.shared.client.deny_joined(joined).await;
+        // Before the Engine's approval was joined there is nothing on the server to cancel;
+        // after a cancel it did not take, the handle is spent and the approval ends on its own.
+        let Some(joined) = taken.joined.take() else {
+            return Ok(());
+        };
+        let Err(error) = self.shared.client.deny_joined(joined).await else {
+            return Ok(());
+        };
+        let error = map(error);
+        // An approval that is over needs nothing more; any other failure is told to the caller
+        // and the request is kept, so the person is not shown it as cancelled.
+        if !matches!(
+            error,
+            DeviceError::RequestGone | DeviceError::ApprovalRefused
+        ) {
+            let mut slot = self.joining.lock().await;
+            if slot.is_none() {
+                taken.cancel_unsent = true;
+                *slot = Some(taken);
+            }
         }
-        Ok(())
+        Err(error)
     }
 
     pub(super) async fn finish_joined(

@@ -960,3 +960,44 @@ async fn signing_up_on_a_computer_with_settings_asks_how_to_join_them() {
     assert_eq!(a.status().state, SyncState::NotConnected);
     assert!(a.stand_in().zones().zone(ZONE).is_none());
 }
+
+#[tokio::test]
+async fn a_second_cancel_waits_for_the_first_and_no_tab_is_told_cancelled_early() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "twice");
+    asking(&core, "blip@example.com").await;
+    let (first, second, polled) = tokio::join!(
+        core.account.cancel_second_factor(),
+        core.account.cancel_second_factor(),
+        core.account.poll_approval()
+    );
+    // The first cancel failed (the Engine blipped): it said so, the second one went through
+    // after it, and nothing answered "cancelled" while the request was still live.
+    assert_eq!(code(first.unwrap_err()), "account_offline");
+    second.unwrap();
+    // The sign-in was still waiting for a poll that came in during the cancel.
+    assert!(polled.unwrap().is_some());
+    assert_eq!(
+        core.account.stand_in().cancelled(),
+        vec!["req-mine".to_owned()]
+    );
+    assert!(core.account.view("macos").await.approval.is_none());
+}
+
+#[tokio::test]
+async fn a_failed_cancel_keeps_the_same_request_for_the_retry() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "meanwhile");
+    asking(&core, "blip@example.com").await;
+    assert_eq!(
+        code(core.account.cancel_second_factor().await.unwrap_err()),
+        "account_offline"
+    );
+    // Still the same waiting request, not a copy: a second cancel ends exactly that one.
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Waiting
+    );
+    core.account.cancel_second_factor().await.unwrap();
+    assert!(core.account.view("macos").await.approval.is_none());
+}

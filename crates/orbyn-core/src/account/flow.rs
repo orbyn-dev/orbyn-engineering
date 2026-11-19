@@ -428,43 +428,46 @@ impl AccountCenter {
 
     /// Gives up the sign-in that waits for its code or for a trusted device: the person is
     /// back at the password, or at the Account page. A request still waiting on a trusted
-    /// device is ended on the service too; when the service does not take the cancel, that
-    /// is answered instead of a silent 204, and the sign-in stays open so a retry sends it
-    /// again rather than leaving a live request behind.
+    /// device is ended on the service too. The sign-in stays in place while the service is
+    /// asked, so it still shows as waiting; when the service does not take the cancel that
+    /// is answered instead of a silent 204, and the sign-in stays open. Cancels run one at
+    /// a time, so a second one is answered from what the first left.
     pub async fn cancel_second_factor(&self) -> Result<()> {
         let backend = self.backend()?.clone();
-        let mut inner = self.inner.lock().await;
-        let asked = inner.approval.take();
-        let code = inner.second_factor.take();
-        if code.is_none() && asked.is_none() {
-            return Ok(());
-        }
-        // Only a request that is still open needs the service's help to end; a sign-in
-        // waiting for its code, or a request that already has its answer, is ours alone.
-        if let Some(id) = asked
-            .as_ref()
-            .filter(|approval| approval.answer.is_none())
-            .map(|approval| approval.request_id.clone())
-        {
-            drop(inner);
-            match backend.account.cancel_approval(&id).await {
+        let _one_at_a_time = self.cancelling.lock().await;
+        let open = {
+            let inner = self.inner.lock().await;
+            if inner.second_factor.is_none() && inner.approval.is_none() {
+                return Ok(());
+            }
+            // Only a request that is still open needs the service's help to end; a sign-in
+            // waiting for its code, or a request that already has its answer, is ours alone.
+            inner
+                .approval
+                .as_ref()
+                .filter(|approval| approval.answer.is_none())
+                .map(|approval| approval.request_id.clone())
+        };
+        if let Some(id) = &open {
+            match backend.account.cancel_approval(id).await {
                 Ok(()) => {}
                 // The request is already over: there is nothing left to cancel.
                 Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {}
-                Err(error) => {
-                    let mut inner = self.inner.lock().await;
-                    // A sign-in that started meanwhile is not replaced by the one the
-                    // service never took back.
-                    if inner.approval.is_none() {
-                        inner.approval = asked;
-                        inner.second_factor = code;
-                    }
-                    return Err(refusal(&error));
-                }
+                Err(error) => return Err(refusal(&error)),
             }
-        } else {
-            drop(inner);
         }
+        let mut inner = self.inner.lock().await;
+        // Only the request that was cancelled is cleared: a sign-in started meanwhile stays.
+        let same = match (&open, &inner.approval) {
+            (Some(id), Some(approval)) => approval.request_id == *id,
+            (Some(_), None) => true,
+            (None, _) => true,
+        };
+        if same {
+            inner.approval = None;
+            inner.second_factor = None;
+        }
+        drop(inner);
         self.status
             .update(|s| s.state = SyncState::SignedOut { reason: None });
         Ok(())
