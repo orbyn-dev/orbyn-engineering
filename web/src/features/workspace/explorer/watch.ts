@@ -8,6 +8,8 @@ import type { Row } from "./model";
 
 const RETRY_BASE_MS = 3000;
 const RETRY_MAX_MS = 60_000;
+/** A stream that closes sooner than this was not healthy, whatever it sent first. */
+const HEALTHY_MS = 30_000;
 
 /** Only unfolded worktrees own watches, including their loading/error/empty state. */
 export function watchedWorktrees(rows: readonly Row[]): string {
@@ -42,6 +44,7 @@ export function followExplorer(worktrees: string): () => void {
     let release: (() => void) | undefined;
     let ready = false;
     let refused = false;
+    let opened = 0;
     try {
       release = await reserveStreamConnection(current.signal);
       if (current.signal.aborted) return;
@@ -55,6 +58,7 @@ export function followExplorer(worktrees: string): () => void {
         refused = response.status >= 400 && response.status < 500;
         throw new Error("no explorer stream");
       }
+      opened = Date.now();
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       const parser = new SseParser();
       const cancel = () => { void reader.cancel().catch(() => undefined); };
@@ -82,8 +86,8 @@ export function followExplorer(worktrees: string): () => void {
     } finally {
       release?.();
       if (controller === current) controller = undefined;
-      // A stream that delivered its ready frame was healthy: start the backoff over.
-      failures = ready ? 0 : failures + 1;
+      // Start the backoff over only after a stream that said ready and then stayed up.
+      failures = ready && Date.now() - opened >= HEALTHY_MS ? 0 : failures + 1;
       if (!stopped && !refused && !current.signal.aborted && active()) {
         const delay = Math.min(RETRY_BASE_MS * 2 ** Math.max(failures - 1, 0), RETRY_MAX_MS);
         retry = setTimeout(() => void connect(), delay);

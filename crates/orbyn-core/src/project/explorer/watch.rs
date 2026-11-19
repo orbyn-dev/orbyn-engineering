@@ -51,10 +51,50 @@ struct Stats {
     commits: usize,
 }
 
+/// Which folder a watch was made for. A folder deleted and recreated under the same
+/// name is another folder, and some backends drop their watch when the old one goes.
+type Identity = (u64, u64);
+
+struct Watched {
+    _permit: OwnedSemaphorePermit,
+    identity: Identity,
+}
+
+#[cfg(unix)]
+fn identity(handle: &std::fs::File) -> Identity {
+    use std::os::unix::fs::MetadataExt;
+    handle
+        .metadata()
+        .map_or((0, 0), |meta| (meta.dev(), meta.ino()))
+}
+
+#[cfg(windows)]
+fn identity(handle: &std::fs::File) -> Identity {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    // SAFETY: the handle stays owned by the caller; the struct is plain data the call fills.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: a live handle and a writable struct of the expected type.
+    if unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut info) } == 0 {
+        return (0, 0);
+    }
+    (
+        u64::from(info.dwVolumeSerialNumber),
+        u64::from(info.nFileIndexHigh) << 32 | u64::from(info.nFileIndexLow),
+    )
+}
+
+#[cfg(not(any(unix, windows)))]
+fn identity(_: &std::fs::File) -> Identity {
+    (0, 0)
+}
+
 struct Resources {
     native: RecommendedWatcher,
     /// Each watched directory with the permit it holds on the service-wide budget.
-    directories: BTreeMap<PathBuf, OwnedSemaphorePermit>,
+    directories: BTreeMap<PathBuf, Watched>,
     budget: Arc<Semaphore>,
     _slot: OwnedSemaphorePermit,
     #[cfg(test)]
@@ -115,7 +155,9 @@ impl Drop for ExplorerWatch {
 }
 
 fn unavailable() -> CoreError {
-    CoreError::Unsupported("Explorer file watching is unavailable. Refresh to read changes.".into())
+    CoreError::WatchUnavailable(
+        "Explorer file watching is unavailable. Refresh to read changes.".into(),
+    )
 }
 
 /// What the callback tells the worker. The flags survive a full wake-up channel.
@@ -169,46 +211,70 @@ fn release(resources: &mut Resources, gone: &[PathBuf]) -> Result<()> {
     paths.commit().map_err(|_| unavailable())
 }
 
-/// Watches the directories not yet watched, in one native restart, and says which of the
-/// given directories are watched now. A directory over a bound is left out.
-fn register(resources: &mut Resources, dirs: &[&Path], root: &Path) -> Result<Vec<bool>> {
-    let fresh = dirs
-        .iter()
-        .filter(|dir| !resources.directories.contains_key(**dir))
-        .count();
-    if fresh > 0 {
+/// Watches the directories not yet watched, and those whose folder was replaced under the
+/// same name, in one native restart; says which of the given directories are watched now.
+/// Admission is decided first, so a tree past a bound costs no native call at all.
+fn register(
+    resources: &mut Resources,
+    dirs: &[(&Path, Identity)],
+    root: &Path,
+) -> Result<Vec<bool>> {
+    let mut batch = Vec::new();
+    let mut replaced = Vec::new();
+    for (dir, identity) in dirs {
+        match resources.directories.get(*dir) {
+            Some(watched) if watched.identity == *identity => {}
+            Some(_) => {
+                // Keep its permit: the replacement takes the place of the old watch.
+                if let Some(old) = resources.directories.remove(*dir) {
+                    replaced.push(*dir);
+                    batch.push((*dir, *identity, old._permit));
+                }
+            }
+            None => {
+                if resources.directories.len() + batch.len() >= MAX_DIRECTORIES {
+                    continue;
+                }
+                if let Ok(permit) = resources.budget.clone().try_acquire_owned() {
+                    batch.push((*dir, *identity, permit));
+                }
+            }
+        }
+    }
+    if !batch.is_empty() {
         let mut paths = resources.native.paths_mut();
-        for dir in dirs {
-            if resources.directories.contains_key(*dir) {
-                continue;
-            }
-            if resources.directories.len() >= MAX_DIRECTORIES {
-                break;
-            }
-            let Ok(permit) = resources.budget.clone().try_acquire_owned() else {
-                break;
-            };
+        for dir in &replaced {
+            let _ = paths.remove(dir);
+        }
+        for (dir, identity, permit) in batch {
             match paths.add(dir, RecursiveMode::NonRecursive) {
                 Ok(()) => {
-                    resources.directories.insert(dir.to_path_buf(), permit);
+                    resources.directories.insert(
+                        dir.to_path_buf(),
+                        Watched {
+                            _permit: permit,
+                            identity,
+                        },
+                    );
                     #[cfg(test)]
                     {
                         resources.stats.added += 1;
                     }
                 }
-                Err(_) if *dir == root => return Err(unavailable()),
+                Err(_) if dir == root => return Err(unavailable()),
                 Err(_) => {}
             }
         }
         #[cfg(test)]
         {
+            resources.stats.removed += replaced.len();
             resources.stats.commits += 1;
         }
         paths.commit().map_err(|_| unavailable())?;
     }
     Ok(dirs
         .iter()
-        .map(|dir| resources.directories.contains_key(*dir))
+        .map(|(dir, _)| resources.directories.contains_key(*dir))
         .collect())
 }
 
@@ -263,7 +329,10 @@ fn scan(
                     Err(error) => skipped(dir, root, error)?,
                 }
             }
-            let dirs: Vec<&Path> = open.iter().map(|(dir, _)| *dir).collect();
+            let dirs: Vec<(&Path, Identity)> = open
+                .iter()
+                .map(|(dir, handle)| (*dir, identity(handle)))
+                .collect();
             let watched = register(resources, &dirs, root)?;
             for ((dir, handle), watched) in open.into_iter().zip(watched) {
                 if cancel.is_cancelled() {
@@ -777,11 +846,12 @@ mod tests {
             .acquire_many_owned(MAX_WATCHES as u32)
             .await
             .unwrap();
-        assert!(
-            core.explorer_watch(&[(project.id.clone(), id.clone())])
-                .await
-                .is_err()
-        );
+        let refused = core
+            .explorer_watch(&[(project.id.clone(), id.clone())])
+            .await
+            .err()
+            .expect("a full table refuses");
+        assert_eq!(refused.status(), 503, "busy, not invalid: clients retry");
         drop(reserved);
         let watches = core.explorer_watch(&[(project.id, id)]).await.unwrap();
         assert_eq!(
@@ -822,6 +892,12 @@ mod tests {
         let cancel = CancellationToken::new();
         reconcile(&mut resources, &guard, &root, &cancel).unwrap();
         assert_eq!(resources.directories.len(), MAX_DIRECTORIES);
+        let commits = resources.stats.commits;
+        reconcile(&mut resources, &guard, &root, &cancel).unwrap();
+        assert_eq!(
+            resources.stats.commits, commits,
+            "folders past the bound are never offered to the backend again"
+        );
         for denied in ["data", "repo", ".git", "linked"] {
             assert!(
                 !resources
@@ -1076,5 +1152,59 @@ mod tests {
         changed(&mut events, &project.id).await;
         tokio::time::sleep(RECONCILE_GAP + RECONCILE_GAP / 2).await;
         assert_eq!(reconciles(&watches[0]), before);
+    }
+
+    #[test]
+    fn a_folder_deleted_and_recreated_under_the_same_name_is_watched_again() {
+        let dir = TempDir::new();
+        let root = crate::util::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir_all(root.join("dist/inner")).unwrap();
+        let guard = Guard::new(&root, &root.join("data"), None).unwrap();
+        let cancel = CancellationToken::new();
+        let mut resources = unwatched(&roomy());
+        reconcile(&mut resources, &guard, &root, &cancel).unwrap();
+        let stats = |r: &Resources| (r.stats.added, r.stats.removed, r.stats.commits);
+        let before = stats(&resources);
+        // The decoy takes the freed inode so the new folder cannot share the old one.
+        std::fs::remove_dir_all(root.join("dist")).unwrap();
+        std::fs::create_dir(root.join("decoy")).unwrap();
+        std::fs::create_dir_all(root.join("dist/inner")).unwrap();
+        reconcile(&mut resources, &guard, &root, &cancel).unwrap();
+        let after = stats(&resources);
+        // dist and dist/inner are both new folders; decoy is also new.
+        assert_eq!(after.0 - before.0, 3, "added");
+        assert_eq!(after.1 - before.1, 2, "the stale watches were replaced");
+        assert!(resources.directories.contains_key(&root.join("dist/inner")));
+        reconcile(&mut resources, &guard, &root, &cancel).unwrap();
+        assert_eq!(stats(&resources), after, "settled");
+    }
+
+    #[tokio::test]
+    async fn a_fast_recreate_of_a_folder_keeps_announcing_writes_inside_it() {
+        let dir = TempDir::new();
+        let core = Arc::new(core(&dir).await);
+        let (project, root) = project(&core, &dir, "app").await;
+        let id = main_id(&core, &project).await;
+        std::fs::create_dir(root.join("dist")).unwrap();
+        let watches = core
+            .explorer_watch(&[(project.id.clone(), id)])
+            .await
+            .unwrap();
+        let mut events = core.shell.watch();
+        let before = reconciles(&watches[0]);
+        std::fs::remove_dir_all(root.join("dist")).unwrap();
+        std::fs::create_dir(root.join("decoy")).unwrap();
+        std::fs::create_dir(root.join("dist")).unwrap();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while reconciles(&watches[0]) == before {
+                changed(&mut events, &project.id).await;
+            }
+        })
+        .await
+        .expect("the rebuild runs");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let mut events = core.shell.watch();
+        write(&root.join("dist/out.js"), "built");
+        changed(&mut events, &project.id).await;
     }
 }

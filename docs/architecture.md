@@ -1686,7 +1686,8 @@ a person's create, move (including rename), or delete request without a thread.
   before announcing `explorer:<project>`. Only a change that can alter which folders exist
   (a folder created, removed or renamed, a change on the root, or a backend rescan request)
   also rebuilds the watched set, at most once a second with one trailing run, and only the
-  difference from the watched set reaches the backend.
+  difference from the watched set reaches the backend (a folder replaced under the same name
+  counts as a difference, found by its file identity).
   These are native notifications, without freshness polling. Failed watches invalidate
   and announce the project before closing the subscription; reconnecting invalidates
   and rereads the subscribed projects through the stream's ready frame. The client retries
@@ -1694,7 +1695,9 @@ a person's create, move (including rename), or delete request without a thread.
   it does not retry a 4xx.
   Blur, hiding, folding the worktree or leaving Files closes the client subscription;
   the last subscriber releases its native handles. Project removal or loss of trust
-  revokes live subscriptions, and every notification rechecks authority before reading.
+  revokes live subscriptions: a project change or a rebuild rechecks authority, and every read
+  checks it again on its own. A busy or failing watch answers 503 and the client retries with
+  backoff; a refused one answers 4xx.
   The accepted project-trust boundary and `.env` visibility above stay unchanged.
   An event received during a matching client read queues one reread after it settles;
   bursts share that pending reread, newer questions supersede it, and reset discards it.

@@ -119,22 +119,43 @@ it("backs off exponentially after repeated server failures, capped at one minute
   expect(fetcher).toHaveBeenCalledTimes(7);
 });
 
-it("starts the backoff over after a stream that delivered its ready frame", async () => {
-  const ready = () => new Response(new ReadableStream({ start(controller) {
-    controller.enqueue(new TextEncoder().encode('data: {"type":"data_changed","what":"explorer:p"}\n\n'));
-    controller.close();
+it("starts the backoff over only after a ready stream that stayed up for 30 s", async () => {
+  const frame = new TextEncoder().encode('data: {"type":"data_changed","what":"explorer:p"}\n\n');
+  let close: (() => void) | undefined;
+  const live = () => new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(frame);
+    close = () => controller.close();
   } }));
   fetcher.mockResolvedValueOnce(new Response("down", { status: 503 }));
   fetcher.mockResolvedValueOnce(new Response("down", { status: 503 }));
-  fetcher.mockImplementationOnce(async () => ready());
+  fetcher.mockImplementationOnce(async () => live());
   fetcher.mockResolvedValue(new Response("down", { status: 503 }));
   stop = followExplorer(pair);
   await vi.advanceTimersByTimeAsync(3000 + 6000);
   expect(fetcher).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(30_000);
+  close?.();
   await vi.advanceTimersByTimeAsync(2999);
   expect(fetcher).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(1);
   expect(fetcher).toHaveBeenCalledTimes(4);
+});
+
+it("keeps backing off after a stream that said ready and then failed at once", async () => {
+  const flash = () => new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(new TextEncoder().encode('data: {"type":"data_changed","what":"explorer:p"}\n\n'));
+    controller.close();
+  } }));
+  fetcher.mockImplementation(async () => flash());
+  stop = followExplorer(pair);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(5999);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
 it("turns a ready frame into the existing explorer refresh hint", async () => {
