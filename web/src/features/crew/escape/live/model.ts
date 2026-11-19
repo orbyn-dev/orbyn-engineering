@@ -17,7 +17,6 @@ export const WHY = {
   openItself: "a choice to open the check task by itself is not built",
   put: "the constants are read from this device; changing them (PUT /api/crew/escapes/thresholds) is not built",
   router: "confirmed escapes do not feed the Router in v1, so a tie-break between equal engines decides nothing",
-  oneField: "a mark keeps one reason of at most 200 characters, not this field",
 } as const;
 
 /** The core’s own cap on one project’s escapes (ESCAPES_PER_PROJECT_MAX). The log read carries the count, so the page can

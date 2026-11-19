@@ -316,8 +316,8 @@ No migration, no route, no read field and no write: the web binds the reads and 
 - **Derived, not invented.** The log's limit banner appears only when the unfiltered read's total reaches the store's 5,000 cap,
   and its heading names the count from the read; the narrow panel draws the frame's first four cards, the narrow window the page's
   rows. Rate, gap and check counts read Not measured while the report route does not exist.
-- **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and an as-of line are absent because
-  no read carries them; the create-check form is a drawn sample.
+- **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
+  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the create-check form is a drawn sample.
 
 ## Decisions (owner)
 

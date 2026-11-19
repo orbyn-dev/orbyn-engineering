@@ -293,7 +293,10 @@ export function createEscapesMock() {
     }
     unreadable = scenario === "crew-escapes-unreadable";
     staleOnce = scenario === "crew-escapes-stale";
-    if (scenario === "crew-escapes-stored") thresholds = { report_days: 30, follow_up_days: 21, min_merges: 20, rate_multiple: 3, stored: true };
+    thresholds =
+      scenario === "crew-escapes-stored"
+        ? { report_days: 30, follow_up_days: 21, min_merges: 20, rate_multiple: 3, stored: true }
+        : { report_days: 60, follow_up_days: 14, min_merges: 10, rate_multiple: 2, stored: false };
   }
 
   const wire = (row: Seed & { line?: string }): EscapeRow => {

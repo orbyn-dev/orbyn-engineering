@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { LiveEscapeSettings } from "./LiveEscapeSettings";
@@ -85,7 +85,11 @@ describe("the escape constants on the real thresholds read", () => {
     answers.preview = { status: 404, body: { code: "not_found", message: "Not found" } };
     const { container } = render(<LiveEscapeSettings />);
     await waitFor(() => expect(calls.some(({ url }) => url.includes("/api/crew/preview"))).toBe(true));
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    // The preview call was answered 404: let its response settle and the screen react before asserting, so a screen that drew anyway fails here.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(container).toBeEmptyDOMElement();
     expect(calls.some(({ url }) => url.includes("/api/crew/escapes"))).toBe(false);
   });
 });

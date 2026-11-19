@@ -3,6 +3,7 @@ import { NETWORK_ERROR, type ApiFailure } from "../../../../api/client";
 import { Loading } from "../../../../product/ui/states";
 import type { EscapeLog } from "../../../../generated/EscapeLog";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
+import { useNarrow } from "../../board/useWidth";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
@@ -259,7 +260,7 @@ function WhatCounts({ log }: { log: EscapeLog }) {
 /**
  * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, and `escape-limit` (the banner the
  * writer's own refusal draws when a project holds its 5,000 escapes), on the real escape log read. `escape-narrow-window`
- * is the same page at 640 px (two tiles, one card per escape) and `escape-narrow-panel` the 320 px side panel (one counts
+ * is the same page below 640 px, measured (not chosen by frame id) (two tiles, one card per escape) and `escape-narrow-panel` the 320 px side panel (one counts
  * card, one card per escape), as the design's narrow frames draw. The limit is the core's own cap and the read carries
  * the count, so the page says it is reached only when the count does. Counts are shown apart and never added; there is
  * no rate in this slice, so the tiles say so instead of inventing one. The window is the stored one, so the header names
@@ -271,14 +272,17 @@ export function LiveEscapeLog({
   name,
   projects,
   onPick,
-  variant = "full",
+  panel = false,
 }: {
   project: string;
   name: string;
   projects: readonly Project[];
   onPick(id: string): void;
-  variant?: LogVariant;
+  /** The 320 px side panel: an explicit surface, not a width. Every other width is measured. */
+  panel?: boolean;
 }) {
+  const [measure, narrow] = useNarrow();
+  const variant: LogVariant = panel ? "panel" : narrow ? "window" : "full";
   const read = useEscapeLog(project);
   const log = read.status === "ready" ? read.data : null;
   const open = (id: string) => {
@@ -286,8 +290,17 @@ export function LiveEscapeLog({
   };
   const chip = <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />;
   return (
-    <Frame live panel={variant === "panel"} width={variant === "window" ? 640 : undefined}>
-      <div className="cx-cwpg">
+    <Frame live panel={panel}>
+      {panel ? (
+        <div className="cx-phd2">
+          <b>Crew</b>
+          <span className="cx-cwpv">Preview</span>
+          <span className="cx-pha">
+            <button type="button" className="cx-ghost" style={{ height: "24px", fontSize: "12px", padding: "0 9px" }} onClick={() => { window.location.hash = "#/preview/crew/escape-log"; }}>Open in Crew</button>
+          </span>
+        </div>
+      ) : null}
+      <div className="cx-cwpg" ref={measure}>
         {variant === "full" ? (
           <div className="cx-flcr">
             <span>Dashboard</span>

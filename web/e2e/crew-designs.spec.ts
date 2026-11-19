@@ -39,7 +39,7 @@ for (const frame of [...ESCAPE_DRAWN_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAME
 const LIVE_PROOF: Record<(typeof ESCAPE_LIVE_FRAMES)[number], (page: Page) => ReturnType<Page["getByText"]>> = {
   "escape-log": (page) => page.getByText(/^As of /),
   "escape-narrow-window": (page) => page.getByText(/^Showing \d+ of \d+ · newest found first$/),
-  "escape-narrow-panel": (page) => page.getByText(/are behind Open in Crew\./),
+  "escape-narrow-panel": (page) => page.getByText(/^Showing \d+ of \d+\. The table, the timeline/),
   "escape-empty": (page) => page.getByText("No escapes in the last 60 days"),
   "escape-low-sample": (page) => page.getByText(/Fewer than 10 merges in the last 60 days \(6\)/),
   "escape-error": (page) => page.getByText(/Can’t read escapes/),

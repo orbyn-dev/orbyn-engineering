@@ -42,8 +42,13 @@ export const escapeIdOfHash = (): string => new URLSearchParams(window.location.
 
 export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-log": () => <LiveEscapes view="log" />,
-  "escape-narrow-window": () => <LiveEscapes view="log" variant="window" />,
-  "escape-narrow-panel": () => <LiveEscapes view="log" variant="panel" />,
+  // The design's window is 640 px; the page goes narrow below 640 px by its own measure, so this frame is held just under it.
+  "escape-narrow-window": () => (
+    <div style={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
+      <LiveEscapes view="log" />
+    </div>
+  ),
+  "escape-narrow-panel": () => <LiveEscapes view="log" panel />,
   "escape-empty": () => <LiveEscapes view="log" />,
   "escape-low-sample": () => <LiveEscapes view="log" />,
   "escape-error": () => <LiveEscapes view="log" />,
