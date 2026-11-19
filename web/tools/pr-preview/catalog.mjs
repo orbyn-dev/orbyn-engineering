@@ -645,4 +645,17 @@ export const FRAMES = {
   "classes-narrow": { route: "#/settings/crew", scenario: "crew-classes", width: 640 },
   "route-log-none": { route: "#/crew/approvals", scenario: "crew-route-none", steps: [click("button", "Routing", { prefix: true })] },
   "route-log": { route: "#/crew/approvals", scenario: "crew-route-blocked", steps: [click("button", "Routing", { prefix: true })] },
+
+  /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
+   *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */
+  "escape-log": { route: "#/preview/crew/escape-log", scenario: "crew-escapes", wait: 2500 },
+  "escape-empty": { route: "#/preview/crew/escape-empty", scenario: "crew-escapes-empty" },
+  "escape-low-sample": { route: "#/preview/crew/escape-low-sample", scenario: "crew-escapes-low" },
+  "escape-error": { route: "#/preview/crew/escape-error", scenario: "crew-escapes-unreadable" },
+  "escape-possible": { route: "#/preview/crew/escape-possible", scenario: "crew-escapes" },
+  "escape-detail": { route: "#/preview/crew/escape-detail?id=esc-returnto", scenario: "crew-escapes" },
+  "escape-detail-tooling": { route: "#/preview/crew/escape-detail?id=esc-next", scenario: "crew-escapes" },
+  "escape-confirmed": { route: "#/preview/crew/escape-confirmed?id=esc-session", scenario: "crew-escapes" },
+  "escape-dismissed": { route: "#/preview/crew/escape-dismissed?id=esc-docs", scenario: "crew-escapes" },
+  "escape-gap": { route: "#/preview/crew/escape-gap?id=esc-session", scenario: "crew-escapes", steps: [click("button", "Set the gap…")] },
 };

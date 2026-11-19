@@ -183,6 +183,9 @@
 .cx-apq .cx-rb{grid-column:2/-1;display:flex;gap:10px;align-items:center;color:var(--color-muted);font-size:11.5px}
 .cx-apchip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:10px;font-size:11px;white-space:nowrap;background:var(--color-sunken);color:var(--color-textSoft)}
 .cx-apchip.cx-ok{background:var(--color-greenSoft);color:var(--color-green)}
+.cx-apchip.cx-no{background:transparent;box-shadow:inset 0 0 0 1px var(--color-borderStrong);color:var(--color-text)}
+.cx-linkname{appearance:none;background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;text-align:inherit;cursor:pointer}
+.cx-linkname:focus-visible{outline:2px solid var(--color-borderStrong);outline-offset:2px;border-radius:4px}
 .cx-apchip.cx-am{background:var(--color-warnSoft);color:var(--color-warnText);box-shadow:inset 0 0 0 1px var(--color-warnBorder)}
 .cx-apchip.cx-dim{background:transparent;color:var(--color-muted);box-shadow:inset 0 0 0 1px var(--color-borderStrong)}
 .cx-apck{width:16px;height:16px;border-radius:5px;background:var(--color-text);color:var(--color-surface);display:grid;place-items:center;flex:none;margin-top:2px}
