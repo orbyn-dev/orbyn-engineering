@@ -1,3 +1,4 @@
+import { ApiFailure, NETWORK_ERROR } from "../../../../api/client";
 import type { EscapeGap } from "../../../../generated/EscapeGap";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
 import type { EscapeSource } from "../../../../generated/EscapeSource";
@@ -10,8 +11,20 @@ export const WHY = {
   model: "the merge does not record a model or a lane yet, so a row names the engine and the area only",
   counts: "GET /api/crew/escapes/counts (per engine for a task’s area) is not built",
   queue: "the Review queue is not in the beta, so there is no button to open it",
-  check: "the check screens (a proposal, a proof and its merge) are a separate pull request",
+  check: "the create-check screen (the form for the path, what it asserts and the run command) is still a drawn sample, so no live screen collects a proposal yet",
+  tooling: "a created check only adds test files in v1; a tooling gap is logged with no proposal",
+  pruning: "pruning the oldest dismissed and possible escapes is not built; the writer refuses instead",
 } as const;
+
+/** The core’s own cap on one project’s escapes (ESCAPES_PER_PROJECT_MAX). The log read carries the count, so the page can
+ * say the limit is reached without inventing a state the read does not carry. */
+export const ESCAPES_LIMIT = 5000;
+
+/** A refused write in the service’s own words: a stale act adds “Look again.” unless the message already says it, a network failure its own message. */
+export const refusalOf = (error: unknown): string => {
+  const failure = error instanceof ApiFailure ? error : new ApiFailure("unexpected", "Something went wrong.", 0);
+  return failure.code === NETWORK_ERROR ? failure.message : failure.code === "stale" ? (/again\.$/.test(failure.message) ? failure.message : `${failure.message} Look again.`) : `${failure.code}: ${failure.message}`;
+};
 
 export const count = (n: number) => n.toLocaleString("en-US");
 const plural = (n: number, one: string, many: string) => `${count(n)} ${n === 1 ? one : many}`;

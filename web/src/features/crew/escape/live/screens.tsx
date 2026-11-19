@@ -4,7 +4,9 @@ import { LiveEscapes } from "./LiveEscapes";
 /**
  * The escape frames of Crew Designs v79, built on the real escape routes. Each opens at '#/preview/crew/<id>'; a detail
  * frame names its escape in the hash's query ('?id=<escape id>'), so the same frame draws whichever escape it is asked
- * for. The log's empty, low-sample and unreadable states are the log read's own answers, not separate screens.
+ * for. A check frame opens the escape's own page too: the check is drawn in whichever state the read carries, and the
+ * retry and withdraw frames are that page with their dialog opened by a click. The log's empty, low-sample, unreadable
+ * and at-limit states are the log read's own answers, not separate screens.
  */
 export const ESCAPE_LIVE_FRAMES = [
   "escape-log",
@@ -17,6 +19,15 @@ export const ESCAPE_LIVE_FRAMES = [
   "escape-confirmed",
   "escape-dismissed",
   "escape-gap",
+  "escape-check-proposed",
+  "escape-check-writing",
+  "escape-check-approve",
+  "escape-check-proven",
+  "escape-check-invalid",
+  "escape-check-retry",
+  "escape-check-withdraw",
+  "escape-check-withdrawn",
+  "escape-limit",
 ] as const;
 
 export type EscapeLiveFrameId = (typeof ESCAPE_LIVE_FRAMES)[number];
@@ -35,4 +46,13 @@ export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-confirmed": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-dismissed": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-gap": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-proposed": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-writing": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-approve": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-proven": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-invalid": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-retry": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-withdraw": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-check-withdrawn": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
+  "escape-limit": () => <LiveEscapes view="log" />,
 };

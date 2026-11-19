@@ -72,7 +72,7 @@ describe("one escape's own page", () => {
     expect(screen.getByText(/The escape is confirmed and its gap is a test gap, or not set yet/)).toBeInTheDocument();
     const propose = screen.getByRole("button", { name: "Propose a check" });
     expect(propose).toBeDisabled();
-    expect(propose).toHaveAttribute("aria-description", expect.stringContaining("separate pull request"));
+    expect(propose).toHaveAttribute("aria-description", expect.stringContaining("create-check screen"));
     await user.click(propose).catch(() => undefined);
     expect(posts(calls)).toHaveLength(0);
   });
