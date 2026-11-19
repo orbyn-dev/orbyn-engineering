@@ -5,7 +5,7 @@ its own. Code, not a model, decides whether a finding is true.
 
 | Module | Owns |
 | --- | --- |
-| `lanes` | `crew_review`: one read-only run per lane, no cap, also after the work has passed. A lane named again is its next round. A call is paced by the MCP timer's own deadline (room for the longest start seen plus a reserve; the first lane always starts), and a call it cuts short is an error listing the lanes started, waiting on a person, refused and not reached. A lane only a repo rule asks for is not started again on the same commit unless named. The reviewer's prompt and its key |
+| `lanes` | `crew_review`: one read-only run per lane, no cap, also after the work has passed. A lane named again is its next round. A call is paced by the MCP timer's own deadline (room for the longest start seen plus a reserve; the first lane always starts), and a call it cuts short is an error listing the lanes started, waiting on a person, refused and not reached. A lane only a repo rule asks for is skipped while already running or done on the commit unless named; a failed, stopped or waiting one runs again. The reviewer's prompt and its key |
 | `findings` | `crew_finding`: a reviewer files a typed finding; the core stamps author, lane, commit, run and id |
 | `decide` | `crew_check_finding`: the finding check, the Evidence it cites and the `finding_check` Gate |
 | `fix` | The fix brief for a confirmed finding, and the loop stop |

@@ -313,7 +313,7 @@ async fn a_budget_cut_review_call_names_its_lanes() {
     assert_eq!(
         cut.message,
         format!(
-            "lanes: the tool budget ran out. Started: correctness ({}). Not reached: security, performance. Ask again with task {subject} and lanes [\"security\",\"performance\"]; the lanes above are not started again, and a lane only a repo rule asks for does not run twice on one commit.",
+            "lanes: the tool budget ran out. Started: correctness ({}). Not reached: security, performance. Ask again with task {subject} and lanes [\"security\",\"performance\"]; a lane already started is not run again, and a lane only a repo rule asks for is skipped while it is running or done on this commit.",
             one.task_id
         )
     );
@@ -889,7 +889,9 @@ async fn a_rule_lane_is_not_started_again_by_the_retry() {
     let (answer, error) = w.lead("crew_review", json!({ "task": subject })).await;
     assert!(error, "{answer}");
     assert!(
-        answer.to_string().contains("already ran on this commit"),
+        answer
+            .to_string()
+            .contains("already running or done on this commit"),
         "{answer}"
     );
     // Naming it is the next round.
@@ -911,4 +913,70 @@ async fn a_rule_lane_is_not_started_again_by_the_retry() {
         Some(2)
     );
     assert_eq!(reviews.iter().filter(|r| r.lane == "licence").count(), 2);
+}
+
+/// Issue #628: a rule lane whose worker failed to start (its review row is written before the start can fail) is
+/// not "already running or done": the retry runs it again as the next round; one that is running is skipped.
+#[tokio::test]
+async fn a_rule_lane_whose_worker_failed_is_run_again() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        2 => Turn::Crash,
+        3 => Turn::Hang,
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(
+        &w,
+        &json!({ "required": ["checks"], "lanes": [{ "lane": "licence" }] }).to_string(),
+    );
+    let subject = w.built_work().await;
+    // The first call starts correctness (engine start 1) and the rule lane licence (engine start 2, which crashes).
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["correctness"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let licence = answer["lanes"][1]["task"].as_str().unwrap().to_owned();
+    w.until_state(&licence, "stopped").await;
+    // Asking for another lane runs licence again (round 2), for the failed one holds nothing; this start hangs.
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["security"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let lanes: Vec<&str> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["lane"].as_str().unwrap())
+        .collect();
+    assert_eq!(lanes, ["security", "licence"]);
+    let rows = w.core.store.crew_reviews_of(&subject).unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.lane == "licence")
+            .map(|r| r.round)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    // The second licence run is still running, so it holds the lane: asking for security again leaves it out.
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["security"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let lanes: Vec<&str> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["lane"].as_str().unwrap())
+        .collect();
+    assert_eq!(lanes, ["security"]);
 }

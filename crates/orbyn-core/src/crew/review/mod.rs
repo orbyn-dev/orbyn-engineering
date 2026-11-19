@@ -71,7 +71,7 @@ pub fn specs() -> Vec<Value> {
         before it merges a task, so name them for work you mean to merge. There is no limit on lanes, and a lane can be added after a pass. Lanes \
                 the repo's rules (`.orbyn/crew.json`) ask for run as well. Every lane is a separate read-only run, \
                 routed to another vendor than the builder where one is configured. A lane named again runs again, as the \
-                next round, except a lane only a repo rule asked for, which does not run again on the same commit unless you name it. \
+                next round, except a lane only a repo rule asked for, which is skipped while it is already running or done on the commit unless you name it. \
                 A call starts lanes until its 45 second tool budget is nearly spent, and is then an error that lists the lanes \
                 that started, those waiting on a person, those refused with the reason, and the ones not reached, with the \
                 `lanes` to pass to ask again. Ask again for only the lanes not reached.",

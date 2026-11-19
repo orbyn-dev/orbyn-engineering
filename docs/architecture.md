@@ -2513,8 +2513,8 @@ finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can a
 timer leaves room for the longest lane start seen so far plus a 5-second reserve (the first lane always starts), and is
 then an error that lists the lanes that started (with their task), those waiting on a person, those refused with the
 reason and those not reached, plus the `lanes` to pass to ask again. The lanes it started keep running, and only the
-not-reached ones are worth asking for. A lane only a repo rule asks for does not run again on the same commit unless it
-is named, so the retry never repeats it.
+not-reached ones are worth asking for. A lane only a repo rule asks for is skipped while it is already running or done on that commit unless it
+is named, so the retry does not repeat it; a rule lane whose start failed, needs a person, was stopped or was cancelled runs again.
 
 Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
 subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch

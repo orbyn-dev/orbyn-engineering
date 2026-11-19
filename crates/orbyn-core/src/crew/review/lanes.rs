@@ -3,7 +3,7 @@
 //! start seen and a reserve), and a call the budget cuts short is an error listing the lanes that started, that
 //! wait on a person, that were refused and that were not reached, so a retry asks for only the last. A lane named after the
 //! work has passed runs like any other, and a lane the repo's rules ask for runs without being named, once per
-//! commit: a rule lane that already has a review on the commit is left out unless named. A lane
+//! commit: a rule lane that is already running or done on the commit is left out unless named. A lane
 //! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
 //! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
@@ -83,14 +83,23 @@ fn room_for_another(
     remaining >= longest_start + reserve
 }
 
+/// Whether a review task holds its lane on a commit: it is still running, or it ended well. A task that
+/// needs a person, failed, was stopped or cancelled does not, so its lane is run again.
+fn holds_the_lane(state: &str) -> bool {
+    state == "passed"
+        || !(crate::crew::lifecycle::is_final(state) || matches!(state, "needs_person" | "failed"))
+}
+
 /// The cut call's answer, built from what each lane's start returned: lanes that started (with their task),
-/// lanes waiting on a person, lanes refused with the reason, and lanes not reached. Only the last are advised
-/// to be asked for again, with the exact `lanes` to pass; the others are not started by that call, and a lane
-/// only a repo rule asked for does not run twice on the same commit.
+/// lanes waiting on a person, lanes that failed to start after their row was written (transient), lanes refused
+/// by a rule of the core with the reason (asking again changes nothing) and lanes not reached. Only the
+/// failed and not reached lanes are advised to be asked for again, with the exact `lanes` to pass.
 fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
     let mut begun = Vec::new();
     let mut waiting = Vec::new();
+    let mut failed = Vec::new();
     let mut refused = Vec::new();
+    let mut again = Vec::new();
     for (lane, answer) in lanes.iter().zip(answers) {
         let id = answer["task"].as_str();
         let with_id = |text: &str| match id {
@@ -99,12 +108,17 @@ fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
         };
         if let Some(error) = answer.get("error") {
             let why = error["message"].as_str().unwrap_or("it was refused");
-            refused.push(format!("{lane} ({why})"));
+            if answer["failed_to_start"] == true {
+                failed.push(format!("{lane} ({why})"));
+                again.push(lane.as_str());
+            } else {
+                refused.push(format!("{lane} ({why})"));
+            }
         } else if answer["state"] == "needs_person" {
             let why = if answer["routed"] == false {
                 "no engine could take it"
             } else {
-                "same-engine consent"
+                "same-engine consent, asked again when the lane is named again"
             };
             waiting.push(with_id(&format!("{lane}: {why}")));
         } else {
@@ -115,6 +129,7 @@ fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
         .iter()
         .map(CrewToken::as_str)
         .collect();
+    again.extend(&rest);
     let named = |items: &[String]| items.join(", ");
     let mut note = format!(
         "lanes: the tool budget ran out. Started: {}.",
@@ -127,6 +142,9 @@ fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
     if !waiting.is_empty() {
         note += &format!(" Waiting on a person: {}.", named(&waiting));
     }
+    if !failed.is_empty() {
+        note += &format!(" Failed to start, so worth a retry: {}.", named(&failed));
+    }
     if !refused.is_empty() {
         note += &format!(
             " Refused, so asking again changes nothing: {}.",
@@ -134,9 +152,9 @@ fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
         );
     }
     note += &format!(
-        " Not reached: {}. Ask again with task {task} and lanes {}; the lanes above are not started again, and a lane only a repo rule asks for does not run twice on one commit.",
+        " Not reached: {}. Ask again with task {task} and lanes {}; a lane already started is not run again, and a lane only a repo rule asks for is skipped while it is running or done on this commit.",
         rest.join(", "),
-        json!(rest)
+        json!(again)
     );
     note
 }
@@ -283,9 +301,14 @@ impl Core {
         let done = self.store.crew_reviews_of(&task.id).map_err(internal)?;
         let mut ran = Vec::new();
         for rule in &from_rules {
-            let already = done
-                .iter()
-                .any(|r| r.role == "review" && r.lane == rule.lane.as_str() && r.commit == commit);
+            // The row is written before the steps that can fail, so only a task still running or ended well
+            // holds the lane; one that needs a person, failed, was stopped or cancelled runs again.
+            let already = done.iter().any(|r| {
+                r.role == "review"
+                    && r.lane == rule.lane.as_str()
+                    && r.commit == commit
+                    && matches!(self.store.crew_task(&r.task_id), Ok(Some(t)) if holds_the_lane(&t.state))
+            });
             if already && !named.contains(rule.lane.as_str()) {
                 ran.push(rule.lane.as_str().to_owned());
             } else {
@@ -309,7 +332,7 @@ impl Core {
                     .to_owned()
             } else {
                 format!(
-                    "lanes: the lanes the repo's rules ask for ({}) already ran on this commit; name one to run its next round",
+                    "lanes: the lanes the repo's rules ask for ({}) are already running or done on this commit; name one to run its next round",
                     ran.join(", ")
                 )
             }));
@@ -325,6 +348,14 @@ impl Core {
             if place > 0 && !room_for_another(remaining, longest, reserve) {
                 return Err(invalid(cut_note(&task.id, &lanes, &started)));
             }
+            let rows = |core: &Self| {
+                core.store.crew_reviews_of(&task.id).map_or(0, |all| {
+                    all.iter()
+                        .filter(|r| r.role == "review" && r.lane == lane.as_str())
+                        .count()
+                })
+            };
+            let rows_before = rows(self);
             let began = std::time::Instant::now();
             // Boxed: the start's future is large, and the loop holds it across the await.
             let answer = match Box::pin(self.start_review_run(
@@ -344,7 +375,15 @@ impl Core {
                         json!(from_rules.iter().any(|r| r.lane == *lane && r.locked));
                     answer
                 }
-                Err(error) => json!({ "lane": lane, "started": false, "error": error }),
+                // An error after the lane's row was written is a start that failed (transient); one before it is a
+                // refusal of the core (too many rounds, too many changed files) that asking again does not change.
+                Err(error) => {
+                    let mut answer = json!({ "lane": lane, "started": false, "error": error });
+                    if rows(self) > rows_before {
+                        answer["failed_to_start"] = json!(true);
+                    }
+                    answer
+                }
             };
             longest = longest.max(began.elapsed());
             started.push(answer);
@@ -628,8 +667,25 @@ mod tests {
     }
 
     #[test]
+    fn only_a_running_or_passed_review_holds_its_lane() {
+        for held in [
+            "briefed",
+            "routed",
+            "running",
+            "verifying",
+            "changed_approach",
+            "passed",
+        ] {
+            assert!(holds_the_lane(held), "{held}");
+        }
+        for free in ["needs_person", "failed", "stopped", "cancelled"] {
+            assert!(!holds_the_lane(free), "{free}");
+        }
+    }
+
+    #[test]
     fn a_cut_note_separates_started_waiting_refused_and_not_reached() {
-        let lanes: Vec<CrewToken> = ["a", "b", "c", "d", "e"]
+        let lanes: Vec<CrewToken> = ["a", "b", "c", "d", "f", "e"]
             .iter()
             .map(|l| CrewToken::new(*l).unwrap())
             .collect();
@@ -638,11 +694,12 @@ mod tests {
             json!({ "lane": "b", "task": "task-b", "state": "needs_person", "routed": false }),
             json!({ "lane": "c", "started": false, "state": "needs_person", "same_engine_consent": {} }),
             json!({ "lane": "d", "started": false, "error": { "message": "too many rounds" } }),
+            json!({ "lane": "f", "started": false, "failed_to_start": true, "error": { "message": "engine did not start" } }),
         ];
         let note = cut_note("task-0", &lanes, &answers);
         assert_eq!(
             note,
-            "lanes: the tool budget ran out. Started: a (task-a). Waiting on a person: b: no engine could take it (task-b), c: same-engine consent. Refused, so asking again changes nothing: d (too many rounds). Not reached: e. Ask again with task task-0 and lanes [\"e\"]; the lanes above are not started again, and a lane only a repo rule asks for does not run twice on one commit."
+            "lanes: the tool budget ran out. Started: a (task-a). Waiting on a person: b: no engine could take it (task-b), c: same-engine consent, asked again when the lane is named again. Failed to start, so worth a retry: f (engine did not start). Refused, so asking again changes nothing: d (too many rounds). Not reached: e. Ask again with task task-0 and lanes [\"f\",\"e\"]; a lane already started is not run again, and a lane only a repo rule asks for is skipped while it is running or done on this commit."
         );
     }
 }
