@@ -691,17 +691,52 @@ async fn a_background_lead_takes_no_message_and_a_retry_never_prompts_it() {
     let id = crew(&w);
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let error = w.core.runs.enqueue(&run.id, "hello", &[]).unwrap_err();
-    assert!(matches!(error, CoreError::Invalid(_)), "{error}");
-    assert!(w.core.runs.admit(&run.id, "hello", "user").is_err());
+    assert!(
+        matches!(&error, CoreError::Invalid(why) if why.contains("takes no messages")),
+        "{error}"
+    );
+    let error = w.core.runs.admit(&run.id, "hello", "user").unwrap_err();
+    assert!(
+        matches!(&error, CoreError::Invalid(why) if why.contains("takes no messages")),
+        "{error}"
+    );
     let task = task_of(&w, &run);
     w.core
         .store
         .move_crew_task(&task, "needs_person", None)
         .unwrap();
+    // The task derives as could-not-start, so the refusal is the background-lead guard and not the "did start" check.
+    let facts = w
+        .core
+        .flow_facts(w.core.store.crew_task(&task).unwrap().unwrap())
+        .unwrap();
+    assert!(
+        facts.could_not_start(),
+        "the stored shape of a refused start"
+    );
     let answer = w.core.crew_retry_elsewhere(&task, "user").await;
-    assert!(answer.is_err(), "{answer:?}");
+    assert!(
+        matches!(&answer, Err(CoreError::CrewTaskBusy(why)) if why.contains("background run is not retried")),
+        "{answer:?}"
+    );
     assert!(w.sent_to(&run.id).is_empty());
     assert_ne!(w.task(&task).state, "cancelled");
+}
+
+/// A cancel that failed leaves a `disabled` run with a live task: turning the crew off again cancels it, and then the crew can go.
+#[tokio::test]
+async fn turning_off_again_cancels_a_task_left_after_a_failed_cancel() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = crew(&w);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let task = task_of(&w, &run);
+    // The first press only ended the record, as when its cancel failed.
+    w.core.background_set_enabled(&id, false).unwrap();
+    assert_ne!(w.task(&task).state, "cancelled");
+    assert!(w.core.background_delete(&id).is_err());
+    w.core.background_turn_off(&id).await.unwrap();
+    assert_eq!(w.task(&task).state, "cancelled");
+    w.core.background_delete(&id).unwrap();
 }
 
 /// A stored row for the run's crew scope cannot widen what a background merge may do.
@@ -716,6 +751,22 @@ async fn a_stored_full_mode_for_a_background_crew_is_ignored() {
         .set_crew_autopilot_mode(&ModeScope::Crew(run.id.clone()), Mode::Full)
         .unwrap();
     assert_eq!(w.core.crew_autopilot_mode(&project(&w), &run.id), Mode::Off);
+    // The settings neither list the stale row nor accept a new one.
+    let listed = w.core.autopilot_modes().unwrap();
+    assert!(
+        listed
+            .entries
+            .iter()
+            .all(|entry| entry.id.as_deref() != Some(run.id.as_str())),
+        "{listed:?}"
+    );
+    let change: wire::AutopilotModeChange =
+        serde_json::from_value(json!({ "scope": "crew", "id": run.id, "mode": "full" })).unwrap();
+    let error = w.core.autopilot_set_mode(&change).unwrap_err();
+    assert!(
+        matches!(&error, CoreError::PolicyDenied(why) if why.contains("always wait for a person")),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -945,8 +996,6 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
             scratch: false,
         })
         .unwrap();
-    let scope = ModeScope::Crew(thread.id.clone());
-    w.core.set_crew_autopilot_mode(&scope, Mode::Off).unwrap();
     w.core
         .store
         .start_background_run_as(&crew_row.id, &thread.id, "user")
@@ -985,7 +1034,7 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
         .unwrap();
     assert!(unwound.discarded);
     assert!(w.core.store.background_run(&thread.id).unwrap().is_none());
-    assert_eq!((threads(&w), mode_rows(&w)), (before.0 - 1, before.1 - 1));
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 - 1, before.1));
     assert_eq!(refusals(&w, &thread.id), 1);
     assert!(
         !w.core

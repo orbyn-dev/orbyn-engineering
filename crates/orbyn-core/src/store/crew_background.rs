@@ -170,7 +170,7 @@ fn name_taken(
 /// What `Store::unwind_background_run` did.
 #[derive(Debug, Default)]
 pub struct Unwound {
-    /// The run, its mode row and its lead thread were taken back: no task existed.
+    /// The run and its lead thread were taken back: no task existed.
     pub discarded: bool,
     /// Every task of the retained run that now waits for a person: the ones moved here and the ones already waiting (as they stood
     /// before the move). The caller releases their leases and gives each a result if it has none.
@@ -178,13 +178,9 @@ pub struct Unwound {
     deleted_threads: Vec<String>,
 }
 
-/// Deletes a run's crew mode row and its lead thread, in the caller's transaction. Returns the deleted thread ids; the caller
+/// Deletes a run's lead thread, in the caller's transaction. Returns the deleted thread ids; the caller
 /// removes them from the hub after the commit.
 fn discard_lead_in(tx: &Transaction<'_>, thread_id: &str) -> Result<Vec<String>> {
-    tx.execute(
-        "DELETE FROM crew_autopilot_modes WHERE scope = 'crew:' || ?1",
-        [thread_id],
-    )?;
     let present: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?1)",
         [thread_id],
@@ -741,7 +737,7 @@ impl Store {
             .unwrap_or(0))
     }
 
-    /// Settles a refused start in one commit. With no task yet, the run, its Autopilot mode row and its lead thread are all taken
+    /// Settles a refused start in one commit. With no task yet, the run and its lead thread are all taken
     /// back, so a crash leaves nothing half done. Once a task exists the run is retained for review instead: the tasks are held for
     /// a person and the run ends `needs_review` (`hold_tasks_and_end_run`). The refusal audit is in the same commit either way.
     /// Repeating this is harmless: a missing or already ended run changes nothing.
@@ -788,7 +784,7 @@ impl Store {
         Ok(unwound)
     }
 
-    /// Takes back the lead thread and mode row of a start that failed before its run row existed, in one commit. A thread that has a
+    /// Takes back the lead thread of a start that failed before its run row existed, in one commit. A thread that has a
     /// run or a task is left alone, and so is one that is already gone, so repeating this is harmless.
     pub fn discard_unopened_background_lead(&self, thread_id: &str) -> Result<()> {
         let deleted = self.commit(|tx, _| {

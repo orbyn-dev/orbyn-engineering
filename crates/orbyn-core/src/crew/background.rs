@@ -328,10 +328,9 @@ impl Core {
     pub async fn background_turn_off(self: &Arc<Self>, id: &str) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
-        let running = match self.store.background_standing(id)?.0 {
-            Some(run) if run.state == "running" => Some(run.id),
-            _ => None,
-        };
+        // The newest run whatever its state: a turn-off whose cancel failed leaves a `disabled` run with a live task, and pressing Off
+        // again must try that cancel again.
+        let running = self.store.background_standing(id)?.0.map(|run| run.id);
         let row = self.store.set_background_enabled(id, false, "user")?;
         if let Some(run) = running {
             self.cancel_background_tasks(&run).await;
