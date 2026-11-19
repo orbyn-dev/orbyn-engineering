@@ -603,3 +603,66 @@ async fn a_background_merge_waits_for_a_person_even_when_autopilot_is_full() {
         "the person's merge landed"
     );
 }
+
+#[tokio::test]
+async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    // Use an existing tracked file regardless of the harness fixture's names.
+    let listed = gitq(&w.repo, &["ls-files"]).await;
+    let path = listed.lines().next().unwrap();
+    run_git(&w.repo, &["update-index", "--assume-unchanged", path]);
+    let before = (threads(&w), mode_rows(&w));
+    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    assert!(error.public_message().contains("git index"), "{error}");
+    let run = run_of(&w, &id);
+    assert_eq!(run.state, wire::BackgroundRunState::NeedsReview);
+    assert!(run.review_waiting);
+    let task = task_of(&w, &run);
+    assert_eq!(
+        w.core.store.crew_task(&task).unwrap().unwrap().state,
+        "needs_person"
+    );
+    assert!(w.core.store.thread(&run.id).is_ok());
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1 + 1));
+    let saved = w.core.store.background_run(&run.id).unwrap();
+    w.core
+        .store
+        .unwind_background_run(&run.id, "retry")
+        .unwrap();
+    assert_eq!(w.core.store.background_run(&run.id).unwrap(), saved);
+    let refusals: i64 = w.core.store.reader().query_row(
+        "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.refused' AND json_extract(detail, '$.run') = ?1",
+        [&run.id], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(refusals, 1);
+    assert!(w.sent_to(&run.id).is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_refusal_transaction_preserves_the_lead_and_reports_the_store_error() {
+    let w = world(true, good()).await;
+    let id = crew(&w);
+    let listed = gitq(&w.repo, &["ls-files"]).await;
+    run_git(
+        &w.repo,
+        &[
+            "update-index",
+            "--assume-unchanged",
+            listed.lines().next().unwrap(),
+        ],
+    );
+    rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap().execute_batch(
+        "CREATE TRIGGER refuse_unwind BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.refused' BEGIN SELECT RAISE(ABORT, 'refusal audit unavailable'); END;",
+    ).unwrap();
+    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    assert!(
+        error.to_string().contains("refusal audit unavailable"),
+        "{error}"
+    );
+    let run = run_of(&w, &id);
+    assert_eq!(run.state, wire::BackgroundRunState::Running);
+    assert!(w.core.store.thread(&run.id).is_ok());
+    assert_eq!(w.core.crew_autopilot_mode(&project(&w), &run.id), Mode::Off);
+    assert_eq!(w.core.store.crew_tasks_in_crew(&run.id).unwrap().len(), 1);
+}

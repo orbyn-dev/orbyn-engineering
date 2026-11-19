@@ -599,8 +599,8 @@ impl Store {
             .unwrap_or(0))
     }
 
-    /// Takes back a run that was opened and then refused before any work began (for example held by review capacity): the row is removed
-    /// and the removal is audited, so a refused start leaves no run that reads as running. A run that is not running is left alone.
+    /// Takes back a taskless refused start. Once a task exists, retain its run for review and hold the task for a person instead:
+    /// its crew id still names the run's lead thread. Refusal, task hold and run end commit together. Repeating this is harmless.
     pub fn unwind_background_run(&self, run: &str, why: &str) -> Result<()> {
         self.commit(|tx, _| {
             let Some(current) = tx
@@ -623,6 +623,20 @@ impl Store {
                 &current.background_id,
                 json!({ "run": run, "why": why }),
             )?;
+            let tasks = {
+                let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
+                statement
+                    .query_map([run], super::crew::task_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            if !tasks.is_empty() {
+                for task in tasks {
+                    if crate::crew::lifecycle::allowed(&task.state, "needs_person") {
+                        super::crew_runs::step(tx, &task, "needs_person", None, &[])?;
+                    }
+                }
+                return end_run(tx, &current, RunEnd::NeedsReview(why), Some(why), "crew");
+            }
             tx.execute("DELETE FROM crew_background_runs WHERE id = ?1", [run])?;
             Ok(())
         })

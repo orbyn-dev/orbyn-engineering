@@ -151,7 +151,7 @@ impl Core {
         })?;
         let crew_scope = ModeScope::Crew(thread.id.clone());
         if let Err(error) = self.start_background_run_for(&crew, &thread, &crew_scope) {
-            self.discard_background_lead(&thread.id, &crew_scope);
+            self.discard_background_lead(&thread.id, &crew_scope)?;
             return Err(error);
         }
         let stamper = match self.review_stamper(&thread, &engine) {
@@ -295,30 +295,25 @@ impl Core {
         Ok(())
     }
 
-    /// Takes back what a refused start made: the run, the pinned mode and the lead thread. Returns the refusal.
+    /// Takes back a taskless start, or retains a task-backed start for review. Cleanup errors keep their cause and preserve the lead.
     fn unwind_background_start(
         &self,
         thread_id: &str,
         scope: &ModeScope,
         refusal: CoreError,
     ) -> Result<wire::BackgroundRun> {
-        if let Err(error) = self
-            .store
-            .unwind_background_run(thread_id, &redact(&refusal.public_message()))
-        {
-            tracing::warn!(%error, "could not take back a refused background run");
+        self.store
+            .unwind_background_run(thread_id, &redact(&refusal.public_message()))?;
+        if self.store.background_run(thread_id)?.is_none() {
+            self.discard_background_lead(thread_id, scope)?;
         }
-        self.discard_background_lead(thread_id, scope);
         Err(refusal)
     }
 
-    fn discard_background_lead(&self, thread_id: &str, scope: &ModeScope) {
-        if let Err(error) = self.clear_crew_autopilot_mode(scope) {
-            tracing::warn!(%error, "could not remove a refused background run's mode");
-        }
-        if let Err(error) = self.store.delete_thread(thread_id, "crew") {
-            tracing::warn!(%error, "could not remove a refused background run's lead thread");
-        }
+    fn discard_background_lead(&self, thread_id: &str, scope: &ModeScope) -> Result<()> {
+        self.clear_crew_autopilot_mode(scope)?;
+        self.store.delete_thread(thread_id, "crew")?;
+        Ok(())
     }
 
     /// Whether `thread_id` is the lead thread of a background run.
