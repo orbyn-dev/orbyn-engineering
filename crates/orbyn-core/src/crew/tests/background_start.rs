@@ -815,7 +815,7 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
     run_git(&w.repo, &["update-index", "--assume-unchanged", path]);
     let before = (threads(&w), mode_rows(&w));
     // A refusal after the task exists keeps the run for review and returns it, like a route refusal does.
-    let returned = w.core.crew_background_run_now(&id).await.unwrap();
+    let returned = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert!(
         returned
             .review_reason
@@ -864,7 +864,11 @@ async fn a_failed_refusal_transaction_preserves_the_lead_and_reports_the_store_e
     rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap().execute_batch(
         "CREATE TRIGGER refuse_unwind BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.refused' BEGIN SELECT RAISE(ABORT, 'refusal audit unavailable'); END;",
     ).unwrap();
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     assert!(
         error.to_string().contains("refusal audit unavailable"),
         "{error}"
@@ -892,7 +896,7 @@ async fn a_start_refused_while_the_task_is_briefed_holds_the_task_through_the_re
         "CREATE TRIGGER no_crew_run BEFORE INSERT ON crew_runs BEGIN SELECT RAISE(ABORT, 'no crew run'); END;",
     ).unwrap();
     let before = (threads(&w), mode_rows(&w));
-    let returned = w.core.crew_background_run_now(&id).await.unwrap();
+    let returned = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let run = run_of(&w, &id);
     assert_eq!(returned.id, run.id);
     assert_eq!(run.state, wire::BackgroundRunState::NeedsReview);
@@ -941,7 +945,7 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
     w.core.set_crew_autopilot_mode(&scope, Mode::Off).unwrap();
     w.core
         .store
-        .start_background_run_as(&crew_row.id, &thread.id)
+        .start_background_run_as(&crew_row.id, &thread.id, "user")
         .unwrap();
     let before = (threads(&w), mode_rows(&w));
     // The last step of the cleanup fails: the refusal audit and every earlier delete must go with it.

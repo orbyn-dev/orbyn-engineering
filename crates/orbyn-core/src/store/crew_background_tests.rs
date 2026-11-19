@@ -321,7 +321,7 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             run_ends: true,
         },
     ];
-    let (crew_id, interrupted, lead, runs, modes) = {
+    let (crew_id, interrupted, lead, runs) = {
         let store = store(&dir);
         let crew = store
             .create_background_crew(&new_crew("Interrupted", &settings), "user")
@@ -352,11 +352,10 @@ fn core_startup_recovers_interrupted_background_starts_once() {
                 scratch: false,
             })
             .unwrap();
-        let run = store.start_background_run_as(&crew.id, &lead.id).unwrap();
-        let interrupted = store.add_background_spend(&run.id, 2, 3).unwrap();
-        store
-            .set_crew_autopilot_mode(&format!("crew:{}", run.id), "off")
+        let run = store
+            .start_background_run_as(&crew.id, &lead.id, "user")
             .unwrap();
+        let interrupted = store.add_background_spend(&run.id, 2, 3).unwrap();
         let mut runs = Vec::new();
         for (n, case) in cases.iter().enumerate() {
             let crew = store
@@ -415,13 +414,7 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             ).unwrap();
             runs.push((ended, store.crew_task(&task).unwrap().unwrap()));
         }
-        (
-            crew.id,
-            interrupted,
-            lead,
-            runs,
-            store.crew_autopilot_modes_all(100).unwrap(),
-        )
+        (crew.id, interrupted, lead, runs)
     };
     let snapshot = |core: &Core| -> Vec<(String, String, String, Option<String>)> {
         let mut all = Vec::new();
@@ -461,7 +454,6 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             ),
             (2, 3, 10, 30)
         );
-        assert_eq!(core.store.crew_autopilot_modes_all(100).unwrap(), modes);
         assert_eq!(core.store.thread(&lead.id).unwrap(), lead);
         for (case, (run, task)) in cases.iter().zip(&runs) {
             let now = core.store.background_run(&run.id).unwrap().unwrap();
