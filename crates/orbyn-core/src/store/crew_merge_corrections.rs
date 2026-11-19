@@ -66,7 +66,39 @@ impl Store {
             .collect()
     }
 
-    pub(crate) fn add_crew_forge_correction(&self, correction: &ForgeCorrection) -> Result<()> {
+    /// Completed corrections, newest first, so their checkout and reference can be retired once nothing reads them.
+    pub(crate) fn crew_completed_corrections(&self) -> Result<Vec<ForgeCorrection>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare("SELECT body FROM crew_forge_corrections WHERE completed_commit IS NOT NULL ORDER BY rowid DESC LIMIT 256")?;
+        let bodies = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        bodies
+            .into_iter()
+            .map(|body| serde_json::from_str(&body).map_err(CoreError::from))
+            .collect()
+    }
+
+    /// A review or fix of the correction still reads its checkout: another unfinished task runs in that folder.
+    pub(crate) fn crew_correction_checkout_in_use(
+        &self,
+        correction: &ForgeCorrection,
+    ) -> Result<bool> {
+        let count: i64 = self.reader().query_row(
+            "SELECT COUNT(*) FROM crew_runs r JOIN crew_tasks t ON t.id=r.task_id WHERE r.worktree=?1 AND r.task_id<>?2 AND t.state NOT IN ('passed','stopped','cancelled')",
+            params![correction.checkout, correction.task_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// `actor` is who asked: `person` for a Revert answer, `watch` for the code's own verification of a broken main. The audit
+    /// row is written first, in the same transaction as the binding, and only when the binding is new.
+    pub(crate) fn add_crew_forge_correction(
+        &self,
+        correction: &ForgeCorrection,
+        actor: &str,
+    ) -> Result<()> {
         if correction.task_id == correction.parent_task
             || correction.run_id.is_empty()
             || !Path::new(&correction.repo).is_absolute()
@@ -107,6 +139,23 @@ impl Store {
                 }
                 return Ok(());
             }
+            let crew: String = tx.query_row(
+                "SELECT crew_id FROM crew_merges WHERE task_id=?1",
+                [&correction.parent_task],
+                |row| row.get(0),
+            )?;
+            let event = serde_json::json!({
+                "actor": actor,
+                "parent": correction.parent_task,
+                "parent_commit": correction.parent_commit,
+                "base": correction.base,
+                "candidate": correction.candidate,
+                "tree": correction.tree,
+            });
+            tx.execute(
+                "INSERT INTO crew_autopilot_events(crew_id,task_id,kind,body,at) VALUES(?1,?2,'correction_requested',?3,?4)",
+                params![crew, correction.parent_task, event.to_string(), crate::util::now()],
+            )?;
             tx.execute(
                 "INSERT INTO crew_forge_corrections(parent_task,task_id,body) VALUES(?1,?2,?3)",
                 params![correction.parent_task, correction.task_id, body],
@@ -157,8 +206,16 @@ impl Store {
             if base != correction.base || candidate != correction.candidate {
                 return Err(CoreError::Invalid("the corrective merge receipt differs".into()));
             }
-            tx.execute("UPDATE crew_merges SET review_state='reverted',reverted_commit=?2,needs_person=NULL,reviewed_unix=?3 WHERE task_id=?1 AND merge_commit=?4",
+            let changed = tx.execute("UPDATE crew_merges SET review_state='reverted',reverted_commit=?2,needs_person=NULL,reviewed_unix=?3 WHERE task_id=?1 AND merge_commit=?4",
                 params![correction.parent_task,commit,crate::util::unix_now(),correction.parent_commit])?;
+            if changed != 1 {
+                // The original merge is gone or changed: completing would fail on every start. Ask a person once instead.
+                tx.execute(
+                    "UPDATE crew_merges SET needs_person=?2 WHERE task_id=?1",
+                    params![correction.parent_task, "The corrective PR merged, but the original merge record changed. A person must reconcile it."],
+                )?;
+                return Ok(false);
+            }
             Ok(true)
         })
     }

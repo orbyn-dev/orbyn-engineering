@@ -20,6 +20,24 @@ use crate::source_control::{
 };
 use crate::store::{ForgeMerge, ForgePhase, MergeEntry};
 
+/// Who asked for a forge lane pass, in the ledger's own words.
+#[derive(Clone, Copy)]
+pub(super) enum ForgeActor {
+    /// A lead's merge tool, scoped to its crew.
+    Lead,
+    /// The local HTTP caller of the service: no proof of who.
+    LocalCaller,
+}
+
+impl ForgeActor {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Lead => "lead",
+            Self::LocalCaller => "local_caller",
+        }
+    }
+}
+
 fn blocked(task: &str, why: &str) -> MergeOutcome {
     MergeOutcome::Blocked {
         task_id: task.into(),
@@ -173,8 +191,13 @@ impl Core {
         crew_id: Option<&str>,
         now: i64,
     ) -> Result<Vec<MergeOutcome>> {
-        let outcomes = self.process_forge_lane(target, crew_id, now, false).await?;
-        self.crew_watch_forge_main(target, now).await?;
+        let actor = if crew_id.is_some() {
+            ForgeActor::Lead
+        } else {
+            ForgeActor::LocalCaller
+        };
+        let outcomes = self.process_forge_lane(target, crew_id, actor, now).await?;
+        self.crew_watch_forge_main(target, crew_id, now).await?;
         Ok(outcomes)
     }
 
@@ -182,16 +205,11 @@ impl Core {
         self: &Arc<Self>,
         target: &MergeTarget,
         crew_id: Option<&str>,
+        actor: ForgeActor,
         now: i64,
-        corrections_only: bool,
     ) -> Result<Vec<MergeOutcome>> {
         self.crew_preview_only()?;
-        // The lead tool passes its crew; the local HTTP caller has none. Same names as the ledger's actor.
-        let actor = if crew_id.is_some() {
-            "lead"
-        } else {
-            "local_caller"
-        };
+        let actor = actor.as_str();
         let mut outcomes = Vec::new();
         {
             let _serial = self.crew_merges.lock().await;
@@ -204,18 +222,6 @@ impl Core {
                 let Some(mut intent) = self.store.crew_forge_merge(&entry.task_id)? else {
                     continue;
                 };
-                if corrections_only
-                    && self
-                        .store
-                        .crew_correction_for_task(&entry.task_id)?
-                        .is_none()
-                {
-                    if intent.phase == ForgePhase::NeedsPerson {
-                        continue;
-                    }
-                    outcomes.push(blocked(&entry.task_id,"an ordinary task owns this repository's lane; the corrective startup owner cannot publish it"));
-                    break;
-                }
                 // Ordering rule: merges are ordered per repository, and a published or uncertain entry keeps the lane. An intent in
                 // `needs_person` is different: it is not progressing, each entry pins its own base and is checked against the
                 // forge's base, so no later entry depends on it, and a later merge only moves the base, which that intent would have
@@ -378,15 +384,13 @@ impl Core {
                 ],
             )
             .await?;
+            let (title, body) = self.forge_pull_text(task)?;
             let url = forge::create_pull_in(
                 selected.forge,
                 &target.repo,
                 &intent.source,
-                &format!(
-                    "Merge crew task {}",
-                    task.chars().skip(7).take(12).collect::<String>()
-                ),
-                "Core-checked Crew task. Combined-state checks are recorded in the task proof.",
+                &title,
+                &body,
                 Some(&intent.branch),
                 &selected.selector(),
             )
@@ -508,6 +512,42 @@ impl Core {
         Ok(blocked(
             task,
             "merge requested; awaiting an exact merge receipt",
+        ))
+    }
+
+    /// The pull request text is written by code alone: fixed words, ids and numbers, never agent text or a mention.
+    fn forge_pull_text(&self, task: &str) -> Result<(String, String)> {
+        let Some(correction) = self.store.crew_correction_for_task(task)? else {
+            return Ok((
+                format!(
+                    "Merge crew task {}",
+                    task.chars().skip(7).take(12).collect::<String>()
+                ),
+                "Core-checked Crew task. Combined-state checks are recorded in the task proof."
+                    .into(),
+            ));
+        };
+        let original = self
+            .store
+            .crew_forge_merge(&correction.parent_task)?
+            .and_then(|intent| intent.pull)
+            .map_or_else(
+                || "the original Crew PR".to_owned(),
+                |number| format!("the original Crew PR #{number}"),
+            );
+        Ok((
+            format!(
+                "Revert crew merge {}",
+                correction
+                    .parent_commit
+                    .chars()
+                    .take(12)
+                    .collect::<String>()
+            ),
+            format!(
+                "Core-prepared rollback of {original}, merge commit {}. The exact rollback tree and the repository checks are recorded in the corrective task proof.",
+                correction.parent_commit
+            ),
         ))
     }
 

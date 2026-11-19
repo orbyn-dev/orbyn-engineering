@@ -2597,7 +2597,7 @@ and its exact check/Evidence citations, so later merge or finding Gates/Evidence
 
 Confirmed forge merges trigger a scratch watch of the actual remote tip. It reads repository checks at the trusted pre-merge base
 and records `NoChecks` as unverified. A reproducible first-parent Crew culprit prepares a distinct corrective task unless the mode
-is Off; uncertain causes ask a person. A person's Revert requests the same task. The task has no model worker or fabricated
+is Off, then asks the person to choose Revert; uncertain causes ask a person. The watch never queues, pushes, opens or merges: only a person's Revert queues the verified task. A lead's watch only prepares and flags its own crew's merges. The task has no model worker or fabricated
 route: Core creates the exact rollback in its registered sibling checkout, retains the original scope/effect grants and protected
 files, and verifies the rollback tree plus trusted repository checks through the ordinary Evidence/Gate/Result path.
 Schema 56 binds the original merge to one immutable corrective task/run, destination, base, candidate and checkout before admission.
@@ -2609,13 +2609,12 @@ A confirmed finding on a deterministic correction holds it for a person's new ta
 An unknown publication or merge only read-reconciles its existing intent. Target drift holds the pinned correction without
 admitting a second one. The original merge remains standing until an exact corrective merge receipt projects its reverted state
 and area breaker once. Completion remains pending after parent projection until the idempotent area effect succeeds; the final receipt and revert ledger event commit together. Startup resumes this projector even when the corrective merge record already exists. HTTP Revert reports the actual persisted review state and no revert commit while the correction waits.
-The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and watch use
-lane-only processing restricted to correction tasks to avoid recursive watch calls or nested merge locks. An earlier ordinary entry keeps its lane and is never published by corrective startup. No local main ref is moved.
+The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and the periodic tick only read effects that already reached publishing and never run the lane. Queueing publishes nothing; the person's merge route does, pushing the verified candidate by its commit id (never forced) with fixed code-written pull request text. A completed correction's checkout and object reference are removed once no review reads them; the pushed branch on the forge is left for the person. No local main ref is moved.
 Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
 without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
 24 hours, observes at most 32 confirmed forge targets. Corrective tasks use the same guarded forge lane; no separate writer schedules effects. With Preview enabled, startup
-first reconciles up to 128 unfinished effects/confirmed receipts, resumes at most 128 pending corrections and watches the resulting merges even when periodic work is off;
+first reconciles up to 128 unfinished effects/confirmed receipts, re-verifies at most 128 pending corrections locally and watches the resulting merges even when periodic work is off;
 only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local
 JSON list, never a tool or HTTP setting. A stored person's Comment becomes a deterministic ordinary task with the
 original write grants, effects and protected checks plus a scope check; a stale checkout or failed admission asks the person.

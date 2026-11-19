@@ -645,6 +645,8 @@ impl Core {
         let commit = self
             .crew_answer_review(task_id, answer, &target, now)
             .await?;
+        // A forge revert queues a corrective PR: show exactly which commit will be pushed onto which base.
+        let correction = self.store.crew_forge_correction(task_id)?;
         Ok(wire::AutopilotAnswered {
             task_id: task_id.to_owned(),
             review_state: self
@@ -653,6 +655,8 @@ impl Core {
                 .ok_or_else(|| CoreError::NotFound("merge".into()))?
                 .review_state,
             revert_commit: commit,
+            candidate: correction.as_ref().map(|c| c.candidate.clone()),
+            base: correction.map(|c| c.base),
         })
     }
 
@@ -675,6 +679,17 @@ impl Core {
                 *ahead.entry(key).or_default() += 1;
             }
             let mut row = queue_entry(entry, before, &scrubs.of(&entry.task_id));
+            let leftover = self
+                .store
+                .crew_correction_for_task(&entry.task_id)?
+                .map(|c| wire::AutopilotCorrectionLeftovers {
+                    checkout: c.checkout,
+                    reference: format!(
+                        "refs/orbyn/corrections/{}",
+                        c.task_id.get(7..).unwrap_or_default()
+                    ),
+                    branch: forge.as_ref().map(|f| f.source.clone()),
+                });
             row.forge = forge.map(|f| wire::AutopilotForgeIntent {
                 phase: serde_json::to_value(f.phase)
                     .ok()
@@ -682,6 +697,7 @@ impl Core {
                     .unwrap_or_default(),
                 revision: f.revision,
                 pull: f.pull,
+                correction: leftover,
             });
             rows.push(row);
         }

@@ -29,11 +29,13 @@ impl Drop for WatchClaim<'_> {
 }
 
 impl Core {
-    /// Checks the remote tip without moving local branches. A certain Crew culprit requests
-    /// a normal reviewed corrective task; uncertainty or Off asks the person.
+    /// Checks the remote tip without moving local branches and writes nothing to the forge. A certain Crew culprit gets a
+    /// locally verified corrective task and a note asking the person to choose Revert; uncertainty or Off asks the person.
+    /// `crew_id` is the calling lead's crew: a lead only prepares and flags its own crew's merges. The person's route passes none.
     pub async fn crew_watch_forge_main(
         self: &Arc<Self>,
         target: &MergeTarget,
+        crew_id: Option<&str>,
         now: i64,
     ) -> Result<()> {
         self.crew_preview_only()?;
@@ -65,7 +67,13 @@ impl Core {
         }
         let selected = CrewRepository::from_remote(&intent.remote)?;
         let tip = crew_base(&selected, &target.repo, &target.branch).await?;
-        let identity = format!("watch:{}:{}:{tip}", intent.remote, intent.branch);
+        // One claim per tip and caller scope, so another crew's earlier watch never uses up this crew's observation.
+        let identity = format!(
+            "watch:{}:{}:{tip}:{}",
+            intent.remote,
+            intent.branch,
+            crew_id.unwrap_or("*")
+        );
         if !self
             .store
             .claim_crew_merge_watch(&identity, &first.task_id)?
@@ -119,7 +127,9 @@ impl Core {
                 }
                 super::watch::Found::Unsure { why, culprit, .. } => {
                     for record in &records {
-                        if culprit.as_ref().is_none_or(|task| task == &record.task_id) {
+                        if crew_id.is_none_or(|crew| record.crew_id == crew)
+                            && culprit.as_ref().is_none_or(|task| task == &record.task_id)
+                        {
                             self.store.set_merge_watch(&record.task_id, "broken")?;
                             self.store
                                 .set_merge_needs_person(&record.task_id, Some(&why))?;
@@ -129,7 +139,10 @@ impl Core {
                 }
                 super::watch::Found::Certain(record) => {
                     self.store.set_merge_watch(&record.task_id, "broken")?;
-                    if self.merge_mode(&record.task_id)? == crate::crew::Mode::Off {
+                    if crew_id.is_some_and(|crew| record.crew_id != crew) {
+                        // Another crew's merge: its own lead or the person decides. This caller touches nothing more.
+                        None
+                    } else if self.merge_mode(&record.task_id)? == crate::crew::Mode::Off {
                         self.store.set_merge_needs_person(
                             &record.task_id,
                             Some("Autopilot is Off. A person must request the corrective PR."),
@@ -146,9 +159,16 @@ impl Core {
         let culprit = watched?;
         drop(serial);
         if let Some(parent) = culprit {
-            match self.prepare_forge_correction(&parent, target, now).await {
+            // Local verification only. A forge write follows a person's Revert answer and nothing else.
+            match self
+                .prepare_and_verify_forge_correction(&parent, target, "watch", now)
+                .await
+            {
                 Ok(_) => {
-                    self.process_forge_lane(target, None, now, true).await?;
+                    self.store.set_merge_needs_person(
+                        &parent,
+                        Some("A verified corrective PR is ready. Choose Revert to publish it."),
+                    )?;
                 }
                 Err(error) => {
                     self.store.set_merge_needs_person(
@@ -207,8 +227,9 @@ impl Core {
         {
             tracing::warn!(%error, "Crew forge intent reconciliation needs another observation");
         }
-        self.resume_forge_corrections(crate::util::unix_now())
-            .await?;
+        if let Err(error) = self.resume_forge_corrections(crate::util::unix_now()).await {
+            tracing::warn!(%error, "Crew correction resume needs another observation");
+        }
         let mut targets = std::collections::BTreeSet::new();
         for record in self.store.crew_all_merges()? {
             if self.store.crew_forge_merge(&record.task_id)?.is_some() {
@@ -227,13 +248,7 @@ impl Core {
                 owed: None,
             };
             if let Err(error) = self
-                .process_forge_lane(&target, None, crate::util::unix_now(), true)
-                .await
-            {
-                tracing::warn!(%error,"the forge correction lane needs another observation");
-            }
-            if let Err(error) = self
-                .crew_watch_forge_main(&target, crate::util::unix_now())
+                .crew_watch_forge_main(&target, None, crate::util::unix_now())
                 .await
             {
                 tracing::warn!(%error, "Crew forge watch needs another observation");

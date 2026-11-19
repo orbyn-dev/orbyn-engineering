@@ -47,6 +47,8 @@ impl Drop for Scratch {
 
 impl Scratch {
     pub async fn at(repo: &Path, root: &Path, rev: &str) -> Result<Self> {
+        // A crash can leave a registration for a folder that is gone; clear those before adding another checkout.
+        let _ = git(repo, &["worktree", "prune"]).await;
         std::fs::create_dir_all(root)?;
         Self::named(repo, &root.join(new_id()), rev).await
     }

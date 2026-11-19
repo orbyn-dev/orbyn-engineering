@@ -95,6 +95,8 @@ pub(super) struct RemoteState {
     /// The PR was closed without a merge.
     pub(super) closed: bool,
     pub(super) unknown_create: bool,
+    /// The arguments of the last `pr create`, so a test can read the title and body Core wrote.
+    pub(super) create_args: Vec<String>,
     pub(super) unreadable_once: bool,
     pub(super) wrong_merge_commit: bool,
     /// The pull reads so far, and the read after which the fixture withdraws the escape check of the task (0: never). Reads belong to
@@ -155,6 +157,7 @@ pub(super) async fn fake(setup: &Setup) -> (Arc<Mutex<RemoteState>>, Fake) {
             ["pr", "create", ..] => {
                 s.creates += 1;
                 s.published = true;
+                s.create_args = args.iter().map(|arg| (*arg).to_owned()).collect();
                 if s.unknown_create {
                     return Err(CoreError::Git("unknown fake create response".into()));
                 }

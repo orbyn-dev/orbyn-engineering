@@ -69,6 +69,15 @@ async fn correction_path(repo: &Path, parent: &str) -> Result<PathBuf> {
     )))
 }
 
+/// The object reference that keeps the candidate reachable while its checkout lives.
+fn correction_ref(task: &str) -> Result<String> {
+    Ok(format!(
+        "refs/orbyn/corrections/{}",
+        task.get(7..)
+            .ok_or_else(|| CoreError::Invalid("invalid corrective task id".into()))?
+    ))
+}
+
 struct Leases<'a> {
     core: &'a Core,
     task: &'a str,
@@ -82,33 +91,51 @@ impl Drop for Leases<'_> {
 }
 
 impl Core {
+    /// Local work only: build the exact rollback in a checkout, bind it and verify it. Nothing is queued, pushed or opened on
+    /// the forge. `actor` is `person` for a Revert answer and `watch` for the code's own verification of a broken main.
+    pub(super) async fn prepare_and_verify_forge_correction(
+        self: &Arc<Self>,
+        parent: &str,
+        target: &MergeTarget,
+        actor: &str,
+        now: i64,
+    ) -> Result<ForgeCorrection> {
+        self.crew_preview_only()?;
+        let _merges = self.crew_merges.lock().await;
+        let _starts = self.crew_starts.lock().await;
+        let correction = match self.store.crew_forge_correction(parent)? {
+            Some(correction) => correction,
+            None => {
+                self.make_forge_correction(parent, target, actor, now)
+                    .await?
+            }
+        };
+        self.verify_forge_correction(&correction, now).await?;
+        Ok(correction)
+    }
+
+    /// A person's Revert answer: prepare, then queue the verified task. The only caller that queues a correction; queueing
+    /// publishes nothing, the person's merge route does that later.
     pub(super) async fn prepare_forge_correction(
         self: &Arc<Self>,
         parent: &str,
         target: &MergeTarget,
         now: i64,
-    ) -> Result<String> {
-        self.crew_preview_only()?;
-        let correction = {
-            let _merges = self.crew_merges.lock().await;
-            let _starts = self.crew_starts.lock().await;
-            let correction = match self.store.crew_forge_correction(parent)? {
-                Some(correction) => correction,
-                None => self.make_forge_correction(parent, target, now).await?,
-            };
-            self.verify_forge_correction(&correction, now).await?;
-            correction
-        };
+    ) -> Result<ForgeCorrection> {
+        let correction = self
+            .prepare_and_verify_forge_correction(parent, target, "person", now)
+            .await?;
         // Ordinary queue admission owns its locks and revalidates the pinned binding and remote tip.
         self.crew_queue_forge_merge(&correction.task_id, target, now)
             .await?;
-        Ok(correction.task_id)
+        Ok(correction)
     }
 
     async fn make_forge_correction(
         self: &Arc<Self>,
         parent: &str,
         target: &MergeTarget,
+        actor: &str,
         now: i64,
     ) -> Result<ForgeCorrection> {
         let record = self
@@ -182,7 +209,14 @@ impl Core {
         let tree = text(&git(&scratch.dir, &["rev-parse", "HEAD^{tree}"]).await?);
         let (brief, key) =
             self.correction_drafts(&record, &original, &base, &tree, &commands, &protected)?;
-        let run_id = format!("correction-{}", &brief.id.as_str()[7..31]);
+        let run_id = format!(
+            "correction-{}",
+            brief
+                .id
+                .as_str()
+                .get(7..31)
+                .ok_or_else(|| CoreError::Invalid("invalid corrective task id".into()))?
+        );
         let correction = ForgeCorrection {
             parent_task: parent.into(),
             parent_commit: record.merge_commit,
@@ -196,14 +230,14 @@ impl Core {
             tree,
             checkout: checkout.to_string_lossy().into_owned(),
         };
-        self.store.add_crew_forge_correction(&correction)?;
+        self.store.add_crew_forge_correction(&correction, actor)?;
         scratch.retain();
         // Keep an object reference even when the registered checkout later needs restoration.
         git(
             &target.repo,
             &[
                 "update-ref",
-                &format!("refs/orbyn/corrections/{}", &brief.id.as_str()[7..]),
+                &correction_ref(&correction.task_id)?,
                 &correction.candidate,
             ],
         )
@@ -222,7 +256,6 @@ impl Core {
         self.store.bind_crew_correction_checkout(&correction)?;
         self.store
             .set_crew_protected(&correction.task_id, &serde_json::to_string(&before)?)?;
-        self.merge_event(parent,"person_told",&json!({"about":"corrective_task","task":correction.task_id,"base":correction.base,"requested_unix":now}));
         Ok(correction)
     }
 
@@ -540,6 +573,8 @@ impl Core {
         }
     }
 
+    /// Startup and ticks repair local state only: an interrupted corrective task is verified again, a finished one is
+    /// projected, a completed one is cleaned up. Nothing here queues, pushes, opens or merges anything.
     pub(in crate::crew) async fn resume_forge_corrections(
         self: &Arc<Self>,
         now: i64,
@@ -553,18 +588,59 @@ impl Core {
                 }
                 continue;
             }
+            if self.store.merge_entry(&correction.task_id)?.is_some() {
+                // Queued by a person's Revert: the queue and the forge intent own it from here.
+                continue;
+            }
             let target = MergeTarget {
                 repo: correction.repo.clone().into(),
                 branch: correction.branch.clone(),
                 owed: None,
             };
             if let Err(error) = self
-                .prepare_forge_correction(&correction.parent_task, &target, now)
+                .prepare_and_verify_forge_correction(&correction.parent_task, &target, "watch", now)
                 .await
             {
                 self.store.set_merge_needs_person(&correction.parent_task,Some("The corrective task needs reconciliation. Open its task proof before retrying."))?;
                 tracing::warn!(%error,"a corrective task could not resume");
             }
+        }
+        for correction in self.store.crew_completed_corrections()? {
+            if let Err(error) = self.retire_forge_correction(&correction).await {
+                tracing::warn!(%error, task = %correction.task_id, "a finished correction's checkout could not be cleaned up yet");
+            }
+        }
+        Ok(())
+    }
+
+    /// A completed correction no longer needs its checkout or object reference, unless a review or fix still reads that
+    /// checkout. Idempotent, so a busy checkout is simply tried again on a later tick. The pushed forge branch stays: Core
+    /// never deletes a branch on the forge.
+    async fn retire_forge_correction(&self, correction: &ForgeCorrection) -> Result<()> {
+        let path = PathBuf::from(&correction.checkout);
+        let repo = Path::new(&correction.repo);
+        let present = std::fs::symlink_metadata(&path).is_ok();
+        let reference = correction_ref(&correction.task_id)?;
+        let kept = git(repo, &["rev-parse", "--verify", "--quiet", &reference])
+            .await
+            .is_ok();
+        if !present && !kept {
+            return Ok(());
+        }
+        if self.store.crew_correction_checkout_in_use(correction)? {
+            return Ok(());
+        }
+        if present {
+            // Same identity checks as a review: remove only the registered checkout this binding created.
+            self.checked_correction_checkout(correction).await?;
+            git(
+                repo,
+                &["worktree", "remove", "--force", &path.to_string_lossy()],
+            )
+            .await?;
+        }
+        if kept {
+            git(repo, &["update-ref", "-d", &reference]).await?;
         }
         Ok(())
     }

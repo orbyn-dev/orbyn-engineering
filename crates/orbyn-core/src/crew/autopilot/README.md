@@ -174,10 +174,11 @@ the way out lives in `resolve_crew_forge_merge` alone.
   It reverts only when the culprit is a merge the crew made, the checks fail with it twice and pass without it, and they pass
   after the revert (so no later merge needs it). Otherwise it records the break, flags the item to the top of the Review queue
   and tells the person (a `person_told` row). Under `off` it only asks. A revert in a repository that defines no checks runs none and is recorded `verified: false`. A repository with no checks is reported `NoChecks`,
-  never healthy. Forge merges trigger a remote-tip scratch watch after a confirmed receipt; a break asks for a reviewed corrective
-  PR instead of moving local main. A repository/commit claim is durable across restart. Digest, overdue and break messages are
+  never healthy. Forge merges trigger a remote-tip scratch watch after a confirmed receipt; a certain break prepares and verifies a corrective
+  task locally and flags the merge with "Choose Revert to publish it". Only a person's Revert queues it, and the watch never
+  pushes, opens, comments on or merges anything on the forge, nor moves local main. A repository/commit claim is durable across restart. Digest, overdue and break messages are
   visible chat messages with atomic dedupe receipts, without provider turns. The optional owned `run_crew_merge_watch` future
-  is off by default, bounded to 60s..24h and 32 targets, and cancellation-owned; it never schedules publication or merging.
+  is off by default, bounded to 60s..24h and 32 targets, and cancellation-owned; it only reads effects already requested and never schedules publication or merging.
 
 ## The always-denied list: what it reads, and what it cannot
 
