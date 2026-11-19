@@ -698,7 +698,6 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
                 json!({"task": s.task, "branch": s.target.branch}),
             )
             .await;
-        eprintln!("DIAG answer: {answer}");
         assert!(!error, "{answer}");
         let correction =
             s.w.core
