@@ -815,3 +815,54 @@ async fn an_action_edit_is_audited_by_name_without_its_command() {
     assert!(!audit.to_string().contains("command-text-two"));
     service.stop().await;
 }
+
+#[tokio::test]
+async fn agent_device_access_cannot_be_turned_on_through_the_scope_routes() {
+    let dir = TempDir::new();
+    let (service, projects, scope) = fixture(&dir).await;
+    let all = query(&service, json!({}), &["enable_agent_device_access"]).await;
+    assert_eq!(row(&all, "enable_agent_device_access")["value"], false);
+    let (status, refused) = put(
+        &service,
+        "/api/settings/preferences",
+        edit_body(
+            &all,
+            json!({}),
+            json!({"enable_agent_device_access":{"op":"set","value":true}}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (400, Some("invalid_input")),
+        "{refused}"
+    );
+    assert!(
+        refused["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not built"),
+        "{refused}"
+    );
+    let after = query(&service, json!({}), &["enable_agent_device_access"]).await;
+    assert_eq!(row(&after, "enable_agent_device_access")["value"], false);
+    // The single-project route is the same refusal, and it writes no override.
+    let id = projects[0]["id"].as_str().unwrap();
+    let (status, refused) = put(
+        &service,
+        &format!("/api/projects/{id}/preferences"),
+        json!({"values":{"enable_agent_device_access":true}}),
+    )
+    .await;
+    assert_eq!(status, 400, "{refused}");
+    let project = query(&service, scope, &["enable_agent_device_access"]).await;
+    assert_eq!(row(&project, "enable_agent_device_access")["value"], false);
+    assert_eq!(
+        row(&project, "enable_agent_device_access")["overrides"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    service.stop().await;
+}

@@ -987,6 +987,9 @@ Missing or changed scopes and stale revisions return typed 409 errors, never a
 broader write. Group and checkout edits share the same selected-member metadata
 rule: incomplete repository metadata disables either selection unless its physical
 member is explicitly grouped Separately. These full-app routes do not add engine tool capabilities.
+A setting whose permission is not built fails closed: `enable_agent_device_access` resolves
+off and a write that turns it on is refused with a plain reason until agent device access
+exists (H27).
 
 Git and project-file observations precede SQLite. The immediate transaction fences
 registered IDs and paths, the observed catalog membership version, and each key's
