@@ -359,6 +359,35 @@ async fn cancelling_gives_the_request_up() {
 }
 
 #[tokio::test]
+async fn a_cancel_the_service_did_not_take_is_answered_and_tried_again() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "blip");
+    asking(&core, "blip@example.com").await;
+    // The Engine is unreachable: the cancel is refused and the request stays open, rather
+    // than the person leaving as if the service had taken it.
+    assert_eq!(
+        code(core.account.cancel_second_factor().await.unwrap_err()),
+        "account_offline"
+    );
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Waiting
+    );
+    assert!(core.account.stand_in().cancelled().is_empty());
+    // The service answers again: the retry sends the cancel, and the sign-in ends.
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(
+        core.account.stand_in().cancelled(),
+        vec!["req-mine".to_owned()]
+    );
+    assert!(core.account.view("macos").await.approval.is_none());
+    assert_eq!(
+        core.account.status().state,
+        SyncState::SignedOut { reason: None }
+    );
+}
+
+#[tokio::test]
 async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation_for_that_request()
 {
     let dir = TempDir::new();

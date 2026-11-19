@@ -427,24 +427,46 @@ impl AccountCenter {
     }
 
     /// Gives up the sign-in that waits for its code or for a trusted device: the person is
-    /// back at the password, or at the Account page.
+    /// back at the password, or at the Account page. A request still waiting on a trusted
+    /// device is ended on the service too; when the service does not take the cancel, that
+    /// is answered instead of a silent 204, and the sign-in stays open so a retry sends it
+    /// again rather than leaving a live request behind.
     pub async fn cancel_second_factor(&self) -> Result<()> {
         let backend = self.backend()?.clone();
         let mut inner = self.inner.lock().await;
         let asked = inner.approval.take();
-        if inner.second_factor.take().is_some() || asked.is_some() {
-            drop(inner);
-            if let Some(Approval {
-                request_id,
-                answer: None,
-                ..
-            }) = asked
-            {
-                let _ = backend.account.cancel_approval(&request_id).await;
-            }
-            self.status
-                .update(|s| s.state = SyncState::SignedOut { reason: None });
+        let code = inner.second_factor.take();
+        if code.is_none() && asked.is_none() {
+            return Ok(());
         }
+        // Only a request that is still open needs the service's help to end; a sign-in
+        // waiting for its code, or a request that already has its answer, is ours alone.
+        if let Some(id) = asked
+            .as_ref()
+            .filter(|approval| approval.answer.is_none())
+            .map(|approval| approval.request_id.clone())
+        {
+            drop(inner);
+            match backend.account.cancel_approval(&id).await {
+                Ok(()) => {}
+                // The request is already over: there is nothing left to cancel.
+                Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {}
+                Err(error) => {
+                    let mut inner = self.inner.lock().await;
+                    // A sign-in that started meanwhile is not replaced by the one the
+                    // service never took back.
+                    if inner.approval.is_none() {
+                        inner.approval = asked;
+                        inner.second_factor = code;
+                    }
+                    return Err(refusal(&error));
+                }
+            }
+        } else {
+            drop(inner);
+        }
+        self.status
+            .update(|s| s.state = SyncState::SignedOut { reason: None });
         Ok(())
     }
 
