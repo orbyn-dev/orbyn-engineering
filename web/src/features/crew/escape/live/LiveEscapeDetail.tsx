@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { ApiFailure, NETWORK_ERROR } from "../../../../api/client";
 import type { EscapeCheckRow } from "../../../../generated/EscapeCheckRow";
 import type { EscapeDetail } from "../../../../generated/EscapeDetail";
 import type { EscapeEventRow } from "../../../../generated/EscapeEventRow";
@@ -9,20 +8,13 @@ import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
-import { checkStateLabel, eventMoment, gapLabel, nameOf, sourceLabel, stateLabel, WHY } from "./model";
+import { checkStateLabel, eventMoment, gapLabel, nameOf, refusalOf, sourceLabel, stateLabel, WHY } from "./model";
 import { escapeApi } from "./api";
+import { CheckCard, CheckChip, Commit, short, type CheckAct } from "./check";
 import { StateChip } from "./parts";
 import { useEscapeDetail, useEscapeLog } from "./useEscapes";
 
-const short = (commit: string) => commit.slice(0, 7);
 const mono = { fontFamily: "var(--font-mono)", fontSize: "11px", wordBreak: "break-all", lineHeight: 1.5 } as const;
-const refusalOf = (error: unknown) => {
-  const failure = error instanceof ApiFailure ? error : new ApiFailure("unexpected", "Something went wrong.", 0);
-  return failure.code === NETWORK_ERROR ? failure.message : failure.code === "stale" ? `${failure.message} Look again.` : `${failure.code}: ${failure.message}`;
-};
-
-/** The design draws seven hex of a commit id; the whole id stays one hover away. */
-const Commit = ({ id }: { id: string }) => <span style={mono} title={id}>{short(id)}</span>;
 
 /** The trail of one escape, oldest first. An event's time is the time alone on the day the escape was found. */
 function Timeline({ detail: one }: { detail: EscapeDetail }) {
@@ -107,16 +99,20 @@ function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: Escap
   );
 }
 
-/** The escape's check, read as it stands: its state, its one file and its proof. No act on it lives here. */
-function TheCheck({ check }: { check: EscapeCheckRow | null }) {
+/**
+ * The escape's check, read as it stands. Its own frames (`escape-check-*`) draw each state with its acts in ./check; the
+ * merged state keeps this card, whose proof row carries what the read says. The person's acts on a check are theirs.
+ */
+function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct): void }) {
   if (check) {
+    if (check.state !== "merged") return <CheckCard row={row} check={check} busy={busy} onAct={act} />;
     return (
       <div className="cx-fbx">
         <h6>The check</h6>
         <div className="cx-fkv">
           <span>State</span>
           <b>
-            <span className={`cx-apchip${check.state === "merged" || check.state === "proven" ? " cx-ok" : ""}`}>{checkStateLabel(check.state)}</span>
+            <span className="cx-apchip cx-ok">{checkStateLabel(check.state)}</span>
           </b>
           <span>Where it stands</span>
           <b>{check.line}</b>
@@ -164,8 +160,8 @@ function TheCheck({ check }: { check: EscapeCheckRow | null }) {
 }
 
 /** A tooling gap gets no proposal in v1: the box says why a test can’t help, and that the rule is yours to add. */
-function ToolingCheck({ row, check }: { row: EscapeRow; check: EscapeCheckRow | null }) {
-  if (row.gap !== "tooling_gap") return <TheCheck check={check} />;
+function ToolingCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct): void }) {
+  if (row.gap !== "tooling_gap") return <TheCheck row={row} check={check} busy={busy} act={act} />;
   return (
     <>
       <div className="cx-fbx">
@@ -177,7 +173,7 @@ function ToolingCheck({ row, check }: { row: EscapeRow; check: EscapeCheckRow | 
       </div>
       <div className="cx-fbx">
         <h6>
-          The check <Planned why={WHY.check} />
+          The check <Planned why={WHY.tooling} />
         </h6>
         <div className="cx-fkv">
           <span>State</span>
@@ -250,7 +246,7 @@ function GapDialog({ row, onClose, onSet }: { row: EscapeRow; onClose(): void; o
               <div>
                 <b>Tooling gap</b>
                 <small>
-                  No cheap test could catch it. It is logged with no proposal in v1 <Planned why={WHY.check} />
+                  No cheap test could catch it. It is logged with no proposal in v1 <Planned why={WHY.tooling} />
                 </small>
               </div>
             </button>
@@ -268,9 +264,10 @@ function GapDialog({ row, onClose, onSet }: { row: EscapeRow; onClose(): void; o
 
 /**
  * Crew Designs v79, `escape-detail` with its tooling-gap, confirmed, dismissed and gap-dialog states, on the real detail
- * read. The escape's own reason or line names it: the merge's task title is not in any read, so none is invented. The
- * check is drawn as it stands; its acts (propose, accept, retry, withdraw) are the check screens' own pull request. The
- * person's acts here are the two decisions on a possible escape and the gap.
+ * read, and the check frames (`escape-check-*`), which open the same page and draw the escape's check in whichever state
+ * it is read. The escape's own reason or line names it: the merge's task title is not in any read, so none is invented.
+ * The person's acts here are the two decisions on a possible escape, the gap, and the check's accept, approve, retry and
+ * withdraw (./check); a proposal needs the create-check screen's form, which is still a drawn sample.
  */
 export function LiveEscapeDetail({ id }: { id: string }) {
   if (!id) return <Frame sheet live><Empty title="No escape is named" /></Frame>;
@@ -316,6 +313,36 @@ function NamedEscape({ id }: { id: string }) {
         void read.reload();
       });
   };
+
+  /** A person's act on the check: accept, approve, retry or withdraw, each one write with what they saw. */
+  const act = (kind: CheckAct) => {
+    const one = read.status === "ready" ? read.data : null;
+    if (!row || !one) return;
+    const seen = { state: row.state, gap: row.gap, check: one.check?.state ?? null };
+    const send =
+      kind === "accept"
+        ? escapeApi.accept(id, { project: row.project, seen })
+        : kind === "retry"
+          ? escapeApi.retry(id, { project: row.project, seen })
+          : kind === "withdraw"
+            ? escapeApi.withdraw(id, { project: row.project, seen })
+            : one.check?.diff_commit && one.check?.diff_hash
+              ? escapeApi.approve(id, { project: row.project, seen, commit: one.check.diff_commit, diff_hash: one.check.diff_hash })
+              : null;
+    if (!send) return;
+    setBusy(true);
+    setRefused(null);
+    void send
+      .then(() => {
+        setBusy(false);
+        void read.reload();
+      })
+      .catch((error: unknown) => {
+        setBusy(false);
+        setRefused(refusalOf(error));
+        void read.reload();
+      });
+  };
   if (read.status === "loading") return <Frame sheet live><Loading label="Reading the escape" rows={3} /></Frame>;
   if (read.status === "error")
     return <Frame sheet live><ErrorState title="Can’t read the escape" failure={read.error} onRetry={() => void read.reload()} /></Frame>;
@@ -341,9 +368,7 @@ function NamedEscape({ id }: { id: string }) {
             <StateChip row={escape} />
             <span className="cx-apchip">{sourceLabel(escape.source)}</span>
             {escape.state !== "dismissed" ? <span className="cx-apchip">{escape.gap ? gapLabel[escape.gap] : "Gap not set"}</span> : null}
-            {one.check ? (
-              <span className={`cx-apchip${one.check.state === "merged" || one.check.state === "proven" ? " cx-ok" : ""}`}>{checkStateLabel(one.check.state)}</span>
-            ) : null}
+            {one.check ? <CheckChip check={one.check} /> : null}
             <span className="cx-t10sp">
               {escape.state === "possible" ? (
                 <>
@@ -394,7 +419,7 @@ function NamedEscape({ id }: { id: string }) {
                   </div>
                 </>
               ) : (
-                <ToolingCheck row={escape} check={one.check ?? null} />
+                <ToolingCheck row={escape} check={one.check ?? null} busy={busy} act={act} />
               )}
               <CountedAgainst row={escape} />
               {escape.state !== "dismissed" ? (
