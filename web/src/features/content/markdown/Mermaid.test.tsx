@@ -103,6 +103,15 @@ const SVG = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg" id="s">$
 const clean = (markup: string, id = "s") => sanitizeSvg(markup, id)?.outerHTML ?? "";
 
 describe("sanitizeSvg", () => {
+  it("removes every unsafe attribute and keeps every safe one on an element that holds many", () => {
+    // A live attribute list walked while removals reshape it would leave every other unsafe attribute behind.
+    const attrs = Array.from({ length: 200 }, (_, i) => (i % 2 ? `data-safe-${i}="v${i}"` : `onx${i}="bad()"`)).join(" ");
+    const out = sanitizeSvg(SVG(`<rect ${attrs}/>`), "s")!;
+    const rect = out.querySelector("rect")!;
+    expect(rect.getAttributeNames().filter((name) => name.startsWith("onx"))).toEqual([]);
+    expect(rect.getAttributeNames().filter((name) => name.startsWith("data-safe-"))).toHaveLength(100);
+  });
+
   it("keeps a label written with a non-breaking space entity", () => {
     expect(sanitizeSvg(SVG("<text>a&nbsp;b</text>"), "s")?.textContent).toBe("a\u00a0b");
   });
