@@ -434,14 +434,14 @@ async fn schema_checks_validate_the_instance_against_the_schema_in_the_checkout(
     assert_eq!(fail.outcome, CheckOutcome::Fail);
     assert!(
         fail.names.iter().any(|name| name == "/name"),
-        "{:?}",
-        fail.names
+        "the failing instance location is not named"
     );
     // The value that broke the schema never reaches the reason a worker reads.
     let reason = fail.reason.unwrap();
+    assert!(reason.contains("/name"), "the reason does not name /name");
     assert!(
-        reason.contains("/name") && !reason.contains('7'),
-        "{reason}"
+        !reason.contains('7'),
+        "the reason repeats the value that broke the schema"
     );
     assert_eq!(
         run_check(&schema("not-json.json"), &site).await.outcome,
@@ -488,9 +488,17 @@ async fn secret_scans_fail_a_changed_file_holding_a_recognised_secret() {
     assert_eq!(leak.outcome, CheckOutcome::Fail);
     assert_eq!(leak.names, ["leak.txt"]);
     let reason = leak.reason.unwrap();
+    // The test-log messages below stay constant on purpose. CodeQL's rust/cleartext-logging
+    // treats a call to `secret_scan` as a sensitive source (by its name) and then flags a test
+    // message that formats the check's own output into the test log, although that output holds
+    // only the path, line and class. The assertions are the guarantee; no suppression is used.
     assert!(
-        reason.contains("leak.txt") && reason.contains("line 1"),
-        "{reason}"
+        reason.contains("leak.txt"),
+        "the reason does not name the file"
+    );
+    assert!(
+        reason.contains("line 1"),
+        "the reason does not name the line"
     );
     assert!(!reason.contains(&token), "the secret reached the reason");
     assert!(!leak.log.contains(&token), "the secret reached the log");
@@ -521,7 +529,10 @@ async fn repo_required_runs_the_repositorys_own_checks_at_the_starting_commit() 
     let pass = run_check(&repo, &site_of(root, Some(&passing))).await;
     assert_eq!(pass.outcome, CheckOutcome::Pass);
     assert_eq!(pass.command, "repo_required: chk-repo");
-    assert!(pass.log.contains("exit 0"), "{}", pass.log);
+    assert!(
+        pass.log.contains("exit 0"),
+        "the log does not show the repository check"
+    );
     // The same file in the checkout says otherwise: the check keeps to the starting commit.
     write_rules(r#"{"checks":[{"run":"exit 1"}]}"#);
     assert_eq!(
@@ -537,8 +548,7 @@ async fn repo_required_runs_the_repositorys_own_checks_at_the_starting_commit() 
     assert_eq!(fail.outcome, CheckOutcome::Fail);
     assert!(
         fail.names.iter().any(|n| n.contains("exit 1")),
-        "{:?}",
-        fail.names
+        "the failure does not name the repository check"
     );
     // Rules that cannot be parsed are an error, never a pass.
     write_rules("{");
@@ -556,5 +566,8 @@ async fn repo_required_runs_the_repositorys_own_checks_at_the_starting_commit() 
     let absent = crate::crew::classes::base_commit(root).await.unwrap();
     let none = run_check(&repo, &site_of(root, Some(&absent))).await;
     assert_eq!(none.outcome, CheckOutcome::Pass);
-    assert!(none.log.contains("no checks"), "{}", none.log);
+    assert!(
+        none.log.contains("no checks"),
+        "the log does not say the repository declares no checks"
+    );
 }
