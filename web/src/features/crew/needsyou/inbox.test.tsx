@@ -129,14 +129,14 @@ describe("the Needs you inbox on live data", () => {
     const { user, view } = await open("crew-areas-tripped");
     const item = (await screen.findByText("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.")).closest("li") as HTMLElement;
     await user.click(within(item).getByRole("button", { name: /^Dismiss/ }));
-    expect(screen.queryByText("moved from Full to On")).toBeNull();
+    expect(screen.queryByText(/moved from Full to On/)).toBeNull();
     expect(writes()).toHaveLength(0);
     const stored = () => JSON.parse(window.localStorage.getItem("orbyn.needsyou.dismissedAutonomy") ?? "[]") as string[];
     expect(stored()).toHaveLength(1);
     view.unmount();
     render(<NeedsYouInbox />);
     await screen.findByRole("list", { name: "Needs you" });
-    expect(screen.queryByText("moved from Full to On")).toBeNull();
+    expect(screen.queryByText(/moved from Full to On/)).toBeNull();
     expect(stored()).toHaveLength(1);
   });
 
@@ -176,7 +176,7 @@ describe("the Needs you inbox on live data", () => {
     await user.click(within(dialog).getByRole("checkbox", { name: "I understand that everything in web/auth will wait for me." }));
     await user.click(within(dialog).getByRole("button", { name: "Turn it off" }));
     await waitFor(() => expect(calls("/api/crew/autopilot/areas?").length).toBeGreaterThan(before.areas));
-    await waitFor(() => expect(screen.queryByText("moved from Full to On")).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/moved from Full to On/)).toBeNull());
     expect(calls("/api/crew/stops")).toHaveLength(before.stops);
     expect(calls("/api/crew/autopilot/review")).toHaveLength(before.review);
   });
@@ -206,7 +206,7 @@ describe("the Needs you inbox on live data", () => {
     await user.click(confirm);
     await waitFor(() => expect(writes().map(([url, init]) => [String(url), init?.method])).toContainEqual(["/api/crew/autopilot/areas/override", "POST"]));
     // The area is no longer demoted, so the inbox's line is gone.
-    await waitFor(() => expect(screen.queryByText("moved from Full to On")).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/moved from Full to On/)).toBeNull());
   });
 
   const KEY = "orbyn.needsyou.dismissedStops";
