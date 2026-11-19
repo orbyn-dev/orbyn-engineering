@@ -9,12 +9,14 @@
 //! | `presence_grant {request_id, nonce, hold_id, thread_id, task_id, command_sha256}` | `presence_ready {request_id}` or `presence_refused {request_id, code}` |
 //!
 //! The command, the worker's name and the task's title all come from here, redacted and bounded, never from the window: the
-//! dialog shows what the service says the hold is. `command_sha256` is the hold's binding hash (the task, the thread, the kind,
-//! the whole command and its details). A grant is recorded only if the hold is open now and every field matches it as it stands
-//! now; the shell hands the nonce to the page only after `presence_ready`.
+//! dialog shows what the service says the hold is. `command_sha256` is the hold's binding: an HMAC-SHA256, with a key this
+//! process draws at start, of the task, the thread, the kind, the command, its paths and the fields that decide what runs (the
+//! working directory and the effect flags). A grant is recorded only if the hold is open now and every field matches it as it
+//! stands now; the shell hands the nonce to the page only after `presence_ready`.
 //!
 //! Refusal codes: `unavailable` (the Preview flag is off or no shell is attached), `invalid` (a field is malformed), `not_found`,
-//! `gone` (decided, expired or its task ended), `unreadable` (too long to read whole), `mismatch` (a bound field changed).
+//! `gone` (decided, expired or its task ended), `unreadable` (the request cannot be shown whole: too long, or it names no command),
+//! `mismatch` (a bound field changed).
 
 use serde_json::{Value, json};
 
@@ -55,7 +57,7 @@ fn invisible(c: char) -> bool {
 
 /// Text a dialog can show as plain text without it faking a line or reordering: a newline becomes a visible `⏎` and any other
 /// invisible character a visible `\u{FFFD}`. One character in, one character out.
-fn plain(text: &str) -> String {
+pub(super) fn plain(text: &str) -> String {
     text.chars()
         .map(|c| match c {
             '\n' | '\r' => '\u{23CE}',

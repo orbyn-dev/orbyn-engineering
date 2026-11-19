@@ -165,7 +165,7 @@ impl EngineDriver for Fake {
                         kind: orbyn_contracts::ActionKind::Command,
                         target: "must-not-execute".into(),
                         summary: "forbidden".into(),
-                        detail: json!({}),
+                        detail: json!({ "command": "must-not-execute" }),
                         paths: vec![],
                         reply,
                     })
