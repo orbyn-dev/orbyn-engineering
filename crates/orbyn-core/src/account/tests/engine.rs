@@ -244,6 +244,51 @@ async fn a_cancel_the_engine_did_not_take_is_returned_and_the_request_is_kept() 
 }
 
 #[tokio::test]
+async fn while_a_cancel_is_on_its_way_the_request_is_neither_gone_nor_finished() {
+    let (server, approver, newcomer) = pair();
+    let digits = allow(&approver, &newcomer).await;
+    server.set_offline(true);
+    server.stall_on("/cancel");
+    let (cancel, ()) = tokio::join!(newcomer.account.cancel_approval(NEWCOMER), async {
+        server.stalled().await;
+        // In flight: the request is still there, and the digits are not spent on it.
+        assert_eq!(
+            newcomer.account.approval_status(NEWCOMER).await,
+            Ok(ApprovalStatus::Waiting)
+        );
+        assert_eq!(
+            newcomer
+                .account
+                .finish_approval(NEWCOMER, &digits)
+                .await
+                .err(),
+            Some(DeviceError::Server { retryable: true })
+        );
+        server.release();
+    });
+    assert_eq!(cancel.err(), Some(DeviceError::Offline));
+    // The Engine did not take it: still waiting, digits still not spent, nothing read as gone.
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await,
+        Ok(ApprovalStatus::Waiting)
+    );
+    assert_eq!(
+        newcomer
+            .account
+            .finish_approval(NEWCOMER, &digits)
+            .await
+            .err(),
+        Some(DeviceError::Server { retryable: true })
+    );
+    // The next cancel lets go.
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await.err(),
+        Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
 async fn dont_allow_starts_an_approval_and_denies_it_so_the_new_device_sees_it_end() {
     let (server, approver, newcomer) = pair();
     newcomer.account.expect_approval(NEWCOMER).await;

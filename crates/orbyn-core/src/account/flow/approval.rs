@@ -27,6 +27,8 @@ pub const APPROVAL_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// even if the Engine did not count.
 pub(super) struct Approval {
     pub(super) request_id: String,
+    /// Tells this request from a later one that reuses the id.
+    pub(super) serial: u64,
     pub(super) asked: Instant,
     /// A trusted device allowed the request: the digits are due.
     pub(super) allowed: bool,

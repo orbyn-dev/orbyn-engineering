@@ -57,6 +57,10 @@ struct State {
 #[derive(Default)]
 pub struct Server {
     state: Mutex<State>,
+    /// A path part whose requests wait for [`Server::release`] before they are answered.
+    stall: Mutex<Option<String>>,
+    entered: tokio::sync::Notify,
+    released: tokio::sync::Notify,
 }
 
 fn rfc3339_now() -> String {
@@ -135,6 +139,27 @@ impl Server {
     /// Every request whose path contains `part` is answered `status` `code`, until cleared.
     pub fn refuse(&self, part: &str, status: u16, code: &str) {
         self.lock().refuse = Some((part.to_owned(), status, code.to_owned()));
+    }
+
+    /// Requests to a path that contains `part` wait, once they reach the server, until released.
+    pub fn stall_on(&self, part: &str) {
+        *self
+            .stall
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(part.to_owned());
+    }
+
+    /// Resolves once a stalled request is waiting.
+    pub async fn stalled(&self) {
+        self.entered.notified().await;
+    }
+
+    pub fn release(&self) {
+        *self
+            .stall
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.released.notify_waiters();
     }
 
     pub fn clear_refusal(&self) {
@@ -476,6 +501,22 @@ impl dc::DeviceApi for Wire {
         request: dc::Request,
     ) -> impl Future<Output = Result<dc::Response, dc::DeviceError>> + Send {
         let outcome = self.0.handle(&request);
-        async move { outcome }
+        let server = self.0.clone();
+        let stalled = server
+            .stall
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|part| request.path.contains(part));
+        async move {
+            if stalled {
+                let waiting = server.released.notified();
+                tokio::pin!(waiting);
+                waiting.as_mut().enable();
+                server.entered.notify_one();
+                waiting.await;
+            }
+            outcome
+        }
     }
 }

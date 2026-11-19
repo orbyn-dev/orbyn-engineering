@@ -372,8 +372,10 @@ impl AccountCenter {
 
     /// This computer's own request to sign in now waits for a trusted device.
     async fn await_approval(&self, request_id: String) {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.inner.lock().await.approval = Some(Approval {
             request_id,
+            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             asked: Instant::now(),
             allowed: false,
             tries_left: None,
@@ -446,9 +448,9 @@ impl AccountCenter {
                 .approval
                 .as_ref()
                 .filter(|approval| approval.answer.is_none())
-                .map(|approval| approval.request_id.clone())
+                .map(|approval| (approval.request_id.clone(), approval.serial))
         };
-        if let Some(id) = &open {
+        if let Some((id, _)) = &open {
             match backend.account.cancel_approval(id).await {
                 Ok(()) => {}
                 // The request is already over: there is nothing left to cancel.
@@ -457,19 +459,21 @@ impl AccountCenter {
             }
         }
         let mut inner = self.inner.lock().await;
-        // Only the request that was cancelled is cleared: a sign-in started meanwhile stays.
-        let same = match (&open, &inner.approval) {
-            (Some(id), Some(approval)) => approval.request_id == *id,
-            (Some(_), None) => true,
-            (None, _) => true,
+        // Only the request that was cancelled is cleared: a sign-in started meanwhile stays,
+        // even when it reuses the id.
+        let cleared = match (&open, &inner.approval) {
+            (Some((_, serial)), Some(approval)) => approval.serial == *serial,
+            _ => true,
         };
-        if same {
+        if cleared {
             inner.approval = None;
             inner.second_factor = None;
         }
         drop(inner);
-        self.status
-            .update(|s| s.state = SyncState::SignedOut { reason: None });
+        if cleared {
+            self.status
+                .update(|s| s.state = SyncState::SignedOut { reason: None });
+        }
         Ok(())
     }
 
