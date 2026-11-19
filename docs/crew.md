@@ -133,7 +133,7 @@ scope).
 | 2 | Crew core, headless: slice 0 (protocol schemas), slices 1 to 4, review and Autopilot backends, ledger. Fake-engine tests only, no new screens, so it can run beside Phase 1 if the app owner splits work into worktrees | E2 | None |
 | 3 | Shell redesign (slice 4e) | E2 + Designer | Engineer Designs v80 or later merged (done) |
 | 4 | Crew UI (slice 5), review stages (4b) and Autopilot (4f) | E2 + Designer | Crew Designs v8 merged (done). Phase 2 backends in place |
-| 5 | Parity rows ([Appendix A](crew/beta-rows.md#appendix-a-every-unfinished-beta-row-app-parity)), unbuilt screens ([Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built)), rows with no design ([Appendix C](crew/beta-rows.md#appendix-c-unfinished-rows-that-have-no-design-yet)), Warp features W1 to W12 | E2 + Designer | Each row's frames merged. Part C, D, E and F designs are still being drawn |
+| 5 | Parity rows ([Appendix A](crew/beta-rows.md#appendix-a-every-unfinished-beta-row-app-parity)), unbuilt screens ([Appendix B](crew/beta-rows.md#appendix-b-designed-screens-not-yet-built)), rows with no design ([Appendix C](crew/beta-rows.md#appendix-c-unfinished-rows-that-have-no-design-yet)), Warp features W1 to W12 | E2 + Designer | Each row's frames merged. Parts C to F are drawn and their frame ids are recorded in [match-kit.md](match-kit.md); the part E and F decisions are recorded with their slices |
 | 6 | Hardening: packaged-app checks on macOS and Windows, docs, live evals with the owner's budget, release notes, the Crew page on orbyn.dev | E2, E3, the owner | Phases 1 to 5 |
 
 Release means the [beta cut](#beta-cut) is done. Anything not in the cut keeps its "After the beta" label.
@@ -1368,7 +1368,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
 - **Profiles:** they pick among the four existing permission modes (Supervised, Auto edits, Auto, Full access). There is
   no read-only mode. Examples are "Careful", "Fast" and "Hands-off".
 - **Start a crew dialog:** Profile, Budget and Autopilot mode (Full by default) in one dialog.
-- **Settings:** Crew is in the Agents group, and Secrets sits beside Privacy and Telemetry.
+- **Settings:** Crew and Secrets are both in the Settings Agents group, beside providers, tools, threads and tasks; there is no Privacy or Telemetry section.
 
 ## Workspace shell redesign
 
@@ -1481,10 +1481,10 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 | W5 | Code editor tab | Files opened from the explorer get an editor: syntax colour, find, go to line, line comments (same comment threads as Changes), save. Language-server diagnostics come after the beta | New panel tab type |
 | W6 | Changes: revert hunk, edit inline, attach to agent | Revert one hunk, edit a line in place, or send a selection to the engine | Extends the shell's Changes view |
 | W7 | Batched review feedback | "Send all to engine" sends all drafts as one message, so the agent fixes everything in one pass | Already designed (Review and comments tab); confirm the behaviour |
-| W8 | Execution profiles | Named presets: engine, model tier, permission mode and Autopilot mode. Picked per thread or crew, for example "Careful", "Fast", "Read-only audit" | Settings, Crew, plus a picker in the composer |
+| W8 | Execution profiles | Named presets: engine, model tier, permission mode and Autopilot mode. Picked per thread or crew, for example "Careful", "Fast", "Hands-off" (there is no read-only permission mode) | Settings, Crew, plus a picker in the composer |
 | W9 | Workflows, prompts and env sets | Saved commands with parameters, reusable prompts and environment-variable sets. Stored in `.orbyn/` in the repository so the team shares them through git, plus a personal library on the device. Ties into B63 workflow recipes | Local, no server |
 | W10 | CLI-agent attention | When an engine runs in a terminal (engine console), Orbyn notices it waiting for input and shows a notification and a Needs you item | Extends G14 |
-| W11 | Run page for a PR | One static page per Crew task: prompt, plan, route, checks, findings and diff, attached to the pull request next to the signed proof | Generated locally; publishing is the person's choice |
+| W11 | Run page for a PR | One static page per Crew task: prompt, plan, route, checks, findings and diff | Generated locally: Save as file writes a static page and Copy PR comment copies Markdown; nothing is uploaded in the beta, and the signed proof and its verify step are Planned |
 | W12 | Crew dashboard | Autonomy rate, cycle time, cost and revert rate per repository over time | Uses trust-score data |
 
 **After the beta:**
@@ -1524,7 +1524,7 @@ reason.
 **In the Crew beta (Preview):**
 
 - Phase 1 wiring: optional Orbyn account on staging, with personal settings syncing across devices
-- Warp features W1 to W12 (above)
+- Warp features W1, W4, W5, W6, W7, W11 and W12 (above); W2, W3, W8, W9 and W10 are After the beta or Planned in the designs
 - Slice 0: protocol v0 spec and schemas (not yet published)
 - Slices 1 to 4: contracts, router v0 on defaults, runs, verifier, bus, leases
 - 4b: review stages
