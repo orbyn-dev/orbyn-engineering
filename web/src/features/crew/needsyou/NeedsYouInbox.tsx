@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { navigate } from "../../../product/state/route";
 import { ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
+import { useAreaOverride } from "../autopilot/approvals/areaOverride";
+import { useRepo } from "../autopilot/approvals/AutonomyAreas";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { HELD } from "../autopilot/approvals/copy";
 import { UNAVAILABLE_REASON } from "../autopilot/review/Parts";
@@ -15,8 +17,9 @@ import { useNeedsYou } from "./useNeedsYou";
 
 /**
  * The Needs you inbox on live data. Nothing is drawn while Crew Preview is off. Deny goes through the held-command client that
- * already exists. Approve and Open go to the Approvals tab, where the approve-once flow lives; the inbox has no approve flow of its
- * own. Nothing here merges, reverts or approves anything.
+ * already exists. Approve and Open go to the Approvals tab, where the approve-once flow lives; the inbox has no approve flow of
+ * its own. A demoted area's Review opens Autopilot by area and its Override… opens the page's own menu; both stay person-only.
+ * Nothing here merges, reverts or approves anything.
  */
 export function NeedsYouInbox() {
   // A service with Crew Preview off answers 404, and so does one with no Crew routes: both read as off, and no other route is read.
@@ -24,7 +27,11 @@ export function NeedsYouInbox() {
 }
 
 function Inbox() {
-  const state = useNeedsYou();
+  // The same repository the Background tab reads: the first git project, or the one in the address.
+  const repo = useRepo();
+  const project = repo === "loading" || repo === null ? null : repo.id;
+  const state = useNeedsYou(project);
+  const override = useAreaOverride({ project, reload: () => { if (state.status === "ready") void state.reloadAreas(); } });
   const [filter, setFilter] = useState<NeedsKind | "all">("all");
   const [ref, narrow] = useNarrow();
   const [asking, setAsking] = useState<{ id: string; name: string; kind: Ask } | null>(null);
@@ -39,8 +46,17 @@ function Inbox() {
   if (state.status === "error") return <ErrorState title="Can’t read what needs you" failure={state.failure} onRetry={state.retry} />;
 
   const handlers: NeedsActions = {
-    act(item: NeedsItem, action: NeedsAction) {
+    act(item: NeedsItem, action: NeedsAction, anchor: HTMLElement) {
       if (item.kind === "could_not_start") setAsking({ id: item.ref, name: item.from, kind: action.key === "retry" ? "retry" : "dismiss" });
+      else if (item.kind === "autonomy") {
+        // The demotion's own actions (needsyou-demoted): the row's Review opens the area, Override… the page's menu, Dismiss is remembered here.
+        if (action.key === "dismiss") state.dismiss(item.id);
+        else if (action.key === "review") navigate({ name: "settings", section: "crew", crewPage: "areas", ...(project ? { repo: project } : {}) });
+        else if (action.key === "override") {
+          const row = state.areas.find((one) => one.area_key === item.ref);
+          if (row) override.open(row, anchor);
+        }
+      }
       else if (action.key === "dismiss") state.dismiss(item.id);
       else if (action.key === "sign-in") navigate({ name: "settings", section: "providers" });
       else if (action.key === "deny") state.hold(item.ref)?.deny();
@@ -84,6 +100,7 @@ function Inbox() {
           {state.noticeFailure ? <p className="ny-note" role="alert">{state.noticeFailure.message}</p> : null}
         </>
       )}
+      {repo !== "loading" && repo?.several ? <p className="ny-note">Autonomy shows {repo.name} only.</p> : null}
       {asking ? (
         <ConfirmWrite
           kind={asking.kind}
@@ -95,6 +112,7 @@ function Inbox() {
           }}
         />
       ) : null}
+      {override.node}
     </section>
   );
 }

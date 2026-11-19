@@ -7,7 +7,6 @@ const SHOWS: Record<string, string[]> = {
   "escape-create-check": ["Main is healthy · watched since 09:00", "Merged by Crew at 14:32 · Claude Code · Sonnet 5.5 · crew/redirect-impl", "Claude Code · Sonnet 5.5 · auth/", "It must fail on 8d41b7c and pass on the revert. If it doesn’t, Crew doesn’t add it and asks you"],
   "escape-create-check-tooling": ["Main is healthy · watched since 09:00", "Merged by Crew at 14:32 · Claude Code · Sonnet 5.5 · crew/redirect-impl · auth/redirect.ts", "Claude Code · Sonnet 5.5 · auth/", "It must fail on c7f20b9 (the route is missing) and pass after “Add a rate limit to the login route”"],
   "escape-report": ["Main is healthy · watched since 09:00", "Use next in the auth redirect", "Claude Code · Sonnet 5.5 · auth/", "Add a rate limit to the login route · merged 16:10"],
-  "escape-check-invalid": ["Move session helpers to auth/session.ts", "People were asked to sign in again after a session refresh. The revert passed its checks.", "The check passes on the bad commit", "tests/auth/session.test.ts"],
   "escape-dashboard": ["Main is healthy · watched since 09:00", "Claude Code · Sonnet 5.5", "OpenCode · DeepSeek V4", "Why some rows have no percentage"],
   "escape-route-counts": ["Add a keyboard shortcut to the web client", "The task, as Crew read it", "Claude Code · Sonnet 5.5", "Workers run as you, with your machine’s permissions."],
   "escape-route-shifted": ["Add pagination to the list endpoint", "The task, as Crew read it", "1 escape in 14 merges · 7%", "Workers run as you, with your machine’s permissions."],

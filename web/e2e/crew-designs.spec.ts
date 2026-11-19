@@ -47,6 +47,15 @@ const LIVE_PROOF: Record<(typeof ESCAPE_LIVE_FRAMES)[number], (page: Page) => Re
   "escape-confirmed": (page) => page.getByText("Timeline"),
   "escape-dismissed": (page) => page.getByText("Timeline"),
   "escape-gap": (page) => page.getByText(/What kind of gap was it\?/),
+  "escape-check-proposed": (page) => page.getByText(/It must fail on the escaped merge and pass on/),
+  "escape-check-writing": (page) => page.getByText(/writing the test file/),
+  "escape-check-approve": (page) => page.getByText("Approve the proof"),
+  "escape-check-proven": (page) => page.getByText("Queued like any change, with its own risk tier, holds and required checks"),
+  "escape-check-invalid": (page) => page.getByText("The check did not prove itself"),
+  "escape-check-retry": (page) => page.getByText("Retry this check?"),
+  "escape-check-withdraw": (page) => page.getByText("Withdraw this check?"),
+  "escape-check-withdrawn": (page) => page.getByText(/A new proposal replaces this one/),
+  "escape-limit": (page) => page.getByText(/escape limit\. A new escape is not recorded/),
 };
 
 for (const frame of ESCAPE_LIVE_FRAMES) {

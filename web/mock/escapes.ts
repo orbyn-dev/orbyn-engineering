@@ -7,11 +7,13 @@ import type { MockResponse, Scenario } from "./api.ts";
 
 /**
  * The escape log's mock (slice 4k): the routes the web client reads, with the Crew Designs v79 sample rows. Scenarios:
- * "crew-escapes" (six escapes: three confirmed, two possible, one dismissed, of 38 merges), "crew-escapes-empty" (14
- * merges, nothing to count), "crew-escapes-low" (6 merges, one confirmed, every group low sample),
- * "crew-escapes-unreadable" (every read answers 500 "unreadable", as a damaged log does) and "crew-escapes-stale" (the
- * first person write is refused stale, as an escape that changed since it was opened is). A write moves its escape like
- * the service does and answers with the escape as it now stands.
+ * "crew-escapes" (six escapes: three confirmed, two possible, one dismissed, of 38 merges), "crew-escapes-checks" (the
+ * check frames' escapes: the return-to check proposed, being written, awaiting approval, proven, the session check that
+ * passed on the escaped merge too, and one withdrawn), "crew-escapes-limit" (the log answers 5,000 escapes in all, as a
+ * project at the core's cap is), "crew-escapes-empty" (14 merges, nothing to count), "crew-escapes-low" (6 merges, one
+ * confirmed, every group low sample), "crew-escapes-unreadable" (every read answers 500 "unreadable", as a damaged log
+ * does) and "crew-escapes-stale" (the first person write is refused stale, as an escape that changed since it was opened
+ * is). A write moves its escape and its check like the service does and answers with them as they now stand.
  */
 
 /** Sat 7 Nov 2026, 00:00 UTC: the day the design's sample rows live on. */
@@ -106,6 +108,135 @@ const seeds = (): Seed[] => [
   },
 ];
 
+/** The check frames' escapes: one confirmed test-gap escape per check state, as the designs' samples leave them. */
+const checkSeeds = (): Seed[] => [
+  {
+    id: "esc-proposed", project: "p-app", merge_task_id: "task-returnto", source: "revert", state: "confirmed",
+    gap: "test_gap", gap_by: "person", engine: "claude", model: null, areas: ["web/auth"], lane: null,
+    reason: "Old returnTo links stopped redirecting", found_unix: T + hours(15) + mins(34),
+    decided_unix: T + hours(15) + mins(40), decided_by: "person",
+    events: [
+      { id: 1, kind: "detected", from_state: null, to_state: "possible", decided_by: "core", cause: "revert:e41a9c0", at: T + hours(15) + mins(34) },
+      { id: 2, kind: "confirmed", from_state: "possible", to_state: "confirmed", decided_by: "person", cause: "person:40", at: T + hours(15) + mins(40) },
+      { id: 3, kind: "reclassified", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:41", at: T + hours(15) + mins(41) },
+      { id: 4, kind: "check_proposed", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:42", at: T + hours(15) + mins(50) },
+    ],
+    check: {
+      state: "proposed", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
+      run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: null,
+      proof: null, note: null, attempts: 1, diff_commit: null, diff_hash: null, diff_paths: [],
+      awaiting_approval: false, approved: false,
+      line: "Proposed: add tests/auth/return-to.test.ts. Nothing runs until a person accepts.",
+      proposed_unix: T + hours(15) + mins(50), updated_unix: T + hours(15) + mins(50),
+    },
+  },
+  {
+    id: "esc-writing", project: "p-app", merge_task_id: "task-returnto", source: "revert", state: "confirmed",
+    gap: "test_gap", gap_by: "person", engine: "claude", model: null, areas: ["web/auth"], lane: null,
+    reason: "Old returnTo links stopped redirecting", found_unix: T + hours(15) + mins(34),
+    decided_unix: T + hours(15) + mins(40), decided_by: "person",
+    events: [
+      { id: 1, kind: "detected", from_state: null, to_state: "possible", decided_by: "core", cause: "revert:e41a9c0", at: T + hours(15) + mins(34) },
+      { id: 2, kind: "confirmed", from_state: "possible", to_state: "confirmed", decided_by: "person", cause: "person:40", at: T + hours(15) + mins(40) },
+      { id: 3, kind: "reclassified", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:41", at: T + hours(15) + mins(41) },
+      { id: 4, kind: "check_proposed", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:42", at: T + hours(15) + mins(50) },
+    ],
+    check: {
+      state: "writing", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
+      run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: "task-check-2",
+      proof: null, note: null, attempts: 1, diff_commit: null, diff_hash: null, diff_paths: [],
+      awaiting_approval: false, approved: false, line: "A worker is writing tests/auth/return-to.test.ts.",
+      proposed_unix: T + hours(15) + mins(50), updated_unix: T + hours(15) + mins(58),
+    },
+  },
+  {
+    id: "esc-proof", project: "p-app", merge_task_id: "task-returnto", source: "revert", state: "confirmed",
+    gap: "test_gap", gap_by: "person", engine: "claude", model: null, areas: ["web/auth"], lane: null,
+    reason: "Old returnTo links stopped redirecting", found_unix: T + hours(15) + mins(34),
+    decided_unix: T + hours(15) + mins(40), decided_by: "person",
+    events: [
+      { id: 1, kind: "detected", from_state: null, to_state: "possible", decided_by: "core", cause: "revert:e41a9c0", at: T + hours(15) + mins(34) },
+      { id: 2, kind: "confirmed", from_state: "possible", to_state: "confirmed", decided_by: "person", cause: "person:40", at: T + hours(15) + mins(40) },
+      { id: 3, kind: "reclassified", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:41", at: T + hours(15) + mins(41) },
+      { id: 4, kind: "check_proposed", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:42", at: T + hours(15) + mins(50) },
+    ],
+    check: {
+      state: "writing", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
+      run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: "task-check-2",
+      proof: null, note: null, attempts: 1,
+      diff_commit: "4f1c9a07d3be5a6c218e0b97f5d2a43c6e81b09d", diff_hash: "b3a7f0c95e1d482a6f07c3d9e8b15a4720c6d8f3e91b5a07c4d2f86e30a1b97c",
+      diff_paths: ["tests/auth/return-to.test.ts"], awaiting_approval: true, approved: false,
+      line: "Waiting for a person to approve tests/auth/return-to.test.ts (commit 4f1c9a07d3be, hash b3a7f0c95e1d): the proof runs it as you, unrestricted, so read the file first.",
+      proposed_unix: T + hours(15) + mins(50), updated_unix: T + hours(16) + mins(0),
+    },
+  },
+  {
+    id: "esc-proven", project: "p-app", merge_task_id: "task-returnto", source: "revert", state: "confirmed",
+    gap: "test_gap", gap_by: "person", engine: "claude", model: null, areas: ["web/auth"], lane: null,
+    reason: "Old returnTo links stopped redirecting", found_unix: T + hours(15) + mins(34),
+    decided_unix: T + hours(15) + mins(40), decided_by: "person",
+    events: [
+      { id: 1, kind: "detected", from_state: null, to_state: "possible", decided_by: "core", cause: "revert:e41a9c0", at: T + hours(15) + mins(34) },
+      { id: 2, kind: "confirmed", from_state: "possible", to_state: "confirmed", decided_by: "person", cause: "person:40", at: T + hours(15) + mins(40) },
+      { id: 3, kind: "reclassified", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:41", at: T + hours(15) + mins(41) },
+      { id: 4, kind: "check_proposed", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:42", at: T + hours(15) + mins(50) },
+      { id: 5, kind: "check_proven", from_state: "confirmed", to_state: "confirmed", decided_by: "core", cause: "core:task-check-2:1", at: T + hours(16) + mins(5) },
+    ],
+    check: {
+      state: "proven", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
+      run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: "task-check-2",
+      proof: { escaped_commit: "9be4410a1b2c3d4e5f60718293a4b5c6d7e8f90a", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", fails_on_escape: true, passes_on_fix: true },
+      note: "Queued for merge like any change.", attempts: 1, diff_commit: "4f1c9a07d3be5a6c218e0b97f5d2a43c6e81b09d",
+      diff_hash: "b3a7f0c95e1d482a6f07c3d9e8b15a4720c6d8f3e91b5a07c4d2f86e30a1b97c", diff_paths: ["tests/auth/return-to.test.ts"],
+      awaiting_approval: false, approved: true,
+      line: "Proven: tests/auth/return-to.test.ts fails on the escaped merge and passes on the fix. It goes through the merge queue like any change.",
+      proposed_unix: T + hours(15) + mins(50), updated_unix: T + hours(16) + mins(5),
+    },
+  },
+  {
+    id: "esc-session", project: "p-app", merge_task_id: "task-session", source: "revert", state: "confirmed",
+    gap: "test_gap", gap_by: "person", engine: "codex", model: null, areas: ["web/auth"], lane: null,
+    reason: "People were asked to sign in again after a session refresh", found_unix: T - days(4) + hours(13) + mins(15),
+    decided_unix: T - days(4) + hours(13) + mins(20), decided_by: "person",
+    events: [
+      { id: 1, kind: "detected", from_state: null, to_state: "possible", decided_by: "core", cause: "revert:8e21d47", at: T - days(4) + hours(13) + mins(15) },
+      { id: 2, kind: "confirmed", from_state: "possible", to_state: "confirmed", decided_by: "person", cause: "person:53", at: T - days(4) + hours(13) + mins(20) },
+      { id: 3, kind: "reclassified", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:54", at: T - days(4) + hours(13) + mins(40) },
+      { id: 4, kind: "check_proposed", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:55", at: T - days(4) + hours(14) + mins(20) },
+      { id: 5, kind: "check_failed", from_state: "confirmed", to_state: "confirmed", decided_by: "core", cause: "core:task-check-3:1", at: T - days(4) + hours(14) + mins(50) },
+    ],
+    check: {
+      state: "failed", path: "tests/auth/session.test.ts", asserts: "A refreshed session keeps you signed in",
+      run: "npm test -- tests/auth/session.test.ts", fix_commit: "8e21d47a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: null,
+      proof: { escaped_commit: "3be5a02a1b2c3d4e5f60718293a4b5c6d7e8f90a", fix_commit: "8e21d47a1b2c3d4e5f60718293a4b5c6d7e8f90a", fails_on_escape: false, passes_on_fix: true },
+      note: null, attempts: 1, diff_commit: null, diff_hash: null, diff_paths: [],
+      awaiting_approval: false, approved: false,
+      line: "Refused: tests/auth/session.test.ts passes on the escaped merge too, so it proves nothing. Retry or withdraw.",
+      proposed_unix: T - days(4) + hours(14) + mins(20), updated_unix: T - days(4) + hours(14) + mins(50),
+    },
+  },
+  {
+    id: "esc-withdrawn", project: "p-app", merge_task_id: "task-returnto", source: "revert", state: "confirmed",
+    gap: "test_gap", gap_by: "person", engine: "claude", model: null, areas: ["web/auth"], lane: null,
+    reason: "Old returnTo links stopped redirecting", found_unix: T + hours(15) + mins(34),
+    decided_unix: T + hours(15) + mins(40), decided_by: "person",
+    events: [
+      { id: 1, kind: "detected", from_state: null, to_state: "possible", decided_by: "core", cause: "revert:e41a9c0", at: T + hours(15) + mins(34) },
+      { id: 2, kind: "confirmed", from_state: "possible", to_state: "confirmed", decided_by: "person", cause: "person:40", at: T + hours(15) + mins(40) },
+      { id: 3, kind: "reclassified", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:41", at: T + hours(15) + mins(41) },
+      { id: 4, kind: "check_proposed", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:42", at: T + hours(15) + mins(50) },
+      { id: 5, kind: "check_withdrawn", from_state: "confirmed", to_state: "confirmed", decided_by: "person", cause: "person:56", at: T + hours(16) + mins(10) },
+    ],
+    check: {
+      state: "withdrawn", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
+      run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: null,
+      proof: null, note: null, attempts: 1, diff_commit: null, diff_hash: null, diff_paths: [],
+      awaiting_approval: false, approved: false, line: "Withdrawn by a person.",
+      proposed_unix: T + hours(15) + mins(50), updated_unix: T + hours(16) + mins(10),
+    },
+  },
+];
+
 /** The low-sample repo's one escape: "Update the calendar feed token", marked by you. */
 const lowSeed = (): Seed[] => [
   {
@@ -129,16 +260,18 @@ export function createEscapesMock() {
   let merges = 0;
   let unreadable = false;
   let staleOnce = false;
+  let atLimit = false;
 
   function reset(scenario: Scenario) {
-    if (scenario === "crew-escapes") {
-      rows = seeds();
+    if (scenario === "crew-escapes" || scenario === "crew-escapes-checks" || scenario === "crew-escapes-limit") {
+      rows = scenario === "crew-escapes-checks" ? checkSeeds() : seeds();
       engines = [
         { engine: "claude", merges: 21, possible: 1, confirmed: 2, dismissed: 1, low_sample: false },
         { engine: "codex", merges: 12, possible: 1, confirmed: 1, dismissed: 0, low_sample: false },
         { engine: "opencode", merges: 5, possible: 0, confirmed: 0, dismissed: 0, low_sample: true },
       ];
       merges = 38;
+      atLimit = scenario === "crew-escapes-limit";
     } else if (scenario === "crew-escapes-low") {
       rows = lowSeed();
       engines = [
@@ -194,7 +327,9 @@ export function createEscapesMock() {
       const offset = Number(search.get("offset") ?? 0);
       const page = all.slice(offset, offset + limit);
       const counts = totals();
-      return { status: 200, body: { project: "p-app", as_of: T + hours(17), window_days: 60, merges, low_sample: merges < 10, min_merges: 10, engines, total: all.length, rows: page.map(wire), ...counts } satisfies EscapeLog };
+      // A project at the core's cap: the count in all is the limit, and the page rows are still the newest page.
+      const total = atLimit ? 5000 : all.length;
+      return { status: 200, body: { project: "p-app", as_of: T + hours(17), window_days: 60, merges, low_sample: merges < 10, min_merges: 10, engines, total, rows: page.map(wire), ...counts } satisfies EscapeLog };
     }
     if (method === "GET" && pathname === "/api/crew/escapes/possible") {
       const known = project(search);
@@ -208,6 +343,88 @@ export function createEscapesMock() {
       const row = rows.find((one) => one.id === id);
       if (!row) return { status: 404, body: { code: "not_found", message: "No such escape on this device." } };
       return { status: 200, body: { escape: wire(row), events: row.events, truncated: false, check: row.check ?? null } satisfies EscapeDetail };
+    }
+    // The five check routes: a write moves the check like the service does and answers with the escape and its check.
+    const checkPath = /^\/api\/crew\/escapes\/([A-Za-z0-9_.:-]+)\/check(\/(accept|approve|retry|withdraw))?$/.exec(pathname);
+    if (method === "POST" && checkPath) {
+      const write = (body ?? {}) as Record<string, unknown>;
+      if (write.project !== "p-app") return { status: 404, body: { code: "not_found", message: "No such escape on this device." } };
+      const row = rows.find((one) => one.id === checkPath[1]);
+      if (!row) return { status: 404, body: { code: "not_found", message: "No such escape on this device." } };
+      if (staleOnce) {
+        staleOnce = false;
+        return { status: 409, body: { code: "stale", message: "This check changed since you looked. Reload it and choose again." } };
+      }
+      const seen = (write.seen ?? {}) as { state: string; gap?: string | null; check?: string | null };
+      if (seen.state !== row.state || (seen.gap ?? null) !== (row.gap ?? null) || (seen.check ?? null) !== (row.check?.state ?? null)) {
+        return { status: 409, body: { code: "stale", message: "This check changed since you looked. Reload it and choose again." } };
+      }
+      const kind = checkPath[3] ?? "";
+      const bad = (message: string) => ({ status: 400, body: { code: "invalid", message } });
+      const push = (kind2: string, cause: string) =>
+        row.events.push({ id: row.events.length + 1, kind: kind2 as Seed["events"][number]["kind"], from_state: row.state, to_state: row.state, decided_by: "person", cause, at: T + hours(17) });
+      const answer = () => ({ status: 200, body: { escape: wire(row), check: row.check ?? null } });
+      if (kind === "accept") {
+        if (!row.check) return bad("This escape has no check to accept.");
+        if (row.check.state !== "proposed") return bad("This check is not proposed, so it cannot be accepted now.");
+        if (row.state !== "confirmed") return bad("Only a confirmed escape can have a check written.");
+        row.check.state = "writing";
+        row.check.task_id = "task-check-2";
+        row.check.attempts += 1;
+        row.check.line = `A worker is writing ${row.check.path}.`;
+        row.check.updated_unix = T + hours(17);
+        return answer();
+      }
+      if (kind === "approve") {
+        if (!row.check || row.check.state !== "writing" || !row.check.awaiting_approval) return bad("This check is not waiting for an approval.");
+        if (write.commit !== row.check.diff_commit || write.diff_hash !== row.check.diff_hash)
+          return { status: 409, body: { code: "stale", message: "This check changed since you looked. Reload it and choose again." } };
+        row.check.approved = true;
+        row.check.awaiting_approval = false;
+        row.check.line = `${row.check.path} was approved; the proof is running.`;
+        row.check.updated_unix = T + hours(17);
+        return answer();
+      }
+      if (kind === "retry") {
+        if (!row.check) return bad("This escape has no check to retry.");
+        if (row.check.state !== "failed") return bad("This check is not failed, so it cannot be retried now.");
+        row.check.state = "proposed";
+        row.check.task_id = null;
+        row.check.proof = null;
+        row.check.note = null;
+        row.check.line = `Proposed: add ${row.check.path}. Nothing runs until a person accepts.`;
+        row.check.updated_unix = T + hours(17);
+        push("check_proposed", "retry:82");
+        return answer();
+      }
+      if (kind === "withdraw") {
+        if (!row.check) return bad("This escape has no check to withdraw.");
+        if (row.check.state === "merged") return bad("This check is merged, so it cannot be withdrawn now.");
+        if (row.check.state === "withdrawn") return answer();
+        row.check.state = "withdrawn";
+        row.check.line = "Withdrawn by a person.";
+        row.check.updated_unix = T + hours(17);
+        push("check_withdrawn", "person:83");
+        return answer();
+      }
+      // A proposal: the body names the one test file, what it asserts and how it runs.
+      if (row.state !== "confirmed") return bad("Only a confirmed escape can have a check proposed.");
+      if (row.gap === "tooling_gap") return bad("A tooling gap has no proposal in this version. Change the gap to a test gap to propose a check.");
+      if (row.check && row.check.state !== "withdrawn") return bad("This escape already has a check. Withdraw it before proposing another.");
+      const path = String(write.path ?? "");
+      const asserts = String(write.asserts ?? "");
+      const run = String(write.run ?? "");
+      if (!path || !asserts || !run) return bad("The proposal names the test file, what it asserts and how it runs.");
+      row.check = {
+        state: "proposed", path, asserts, run,
+        fix_commit: (write.fix_commit as string | undefined) ?? "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a",
+        task_id: null, proof: null, note: null, attempts: 0, diff_commit: null, diff_hash: null, diff_paths: [],
+        awaiting_approval: false, approved: false,
+        line: `Proposed: add ${path}. Nothing runs until a person accepts.`,
+        proposed_unix: T + hours(17), updated_unix: T + hours(17),
+      };
+      push("check_proposed", "person:84");
+      return answer();
     }
     if (method === "POST" && suffix) {
       const write = (body ?? {}) as Record<string, unknown>;
