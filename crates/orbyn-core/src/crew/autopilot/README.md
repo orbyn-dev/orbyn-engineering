@@ -29,7 +29,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/tool`, `merge/comment` | Lead requests and the person's Comment through ordinary scoped task admission |
 | `merge/correction` | Core-owned deterministic rollback tasks, retained candidate checkouts and normal reviewed forge publication |
 | `merge/forge_watch` | Remote-tip checks, an optional owned watch future, and durable digest/overdue/break messages |
-| `merge/review_queue` | The after-merge Review queue and the person's answers |
+| `merge/review_queue` | The after-merge Review queue and the person's answers, plus the background runs that stopped without a merge and wait for the person (read only: no answer path) |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
 | `merge/api` | The views the HTTP routes read, the shape checks of the person's answers, and the Preview gate. Decides nothing |
 | `merge/gitops` | The git behind them: scratch checkouts, merge, revert, compare-and-swap of the branch |

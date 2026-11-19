@@ -34,7 +34,7 @@ pub enum BackgroundEnd {
     NeedsReview,
 }
 
-fn parse_wire<T: DeserializeOwned>(text: &str) -> Result<T> {
+pub(super) fn parse_wire<T: DeserializeOwned>(text: &str) -> Result<T> {
     serde_json::from_value(Value::String(text.to_owned()))
         .map_err(|_| CoreError::Internal(format!("a stored background value is unknown: {text}")))
 }
