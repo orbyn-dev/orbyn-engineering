@@ -304,7 +304,7 @@ impl Core {
     /// Takes back a taskless start (run, mode row and lead thread, in one commit) and returns the refusal as an error, or retains a
     /// task-backed start for review: its tasks are held and the retained run is returned. An error of the store unwind is returned
     /// as it is, since the run is still `running` and the caller must know. What follows the commit is best effort and only logged:
-    /// each held task gives up its leases (so the next run is not refused for them) and gets a `NeedsPerson` result with the reason
+    /// each held task gives up its leases (a run that ended `needs_review` leaves none showing as granted, as `end_crew_task` does) and gets a `NeedsPerson` result with the reason
     /// unless it already has one. A task with no run row (that insert is what failed) cannot be given a result, so it has none and
     /// the run's `review_reason` carries the reason.
     pub(super) fn unwind_background_start(

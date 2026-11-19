@@ -631,7 +631,7 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
         w.core.store.crew_task(&task).unwrap().unwrap().state,
         "needs_person"
     );
-    // The task was moved to waiting by the start itself, which wrote no result: the unwind writes exactly one, and a repeat no more.
+    // The task was moved to waiting by the start itself, which wrote no result: the unwind writes exactly one.
     let results = w.core.store.crew_results(&task).unwrap();
     assert_eq!(results.len(), 1, "{results:?}");
     assert_eq!(results[0].state, wire::ResultState::NeedsPerson);
@@ -792,7 +792,7 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
 }
 
 #[tokio::test]
-async fn a_held_task_gives_up_its_leases_so_the_next_run_is_not_refused_for_them() {
+async fn a_held_task_gives_up_its_leases() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
     let id = crew(&w);
     // The lead thread of this harness stands for a run's lead: the task started under it has a lease and a worker.
