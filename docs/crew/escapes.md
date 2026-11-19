@@ -285,7 +285,8 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   accepted) and a damaged row or record.
 - **Withdraw and a merge that is landing.** A withdraw is refused, with no state change and in plain words ("the merge is landing; withdraw after it ends"), when the check's queue entry is `merging` or its forge intent is
   `merge_requested` or `merged`; that read is inside the withdraw's transaction. The merge side re-reads the guard right after it writes `merging` (local queue) or saves `merge_requested` (forge) and undoes the step
-  if the check is no longer proven, so exactly one order can happen and a withdrawn check never lands. A withdraw that committed does not report an error for a queue entry that is already merged or out of the queue:
+  if the check is no longer proven, so exactly one order can happen and a withdrawn check never lands. A queue entry a crash left `merging` is settled at startup from git (docs/crew.md, "A local merge a crash interrupted"), so it
+  does not hold the refusal for good; while a merge is live in the process the refusal stands. A withdraw that committed does not report an error for a queue entry that is already merged or out of the queue:
   the answer's `note` says so ("Already merged: the merge could not be stopped").
 - **The tick** (`run_crew_escape_scan` calls `crew_escape_check_reconcile`, off its critical path, cancelled with the service): it records `merged` once the merge exists, finishes a `writing` check whose task ended
   while the core was down, **unwinds a `writing` check whose task never existed** (the process died between accept and the start) back to `proposed` with a plain reason, **turns down an open queue entry of any task

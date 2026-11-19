@@ -1106,8 +1106,9 @@ fn a_withdraw_is_refused_while_the_merge_lands_and_nothing_changes() {
         .add_merge_entry(&crate::crew::fixtures::merge_entry(&task2, "/p", "x"))
         .unwrap();
     store
-        .set_merge_entry_state(&task2, "merging", None)
-        .unwrap();
+        .set_merge_entry_state(&task2, &crate::store::OPEN_MERGE_STATES, "merging", None)
+        .unwrap()
+        .expect_moved();
     let audits_before = audits(&store).len();
     let refused = store.withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 2);
     assert!(
@@ -1119,7 +1120,10 @@ fn a_withdraw_is_refused_while_the_merge_lands_and_nothing_changes() {
         store.crew_escape_check(&id).unwrap().unwrap().state,
         EscapeCheckState::Writing
     );
-    store.set_merge_entry_state(&task2, "queued", None).unwrap();
+    store
+        .set_merge_entry_state(&task2, &crate::store::OPEN_MERGE_STATES, "queued", None)
+        .unwrap()
+        .expect_moved();
     store
         .withdraw_escape_check(PROJECT, &id, &writing_seen(), AT + 3)
         .unwrap();
