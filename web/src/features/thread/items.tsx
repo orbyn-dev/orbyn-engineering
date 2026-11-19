@@ -1,11 +1,15 @@
-import { PreparationRetryButton } from "./ThreadBanners";
+import { PreparationRetryButton, ResendButton } from "./ThreadBanners";
 import { useWorkspace } from "../../product/state/workspace";
 import { MessageActions } from "./MessageActions";
+import { failureWantsResend } from "./runFailures";
 import {
   Brain,
   ChevronRight,
+  Clock,
   FileDiff as FileDiffIcon,
   OctagonAlert,
+  Terminal,
+  Users,
 } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { Square } from "lucide-react";
@@ -33,7 +37,7 @@ import { workSegments } from "./toolCalls";
 import { PlanRow } from "./trail/PlanRow";
 import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
-import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, ToolItem } from "../../product/timeline/types";
+import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, StoppedItem, StoppedTask, ToolItem } from "../../product/timeline/types";
 
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {
@@ -167,6 +171,8 @@ function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
   const timestampFormat = useUi((state) => state.timestampFormat);
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
+  // A failure with nothing to retry sends the message again instead.
+  const resendable = failureWantsResend(item.text);
   if (item.code === "run_stopped") {
     return (
       <div className="stop-mark" data-minimap={item.key}>
@@ -189,10 +195,51 @@ function Notice({ item }: { item: NoticeItem }) {
       <div>
         <strong>Run failed</strong>
         <p>{item.text}</p>
-        {item.code && !preparation ? <Pill>{item.code}</Pill> : null}
+        {item.code && !preparation && !resendable ? <Pill>{item.code}</Pill> : null}
+        {resendable && threadId ? (
+          <div className="notice-actions">
+            <ResendButton threadId={threadId} seq={item.seq} />
+          </div>
+        ) : null}
         {threadId && item.runId && item.code === "workspace_preparation_failed"
           ? <PreparationRetryButton threadId={threadId} runId={item.runId} /> : null}
       </div>
+    </div>
+  );
+}
+
+/** One task the engine stopped when its run ended: its kind, and its own words for it. */
+function StoppedRow({ task }: { task: StoppedTask }) {
+  const subagent = task.taskType === "local_agent";
+  const shell = task.taskType === "local_bash";
+  const Icon = subagent ? Users : shell ? Terminal : Clock;
+  const kind = subagent ? "Subagent" : shell ? "Shell" : "Background task";
+  return (
+    <div className="stopped-row">
+      <Icon size={14} aria-hidden />
+      <span className="stopped-text">
+        <span className="stopped-kind">{kind}</span>
+        {task.description ? ` · ${task.description}` : null}
+      </span>
+    </div>
+  );
+}
+
+/** The tasks the engine stopped when this run ended, one row each, in the order it reported them. */
+function Stopped({ item }: { item: StoppedItem }) {
+  return (
+    <div className="stopped" data-minimap={item.key}>
+      <div className="stop-mark">
+        <span aria-hidden />
+        <Square size={12} aria-hidden />
+        <span>Stopped when the run ended</span>
+        <span aria-hidden />
+      </div>
+      <section className="steps tc" aria-label="Stopped when the run ended">
+        {item.tasks.map((task) => (
+          <StoppedRow key={task.taskId} task={task} />
+        ))}
+      </section>
     </div>
   );
 }
@@ -417,6 +464,8 @@ function ItemView({ item, live }: { item: Exclude<TimelineEntry, WorkGroup | Tur
       return <Notice item={item} />;
     case "activity":
       return <Activity item={item} />;
+    case "stopped":
+      return <Stopped item={item} />;
   }
 }
 
