@@ -16,8 +16,8 @@ import { useBackground } from "./useBackground";
 
 const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?.short ?? id;
 /** A crew's state as the design draws it: Needs review, Running, Idle, and a stopped crew with its reason. */
-// The designs draw Needs review as a warning, Running as an info chip with a spinner and Idle as neutral. The shared Chip has no info
-// tone or spinner, so Running takes the closest existing tone (dim, like Idle) until the design system gains one.
+// Crew Designs (background-list, background-runs, background-narrow-panel): Needs review and Stopped are amber; Idle and Running are
+// the plain outline chip, and Running has no spinner. The shared Chip's dim tone is that outline chip, so Running and Idle take it.
 export const statusTone = (status: string): "am" | "dim" => (status.startsWith("Stopped") || status === "Needs review" ? "am" : "dim");
 const hasMode = (rows: { mode: Mode | null }[]) => rows.length > 0 && rows.every((row) => row.mode !== null);
 
