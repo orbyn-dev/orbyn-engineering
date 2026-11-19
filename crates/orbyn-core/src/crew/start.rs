@@ -33,6 +33,8 @@ pub(super) struct Links {
     /// Which trigger started it, with its own stable key, for the list of refused starts. Every Crew-started launch must
     /// set it; one that does not is recorded as `unknown` and logged. A person's start has none.
     pub trigger: Option<PausedTrigger>,
+    /// Only a recorded correction review may select its retained candidate checkout.
+    pub correction_subject: Option<String>,
 }
 
 /// One task to start. `prompt` is the whole first prompt when the caller writes it (a reviewer's);
@@ -196,6 +198,21 @@ impl Core {
             prompt,
             links,
         } = launch;
+        let selected_thread = if let Some(subject) = links.correction_subject.as_deref() {
+            if links
+                .review
+                .as_ref()
+                .is_none_or(|review| review.subject_id != subject)
+            {
+                return Err(invalid(
+                    "a corrective checkout is reserved for its recorded review",
+                ));
+            }
+            Some(self.correction_review_thread(thread, subject).await?)
+        } else {
+            None
+        };
+        let thread = selected_thread.as_ref().unwrap_or(thread);
         // Only the core's recorded fix launch may install this internal byte check.
         for check in &key.checks {
             if check.id.as_str() == "chk-fix-touched" || check.params["name"] == "crew-fix-touched"
@@ -562,10 +579,50 @@ impl Core {
             effort: wanted.effort,
             options: Default::default(),
         };
+        let correction_subject = match self
+            .store
+            .crew_review(brief.id.as_str())
+            .map_err(internal)?
+        {
+            Some(review)
+                if self
+                    .store
+                    .crew_correction_for_task(&review.subject_id)
+                    .map_err(internal)?
+                    .is_some() =>
+            {
+                Some(review.subject_id)
+            }
+            _ => None,
+        };
         let thread = self
-            .attach_crew_worker(&lead.id, &task, brief.id.as_str(), base)
+            .attach_crew_worker_at(
+                &lead.id,
+                &task,
+                brief.id.as_str(),
+                base,
+                correction_subject.as_deref(),
+            )
             .await?;
         Ok(json!({ "thread": thread.id, "member": member }))
+    }
+
+    async fn attach_crew_worker_at(
+        &self,
+        lead_id: &str,
+        task: &DelegateTask,
+        task_id: &str,
+        base: Option<&str>,
+        correction_subject: Option<&str>,
+    ) -> Result<orbyn_contracts::Thread, CrewError> {
+        let Some(subject) = correction_subject else {
+            return self.attach_crew_worker(lead_id, task, task_id, base).await;
+        };
+        let selected = self
+            .correction_review_thread(&self.store.thread(lead_id).map_err(internal)?, subject)
+            .await?;
+        self.attach_crew_worker_selected(lead_id, task, task_id, base, Some(&selected.cwd))
+            .await
     }
 
     /// Makes the worker's thread, records it on the task and starts it. A task that ended while this ran (a person's cancel) gets no
@@ -578,19 +635,36 @@ impl Core {
         task_id: &str,
         base: Option<&str>,
     ) -> Result<orbyn_contracts::Thread, CrewError> {
-        let thread = self
-            .delegate_then(lead_id, task, "crew", |child| {
-                let recorded = self
-                    .store
-                    .set_crew_worker(task_id, &child.id, &child.cwd, base);
-                if recorded.is_err()
-                    && let Err(error) = self.store.delete_thread(&child.id, "crew")
-                {
-                    tracing::warn!(%error, "could not remove the worker thread of an ended crew task");
-                }
-                recorded
-            })
-            .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.public_message()))?;
+        self.attach_crew_worker_selected(lead_id, task, task_id, base, None)
+            .await
+    }
+
+    async fn attach_crew_worker_selected(
+        &self,
+        lead_id: &str,
+        task: &DelegateTask,
+        task_id: &str,
+        base: Option<&str>,
+        checkout: Option<&str>,
+    ) -> Result<orbyn_contracts::Thread, CrewError> {
+        let before_start = |child: &orbyn_contracts::Thread| {
+            let recorded = self
+                .store
+                .set_crew_worker(task_id, &child.id, &child.cwd, base);
+            if recorded.is_err()
+                && let Err(error) = self.store.delete_thread(&child.id, "crew")
+            {
+                tracing::warn!(%error, "could not remove the worker thread of an ended crew task");
+            }
+            recorded
+        };
+        let thread = match checkout {
+            Some(checkout) => {
+                self.delegate_then_in_checkout(lead_id, task, "crew", checkout, before_start)
+            }
+            None => self.delegate_then(lead_id, task, "crew", before_start),
+        }
+        .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.public_message()))?;
         if let Err(error) = self.store.move_crew_task(task_id, "running", None) {
             if let Ok(Some(run)) = self.store.crew_run(task_id)
                 && let Err(stop) = self.stop_crew_worker(Some(&run), "core").await

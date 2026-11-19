@@ -142,13 +142,19 @@ impl Core {
                 // can land after the start cleared it. The generic note had the same exposure; the next answer fixes it.
                 let mut paused = false;
                 let admitted: crate::error::Result<_> = async {
-                    let run = self.store.crew_run(task_id)?.ok_or_else(|| CoreError::NotFound("merge lead".into()))?;
+                    let run = self
+                        .store
+                        .crew_run(task_id)?
+                        .ok_or_else(|| CoreError::NotFound("merge lead".into()))?;
                     let thread = self.store.thread(&run.lead_thread_id)?;
-                    self.crew_merge_comment_fix(&thread, task_id).await.map_err(|error| {
-                        paused = paused_by_capacity(&error);
-                        CoreError::Invalid(error.message)
-                    })
-                }.await;
+                    self.crew_merge_comment_fix(&thread, task_id)
+                        .await
+                        .map_err(|error| {
+                            paused = paused_by_capacity(&error);
+                            CoreError::Invalid(error.message)
+                        })
+                }
+                .await;
                 if let Err(error) = admitted {
                     // Admission can include an engine failure. Persist only code-owned text, never its output.
                     let why = if paused {
@@ -164,7 +170,11 @@ impl Core {
                 }
                 Ok(None)
             }
-            ReviewAnswer::Revert if self.store.crew_forge_merge(task_id)?.is_some() => Err(CoreError::Invalid("a forge merge needs a reviewed revert PR; the local compatibility revert cannot change the forge".into())),
+            ReviewAnswer::Revert if self.store.crew_forge_merge(task_id)?.is_some() => {
+                drop(_one_at_a_time);
+                self.prepare_forge_correction(task_id, target, now).await?;
+                Ok(None)
+            }
             ReviewAnswer::Revert => match revert_merge(self, &record, target, now).await? {
                 Ok(commit) => Ok(Some(commit)),
                 Err(why) => Err(CoreError::Invalid(why)),

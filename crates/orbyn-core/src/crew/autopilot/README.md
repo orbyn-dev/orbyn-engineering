@@ -27,6 +27,7 @@ The second half of the slice is the merge queue, the after-merge Review queue an
 | `merge/queue` | The merge queue: score, mode, one merge at a time, checks again on the combined state |
 | `merge/forge`, `merge/evidence` | Durable forge intent, current-head CI receipts and the code-written merge Gate |
 | `merge/tool`, `merge/comment` | Lead requests and the person's Comment through ordinary scoped task admission |
+| `merge/correction` | Core-owned deterministic rollback tasks, retained candidate checkouts and normal reviewed forge publication |
 | `merge/forge_watch` | Remote-tip checks, an optional owned watch future, and durable digest/overdue/break messages |
 | `merge/review_queue` | The after-merge Review queue and the person's answers |
 | `merge/watch` | Watch on main: the repository's checks, the bisect, the revert |
@@ -173,10 +174,11 @@ the way out lives in `resolve_crew_forge_merge` alone.
   It reverts only when the culprit is a merge the crew made, the checks fail with it twice and pass without it, and they pass
   after the revert (so no later merge needs it). Otherwise it records the break, flags the item to the top of the Review queue
   and tells the person (a `person_told` row). Under `off` it only asks. A revert in a repository that defines no checks runs none and is recorded `verified: false`. A repository with no checks is reported `NoChecks`,
-  never healthy. Forge merges trigger a remote-tip scratch watch after a confirmed receipt; a break asks for a reviewed corrective
-  PR instead of moving local main. A repository/commit claim is durable across restart. Digest, overdue and break messages are
+  never healthy. Forge merges trigger a remote-tip scratch watch after a confirmed receipt; a certain break prepares and verifies a corrective
+  task locally and flags the merge with "Choose Revert to publish it". Only a person's Revert queues it, and the watch never
+  pushes, opens, comments on or merges anything on the forge, nor moves local main. A repository/commit claim is durable across restart. Digest, overdue and break messages are
   visible chat messages with atomic dedupe receipts, without provider turns. The optional owned `run_crew_merge_watch` future
-  is off by default, bounded to 60s..24h and 32 targets, and cancellation-owned; it never schedules publication or merging.
+  is off by default, bounded to 60s..24h and 32 targets, and cancellation-owned; it only reads effects already requested and never schedules publication or merging.
 
 ## The always-denied list: what it reads, and what it cannot
 
@@ -267,11 +269,33 @@ including old ones; neither action approves or retries work. Guarded commands re
 - Forge merging needs the person's nonempty `ORBYN_CREW_REQUIRED_CHECKS` JSON list. Only GitHub and GitLab have guarded Crew
   receipts. Idle delivery is off unless Preview and `ORBYN_CREW_WATCH_INTERVAL_SECS` (60..86400) are explicitly enabled; the
   service still makes one read-only startup reconciliation/watch pass with Preview on, and cancels/awaits its single owner on
-  shutdown. Forge breaks and requested reverts require a reviewed corrective
-  PR; automatic forge revert publication is not implemented. Same-vendor
-  Security review awaits the review owner's consent/risk receipt integration and is conservatively held for a person's release.
-  Coverage remains unmeasured. These remaining items stay with [#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460).
+  shutdown. A person's Revert or a certain watch culprit prepares a distinct Core-owned rollback task. Its original scope,
+  protected files, trusted repository checks and exact rollback tree are verified without a provider turn. The ordinary forge
+  queue requires fresh reviewer lane Gates, configured current-head CI and all mode/area holds before publication and merging.
+  Same-vendor Security requires its persisted once-consent or Full exception receipt, a separate lead-tier run and High risk,
+  or a person's merge release; locked lanes remain owed. Coverage and live-forge qualification remain unmeasured
+  ([#460](https://github.com/orbyn-dev/orbyn-engineering/issues/460)).
 - The detector and the list are heuristics (above). Host-admission regressions use synthetic inputs,
   including malformed configuration and legitimate local/private destinations; they are not captured
   engine runs. The three-engine real-run replay campaign and its observed misses remain outstanding
   ([#457](https://github.com/orbyn-dev/orbyn-engineering/issues/457)); no real-run findings are claimed here.
+
+
+### Corrective forge tasks
+
+A rollback has its own immutable schema-56 binding to the original merge, remote, branch, current target tip, candidate and
+registered sibling checkout. The original merge stays in the Review queue until the corrective merge receipt is confirmed. Parent projection and the idempotent area effect are resumed after a crash; completion and the revert ledger row commit together only after both succeeded.
+Revert replies report that persisted state and carry no revert commit while the PR waits. Repeating an answer or restarting
+reuses the same task and publication intent. Unknown creates and merges use the ordinary receipt reconciler without another send.
+
+The retained candidate checkout is the source of normal review, finding checks and lane Gates. It is validated against its
+binding, registered Git common directory, exact HEAD and clean index before admission. A missing or altered checkout, target
+drift, failed check, confirmed finding or ended corrective task asks a person. A deterministic rollback with a finding does
+not launch a model to rewrite the candidate. The lead's checkout is untouched. The watcher proves a reproducible Crew culprit
+and excludes unknown causes; Off asks a person. Startup resumes code-owned verification and processes the ordinary lane.
+
+Each original merge has at most one correction, and startup refuses more than 128 pending bindings. Candidate checkouts remain
+held while their task, PR or review threads need them, including a failed or cancelled task requiring inspection. They are normal
+registered worktrees visible to the app's retention/cleanup policy, never silently deleted by this workflow. Retire them only
+after the task, review threads and forge intent are terminal and their proof no longer needs the checkout. Completed bindings
+and commit receipts remain durable. A confirmed revert projects the original state and area breaker once.

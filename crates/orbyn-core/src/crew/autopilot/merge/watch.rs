@@ -285,7 +285,7 @@ impl Core {
     }
 
     /// Runs the checks at the tip and, if they fail, bisects to the first failing first-parent commit.
-    async fn find_break(
+    pub(super) async fn find_break(
         &self,
         scratch: &Scratch,
         repo: &std::path::Path,
@@ -356,7 +356,7 @@ impl Core {
     }
 }
 
-enum Found {
+pub(super) enum Found {
     Healthy,
     Unsure {
         why: String,
