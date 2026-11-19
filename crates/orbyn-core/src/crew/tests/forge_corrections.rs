@@ -1074,7 +1074,17 @@ async fn cleanup_waits_for_an_unfinished_review_of_the_checkout() {
                 [&reviewer],
             )
             .unwrap();
-        s.w.core.resume_forge_corrections(NOW + 3).await.unwrap();
+        // A review start holds the start lock: cleanup waits for it instead of removing the checkout under it.
+        let starting = s.w.core.crew_starts.lock().await;
+        let mut cleanup = Box::pin(s.w.core.resume_forge_corrections(NOW + 3));
+        tokio::select! {
+            biased;
+            result = &mut cleanup => panic!("cleanup ran while a start held the lock: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {}
+        }
+        assert!(std::path::Path::new(&correction.checkout).exists());
+        drop(starting);
+        cleanup.await.unwrap();
         assert!(!std::path::Path::new(&correction.checkout).exists());
         assert!(!kept().await);
     })

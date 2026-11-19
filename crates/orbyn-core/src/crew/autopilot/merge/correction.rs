@@ -117,7 +117,15 @@ impl Core {
     /// A correction is queued or published only after a person's Revert answer marked it. Agent tools, the person's plain
     /// Queue route and every later step stop here.
     pub(super) fn refuse_unrequested_correction(&self, task: &str) -> Result<()> {
-        if self.store.crew_correction_person_requested(task)? == Some(false) {
+        let refused = match self.store.crew_correction_person_requested(task)? {
+            Some(requested) => !requested,
+            // Fail closed: a Core correction run without its binding is never queued.
+            None => self
+                .store
+                .crew_run(task)?
+                .is_some_and(|run| run.member == "core-correction"),
+        };
+        if refused {
             return Err(CoreError::Invalid(
                 "a corrective task is queued only by a person's Revert answer".into(),
             ));
@@ -641,6 +649,8 @@ impl Core {
         if !present && !kept {
             return self.store.mark_crew_correction_retired(&correction.task_id);
         }
+        // A review start takes this lock before it reads the checkout, so none is admitted between the check and the removal.
+        let _starts = self.crew_starts.lock().await;
         if self.store.crew_correction_checkout_in_use(correction)? {
             return Ok(());
         }
