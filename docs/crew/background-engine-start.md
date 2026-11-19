@@ -1,6 +1,6 @@
 # Engine start for background crews (4h)
 
-Design note. Status: PR 1 (the `manual` event, Run now through the core) built; the budget, the listeners and the Review join remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
+Design note. Status: PR 1 (the `manual` event, Run now through the core, with no route yet) built; the budget, the listeners and the Review join remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
 
 ## 1. What exists today
 
@@ -38,7 +38,7 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core) built; 
 
 All behind `CoreConfig::crew_preview`, tests first with fake engines.
 
-1. Manual start in core: map a file trigger to the stored crew, open the run, lead thread and `crew_start` with `Links::crew_started` and a `Background` trigger; refusals; run-end mapping to stop reasons. Fake-engine tests for capacity pause, no reply and repeated failure.
+1. Manual start in core: start one run of a stored enabled crew by hand (mapping a file trigger to a stored crew is PR 3, the listeners), open the run, lead thread and `crew_start` with `Links::crew_started` and a `Background` trigger; refusals; run-end mapping to stop reasons. Fake-engine tests for capacity pause, no reply and repeated failure.
 2. Budget: turn and minute counting from engine events, cancel at the cap, the daily per-engine budget (one migration). Fake-engine tests for overshoot and the daily refusal.
 3. Listeners: schedule timer and CI-failure watch as one owned future like `run_crew_merge_watch`, opt-in, awaited on shutdown, deduplicated by event key. Fake-forge tests.
 4. Review join: stopped runs in the Review queue, a route for Run now, contracts and `web/src/generated` in the same commit.

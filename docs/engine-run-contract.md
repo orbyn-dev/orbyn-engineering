@@ -15,7 +15,9 @@ breaks one looks like a message with no reply, and the person has to send it twi
    the message "No reply: the engine finished without answering. Send your message again." (see
    `conversation::runs::turn`), and a run whose engine no longer holds the conversation with the message
    "The engine lost this conversation." (see `conversation::runs::execute`). Slash commands and goals are
-   exempt: they may have nothing to say.
+   exempt: they may have nothing to say. A Crew lead, a Crew worker and a subagent are judged by what they leave behind, not by what
+   they say, and are exempt too, except the worker of a background crew's run, whose turn nobody reads live: no reply there ends the run
+   `engine_error`.
 
 ## How each rule is met
 

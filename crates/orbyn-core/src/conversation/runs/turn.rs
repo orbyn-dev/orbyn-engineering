@@ -24,7 +24,7 @@ impl RunManager {
             || self.store.is_crew_thread(&thread.id).unwrap_or(true);
         let expects_reply = RunKind::parse(&message.0) == RunKind::Turn
             && !message.0.trim_start().starts_with('/')
-            && (!judged_by_work || self.store.is_background_worker(&thread.id).unwrap_or(false));
+            && (!judged_by_work || self.store.is_background_worker(&thread.id).unwrap_or(true));
         match self
             .start(thread, scope, message, run_dir, token, &stops.cancel, retry)
             .await

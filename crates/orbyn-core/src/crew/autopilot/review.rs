@@ -130,13 +130,12 @@ impl Core {
             .set_crew_autopilot_mode(&scope_key(scope), mode.name())
     }
 
-    /// Forgets the person's choice for a scope, so it reads as unset again.
-    pub fn clear_crew_autopilot_mode(&self, scope: &ModeScope) -> Result<()> {
-        self.store.clear_crew_autopilot_mode(&scope_key(scope))
-    }
-
-    /// The mode in force: the crew's, else the repository's, else the default, else `Full`.
+    /// The mode in force: the crew's, else the repository's, else the default, else `Full`. A background run's crew is always `Off`: no
+    /// background merge lands without a person is a rule of the code, so no stored row can change it.
     pub fn crew_autopilot_mode(&self, project_id: &str, crew_id: &str) -> Mode {
+        if self.crew_background_lead(crew_id) {
+            return Mode::Off;
+        }
         self.mode_in(&[
             ModeScope::Crew(crew_id.to_owned()),
             ModeScope::Repo(project_id.to_owned()),
