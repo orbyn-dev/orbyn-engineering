@@ -670,8 +670,9 @@ async fn broken_world() -> Setup {
     }))
     .await;
     let good = gitq(&w.repo, &["rev-parse", "HEAD"]).await;
+    // No quote characters: the check runs under `cmd /C` on Windows, where `'` is a literal and a `"` is re-escaped.
     let rules =
-        json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- . ':!.orbyn'")}]});
+        json!({"checks":[{"run":format!("git diff --exit-code {good} HEAD -- . :!.orbyn")}]});
     setup_world(&rules.to_string(), w).await
 }
 
@@ -697,6 +698,7 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
                 json!({"task": s.task, "branch": s.target.branch}),
             )
             .await;
+        eprintln!("DIAG answer: {answer}");
         assert!(!error, "{answer}");
         let correction =
             s.w.core
