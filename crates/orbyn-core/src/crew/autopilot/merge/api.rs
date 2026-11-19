@@ -330,6 +330,13 @@ impl Core {
             .into_iter()
             .filter_map(|(scope, mode, updated_at)| {
                 let mode = mode_wire(Mode::parse(&mode)?);
+                // A background crew's mode is always off (the code's rule), so a stored row for it is not a setting to show.
+                if scope
+                    .strip_prefix("crew:")
+                    .is_some_and(|id| self.crew_background_lead(id))
+                {
+                    return None;
+                }
                 let (scope, id) = match scope.split_once(':') {
                     Some(("repo", id)) => (wire::AutopilotScopeKind::Repo, Some(id.to_owned())),
                     Some(("crew", id)) => (wire::AutopilotScopeKind::Crew, Some(id.to_owned())),
@@ -370,6 +377,11 @@ impl Core {
                 valid_id(id)?;
                 if self.store.crew_tasks_in_crew(id)?.is_empty() {
                     return Err(CoreError::NotFound("crew".into()));
+                }
+                if self.crew_background_lead(id) {
+                    return Err(CoreError::PolicyDenied(
+                        "A background crew's merges always wait for a person; its mode cannot be changed.".into(),
+                    ));
                 }
                 ModeScope::Crew(id.to_owned())
             }

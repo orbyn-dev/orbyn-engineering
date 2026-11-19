@@ -47,9 +47,9 @@ const MAX_LINES: u64 = 2000;
 const WHY_MAX: usize = 300;
 
 /// What a template asks for, in the words of the task. Code-owned: no repository text and no event text is part of it.
-fn outcome(template: &str, branch: Option<&str>) -> String {
+fn outcome(template: &str, branch: Option<&str>) -> Result<String> {
     let on = branch.map_or_else(String::new, |branch| format!(" on branch {branch}"));
-    match template {
+    Ok(match template {
         "fix_failing_ci" => format!(
             "Find why the latest CI run{on} fails and fix it with the smallest change that makes it pass. Do not weaken or remove a check."
         ),
@@ -59,8 +59,12 @@ fn outcome(template: &str, branch: Option<&str>) -> String {
         "security_advisory" => {
             "Find one dependency with a published security advisory and update it to a version that fixes it.".to_owned()
         }
-        _ => unreachable!("an unknown template is refused before a run starts"),
-    }
+        _ => {
+            return Err(CoreError::Invalid(
+                "This crew's template is not one a run can start. Make the crew again from a template.".into(),
+            ));
+        }
+    })
 }
 
 /// The templates a run knows how to ask for. Any other is refused, not run with a vague brief.
@@ -153,6 +157,7 @@ impl Core {
         if !project.trusted {
             return Err(CoreError::FolderUntrusted);
         }
+        let outcome = outcome(&crew.template, branch)?;
         let engine = self.background_lead_engine(&crew.project_id).await?;
         let files = write_entries(std::path::Path::new(&project.path)).await?;
 
@@ -184,7 +189,7 @@ impl Core {
         };
         let draft = json!({
             "kind": "implement",
-            "outcome": outcome(&crew.template, branch),
+            "outcome": outcome,
             "inputs": [],
             "files": files.iter().map(|path| json!({ "path": path, "mode": "write" })).collect::<Vec<_>>(),
             "allowed_effects": ["read_repo", "write_leased", "run_checks"],
@@ -352,7 +357,7 @@ impl Core {
     pub(super) fn enqueue_for_lead(&self, lead_thread_id: &str, text: &str) -> Result<()> {
         if self.crew_background_lead(lead_thread_id) {
             return Err(CoreError::CrewTaskBusy(
-                "A background run is not retried here. Start a new run with Run now.".into(),
+                "A background run's lead thread takes no messages.".into(),
             ));
         }
         self.runs.enqueue(lead_thread_id, text, &[])?;
