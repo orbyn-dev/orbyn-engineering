@@ -26,7 +26,9 @@ pub enum AppMode {
 }
 
 wire_enum! {
+#[derive(Default)]
 pub enum AppUpdatePhase {
+    #[default]
     Idle,
     Available,
     Downloading,
@@ -34,12 +36,6 @@ pub enum AppUpdatePhase {
     Ready,
     Installing,
 }
-}
-
-impl Default for AppUpdatePhase {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 wire! {
