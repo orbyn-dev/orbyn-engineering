@@ -343,7 +343,9 @@ pub struct CrewForgeResolved {
 }
 
 wire! {
-/// What the queue will do next, from what is stored. Conflicts are found when a merge is tried, not forecast.
+/// What the queue will do next, from what is stored, and what a dry run of the queued candidates' merges onto the branch
+/// says: a candidate that conflicts now is reported before the queue reaches it. The dry run is a local `git merge-tree`;
+/// it is not the dependency-graph forecast the plan draws, which needs the router's task graph.
 pub struct AutopilotForecast {
     /// The queued entry that merges first when the queue is processed.
     #[serde(default)]
@@ -352,8 +354,25 @@ pub struct AutopilotForecast {
     pub queued: u32,
     pub blocked: u32,
     pub waiting_for_person: u32,
-    /// There is no conflict forecast from the dependency graph yet.
+    /// The queued candidates the dry run covered, in queue order. A candidate whose repository or commit cannot be read
+    /// locally is left out rather than guessed at, so this can be smaller than `queued + blocked`.
+    pub checked: u32,
+    /// The dry run says at least one covered candidate would conflict with the branch as it stands now.
     pub conflict_forecast: bool,
+    /// The covered candidates that would conflict now, in queue order: which task, its candidate commit and the files the
+    /// dry run reports. Empty when nothing conflicts, or when there was nothing to check locally.
+    pub conflicts: Vec<AutopilotForecastConflict>,
+}
+}
+
+wire! {
+/// One queued candidate a dry-run merge says would conflict with the branch now.
+pub struct AutopilotForecastConflict {
+    pub task_id: String,
+    /// The candidate commit the dry run merged onto the branch tip.
+    pub merge_commit: String,
+    /// The files the dry run reports as conflicting, at most 20.
+    pub paths: Vec<String>,
 }
 }
 

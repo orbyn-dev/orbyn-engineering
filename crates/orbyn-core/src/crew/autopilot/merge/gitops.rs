@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::error::{CoreError, Result};
-use crate::source_control::git::{git, git_hardened, git_hardened_capped, git_raw, text};
+use crate::source_control::git::{
+    git, git_hardened, git_hardened_capped, git_hardened_output_capped, git_raw, text,
+};
 use crate::util::new_id;
 
 /// The identity of a merge or revert commit the crew makes.
@@ -291,6 +293,40 @@ pub async fn first_parents(repo: &Path, from: &str, to: &str) -> Result<Vec<Stri
 /// The first parent of a commit.
 pub async fn parent(repo: &Path, commit: &str) -> Result<String> {
     rev(repo, &format!("{commit}^1")).await
+}
+
+/// The most output a merge dry run reads.
+const MERGE_TREE_CAP: usize = 64 * 1024;
+/// The most conflicting files one candidate reports; a merge can conflict in more, and the screen needs the first few.
+pub const CONFLICT_PATHS_MAX: usize = 20;
+
+/// The files a dry-run merge of `candidate` onto `branch` would report as conflicting, from `git merge-tree`. The trial tree is
+/// written as unreachable objects only: no ref, index or worktree moves. Empty means the merge is clean at this read.
+pub async fn conflict_paths(repo: &Path, branch: &str, candidate: &str) -> Result<Vec<String>> {
+    let (status, out) = git_hardened_output_capped(
+        repo,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            branch,
+            candidate,
+        ],
+        MERGE_TREE_CAP,
+    )
+    .await?;
+    match status.code() {
+        Some(0) => Ok(Vec::new()),
+        // 1 is a conflict; the first line names the trial tree and every line after it is a path.
+        Some(1) => Ok(text(&out)
+            .lines()
+            .skip(1)
+            .take(CONFLICT_PATHS_MAX)
+            .map(str::to_owned)
+            .collect()),
+        _ => Err(CoreError::Git("the merge dry run did not finish".into())),
+    }
 }
 
 /// The paths a candidate changes against where it left `branch`, and the lines added and removed.

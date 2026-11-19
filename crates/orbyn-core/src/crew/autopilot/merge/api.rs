@@ -8,12 +8,13 @@
 //! redacted and has the key's text withheld, and a value that still fails the scan is replaced.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
 use serde_json::Value;
 
+use super::gitops;
 use super::queue::MergeTarget;
 use super::review_queue::ReviewAnswer;
 use super::risk::{
@@ -38,6 +39,9 @@ pub const DIGEST_HOURS_MAX: u32 = 720;
 const MODES_MAX: u32 = 500;
 const ROWS_MAX: usize = 100;
 const RECENT: u32 = 20;
+/// How many queued candidates one queue read dry-runs. Each is one `git merge-tree`, so the bound keeps a page cheap and a
+/// very long queue from turning a read into a many-second call.
+const FORECAST_MAX: u32 = 8;
 const ACTIVE_MAX: u32 = 1000;
 const LATER_MAX: usize = 50;
 const ACTIVE: [&str; 4] = ["queued", "blocked", "waiting", "merging"];
@@ -664,8 +668,9 @@ impl Core {
         })
     }
 
-    /// What waits to merge, in the order queued, one page, with what the queue will do next.
-    pub fn autopilot_merge_queue(&self, page: Page) -> Result<wire::AutopilotMergeQueue> {
+    /// What waits to merge, in the order queued, one page, with what the queue will do next and what a dry run of the
+    /// queued candidates' merges onto the branch says.
+    pub async fn autopilot_merge_queue(&self, page: Page) -> Result<wire::AutopilotMergeQueue> {
         self.crew_preview_only()?;
         let (all, _) = self.store.merge_entries_page(&ACTIVE, ACTIVE_MAX, 0)?;
         let mut scrubs = Scrubs::new(self)?;
@@ -706,6 +711,7 @@ impl Core {
             rows.push(row);
         }
         let count = |state: &str| to_u32(all.iter().filter(|e| e.state == state).count());
+        let (checked, conflicts) = self.queue_conflicts(&all, &mut scrubs).await;
         let forecast = wire::AutopilotForecast {
             next_task_id: all
                 .iter()
@@ -714,7 +720,9 @@ impl Core {
             queued: count("queued"),
             blocked: count("blocked"),
             waiting_for_person: count("waiting"),
-            conflict_forecast: false,
+            checked,
+            conflict_forecast: !conflicts.is_empty(),
+            conflicts,
         };
         Ok(wire::AutopilotMergeQueue {
             entries: slice(&rows, page),
@@ -722,6 +730,65 @@ impl Core {
             next_offset: page.next(rows.len()),
             forecast,
         })
+    }
+
+    /// A dry-run merge of each queued candidate onto its branch tip, up to [`FORECAST_MAX`], so the queue view says what
+    /// would conflict now. A candidate whose repository or commit cannot be read locally is left out, never guessed at.
+    async fn queue_conflicts(
+        &self,
+        entries: &[MergeEntry],
+        scrubs: &mut Scrubs<'_>,
+    ) -> (u32, Vec<wire::AutopilotForecastConflict>) {
+        let mut tips: HashMap<(String, String), Option<String>> = HashMap::new();
+        let mut checked = 0u32;
+        let mut conflicts = Vec::new();
+        for entry in entries
+            .iter()
+            .filter(|e| matches!(e.state.as_str(), "queued" | "blocked"))
+        {
+            if checked >= FORECAST_MAX {
+                break;
+            }
+            // A forge merge is tried on the forge; its candidate may not be in this repository.
+            if !matches!(self.store.crew_forge_merge(&entry.task_id), Ok(None)) {
+                continue;
+            }
+            let key = (entry.repo.clone(), entry.branch.clone());
+            let tip = match tips.get(&key) {
+                Some(tip) => tip.clone(),
+                None => {
+                    let found = gitops::rev(
+                        Path::new(&entry.repo),
+                        &format!("refs/heads/{}", entry.branch),
+                    )
+                    .await
+                    .ok();
+                    tips.insert(key, found.clone());
+                    found
+                }
+            };
+            let Some(tip) = tip else { continue };
+            let Ok(paths) =
+                gitops::conflict_paths(Path::new(&entry.repo), &tip, &entry.candidate).await
+            else {
+                continue;
+            };
+            checked += 1;
+            if paths.is_empty() {
+                continue;
+            }
+            conflicts.push(wire::AutopilotForecastConflict {
+                task_id: entry.task_id.clone(),
+                merge_commit: entry.candidate.clone(),
+                paths: scrubs
+                    .of(&entry.task_id)
+                    .texts(&paths)
+                    .into_iter()
+                    .take(gitops::CONFLICT_PATHS_MAX)
+                    .collect(),
+            });
+        }
+        (checked, conflicts)
     }
 
     /// The watch on main: what it found for each merge, newest first, and the latest breaks and reverts.
@@ -750,7 +817,6 @@ impl Core {
             broken: of("broken"),
             unwatched: of("unknown"),
             recent,
-            bisect_progress: false,
         })
     }
 
