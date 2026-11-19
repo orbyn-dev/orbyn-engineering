@@ -66,6 +66,12 @@ export const stateLabel: Record<EscapeRow["state"], string> = {
 
 export const gapLabel: Record<EscapeGap, string> = { test_gap: "Test gap", tooling_gap: "Tooling gap" };
 
+/** The gap as a chip says it: a gap Crew set is only a suggestion until a person sets it. */
+export const gapText = (gap: EscapeGap, by: EscapeRow["gap_by"]): string => (by === "core" ? `${gapLabel[gap]} · suggested` : gapLabel[gap]);
+
+/** The engine and its areas, with no trailing separator when the read names no area. */
+export const againstOf = (row: Pick<EscapeRow, "engine" | "areas">): string => [row.engine, ...row.areas].join(" · ");
+
 /** The check's own one-plain-sentence line already says where it stands; the chip repeats it at a glance. */
 export const checkStateLabel = (state: string): string => `Check ${state}`;
 

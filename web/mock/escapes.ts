@@ -172,7 +172,7 @@ export function createEscapesMock() {
     dismissed: rows.filter((row) => row.state === "dismissed").length,
   });
 
-  /** The service answers a stale write with plain words; the same act twice changes nothing, whatever was seen. */
+  /** The service answers a stale write with plain words. It answers an unchanged repeat before it checks stale, so callers check that first. */
   const stale = (row: Seed, seen: { state: string; gap?: string | null }) => {
     if (seen.state !== row.state || (seen.gap ?? null) !== (row.gap ?? null)) {
       return { status: 409, body: { code: "stale", message: "This escape changed since you opened it." } };
@@ -220,10 +220,10 @@ export function createEscapesMock() {
         return { status: 409, body: { code: "stale", message: "This escape changed since you opened it." } };
       }
       const seen = (write.seen ?? {}) as { state: string; gap?: string | null };
-      const refuse = stale(row, seen);
-      if (refuse) return refuse;
       if (suffix === "confirm") {
         if (row.state === "confirmed") return { status: 200, body: wire(row) };
+        const refuse = stale(row, seen);
+        if (refuse) return refuse;
         if (row.state === "dismissed") return { status: 400, body: { code: "invalid", message: "This escape is already dismissed, so it cannot be confirmed now." } };
         row.state = "confirmed";
         row.decided_by = "person";
@@ -233,6 +233,8 @@ export function createEscapesMock() {
       }
       if (suffix === "dismiss") {
         if (row.state === "dismissed") return { status: 200, body: wire(row) };
+        const refuse = stale(row, seen);
+        if (refuse) return refuse;
         if (row.state === "confirmed") return { status: 400, body: { code: "invalid", message: "This escape is already confirmed, so it cannot be dismissed now." } };
         row.state = "dismissed";
         row.decided_by = "person";
@@ -242,8 +244,10 @@ export function createEscapesMock() {
       }
       const gap = write.gap;
       if (gap !== "test_gap" && gap !== "tooling_gap") return { status: 400, body: { code: "invalid", message: "The gap is test_gap or tooling_gap." } };
+      if (row.gap === gap && row.gap_by === "person") return { status: 200, body: wire(row) };
+      const refuse = stale(row, seen);
+      if (refuse) return refuse;
       if (row.state === "dismissed") return { status: 400, body: { code: "invalid", message: "A dismissed escape’s gap cannot be set." } };
-      if (row.gap === gap) return { status: 200, body: wire(row) };
       row.gap = gap;
       row.gap_by = "person";
       row.events.push({ id: row.events.length + 1, kind: "reclassified", from_state: row.state, to_state: row.state, decided_by: "person", cause: "person:72", at: T + hours(17) });

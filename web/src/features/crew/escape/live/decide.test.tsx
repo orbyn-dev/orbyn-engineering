@@ -41,7 +41,7 @@ describe("possible escapes, and the two decisions that are a person’s alone", 
     expect(screen.getByText(/A later fix commit changed lines this merge added/)).toBeInTheDocument();
     expect(screen.getAllByText(/It becomes a confirmed escape and counts against/)).toHaveLength(2);
     expect(screen.getByText(/Confirmed escapes/)).toBeInTheDocument();
-    expect(screen.getByText(/3 in the last 60 days/)).toBeInTheDocument();
+    expect(screen.getByText(/3 in all/)).toBeInTheDocument();
   });
 
   it("a Confirm click sends the person's own write with what was seen, and reads again", async () => {

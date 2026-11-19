@@ -5,7 +5,7 @@ import type { EscapeRow } from "../../../../generated/EscapeRow";
 import { Menu, type MenuItem } from "../../../../ui/Menu";
 import { Presence } from "../../../../ui/Presence";
 import { Ic } from "../../shared/parts";
-import { dayMoment, gapLabel, nameOf, sourceLabel, stateLabel } from "./model";
+import { dayMoment, gapText, nameOf, sourceLabel, stateLabel } from "./model";
 
 /** The state chip: a possible escape is neutral, a confirmed one strong, a dismissed one plain. */
 export function StateChip({ row }: { row: Pick<EscapeRow, "state"> }) {
@@ -13,8 +13,8 @@ export function StateChip({ row }: { row: Pick<EscapeRow, "state"> }) {
   return <span className={`cx-apchip${strong}`}>{stateLabel[row.state]}</span>;
 }
 
-export function GapChip({ gap }: { gap: EscapeGap | null }) {
-  return gap ? <span className="cx-apchip">{gapLabel[gap]}</span> : <small>Not set</small>;
+export function GapChip({ gap, by }: { gap: EscapeGap | null; by: EscapeRow["gap_by"] }) {
+  return gap ? <span className="cx-apchip">{gapText(gap, by)}</span> : <small>Not set</small>;
 }
 
 /** The project chip. With several projects it opens a short menu: the one shown is checked, and choosing another reads that project. */
@@ -76,11 +76,11 @@ function Row({ row, onOpen }: { row: EscapeRow; onOpen(id: string): void }) {
         ) : null}
       </div>
       <div>
-        <GapChip gap={row.gap} />
+        <GapChip gap={row.gap} by={row.gap_by} />
       </div>
       <div>
         <b>{row.engine}</b>
-        <small>{row.areas.join(" · ")}</small>
+        {row.areas.length ? <small>{row.areas.join(" · ")}</small> : null}
       </div>
     </>
   );

@@ -6,7 +6,7 @@ import type { EscapeRow } from "../../../../generated/EscapeRow";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
-import { count, dayMoment, sourceLabel, WHY } from "./model";
+import { againstOf, count, dayMoment, sourceLabel, WHY } from "./model";
 import { EscapeTable, ProjectChip, StateChip } from "./parts";
 import { escapeApi } from "./api";
 import { useEscapeLog, usePossible } from "./useEscapes";
@@ -16,7 +16,7 @@ const why = (failure: ApiFailure) => (failure.code === NETWORK_ERROR ? failure.m
 
 /** One possible escape: a question, not a failure, so it is neutral and blocks nothing. The two acts are the person's alone. */
 function Card({ row, busy, onDecide }: { row: EscapeRow; busy: boolean; onDecide(id: string, kind: "confirm" | "dismiss"): void }) {
-  const against = `${row.engine} · ${row.areas.join(" · ")}`;
+  const against = againstOf(row);
   return (
     <div className="cx-fbx">
       <div className="cx-t14r">
@@ -24,12 +24,14 @@ function Card({ row, busy, onDecide }: { row: EscapeRow; busy: boolean; onDecide
         <StateChip row={row} />
         <span className="cx-apchip">{sourceLabel(row.source)}</span>
       </div>
-      <p>{row.engine} · {row.areas.join(" · ")} · found {dayMoment(row.found_unix)}</p>
+      <p>{against} · found {dayMoment(row.found_unix)}</p>
       <div className="cx-fkv">
         <span>Why this one</span>
         <b>{row.reason ?? row.line}</b>
         <span>If you confirm</span>
-        <b>It becomes a confirmed escape and counts against {against}. You can then set its gap and ask Crew to propose a check</b>
+        <b>
+          It becomes a confirmed escape and counts against {against}. You can then set its gap. Asking Crew to propose a check is not built <Planned why={WHY.check} />
+        </b>
         <span>If you dismiss</span>
         <b>Nothing is counted and this merge is not offered again. There is no undo in v1</b>
       </div>
@@ -137,10 +139,20 @@ export function LiveEscapePossible({ project, name, projects, onPick }: { projec
               ))}
             </>
           ) : null}
+          {confirmed.status === "error" ? (
+            <div className="cx-cwbn cx-red" style={{ margin: "0" }} role="alert">
+              <Ic n="alert" sm />
+              <span>Can’t read the confirmed escapes on this device. Nothing was changed, and no escape was counted or removed.</span>
+              <span className="cx-acts">
+                <button type="button" className="cx-btn" onClick={() => void confirmed.reload()}>Try again</button>
+              </span>
+            </div>
+          ) : null}
           {confirmed.status === "ready" ? (
             <>
               <h5 className="cx-t10h5">
-                Confirmed escapes <span className="cx-t10r">{count(confirmed.data.confirmed)} in the last {confirmed.data.window_days} days</span>
+                Confirmed escapes <span className="cx-t10r">{count(confirmed.data.total)} in all</span>
+                {confirmed.data.total > confirmed.data.rows.length ? <span className="cx-t10r"> · Showing {count(confirmed.data.rows.length)} of {count(confirmed.data.total)}</span> : null}
               </h5>
               <EscapeTable
                 rows={confirmed.data.rows}
