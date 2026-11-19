@@ -1,4 +1,4 @@
-import { AppWindow, FileCode, FileDiff, Quote, SquareTerminal, X } from "lucide-react";
+import { AppWindow, FileCode, FileDiff, MessageSquare, Quote, SquareTerminal, X } from "lucide-react";
 import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Dialog } from "../../../ui/Dialog";
@@ -14,6 +14,7 @@ const ICONS = {
   review: FileDiff,
   annotation: AppWindow,
   citation: Quote,
+  thread: MessageSquare,
 } as const;
 
 /**
