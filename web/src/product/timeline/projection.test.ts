@@ -230,3 +230,51 @@ describe("applyEvents", () => {
     expect(log.items[0]).toMatchObject({ kind: "activity", activityType: "search" });
   });
 });
+
+describe("background.stopped", () => {
+  const stopped = (seq: number, value: JsonValue, runId = "r"): WireThreadEvent => ({
+    ...ev(seq, { type: "CUSTOM", name: "background.stopped", value }),
+    run_id: runId,
+  });
+
+  it("gathers one run's stopped tasks into one item, in arrival order", () => {
+    const log = applyEvents("t", emptyLog, [
+      stopped(1, { taskId: "s1", taskType: "local_bash", description: "pnpm dev --port 5173" }),
+      stopped(2, { taskId: "a1", taskType: "local_agent", description: "Review callers of after()" }),
+      stopped(3, { taskId: "w1", taskType: "local_workflow", description: "" }),
+    ]);
+    expect(log.items).toHaveLength(1);
+    expect(log.items[0]).toMatchObject({
+      kind: "stopped",
+      key: "stopped:r",
+      runId: "r",
+      tasks: [
+        { taskId: "s1", taskType: "local_bash", description: "pnpm dev --port 5173" },
+        { taskId: "a1", taskType: "local_agent", description: "Review callers of after()" },
+        { taskId: "w1", taskType: "local_workflow", description: null },
+      ],
+    });
+  });
+
+  it("keeps each run's stopped tasks under that run", () => {
+    const log = applyEvents("t", emptyLog, [
+      stopped(1, { taskId: "s1", taskType: "local_bash", description: "pnpm dev" }, "r1"),
+      stopped(2, { taskId: "s2", taskType: "local_bash", description: "npm test" }, "r2"),
+    ]);
+    expect(log.items.map((item) => item.kind)).toEqual(["stopped", "stopped"]);
+    expect(log.items[0]).toMatchObject({ key: "stopped:r1", runId: "r1", tasks: [{ taskId: "s1" }] });
+    expect(log.items[1]).toMatchObject({ key: "stopped:r2", runId: "r2", tasks: [{ taskId: "s2" }] });
+  });
+
+  it("ignores a stopped event with no task id", () => {
+    const log = applyEvents("t", emptyLog, [stopped(1, { taskType: "local_agent" })]);
+    expect(log.items).toHaveLength(0);
+  });
+
+  it("ignores a custom event with another name", () => {
+    const log = applyEvents("t", emptyLog, [
+      ev(1, { type: "CUSTOM", name: "background.started", value: { taskId: "s1", taskType: "local_bash" } }),
+    ]);
+    expect(log.items).toHaveLength(0);
+  });
+});

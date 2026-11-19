@@ -90,6 +90,8 @@ const staysVisible = (item: ThreadItem): boolean => {
       return item.tone === "error" || item.code === "run_stopped";
     case "diff":
       return true;
+    case "stopped":
+      return true;
     case "message":
       return item.role === "user";
     default:
