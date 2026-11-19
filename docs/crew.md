@@ -952,15 +952,18 @@ background crew is per device and is not shared through git. A repository's own 
   disable, and the stop it causes, are logged with the person as actor and source; a run's start, spend and other ends as `crew`.
 - **Routes**, all under `/api/crew/background`, behind the Preview flag like every Crew route (404 with it off, 401 without the token, writes
   refused for a remote viewer and listed in `crew::changes` so N1 refuses an agent's request): reads `GET /` (`project`, `limit`, `offset`),
-  `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
-  There is no route that starts a run, spends, merges or reverts.
-
-What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; a later
-slice will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
-lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
-review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
-limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
-prompt and checks are not defined yet.
+  `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and
+  `/{id}/run-now`, which starts one run of an enabled crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a
+  Low Crew-started task review capacity may pause). There is no route that spends, merges or reverts.
+- **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a
+  failure), and `GET /api/crew/autopilot/review` joins it beside the merges as `background_runs`: the run's state, stop reason, plain reason,
+  spend and budget, oldest first. It carries no merge, commit or risk, because it has none, and it is not listed while running or when the
+  person's own switch stopped it. **The person's answer to one is not built:** no route settles or dismisses a waiting background review, so
+  that row is read-only.
+- **What is not built:** **no trigger fires on its own** (the schedule timer and the CI watch are later slices), so a run exists only when a
+  person presses Run now or the core's run functions are called (tests do). The person's answer to a waiting run, and a background crew with
+  merge authority, wait for later work. Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is
+  gone); crews are per device; a template's prompt and checks are not defined yet.
 
 **As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
 `background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
