@@ -1,5 +1,8 @@
 //! Chrome DevTools Protocol against an installed Chrome or Edge, using a
 //! dedicated profile directory so the user's own browser data is never touched.
+//! Starting the process and waiting for its debugging endpoint lives in `start`.
+
+mod start;
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -18,11 +21,6 @@ use super::browser_stderr::BrowserStderr;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
 
-const START_TIMEOUT: Duration = Duration::from_secs(20);
-/// A busy machine can start the browser slower than one bounded wait allows. A browser
-/// still running when that wait ends is slow, not broken, so it gets one more bounded
-/// wait; one that exited is a real failure and is reported at once.
-const START_WAITS: u32 = 2;
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 /// A capture is normally a few milliseconds. One sent as the page swaps documents can go
@@ -348,35 +346,7 @@ impl BrowserSession {
                 .take()
                 .ok_or_else(|| failed("browser stderr is missing"))?,
         );
-        let url = {
-            let mut attempt = 1;
-            loop {
-                match wait_for_port(&mut child, &port_file, START_TIMEOUT).await {
-                    StartWait::Opened(url) => break url,
-                    // Slow is not failed: the live browser gets a second bounded wait.
-                    StartWait::TimedOut if attempt < START_WAITS => {
-                        attempt += 1;
-                        tracing::warn!(
-                            attempt,
-                            "the browser has not opened its debugging port yet; waiting again"
-                        );
-                    }
-                    StartWait::TimedOut => {
-                        let detail = stderr.failure_text().await;
-                        let error = failed("the browser did not open its debugging port");
-                        return Err(CoreError::Computer(format!(
-                            "{error}; startup flags: {flags:?}; stderr: {detail}"
-                        )));
-                    }
-                    StartWait::Exited(error) => {
-                        let detail = stderr.failure_text().await;
-                        return Err(CoreError::Computer(format!(
-                            "{error}; startup flags: {flags:?}; stderr: {detail}"
-                        )));
-                    }
-                }
-            }
-        };
+        let url = start::wait_until_ready(&mut child, &port_file, &mut stderr, &flags).await?;
         stderr.startup_complete();
         let mut session = Self::connect(&url, Some(child)).await?;
         session._stderr = Some(stderr);
@@ -903,48 +873,6 @@ impl BrowserSession {
     }
 }
 
-async fn read_port_file(path: &Path) -> String {
-    loop {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            let mut lines = text.lines();
-            if let (Some(port), Some(endpoint)) = (lines.next(), lines.next())
-                && !port.is_empty()
-            {
-                return format!("ws://127.0.0.1:{port}{endpoint}");
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-/// What one bounded wait for the debugging port found.
-enum StartWait {
-    /// The browser wrote its endpoint; the URL is ready to connect to.
-    Opened(String),
-    /// The browser is still running but has not written the port yet.
-    TimedOut,
-    /// The browser stopped before it could be used.
-    Exited(CoreError),
-}
-
-async fn wait_for_port(child: &mut ManagedChild, path: &Path, limit: Duration) -> StartWait {
-    let waited = tokio::time::timeout(limit, async {
-        tokio::select! {
-            biased;
-            status = child.wait() => StartWait::Exited(match status {
-                Ok(status) => failed(format!("the browser exited before opening its debugging port: {status}")),
-                Err(error) => failed(format!("the browser exited before opening its debugging port: {error}")),
-            }),
-            url = read_port_file(path) => StartWait::Opened(url),
-        }
-    })
-    .await;
-    match waited {
-        Ok(outcome) => outcome,
-        Err(_) => StartWait::TimedOut,
-    }
-}
-
 #[cfg(test)]
 mod frame_tests;
 
@@ -1336,93 +1264,6 @@ mod tests {
         }
         drop(session);
         server.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn browser_exit_during_startup_is_reported_without_waiting_for_timeout() {
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .arg("--list")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = ManagedChild::spawn(command).unwrap();
-        let path = std::env::temp_dir().join(format!("missing-port-{}", crate::util::new_id()));
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            wait_for_port(&mut child, &path, START_TIMEOUT),
-        )
-        .await
-        .unwrap();
-        match result {
-            StartWait::Exited(error) => assert!(
-                error
-                    .to_string()
-                    .contains("exited before opening its debugging port"),
-                "{error}"
-            ),
-            _ => panic!("a browser that exited is a failure, not a slow start"),
-        }
-    }
-
-    /// A browser that is slow to start is waited on again rather than reported broken.
-    #[cfg(any(unix, windows))]
-    #[tokio::test]
-    async fn a_slow_browser_gets_a_second_bounded_wait() {
-        let path = std::env::temp_dir().join(format!("slow-port-{}", crate::util::new_id()));
-        let mut child = slow_browser(&path).await;
-        let first = wait_for_port(&mut child, &path, Duration::from_millis(300)).await;
-        assert!(
-            matches!(first, StartWait::TimedOut),
-            "a live browser without its port is a slow start, not a failure"
-        );
-        let second = wait_for_port(&mut child, &path, Duration::from_secs(5)).await;
-        match second {
-            StartWait::Opened(url) => {
-                assert_eq!(url, "ws://127.0.0.1:1234/devtools/browser/fixture")
-            }
-            _ => panic!("the second bounded wait must read the endpoint the browser wrote"),
-        }
-        drop(child);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    /// The browser process a slow-start test needs: alive, and it writes the port after a
-    /// delay long enough for the first wait to end. It exits long after the test does.
-    #[cfg(unix)]
-    async fn slow_browser(path: &Path) -> ManagedChild {
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(format!(
-                "sleep 1; printf '1234\\n/devtools/browser/fixture\\n' > '{}'; sleep 30",
-                path.display()
-            ))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        command.process_group(0);
-        ManagedChild::spawn(command).unwrap()
-    }
-
-    #[cfg(windows)]
-    async fn slow_browser(path: &Path) -> ManagedChild {
-        let mut command = Command::new("cmd");
-        command
-            .args([
-                "/C",
-                &format!(
-                    "ping -n 3 127.0.0.1 >NUL & echo 1234>\"{0}\" & echo /devtools/browser/fixture>>\"{0}\" & ping -n 30 127.0.0.1 >NUL",
-                    path.display()
-                ),
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        ManagedChild::spawn(command).unwrap()
     }
 
     #[tokio::test]
