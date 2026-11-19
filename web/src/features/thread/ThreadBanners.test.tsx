@@ -2,8 +2,34 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
-import type { Thread } from "../../api/types";
-import { LimitBanner } from "./ThreadBanners";
+import type { AgUiEvent, Thread, WireThreadEvent } from "../../api/types";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { applyEvents, emptyLog } from "../../product/timeline/projection";
+import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
+
+const wire = (seq: number, event: AgUiEvent): WireThreadEvent => ({
+  seq,
+  thread_id: "t",
+  run_id: "r",
+  ts: "2026-11-01T00:00:00Z",
+  event,
+});
+
+const prompt = [
+  wire(1, { type: "TEXT_MESSAGE_START", messageId: "u1", role: "user" }),
+  wire(2, { type: "TEXT_MESSAGE_CONTENT", messageId: "u1", delta: "Find out why login sends people back to /home." }),
+  wire(3, { type: "TEXT_MESSAGE_END", messageId: "u1" }),
+];
+
+const failedLog = (message: string) =>
+  useThreadLogs.setState({
+    logs: {
+      t: applyEvents("t", emptyLog, [
+        ...prompt,
+        wire(9, { type: "RUN_ERROR", message, code: "engine_failed" }),
+      ]),
+    },
+  });
 
 const reset = "2100-01-01T00:00:00Z";
 const thread: Thread = { id: "t", project_id: "p", title: "Limited", engine: "codex", model: null,
@@ -38,4 +64,31 @@ it("keeps the reset snooze action for a thread not snoozed until that instant", 
   render(<LimitBanner thread={thread} />);
   await user.click(screen.getByRole("button", { name: "Snooze until reset" }));
   expect(patch).toHaveBeenCalledExactlyOnceWith("t", { snoozed_until: reset });
+});
+
+const failed: Thread = { ...thread, lifecycle: { ...thread.lifecycle!, limit: undefined } };
+
+describe("ThreadErrorBanner", () => {
+  it("drops Retry from a no-reply failure; Resend on the failed run replaces it", () => {
+    failedLog("No reply: the engine finished without answering. Send your message again.");
+    render(<ThreadErrorBanner thread={failed} />);
+    expect(screen.getByText("No reply: the engine finished without answering. Send your message again.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Dismiss error" })).toBeTruthy();
+  });
+
+  it("drops Retry from a lost-conversation failure", () => {
+    failedLog("The engine lost this conversation.");
+    render(<ThreadErrorBanner thread={failed} />);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("keeps Retry for another failure and sends the prompt again", async () => {
+    const user = userEvent.setup();
+    const run = vi.spyOn(api, "startRun").mockResolvedValue({} as never);
+    failedLog("Codex exited unexpectedly with status 137.");
+    render(<ThreadErrorBanner thread={failed} />);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(run).toHaveBeenCalledExactlyOnceWith("t", "Find out why login sends people back to /home.");
+  });
 });
