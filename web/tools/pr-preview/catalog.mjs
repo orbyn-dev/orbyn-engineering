@@ -658,4 +658,9 @@ export const FRAMES = {
   "escape-confirmed": { route: "#/preview/crew/escape-confirmed?id=esc-session", scenario: "crew-escapes" },
   "escape-dismissed": { route: "#/preview/crew/escape-dismissed?id=esc-docs", scenario: "crew-escapes" },
   "escape-gap": { route: "#/preview/crew/escape-gap?id=esc-session", scenario: "crew-escapes", steps: [click("button", "Set the gap…")] },
+  /** Crew, the reviewer backtest (Crew Designs v23), on the real 4n routes over the mock's crew-backtest scenarios. A report
+   *  frame names its run in the hash, the way an escape detail names its escape. The estimate draws its dialog open. */
+  "backtest-estimate": { route: "#/preview/crew/backtest-estimate", scenario: "crew-backtest", wait: 2500 },
+  "backtest-report": { route: "#/preview/crew/backtest-report?id=run-4n", scenario: "crew-backtest-report" },
+  "backtest-stopped": { route: "#/preview/crew/backtest-stopped?id=run-stopped", scenario: "crew-backtest-stopped" },
 };

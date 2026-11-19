@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { BACKTEST_LIVE_FRAMES } from "../src/features/crew/backtest/live/screens";
 import { BACKTEST_FRAMES } from "../src/features/crew/backtest/names";
 import { CAPACITY_FRAMES } from "../src/features/crew/capacity/names";
 import { ESCAPE_FRAMES } from "../src/features/crew/escape/names";
@@ -17,7 +18,12 @@ const ESCAPE_DRAWN_FRAMES = ESCAPE_FRAMES.filter(
   (frame) => !(ESCAPE_LIVE_FRAMES as readonly string[]).includes(frame),
 );
 
-for (const frame of [...ESCAPE_DRAWN_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES]) {
+/** Backtest screens that read the dev mock: the estimate, the report and the stopped report. */
+const BACKTEST_DRAWN_FRAMES = BACKTEST_FRAMES.filter(
+  (frame) => !(BACKTEST_LIVE_FRAMES as readonly string[]).includes(frame),
+);
+
+for (const frame of [...ESCAPE_DRAWN_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_DRAWN_FRAMES, ...SETTINGS_FRAMES]) {
   test(`${frame} draws on sample data, makes no Crew request and has no live control`, async ({ page }) => {
     const requests: string[] = [];
     page.on("request", (request) => {
@@ -69,6 +75,32 @@ for (const frame of ESCAPE_LIVE_FRAMES) {
     await expect(LIVE_PROOF[frame](page).first()).toBeVisible();
     await expect(page.getByText("Sample data.")).toHaveCount(0);
     expect(reads.length, "at least one GET to /api/crew/escapes").toBeGreaterThan(0);
+    expect(writes).toEqual([]);
+  });
+}
+
+/** What each live backtest frame must show once it has read the mock: text only a read can fill, never sample copy. */
+const BACKTEST_LIVE_PROOF: Record<(typeof BACKTEST_LIVE_FRAMES)[number], (page: Page) => ReturnType<Page["getByText"]>> = {
+  "backtest-estimate": (page) => page.getByText("64 merged pull requests are 30 days old or more."),
+  "backtest-report": (page) => page.getByText(/^By lane/),
+  "backtest-stopped": (page) => page.getByText("You stopped this backtest."),
+};
+
+for (const frame of BACKTEST_LIVE_FRAMES) {
+  test(`${frame} runs on the dev mock: it reads /api/crew/backtest, sends no write and shows live content`, async ({ page }) => {
+    const entry = (FRAMES as Record<string, { route: string; scenario?: string }>)[frame]!;
+    expect(entry, `${frame} is in the pr-preview catalog`).toBeTruthy();
+    const reads: string[] = [];
+    const writes: string[] = [];
+    page.on("request", (request) => {
+      if (!request.url().includes("/api/crew/backtest")) return;
+      (request.method() === "GET" ? reads : writes).push(`${request.method()} ${request.url()}`);
+    });
+    await page.goto(`/__mock/scenario/${entry.scenario ?? "default"}`);
+    await page.goto(`/${entry.route}`);
+    await expect(BACKTEST_LIVE_PROOF[frame](page).first()).toBeVisible();
+    await expect(page.getByText("Sample data.")).toHaveCount(0);
+    expect(reads.length, "at least one GET to /api/crew/backtest").toBeGreaterThan(0);
     expect(writes).toEqual([]);
   });
 }

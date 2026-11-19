@@ -25,6 +25,7 @@ import type {
   WorkspaceStatus,
 } from "../src/api/types.ts";
 import { createAccountMock } from "./account.ts";
+import { createBacktestMock } from "./backtest.ts";
 import { createBackgroundMock } from "./background.ts";
 import { createCrewMock } from "./crew.ts";
 import { createEscapesMock } from "./escapes.ts";
@@ -62,6 +63,7 @@ export type Scenario =
   /** Settings › Crew › Worker provider: "crew-worker-provider-any" starts on Any provider, "crew-worker-provider-fail" refuses the write. Pinned-ref block: "crew-classes-pinned". */
   /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". Background crews: "crew-background" (the four the designs draw), "crew-background-empty". */
   /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale". */
+  /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
@@ -147,6 +149,7 @@ export function createMockApi(options: MockOptions = {}) {
   const accountMock = createAccountMock();
   const crewMock = createCrewMock();
   const escapesMock = createEscapesMock();
+  const backtestMock = createBacktestMock();
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
@@ -158,6 +161,7 @@ export function createMockApi(options: MockOptions = {}) {
     accountMock.reset(next === "account");
     crewMock.reset(next);
     escapesMock.reset(next);
+    backtestMock.reset(next);
     backgroundMock.reset(next);
     reviewControlsMock.reset();
     secretsMock.reset();
@@ -1147,7 +1151,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
+      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */
