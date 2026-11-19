@@ -20,10 +20,10 @@ export const WHY = {
  * say the limit is reached without inventing a state the read does not carry. */
 export const ESCAPES_LIMIT = 5000;
 
-/** A refused write in the service’s own words: a stale act adds “Look again.”, a network failure its own message. */
+/** A refused write in the service’s own words: a stale act adds “Look again.” unless the message already says it, a network failure its own message. */
 export const refusalOf = (error: unknown): string => {
   const failure = error instanceof ApiFailure ? error : new ApiFailure("unexpected", "Something went wrong.", 0);
-  return failure.code === NETWORK_ERROR ? failure.message : failure.code === "stale" ? `${failure.message} Look again.` : `${failure.code}: ${failure.message}`;
+  return failure.code === NETWORK_ERROR ? failure.message : failure.code === "stale" ? (/again\.$/.test(failure.message) ? failure.message : `${failure.message} Look again.`) : `${failure.code}: ${failure.message}`;
 };
 
 export const count = (n: number) => n.toLocaleString("en-US");

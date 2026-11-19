@@ -106,7 +106,7 @@ function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: Escap
  * The escape's check, read as it stands. Its own frames (`escape-check-*`) draw each state with its acts in ./check; the
  * merged state keeps this card, whose proof row carries what the read says. The person's acts on a check are theirs.
  */
-function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct): void }) {
+function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct, done?: () => void): void }) {
   if (check) {
     if (check.state !== "merged") return <CheckCard row={row} check={check} busy={busy} onAct={act} />;
     return (
@@ -256,7 +256,7 @@ function GapDialog({ row, busy, onClose, onSet }: { row: EscapeRow; busy: boolea
           <div>
             <b>Tooling gap</b>
             <small>
-              No cheap test could catch it. It is logged with no proposal in v1 <Planned why={WHY.check} />
+              No cheap test could catch it. It is logged with no proposal in v1 <Planned why={WHY.tooling} />
             </small>
           </div>
         </button>
@@ -324,9 +324,9 @@ function NamedEscape({ id }: { id: string }) {
   };
 
   /** A person's act on the check: accept, approve, retry or withdraw, each one write with what they saw. */
-  const act = (kind: CheckAct) => {
+  const act = (kind: CheckAct, done?: () => void) => {
     const one = read.status === "ready" ? read.data : null;
-    if (!row || !one) return;
+    if (!row || !one || sending.current) return;
     const seen = { state: row.state, gap: row.gap, check: one.check?.state ?? null };
     const send =
       kind === "accept"
@@ -339,16 +339,21 @@ function NamedEscape({ id }: { id: string }) {
               ? escapeApi.approve(id, { project: row.project, seen, commit: one.check.diff_commit, diff_hash: one.check.diff_hash })
               : null;
     if (!send) return;
+    sending.current = true;
     setBusy(true);
     setRefused(null);
     void send
       .then(() => {
+        sending.current = false;
         setBusy(false);
+        done?.();
         void read.reload();
       })
       .catch((error: unknown) => {
+        sending.current = false;
         setBusy(false);
         setRefused(refusalOf(error));
+        done?.();
         void read.reload();
       });
   };

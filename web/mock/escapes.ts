@@ -186,7 +186,7 @@ const checkSeeds = (): Seed[] => [
       state: "proven", path: "tests/auth/return-to.test.ts", asserts: "An old returnTo link still redirects to its path",
       run: "npm test -- tests/auth/return-to.test.ts", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", task_id: "task-check-2",
       proof: { escaped_commit: "9be4410a1b2c3d4e5f60718293a4b5c6d7e8f90a", fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a", fails_on_escape: true, passes_on_fix: true },
-      note: null, attempts: 1, diff_commit: "4f1c9a07d3be5a6c218e0b97f5d2a43c6e81b09d",
+      note: "Queued for merge like any change.", attempts: 1, diff_commit: "4f1c9a07d3be5a6c218e0b97f5d2a43c6e81b09d",
       diff_hash: "b3a7f0c95e1d482a6f07c3d9e8b15a4720c6d8f3e91b5a07c4d2f86e30a1b97c", diff_paths: ["tests/auth/return-to.test.ts"],
       awaiting_approval: false, approved: true,
       line: "Proven: tests/auth/return-to.test.ts fails on the escaped merge and passes on the fix. It goes through the merge queue like any change.",
@@ -418,7 +418,7 @@ export function createEscapesMock() {
       row.check = {
         state: "proposed", path, asserts, run,
         fix_commit: (write.fix_commit as string | undefined) ?? "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a",
-        task_id: null, proof: null, note: null, attempts: 1, diff_commit: null, diff_hash: null, diff_paths: [],
+        task_id: null, proof: null, note: null, attempts: 0, diff_commit: null, diff_hash: null, diff_paths: [],
         awaiting_approval: false, approved: false,
         line: `Proposed: add ${path}. Nothing runs until a person accepts.`,
         proposed_unix: T + hours(17), updated_unix: T + hours(17),

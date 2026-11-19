@@ -2,8 +2,13 @@ import { useState, type ReactNode } from "react";
 import type { EscapeCheckRow } from "../../../../generated/EscapeCheckRow";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
 import { Planned } from "../../capacity/Planned";
+import { Button } from "../../../../ui/controls";
+import { Dialog } from "../../../../ui/Dialog";
 import { Btn } from "../../shared/parts";
 import { checkStateLabel, WHY } from "./model";
+
+/** The note the service writes when the proven check went into the merge queue (check.rs). */
+const QUEUED_NOTE = "Queued for merge like any change.";
 
 export const short = (commit: string) => commit.slice(0, 7);
 const mono = { fontFamily: "var(--font-mono)", fontSize: "11px", wordBreak: "break-all", lineHeight: 1.5 } as const;
@@ -70,56 +75,58 @@ export function CheckChip({ check }: { check: EscapeCheckRow }) {
 /** Retry asks first: the dialog the `escape-check-retry` frame draws over the failed check. */
 function RetryDialog({ check, busy, onClose, onRetry }: { check: EscapeCheckRow; busy: boolean; onClose(): void; onRetry(): void }) {
   return (
-    <div className="cx-cwov">
-      <div>
-        <div className="cx-cwdlg" style={{ width: "600px" }} role="dialog" aria-modal="true" aria-label="Retry this check?">
-          <h4>Retry this check?</h4>
-          <p>It goes back to Proposed for a new round. Retry starts nothing: no worker runs until you accept again. The failed round stays in the trail.</p>
-          <div className="cx-fbx">
-            <div className="cx-fkv">
-              <span>New test file</span>
-              <b>{check.path}</b>
-              <span>Attempts so far</span>
-              <b>{check.attempts}</b>
-              <span>Last result</span>
-              <b>{lastResult(check)}</b>
-            </div>
-          </div>
-          <div className="cx-ra">
-            <button type="button" className="cx-ghost" onClick={onClose}>Cancel</button>
-            <button type="button" className="cx-btn" disabled={busy} onClick={onRetry}>Retry</button>
-          </div>
+    <Dialog
+      title="Retry this check?"
+      busy={busy}
+      onClose={onClose}
+      footer={
+        <>
+          <Button small disabled={busy} data-dialog-focus onClick={onClose}>Cancel</Button>
+          <Button small tone="primary" disabled={busy} onClick={onRetry}>Retry</Button>
+        </>
+      }
+    >
+      <p>It goes back to Proposed for a new round. Retry starts nothing: no worker runs until you accept again. The failed round stays in the trail.</p>
+      <div className="cx-fbx">
+        <div className="cx-fkv">
+          <span>New test file</span>
+          <b>{check.path}</b>
+          <span>Attempts so far</span>
+          <b>{check.attempts}</b>
+          <span>Last result</span>
+          <b>{lastResult(check)}</b>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
 /** Withdraw asks first, and says what it stops and when Crew refuses, as the `escape-check-withdraw` frame draws. */
 function WithdrawDialog({ check, busy, onClose, onWithdraw }: { check: EscapeCheckRow; busy: boolean; onClose(): void; onWithdraw(): void }) {
   return (
-    <div className="cx-cwov">
-      <div>
-        <div className="cx-cwdlg" style={{ width: "600px" }} role="dialog" aria-modal="true" aria-label="Withdraw this check?">
-          <h4>Withdraw this check?</h4>
-          <p>This stops it: a worker still writing is cancelled, a proof still running is stopped and a queued merge of it is turned down. A withdrawn check can be proposed again.</p>
-          <div className="cx-fbx">
-            <div className="cx-fkv">
-              <span>Now</span>
-              <b>{check.state.charAt(0).toUpperCase()}{check.state.slice(1)}</b>
-              <span>If the merge is landing</span>
-              <b>Crew refuses: “The merge is landing right now. Withdraw the check after it ends.”</b>
-              <span>If it already merged</span>
-              <b>The answer says: “Already merged: the merge could not be stopped”</b>
-            </div>
-          </div>
-          <div className="cx-ra">
-            <button type="button" className="cx-ghost" onClick={onClose}>Cancel</button>
-            <button type="button" className="cx-btn" disabled={busy} onClick={onWithdraw}>Withdraw the check</button>
-          </div>
+    <Dialog
+      title="Withdraw this check?"
+      busy={busy}
+      onClose={onClose}
+      footer={
+        <>
+          <Button small disabled={busy} data-dialog-focus onClick={onClose}>Cancel</Button>
+          <Button small tone="primary" disabled={busy} onClick={onWithdraw}>Withdraw the check</Button>
+        </>
+      }
+    >
+      <p>This stops it: a worker still writing is cancelled, a proof still running is stopped and a queued merge of it is turned down. A withdrawn check can be proposed again.</p>
+      <div className="cx-fbx">
+        <div className="cx-fkv">
+          <span>Now</span>
+          <b>{check.state.charAt(0).toUpperCase()}{check.state.slice(1)}</b>
+          <span>If the merge is landing</span>
+          <b>Crew refuses: “The merge is landing right now. Withdraw the check after it ends.”</b>
+          <span>If it already merged</span>
+          <b>The answer says: “Already merged: the merge could not be stopped”</b>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -277,7 +284,7 @@ function ProvenCard({ check, busy, onWithdraw }: { check: EscapeCheckRow; busy: 
             : "Not run yet"}
         </b>
         <span>Merge</span>
-        <b>Queued like any change, with its own risk tier, holds and required checks</b>
+        <b>{check.note === QUEUED_NOTE ? "Queued like any change, with its own risk tier, holds and required checks" : (check.note ?? "Not queued yet")}</b>
         <span>Attempts</span>
         <b>{check.attempts}</b>
       </div>
@@ -359,6 +366,12 @@ function WithdrawnCard({ check }: { check: EscapeCheckRow }) {
         <b>
           <Commit id={check.fix_commit} />
         </b>
+        {check.note ? (
+          <>
+            <span>Note</span>
+            <b>{check.note}</b>
+          </>
+        ) : null}
       </div>
       <div className="cx-t13row" style={{ marginTop: "8px" }}>
         <Planned why={WHY.check} />
@@ -377,12 +390,10 @@ export type CheckAct = "accept" | "approve" | "retry" | "withdraw";
  * and the routes carry, and a Planned pill where a frame draws what the app does not have. `merged` keeps the detail
  * page’s own merged card (no frame of this slice draws it).
  */
-export function CheckCard({ row, check, busy, onAct }: { row: EscapeRow; check: EscapeCheckRow; busy: boolean; onAct(kind: CheckAct): void }) {
+export function CheckCard({ row, check, busy, onAct }: { row: EscapeRow; check: EscapeCheckRow; busy: boolean; onAct(kind: CheckAct, done?: () => void): void }) {
   const [ask, setAsk] = useState<"retry" | "withdraw" | null>(null);
-  const confirming = (kind: CheckAct) => () => {
-    setAsk(null);
-    onAct(kind);
-  };
+  /** The dialog stays open while the write is in flight and closes when it settles. */
+  const confirming = (kind: CheckAct) => () => onAct(kind, () => setAsk(null));
   let card: ReactNode = null;
   if (check.state === "proposed") card = <ProposedCard check={check} busy={busy} onAccept={() => onAct("accept")} onWithdraw={() => setAsk("withdraw")} />;
   else if (check.state === "writing")
