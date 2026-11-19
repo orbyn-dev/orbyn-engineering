@@ -16,8 +16,9 @@
 //! at a head commit, the head commit's sha, and a `.orbyn/crew.json` trigger's name and kind. Each of them only
 //! *selects* what to start: a name is compared with the crew's stored workflow filter, a sha decides which head is
 //! watched, a file trigger's name decides only whether a diagnostic line is worth writing. They appear in the dedupe
-//! key, the `PausedTrigger` key (ids and keys only) and a diagnostic log, and never in the brief, the worker's prompt
-//! or any other text a model reads, which `crew_background_start` keeps code-owned. A check's output is never read.
+//! key, the `PausedTrigger` key (`<crew>:ci:<head>:<name>`, one event per head and failing check) and a diagnostic log,
+//! and never in the brief, the worker's prompt or any other text a model reads, which `crew_background_start` keeps
+//! code-owned. A check's output is never read.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -127,8 +128,8 @@ impl Core {
 
     /// The CI watch: a failed check run at the head of the branch each `ci_failure` crew watches, narrowed by the
     /// crew's optional workflow filter. One read per project and branch, however many crews watch it. The check's
-    /// name only selects: it is compared with the stored filter and written into the dedupe key, and it never reaches
-    /// the run the firing starts.
+    /// name only selects: it is compared with the stored filter and written into the dedupe key and the firing's key,
+    /// and it never reaches the brief or a prompt.
     async fn crew_background_ci_tick(self: &Arc<Self>) {
         let crews = self
             .store
@@ -213,8 +214,10 @@ impl Core {
                             continue;
                         }
                     }
-                    // The event key in the start's trigger is the head alone: ids and keys, never the check's name.
-                    self.fire_background_event(&crew.id, &format!("ci:{head}"))
+                    // One event per head and failing check (docs/crew/background-engine-start.md, section 2), so two
+                    // different failed checks at one head are two firings, and the same one twice is one. The check's
+                    // name is outside text and stays in the key and the claim only; the brief stays code-owned.
+                    self.fire_background_event(&crew.id, &format!("ci:{head}:{name}"))
                         .await;
                 }
             }

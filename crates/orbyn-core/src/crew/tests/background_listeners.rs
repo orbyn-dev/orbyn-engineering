@@ -278,6 +278,71 @@ async fn a_failed_check_at_the_watched_head_starts_one_run_and_a_repeat_starts_n
 }
 
 #[tokio::test]
+async fn two_failed_checks_at_one_head_are_two_events_and_a_repeat_starts_nothing_new() {
+    let w = world(true, good()).await;
+    let branch = main_branch(&w.repo).await;
+    let head = gitq(&w.repo, &["rev-parse", &branch]).await;
+    add_origin(&w);
+    let id = ci_crew(&w, "Fix CI", &branch, true);
+    let remote = Arc::new(Mutex::new(Remote {
+        heads: [(branch.clone(), head.clone())].into_iter().collect(),
+        checks: vec![(head.clone(), "ci".into(), "failure".into())],
+    }));
+    with_crew_fixture(remote_fixture(remote.clone()), async {
+        // The first failing check fires a run; the run ends, so the crew is free again for the next event.
+        w.core.crew_background_listeners_tick(NOW).await.unwrap();
+        let first = until_run(&w, &id, wire::BackgroundRunState::Running).await;
+        let task = task_of(&w, &first);
+        w.until_state(&task, "passed").await;
+        until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+        assert_eq!(runs_of(&w, &id).len(), 1);
+
+        // The same failure at the same head is the same event: nothing new starts.
+        w.core
+            .crew_background_listeners_tick(NOW + 60)
+            .await
+            .unwrap();
+        assert_eq!(
+            runs_of(&w, &id).len(),
+            1,
+            "a repeat of the same failure is one event"
+        );
+
+        // A different failed check at the same head is a second event (head commit + workflow), so it starts a run.
+        remote
+            .lock()
+            .unwrap()
+            .checks
+            .push((head.clone(), "lint".into(), "failure".into()));
+        w.core
+            .crew_background_listeners_tick(NOW + 120)
+            .await
+            .unwrap();
+        assert_eq!(
+            runs_of(&w, &id).len(),
+            2,
+            "a different failing check at the same head is a second event"
+        );
+
+        // The two firings keep one claim each, keyed by head and check name.
+        let reader = w.core.store.reader();
+        let mut statement = reader
+            .prepare("SELECT identity FROM crew_background_events ORDER BY identity")
+            .unwrap();
+        let claimed = statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<std::result::Result<Vec<String>, _>>()
+            .unwrap();
+        assert_eq!(
+            claimed,
+            [format!("ci:{id}:{head}:ci"), format!("ci:{id}:{head}:lint")]
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn an_off_crew_is_refused_and_its_event_is_never_retried() {
     let w = world(true, hung()).await;
     let branch = main_branch(&w.repo).await;
@@ -418,7 +483,10 @@ async fn a_firing_refused_by_capacity_is_held_with_its_event_key() {
         keys.insert(row.key.clone());
     }
     assert_eq!(keys.len(), 2, "{rows:?}");
-    assert!(keys.contains(&format!("{ci}:ci:{head}")), "{keys:?}");
+    assert!(
+        keys.contains(&format!("{ci}:ci:{head}:ci")),
+        "one event per head and failing check: {keys:?}"
+    );
     assert!(
         keys.contains(&format!("{sched}:schedule:{bucket}")),
         "{keys:?}"
