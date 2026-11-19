@@ -10,8 +10,9 @@
 //!
 //! The command, the worker's name and the task's title all come from here, redacted and bounded, never from the window: the
 //! dialog shows what the service says the hold is. `command_sha256` is the hold's binding: an HMAC-SHA256, with a key this
-//! process draws at start, of the task, the thread, the kind, the command, its paths and the fields that decide what runs (the
-//! working directory and the effect flags). A grant is recorded only if the hold is open now and every field matches it as it
+//! process draws at start, of the task, the thread, the kind, the command, its paths and the chosen fields that decide what runs
+//! (the working directory, the arguments, the environment overrides and the effect flags). A grant is recorded only if the hold
+//! is open now and every field matches it as it
 //! stands now; the shell hands the nonce to the page only after `presence_ready`.
 //!
 //! Refusal codes: `unavailable` (the Preview flag is off or no shell is attached), `invalid` (a field is malformed), `not_found`,
