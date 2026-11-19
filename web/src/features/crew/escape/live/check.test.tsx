@@ -232,13 +232,13 @@ describe("the check frames of Crew Designs v79", () => {
 });
 
 describe("the escape log at its limit", () => {
-  it("draws the refusal banner and the newest-of heading when the project holds 5,000 escapes", async () => {
+  it("draws the refusal banner and the showing-of heading when the project holds 5,000 escapes", async () => {
     answers.log = { status: 200, body: log({ total: 5000 }) };
     render(<LiveEscapes view="log" />);
     expect(await screen.findByText(/This project has reached the 5,000-escape limit\./)).toBeInTheDocument();
     expect(screen.getByText(/The same holds at 20,000 audit events\. Confirmed escapes are never dropped\./)).toBeInTheDocument();
     expect(screen.getByTitle("Planned: pruning the oldest dismissed and possible escapes is not built; the writer refuses instead")).toBeInTheDocument();
-    expect(screen.getByText("Newest 3 of 5,000")).toBeInTheDocument();
+    expect(screen.getByText(/Showing 3 of 5,000/)).toBeInTheDocument();
     expect(posts(calls)).toHaveLength(0);
   });
 
@@ -246,6 +246,6 @@ describe("the escape log at its limit", () => {
     render(<LiveEscapes view="log" />);
     await screen.findByText("Escapes");
     expect(screen.queryByText(/5,000-escape limit/)).toBeNull();
-    expect(screen.getByText(/6 in the last 60 days/)).toBeInTheDocument();
+    expect(screen.getByText(/6 in all/)).toBeInTheDocument();
   });
 });
