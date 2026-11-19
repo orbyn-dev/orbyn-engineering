@@ -1,18 +1,18 @@
-//! The possible-escape scan at rest (slice 4k, PR 3; docs/crew/escapes.md). Two reads and one write, no migration.
+//! The possible-escape scan at rest (slice 4k, PR 3; docs/crew/escapes.md). Reads and one write; migration 57 adds retention tombstones.
 //!
 //! - [`Store::crew_escape_scan_candidates`]: merges that reached a branch, in a project, with **no escape row yet**, newest first. A
 //!   merge with a row of any state (a dismissed one included) is never a candidate, so a dismissed escape is not offered again.
 //! - [`Store::crew_escape_room`]: how many escapes and events a project holds, for the caps of PR 2.
 //! - [`Store::record_possible_escapes`]: one immediate transaction per project that adds `possible` rows and their `detected`
 //!   events. State is written as `possible` in the SQL itself, so no scan can confirm; the writer refuses the whole batch, and
-//!   writes nothing, when it would pass 5,000 escapes or 20,000 events. Repeating a batch adds nothing (one escape per merge).
+//!   writes nothing when protected history prevents admission after eligible retention. Tombstones suppress automatic replay too.
 
 use orbyn_contracts::EscapeSource;
 use rusqlite::{OptionalExtension, params};
 
 use super::Store;
-use super::crew_escape_person::EVENTS_PER_PROJECT_MAX;
-use super::crew_escapes::{ESCAPES_PER_PROJECT_MAX, unreadable};
+use super::crew_escape_retention::room;
+use super::crew_escapes::unreadable;
 use super::crew_merges::{MergeRecord, merge_row};
 use crate::error::{CoreError, Result};
 
@@ -66,6 +66,7 @@ impl Store {
              WHERE m.merged_unix >= ?1
                AND (?3 IS NULL OR m.merged_unix < ?3 OR (m.merged_unix = ?3 AND m.id < ?4))
                AND NOT EXISTS (SELECT 1 FROM crew_escapes e WHERE e.merge_task_id = m.task_id)
+               AND NOT EXISTS (SELECT 1 FROM crew_escape_tombstones x WHERE x.merge_task_id = m.task_id)
              ORDER BY m.merged_unix DESC, m.id DESC LIMIT ?2",
         )
         .map_err(unreadable)?
@@ -118,35 +119,28 @@ impl Store {
             let mut new: Vec<&PossibleEscape> = Vec::new();
             let mut held = 0_u32;
             for item in found {
+                // Only actual admissions may cause retention. Missing/foreign merges must not clear history before INSERT SELECT skips them.
+                let insertable: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM crew_merges m JOIN crew_runs r ON r.task_id=m.task_id
+                     JOIN threads t ON t.id=r.lead_thread_id WHERE m.task_id=?1 AND t.project_id=?2)",
+                    params![item.merge_task_id, project_id], |row| row.get(0),
+                ).map_err(unreadable)?;
                 let exists: Option<i64> = tx
                     .query_row(
-                        "SELECT 1 FROM crew_escapes WHERE merge_task_id = ?1",
+                        "SELECT 1 FROM crew_escapes WHERE merge_task_id = ?1 UNION ALL SELECT 1 FROM crew_escape_tombstones WHERE merge_task_id = ?1 LIMIT 1",
                         [&item.merge_task_id],
                         |row| row.get(0),
                     )
                     .optional()
                     .map_err(unreadable)?;
-                if exists.is_some() || new.iter().any(|n| n.merge_task_id == item.merge_task_id) {
+                if !insertable || exists.is_some() || new.iter().any(|n| n.merge_task_id == item.merge_task_id) {
                     held += 1;
                 } else {
                     new.push(item);
                 }
             }
-            let count = |sql: &str| -> Result<u32> {
-                tx.query_row(sql, [project_id], |row| row.get(0))
-                    .map_err(unreadable)
-            };
-            let have_escapes = count("SELECT COUNT(*) FROM crew_escapes WHERE project_id = ?1")?;
-            let have_events =
-                count("SELECT COUNT(*) FROM crew_escape_events WHERE project_id = ?1")?;
             let n = u32::try_from(new.len()).unwrap_or(u32::MAX);
-            if have_escapes.saturating_add(n) > ESCAPES_PER_PROJECT_MAX
-                || have_events.saturating_add(n) > EVENTS_PER_PROJECT_MAX
-            {
-                return Err(CoreError::Invalid(
-                    "This project's escape log is full. Nothing more can be added until old entries are cleared.".into(),
-                ));
-            }
+            room(tx, project_id, n, n, None, at)?;
             let mut added = 0_u32;
             for item in new {
                 let source = source_word(item.source)?;
@@ -182,7 +176,7 @@ impl Store {
 /// Rows for tests, which cannot reach the writer. Never built into the service.
 #[cfg(any(test, feature = "test-support"))]
 impl Store {
-    /// Fills a project's log with `escapes` ghost escapes (of merges that do not exist) and `events` ghost events, so a full log can
+    /// Fills a project's log with `escapes` protected confirmed ghost escapes and `events` unclassified ghost events, so a full log can
     /// be tested without writing thousands of real merges.
     pub fn fill_escape_log_for_test(
         &self,
@@ -194,8 +188,8 @@ impl Store {
         conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
         conn.execute(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?2)
-             INSERT INTO crew_escapes (id, project_id, merge_task_id, source, state, engine, areas, found_unix)
-             SELECT 'ghost' || i, ?1, 'ghost-merge' || i, 'revert', 'possible', 'alpha', '[]', 1 FROM n WHERE ?2 > 0",
+             INSERT INTO crew_escapes (id, project_id, merge_task_id, source, state, engine, areas, found_unix, decided_unix, decided_by)
+             SELECT 'ghost' || i, ?1, 'ghost-merge' || i, 'revert', 'confirmed', 'alpha', '[]', 1, 1, 'person' FROM n WHERE ?2 > 0",
             params![project_id, escapes],
         )?;
         conn.execute(

@@ -2989,6 +2989,21 @@ Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to t
 it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
 wins, and a shim that points at a shell is refused.
 
+## Escape log capacity
+
+The escape log's person and scanner admissions use one store retention owner under
+an immediate transaction (details in [escapes](crew/escapes.md#capacity-pressure-and-writer-migration-686)).
+Capacity pressure may clear audited, oldest dismissed/possible history while retaining
+confirmed rows, check-bearing history, the current operation's target, and orphan events.
+Permanent merge tombstones preserve suppression after clearing. Possible tombstones
+allow an explicit person's mark; dismissed ones never return. Schema 57 gates event
+deletion with audited grants and fences older escape writers at the SQLite boundary.
+Gap changes reserve a below-cap possible escape's final visible event slot for its decision.
+Detail reads show the latest 100 events in ascending append order with truncation marked;
+the oldest-first provenance reader and stored history remain unchanged.
+Core check completion keeps its existing durable-event behavior, so admission limits
+are not a hard cap on all historical events. No new UI or manual clearing authority is added.
+
 ## Crew worker confinement
 
 A Crew worker is an engine process that runs as the person, so it could read the data folder

@@ -74,14 +74,16 @@ migration PR to merge takes the next free number and any other renumbers at its 
 - `crew_escapes(id PK, project_id, merge_task_id UNIQUE REFERENCES crew_merges(task_id), source, state, gap, gap_by, engine,
   model, areas, lane, reason, found_unix, decided_unix, decided_by)`. `state`: `possible`, `confirmed`, `dismissed`.
   `source` and `gap` are checked enums. `reason` is at most 200 characters, redacted by the same scrub the ledger uses.
-- `crew_escape_events` (append-only, UPDATE and DELETE refused by triggers, like `crew_area_events`): `detected`, `confirmed`,
+- `crew_escape_events` (append-only outside migration 57's audited retention path; UPDATE always refused): `detected`, `confirmed`,
   `dismissed`, `reclassified`, `check_proposed`, `check_failed`, `check_proven`, `check_merged`, `check_withdrawn`;
   unique `(escape_id, kind, cause)`. The audit row is written in the same transaction as the state change (rule 6).
 - `crew_escape_checks(escape_id PK, path, task_id, state, proof)`; `proof` is JSON: commit ids and two booleans.
 
 **Stored:** ids, commit ids, paths, enums, areas, engine and model names, one short reason. **Never stored:** diffs, test bodies,
-command output, prompts, secrets or comment text. On this device only (rule 4). Limits: 5,000 escapes and 20,000 events per
-project; oldest `dismissed` and `possible` rows go first, `confirmed` never. Unreadable fails closed (rule 7).
+command output, prompts, secrets or comment text. On this device only (rule 4). Person and scan admission limits are 5,000 escapes and
+20,000 events per project; capacity pressure clears oldest `dismissed`, then oldest `possible` rows, never confirmed or check-bearing history.
+Core-owned check completion events remain durable even when a legacy/full log has no room; this is not a hard cap on all event writers.
+Unreadable fails closed (rule 7).
 
 ## HTTP and route classes
 
@@ -95,7 +97,7 @@ follow [worker-token-isolation.md](../worker-token-isolation.md), not built: `lo
 | `POST /escapes/mark`, `/escapes/{id}/confirm`, `/dismiss`, `/gap` | Person |
 | `POST /escapes/{id}/check` (propose), `/check/accept`, `/check/retry`, `/check/withdraw` | Person |
 
-Each write takes a `seen` token (a mismatch is `409 stale`, as areas do) and answers with the escape as it now stands.
+Confirm, dismiss and gap take a `seen` token (a mismatch is `409 stale`, as areas do). Mark accepts an optional `seen`: without it the mark itself is the explicit confirmation, including an existing possible escape. A supplied token is checked. Each answers with the escape as it now stands.
 `check/accept` is the only route that starts a worker.
 
 ## PR plan
@@ -124,11 +126,11 @@ Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later me
   drops out, as for 4j. A failure to log never undoes a revert (`ON CONFLICT DO NOTHING`; any other refusal still errors).
 - **Routes** (Preview-gated, class **Local**, in `READS`; writes are PR 2, as Person): `GET /api/crew/escapes?project=&state=&limit=&offset=`
   (counts for the report window by engine, possible, confirmed and dismissed apart, no rate, `low_sample`; one page of rows, newest found first),
-  `GET /api/crew/escapes/{id}` (the escape and its trail, at most 100 rows) and `GET /api/crew/escapes/thresholds`. A damaged log is `500 unreadable`.
+  `GET /api/crew/escapes/{id}` (the escape and its latest 100 events, in ascending append order) and `GET /api/crew/escapes/thresholds`. A damaged log is `500 unreadable`.
 - **Thresholds** are one JSON document in the existing `settings` table under `crew_escape_thresholds` (not a `pref:` key, so the account sync never
   carries it): `report_days` 60, `follow_up_days` 14, `min_merges` 10, `rate_multiple` 2; `stored` says whether a person's values are in force.
   Absent means defaults; present but unparsable, unknown-field or out of range is `unreadable`, never the defaults.
-- **Limits not built.** The 5,000-escape and 20,000-event pruning is still not built (PR 2's writer refuses to pass either limit instead); `DELETE` on events is refused by trigger, so pruning needs its own removal path. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
+- **Retention.** Migration 57 adds the guarded clearing path below. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
 - **Display only.** Nothing reads the log for a decision: the breaker, the Router and every gate ignore it (decision 2). Test-covered for the breaker.
 
 ## As built: PR 2, person acts
@@ -151,7 +153,7 @@ No migration. `store/crew_escape_person.rs` (the writes), `crew/escapes/person.r
 - **Audit first, one transaction** (rule 6): the ledger's audit row (`crew.escape.confirm`, `.dismiss`, `.mark`, `.gap`; who `user`, when, the
   note), then the state change, then the `crew_escape_events` row (`confirmed`, `dismissed`, `reclassified` for a gap; a mark writes `detected` then
   `confirmed`) whose `cause` is `person:<audit id>`. The state is read and compared inside the immediate transaction and the `UPDATE` repeats the
-  old state, so two acts racing leave one decision. A mark that would pass 5,000 escapes, or any act that would pass 20,000 events, is refused.
+  old state, so two acts racing leave one decision. If admission would pass 5,000 escapes or 20,000 events, the same transaction first plans and audits eligible retention. If protected history leaves too little room, the act is refused without deleting anything.
 - **Authority.** `Person` and enforced (`routes/classes.rs`, `tests/routes.json`, `web/src/api/personKey.ts`): browser mode and the CLI get
   `403 desktop_required`, a remote viewer `403 local_only`, the flag off `404`. All four are in `crew::changes::STATE_CHANGING`, so an agent's
   request is refused by path (N1); no MCP tool, CLI command, timer or scan calls them. Nothing confirms by itself: detection, the revert trigger
@@ -208,6 +210,44 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
   hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
+
+## Capacity pressure and writer migration (#686)
+
+Migration **57** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
+escape stops gap changes at 99 events, reserving event 100 for confirm or dismiss. An identical gap on a non-dismissed escape remains an idempotent
+retry, including at capacity. A dismissed escape refuses every gap write, including an identical gap. Existing oversized trails are retained and get no more gap changes. The reserved final visible slot applies to new trails that have not already exceeded the cap.
+Detail reads retrieve the newest 101 events, use the extra event only to set `truncated`, and return the latest 100 in ascending append order, so a legacy trail's
+latest confirmation or dismissal remains visible. No stored history is removed by a read. The existing oldest-first `crew_escape_events` reader remains
+unchanged for initial detected-event provenance in check proof and backtest fix resolution. Check events are not subject to the gap-only cap.
+
+`store/crew_escape_retention.rs` serves person actions, person check actions, scanner writes and the normal revert API. Under capacity pressure it
+plans enough room before mutating, excluding the operation's current escape, confirmed escapes, any current check row, and every escape named by
+permanent `crew_escape_check_tasks`. Eligible dismissed rows go before possible rows; each class is ordered by oldest found time, then id.
+Other projects are untouched. Events without a surviving, classifiable owning escape, or with a mismatched project, are retained and unprunable.
+A log containing only protected history refuses truthfully; there is no manual clear control or promise that the person can delete that history.
+
+For each eviction, the same immediate transaction writes `crew.escape.retain` to the permanent audit ledger, records a compact immutable
+`crew_escape_tombstones` row (merge task, project, evicted state/time and audit id), opens a validated deletion grant, removes the eligible events
+and escape, and closes the grant. Normal event DELETE and all event UPDATE remain refused. A later failure rolls the whole operation back,
+including evictions, grants and tombstones. Runtime code never drops or recreates a trigger. Parent-merge deletion may still remove an escape
+through its existing foreign key, leaving its immutable orphan trail; retention does not guess that trail's state.
+
+Tombstones suppress candidates, scanner writes and SQL revert detection permanently. A dismissed tombstone also refuses a person's mark.
+A possible tombstone permits an explicit mark without `seen`, creating a new confirmed row; it still suppresses automatic detection. Tombstones,
+check-task proof mappings and permanent audit receipts are never pruned: their compact storage can grow with historical merges.
+
+Scanner preflight only reads a capacity plan, so an eligible full log still gets scanned. The writer validates still-existing project-owned merges and deduplicates
+admissions before planning under the immediate writer transaction. Missing or foreign merges and a no-op revert of a non-merged task clear no history.
+The writer re-evaluates current states; a concurrent confirmation cannot be deleted as possible. A direct SQL revert at capacity skips logging
+and never undoes the revert. The normal API can clear eligible history first; only the typed unprunable-capacity outcome may skip logging, while
+unreadable/store/audit errors propagate. Existing core-owned check finish/merge events retain their original durable semantics and can exceed the
+admission limit; they are not silently dropped to manufacture a hard cap.
+
+Current `Store` connections register escape writer protocol 57 before migrating. New triggers reject affected escape/event/check writes from an
+already-open older connection that lacks that protocol function; older services also reject schema 57 on reopen through the existing schema-version
+check. No deployed old process is assumed stopped by these source tests: normal Core startup still owns the data-directory lock. Migration is
+forward-only and tested on a populated schema-56 database. After an error, reopen with a compatible current service and retry; do not remove the
+fence or restart an older writer against migrated data. Direct database tools must use the current writer protocol rather than bypass triggers.
 
 ## As built: PR 4, create a check
 
