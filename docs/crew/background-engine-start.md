@@ -1,6 +1,6 @@
 # Engine start for background crews (4h)
 
-Design note. Status: proposal, nothing built. Today a background crew is stored and can be turned on, but no trigger fires and no engine starts. This note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
+Design note. Status: PR 1 (the `manual` event, Run now through the core) built; the budget, the listeners and the Review join remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
 
 ## 1. What exists today
 
