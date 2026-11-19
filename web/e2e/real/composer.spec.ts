@@ -47,7 +47,7 @@ test("a run that ignores Stop can be force stopped", async ({ page }) => {
 });
 
 test("# finds a pull request and @ finds another thread", async ({ page }) => {
-  const other = await service.api<{ id: string }>("POST", "/api/threads", {
+  await service.api<{ id: string }>("POST", "/api/threads", {
     project_id: projectId,
     engine: (await service.api<{ id: string }[]>("GET", "/api/engines")).find((engine) => engine.id === "codex")?.id,
     title: "Payment retries",
