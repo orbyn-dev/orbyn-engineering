@@ -13,7 +13,9 @@ breaks one looks like a message with no reply, and the person has to send it twi
    exited) is shown but does not end the run, whatever it returns, including an error.
 3. **A run that produced no assistant output is never plain success.** The core ends it as failed with
    the message "No reply: the engine finished without answering. Send your message again." (see
-   `conversation::runs::turn`). Slash commands and goals are exempt: they may have nothing to say.
+   `conversation::runs::turn`), and a run whose engine no longer holds the conversation with the message
+   "The engine lost this conversation." (see `conversation::runs::execute`). Slash commands and goals are
+   exempt: they may have nothing to say.
 
 ## How each rule is met
 

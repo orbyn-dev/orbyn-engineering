@@ -111,6 +111,13 @@ budget/spend. Task-backed runs remain under normal Crew task recovery; existing
 terminal background runs stay unchanged. Recovery finishes before a starter or
 listener can run and never starts an engine or retries the interrupted start.
 
+A refused background start removes its run, lead thread and pinned Autopilot mode
+only while no Crew task exists, and does so in one transaction with the refusal
+audit, so a crash leaves none of them behind. After task creation, refusal holds the
+task for a person and ends the background run `needs_review`, retaining its lead and
+mode; the run is returned, not an error. The refusal audit, task hold and run end
+share one transaction; a failed store write is returned to the caller.
+
 ## Thread lifecycle
 
 Settling removes a pin and ends a snooze; it needs no active run and closes the
@@ -206,9 +213,12 @@ sends, and a picker on the opening line names or clears the language. Tab outsid
 block keeps the list and focus rules.
 
 Context can sit above the draft as a chip: a cited reply, a terminal selection, a
-review comment on a diff line or range, a picked page element, or the open file at
-its revealed line. A chip is not engine protocol; when the message is sent, each
-chip becomes a readable block at the top of the prompt and the typed draft follows.
+review comment on a diff line or range, a picked page element, the open file at
+its revealed line, or a thread picked from the @ menu. A chip is not engine
+protocol; when the message is sent, each chip becomes a readable block at the top
+of the prompt and the typed draft follows. A picked thread's block is the thread
+link itself, `Thread: [title](orbyn://thread/<id>)`, which the timeline renders
+as a thread and the agent reads on demand.
 A terminal selection inside one command's output also carries that command line and
 exit code when the shell marks its commands with OSC 133 or 633 shell-integration
 sequences. Orbyn installs no shell integration, so a shell that emits no marks gives

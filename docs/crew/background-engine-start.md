@@ -15,6 +15,7 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core) built; 
 - Events: `ci_failed` (a failed check run on the branch head, optional workflow), `schedule` (every `every_hours`), `manual` (the person presses Run). One event key per firing, such as head commit + workflow, so a repeat of the same failure starts nothing new.
 - A run goes through `crew_start` with `Links::crew_started` and a `PausedTrigger` of kind `Background` (key: crew id + event key). It is Low priority, so `capacity_start_check` can refuse it while too many merges wait; the refusal is a held row in `crew_paused_starts`, never retried on a timer.
 - Refused, not started: crew off or deleted, project gone, Preview off, a run already running, no engine that passes `worker_refusal` and the router's tier rules among the trigger's `engines`.
+- A refusal after the task exists (for example the task could not be stored or routed) holds the task for a person and ends the run `needs_review` with the reason, in one transaction with the refusal audit; the run is kept and returned, not an error. A refusal before any task exists takes back the run, its lead thread and its mode row in one transaction, so a crash leaves nothing behind.
 - `crew_start` needs a lead thread. The build opens one thread per run in the crew's project, marked as the crew's.
 
 ## 3. Budget

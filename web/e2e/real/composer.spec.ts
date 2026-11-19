@@ -47,7 +47,7 @@ test("a run that ignores Stop can be force stopped", async ({ page }) => {
 });
 
 test("# finds a pull request and @ finds another thread", async ({ page }) => {
-  const other = await service.api<{ id: string }>("POST", "/api/threads", {
+  await service.api<{ id: string }>("POST", "/api/threads", {
     project_id: projectId,
     engine: (await service.api<{ id: string }[]>("GET", "/api/engines")).find((engine) => engine.id === "codex")?.id,
     title: "Payment retries",
@@ -62,9 +62,10 @@ test("# finds a pull request and @ finds another thread", async ({ page }) => {
   await expect(box(page)).toHaveValue("see [#77 Tidy the docs](https://github.com/o/r/pull/77) ");
   await box(page).pressSequentially("and @Payment");
   await page.getByRole("option", { name: /Payment retries/ }).click();
-  await expect(box(page)).toHaveValue(
-    `see [#77 Tidy the docs](https://github.com/o/r/pull/77) and [Payment retries](orbyn://thread/${other.id}) `,
-  );
+  await expect(box(page)).toHaveValue("see [#77 Tidy the docs](https://github.com/o/r/pull/77) and ");
+  const chip = page.locator('ul[aria-label="Context chips"] li[data-kind="thread"]');
+  await expect(chip).toHaveCount(1);
+  await expect(chip.getByTitle("Payment retries")).toBeVisible();
   await box(page).fill("");
 });
 

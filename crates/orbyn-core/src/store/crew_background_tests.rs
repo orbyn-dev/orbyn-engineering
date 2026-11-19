@@ -438,3 +438,55 @@ fn core_startup_does_not_hide_a_failed_background_recovery_audit() {
         "needs_review"
     );
 }
+
+#[test]
+fn a_refused_start_with_a_task_is_retained_atomically_and_retryable() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Refusal", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    store.writer().execute(
+        "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at) VALUES ('sha256:refused', ?1, 'refused', 'now', 'now'), ('sha256:other', 'other-crew', 'other', 'now', 'now')",
+        [&run.id],
+    ).unwrap();
+    store.writer().execute_batch(
+        "CREATE TRIGGER refuse_review_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.review' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
+    ).unwrap();
+    assert!(
+        store
+            .unwind_background_run(&run.id, "launch refused")
+            .is_err()
+    );
+    assert_eq!(store.background_run(&run.id).unwrap().unwrap(), run);
+    assert_eq!(
+        store.crew_task("sha256:refused").unwrap().unwrap().state,
+        "briefed"
+    );
+    store
+        .writer()
+        .execute_batch("DROP TRIGGER refuse_review_audit")
+        .unwrap();
+    store
+        .unwind_background_run(&run.id, "launch refused")
+        .unwrap();
+    let ended = store.background_run(&run.id).unwrap().unwrap();
+    assert_eq!(ended.state, "needs_review");
+    assert_eq!(ended.review_reason.as_deref(), Some("launch refused"));
+    assert_eq!(
+        store.crew_task("sha256:refused").unwrap().unwrap().state,
+        "needs_person"
+    );
+    assert_eq!(
+        store.crew_task("sha256:other").unwrap().unwrap().state,
+        "briefed"
+    );
+    store.unwind_background_run(&run.id, "retry").unwrap();
+    assert_eq!(store.background_run(&run.id).unwrap().unwrap(), ended);
+    assert!(store.start_background_run(&crew.id).is_ok());
+}

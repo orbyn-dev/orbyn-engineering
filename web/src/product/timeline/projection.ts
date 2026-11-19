@@ -420,6 +420,23 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
         }
       } else if (event.name === "usage") {
         fold.usage = event.value;
+      } else if (event.name === "background.stopped") {
+        // A task the engine stopped when the run ended; one row per task, under its run.
+        const body = record(event.value);
+        const taskId = body?.taskId;
+        const taskType = typeof body?.taskType === "string" ? body.taskType : "";
+        const described = typeof body?.description === "string" && body.description !== "" ? body.description : null;
+        if (typeof taskId === "string" && taskId !== "") {
+          const key = "stopped:" + (wire.run_id ?? "");
+          const at = fold.items.findIndex((item) => item.key === key);
+          const task = { taskId, taskType, description: described };
+          if (at === -1) {
+            put(fold, { ...base, key, kind: "stopped", tasks: [task] });
+          } else {
+            const item = fold.items[at];
+            if (item?.kind === "stopped") fold.items[at] = { ...item, tasks: [...item.tasks, task] };
+          }
+        }
       }
       break;
     case "RAW":
