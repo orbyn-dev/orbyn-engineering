@@ -1,5 +1,5 @@
-// Sample items for the drawn frames, copied from Crew Designs (needsyou-*). Samples only: nothing here is read from a route,
-// and four of the kinds (denied, questions, conflict, autonomy) have no route behind them yet.
+// Sample items for the drawn frames, copied from Crew Designs (needsyou-*). Samples only: nothing here is read from a route.
+// Two kinds still have no route behind them (questions and conflict); the live inbox assembles the rest, autonomy from the areas read.
 import type { NeedsItem } from "./model";
 
 const item = (over: Partial<NeedsItem> & Pick<NeedsItem, "id" | "kind" | "title" | "actions">): NeedsItem => ({

@@ -1289,7 +1289,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
 | Taskboard | Cards by state: Queued, Routed, Running, Verifying, Needs you, Passed, Stopped or Cancelled. A card is a brief: kind, engine, owner, last activity, and on a passed card the checks passed and total of its final verification (other states show none until the core keeps a record per verification attempt). From the card the person can reassign the engine, cancel, add a check, answer or open |
 | Conversation lanes | One lane per worker over time. Messages show as arrows between lanes, each marked "live" (steered) or "next turn". The board's facts show with their author and evidence |
 | Route card | Why this engine: the reasons, every rejected engine and why, and what the person can change |
-| Needs you inbox | Questions, approvals, reviews and conflicting board writes, oldest first, each with the one action it needs |
+| Needs you inbox | Questions, approvals, reviews and conflicting board writes, each with the one action it needs. Order: risk first, then the items that block nothing (a demotion) last within a risk tier, then oldest first. An **Autonomy** row appears when the circuit breaker demotes an area from Full to On; it blocks nothing, shows the trip's record, and offers Review, Override… and Dismiss (Dismiss is remembered per browser and repository, and returns only after a new trip). It reads the first Git repository only; with several repositories the inbox says so |
 | Task report | What changed (the diff), what was verified, what was not, risks, cost, and a timeline the person can replay |
 
 **UI decisions** (2026-11-11, Designer part 1, orbyn-designs pull request #129, frames `crew-*`):
