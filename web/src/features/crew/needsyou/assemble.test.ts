@@ -72,10 +72,10 @@ describe("each source becomes one inbox row", () => {
       line: "Lowered after 2 of 9 merges were reverted in 14 days.", since: 1_000,
       record: { merges: 9, reverts: 2, window_days: 14 },
     };
-    const items = autonomyItems([row]);
+    const items = autonomyItems([row], "p-app");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
-      id: "autonomy:web/auth:1000", kind: "autonomy", ref: "web/auth", risk: null, undo: null, since: 1_000_000,
+      id: "autonomy:p-app:web/auth:1000", kind: "autonomy", ref: "web/auth", risk: null, undo: null, since: 1_000_000,
       title: "web/auth moved from Full to On: 2 reverts in 14 days. Review or override.",
       from: "Autopilot by area · circuit breaker · 9 merges in the window",
       cost: "Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.",
@@ -100,7 +100,24 @@ describe("each source becomes one inbox row", () => {
       row({ state: "overridden", now: "off", override: { choice: "off", at: 5 } }),
       row({ state: "follows", now: "full", since: undefined }),
       row({ state: "not_enough_data", now: "full", since: undefined }),
-    ])).toEqual([]);
+    ], "p-app")).toEqual([]);
+  });
+
+  it("a demotion that left the area Off is not a row: the line's High-waits, Low-and-Medium-merge copy is true only at On", () => {
+    const off: AutopilotAreaRow = {
+      area: "web/auth", area_key: "web/auth", ceiling: "full", now: "off", state: "demoted", since: 1_000,
+      line: "Lowered after 5 of 9 merges were reverted in 14 days.", record: { merges: 9, reverts: 5, window_days: 14 },
+    };
+    expect(autonomyItems([off], "p-app")).toEqual([]);
+    expect(autonomyItems([{ ...off, now: "on" }], "p-app")).toHaveLength(1);
+  });
+
+  it("the id names the repository, so the same area and trip in two repositories are two rows", () => {
+    const row: AutopilotAreaRow = {
+      area: "web/auth", area_key: "web/auth", ceiling: "full", now: "on", state: "demoted", since: 1_000,
+      line: "x", record: { merges: 9, reverts: 2, window_days: 14 },
+    };
+    expect(autonomyItems([row], "p-a")[0]!.id).not.toBe(autonomyItems([row], "p-b")[0]!.id);
   });
 
   it("nothing in, nothing out", () => {

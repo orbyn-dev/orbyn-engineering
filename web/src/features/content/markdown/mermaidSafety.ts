@@ -180,8 +180,8 @@ function scopeCss(css: string, rootId: string): string | null {
 }
 
 function cleanAttributes(el: Element): void {
-  // getAttributeNames returns a plain array snapshot, so removing while walking it cannot skip an attribute, and no
-  // attribute is reached through the live NamedNodeMap the removals keep reshuffling.
+  // Walk a snapshot of the names (getAttributeNames), so removing as we go cannot skip an attribute. This reads more plainly
+  // than Array.from(el.attributes), which was already a snapshot; the checks and what is removed are unchanged.
   for (const raw of el.getAttributeNames()) {
     const value = el.getAttribute(raw) ?? "";
     const name = raw.toLowerCase();

@@ -31,7 +31,7 @@ function Inbox() {
   const repo = useRepo();
   const project = repo === "loading" || repo === null ? null : repo.id;
   const state = useNeedsYou(project);
-  const override = useAreaOverride({ project, reload: () => { if (state.status !== "loading") void state.retry(); } });
+  const override = useAreaOverride({ project, reload: () => { if (state.status === "ready") void state.reloadAreas(); } });
   const [filter, setFilter] = useState<NeedsKind | "all">("all");
   const [ref, narrow] = useNarrow();
   const [asking, setAsking] = useState<{ id: string; name: string; kind: Ask } | null>(null);
@@ -100,6 +100,7 @@ function Inbox() {
           {state.noticeFailure ? <p className="ny-note" role="alert">{state.noticeFailure.message}</p> : null}
         </>
       )}
+      {repo !== "loading" && repo?.several ? <p className="ny-note">Autonomy shows {repo.name} only.</p> : null}
       {asking ? (
         <ConfirmWrite
           kind={asking.kind}

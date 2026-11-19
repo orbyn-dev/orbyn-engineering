@@ -34,6 +34,10 @@ async function open(scenario: "crew" | `crew-${string}`) {
 }
 
 /** The repository the areas read needs, as the areas page's own tests give it. */
+const gitProject = (id: string, name: string) => ({ id, name, trusted: true, is_git: true, path: `/fixture/${id}` }) as Project;
+function twoGitProjects() {
+  useWorkspace.setState({ projects: { data: [gitProject("p-app", "orbyn-engineering"), gitProject("p-two", "other-repo")], loading: false, error: null } });
+}
 function oneGitProject() {
   useWorkspace.setState({ projects: { data: [{ id: "p-app", name: "orbyn-engineering", trusted: true, is_git: true, path: "/fixture/app" } as Project], loading: false, error: null } });
 }
@@ -134,6 +138,47 @@ describe("the Needs you inbox on live data", () => {
     await screen.findByRole("list", { name: "Needs you" });
     expect(screen.queryByText("moved from Full to On")).toBeNull();
     expect(stored()).toHaveLength(1);
+  });
+
+  it("with several repositories the inbox says Autonomy shows one repository only; with one it says nothing", async () => {
+    twoGitProjects();
+    const first = await open("crew-areas-tripped");
+    expect(await screen.findByText("Autonomy shows orbyn-engineering only.")).toBeVisible();
+    first.view.unmount();
+    oneGitProject();
+    await open("crew-areas-tripped");
+    await screen.findByRole("list", { name: "Needs you" });
+    expect(screen.queryByText(/Autonomy shows/)).toBeNull();
+  });
+
+  it("a dismissal is per repository, and pruning only touches the shown repository's own entries", async () => {
+    oneGitProject();
+    const origin = window.location.origin;
+    const other = `${origin}|autonomy:p-other:web/auth:1`;
+    const stale = `${origin}|autonomy:p-app:web/auth:9`;
+    window.localStorage.setItem("orbyn.needsyou.dismissedAutonomy", JSON.stringify([other, stale]));
+    await open("crew-areas-tripped");
+    await screen.findByRole("list", { name: "Needs you" });
+    const stored = () => JSON.parse(window.localStorage.getItem("orbyn.needsyou.dismissedAutonomy") ?? "[]") as string[];
+    await waitFor(() => expect(stored()).not.toContain(stale));
+    expect(stored()).toContain(other);
+  });
+
+  it("after an override only the areas are read again, not the whole inbox", async () => {
+    oneGitProject();
+    const { user } = await open("crew-areas-tripped");
+    const item = (await screen.findByText("web/auth moved from Full to On: 2 reverts in 14 days. Review or override.")).closest("li") as HTMLElement;
+    const before = { stops: calls("/api/crew/stops").length, review: calls("/api/crew/autopilot/review").length, areas: calls("/api/crew/autopilot/areas?").length };
+    await user.click(within(item).getByRole("button", { name: /^Override/ }));
+    const menu = await screen.findByRole("menu", { name: "web/auth override" });
+    await user.click(within(menu).getByRole("menuitem", { name: "Off" }));
+    const dialog = await screen.findByRole("dialog", { name: "Turn web/auth off?" });
+    await user.click(within(dialog).getByRole("checkbox", { name: "I understand that everything in web/auth will wait for me." }));
+    await user.click(within(dialog).getByRole("button", { name: "Turn it off" }));
+    await waitFor(() => expect(calls("/api/crew/autopilot/areas?").length).toBeGreaterThan(before.areas));
+    await waitFor(() => expect(screen.queryByText("moved from Full to On")).toBeNull());
+    expect(calls("/api/crew/stops")).toHaveLength(before.stops);
+    expect(calls("/api/crew/autopilot/review")).toHaveLength(before.review);
   });
 
   it("a demotion's Review opens Autopilot by area on the row's repository; it writes nothing", async () => {

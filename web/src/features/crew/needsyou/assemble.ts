@@ -160,14 +160,16 @@ const BLOCKS_NOTHING: ReadonlySet<NeedsKind> = new Set(["autonomy"]);
  * An area the circuit breaker demoted, as the Needs you inbox's one line (Crew Designs: needsyou-demoted). The route's record is the
  * trip's own numbers, so the line names them. Only a demotion under a Full ceiling is a row: a recovering or criteria-met area is not a
  * new tell (the areas page keeps showing it, and its served record is the recovery, not the trip), a ceiling below Full means the
- * demotion changed nothing, and the inbox never re-tells an area that follows its ceiling.
+ * demotion changed nothing, and the inbox never re-tells an area that follows its ceiling. Only a demotion to On is a row, since the
+ * line says a High risk diff waits while Low and Medium still merge; an area the breaker took to Off says something else.
  */
-export function autonomyItems(rows: AutopilotAreaRow[]): NeedsItem[] {
+export function autonomyItems(rows: AutopilotAreaRow[], project: string): NeedsItem[] {
   return rows
-    .filter((row) => row.state === "demoted" && row.ceiling === "full")
+    .filter((row) => row.state === "demoted" && row.ceiling === "full" && row.now === "on")
     .map((row) => ({
-      // The trip time is part of the id, like a stop's: a new trip after a dismissal is a new row.
-      id: `autonomy:${row.area_key}:${row.since ?? ""}`,
+      // The repository and the trip time are part of the id, like a stop's: a new trip after a dismissal is a new row, and another
+      // repository's area of the same name is another row.
+      id: `autonomy:${project}:${row.area_key}:${row.since ?? ""}`,
       kind: "autonomy" as const,
       title: `${row.area} moved from ${modeName(row.ceiling)} to ${modeName(row.now)}: ${plural(row.record.reverts, "revert")} in ${row.record.window_days} days. Review or override.`,
       risk: null,

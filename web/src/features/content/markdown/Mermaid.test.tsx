@@ -17,8 +17,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Fires the debounce and flushes the draw, so a broken debounce fails the next assertion instead of sleeping. */
-const settled = () => act(async () => { await vi.advanceTimersByTimeAsync(DRAW_DEBOUNCE_MS); });
+/**
+ * Fires the debounce, then waits for the `import("mermaid")` the timer starts and for the draw chain behind it. Advancing the
+ * timers alone does not wait for the import, so without this a guard test could pass before the guard ever ran.
+ */
+const settled = () =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(DRAW_DEBOUNCE_MS);
+    await vi.dynamicImportSettled();
+    await vi.advanceTimersByTimeAsync(0);
+  });
 
 describe("Mermaid", () => {
   it("initialises Mermaid at its strict security level, and draws the SVG inline", async () => {

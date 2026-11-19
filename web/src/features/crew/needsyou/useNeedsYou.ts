@@ -57,7 +57,7 @@ function writeDismissed(key: string, ids: ReadonlySet<string>): void {
 export type NeedsState =
   | { status: "loading" }
   | { status: "error"; failure: ApiFailure; retry(): void }
-  | { status: "ready"; items: NeedsItem[]; hold(id: string): HoldControl | null; partial: string[]; noticeFailure: ApiFailure | null; retry(): void; dismiss(id: string): void; areas: AutopilotAreaRow[] };
+  | { status: "ready"; items: NeedsItem[]; hold(id: string): HoldControl | null; partial: string[]; noticeFailure: ApiFailure | null; retry(): void; reloadAreas(): void; dismiss(id: string): void; areas: AutopilotAreaRow[] };
 
 /**
  * The inbox from the routes that exist. Mount it only while Crew Preview is on (`NeedsYouInbox` does): it reads at once. One source failing does not hide the others: the ones that read are listed, and the ones
@@ -124,10 +124,10 @@ export function useNeedsYou(project: string | null): NeedsState {
       ...(refused.data ? couldNotStartItems(refused.data) : []),
       ...(review.data ? mainItems(review.data) : []),
       ...(background.data ? backgroundItems(background.data) : []),
-      ...(areaRows ? autonomyItems(areaRows).filter((one) => !dismissedAutonomy.has(dismissKey(one.id))) : []),
+      ...(areaRows && project ? autonomyItems(areaRows, project).filter((one) => !dismissedAutonomy.has(dismissKey(one.id))) : []),
       ...(notices.data ? secondEngineItems(notices.data) : []),
     ]);
-  }, [heldRows, stops.data, review.data, background.data, refused.data, notices.data, areaRows, dismissed, dismissedAutonomy]);
+  }, [heldRows, stops.data, review.data, background.data, refused.data, notices.data, areaRows, project, dismissed, dismissedAutonomy]);
   // Keep only the dismissals whose row is still in the service's list, so the stored lists cannot grow without end.
   const recent = stops.data?.recent;
   useEffect(() => {
@@ -142,12 +142,14 @@ export function useNeedsYou(project: string | null): NeedsState {
       return new Set(kept);
     });
   }, [recent]);
-  // A dismissed demotion returns only if the area trips again (a new trip time is a new row).
+  // A dismissed demotion returns only if the area trips again (a new trip time is a new row). Only this repository's own entries are
+  // pruned: another repository's stay until it is shown again.
   useEffect(() => {
     if (!project || !areaRows) return;
-    const present = new Set(autonomyItems(areaRows).map((one) => dismissKey(one.id)));
+    const own = dismissKey(`autonomy:${project}:`);
+    const present = new Set(autonomyItems(areaRows, project).map((one) => dismissKey(one.id)));
     setDismissedAutonomy((now) => {
-      const kept = [...now].filter((key) => present.has(key));
+      const kept = [...now].filter((key) => !key.startsWith(own) || present.has(key));
       if (kept.length === now.size) return now;
       writeDismissed(DISMISSED_AUTONOMY_KEY, new Set(kept));
       return new Set(kept);
@@ -192,5 +194,5 @@ export function useNeedsYou(project: string | null): NeedsState {
   const loading = stops.status === "loading" && review.status === "loading" && background.status === "loading" && refused.status === "loading" && notices.status === "loading" && (project === null || areas.status === "loading");
   if (failed.length === reads.length) return { status: "error", failure: failed[0]!.error as ApiFailure, retry };
   if (loading) return { status: "loading" };
-  return { status: "ready", items, hold, partial: failed.map((one) => one.name), noticeFailure: notices.failure, retry, dismiss, areas: areaRows ?? [] };
+  return { status: "ready", items, hold, partial: failed.map((one) => one.name), noticeFailure: notices.failure, retry, reloadAreas: quietAreas, dismiss, areas: areaRows ?? [] };
 }
