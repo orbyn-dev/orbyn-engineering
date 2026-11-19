@@ -209,6 +209,7 @@ impl Core {
                 links: Links {
                     review: None,
                     fix: None,
+                    correction_subject: None,
                     crew_started: true,
                     trigger: Some(PausedTrigger {
                         kind: PausedKind::Background,
