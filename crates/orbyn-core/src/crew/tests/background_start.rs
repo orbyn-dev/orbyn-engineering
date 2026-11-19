@@ -996,8 +996,6 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
             scratch: false,
         })
         .unwrap();
-    let scope = ModeScope::Crew(thread.id.clone());
-    w.core.set_crew_autopilot_mode(&scope, Mode::Off).unwrap();
     w.core
         .store
         .start_background_run_as(&crew_row.id, &thread.id, "user")
@@ -1036,7 +1034,7 @@ async fn a_crash_between_the_refusal_and_the_cleanup_leaves_nothing_partial() {
         .unwrap();
     assert!(unwound.discarded);
     assert!(w.core.store.background_run(&thread.id).unwrap().is_none());
-    assert_eq!((threads(&w), mode_rows(&w)), (before.0 - 1, before.1 - 1));
+    assert_eq!((threads(&w), mode_rows(&w)), (before.0 - 1, before.1));
     assert_eq!(refusals(&w, &thread.id), 1);
     assert!(
         !w.core

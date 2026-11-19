@@ -336,7 +336,7 @@ impl Core {
             })
     }
 
-    /// Takes back a taskless start (run, mode row and lead thread, in one commit) and returns the refusal as an error, or retains a
+    /// Takes back a taskless start (run and lead thread, in one commit) and returns the refusal as an error, or retains a
     /// task-backed start for review: its tasks are held and the retained run is returned. An error of the store unwind is returned
     /// as it is, since the run is still `running` and the caller must know. What follows the commit is best effort and only logged:
     /// each held task gives up its leases (a run that ended `needs_review` leaves none showing as granted, as `end_crew_task` does) and gets a `NeedsPerson` result with the reason
