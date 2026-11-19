@@ -468,6 +468,9 @@
   font-family: var(--font-mono);
   font-size: var(--text-label);
 }
+.mention-name b {
+  font-weight: 500;
+}
 .mention-detail {
   min-width: 0;
   margin-left: auto;

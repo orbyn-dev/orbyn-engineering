@@ -206,9 +206,12 @@ sends, and a picker on the opening line names or clears the language. Tab outsid
 block keeps the list and focus rules.
 
 Context can sit above the draft as a chip: a cited reply, a terminal selection, a
-review comment on a diff line or range, a picked page element, or the open file at
-its revealed line. A chip is not engine protocol; when the message is sent, each
-chip becomes a readable block at the top of the prompt and the typed draft follows.
+review comment on a diff line or range, a picked page element, the open file at
+its revealed line, or a thread picked from the @ menu. A chip is not engine
+protocol; when the message is sent, each chip becomes a readable block at the top
+of the prompt and the typed draft follows. A picked thread's block is the thread
+link itself, `Thread: [title](orbyn://thread/<id>)`, which the timeline renders
+as a thread and the agent reads on demand.
 A terminal selection inside one command's output also carries that command line and
 exit code when the shell marks its commands with OSC 133 or 633 shell-integration
 sequences. Orbyn installs no shell integration, so a shell that emits no marks gives
