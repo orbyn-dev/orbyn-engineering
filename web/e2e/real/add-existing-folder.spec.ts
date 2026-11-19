@@ -33,7 +33,7 @@ test("an existing folder is added from the browse list, through its rows and the
   const field = palette.getByLabel("Folder path");
   await expect(field).toHaveValue("~/");
 
-  // The listing is the real service's browse of the home folder: one plain folder, one Git repository.
+  // The listing is the real service's browse of the home folder: the home listing includes my-folder (plain) and my-repo (Git).
   const folder = palette.getByRole("button", { name: "~/my-folder" });
   const repo = palette.getByRole("button", { name: "~/my-repo" });
   await expect(repo).toBeVisible();
@@ -45,8 +45,7 @@ test("an existing folder is added from the browse list, through its rows and the
   // so its listing is the parent row alone.
   await repo.click();
   await expect(field).toHaveValue("~/my-repo/");
-  await expect(palette.getByRole("button", { name: "..", exact: true })).toBeVisible();
-  await expect(palette.getByRole("button", { name: "~/my-folder" })).toHaveCount(0);
+  await expect(palette.getByRole("button", { name: /^~\// })).toHaveCount(0);
   // The parent row climbs back up, so the listing returns to home.
   await palette.getByRole("button", { name: "..", exact: true }).click();
   await expect(field).toHaveValue("~/");
@@ -55,7 +54,6 @@ test("an existing folder is added from the browse list, through its rows and the
   // The shortcut add: the active row is added where it is, with Cmd/Ctrl+Enter.
   await folder.hover();
   await expect(folder).toHaveAttribute("data-active", "true");
-  await field.click();
   await field.press("ControlOrMeta+Enter");
   // An untrusted project lands on the trust step, as the typed-path add does.
   await expect(page.getByRole("button", { name: "Trust folder" })).toBeVisible();
