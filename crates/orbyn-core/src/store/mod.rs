@@ -112,7 +112,7 @@ pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
 pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
-pub use crew_merges::{MergeEntry, MergeRecord};
+pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
 pub use crew_provenance::StoredHunk;
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};

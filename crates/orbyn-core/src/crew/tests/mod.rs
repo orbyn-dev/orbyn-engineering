@@ -50,6 +50,7 @@ mod forge_resolve;
 mod hardening;
 mod harness;
 mod lifecycle;
+mod merging_recovery;
 mod overrides;
 mod protect;
 mod provider_facts;

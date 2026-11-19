@@ -18,7 +18,7 @@ use crate::source_control::{
     forge,
     git::{git, text},
 };
-use crate::store::{ForgeMerge, ForgePhase, MergeEntry};
+use crate::store::{ForgeMerge, ForgePhase, MergeEntry, OPEN_MERGE_STATES};
 
 /// Who asked for a forge lane pass, in the ledger's own words.
 #[derive(Clone, Copy)]
@@ -471,8 +471,8 @@ impl Core {
             intent.phase = ForgePhase::NeedsPerson;
             intent.note = Some(why.clone());
             self.store.save_crew_forge_merge(intent)?;
-            self.store
-                .set_merge_entry_state(&intent.task_id, "blocked", Some(&why))?;
+            // The entry is only blocked while it is open; a person's reject is left as it is.
+            self.merge_state(&intent.task_id, &OPEN_MERGE_STATES, "blocked", Some(&why))?;
             return Ok(blocked(task, &why));
         }
         // Durable before the request: from here on a merge request may be on the forge, so a person can never retry it, and a
@@ -555,8 +555,7 @@ impl Core {
         intent.phase = ForgePhase::NeedsPerson;
         intent.note = Some(why.into());
         self.store.save_crew_forge_merge(intent)?;
-        self.store
-            .set_merge_entry_state(&intent.task_id, "blocked", Some(why))?;
+        self.merge_state(&intent.task_id, &OPEN_MERGE_STATES, "blocked", Some(why))?;
         Ok(MergeOutcome::NeedsPerson {
             task_id: intent.task_id.clone(),
             why: why.into(),

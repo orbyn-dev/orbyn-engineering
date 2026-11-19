@@ -17,7 +17,7 @@ use crate::app::Core;
 use crate::crew::autopilot::Mode;
 use crate::crew::checks::run_line;
 use crate::error::{CoreError, Result};
-use crate::store::{MergeEntry, MergeRecord};
+use crate::store::{MergeEntry, MergeRecord, MergeStateMove};
 
 /// Where merges go: a repository and the branch in it.
 #[derive(Clone, Debug)]
@@ -49,6 +49,35 @@ pub enum MergeOutcome {
 const CHECK_TIME: Duration = Duration::from_secs(15 * 60);
 
 impl Core {
+    /// A guarded state write for the lane: true when the entry moved, false when it was no longer in one of the `expected` states
+    /// (a person's reject, a recovery) and was left as it is. A lost race never overwrites what the other writer decided.
+    pub(super) fn merge_state(
+        &self,
+        task_id: &str,
+        expected: &[&str],
+        state: &str,
+        note: Option<&str>,
+    ) -> Result<bool> {
+        match self
+            .store
+            .set_merge_entry_state(task_id, expected, state, note)?
+        {
+            MergeStateMove::Moved => Ok(true),
+            MergeStateMove::Changed(now) => {
+                tracing::info!(task = %task_id, now = %now, wanted = %state, "the merge entry changed under the lane; left as it is");
+                Ok(false)
+            }
+        }
+    }
+
+    /// The subject of the merge commit the queue makes for a task. Recovery looks for it on the branch.
+    pub(crate) fn merge_subject(task_id: &str) -> String {
+        format!(
+            "Merge crew task {}",
+            task_id.chars().skip(7).take(8).collect::<String>()
+        )
+    }
+
     fn merge_key(&self, task_id: &str) -> Vec<String> {
         self.store
             .crew_answer_key(task_id)
@@ -235,8 +264,17 @@ impl Core {
                 )?;
             }
             None => {
-                self.store
-                    .set_merge_entry_state(task_id, "rejected", Some(why))?;
+                // The state was read above, but a lane pass may have moved it since: a merge already `merging` is not turned down here.
+                if !self.merge_state(
+                    task_id,
+                    &["waiting", "queued", "blocked"],
+                    "rejected",
+                    Some(why),
+                )? {
+                    return Err(CoreError::Invalid(
+                        "this merge is no longer in the queue".into(),
+                    ));
+                }
                 self.store.note_crew_forge_entry_rejected(task_id, why)?;
             }
         }
@@ -269,6 +307,14 @@ impl Core {
                 continue;
             }
             if let Some(why) = self.merge_blocker(&entry, target)? {
+                if !self.merge_state(
+                    &entry.task_id,
+                    &["queued", "blocked"],
+                    "blocked",
+                    Some(&why),
+                )? {
+                    continue;
+                }
                 // A change of reason is news; the same reason on every pass is not.
                 if entry.note.as_deref() != Some(why.as_str()) {
                     self.merge_event(
@@ -277,24 +323,23 @@ impl Core {
                         &json!({ "why": why, "blocked": true, "risk": entry.risk }),
                     );
                 }
-                self.store
-                    .set_merge_entry_state(&entry.task_id, "blocked", Some(&why))?;
                 outcomes.push(MergeOutcome::Blocked {
                     task_id: entry.task_id,
                     why,
                 });
                 continue;
             }
-            self.store
-                .set_merge_entry_state(&entry.task_id, "merging", None)?;
+            // Only a still-open entry starts: one a person rejected since the list was read stays rejected.
+            if !self.merge_state(&entry.task_id, &["queued", "blocked"], "merging", None)? {
+                continue;
+            }
             // Re-read the escape check now `merging` is written: a withdraw either committed before this (blocked here) or sees `merging` and
             // is refused, so a withdrawn check never lands.
             if let Err(error) =
                 self.refuse_unproven_escape_check(&entry.task_id, Some(&entry.candidate))
             {
                 let why = error.public_message();
-                self.store
-                    .set_merge_entry_state(&entry.task_id, "blocked", Some(&why))?;
+                self.merge_state(&entry.task_id, &["merging"], "blocked", Some(&why))?;
                 outcomes.push(MergeOutcome::Blocked {
                     task_id: entry.task_id,
                     why,
@@ -306,8 +351,7 @@ impl Core {
                 Ok(outcome) => outcome,
                 Err(error) => {
                     let why = error.public_message();
-                    self.store
-                        .set_merge_entry_state(&entry.task_id, "queued", Some(&why))?;
+                    self.merge_state(&entry.task_id, &["merging"], "queued", Some(&why))?;
                     MergeOutcome::Blocked {
                         task_id: entry.task_id.clone(),
                         why,
@@ -356,8 +400,7 @@ impl Core {
     ) -> Result<MergeOutcome> {
         let task_id = entry.task_id.clone();
         if let Some(why) = self.merge_hold_now(entry, target, now).await? {
-            self.store
-                .set_merge_entry_state(&task_id, "waiting", Some(&why))?;
+            self.merge_state(&task_id, &["merging"], "waiting", Some(&why))?;
             self.merge_event(
                 &task_id,
                 "merge_waiting",
@@ -366,11 +409,15 @@ impl Core {
             return Ok(MergeOutcome::NeedsPerson { task_id, why });
         }
         let reject = |why: &str, retry: bool| -> Result<MergeOutcome> {
-            self.store.set_merge_entry_state(
-                &task_id,
-                if retry { "queued" } else { "rejected" },
-                Some(why),
-            )?;
+            let state = if retry { "queued" } else { "rejected" };
+            if !self.merge_state(&task_id, &["merging"], state, Some(why))? {
+                return Ok(MergeOutcome::Blocked {
+                    task_id: task_id.clone(),
+                    why:
+                        "the queue entry changed while it was merging; its state was left as it is"
+                            .to_owned(),
+                });
+            }
             if retry {
                 return Ok(MergeOutcome::Blocked {
                     task_id: task_id.clone(),
@@ -392,14 +439,24 @@ impl Core {
                 "{} is checked out in {folder}, and the crew never moves a checked-out branch",
                 target.branch
             );
-            self.store
-                .set_merge_entry_state(&task_id, "waiting", Some(&why))?;
+            self.merge_state(&task_id, &["merging"], "waiting", Some(&why))?;
             self.merge_event(
                 &task_id,
                 "merge_waiting",
                 &json!({ "why": "the branch is checked out" }),
             );
             return Ok(MergeOutcome::NeedsPerson { task_id, why });
+        }
+        // A candidate the branch already holds leaves nothing to merge: `git merge` would say "Already up to date", make no commit, and
+        // the old tip would be recorded as this task's merge.
+        if gitops::already_on(&target.repo, &target.branch, &entry.candidate).await? {
+            return reject(
+                &format!(
+                    "the change is already on {}; nothing to merge",
+                    target.branch
+                ),
+                false,
+            );
         }
         let before = gitops::rev(&target.repo, &target.branch).await?;
         let scratch = Scratch::at(&target.repo, &self.scratch_root(), &before).await?;
@@ -411,6 +468,16 @@ impl Core {
             Ok(done) => done,
             Err(why) => return reject(&why, false),
         };
+        // Whatever git did, the commit that moves the branch is a merge of exactly the tip and the candidate.
+        if !gitops::is_merge_of(&target.repo, &merge_commit, &before, &entry.candidate)
+            .await
+            .unwrap_or(false)
+        {
+            return reject(
+                "git did not make a merge of this change; nothing was moved",
+                false,
+            );
+        }
         if gitops::move_branch(&target.repo, &target.branch, &merge_commit, &before)
             .await
             .is_err()
@@ -435,10 +502,7 @@ impl Core {
         before: &str,
         repo: &std::path::Path,
     ) -> Result<std::result::Result<(String, u32), String>> {
-        let message = format!(
-            "Merge crew task {}",
-            entry.task_id.chars().skip(7).take(8).collect::<String>()
-        );
+        let message = Self::merge_subject(&entry.task_id);
         let merge_commit = match gitops::merge(scratch, &entry.candidate, &message).await {
             Ok(commit) => commit,
             Err(Refused::Conflict) => return Ok(Err("it conflicts with the branch".to_owned())),

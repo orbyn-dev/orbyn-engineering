@@ -221,6 +221,10 @@ impl Core {
     }
 
     async fn crew_merge_watch_tick(self: &Arc<Self>) -> Result<()> {
+        // Local entries a crash left `merging` (the startup tick is the first); a forge entry is left to its own reconcile below.
+        if let Err(error) = self.recover_crew_merging(crate::util::unix_now()).await {
+            tracing::warn!(%error, "merges a crash interrupted could not be recovered");
+        }
         if let Err(error) = self
             .recover_crew_forge_merges(crate::util::unix_now())
             .await
