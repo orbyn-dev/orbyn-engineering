@@ -2509,9 +2509,12 @@ has ended, H7). A finding has no state and blocks nothing until the core confirm
 citing Evidence: a repro check the lead states that fails, or an independent second review that reports the same file within 3 lines.
 A confirmed finding sends the core's own fix brief to a builder, checked like `crew_start`'s, and the lanes then run again; the same
 finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
-([review group](../crates/orbyn-core/src/crew/review/README.md)). A call starts lanes until the 45-second budget
-runs out, and is then an error naming the lanes that started and the ones it did not reach; the lanes it started keep
-running, and a retry asks for only the missing ones.
+([review group](../crates/orbyn-core/src/crew/review/README.md)). A call starts lanes while the deadline of its own 45-second
+timer leaves room for the longest lane start seen so far plus a 5-second reserve (the first lane always starts), and is
+then an error that lists the lanes that started (with their task), those waiting on a person, those refused with the
+reason and those not reached, plus the `lanes` to pass to ask again. The lanes it started keep running, and only the
+not-reached ones are worth asking for. A lane only a repo rule asks for does not run again on the same commit unless it
+is named, so the retry never repeats it.
 
 Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
 subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch
@@ -2872,8 +2875,8 @@ A tool call answers within 45 seconds, under the minute engines allow, and one t
 can wait on a person gets 240. Going over drops the call, and a dropped wait expires its
 approval, so a late answer does nothing. Claude's `approve` is a run's permission prompt
 and stays on `ORBYN_APPROVAL_TIMEOUT_SECS`. `orbyn_thread_wait` waits at most 40 seconds
-and reports `ended: false`. `crew_review` keeps inside the budget itself: it stops starting lanes in time and its
-answer names the lanes that started and the ones that did not. A request can be 512 KiB and a reply is cut at 256 KiB.
+and reports `ended: false`. `crew_review` paces itself by that timer's own deadline: it stops starting lanes in time and its
+error lists the lanes that started, waited on a person, were refused and were not reached. A request can be 512 KiB and a reply is cut at 256 KiB.
 
 ## Service access
 

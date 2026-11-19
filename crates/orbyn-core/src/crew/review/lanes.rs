@@ -1,7 +1,9 @@
 //! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. The lanes start one after
-//! another inside the call's tool budget, and a call the budget cuts short is an error naming the lanes it started
-//! and the ones it did not, so a retry asks for only the missing ones. A lane named after the
-//! work has passed runs like any other, and a lane the repo's rules ask for runs without being named. A lane
+//! another inside the call's tool budget (the deadline of the MCP timer itself, with room kept for the longest
+//! start seen and a reserve), and a call the budget cuts short is an error listing the lanes that started, that
+//! wait on a person, that were refused and that were not reached, so a retry asks for only the last. A lane named after the
+//! work has passed runs like any other, and a lane the repo's rules ask for runs without being named, once per
+//! commit: a rule lane that already has a review on the commit is left out unless named. A lane
 //! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
 //! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
@@ -68,31 +70,75 @@ impl Core {
     }
 }
 
-/// The cut call's answer: which lanes started and which did not, none invented and none omitted. A lane whose
-/// start was refused or waits on a person has not started, so it is one to ask for again.
-fn cut_note(lanes: &[CrewToken], answers: &[Value]) -> String {
-    let begun: Vec<&str> = answers
+/// The time a call keeps back for what runs after its last lane start: the answer, and the MCP timer's own slack.
+pub(super) const LANE_RESERVE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether another lane may start with `remaining` of the call's budget left. A start takes about as long as the
+/// longest one seen so far, so the next one is begun only when it can end, plus the reserve, inside the budget.
+fn room_for_another(
+    remaining: std::time::Duration,
+    longest_start: std::time::Duration,
+    reserve: std::time::Duration,
+) -> bool {
+    remaining >= longest_start + reserve
+}
+
+/// The cut call's answer, built from what each lane's start returned: lanes that started (with their task),
+/// lanes waiting on a person, lanes refused with the reason, and lanes not reached. Only the last are advised
+/// to be asked for again, with the exact `lanes` to pass; the others are not started by that call, and a lane
+/// only a repo rule asked for does not run twice on the same commit.
+fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
+    let mut begun = Vec::new();
+    let mut waiting = Vec::new();
+    let mut refused = Vec::new();
+    for (lane, answer) in lanes.iter().zip(answers) {
+        let id = answer["task"].as_str();
+        let with_id = |text: &str| match id {
+            Some(id) => format!("{text} ({id})"),
+            None => text.to_owned(),
+        };
+        if let Some(error) = answer.get("error") {
+            let why = error["message"].as_str().unwrap_or("it was refused");
+            refused.push(format!("{lane} ({why})"));
+        } else if answer["state"] == "needs_person" {
+            let why = if answer["routed"] == false {
+                "no engine could take it"
+            } else {
+                "same-engine consent"
+            };
+            waiting.push(with_id(&format!("{lane}: {why}")));
+        } else {
+            begun.push(with_id(lane.as_str()));
+        }
+    }
+    let rest: Vec<&str> = lanes[answers.len()..]
         .iter()
-        .filter(|answer| answer["task"].is_string())
-        .filter_map(|answer| answer["lane"].as_str())
+        .map(CrewToken::as_str)
         .collect();
-    let rest: Vec<&str> = lanes
-        .iter()
-        .map(|lane| lane.as_str())
-        .filter(|lane| !begun.contains(lane))
-        .collect();
-    let named = |lanes: Vec<&str>| {
-        if lanes.is_empty() {
+    let named = |items: &[String]| items.join(", ");
+    let mut note = format!(
+        "lanes: the tool budget ran out. Started: {}.",
+        if begun.is_empty() {
             "none".to_owned()
         } else {
-            lanes.join(", ")
+            named(&begun)
         }
-    };
-    format!(
-        "lanes: the tool budget ran out. Started: {}. Not started: {}. Ask again for the lanes that did not start.",
-        named(begun),
-        named(rest)
-    )
+    );
+    if !waiting.is_empty() {
+        note += &format!(" Waiting on a person: {}.", named(&waiting));
+    }
+    if !refused.is_empty() {
+        note += &format!(
+            " Refused, so asking again changes nothing: {}.",
+            named(&refused)
+        );
+    }
+    note += &format!(
+        " Not reached: {}. Ask again with task {task} and lanes {}; the lanes above are not started again, and a lane only a repo rule asks for does not run twice on one commit.",
+        rest.join(", "),
+        json!(rest)
+    );
+    note
 }
 
 /// What a review run is for.
@@ -179,6 +225,7 @@ impl Core {
         binding: &McpBinding,
         args: &Value,
         deadline: std::time::Instant,
+        reserve: std::time::Duration,
     ) -> Result<Value, CrewError> {
         let (thread, stamper) = self.review_lead(binding, "crew_review")?;
         let Some(fields) = args.as_object() else {
@@ -228,8 +275,22 @@ impl Core {
             .iter()
             .filter(|rule| rule.applies(touched.as_deref()))
             .collect();
+        // A lane the repo's rules ask for is added on every call, so asking again for only the lane a cut call
+        // did not reach would run it a second time: a rule lane that already has a review on this commit and
+        // is not named is left out. Naming it runs its next round.
+        let named: std::collections::BTreeSet<String> =
+            lanes.iter().map(|l| l.as_str().to_owned()).collect();
+        let done = self.store.crew_reviews_of(&task.id).map_err(internal)?;
+        let mut ran = Vec::new();
         for rule in &from_rules {
-            lanes.push(rule.lane.clone());
+            let already = done
+                .iter()
+                .any(|r| r.role == "review" && r.lane == rule.lane.as_str() && r.commit == commit);
+            if already && !named.contains(rule.lane.as_str()) {
+                ran.push(rule.lane.as_str().to_owned());
+            } else {
+                lanes.push(rule.lane.clone());
+            }
         }
         let controls = self
             .store
@@ -243,21 +304,38 @@ impl Core {
         let mut seen = std::collections::BTreeSet::new();
         lanes.retain(|lane| seen.insert(lane.as_str().to_owned()));
         if lanes.is_empty() {
-            return Err(invalid(
-                "lanes: name at least one lane; no rule of the repo asks for one for this change",
-            ));
+            return Err(invalid(if ran.is_empty() {
+                "lanes: name at least one lane; no rule of the repo asks for one for this change"
+                    .to_owned()
+            } else {
+                format!(
+                    "lanes: the lanes the repo's rules ask for ({}) already ran on this commit; name one to run its next round",
+                    ran.join(", ")
+                )
+            }));
         }
         let mut started = Vec::new();
+        let mut longest = std::time::Duration::ZERO;
         for (place, lane) in lanes.iter().enumerate() {
             // The first lane always starts, so a call makes progress on any machine. A later lane starts only
-            // while the call is inside its tool budget (crates/orbyn-core/src/tools/mcp/mod.rs), and when that
-            // runs out the loop answers before the MCP layer drops the call, naming the lanes it started (#628).
-            if place > 0 && std::time::Instant::now() >= deadline {
-                return Err(invalid(cut_note(&lanes, &started)));
+            // while the call's own deadline (the instant the MCP layer's timer fires, so the layer never drops
+            // the call first) leaves room for the longest start seen plus a reserve; otherwise the loop answers,
+            // naming the lanes it started and the ones it did not reach (#628).
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if place > 0 && !room_for_another(remaining, longest, reserve) {
+                return Err(invalid(cut_note(&task.id, &lanes, &started)));
             }
-            let answer = match self
-                .start_review_run(&thread, &stamper, &task, lane, &commit, Run::Lane)
-                .await
+            let began = std::time::Instant::now();
+            // Boxed: the start's future is large, and the loop holds it across the await.
+            let answer = match Box::pin(self.start_review_run(
+                &thread,
+                &stamper,
+                &task,
+                lane,
+                &commit,
+                Run::Lane,
+            ))
+            .await
             {
                 Ok(mut answer) => {
                     answer["lane"] = json!(lane);
@@ -268,6 +346,7 @@ impl Core {
                 }
                 Err(error) => json!({ "lane": lane, "started": false, "error": error }),
             };
+            longest = longest.max(began.elapsed());
             started.push(answer);
         }
         Ok(json!({ "task": task.id, "commit": commit, "lanes": started }))
@@ -515,5 +594,55 @@ impl Core {
              blocks nothing until the core confirms it by a check or by a second independent review. When you have \
              filed everything (or found nothing), call crew_report with a short summary."
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration as D;
+
+    /// Issue #628: three lanes of about 20 s each in a 45 s budget. The second starts at 20 s and ends at 40 s; the
+    /// third would start with 5 s left, inside the longest start plus the reserve, so the call stops and names it.
+    #[test]
+    fn slow_lane_starts_stop_the_loop_before_the_budget() {
+        let budget = D::from_secs(45);
+        let mut elapsed = D::ZERO;
+        let mut longest = D::ZERO;
+        let mut started = 0;
+        for place in 0..3 {
+            if place > 0 && !room_for_another(budget - elapsed, longest, LANE_RESERVE) {
+                break;
+            }
+            elapsed += D::from_secs(20);
+            longest = longest.max(D::from_secs(20));
+            started += 1;
+        }
+        assert_eq!(started, 2);
+        assert!(elapsed < budget);
+        assert!(room_for_another(
+            D::from_secs(40),
+            D::from_secs(2),
+            LANE_RESERVE
+        ));
+    }
+
+    #[test]
+    fn a_cut_note_separates_started_waiting_refused_and_not_reached() {
+        let lanes: Vec<CrewToken> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|l| CrewToken::new(*l).unwrap())
+            .collect();
+        let answers = vec![
+            json!({ "lane": "a", "task": "task-a", "state": "running", "routed": true }),
+            json!({ "lane": "b", "task": "task-b", "state": "needs_person", "routed": false }),
+            json!({ "lane": "c", "started": false, "state": "needs_person", "same_engine_consent": {} }),
+            json!({ "lane": "d", "started": false, "error": { "message": "too many rounds" } }),
+        ];
+        let note = cut_note("task-0", &lanes, &answers);
+        assert_eq!(
+            note,
+            "lanes: the tool budget ran out. Started: a (task-a). Waiting on a person: b: no engine could take it (task-b), c: same-engine consent. Refused, so asking again changes nothing: d (too many rounds). Not reached: e. Ask again with task task-0 and lanes [\"e\"]; the lanes above are not started again, and a lane only a repo rule asks for does not run twice on one commit."
+        );
     }
 }

@@ -295,17 +295,13 @@ async fn a_budget_cut_review_call_names_its_lanes() {
             &binding,
             &json!({ "task": subject, "lanes": ["correctness", "security", "performance"] }),
             std::time::Instant::now(),
+            std::time::Duration::ZERO,
         )
         .await;
     let Err(cut) = answer else {
         panic!("a cut review call is an error, not {answer:?}");
     };
     assert_eq!(cut.code, orbyn_contracts::ErrorCode::InvalidObject, "{cut}");
-    assert_eq!(
-        cut.message,
-        "lanes: the tool budget ran out. Started: correctness. Not started: security, performance. Ask again for the lanes that did not start."
-    );
-    // The lane that started was never lost: it runs, and the others never did.
     let one = w
         .core
         .store
@@ -314,6 +310,13 @@ async fn a_budget_cut_review_call_names_its_lanes() {
         .into_iter()
         .find(|review| review.lane == "correctness")
         .expect("the cut call's first lane started");
+    assert_eq!(
+        cut.message,
+        format!(
+            "lanes: the tool budget ran out. Started: correctness ({}). Not reached: security, performance. Ask again with task {subject} and lanes [\"security\",\"performance\"]; the lanes above are not started again, and a lane only a repo rule asks for does not run twice on one commit.",
+            one.task_id
+        )
+    );
     w.until_state(&one.task_id, "passed").await;
     assert!(
         w.core
@@ -345,6 +348,50 @@ async fn a_budget_cut_review_call_names_its_lanes() {
         reviews.iter().filter(|r| r.lane == "performance").count(),
         1
     );
+}
+
+/// Issue #628, the blocker: the loop is paced by the deadline of the MCP timer itself. Run inside the real
+/// `within`, with a reserve that leaves no room after the first lane, the call answers with the cut error
+/// and the timer never fires, so the generic "did not finish in time" is not what comes back.
+#[tokio::test]
+async fn a_review_call_paced_by_the_mcp_timer_names_its_lanes() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let binding = lead_binding(&w);
+    let args = json!({ "task": subject, "lanes": ["correctness", "security", "performance"] });
+    let budget = std::time::Duration::from_secs(30);
+    let reply = crate::tools::mcp::within_deadline(budget, async {
+        let deadline = crate::tools::mcp::call_deadline().expect("a budgeted call has a deadline");
+        assert!(deadline <= std::time::Instant::now() + budget);
+        let reserve = std::time::Duration::from_secs(60);
+        match w
+            .core
+            .crew_lanes_tool(&binding, &args, deadline, reserve)
+            .await
+        {
+            Ok(value) => Ok(value),
+            Err(error) => Ok(json!({ "isError": true, "text": error.message })),
+        }
+    })
+    .await
+    .unwrap();
+    let text = reply["text"].as_str().unwrap_or_default();
+    assert!(
+        text.starts_with("lanes: the tool budget ran out. Started: correctness ("),
+        "{reply}"
+    );
+    assert!(
+        text.contains("Not reached: security, performance."),
+        "{reply}"
+    );
+    assert!(!text.contains("did not finish in time"));
+    let reviews = w.core.store.crew_reviews_of(&subject).unwrap();
+    assert_eq!(reviews.len(), 1, "only the first lane started");
+    w.until_state(&reviews[0].task_id, "passed").await;
 }
 
 fn commit_rules(w: &super::harness::World, text: &str) {
@@ -772,4 +819,96 @@ async fn lane_tier_checks_fail_closed() {
             .lane_keeps_lead(&root, base, Some(&subject), &token("licence"))
             .await
     );
+}
+
+/// Issue #628: a rule lane is not run again when a cut call's retry asks for only the missing lane; naming it
+/// runs its next round.
+#[tokio::test]
+async fn a_rule_lane_is_not_started_again_by_the_retry() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![]),
+    }))
+    .await;
+    commit_rules(
+        &w,
+        &json!({ "required": ["checks"], "lanes": [{ "lane": "licence" }] }).to_string(),
+    );
+    let subject = w.built_work().await;
+    let binding = lead_binding(&w);
+    // Cut after the first lane: correctness started, then licence (from the rule) and security were not reached.
+    let cut = w
+        .core
+        .crew_lanes_tool(
+            &binding,
+            &json!({ "task": subject, "lanes": ["correctness", "security"] }),
+            std::time::Instant::now(),
+            std::time::Duration::ZERO,
+        )
+        .await
+        .expect_err("cut");
+    assert!(
+        cut.message.contains("Not reached: security, licence."),
+        "{}",
+        cut.message
+    );
+    let first = w.core.store.crew_reviews_of(&subject).unwrap();
+    w.until_state(&first[0].task_id, "passed").await;
+    // The retry for the missing lane starts it, and the rule lane that never started with it.
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["security", "licence"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    for lane in answer["lanes"].as_array().unwrap() {
+        w.until_state(lane["task"].as_str().unwrap(), "passed")
+            .await;
+    }
+    // Everything has now run once. Asking for security alone must not run licence (a rule lane) again.
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["security"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let lanes: Vec<&str> = answer["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["lane"].as_str().unwrap())
+        .collect();
+    assert_eq!(lanes, ["security"]);
+    for lane in answer["lanes"].as_array().unwrap() {
+        w.until_state(lane["task"].as_str().unwrap(), "passed")
+            .await;
+    }
+    // With only a rule lane that already ran, a call names no lane to run, and says why.
+    let (answer, error) = w.lead("crew_review", json!({ "task": subject })).await;
+    assert!(error, "{answer}");
+    assert!(
+        answer.to_string().contains("already ran on this commit"),
+        "{answer}"
+    );
+    // Naming it is the next round.
+    let (answer, error) = w
+        .lead(
+            "crew_review",
+            json!({ "task": subject, "lanes": ["licence"] }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["lanes"][0]["lane"], "licence");
+    let reviews = w.core.store.crew_reviews_of(&subject).unwrap();
+    assert_eq!(
+        reviews
+            .iter()
+            .filter(|r| r.lane == "licence")
+            .map(|r| r.round)
+            .max(),
+        Some(2)
+    );
+    assert_eq!(reviews.iter().filter(|r| r.lane == "licence").count(), 2);
 }
