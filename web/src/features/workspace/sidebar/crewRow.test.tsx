@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
@@ -15,6 +15,16 @@ beforeEach(() => {
 });
 
 const labels = () => within(document.querySelector(".sidebar-nav") as HTMLElement).getAllByRole("link").map((link) => link.textContent);
+/**
+ * The window takes focus. The app listens for it from a passive effect that runs after the Crew row is on screen, so a focus sent the
+ * moment the row shows can arrive before the listener exists and be lost. Letting React flush its effects first makes the event land.
+ */
+const focusWindow = async () => {
+  await act(async () => {});
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"));
+  });
+};
 const crewCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("/api/crew"));
 
 describe("the Crew row of the left bar", () => {
@@ -50,11 +60,11 @@ describe("the Crew row of the left bar", () => {
     render(createElement(App));
     expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
     mock.reset("default");
-    window.dispatchEvent(new Event("focus"));
+    await focusWindow();
     await waitFor(() => expect(screen.queryByRole("link", { name: /^Crew\s*Preview/ })).toBeNull());
     expect(useConnection.getState().crewPreview).toBe(false);
     mock.reset("crew");
-    window.dispatchEvent(new Event("focus"));
+    await focusWindow();
     expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
   });
 
@@ -63,9 +73,10 @@ describe("the Crew row of the left bar", () => {
     render(createElement(App));
     expect(await screen.findByRole("link", { name: /^Crew\s*Preview/ })).toBeVisible();
     expect(useConnection.getState().crewPreview).toBe(true);
-    // Other readers of the info may take the first failure; the re-check gets one of them.
-    mock.fail("/api/info", 4);
-    window.dispatchEvent(new Event("focus"));
+    // Other readers of the info (the quit check on focus, thread streams) draw from the same queue in no fixed order, so a short
+    // queue can be spent before the re-check asks. Every read from now on fails, whoever asks first.
+    mock.fail("/api/info", Number.MAX_SAFE_INTEGER);
+    await focusWindow();
     await waitFor(() => expect(useConnection.getState().crewPreview).toBe(false));
     await waitFor(() => expect(screen.queryByRole("link", { name: /^Crew\s*Preview/ })).toBeNull());
   });

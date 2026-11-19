@@ -1,9 +1,30 @@
 import { api } from "../api";
 import { pullsApi } from "../api";
 import type { Thread } from "../../../api/types";
-import { pullToken, threadToken, type Trigger } from "../../../product/composer/skillMention";
+import { chipId, type ThreadChip } from "../../../product/composer/composerContext";
+import { insertToken, pullToken, type Trigger } from "../../../product/composer/skillMention";
 import { LOCAL_COMMANDS, MENU_ROWS, PLAN_COMMANDS } from "./composerConstants";
 import type { Suggestion } from "./MentionMenu";
+
+/** What a pick puts in the draft, and the chip it adds instead, when any. */
+export function pickResult(
+  draft: string,
+  caret: number,
+  trigger: Trigger,
+  suggestion: Suggestion,
+): { text: string; caret: number; chip?: ThreadChip } {
+  // A picked thread is context, not text: it waits above the draft as a chip
+  // and its block carries the link the agent reads on demand.
+  if (suggestion.thread) {
+    return {
+      text: draft.slice(0, trigger.start) + draft.slice(caret),
+      caret: trigger.start,
+      chip: { id: chipId(), kind: "thread", threadId: suggestion.thread.id, title: suggestion.thread.title },
+    };
+  }
+  const next = insertToken(draft, caret, trigger, suggestion.value, suggestion.insert);
+  return { text: next.text, caret: next.caret };
+}
 
 /** What the @, $, / and # menus offer for the trigger under the caret. */
 export async function loadSuggestions(
@@ -45,7 +66,7 @@ export async function loadSuggestions(
   const threads = found.threads.map((other) => ({
     value: other.title,
     detail: "Thread",
-    insert: threadToken(other.id, other.title),
+    thread: { id: other.id, title: other.title },
   }));
   const files = found.files.slice(0, Math.max(MENU_ROWS - threads.length, 2));
   return [...files.map((value) => ({ value, detail: null })), ...threads];
