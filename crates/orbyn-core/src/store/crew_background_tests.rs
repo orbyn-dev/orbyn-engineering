@@ -228,12 +228,100 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
     );
 }
 
+/// A `CoreConfig` for a test that opens a `Core` on `dir`: no network, no engine lookup, engine programs that do not exist.
+fn recovery_config(dir: &TempDir) -> crate::CoreConfig {
+    let mut config = crate::CoreConfig::new(dir.path().to_path_buf(), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
+    config.engines.claude_program = dir
+        .path()
+        .join("absent/claude")
+        .to_string_lossy()
+        .into_owned();
+    config.engines.codex_program = dir
+        .path()
+        .join("absent/codex")
+        .to_string_lossy()
+        .into_owned();
+    config
+}
+
+/// What a startup must do to a running run that has this task: the task's state afterwards and whether the run ends.
+struct Case {
+    state: &'static str,
+    worker: bool,
+    task_after: &'static str,
+    run_ends: bool,
+}
+
 #[test]
-fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_backed_runs() {
-    use crate::{Core, CoreConfig};
+fn core_startup_recovers_interrupted_background_starts_once() {
+    use crate::Core;
     let dir = TempDir::new();
     let settings = json!({});
-    let (crew_id, interrupted, lead, preserved, modes) = {
+    let cases = [
+        Case {
+            state: "briefed",
+            worker: false,
+            task_after: "needs_person",
+            run_ends: true,
+        },
+        Case {
+            state: "routed",
+            worker: false,
+            task_after: "needs_person",
+            run_ends: true,
+        },
+        Case {
+            state: "routed",
+            worker: true,
+            task_after: "needs_person",
+            run_ends: true,
+        },
+        Case {
+            state: "running",
+            worker: false,
+            task_after: "needs_person",
+            run_ends: true,
+        },
+        Case {
+            state: "running",
+            worker: true,
+            task_after: "running",
+            run_ends: false,
+        },
+        Case {
+            state: "needs_person",
+            worker: false,
+            task_after: "needs_person",
+            run_ends: true,
+        },
+        Case {
+            state: "failed",
+            worker: false,
+            task_after: "failed",
+            run_ends: true,
+        },
+        Case {
+            state: "stopped",
+            worker: false,
+            task_after: "stopped",
+            run_ends: true,
+        },
+        Case {
+            state: "passed",
+            worker: false,
+            task_after: "passed",
+            run_ends: true,
+        },
+        Case {
+            state: "cancelled",
+            worker: false,
+            task_after: "cancelled",
+            run_ends: true,
+        },
+    ];
+    let (crew_id, interrupted, lead, runs, modes) = {
         let store = store(&dir);
         let crew = store
             .create_background_crew(&new_crew("Interrupted", &settings), "user")
@@ -252,7 +340,7 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
             .unwrap();
         let lead = store
             .create_thread(NewThread {
-                project_id: project.id,
+                project_id: project.id.clone(),
                 title: "Interrupted background lead".into(),
                 engine: "alpha".into(),
                 model: None,
@@ -269,21 +357,10 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
         store
             .set_crew_autopilot_mode(&format!("crew:{}", run.id), "off")
             .unwrap();
-        let mut preserved = Vec::new();
-        for (n, state) in [
-            "briefed",
-            "routed",
-            "running",
-            "needs_person",
-            "stopped",
-            "passed",
-            "cancelled",
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        let mut runs = Vec::new();
+        for (n, case) in cases.iter().enumerate() {
             let crew = store
-                .create_background_crew(&new_crew(&format!("Task {state}"), &settings), "user")
+                .create_background_crew(&new_crew(&format!("Task {n}"), &settings), "user")
                 .unwrap();
             store
                 .set_background_enabled(&crew.id, true, "user")
@@ -292,10 +369,29 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
             let task = format!("sha256:{n:064x}");
             store.writer().execute(
                 "INSERT INTO crew_tasks (id, crew_id, run_id, state, stop_reason, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'now', 'now')",
-                params![task, run.id, format!("task-run-{n}"), state, (state == "stopped").then_some("engine_error")],
+                params![task, run.id, format!("task-run-{n}"), case.state, (case.state == "stopped").then_some("engine_error")],
             ).unwrap();
             store.add_crew_run(&task, &run.id, "worker").unwrap();
-            preserved.push((run, Some(store.crew_task(&task).unwrap().unwrap())));
+            if case.worker {
+                let worker = store
+                    .create_thread(NewThread {
+                        project_id: project.id.clone(),
+                        title: format!("Worker {n}"),
+                        engine: "alpha".into(),
+                        model: None,
+                        cwd: dir.path().to_string_lossy().into_owned(),
+                        worktree: None,
+                        skill_profile: None,
+                        parent_thread_id: None,
+                        relation: None,
+                        scratch: false,
+                    })
+                    .unwrap();
+                store
+                    .set_crew_worker(&task, &worker.id, "worktree", None)
+                    .unwrap();
+            }
+            runs.push((run, store.crew_task(&task).unwrap().unwrap()));
         }
         for end in [
             RunEnd::Stopped("disabled"),
@@ -303,7 +399,7 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
         ] {
             let crew = store
                 .create_background_crew(
-                    &new_crew(&format!("Terminal {}", preserved.len()), &settings),
+                    &new_crew(&format!("Terminal {}", runs.len()), &settings),
                     "user",
                 )
                 .unwrap();
@@ -311,31 +407,40 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
                 .set_background_enabled(&crew.id, true, "user")
                 .unwrap();
             let run = store.start_background_run(&crew.id).unwrap();
-            preserved.push((store.end_background_run(&run.id, end).unwrap(), None));
+            let ended = store.end_background_run(&run.id, end).unwrap();
+            let task = format!("sha256:{:064x}", 100 + runs.len());
+            store.writer().execute(
+                "INSERT INTO crew_tasks (id, crew_id, run_id, state, created_at, updated_at) VALUES (?1, ?2, ?3, 'needs_person', 'now', 'now')",
+                params![task, ended.id, format!("terminal-{}", runs.len())],
+            ).unwrap();
+            runs.push((ended, store.crew_task(&task).unwrap().unwrap()));
         }
         (
             crew.id,
             interrupted,
             lead,
-            preserved,
+            runs,
             store.crew_autopilot_modes_all(100).unwrap(),
         )
     };
+    let snapshot = |core: &Core| -> Vec<(String, String, String, Option<String>)> {
+        let mut all = Vec::new();
+        for (run, task) in &runs {
+            let run = core.store.background_run(&run.id).unwrap().unwrap();
+            let task = core.store.crew_task(&task.id).unwrap().unwrap();
+            all.push((run.state, task.state, run.updated_at, run.review_reason));
+        }
+        all
+    };
+    let count = |core: &Core, sql: &str| -> i64 {
+        core.store
+            .reader()
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap()
+    };
     // No Store guard, Core, Arc or engine task from the previous owner survives into startup.
-    let mut config = CoreConfig::new(dir.path().to_path_buf(), "http://127.0.0.1:1".into());
-    config.engines.lookup_latest = false;
-    config.engines.known_engine_ids = Some(Vec::new());
-    config.engines.claude_program = dir
-        .path()
-        .join("absent/claude.exe")
-        .to_string_lossy()
-        .into_owned();
-    config.engines.codex_program = dir
-        .path()
-        .join("absent/codex.exe")
-        .to_string_lossy()
-        .into_owned();
-    let recovered = {
+    let config = recovery_config(&dir);
+    let after_first = {
         let core = Core::open(config.clone()).unwrap();
         let recovered = core.store.background_run(&interrupted.id).unwrap().unwrap();
         assert_eq!(recovered.state, "needs_review");
@@ -358,27 +463,81 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
         );
         assert_eq!(core.store.crew_autopilot_modes_all(100).unwrap(), modes);
         assert_eq!(core.store.thread(&lead.id).unwrap(), lead);
-        for (run, task) in &preserved {
+        for (case, (run, task)) in cases.iter().zip(&runs) {
+            let now = core.store.background_run(&run.id).unwrap().unwrap();
+            let label = format!("{} worker={}", case.state, case.worker);
+            assert_eq!(
+                core.store.crew_task(&task.id).unwrap().unwrap().state,
+                case.task_after,
+                "{label}"
+            );
+            if case.run_ends {
+                assert_eq!(now.state, "needs_review", "{label}");
+                assert!(now.review_waiting && now.ended_at.is_some(), "{label}");
+                let reason = now.review_reason.as_deref().unwrap();
+                let held = matches!(case.state, "briefed" | "routed" | "running");
+                assert_eq!(
+                    reason.contains("Its task waits for a person"),
+                    held,
+                    "{label}: {reason}"
+                );
+                assert_eq!(
+                    reason.contains("The run's task ended"),
+                    matches!(case.state, "stopped" | "passed" | "cancelled"),
+                    "{label}: {reason}"
+                );
+                assert_eq!(
+                    (now.turns_spent, now.minutes_spent, now.budget_turns),
+                    (run.turns_spent, run.minutes_spent, run.budget_turns),
+                    "{label}"
+                );
+            } else {
+                assert_eq!(&now, run, "{label}: left to Crew task recovery");
+            }
+        }
+        // Terminal runs, and their tasks, are unchanged.
+        for (run, task) in &runs[cases.len()..] {
             assert_eq!(
                 core.store.background_run(&run.id).unwrap().as_ref(),
                 Some(run)
             );
-            if let Some(task) = task {
-                assert_eq!(core.store.crew_task(&task.id).unwrap().as_ref(), Some(task));
-            }
+            assert_eq!(core.store.crew_task(&task.id).unwrap().as_ref(), Some(task));
         }
-        recovered
+        // Recovery starts no new run and no engine work.
+        assert_eq!(
+            count(&core, "SELECT COUNT(*) FROM crew_background_runs"),
+            13
+        );
+        assert_eq!(count(&core, "SELECT COUNT(*) FROM crew_tasks"), 12);
+        assert_eq!(count(&core, "SELECT COUNT(*) FROM runs"), 0);
+        let audit: i64 = core.store.reader().query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.recover' AND json_extract(detail, '$.run') = ?1 AND json_extract(detail, '$.why') IS NOT NULL",
+            [&interrupted.id], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(audit, 1);
+        let listed: String = core.store.reader().query_row(
+            "SELECT json_extract(detail, '$.tasks') FROM audit_events WHERE action = 'crew.background.run.recover' AND json_extract(detail, '$.run') = ?1",
+            [&runs[0].0.id], |row| row.get(0),
+        ).unwrap();
+        assert!(
+            listed.contains("briefed") && listed.contains(&runs[0].1.id),
+            "{listed}"
+        );
+        snapshot(&core)
     };
     let core = Core::open(config).unwrap();
     assert_eq!(
-        core.store.background_run(&interrupted.id).unwrap().unwrap(),
-        recovered
+        snapshot(&core),
+        after_first,
+        "a second open changes nothing"
     );
-    let audit: i64 = core.store.reader().query_row(
-        "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.recover' AND json_extract(detail, '$.run') = ?1 AND json_extract(detail, '$.why') IS NOT NULL",
-        [&interrupted.id], |row| row.get(0),
-    ).unwrap();
-    assert_eq!(audit, 1);
+    assert_eq!(
+        count(
+            &core,
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.recover'"
+        ),
+        1 + 9
+    );
     assert!(
         core.store.start_background_run(&crew_id).is_ok(),
         "recovery releases the active-run slot"
@@ -387,7 +546,7 @@ fn core_startup_recovers_taskless_background_starts_once_and_preserves_task_back
 
 #[test]
 fn core_startup_does_not_hide_a_failed_background_recovery_audit() {
-    use crate::{Core, CoreConfig};
+    use crate::Core;
     let dir = TempDir::new();
     let settings = json!({});
     let run = {
@@ -404,19 +563,7 @@ fn core_startup_does_not_hide_a_failed_background_recovery_audit() {
         ).unwrap();
         run
     };
-    let mut config = CoreConfig::new(dir.path().to_path_buf(), "http://127.0.0.1:1".into());
-    config.engines.lookup_latest = false;
-    config.engines.known_engine_ids = Some(Vec::new());
-    config.engines.claude_program = dir
-        .path()
-        .join("absent/claude.exe")
-        .to_string_lossy()
-        .into_owned();
-    config.engines.codex_program = dir
-        .path()
-        .join("absent/codex.exe")
-        .to_string_lossy()
-        .into_owned();
+    let config = recovery_config(&dir);
     match Core::open(config.clone()) {
         Ok(_) => panic!("startup must report the failed recovery transaction"),
         Err(error) => assert!(

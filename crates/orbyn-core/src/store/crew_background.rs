@@ -633,29 +633,68 @@ impl Store {
             .optional()?)
     }
 
-    /// The owner lock is held at startup: no live starter can still be creating a task. Settle only interrupted starts that never
-    /// stored one. Task-backed runs remain owned by Crew task recovery, and terminal runs never change. Audited and retryable.
+    /// Settles the background runs a crash left `running`. Call it only from `Core::open`, after the data-directory owner lock is
+    /// taken and before any starter or listener exists, so no live starter can still be working. A run whose task has a worker in
+    /// `running`, `verifying` or `changed_approach` is left to Crew task recovery, which ends it through the task's own end. Every
+    /// other running run is ended `needs_review` in one transaction with its audit: a run with no task, a run whose task is held
+    /// for a person (`briefed`, `routed` or worker-less `running` move to `needs_person`, compare-and-set, no engine), and a run
+    /// whose task already ended. Nothing is brought back and no engine work starts. Terminal runs never change and a repeat finds
+    /// nothing. A failing transaction fails `Core::open`: startup is fail-closed, as `Store::recover` is.
     pub(crate) fn recover_background_starts(&self) -> Result<usize> {
-        const WHY: &str = "The background run was interrupted before its task was created. Start another run when you are ready.";
+        const NO_TASK: &str = "The background run was interrupted before its task was created. Start another run when you are ready.";
+        const HELD: &str =
+            "The app stopped before this run's worker started. Its task waits for a person.";
+        const ENDED: &str = "The run's task ended, but the app stopped before the run was closed.";
+        const LEFT: &str =
+            "The app stopped before this run was closed. Its task is left as it was.";
         self.commit(|tx, _| {
             let runs = {
                 let mut statement = tx.prepare(
                     "SELECT * FROM crew_background_runs b WHERE b.state = 'running'
-                     AND NOT EXISTS (SELECT 1 FROM crew_tasks t WHERE t.crew_id = b.id)",
+                     AND NOT EXISTS (SELECT 1 FROM crew_tasks t JOIN crew_runs r ON r.task_id = t.id
+                                     WHERE t.crew_id = b.id AND t.state IN ('running', 'verifying', 'changed_approach')
+                                     AND r.worker_thread_id IS NOT NULL)",
                 )?;
                 statement
                     .query_map([], run_row)?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             };
             for run in &runs {
+                let tasks = {
+                    let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
+                    statement
+                        .query_map([&run.id], super::crew::task_row)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                let why = if tasks.is_empty() {
+                    NO_TASK
+                } else if tasks
+                    .iter()
+                    .any(|task| crate::crew::lifecycle::allowed(&task.state, "needs_person"))
+                {
+                    HELD
+                } else if tasks
+                    .iter()
+                    .all(|task| crate::crew::lifecycle::is_final(&task.state))
+                {
+                    ENDED
+                } else {
+                    LEFT
+                };
                 audit(
                     tx,
                     "core",
                     "crew.background.run.recover",
                     &run.background_id,
-                    json!({ "run": run.id, "why": WHY }),
+                    json!({
+                        "run": run.id,
+                        "why": why,
+                        "tasks": tasks.iter().map(|task| json!({ "id": task.id, "state": task.state })).collect::<Vec<_>>(),
+                    }),
                 )?;
-                end_run(tx, run, RunEnd::NeedsReview(WHY), Some(WHY), "core")?;
+                if hold_tasks_and_end_run(tx, run, why)?.is_none() {
+                    end_run(tx, run, RunEnd::NeedsReview(why), Some(why), "core")?;
+                }
             }
             Ok(runs.len())
         })

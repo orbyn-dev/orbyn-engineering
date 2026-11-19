@@ -104,12 +104,16 @@ admitted -> starting -> running <-> awaiting_approval
   since a child caught mid-exec can hold it briefly after a crash.
 - Pending approvals expire in the same transaction that ends a run.
 
-While holding the data-directory owner lock, core startup ends a `running`
-background run that has no Crew task as `needs_review`, with an audited
-interrupted-start reason. It retains the lead thread, pinned mode and recorded
-budget/spend. Task-backed runs remain under normal Crew task recovery; existing
-terminal background runs stay unchanged. Recovery finishes before a starter or
-listener can run and never starts an engine or retries the interrupted start.
+While holding the data-directory owner lock, core startup settles each `running`
+background run before any starter or listener can run, in one transaction with an
+audit. A run whose task has a worker in `running`, `verifying` or `changed_approach`
+is left to Crew task recovery. Every other run ends `needs_review`: with no task,
+with a `briefed`, `routed` or worker-less `running` task, which moves to
+`needs_person` first, or with a task that already ended. A `needs_person` or `failed`
+task stays as it is, nothing is brought back, no engine starts and no start is
+retried. The lead thread, pinned mode and recorded budget and spend are kept;
+terminal runs stay unchanged. If this transaction keeps failing, startup fails
+rather than run on.
 
 A refused background start removes its run, lead thread and pinned Autopilot mode
 only while no Crew task exists, and does so in one transaction with the refusal
