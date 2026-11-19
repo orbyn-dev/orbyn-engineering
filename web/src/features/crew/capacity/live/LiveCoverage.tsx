@@ -126,7 +126,7 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
   return (
     <>
       <span className="cx-t10f" style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>
-        {`As of ${momentOf(coverage.as_of_unix)} · ${count(coverage.agent_lines)} agent-written lines from ${merges(coverage.merges)} since ${dateOf(since)}`}
+        {`As of ${momentOf(coverage.as_of_unix)} · ${count(coverage.agent_lines)} agent or unconfirmed lines from ${merges(coverage.merges)} since ${dateOf(since)}`}
       </span>
       {coverage.not_measured_merges > 0 ? (
         <div className="cx-cwbn" style={{ margin: "0", flexWrap: "wrap" }}>
@@ -166,7 +166,7 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
       </h5>
       <div className="cx-aptb" style={{ gridTemplateColumns: TABLE }}>
         <div className="cx-h">Area</div>
-        <div className="cx-h">Agent-written lines</div>
+        <div className="cx-h">Agent or unconfirmed lines</div>
         <div className="cx-h">Reviewed</div>
         <div className="cx-h">In your queue</div>
         <div className="cx-h">Not in a queue</div>
@@ -194,7 +194,7 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
       <h5 className="cx-t10h5">By engine</h5>
       <div className="cx-aptb" style={{ gridTemplateColumns: ENGINE_TABLE }}>
         <div className="cx-h">Engine</div>
-        <div className="cx-h">Agent-written lines</div>
+        <div className="cx-h">Agent or unconfirmed lines</div>
         <div className="cx-h">Reviewed</div>
         <div className="cx-h">No person has read</div>
         {coverage.engines.flatMap((engine) => {
@@ -210,8 +210,8 @@ function CoverageMap({ coverage, name }: { coverage: ReviewCoverage; name: strin
       <div className="cx-fbx">
         <h6>How to read this</h6>
         <div className="cx-fkv">
-          <span>Agent-written</span>
-          <b>Lines the merges wrote, counted per merge from the note Crew records at merge. Not the lines still on main today</b>
+          <span>Agent or unconfirmed</span>
+          <b>Lines the merges wrote that no person is recorded as writing, counted per merge from the note Crew records at merge. Not the lines still on main today</b>
           <span>Reviewed</span>
           <b>The merge that wrote the lines was marked Looks good or commented. Review is counted per merge, never per line</b>
           <span>In your queue</span>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useState, type RefCallback, type ReactNode } from "react";
 import { Button } from "../../../ui/controls";
 import { UNAVAILABLE_REASON, unavailable } from "../autopilot/review/Parts";
 import { KIND_ONE, type NeedsAction, type NeedsItem, type NeedsKind, type NeedsView } from "./model";
@@ -76,17 +76,15 @@ export function NeedsCard({ item, handlers }: { item: NeedsItem; handlers: Needs
 /** The width, in pixels, of the element: the inbox draws cards below `NARROW`. */
 export const NARROW = 480;
 
-export function useNarrow(): [React.RefObject<HTMLDivElement | null>, boolean] {
-  const ref = useRef<HTMLDivElement>(null);
+export function useNarrow(): [RefCallback<HTMLElement>, boolean] {
   const [narrow, setNarrow] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+  const ref = useCallback<RefCallback<HTMLElement>>((element) => {
+    if (!element || typeof ResizeObserver === "undefined") return;
     const watch = new ResizeObserver(([entry]) => {
       const width = entry?.contentRect.width ?? 0;
       if (width > 0) setNarrow(width < NARROW);
     });
-    watch.observe(el);
+    watch.observe(element);
     return () => watch.disconnect();
   }, []);
   return [ref, narrow];

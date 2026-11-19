@@ -24,7 +24,8 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::pipes::{one_shot_cli, resolve_engine, spawn_engine};
+use super::pipes::{one_shot_cli, resolve_engine, spawn_engine_with};
+use super::worker_identity::{with_identity, worker_env};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, ModelCatalog, RunHandle, RunSpec,
     UpdatePlan,
@@ -380,7 +381,11 @@ impl EngineDriver for CodexDriver {
         }
         let command = resolve_engine(&self.program)?;
         let args = [OsString::from("app-server")];
-        let process = spawn_engine(&command, &args, &spec.cwd)?;
+        let identity = spec.crew_task.as_deref().map_or_else(Vec::new, |task| {
+            worker_env(task, "codex", spec.model.as_deref())
+        });
+        let process =
+            spawn_engine_with(&command, &args, &spec.cwd, &with_identity(&[], &identity))?;
         let cancel = CancellationToken::new();
         let (input, steering) = mpsc::unbounded_channel();
         let task = tokio::spawn(run_protocol(

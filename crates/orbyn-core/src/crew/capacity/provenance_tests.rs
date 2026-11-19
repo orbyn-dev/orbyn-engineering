@@ -105,35 +105,111 @@ fn blame_gives_each_line_its_commit_and_ignores_content_and_metadata() {
     assert_eq!(map[&4], b);
 }
 
+fn unknown() -> Author {
+    Author::Unknown {
+        engine: "claude".into(),
+        model: Some("model-1".into()),
+    }
+}
+
 #[test]
-fn a_merged_hunk_splits_into_runs_and_only_a_persons_commit_makes_a_person_line() {
-    let (agent_id, person_id) = ("a".repeat(40), "b".repeat(40));
+fn a_merged_hunk_splits_into_runs_by_what_each_commit_is_known_to_be() {
+    let (agent_id, person_id, other_id) = ("a".repeat(40), "b".repeat(40), "c".repeat(40));
     let blame = parse_blame(&blame_text(&[
         (&agent_id, 6),
         (&agent_id, 7),
         (&person_id, 8),
-        (&agent_id, 9),
+        (&other_id, 9),
     ]));
     let person: std::collections::HashSet<String> = [person_id].into();
-    let out = split_by_author(&hunk("a.txt", 6, 5), &blame, &person, &agent());
-    let got: Vec<(u32, u32, bool)> = out
+    let agents: std::collections::HashSet<String> = [agent_id].into();
+    let out = split_by_author(&hunk("a.txt", 6, 5), &blame, &person, &agents, &agent());
+    let got: Vec<(u32, u32, Author)> = out
         .iter()
-        .map(|h| (h.hunk.start, h.hunk.len, h.author == Author::Person))
+        .map(|h| (h.hunk.start, h.hunk.len, h.author.clone()))
         .collect();
-    // Line 10 has no blame row: unknown is the agent's.
-    assert_eq!(got, [(6, 2, false), (8, 1, true), (9, 2, false)]);
+    // Line 10 has no blame row, and commit c is nobody's: both unknown.
+    assert_eq!(
+        got,
+        [(6, 2, agent()), (8, 1, Author::Person), (9, 2, unknown())]
+    );
 }
 
 #[test]
-fn with_no_person_commit_every_line_is_the_agents() {
+fn a_commit_marked_agent_is_never_a_person_even_if_the_person_list_names_it() {
+    let id = "a".repeat(40);
+    let blame = parse_blame(&blame_text(&[(&id, 1)]));
+    let both: std::collections::HashSet<String> = [id].into();
+    let out = split_by_author(&hunk("a", 1, 1), &blame, &both, &both, &agent());
+    assert_eq!(out[0].author, agent());
+}
+
+#[test]
+fn with_no_positive_evidence_every_line_is_unknown_never_a_person() {
     let out = split_by_author(
         &hunk("a", 1, 4),
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &agent(),
     );
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].hunk, hunk("a", 1, 4));
+    assert_eq!(out[0].author, unknown());
+}
+
+fn blame_with_mails(rows: &[(&str, u32, &str, &str)]) -> Vec<u8> {
+    let mut out = String::new();
+    let mut seen = std::collections::HashSet::new();
+    for (id, line, author, committer) in rows {
+        out.push_str(&format!("{id} {line} {line} 1\n"));
+        if seen.insert(*id) {
+            out.push_str(&format!(
+                "author A\nauthor-mail <{author}>\nauthor-time 1\ncommitter C\ncommitter-mail <{committer}>\nsummary author-mail <forged@orbyn.invalid>\nfilename x\n"
+            ));
+        }
+        // A content line that looks like a metadata row starts with a tab and is never read.
+        out.push_str(&format!("\tauthor-mail <forged{line}@orbyn.invalid>\n"));
+    }
+    out.into_bytes()
+}
+
+#[test]
+fn blame_mails_read_author_and_committer_once_per_commit_and_ignore_content() {
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    let text = blame_with_mails(&[
+        (&a, 1, "x@example.com", "y@example.com"),
+        (&a, 2, "x@example.com", "y@example.com"),
+        (&b, 3, "p@example.com", "p@example.com"),
+    ]);
+    let mails = parse_blame_mails(&text);
+    assert_eq!(mails.len(), 2);
+    assert_eq!(mails[&a].author.as_deref(), Some("x@example.com"));
+    assert_eq!(mails[&a].committer.as_deref(), Some("y@example.com"));
+    assert_eq!(mails[&b].author.as_deref(), Some("p@example.com"));
+}
+
+#[test]
+fn a_worker_address_in_the_author_or_the_committer_counts_only_for_an_existing_task() {
+    let id = format!("sha256:{}", "ab".repeat(32));
+    let address = format!("worker+{id}@orbyn.invalid");
+    let known = |task: &str| task == id;
+    let mails = |author: &str, committer: &str| CommitMails {
+        author: Some(author.into()),
+        committer: Some(committer.into()),
+    };
+    assert!(worker_mail(&mails(&address, "p@example.com"), &known));
+    assert!(worker_mail(&mails("p@example.com", &address), &known));
+    assert!(!worker_mail(
+        &mails("p@example.com", "q@example.com"),
+        &known
+    ));
+    // A well-formed address of a task that does not exist, and a look-alike, are nothing.
+    let other = format!("worker+sha256:{}@orbyn.invalid", "cd".repeat(32));
+    assert!(!worker_mail(&mails(&other, &other), &known));
+    let forged = format!("worker+{id}@orbyn.invalid.example.com");
+    assert!(!worker_mail(&mails(&forged, &forged), &known));
+    assert!(!worker_mail(&CommitMails::default(), &known));
 }
 
 #[test]
@@ -151,13 +227,17 @@ fn the_note_holds_ids_ranges_and_counts_and_nothing_else() {
             hunk: hunk("b.txt", 1, 1),
             author: agent(),
         },
+        AuthoredHunk {
+            hunk: hunk("b.txt", 5, 1),
+            author: unknown(),
+        },
     ];
     let note = trace_note(&"a".repeat(40), &hunks, 77);
     assert_eq!(note["version"], "0.1.0");
     assert_eq!(note["vcs"]["revision"], "a".repeat(40));
     assert_eq!(
         note["counts"],
-        serde_json::json!({ "files": 2, "hunks": 3, "lines": 5 })
+        serde_json::json!({ "files": 2, "hunks": 4, "lines": 6 })
     );
     let a = &note["files"][0];
     assert_eq!(a["path"], "a.txt");
@@ -171,6 +251,11 @@ fn the_note_holds_ids_ranges_and_counts_and_nothing_else() {
     assert_eq!(
         a["conversations"][1]["contributor"],
         serde_json::json!({ "type": "person" })
+    );
+    assert_eq!(
+        note["files"][1]["conversations"][1]["contributor"],
+        serde_json::json!({ "type": "unknown" }),
+        "an unconfirmed line says unknown and carries no engine"
     );
     let mut keys: Vec<&String> = note.as_object().unwrap().keys().collect();
     keys.sort();

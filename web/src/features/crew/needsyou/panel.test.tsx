@@ -6,7 +6,7 @@ import { installMockFetch } from "../../../test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 
 /**
- * The inbox's 30-second refresh, and the narrow panel it does not yet reach: the cards are a skipped case until #672 is fixed. Its
+ * The inbox's 30-second refresh and narrow-panel cards. Its
  * rows, filters, dismissals and answers are inbox.test.tsx.
  */
 let mock: MockApi;
@@ -37,8 +37,7 @@ function panelWidth(width: number) {
   );
 }
 
-// Skipped until #672 is fixed: useNarrow observes only on the first render, which still shows <Loading>, so the narrow layout never applies after load. Enable this test with the fix.
-it.skip("draws one card per item in a narrow panel, with the kind first and no rank", async () => {
+it("draws one card per item in a narrow panel, with the kind first and no rank", async () => {
   panelWidth(320);
   mock.reset("crew-held-account");
   render(<NeedsYouInbox />);

@@ -292,7 +292,7 @@ async fn hooks_finishing_out_of_order_drop_no_merge() {
     assert_eq!(
         w.core
             .store
-            .crew_open_low_merges(&project(&w), merges[4].id)
+            .crew_open_low_merges(&project(&w), merges[4].id, 0)
             .unwrap()
             .len(),
         1
@@ -310,25 +310,284 @@ async fn hooks_finishing_out_of_order_drop_no_merge() {
     assert!(merges.iter().all(|m| recorded(m) == 1));
 }
 
-#[tokio::test]
-async fn a_backlog_from_before_sampling_was_on_is_batched_in_fours_oldest_first() {
-    let w = quiet().await;
-    let mut merges = Vec::new();
-    for i in 0..9 {
-        merges.push(landed(&w, i, "low").await);
+/// Saves sampling and pins the time of that settings audit row, so a test fixes the boundary instead of reading
+/// the clock. The audit log refuses edits, so the guard is dropped in this test database only.
+fn set_sampling_at(w: &World, sampling: Sampling, limit: u32, at: i64) {
+    set_sampling_of(w, &project(w), sampling, limit, at);
+}
+
+/// The same for any project; only that project's latest settings row is re-stamped.
+fn set_sampling_of(w: &World, project_id: &str, sampling: Sampling, limit: u32, at: i64) {
+    w.core
+        .store
+        .set_crew_capacity_settings(
+            project_id,
+            CapacitySettings {
+                limit,
+                sampling,
+                pause_enabled: false,
+            },
+        )
+        .unwrap();
+    let ts = time::OffsetDateTime::from_unix_timestamp(at)
+        .unwrap()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let conn = w.core.store.reader();
+    conn.execute_batch("DROP TRIGGER IF EXISTS audit_events_no_update")
+        .unwrap();
+    conn.execute(
+        "UPDATE audit_events SET ts = ?1 WHERE id = (SELECT MAX(id) FROM audit_events
+             WHERE action = 'crew.capacity.settings' AND target = ?2)",
+        rusqlite::params![ts, project_id],
+    )
+    .unwrap();
+}
+
+/// Like `landed`, with the merge time fixed.
+async fn landed_at(w: &World, i: usize, risk: &str, at: i64) -> MergeRecord {
+    let merge = landed(w, i, risk).await;
+    w.core
+        .store
+        .reader()
+        .execute(
+            "UPDATE crew_merges SET merged_unix = ?1 WHERE id = ?2",
+            rusqlite::params![at, merge.id],
+        )
+        .unwrap();
+    MergeRecord {
+        merged_unix: at,
+        ..merge
     }
-    set_sampling(&w, Sampling::OneInFour);
-    let picked = sample_after_merge(&w.core.store, &merges[8], NOW).unwrap();
-    assert_eq!(picked.len(), 2, "two full batches of four close");
-    assert_eq!(rows(&w), 8);
+}
+
+fn recorded(w: &World, m: &MergeRecord) -> i64 {
+    w.core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM crew_review_samples WHERE task_id = ?1",
+            [&m.task_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+const T1: i64 = 1_800_000_000;
+
+#[tokio::test]
+async fn a_backlog_from_before_sampling_was_on_is_never_batched() {
+    let w = quiet().await;
+    let mut old = Vec::new();
+    for i in 0..9 {
+        old.push(landed_at(&w, i, "low", T1 - 100 + i as i64).await);
+    }
+    set_sampling_at(&w, Sampling::OneInFour, 8, T1);
     assert_eq!(
-        w.core
-            .store
-            .crew_open_low_merges(&project(&w), merges[8].id)
+        w.core.store.crew_sampling_since(&project(&w)).unwrap(),
+        Some(T1)
+    );
+    // A new merge lands: the nine old ones are not a batch and nothing is picked or recorded.
+    let first = landed_at(&w, 20, "low", T1 + 1).await;
+    assert!(
+        sample_after_merge(&w.core.store, &first, NOW)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(rows(&w), 0);
+    // Three more after the boundary close one batch of four, and the old merges are not in it.
+    let mut fresh = vec![first];
+    let mut picked = Vec::new();
+    for i in 21..24 {
+        let m = landed_at(&w, i, "low", T1 + 2).await;
+        picked = sample_after_merge(&w.core.store, &m, NOW).unwrap();
+        fresh.push(m);
+    }
+    assert_eq!(
+        picked.len(),
+        1,
+        "a batch of four after the boundary picks one"
+    );
+    assert_eq!(rows(&w), 4);
+    assert!(fresh.iter().all(|m| recorded(&w, m) == 1));
+    assert!(old.iter().all(|m| recorded(&w, m) == 0));
+}
+
+#[tokio::test]
+async fn sampling_off_then_on_again_resets_the_boundary() {
+    let w = quiet().await;
+    set_sampling_at(&w, Sampling::OneInFour, 8, T1);
+    // Landed while on, but the person then turned sampling off and on again.
+    let kept_open: Vec<MergeRecord> = {
+        let mut v = Vec::new();
+        for i in 0..3 {
+            v.push(landed_at(&w, i, "low", T1 + 10).await);
+        }
+        v
+    };
+    set_sampling_at(&w, Sampling::Off, 8, T1 + 1000);
+    assert_eq!(
+        w.core.store.crew_sampling_since(&project(&w)).unwrap(),
+        None
+    );
+    let while_off = landed_at(&w, 10, "low", T1 + 1500).await;
+    assert!(
+        sample_after_merge(&w.core.store, &while_off, NOW)
+            .unwrap()
+            .is_empty()
+    );
+    set_sampling_at(&w, Sampling::OneInFour, 8, T1 + 2000);
+    assert_eq!(
+        w.core.store.crew_sampling_since(&project(&w)).unwrap(),
+        Some(T1 + 2000)
+    );
+    let mut last = None;
+    let mut picked = Vec::new();
+    let mut fresh = Vec::new();
+    for i in 20..24 {
+        let m = landed_at(&w, i, "low", T1 + 2010).await;
+        picked = sample_after_merge(&w.core.store, &m, NOW).unwrap();
+        fresh.push(m.clone());
+        last = Some(m);
+    }
+    assert!(last.is_some());
+    assert_eq!(picked.len(), 1);
+    assert_eq!(rows(&w), 4);
+    assert!(fresh.iter().all(|m| recorded(&w, m) == 1));
+    assert!(kept_open.iter().all(|m| recorded(&w, m) == 0));
+    assert_eq!(recorded(&w, &while_off), 0);
+    // Off and on a third time moves the boundary again.
+    set_sampling_at(&w, Sampling::Off, 8, T1 + 3000);
+    set_sampling_at(&w, Sampling::OneInFour, 8, T1 + 4000);
+    assert_eq!(
+        w.core.store.crew_sampling_since(&project(&w)).unwrap(),
+        Some(T1 + 4000)
+    );
+}
+
+#[tokio::test]
+async fn saving_other_settings_with_sampling_still_on_keeps_the_boundary() {
+    let w = quiet().await;
+    set_sampling_at(&w, Sampling::OneInFour, 8, T1);
+    set_sampling_at(&w, Sampling::OneInFour, 5, T1 + 500);
+    assert_eq!(
+        w.core.store.crew_sampling_since(&project(&w)).unwrap(),
+        Some(T1)
+    );
+    let mut picked = Vec::new();
+    for i in 0..4 {
+        let m = landed_at(&w, i, "low", T1 + 10).await;
+        picked = sample_after_merge(&w.core.store, &m, NOW).unwrap();
+    }
+    assert_eq!(
+        picked.len(),
+        1,
+        "merges after the first turn-on are still sampled"
+    );
+}
+
+#[tokio::test]
+async fn a_merge_landing_in_the_boundary_second_counts_as_after_and_one_second_earlier_does_not() {
+    // Same-second semantics: the audit time and a merge time are both whole seconds and cannot be ordered within
+    // one, so a merge in the boundary second counts as after. `>=` is the contract; `>` would fail this test.
+    let w = quiet().await;
+    set_sampling_at(&w, Sampling::OneInFour, 8, T1);
+    let early = landed_at(&w, 0, "low", T1 - 1).await;
+    let mut all = Vec::new();
+    for i in 1..4 {
+        all.push(landed_at(&w, i, "low", T1).await);
+    }
+    assert!(
+        sample_after_merge(&w.core.store, &early, NOW)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        sample_after_merge(&w.core.store, &all[2], NOW)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        rows(&w),
+        0,
+        "three merges from the boundary on are not a batch of four"
+    );
+    all.push(landed_at(&w, 4, "low", T1).await);
+    assert_eq!(
+        sample_after_merge(&w.core.store, &all[3], NOW)
             .unwrap()
             .len(),
         1
     );
+    assert_eq!(rows(&w), 4);
+    assert!(all.iter().all(|m| recorded(&w, m) == 1));
+    assert_eq!(recorded(&w, &early), 0);
+}
+
+#[tokio::test]
+async fn turning_sampling_on_in_another_project_does_not_move_this_projects_boundary() {
+    let w = quiet().await;
+    let a = project(&w);
+    w.core
+        .store
+        .reader()
+        .execute(
+            "INSERT INTO projects (id, name, path, trusted, is_git, created_at) VALUES ('project-b', 'B', '/b', 1, 1, 't')",
+            [],
+        )
+        .unwrap();
+    set_sampling_of(&w, &a, Sampling::OneInFour, 8, T1);
+    set_sampling_of(&w, "project-b", Sampling::OneInFour, 8, T1 + 5000);
+    assert_eq!(w.core.store.crew_sampling_since(&a).unwrap(), Some(T1));
+    assert_eq!(
+        w.core.store.crew_sampling_since("project-b").unwrap(),
+        Some(T1 + 5000)
+    );
+    // Turning B off does not clear A's boundary either.
+    set_sampling_of(&w, "project-b", Sampling::Off, 8, T1 + 6000);
+    assert_eq!(w.core.store.crew_sampling_since(&a).unwrap(), Some(T1));
+    assert_eq!(w.core.store.crew_sampling_since("project-b").unwrap(), None);
+}
+
+#[tokio::test]
+async fn with_no_readable_start_time_nothing_older_than_now_is_sampled() {
+    let w = quiet().await;
+    set_sampling(&w, Sampling::OneInFour);
+    // Sampling is on but its audit row is gone (the case the fallback guards).
+    {
+        let conn = w.core.store.reader();
+        conn.execute_batch("DROP TRIGGER IF EXISTS audit_events_no_delete")
+            .unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE action = 'crew.capacity.settings'",
+            [],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        w.core.store.crew_sampling_since(&project(&w)).unwrap(),
+        None
+    );
+    let early = landed_at(&w, 0, "low", NOW - 1).await;
+    let mut now_merges = Vec::new();
+    for i in 1..4 {
+        now_merges.push(landed_at(&w, i, "low", NOW).await);
+    }
+    assert!(
+        sample_after_merge(&w.core.store, &now_merges[2], NOW)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(rows(&w), 0, "the merge from before `now` is not counted");
+    now_merges.push(landed_at(&w, 4, "low", NOW).await);
+    assert_eq!(
+        sample_after_merge(&w.core.store, &now_merges[3], NOW)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(rows(&w), 4);
+    assert_eq!(recorded(&w, &early), 0);
 }
 
 #[tokio::test]

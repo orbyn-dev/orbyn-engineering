@@ -375,6 +375,7 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_merges",
             "crew_messages",
             "crew_paused_starts",
+            "crew_person_commits",
             "crew_provenance_start",
             "crew_reports",
             "crew_results",
@@ -602,8 +603,14 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
     let intent = queued_forge(&store, &id, ForgePhase::NeedsPerson);
     // A queue entry that already ended makes the whole answer fail: no audit row, the intent unchanged and still resolvable.
     store
-        .set_merge_entry_state(&id, "rejected", Some("by someone"))
-        .unwrap();
+        .set_merge_entry_state(
+            &id,
+            &crate::store::OPEN_MERGE_STATES,
+            "rejected",
+            Some("by someone"),
+        )
+        .unwrap()
+        .expect_moved();
     assert!(
         store
             .resolve_crew_forge_merge(
@@ -622,7 +629,10 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
         ),
         (0, ForgePhase::NeedsPerson)
     );
-    store.set_merge_entry_state(&id, "blocked", None).unwrap();
+    store
+        .set_merge_entry_state(&id, &["rejected"], "blocked", None)
+        .unwrap()
+        .expect_moved();
     let rejected = store
         .resolve_crew_forge_merge(
             &id,

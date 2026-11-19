@@ -86,7 +86,12 @@ pub struct Fake {
     pub answers: Arc<Mutex<Vec<String>>>,
     /// The restriction each worker run was started under: `(thread, rules)`.
     confines: Arc<Mutex<Vec<Confined>>>,
+    /// The crew task each run was started for, none for a run that is not a worker's: `(thread, task)`.
+    crew_tasks: CrewTasks,
 }
+
+/// `(thread, task)` for each run the fake engine started: the task is none for a run that is not a worker's.
+pub type CrewTasks = Arc<Mutex<Vec<(String, Option<String>)>>>;
 
 #[async_trait]
 impl EngineDriver for Fake {
@@ -232,6 +237,10 @@ impl EngineDriver for Fake {
             .lock()
             .unwrap()
             .push((spec.thread_id.clone(), spec.confine.clone()));
+        self.crew_tasks
+            .lock()
+            .unwrap()
+            .push((spec.thread_id.clone(), spec.crew_task.clone()));
         let core = self.core.get().and_then(Weak::upgrade).expect("a core");
         let spec_thread = spec.thread_id.clone();
         let worker = core
@@ -346,6 +355,7 @@ pub struct World {
     pub steered: Arc<Mutex<Vec<(String, String)>>>,
     /// The restriction each run was started under: `(thread, rules)`.
     pub confines: Arc<Mutex<Vec<Confined>>>,
+    pub crew_tasks: CrewTasks,
 }
 
 /// A core with the Crew Preview flag as asked, one git project with a first commit, a lead
@@ -475,6 +485,7 @@ async fn world_full(
     let answers = Arc::new(Mutex::new(Vec::new()));
     let steered = Arc::new(Mutex::new(Vec::new()));
     let confines = Arc::new(Mutex::new(Vec::new()));
+    let crew_tasks = Arc::new(Mutex::new(Vec::new()));
     let turns: Arc<AtomicUsize> = Arc::default();
     let approval_turns = Arc::new(Mutex::new(BTreeMap::new()));
     let approval_specs = Arc::new(Mutex::new(Vec::new()));
@@ -494,6 +505,7 @@ async fn world_full(
             prompts: prompts.clone(),
             answers: answers.clone(),
             confines: confines.clone(),
+            crew_tasks: crew_tasks.clone(),
         }));
     }
     cell.set(Arc::downgrade(&core)).unwrap();
@@ -550,6 +562,7 @@ async fn world_full(
         answers,
         steered,
         confines,
+        crew_tasks,
     }
 }
 

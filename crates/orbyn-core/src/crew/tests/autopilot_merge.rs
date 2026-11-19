@@ -570,13 +570,25 @@ async fn the_lanes_owed_must_have_run_unless_a_person_released_it_and_a_release_
     run_git(&m.w.repo, &["checkout", "-q", &m.main]);
     m.w.core
         .store
-        .set_merge_entry_state(&id, "waiting", Some("held"))
-        .unwrap();
+        .set_merge_entry_state(
+            &id,
+            &crate::store::OPEN_MERGE_STATES,
+            "waiting",
+            Some("held"),
+        )
+        .unwrap()
+        .expect_moved();
     m.w.core.crew_release_merge(&id).unwrap();
     m.w.core
         .store
-        .set_merge_entry_state(&id, "blocked", Some("a lane"))
-        .unwrap();
+        .set_merge_entry_state(
+            &id,
+            &crate::store::OPEN_MERGE_STATES,
+            "blocked",
+            Some("a lane"),
+        )
+        .unwrap()
+        .expect_moved();
     assert!(m.w.core.store.merge_entry(&id).unwrap().unwrap().released);
     run_git(&m.w.repo, &["checkout", "-q", "-b", "parking"]);
     let outcomes =

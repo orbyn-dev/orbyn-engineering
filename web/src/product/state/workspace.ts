@@ -140,7 +140,7 @@ const LIBRARY_MISSING = "workspace_required";
 export const engineHasUpdate = (engine: UpdateStatus["engines"][number]) =>
   engine.latest !== null && engine.latest !== engine.current;
 export const appHasUpdate = (status: UpdateStatus) =>
-  status.app.latest !== null && status.app.latest !== status.app.current;
+  !status.app.unconfigured && status.app.latest !== null && status.app.latest !== status.app.current;
 
 /** What Update all will run, in the server's order. */
 export function plannedSteps(status: UpdateStatus, engines: readonly EngineStatus[]): UpdateRunStep[] {

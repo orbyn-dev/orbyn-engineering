@@ -16,13 +16,13 @@ import { Logo, LogoTile } from "../../../product/ui/Logo";
 const short = (value: string | null) =>
   value && /^[0-9a-f]{12,}$/.test(value) ? value.slice(0, 8) : (value ?? "Unknown");
 
-/** Items a click can apply here. App counts only where the service can install it. */
-export function availableCount(status: UpdateStatus): number {
-  return (
-    status.engines.filter(engineHasUpdate).length +
-    (status.library.behind > 0 ? 1 : 0) +
-    (appHasUpdate(status) && status.app.can_apply ? 1 : 0)
-  );
+/** Sources with a newer version. A configured app release counts only where the service can install it. */
+function availableSources(status: UpdateStatus) {
+  return {
+    app: appHasUpdate(status) && status.app.can_apply ? 1 : 0,
+    library: status.library.behind > 0 ? 1 : 0,
+    engines: status.engines.filter(engineHasUpdate).length,
+  };
 }
 
 /** The server's reason nothing can run now. A server's manual note isn't one. */
@@ -94,7 +94,8 @@ export function UpdateEverythingDialog({ onClose }: { onClose(): void }) {
   const failed = failedStep(run);
   const blocked = updateBlock(status);
   const locked = blocked !== null || applying;
-  const count = availableCount(status);
+  const sources = availableSources(status);
+  const count = sources.app + sources.library + sources.engines;
   const engines = status.engines.filter(engineHasUpdate);
   const appAvailable = appHasUpdate(status);
 
@@ -224,10 +225,19 @@ export function UpdatePill() {
   const run = useWorkspace((state) => state.updateRun);
   const [open, setOpen] = useState(false);
   if (!status) return null;
-  const count = availableCount(status);
-  const failed = failedStep(run);
-  const manualOnly = count === 0 && appHasUpdate(status);
-  if (count === 0 && !run && !manualOnly) return null;
+  const { app, library, engines } = availableSources(status);
+  const sources = [
+    app ? { label: "App 1", spoken: "1 app" } : null,
+    engines ? { label: `Engines ${engines}`, spoken: `${engines} ${engines === 1 ? "engine" : "engines"}` } : null,
+    library ? { label: "Library 1", spoken: "1 Skills library" } : null,
+  ].filter((source) => source !== null);
+  // An app update this build cannot apply here (a server, or runs still active) has no count; the dialog keeps its reason.
+  const manualOnly = appHasUpdate(status) && !app;
+  const failed = failedStep(run) !== null || Boolean(run?.error);
+  if (!sources.length && !manualOnly && !run?.running && !failed) return null;
+
+  const label = sources.length ? sources.map((source) => source.label).join(" · ") : "App update";
+  const spoken = sources.length ? `Updates available: ${sources.map((source) => source.spoken).join(", ")}` : label;
 
   const steps = run?.steps ?? [];
   const done = steps.filter((step) => step.state === "done").length;
@@ -244,9 +254,9 @@ export function UpdatePill() {
           Updating {done + 1}/{steps.length}
         </button>
       ) : (
-        <button type="button" className="update-pill" onClick={() => setOpen(true)}>
+        <button type="button" className="update-pill" aria-label={spoken} onClick={() => setOpen(true)}>
           <Logo size={16} />
-          Updates available{count > 0 ? ` · ${count}` : ""}
+          <span>{label}</span>
         </button>
       )}
       {open ? <UpdateEverythingDialog onClose={() => setOpen(false)} /> : null}
