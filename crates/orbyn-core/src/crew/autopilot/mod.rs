@@ -26,6 +26,7 @@ pub(crate) use areas::AreaCache;
 pub use chain::{Answer, Approver, Approvers, Outcome, Summary};
 pub use hard::{RULES, Refusal, Scene, refuse};
 pub use held::{APPROVAL_LIFETIME_SECS, HELD_LIFETIME_SECS, HeldBook, SHOWN_MAX};
+pub(in crate::crew) use hosts::allowed_host_notes;
 pub use hosts::read_allowed_hosts;
 pub(crate) use merge::merge_tool_specs;
 pub use merge::{

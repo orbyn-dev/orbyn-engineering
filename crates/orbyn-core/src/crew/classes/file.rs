@@ -438,6 +438,9 @@ pub(in crate::crew) fn parse(source: &str) -> Result<(Vec<Rule>, Vec<String>), S
         })
         .collect();
     notes.sort();
+    notes.extend(crate::crew::autopilot::allowed_host_notes(
+        top.get("allowed_hosts"),
+    ));
     let Some(section) = top.get("classes") else {
         return Ok((Vec::new(), notes));
     };
