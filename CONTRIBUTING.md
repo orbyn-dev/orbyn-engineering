@@ -149,6 +149,15 @@ point at each other.
 
 ## Checks
 
+### Optional pre-push hook
+
+`.githooks/pre-push` runs the cheap checks of CI's "Cheap checks" job before a push, for the
+paths you changed: `cargo fmt --all --check`, the script checks, and `npm run check` in `web`
+when `web/node_modules` exists (it prints a SKIPPED line otherwise). It never builds or tests.
+It is opt-in: run `sh scripts/install-hooks.sh` once per clone (undo with
+`git config --unset core.hooksPath`), and skip it once with `git push --no-verify`. Test it
+with `sh scripts/test_pre_push_hook.sh`.
+
 ### Keep Cargo artifacts private to each worktree
 
 Use a separate target directory for every checkout, including worktrees in
