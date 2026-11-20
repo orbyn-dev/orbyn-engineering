@@ -728,6 +728,43 @@ impl Core {
             selection,
         })
     }
+
+    /// The registered projects and the checkout record the settings scope catalog
+    /// serves for each, read once per project with the same bounds. The source-control
+    /// repository lookup matches these records; no remote URL leaves them.
+    pub(crate) async fn repository_checkouts(
+        &self,
+    ) -> Result<Vec<(Project, ProjectScopeCheckout)>> {
+        let library_root = self.workspace.root()?;
+        let projects: Vec<_> = self
+            .store
+            .list_projects()?
+            .into_iter()
+            .filter(|project| Path::new(&project.path) != library_root)
+            .collect();
+        if projects.len() > MAX_PROJECTS {
+            return Err(CoreError::Invalid("Too many local project scopes.".into()));
+        }
+        let reader = tokio::time::timeout(CATALOG_BUDGET, self.workspace.library_reader())
+            .await
+            .ok();
+        let deadline = Instant::now()
+            + if reader.is_some() {
+                CATALOG_BUDGET
+            } else {
+                Duration::ZERO
+            };
+        let records = stream::iter(projects)
+            .map(|project| async move {
+                let checkout =
+                    checkout(project.clone(), ProjectGroupingMode::Repository, deadline).await;
+                (project, checkout)
+            })
+            .buffer_unordered(4)
+            .collect::<Vec<_>>()
+            .await;
+        Ok(records)
+    }
 }
 
 #[cfg(test)]
