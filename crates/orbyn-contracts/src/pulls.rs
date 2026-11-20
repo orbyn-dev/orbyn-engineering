@@ -96,6 +96,10 @@ pub struct PullDetails {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub comment_count: Option<u32>,
+    /// Approved latest opinionated reviews, only when the host's connection is complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub approval_count: Option<u32>,
     /// The signed-in viewer's latest review: `approved`, `changes_requested`,
     /// `commented`, `dismissed`, `pending` or `none`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -551,4 +555,22 @@ wire! {
 pub struct RepositoryStarStatus {
     pub starred: bool,
 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PullDetails;
+    use serde_json::json;
+
+    #[test]
+    fn approval_count_is_additive_and_distinguishes_unknown_from_zero() {
+        let old = json!({"project_id":"p", "number":7});
+        let unknown: PullDetails = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(unknown).unwrap(), old);
+        for count in [0, 2] {
+            let known = json!({"project_id":"p", "number":7, "approval_count":count});
+            let details: PullDetails = serde_json::from_value(known.clone()).unwrap();
+            assert_eq!(serde_json::to_value(details).unwrap(), known);
+        }
+    }
 }

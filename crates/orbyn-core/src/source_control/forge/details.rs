@@ -19,11 +19,12 @@ pub(super) const DETAILS_BATCH: usize = 25;
 pub const DETAILS_ROW_LIMIT: usize = 100;
 
 /// The `PullDetails` fields one batched request supplies, by wire name.
-pub const DETAIL_FIELDS: [&str; 4] = [
+pub const DETAIL_FIELDS: [&str; 5] = [
     "created_at",
     "requested_reviewers",
     "viewer_review_state",
     "comment_count",
+    "approval_count",
 ];
 
 /// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
@@ -61,6 +62,7 @@ pub(super) fn details_query(numbers: &[u64]) -> String {
 reviewRequests(first:50){{nodes{{requestedReviewer{{__typename ...on User{{login}} \
 ...on Mannequin{{login}} ...on Team{{slug}}}}}}}} \
 latestReviews(first:50){{nodes{{state author{{login}}}}}} \
+latestOpinionatedReviews(first:100){{totalCount pageInfo{{hasNextPage}} nodes{{state}}}} \
 comments{{totalCount}} reviews(first:100){{nodes{{comments{{totalCount}}}}}}}}"
             )
         })
@@ -138,11 +140,33 @@ pub(super) fn parse_details(
                     created_at: optional(pull, "createdAt"),
                     requested_reviewers,
                     comment_count: Some(u32::try_from(comments).unwrap_or(u32::MAX)),
+                    approval_count: approval_count(pull),
                     viewer_review_state,
                 },
             ))
         })
         .collect()
+}
+
+/// The host groups latest opinionated reviews per user. Never report a partial count.
+fn approval_count(pull: &Value) -> Option<u32> {
+    let connection = pull.get("latestOpinionatedReviews")?;
+    let nodes = connection.get("nodes")?.as_array()?;
+    let total = connection.get("totalCount")?.as_u64()?;
+    if total != u64::try_from(nodes.len()).ok()?
+        || connection.pointer("/pageInfo/hasNextPage")?.as_bool()?
+    {
+        return None;
+    }
+    let mut approved = 0;
+    for node in nodes {
+        match node.get("state")?.as_str()? {
+            "APPROVED" => approved += 1,
+            "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING" => {}
+            _ => return None,
+        }
+    }
+    Some(approved)
 }
 
 pub(super) fn classify_details(

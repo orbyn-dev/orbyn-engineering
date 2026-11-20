@@ -332,13 +332,16 @@ export function mergeGate(
  * The Review line of the status card, from what the forge reports. The signed-in person is named "you", not by login.
  * `byYou` is the person's own latest review being the one that asked for changes.
  */
-export function reviewWords(pull: PullRequest, reviewers: readonly string[], viewers: readonly string[] = [], byYou = false): string {
+export function reviewWords(pull: PullRequest, reviewers: readonly string[], viewers: readonly string[] = [], byYou = false, approvalCount?: number): string {
   if (pull.draft) return "Not requested";
-  if (pull.review_state === "approved") return "Approved";
+  if (pull.review_state === "approved") return approvalCount === undefined ? "Approved" : approvalWords(approvalCount);
   if (pull.review_state === "changes_requested" || byYou) return byYou ? "Changes requested by you" : "Changes requested";
   const names = reviewers.map((name) => (viewers.some((login) => sameLogin(login, name)) ? "you" : `@${name}`));
   return names.length > 0 ? `Requested from ${names.join(", ")}` : "Not requested";
 }
+
+/** A count the host proved complete, including zero. */
+export const approvalWords = (count: number): string => `${count} ${count === 1 ? "approval" : "approvals"}`;
 
 /** The Conflicts line of the status card: what the service says, and nothing it does not (which file, how many). */
 export const conflictWords = (mergeable: string | null): string => (mergeable === "conflicting" ? "Yes" : mergeable === "mergeable" ? "None" : "\u2014");

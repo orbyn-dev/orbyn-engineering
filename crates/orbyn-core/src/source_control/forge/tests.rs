@@ -686,4 +686,79 @@ fn the_details_query_names_one_alias_per_pull_request() {
         query.contains("p3:pullRequest(number:3)") && query.contains("p40:pullRequest(number:40)")
     );
     assert_eq!(query.matches("pullRequest(").count(), 2);
+    assert_eq!(
+        query
+            .matches(
+                "latestOpinionatedReviews(first:100){totalCount pageInfo{hasNextPage} nodes{state}}"
+            )
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_paused_details_request_withholds_the_approval_count_too() {
+    assert_eq!(
+        super::details::DETAIL_FIELDS,
+        [
+            "created_at",
+            "requested_reviewers",
+            "viewer_review_state",
+            "comment_count",
+            "approval_count"
+        ]
+    );
+}
+
+#[test]
+fn approvals_require_a_complete_latest_opinionated_connection() {
+    let mut response = details_response();
+    let connection = json!({"totalCount": 3, "pageInfo": {"hasNextPage": false}, "nodes": [
+        {"state": "APPROVED"}, {"state": "CHANGES_REQUESTED"}, {"state": "APPROVED"}
+    ]});
+    response["data"]["repository"]["p3"]["latestOpinionatedReviews"] = connection.clone();
+    let read = |response: &Value| {
+        let found = parse_details(response, "proj", &[3]);
+        let row = serde_json::to_value(&found[&3]).unwrap();
+        assert_eq!(row["comment_count"], 5);
+        row.get("approval_count").cloned()
+    };
+    assert_eq!(read(&response), Some(json!(2)));
+    for nodes in [
+        json!([]),
+        json!([{"state":"COMMENTED"}, {"state":"DISMISSED"}, {"state":"PENDING"}]),
+    ] {
+        response["data"]["repository"]["p3"]["latestOpinionatedReviews"] = json!({
+            "totalCount": nodes.as_array().unwrap().len(), "pageInfo": {"hasNextPage":false}, "nodes":nodes
+        });
+        assert_eq!(read(&response), Some(json!(0)));
+    }
+    for invalid in [
+        Value::Null,
+        json!({}),
+        json!({"totalCount":0,"nodes":[],"pageInfo":{}}),
+        json!({"totalCount":0,"nodes":[],"pageInfo":{"hasNextPage":true}}),
+        json!({"totalCount":1,"nodes":[],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":-1,"nodes":[],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":0.0,"nodes":[],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":"0","nodes":[],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":1,"nodes":[null],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":1,"nodes":[{}],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":1,"nodes":[{"state":"FUTURE"}],"pageInfo":{"hasNextPage":false}}),
+        json!({"totalCount":1,"nodes":[{"state":5}],"pageInfo":{"hasNextPage":false}}),
+    ] {
+        response["data"]["repository"]["p3"]["latestOpinionatedReviews"] = invalid;
+        assert_eq!(read(&response), None);
+    }
+    response["data"]["repository"]["p3"]
+        .as_object_mut()
+        .unwrap()
+        .remove("latestOpinionatedReviews");
+    assert_eq!(read(&response), None);
+    response["data"]["repository"]["p3"]["latestOpinionatedReviews"] = connection;
+    response["errors"] = json!([{"path":["repository","p3","latestOpinionatedReviews","nodes",0]}]);
+    assert_eq!(
+        classify_details(false, &response.to_string(), "", "proj", &[3]),
+        DetailsOutcome::Unavailable
+    );
 }

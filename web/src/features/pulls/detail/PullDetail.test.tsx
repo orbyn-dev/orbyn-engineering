@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pullsApi } from "../../../api/pulls";
 import { ApiFailure } from "../../../api/client";
+import { dataChanged } from "../../../api/shell";
+import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
 import { useConnection } from "../../../product/state/connection";
 import { PullDetail } from "./PullDetail";
@@ -76,6 +78,103 @@ afterEach(() => {
 const merge = () => screen.getByRole("button", { name: /^Merge$/ });
 
 describe("one pull request as a page", () => {
+  it.each([[0, "0 approvals"], [1, "1 approval"], [3, "3 approvals"], [undefined, "Approved"]] as const)("shows the known approval count %s in all three approved placements", async (count, words) => {
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: count }], paused: [] });
+    await show(detail({ review_state: "approved" }));
+    expect(screen.getByText("Review").nextElementSibling).toHaveTextContent(words);
+    expect(document.querySelector(".pulls-banner")).toHaveTextContent(`${words}. Checks passed and there are no conflicts.`);
+    expect(document.querySelector(".pull-merge-hint")).toHaveTextContent(count === undefined ? "No conflicts" : `${words} · No conflicts`);
+    expect(merge()).toBeEnabled();
+  });
+
+  it.each([
+    [{ draft: true }, "mergeable", "Not requested", false],
+    [{ review_state: "changes_requested" }, "mergeable", "Changes requested", false],
+    [{ review_state: "review_required" }, "mergeable", "Not requested", false],
+    [{ review_state: "approved" }, "unknown", "2 approvals", true],
+  ] as const)("keeps approval counts separate from precedence and merge eligibility %j", async (over, mergeable, words, enabled) => {
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: 2 }], paused: [] });
+    await show({ ...detail(over, mergeable), reviewers: [] });
+    expect(screen.getByText("Review").nextElementSibling).toHaveTextContent(words);
+    expect(merge().hasAttribute("disabled")).toBe(!enabled);
+    expect(document.querySelector(".pull-merge-hint")?.textContent ?? "").not.toContain("approvals · No conflicts");
+    expect(document.querySelector(".pulls-banner")?.textContent ?? "").not.toContain("approvals. Checks passed");
+  });
+
+  it("uses the current revision and forces a count read after approving", async () => {
+    vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [{ name: "me", kind: "user" }], approval_count: 0 }], paused: [] });
+    await show(detail({ review_state: "review_required", updated_at: "t1" }));
+    expect(pullsApi.details).toHaveBeenLastCalledWith({ pulls: [{ project_id: "p", number: 142, updated_at: "t1" }], fresh: false }, expect.any(AbortSignal));
+    vi.mocked(pullsApi.detail).mockResolvedValue(detail({ review_state: "approved", updated_at: "t1" }));
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: 1 }], paused: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(pullsApi.details).toHaveBeenLastCalledWith(expect.objectContaining({ fresh: true }), expect.any(AbortSignal));
+    expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("1 approval");
+  });
+
+  it("keeps the unknown fallback while approval details are paused", async () => {
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [], paused: ["approval_count"] });
+    await show(detail({ review_state: "approved" }));
+    expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("Approved");
+    expect(document.querySelector(".pulls-banner")).toHaveTextContent("Approved. Checks passed and there are no conflicts.");
+    expect(document.querySelector(".pull-merge-hint")).toHaveTextContent("No conflicts");
+    expect(merge()).toBeEnabled();
+  });
+
+  it("fences delayed details when the selected project and number change", async () => {
+    let oldReply!: (value: Awaited<ReturnType<typeof pullsApi.details>>) => void;
+    vi.mocked(pullsApi.detail).mockImplementation(async (projectId, number) => detail({ number, review_state: "approved", updated_at: projectId }));
+    vi.mocked(pullsApi.details).mockImplementation(async (body) => body.pulls[0]?.project_id === "p"
+      ? new Promise((resolve) => { oldReply = resolve; })
+      : { details: [{ project_id: "q", number: 143, approval_count: 2 }], paused: [] });
+    const view = render(<PullDetail layout="page" projectId="p" number={142} />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    view.rerender(<PullDetail layout="page" projectId="q" number={143} />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("2 approvals");
+    await act(async () => oldReply({ details: [{ project_id: "p", number: 142, approval_count: 8 }], paused: [] }));
+    expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("2 approvals");
+    expect(pullsApi.details).toHaveBeenLastCalledWith({ pulls: [{ project_id: "q", number: 143, updated_at: "q" }], fresh: false }, expect.any(AbortSignal));
+  });
+
+  it("bypasses the details cache on a manual offline retry", async () => {
+    useConnection.setState({ offline: true });
+    await show(detail({ updated_at: "t1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(pullsApi.details).toHaveBeenLastCalledWith({ pulls: [{ project_id: "p", number: 142, updated_at: "t1" }], fresh: true }, expect.any(AbortSignal));
+  });
+
+  it("keeps a fresh approval after a delayed background reply and rereads changed revisions", async () => {
+    const stop = startDataRefresh();
+    try {
+      vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
+      vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [{ name: "me", kind: "user" }], approval_count: 0 }], paused: [] });
+      await show(detail({ review_state: "review_required", updated_at: "t1" }));
+      let oldReply!: (value: Awaited<ReturnType<typeof pullsApi.details>>) => void;
+      vi.mocked(pullsApi.details).mockImplementationOnce(() => new Promise((resolve) => { oldReply = resolve; }));
+      act(() => dataChanged("pull:p:142"));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(COALESCE_MS)));
+      vi.mocked(pullsApi.detail).mockResolvedValue(detail({ review_state: "approved", updated_at: "t1" }));
+      vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: 1 }], paused: [] });
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+      expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("1 approval");
+      await act(async () => oldReply({ details: [{ project_id: "p", number: 142, approval_count: 0 }], paused: [] }));
+      expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("1 approval");
+      vi.mocked(pullsApi.detail).mockResolvedValue(detail({ review_state: "approved", updated_at: "t2" }));
+      vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: 2 }], paused: [] });
+      act(() => dataChanged("pull:p:142"));
+      await act(async () => void (await vi.advanceTimersByTimeAsync(COALESCE_MS)));
+      expect(pullsApi.details).toHaveBeenLastCalledWith({ pulls: [{ project_id: "p", number: 142, updated_at: "t2" }], fresh: false }, expect.any(AbortSignal));
+      expect(screen.getByText("Review").nextElementSibling).toHaveTextContent("2 approvals");
+    } finally {
+      stop();
+    }
+  });
+
   it("names the failing check in a banner, links its log and blocks Merge", async () => {
     await show(detail({ checks_state: "fail", checks: { total: 4, passing: 3, failing: 1, running: 0, failing_names: ["e2e (macOS)"] } }));
     const banner = screen.getByText("e2e (macOS) failed", { selector: "b" }).closest(".pulls-banner") as HTMLElement;

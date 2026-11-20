@@ -6,7 +6,7 @@ import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { useWaited } from "../../../lib/motion";
 import { PullsBanner } from "../list/PullStates";
-import type { PageState } from "../model/pullModel";
+import { approvalWords, type PageState } from "../model/pullModel";
 
 /** The line above the tabs that says what state the pull request is in, with the step that fits it. */
 export function PullStateBanner({
@@ -15,6 +15,7 @@ export function PullStateBanner({
   failed,
   own,
   reviewing,
+  approvalCount,
   actions,
 }: {
   pull: PullRequest;
@@ -25,6 +26,7 @@ export function PullStateBanner({
   own?: boolean;
   /** The review card is open: the Request changes button stays, pressed. */
   reviewing?: boolean;
+  approvalCount?: number;
   actions: { reopen(): void; ready(): void; approve(): void; requestChanges(): void; deleteBranch(): void };
 }) {
   // The person's own pull request: nobody reviews their own, and Request changes is only pressed while its card is open.
@@ -138,7 +140,7 @@ export function PullStateBanner({
     case "approved":
       return (
         <PullsBanner icon={<SquareCheck size={14} aria-hidden />} actions={null}>
-          Approved. Checks passed and there are no conflicts.
+          {approvalCount === undefined ? "Approved" : approvalWords(approvalCount)}. Checks passed and there are no conflicts.
         </PullsBanner>
       );
     default:

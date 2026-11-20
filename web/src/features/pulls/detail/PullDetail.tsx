@@ -28,7 +28,7 @@ import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
-import { baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
+import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
 import { Stack } from "./PullStack";
@@ -58,8 +58,9 @@ export function PullDetail({
   // What the page layout adds beside the detail: files, checks, the details the list also reads, and who is signed in.
   const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
   const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
-  const extras = useAsync(`pull-extras:${projectId}:${number}:${page}`, (signal) =>
-    page ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: null }], fresh: false }, signal) : Promise.resolve({ details: [], paused: [] }),
+  const revision = detail.data?.pull.updated_at ?? null;
+  const extras = useAsync(`pull-extras:${projectId}:${number}:${page}:${revision}`, (signal, how) =>
+    page ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: revision }], fresh: how.force }, signal) : Promise.resolve({ details: [], paused: [] }),
     { refreshOn: changed },
   );
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
@@ -123,7 +124,10 @@ export function PullDetail({
     </PageBar>
   );
   if (detail.status === "loading") return pullDetailLoading({ page, number, pageHead });
-  if (detail.status === "error" && !detail.data) return pullDetailError({ page, number, pageHead, signedOut, forgeLabel, failure: detail.error, onRetry: detail.reload });
+  if (detail.status === "error" && !detail.data) return pullDetailError({ page, number, pageHead, signedOut, forgeLabel, failure: detail.error, onRetry: () => {
+    void detail.reloadNow();
+    void extras.reloadNow();
+  } });
   const current = detail.data as PullRequestDetail;
   const { pull, mergeable, additions, deletions, changed_files: files } = current;
   const open = pull.state === "open";
@@ -136,7 +140,7 @@ export function PullDetail({
       void useWorkspace.getState().refreshManaged();
       // What the banner and the tab counts read goes stale with the pull request.
       if (page) {
-        void extras.reload();
+        void extras.reloadNow();
         void checkList.reload();
       }
     } catch (failure) {
@@ -267,7 +271,7 @@ export function PullDetail({
           initialMethod={mergeMethod}
           onStale={() => {
             void detail.reload();
-            void extras.reload();
+            void extras.reloadNow();
             void checkList.reload();
             void fileList.reload();
           }}
@@ -280,7 +284,7 @@ export function PullDetail({
             pushToast("Merged");
             void detail.reload();
             if (page) {
-              void extras.reload();
+              void extras.reloadNow();
               void checkList.reload();
             }
           }}
@@ -375,12 +379,15 @@ export function PullDetail({
 
   const offline = connection === "offline";
   const viewers = (forges.data ?? []).flatMap((one) => (one.signed_in && one.viewer ? [one.viewer] : []));
-  const mine = extras.data?.details[0];
+  const mine = extras.data?.details.find((row) => row.project_id === projectId && row.number === number);
   const reviewAsked = reviewAskedOf(mine, viewers);
   const own = ownPull(pull, viewers);
   const state = pageState(pull, mergeable, reviewAsked);
   const failedCheck = (checkList.data ?? []).find((check) => check.state === "fail");
   const gate = mergeGate(pull, mergeable, { offline, auto, forge: forgeLabel });
+  const mergeHint = state === "approved" && mine?.approval_count !== undefined && gate.hint === "No conflicts"
+    ? `${approvalWords(mine.approval_count)} · No conflicts`
+    : gate.hint;
   const submitReview = (event: "approve" | "request_changes") =>
     run(pullsApi.review(projectId, number, event, ""), event === "approve" ? "Approved" : "Changes requested");
   const forgeLink = (
@@ -443,7 +450,8 @@ export function PullDetail({
           ago={agoWords(loadedAt ?? Date.now(), Date.now())}
           onRetry={() => {
             checkConnectionNow();
-            detail.reload();
+            void detail.reloadNow();
+            void extras.reloadNow();
           }}
         />
       ) : tab === "checks" && failing > 0 ? (
@@ -457,6 +465,7 @@ export function PullDetail({
           failed={failedCheck}
           own={own}
           reviewing={reviewing}
+          approvalCount={mine?.approval_count}
           actions={{
             reopen: () => void act("reopen", "Reopened"),
             ready: () => void update({ draft: false }, "Ready for review"),
@@ -520,7 +529,7 @@ export function PullDetail({
           </Row>
           {/* Amber only where the person is waited on; a conflict and changes the person asked for stay ink. */}
           <Row name="Review" tone={requested === null && (state === "review" || (state === "changes" && changesNeedYou(pull, viewers))) ? "warn" : undefined}>
-            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested")}
+            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested", mine?.approval_count)}
           </Row>
           <Row name="Conflicts">{conflictWords(mergeable)}</Row>
           {threadTitle ? (
@@ -540,7 +549,7 @@ export function PullDetail({
             setDeleteAfter(on);
             rememberDeleteBranch(projectId, on);
           }}
-          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : requested !== null ? { ...gate, hint: "You requested changes." } : gate}
+          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : requested !== null ? { ...gate, hint: "You requested changes." } : { ...gate, hint: mergeHint }}
           menu={mergeMenu}
           onMenu={setMergeMenu}
           onMerge={openMerge}
@@ -562,14 +571,14 @@ export function PullDetail({
               setReviewNote("");
               setRequested(note);
               void detail.reload();
-              void extras.reload();
+              void extras.reloadNow();
               // The review is an entry of the conversation: the tab counts it once the activity is read again.
               if (activityWanted) void activity.reloadNow();
               else setActivityWanted(true);
             }}
             onUnknown={() => {
               void detail.reload();
-              void extras.reload();
+              void extras.reloadNow();
             }}
           />
         ) : null}
