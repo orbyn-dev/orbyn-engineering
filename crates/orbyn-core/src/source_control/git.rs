@@ -252,14 +252,19 @@ pub(crate) fn valid_purpose(purpose: &str) -> bool {
         && !purpose.starts_with('-')
 }
 
-/// `<repo>-wt/<purpose>` beside the primary clone.
-pub(crate) fn worktree_path(repo: &Path, purpose: &str) -> Result<PathBuf> {
+/// `<repo>-wt` beside the primary clone: where Orbyn makes its worktrees.
+pub(crate) fn worktree_root(repo: &Path) -> Result<PathBuf> {
     let name = repo
         .file_name()
         .ok_or_else(|| CoreError::Git("This repository has no folder name.".into()))?;
     let mut root = name.to_owned();
     root.push("-wt");
-    Ok(repo.with_file_name(root).join(purpose))
+    Ok(repo.with_file_name(root))
+}
+
+/// `<repo>-wt/<purpose>` beside the primary clone.
+pub(crate) fn worktree_path(repo: &Path, purpose: &str) -> Result<PathBuf> {
+    Ok(worktree_root(repo)?.join(purpose))
 }
 
 /// A registered worktree of a primary clone.

@@ -22,6 +22,12 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/threads/{id}/branches/switch", post(switch_branch))
         .route(
+            "/api/threads/{id}/vcs/refresh-status",
+            post(refresh_vcs_status),
+        )
+        .route("/api/threads/{id}/vcs/refs", post(create_ref))
+        .route("/api/threads/{id}/vcs/refs/switch", post(switch_ref))
+        .route(
             "/api/source-control/repository-star",
             get(repository_star_status),
         )
@@ -66,6 +72,35 @@ async fn switch_branch(
         .core
         .switch_branch(&id, &body.name, LOCAL_USER)
         .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The explicit VCS `refreshStatus`: the checkout's branch, HEAD, tracking ref and
+/// working-tree counts, read now rather than from a kept answer.
+async fn refresh_vcs_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.refresh_vcs_status(&id).await?))
+}
+
+/// The explicit VCS `createRef`: a branch at an optional start, without switching.
+async fn create_ref(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<CreateBranch>,
+) -> ApiResult<StatusCode> {
+    state.core.create_ref(&id, &body, LOCAL_USER).await?;
+    Ok(StatusCode::CREATED)
+}
+
+/// The explicit VCS `switchRef`: move the checkout to an existing ref.
+async fn switch_ref(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<SwitchBranch>,
+) -> ApiResult<StatusCode> {
+    state.core.switch_ref(&id, &body.name, LOCAL_USER).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

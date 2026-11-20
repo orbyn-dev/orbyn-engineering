@@ -58,6 +58,28 @@ pub struct BranchInfo {
 }
 
 wire! {
+/// The checked-out state the VCS `refreshStatus` handler reads now, not from a kept
+/// answer: the branch or detached HEAD, its tracking ref and distance, and the
+/// working-tree counts Git reports.
+pub struct VcsStatus {
+    /// The branch HEAD points at; `None` when HEAD is detached.
+    pub branch: Option<String>,
+    pub detached: bool,
+    /// The abbreviated checked-out commit.
+    pub head: String,
+    /// The ref the branch tracks, such as `origin/main`; `None` when it tracks none.
+    pub upstream: Option<String>,
+    /// Commits this checkout has that its upstream does not, and the reverse.
+    pub ahead: u32,
+    pub behind: u32,
+    /// Files Git reports as changed (tracked), untracked, and conflicted.
+    pub changed: u32,
+    pub untracked: u32,
+    pub conflicted: u32,
+}
+}
+
+wire! {
 pub struct CreateBranch {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

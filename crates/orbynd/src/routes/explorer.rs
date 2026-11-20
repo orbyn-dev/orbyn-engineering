@@ -9,7 +9,7 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use futures_util::{Stream, stream};
 use orbyn_contracts::{ExplorerFileAction, ShellEvent};
 use orbyn_core::CoreError;
@@ -28,6 +28,10 @@ pub fn routes() -> Router<AppState> {
             "/api/projects/{id}/worktrees/{worktree}/file-actions",
             post(file_action),
         )
+        .route(
+            "/api/projects/{id}/worktrees/{worktree}",
+            delete(remove_worktree),
+        )
 }
 
 async fn file_action(
@@ -38,6 +42,20 @@ async fn file_action(
     state
         .core
         .explorer_file_action(&id, &worktree, &action, LOCAL_USER)
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// The explicit VCS `removeWorktree`: removes a linked worktree Orbyn made under the
+/// project's sibling `<repo>-wt` root when no thread works in it. Git keeps
+/// uncommitted work, because the removal runs without force.
+async fn remove_worktree(
+    State(state): State<AppState>,
+    Path((id, worktree)): Path<(String, String)>,
+) -> ApiResult<axum::http::StatusCode> {
+    state
+        .core
+        .remove_worktree(&id, &worktree, LOCAL_USER)
         .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
