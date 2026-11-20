@@ -143,6 +143,7 @@
     ["GET","/api/threads/{id}/commits","local"],
     ["GET","/api/threads/{id}/diff","local"],
     ["GET","/api/threads/{id}/events","local"],
+    ["GET","/api/threads/{id}/family","local"],
     ["GET","/api/threads/{id}/files","local"],
     ["GET","/api/threads/{id}/files/content","local"],
     ["GET","/api/threads/{id}/files/ignored","local"],

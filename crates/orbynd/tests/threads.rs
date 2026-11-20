@@ -2,6 +2,7 @@
 
 mod support;
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -210,6 +211,98 @@ async fn delete_takes_descendants_but_refuses_a_busy_family() {
     assert_eq!(response.status(), 204);
     let audit = service.json("/api/audit?limit=5").await;
     assert_eq!(audit[0]["action"], "thread.delete");
+}
+
+/// Forks a child from a thread and checks the stored edge.
+async fn fork(service: &Service, parent: &str, side: bool) -> String {
+    let (status, thread) = service
+        .send(
+            &format!("/api/threads/{parent}/fork"),
+            json!({ "side": side }),
+        )
+        .await;
+    assert_eq!(status, 201, "{thread}");
+    assert_eq!(thread["lifecycle"]["parent_thread_id"], parent);
+    thread["id"].as_str().unwrap().to_owned()
+}
+
+async fn family(service: &Service, thread: &str) -> Value {
+    service.json(&format!("/api/threads/{thread}/family")).await
+}
+
+/// The family read walks the stored `parent_thread_id` tree, so a fork, a side chat
+/// and their own forks come back together, and a thread outside the tree never does.
+#[tokio::test]
+async fn a_thread_family_is_the_whole_parent_child_tree_and_leaves_unrelated_threads_out() {
+    let dir = TempDir::new();
+    let (service, root) = setup(&dir, Options::default(), "codex").await;
+    let project = project_of(&service).await;
+    let side = fork(&service, &root, true).await;
+    let child = fork(&service, &side, false).await;
+    let grandchild = fork(&service, &child, false).await;
+    let peer = service.thread(&project, "codex").await;
+    assert_eq!(
+        service
+            .patch(&grandchild, json!({ "archived": true }))
+            .await
+            .0,
+        200
+    );
+
+    let expected = BTreeSet::from([
+        root.as_str(),
+        side.as_str(),
+        child.as_str(),
+        grandchild.as_str(),
+    ]);
+    // Asking any member gives the same tree, from the top.
+    for asked in [&root, &side, &child, &grandchild] {
+        let answer = family(&service, asked).await;
+        assert_eq!(answer["thread_id"], asked.as_str(), "{answer}");
+        assert_eq!(answer["root_thread_id"], root.as_str(), "{answer}");
+        let members = answer["threads"].as_array().unwrap();
+        let ids: Vec<&str> = members
+            .iter()
+            .map(|thread| thread["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids.iter().copied().collect::<BTreeSet<_>>(),
+            expected,
+            "{answer}"
+        );
+        assert_eq!(ids[0], root.as_str(), "the root comes first: {answer}");
+        assert!(!ids.contains(&peer.as_str()), "{answer}");
+        let position = |id: &str| ids.iter().position(|one| *one == id).unwrap();
+        assert!(position(&root) < position(&side));
+        assert!(position(&side) < position(&child));
+        assert!(position(&child) < position(&grandchild));
+        // The relation is the store's, not a second lineage.
+        let member = |id: &str| {
+            members
+                .iter()
+                .find(|thread| thread["id"] == id)
+                .unwrap_or_else(|| panic!("{id} is in the family"))
+                .clone()
+        };
+        assert!(member(&root)["lifecycle"]["parent_thread_id"].is_null());
+        assert_eq!(member(&side)["lifecycle"]["relation"], "side");
+        assert_eq!(member(&child)["lifecycle"]["relation"], "fork");
+        assert_eq!(member(&grandchild)["lifecycle"]["relation"], "fork");
+        // Archiving hides a thread from the list, not from its family.
+        assert!(member(&grandchild)["lifecycle"]["archived_at"].is_string());
+    }
+
+    // An unrelated thread's family is itself alone.
+    let alone = family(&service, &peer).await;
+    assert_eq!(alone["root_thread_id"], peer.as_str());
+    assert_eq!(alone["threads"].as_array().unwrap().len(), 1);
+
+    let missing = service
+        .get("/api/threads/not-a-thread/family")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 404);
 }
 
 #[tokio::test]
