@@ -1817,7 +1817,8 @@ reach or click, and names the server and what it asked. The web then calls
 token, which opens nothing but its own page. The service finds the app's server in the
 render's own record, which only an app render has, and checks the policy rules as a `tool`
 action on `mcp_app:<server>:<tool>` or `mcp_app:<server>:message`: a deny rule refuses even
-a confirmed request, an allow rule passes without one, and otherwise an unconfirmed request
+a confirmed request (the tool-info read below is included, as `mcp_app:<server>:tool_info`),
+an allow rule passes without one, and otherwise an unconfirmed request
 is refused. The decision is audited before the effect. There is no run to pause for a page
 shown after its run, so this is the person's answer rather than an approval card, as the
 computer gateway does for a call with no run. A tool call reaches only the app's own server:
@@ -1838,9 +1839,16 @@ for that one server's tool list, and answers only the advertised `name`, `descri
 service. The page gets it as `hostContext.toolInfo.tool`, in the `ui/initialize` answer or
 in a later `host-context-changed`; a read the service refuses leaves the context without
 it rather than guessing. An unknown render, a render that is not an app, or a tool its
-server no longer advertises is a plain `404`; a server that cannot be asked is `502
-engine_unavailable`, never empty metadata. The read starts no model turn and reaches no
-other server.
+server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
+names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
+starts no model turn and reaches no other server. It is evaluated read-only against the
+policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
+only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+`ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
+starts a short engine session, so the service holds at most two at once and identical
+concurrent reads of one render share one (single-flight: the answer goes to the callers
+waiting and nothing is kept, so it is not a cache); the card reads once per render and
+aborts the request when it unmounts.
 
 `ui/update-model-context` leaves a note for the model: its text blocks, then its structured
 content as JSON, at most 8000 characters. The web sends it with

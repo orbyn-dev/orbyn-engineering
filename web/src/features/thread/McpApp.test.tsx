@@ -270,7 +270,7 @@ describe("MCP App frame", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(read).toHaveBeenCalledWith(THREAD, RENDER);
+    expect(read).toHaveBeenCalledWith(THREAD, RENDER, expect.any(AbortSignal));
     const own = (screen.getByTitle("demo show_widget") as HTMLIFrameElement).contentWindow as Window;
     const sent = vi.spyOn(own, "postMessage");
     await act(async () => {
@@ -292,6 +292,35 @@ describe("MCP App frame", () => {
       .map(([message]) => message as { id?: number; result?: { hostContext?: Record<string, unknown> } })
       .find((message) => message.id === 20);
     expect(reply?.result?.hostContext?.toolInfo).toEqual({ tool: TOOL_INFO });
+  });
+
+  it("aborts the descriptor read on unmount and reads once per render, not per re-projection", async () => {
+    const read = vi.spyOn(api, "mcpAppToolInfo").mockReturnValue(new Promise(() => {}));
+    const first = appRow();
+    const { rerender, unmount } = render(<McpApp item={first} threadId={THREAD} />);
+    expect(read).toHaveBeenCalledTimes(1);
+    const signal = read.mock.calls[0]?.[2] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    // A re-projection hands the card a new item object for the same render: no new read.
+    rerender(<McpApp item={{ ...first, app: first.app && { ...first.app } }} threadId={THREAD} />);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(false);
+
+    unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("aborts the read and asks again when the card shows another render", () => {
+    const read = vi.spyOn(api, "mcpAppToolInfo").mockReturnValue(new Promise(() => {}));
+    const first = appRow();
+    const { rerender } = render(<McpApp item={first} threadId={THREAD} />);
+    const signal = read.mock.calls[0]?.[2] as AbortSignal;
+    const other = { ...first, app: first.app && { ...first.app, renderId: "01jc8xw9kq00000000000000cc" } };
+    rerender(<McpApp item={other} threadId={THREAD} />);
+    expect(signal.aborted).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read.mock.calls[1]?.[1]).toBe("01jc8xw9kq00000000000000cc");
   });
 
   it("shows no descriptor at all when the service will not read one", async () => {

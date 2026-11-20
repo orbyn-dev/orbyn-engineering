@@ -91,19 +91,24 @@ export function McpApp({ item, threadId }: { item: ToolItem; threadId: string | 
 
   // The app's own tool, read from its MCP server by the service. The page names nothing
   // here and cannot change the answer; while it is unread the page gets no descriptor
-  // rather than a guessed or empty one.
+  // rather than a guessed or empty one. Each read starts a short engine session, so it is
+  // keyed on the render, not the item object (a re-projection must not read again), and
+  // it is aborted when the card unmounts or shows another render.
+  const renderId = app?.renderId;
   useEffect(() => {
     setToolInfo(null);
-    if (!app || !threadId) return;
+    if (!renderId || !threadId) return;
     let live = true;
-    api.mcpAppToolInfo(threadId, app.renderId).then(
+    const reading = new AbortController();
+    api.mcpAppToolInfo(threadId, renderId, reading.signal).then(
       (info) => live && setToolInfo(info),
       () => live && setToolInfo(null),
     );
     return () => {
       live = false;
+      reading.abort();
     };
-  }, [app, threadId]);
+  }, [renderId, threadId]);
 
   useEffect(() => {
     if (!app) return;
