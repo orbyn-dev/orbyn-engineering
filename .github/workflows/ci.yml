@@ -143,18 +143,29 @@ jobs:
         run: npm run check
         working-directory: web
 
-  # Rust on Linux, tests half: every test, and it also runs on main and with the full-ci
-  # label. Clippy runs beside it in rust-linux-clippy. Both start with Cheap checks (they need
-  # only changes): clippy took about 1.1 minutes and the tests about 7, so waiting for lint and
-  # running them in series put about 2.5 minutes on the critical path.
-  # The wire-types check is platform-independent, so it lives here, where every pull request runs it.
+  # Rust on Linux, tests half, split into 2 shards by test count (nextest --partition). It also
+  # runs on main and with the full-ci label. Clippy runs beside it in rust-linux-clippy. Both
+  # start with Cheap checks (they need only changes): clippy took about 1.1 minutes, so waiting
+  # for lint and running them in series would put about 2.5 minutes on the critical path.
+  # Measured on one job: 7m40s = about 3.0 min compiling tests + about 4.3 min running 3,712 tests
+  # on 4 cores. Each shard still compiles every test, so the test run drops to about 2.2 min per
+  # shard and the Rust critical path to about 5.3-5.8 min. This is an estimate until a sharded run
+  # is measured. Two shards cost one more hosted job per pull request run.
+  # Both shards share one cache (they compile the same tests); on main only shard 1 saves it.
+  # Doc tests (about 5 s) and the wire-types check do not depend on the test count, so shard 1
+  # runs them once. The wire-types check is platform-independent, so it lives here, where every
+  # pull request runs it.
   rust-linux-build:
-    name: Rust build (ubuntu-24.04)
+    name: Rust build (ubuntu-24.04) shard ${{ matrix.shard }}/2
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 30
     # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
     runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,7 +176,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: rust-linux
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
       # The scripted-engine regressions launch the browser suite's Node fixtures.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -173,9 +184,11 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --workspace --no-fail-fast
-      - run: cargo test --workspace --doc
-      - name: Generated wire types are committed
+      - run: cargo nextest run --workspace --no-fail-fast --partition count:${{ matrix.shard }}/2
+      - if: matrix.shard == 1
+        run: cargo test --workspace --doc
+      - if: matrix.shard == 1
+        name: Generated wire types are committed
         shell: bash
         run: |
           git add --intent-to-add web/src/generated
@@ -208,8 +221,9 @@ jobs:
           node-version: 22
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  # The required "Rust (linux)" check; see the note on the changes job. It needs the tests job
-  # and the clippy job and passes only when both succeeded or the scope left both out.
+  # The required "Rust (linux)" check; see the note on the changes job. It needs the test shard
+  # job and the clippy job. A matrix job reports one result (success only when both shards
+  # succeeded), so the aggregate passes only when that and clippy succeeded or the scope left both out.
   rust-linux:
     name: Rust (linux)
     needs: [changes, lint, rust-linux-build, rust-linux-clippy]
@@ -225,7 +239,7 @@ jobs:
           BUILD: ${{ needs.rust-linux-build.result }}
           CLIPPY: ${{ needs.rust-linux-clippy.result }}
         run: |
-          echo "changes=$CHANGES lint=$LINT scope=$SCOPE build=$BUILD clippy=$CLIPPY"
+          echo "changes=$CHANGES lint=$LINT scope=$SCOPE shards=$BUILD clippy=$CLIPPY"
           # A job the scope skipped is fine; a job the scope asked for must have succeeded.
           need() { if [ "$2" = true ]; then [ "$1" = success ]; else [ "$1" = success ] || [ "$1" = skipped ]; fi; }
           [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$BUILD" "$SCOPE" && need "$CLIPPY" "$SCOPE"
