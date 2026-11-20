@@ -939,30 +939,37 @@ background crew is per device and is not shared through git. A repository's own 
 - **Runs and state:** a run is `running`, `stopped` (with a reason: `budget`, `repeated_failure`, `engine_error`, `disabled`) or
   `needs_review`, with turns and minutes spent against the budget it was given. At most one run per crew is running, and a run opens only for
   an enabled crew. A crew's state, first match wins: `running` while a run is
-  running; `needs_review` when its newest run finished with work to review; `stopped` when its newest run stopped for the budget or a
+  running; `needs_review` while its newest run waits for the person's review; `stopped` when its newest run stopped for the budget or a
   failure (`budget`, `repeated_failure`, `engine_error`), even with older reviews waiting; `needs_review` when the crew has no run or its
-  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, or the newest run was stopped by the
-  person's own switch and nothing waits). Spending to either number of the budget stops the run with the reason `budget` and puts it in
-  the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
-  refused only while a run is in progress**; a crew with waiting reviews can be deleted (nothing clears a waiting review yet), its runs
+  newest run was stopped as `disabled` while an older review still waits; otherwise `idle` (never ran, the newest run was stopped by the
+  person's own switch and nothing waits, or the person acknowledged the newest run's review). Spending to either number of the budget
+  stops the run with the reason `budget` and puts it in the review queue (`review_waiting`). Turning a crew off stops its run with the reason `disabled`, logged as the person. **Delete is
+  refused only while a run is in progress**; a crew with waiting reviews can be deleted (a waiting review is settled by the person's acknowledgement), its runs
   and waiting reviews are removed with it, and the audit row records `runs_removed` and `reviews_waiting_removed`.
-- **Audit:** create, update, enable, disable, delete, and each run's start, spend, stop and review write an `audit_events` row in the same
-  transaction as the change (rule 6), before the row it describes changes (a spend that reaches the budget writes the spend row, then the
-  stop row, then updates the run once); a failed audit row rolls the change back, and the rows stay after a crew is deleted. A person's
-  disable, and the stop it causes, are logged with the person as actor and source; a run's start, spend and other ends as `crew`.
+- **Audit:** create, update, enable, disable, delete, and each run's start, spend, stop, review and acknowledgement write an `audit_events`
+  row in the same transaction as the change (rule 6), before the row it describes changes (a spend that reaches the budget writes the spend
+  row, then the stop row, then updates the run once; an acknowledgement writes its row with the run, its state, its stop reason and the
+  reason the review kept, then clears the wait); a failed audit row rolls the change back, and the rows stay after a crew is deleted. A
+  person's disable, the stop it causes and an acknowledgement are logged with the person as actor and source; a run's start, spend and
+  other ends as `crew`.
 - **Routes**, all under `/api/crew/background`, behind the Preview flag like every Crew route (404 with it off, 401 without the token, writes
   refused for a remote viewer and listed in `crew::changes` so N1 refuses an agent's request): reads `GET /` (`project`, `limit`, `offset`),
-  `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and
+  `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`,
   `/{id}/run-now`, which starts one run of an enabled crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a
-  Low Crew-started task review capacity may pause). There is no route that spends, merges or reverts.
+  Low Crew-started task review capacity may pause), and `/runs/{id}/acknowledge`, which settles one waiting review (`background_acknowledge_review`:
+  one write clears `review_waiting` and returns the run with its reason, state, stop reason and spend unchanged; a run that is not waiting is
+  refused plainly). There is no route that spends, merges or reverts.
 - **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a
   failure), and `GET /api/crew/autopilot/review` joins it beside the merges as `background_runs`: the run's state, stop reason, plain reason,
   spend and budget, oldest first. It carries no merge, commit or risk, because it has none, and it is not listed while running or when the
-  person's own switch stopped it. **The person's answer to one is not built:** no route settles or dismisses a waiting background review, so
-  that row is read-only.
+  person's own switch stopped it. **The person's answer to one is acknowledge-only (owner ruling, 2026-11-20):**
+  `POST /api/crew/background/runs/{id}/acknowledge` clears the run's wait and returns it with its reason, state, stop reason and spend
+  unchanged, so the run keeps why it waited for the record; the crew's `reviews_waiting` drops and the same crew may run again. It changes
+  nothing else and a run that is not waiting is refused plainly. A run that stopped for a failure still appears (it has nothing to review and
+  nothing to acknowledge), and the Review screen itself is not in the beta.
 - **What is not built:** **no trigger fires on its own** (the schedule timer and the CI watch are later slices), so a run exists only when a
-  person presses Run now or the core's run functions are called (tests do). The person's answer to a waiting run, and a background crew with
-  merge authority, wait for later work. Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is
+  person presses Run now or the core's run functions are called (tests do). A background crew with merge authority, and the Review screen's
+  acknowledge control, wait for later work. Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is
   gone); crews are per device; a template's prompt and checks are not defined yet.
 
 **As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in

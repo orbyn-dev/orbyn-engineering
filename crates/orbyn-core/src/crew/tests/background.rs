@@ -80,6 +80,7 @@ fn with_the_flag_off_nothing_exists() {
     not_found(f.core.background_runs("x", page()).unwrap_err());
     not_found(f.core.crew_background_start_run("x").unwrap_err());
     not_found(f.core.crew_background_spend("x", 1, 1).unwrap_err());
+    not_found(f.core.background_acknowledge_review("x").unwrap_err());
     assert!(audit_actions(&f.core).is_empty());
 }
 

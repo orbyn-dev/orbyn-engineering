@@ -1,7 +1,8 @@
 //! Background crews at rest (docs/crew.md, "Background crews"): the crew the person defined, and its runs with what each spent against
 //! its budget. The caller validates and redacts; this layer keeps the rules that must hold whatever the caller does: an audit row is
 //! written in the same transaction as every change (rule 6), the budget never changes after creation, at most one run per crew is
-//! running, and a run that reaches its budget stops with the reason `budget` and waits for the person's review.
+//! running, and a run that reaches its budget stops with the reason `budget` and waits for the person's review. The person
+//! settles a waiting review by acknowledging it: the wait clears, and the run keeps its reason.
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
@@ -446,15 +447,18 @@ impl Store {
         Ok((rows, total))
     }
 
-    /// The runs that wait for the person, oldest first, each with the crew it belongs to. A run that finished with work to
-    /// review waits; so does a run that stopped for its budget or a failure. A run stopped by the person's own switch
-    /// (`disabled`) needs nothing from them, and a running run is not waiting.
+    /// The runs that wait for the person, oldest first, each with the crew it belongs to: every run whose review is waiting
+    /// (`review_waiting`, whether it finished with work, stopped for its budget or waited on a person), and a run that stopped for
+    /// a failure, which has nothing to review but still tells the person what happened. A review the person acknowledged clears
+    /// `review_waiting` and drops the run from this list, while the run keeps why it waited. A run stopped by the person's own
+    /// switch (`disabled`) needs nothing from them, and a running run is not waiting.
     pub fn background_reviews(&self) -> Result<Vec<BackgroundReviewRow>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT r.*, c.name AS crew_name, c.project_id AS crew_project, c.template AS crew_template
              FROM crew_background_runs r JOIN crew_background c ON c.id = r.background_id
-             WHERE r.state = 'needs_review' OR (r.state = 'stopped' AND COALESCE(r.stop_reason, '') <> 'disabled')
+             WHERE r.review_waiting = 1
+                OR (r.state = 'stopped' AND COALESCE(r.stop_reason, '') IN ('repeated_failure', 'engine_error'))
              ORDER BY r.started_at ASC, r.rowid ASC",
         )?;
         let rows = statement
@@ -702,6 +706,52 @@ impl Store {
                 RunEnd::Stopped(_) => None,
             };
             end_run(tx, &current, end, review, "crew")?;
+            Ok(tx.query_row(
+                "SELECT * FROM crew_background_runs WHERE id = ?1",
+                [run],
+                run_row,
+            )?)
+        })
+    }
+
+    /// The person's acknowledgement of one waiting review: the wait is cleared in the same transaction as its audit row, and
+    /// nothing else changes. The run keeps why it waited (`review_reason`), its state, its stop reason and its spend, so the
+    /// record still says what the person settled. A review that is not waiting is refused plainly and nothing is written.
+    pub fn acknowledge_background_review(
+        &self,
+        run: &str,
+        actor: &str,
+    ) -> Result<BackgroundRunRow> {
+        self.commit(|tx, _| {
+            let current = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?
+                .ok_or_else(|| CoreError::NotFound("background run".into()))?;
+            if !current.review_waiting {
+                return Err(CoreError::Invalid(
+                    "this run is not waiting for the person's review".into(),
+                ));
+            }
+            audit(
+                tx,
+                actor,
+                "crew.background.run.acknowledge",
+                &current.background_id,
+                json!({
+                    "run": run,
+                    "state": current.state,
+                    "stop_reason": current.stop_reason,
+                    "review_reason": current.review_reason,
+                }),
+            )?;
+            tx.execute(
+                "UPDATE crew_background_runs SET review_waiting = 0, updated_at = ?2 WHERE id = ?1 AND review_waiting = 1",
+                params![run, now()],
+            )?;
             Ok(tx.query_row(
                 "SELECT * FROM crew_background_runs WHERE id = ?1",
                 [run],

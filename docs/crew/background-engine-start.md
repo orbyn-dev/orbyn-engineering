@@ -1,6 +1,6 @@
 # Engine start for background crews (4h)
 
-Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 4's Run now route and the read side of the Review join are built; the budget, the listeners and the person's answer to a background review remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
+Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 4's Run now route and the read side of the Review join, and the owner's acknowledge-only answer to a waiting background review are built; the budget and the listeners remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
 
 ## 1. What exists today
 
@@ -27,7 +27,7 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 4's
 ## 4. Where the run lands in Review
 
 - A run that merges: its merge row is a normal `crew_merges` row with `review_state` `waiting`, so it appears in `crew_review_queue` by risk. As a Low task, `capacity_after_merge` adds it to a sampling batch when the person turned sampling on (one in four).
-- A run that stops without a merge: stays on its background run row (`needs_review` or `stopped`), and `GET /api/crew/autopilot/review` now joins it beside the merges as `background_runs` (read side, PR 4): the run's state, stop reason, plain reason, spend and budget, oldest first. A running run and one stopped by the person's own switch are not waiting. It is never shown with a merge, a commit or a risk it does not have. **Not built: the person's answer to one.** No route settles or dismisses a waiting background review, so the row is read-only until the owner decides what an answer does.
+- A run that stops without a merge: stays on its background run row (`needs_review` or `stopped`), and `GET /api/crew/autopilot/review` joins it beside the merges as `background_runs` (read side, PR 4): the run's state, stop reason, plain reason, spend and budget, oldest first. A running run, one stopped by the person's own switch and one whose review the person acknowledged are not waiting. It is never shown with a merge, a commit or a risk it does not have. **The person's answer is acknowledge-only (owner ruling, 2026-11-20):** `POST /api/crew/background/runs/{id}/acknowledge` (a Person route behind the Preview flag and local only) clears the run's wait, keeps why it waited, its state, stop reason and spend, and returns the run. The crew's `reviews_waiting` drops and the same crew may run again; the run keeps its reason for the record. A run that is not waiting is refused plainly. Nothing else is offered: no dismiss, no open, and the Review screen's acknowledge control is not in the beta. A run that stopped for a failure still appears, because it has nothing to review and nothing to acknowledge (PR 4's open question about failed stops is unchanged).
 
 ## 5. Run-end contract
 

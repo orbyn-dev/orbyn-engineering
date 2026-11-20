@@ -58,6 +58,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/autopilot/review/{task_id}/looks-good"],
   ["POST", "/api/crew/autopilot/review/{task_id}/revert"],
   ["POST", "/api/crew/background/create"],
+  ["POST", "/api/crew/background/runs/{id}/acknowledge"],
   ["POST", "/api/crew/background/{id}/delete"],
   ["POST", "/api/crew/background/{id}/disable"],
   ["POST", "/api/crew/background/{id}/enable"],

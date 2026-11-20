@@ -81,6 +81,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/review/{task_id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{task_id}/revert"),
     ("POST", "/api/crew/background/create"),
+    ("POST", "/api/crew/background/runs/{id}/acknowledge"),
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
@@ -433,6 +434,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/background/create",
         "Crew write behind local_only: creates a background worker",
+    ),
+    (
+        "POST",
+        "/api/crew/background/runs/{id}/acknowledge",
+        "Crew write behind local_only: the person settles one background review that waits; the wait clears and the run keeps its reason, state, stop reason and spend",
     ),
     (
         "POST",
