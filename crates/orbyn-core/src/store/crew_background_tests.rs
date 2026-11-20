@@ -227,3 +227,184 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
         ("stopped", 10, true)
     );
 }
+
+#[test]
+fn acknowledging_a_waiting_review_clears_the_wait_and_keeps_the_reason() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Settled", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    let waiting = store.add_background_spend(&run.id, 10, 0).unwrap();
+    assert!(waiting.review_waiting);
+    assert_eq!(store.background_standing(&crew.id).unwrap().1, 1);
+    let reason = waiting.review_reason.clone();
+    assert!(reason.is_some(), "a waiting review says why it waits");
+
+    let settled = store
+        .acknowledge_background_review(&run.id, "user")
+        .unwrap();
+    assert!(!settled.review_waiting);
+    assert!(
+        settled.updated_at >= waiting.updated_at,
+        "the write is stamped"
+    );
+    assert_eq!(
+        settled.review_reason.as_deref(),
+        reason.as_deref(),
+        "the run keeps why it waited"
+    );
+    assert_eq!(
+        (
+            settled.state.as_str(),
+            settled.stop_reason.as_deref(),
+            settled.turns_spent,
+            settled.minutes_spent,
+            settled.budget_turns,
+            settled.budget_minutes,
+            settled.started_at.as_str(),
+            settled.ended_at.clone(),
+        ),
+        (
+            waiting.state.as_str(),
+            waiting.stop_reason.as_deref(),
+            waiting.turns_spent,
+            waiting.minutes_spent,
+            waiting.budget_turns,
+            waiting.budget_minutes,
+            waiting.started_at.as_str(),
+            waiting.ended_at.clone(),
+        ),
+        "nothing but the wait and the stamp changes"
+    );
+    assert_eq!(
+        store.background_standing(&crew.id).unwrap().1,
+        0,
+        "the crew has nothing waiting"
+    );
+
+    // The audit row is the person's, names the crew, and records what was settled before it is cleared.
+    let audits = store.list_audit(None, 50).unwrap();
+    let row = audits
+        .iter()
+        .find(|row| row.action == "crew.background.run.acknowledge")
+        .expect("the acknowledgement is audited");
+    assert_eq!(
+        (row.actor.as_str(), row.source.as_str(), row.target.as_str()),
+        ("user", "user", crew.id.as_str())
+    );
+    assert_eq!(row.detail["run"], run.id);
+    assert_eq!(row.detail["state"], "stopped");
+    assert_eq!(row.detail["stop_reason"], "budget");
+    assert_eq!(row.detail["review_reason"], reason.unwrap());
+
+    // A second acknowledgement has nothing to settle: plain refusal, nothing written.
+    assert!(matches!(
+        store.acknowledge_background_review(&run.id, "user"),
+        Err(crate::error::CoreError::Invalid(_))
+    ));
+    assert_eq!(
+        store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .filter(|row| row.action == "crew.background.run.acknowledge")
+            .count(),
+        1,
+        "a refused acknowledgement writes no row"
+    );
+}
+
+#[test]
+fn acknowledging_a_review_that_is_not_waiting_is_refused_plainly_and_writes_nothing() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Refused", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let refused = |error: crate::error::CoreError| {
+        assert!(
+            matches!(&error, crate::error::CoreError::Invalid(why)
+                if why == "this run is not waiting for the person's review"),
+            "{error}"
+        );
+    };
+    // A running run is not waiting.
+    let running = store.start_background_run(&crew.id).unwrap();
+    refused(
+        store
+            .acknowledge_background_review(&running.id, "user")
+            .unwrap_err(),
+    );
+    // A run that stopped for an engine error left nothing to review.
+    let stopped = store
+        .end_background_run(&running.id, RunEnd::Stopped("engine_error"))
+        .unwrap();
+    assert!(!stopped.review_waiting);
+    refused(
+        store
+            .acknowledge_background_review(&stopped.id, "user")
+            .unwrap_err(),
+    );
+    // A run that is not there is not found, not a refusal.
+    assert!(matches!(
+        store.acknowledge_background_review("nothing", "user"),
+        Err(crate::error::CoreError::NotFound(_))
+    ));
+    // Nothing was written: no acknowledgement row, and the run is as it was.
+    assert!(
+        store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .all(|row| row.action != "crew.background.run.acknowledge")
+    );
+    let (rows, total) = store.background_runs_page(&crew.id, 10, 0).unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        (rows[0].state.as_str(), rows[0].review_waiting),
+        ("stopped", false)
+    );
+}
+
+#[test]
+fn an_acknowledgement_needs_its_audit_row() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Audited", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    let waiting = store.add_background_spend(&run.id, 10, 0).unwrap();
+    assert!(waiting.review_waiting);
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_acknowledge_audit BEFORE INSERT ON audit_events
+             WHEN NEW.action = 'crew.background.run.acknowledge' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
+        )
+        .unwrap();
+    assert!(
+        store
+            .acknowledge_background_review(&run.id, "user")
+            .is_err()
+    );
+    let (rows, _) = store.background_runs_page(&crew.id, 10, 0).unwrap();
+    assert!(
+        rows[0].review_waiting,
+        "no effect without the audit row in the same transaction"
+    );
+}

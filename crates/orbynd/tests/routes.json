@@ -233,6 +233,7 @@
     ["POST","/api/crew/autopilot/review/{task_id}/looks-good","person"],
     ["POST","/api/crew/autopilot/review/{task_id}/revert","person"],
     ["POST","/api/crew/background/create","person"],
+    ["POST","/api/crew/background/runs/{id}/acknowledge","person"],
     ["POST","/api/crew/background/{id}/delete","person"],
     ["POST","/api/crew/background/{id}/disable","person"],
     ["POST","/api/crew/background/{id}/enable","person"],
