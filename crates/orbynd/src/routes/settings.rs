@@ -26,6 +26,10 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/keybindings", get(keybindings).post(save_keybinding))
         .route("/api/diagnostics", get(diagnostics))
+        .route("/api/diagnostics/host", get(host_resources))
+        .route("/api/diagnostics/processes/history", get(process_history))
+        .route("/api/diagnostics/telemetry", get(telemetry_history))
+        .route("/api/diagnostics/trace", get(trace_diagnostics))
         .route("/api/diagnostics/repair", post(repair_database))
         .route("/api/diagnostics/processes/{pid}/stop", post(stop_process))
         .route("/api/diagnostics/otlp", post(check_otlp))
@@ -122,6 +126,40 @@ async fn save_keybinding(
 
 async fn diagnostics(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.diagnostics()?))
+}
+
+async fn host_resources() -> impl IntoResponse {
+    Json(orbyn_core::operations::diagnostics::host_resources())
+}
+
+async fn process_history() -> impl IntoResponse {
+    Json(orbyn_core::operations::diagnostics::process_history())
+}
+
+async fn telemetry_history() -> impl IntoResponse {
+    Json(orbyn_core::operations::telemetry_export::export_history())
+}
+
+/// `?since_minutes=` bounds the window; without it every kept span counts.
+async fn trace_diagnostics(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    let since = match query.get("since_minutes") {
+        None => None,
+        Some(minutes) => match minutes.parse::<u64>() {
+            Ok(minutes) if minutes > 0 && minutes <= 525_600 => {
+                Some(std::time::Duration::from_secs(minutes * 60))
+            }
+            _ => {
+                return Err(orbyn_core::CoreError::Invalid(
+                    "since_minutes must be a whole number of minutes, at least 1.".into(),
+                )
+                .into());
+            }
+        },
+    };
+    Ok(Json(state.core.trace_diagnostics(since)?))
 }
 
 async fn stop_process(Path(pid): Path<u32>) -> ApiResult<StatusCode> {

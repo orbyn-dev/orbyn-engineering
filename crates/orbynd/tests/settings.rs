@@ -562,3 +562,127 @@ async fn the_environment_theme_is_published_with_its_set_time() {
     assert_eq!(code, 400);
     service.stop().await;
 }
+
+#[tokio::test]
+async fn host_resources_read_this_machine_and_not_the_service_tree() {
+    let dir = TempDir::new();
+    let (service, _thread) = setup(&dir, fake_engines(), "claude").await;
+    let host = service.json("/api/diagnostics/host").await;
+    let total = host["total_memory_bytes"].as_u64().unwrap();
+    assert!(total > 0);
+    assert!(host["used_memory_bytes"].as_u64().unwrap() <= total);
+    assert!(host["available_memory_bytes"].as_u64().unwrap() <= total);
+    assert!(
+        host["used_swap_bytes"].as_u64().unwrap() <= host["total_swap_bytes"].as_u64().unwrap()
+    );
+    assert!(host["cpu_count"].as_u64().unwrap() >= 1);
+    assert!(host["uptime_seconds"].as_u64().unwrap() > 0);
+    for key in ["load_one", "load_five", "load_fifteen"] {
+        assert!(host[key].as_f64().unwrap() >= 0.0, "{key}");
+    }
+    // The whole machine holds far more than the service tree alone.
+    let own: u64 = service.json("/api/diagnostics").await["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|process| process["memory_bytes"].as_u64().unwrap())
+        .sum();
+    assert!(total > own);
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn process_history_is_kept_per_process_for_the_service_tree() {
+    let dir = TempDir::new();
+    let (service, _thread) = setup(&dir, fake_engines(), "claude").await;
+    let pid = service.json("/api/diagnostics").await["pid"]
+        .as_u64()
+        .unwrap();
+    let mut series = Value::Null;
+    for _ in 0..50 {
+        let found = service.json("/api/diagnostics/processes/history").await;
+        series = found["processes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["pid"].as_u64() == Some(pid))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if !series.is_null() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        !series.is_null(),
+        "the service's own process has no history"
+    );
+    assert!(!series["name"].as_str().unwrap().is_empty());
+    let samples = series["samples"].as_array().unwrap();
+    assert!(!samples.is_empty());
+    assert!(samples[0]["memory_bytes"].as_u64().unwrap() > 0);
+    assert!(samples[0]["at"].as_str().unwrap().contains('T'));
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn trace_diagnostics_summarise_the_local_timings_and_refuse_a_bad_window() {
+    let dir = TempDir::new();
+    let (service, _thread) = setup(&dir, fake_engines(), "claude").await;
+    service.json("/api/diagnostics").await;
+    service.json("/api/diagnostics").await;
+    let trace = service.json("/api/diagnostics/trace").await;
+    assert!(trace["span_count"].as_u64().unwrap() >= 2, "{trace}");
+    let span = trace["spans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|span| span["name"] == "GET /api/diagnostics")
+        .unwrap_or_else(|| panic!("no span for the diagnostics read: {trace}"));
+    assert!(span["count"].as_u64().unwrap() >= 2);
+    assert_eq!(span["failed"], 0);
+    assert!(span["p50_ms"].as_f64().unwrap() <= span["max_ms"].as_f64().unwrap());
+    let recent = service.json("/api/diagnostics/trace?since_minutes=5").await;
+    assert!(recent["span_count"].as_u64().unwrap() >= 2);
+    for bad in ["0", "abc", "-3"] {
+        let response = service
+            .get(&format!("/api/diagnostics/trace?since_minutes={bad}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400, "since_minutes={bad}");
+    }
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn the_triage_playbook_names_this_build_and_stop_refuses_what_it_did_not_start() {
+    let dir = TempDir::new();
+    let (service, _thread) = setup(&dir, fake_engines(), "claude").await;
+    let playbook = service.json("/api/triage/playbook").await;
+    assert!(
+        playbook["prompt"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Service version: {}", env!("CARGO_PKG_VERSION")))
+    );
+    assert!(
+        playbook["source_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://")
+    );
+    let own = service.json("/api/diagnostics").await["pid"]
+        .as_u64()
+        .unwrap();
+    let (itself, _) = service
+        .send(&format!("/api/diagnostics/processes/{own}/stop"), json!({}))
+        .await;
+    assert_eq!(itself, 400, "the service cannot stop itself");
+    // Pid 1 is never below the service, so it is not on offer.
+    let (stranger, _) = service
+        .send("/api/diagnostics/processes/1/stop", json!({}))
+        .await;
+    assert_eq!(stranger, 404);
+    service.stop().await;
+}
