@@ -1804,9 +1804,10 @@ The page is untrusted and gets nothing a published page does not: the C21 frame
 `connect-src`, and only its own `?render=` token. A server's requested CSP domains and
 permissions are not honoured, so an app that loads remote scripts or data does not work
 here. The host takes `postMessage` JSON-RPC only from that frame's window and answers only
-to it. It answers `ui/initialize` with the theme and display mode, sends the call's
-arguments and result as `tool-input` and `tool-result` after `ui/notifications/initialized`,
-holds `size-changed` heights to 80..2000, and refuses every request it does not serve.
+to it. It answers `ui/initialize` with the theme, display mode and the app's own tool
+descriptor (below), sends the call's arguments and result as `tool-input` and `tool-result`
+after `ui/notifications/initialized`, holds `size-changed` heights to 80..2000, and refuses
+every request it does not serve.
 
 A page may ask for a tool call (`tools/call`) or a message (`ui/message`, user-role text
 only). Each waits for the person in a host dialog outside the frame, which the page cannot
@@ -1828,6 +1829,18 @@ result is audited and held to 256 KiB. A message is queued as the person's own n
 `ui/request-display-mode` switches between the inline card and full screen, which keeps the
 same frame so the page keeps its state; Escape or the card's control returns it inline, and
 the page hears the mode through `host-context-changed`.
+
+Every app also sees its own tool's descriptor. The web reads it at
+`GET /api/threads/:id/mcp-apps/:render_id/tool-info`; the service takes the server and the
+tool from the render's own record — never from the page or the request — asks the engine
+for that one server's tool list, and answers only the advertised `name`, `description` and
+`inputSchema`. The rest of the descriptor and anything about the connection stay in the
+service. The page gets it as `hostContext.toolInfo.tool`, in the `ui/initialize` answer or
+in a later `host-context-changed`; a read the service refuses leaves the context without
+it rather than guessing. An unknown render, a render that is not an app, or a tool its
+server no longer advertises is a plain `404`; a server that cannot be asked is `502
+engine_unavailable`, never empty metadata. The read starts no model turn and reaches no
+other server.
 
 `ui/update-model-context` leaves a note for the model: its text blocks, then its structured
 content as JSON, at most 8000 characters. The web sends it with
@@ -3310,6 +3323,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/mcp-apps/:render_id/tool-call` | An MCP App's confirmed tool call on its own server |
 | `POST /api/threads/:id/mcp-apps/:render_id/message` | An MCP App's confirmed message, queued |
 | `PUT /api/threads/:id/mcp-apps/:render_id/context` | An MCP App's note for the next turn |
+| `GET /api/threads/:id/mcp-apps/:render_id/tool-info` | `McpAppToolInfo`: the app's own tool's advertised name, description and input schema from its server; `404` when the app or tool is unknown, `502` when the server cannot be asked |
 | `DELETE /api/threads/:id/mcp-app-context` | Drop the unsent app note |
 | `PATCH, DELETE /api/queue/:id` | Edit or remove a queued message |
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |

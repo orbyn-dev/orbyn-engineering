@@ -501,6 +501,21 @@ pub trait EngineDriver: Send + Sync {
         ))
     }
 
+    /// One tool's descriptor on an MCP server the engine has configured, for an MCP
+    /// App page. `Ok(None)` means the server answered and does not advertise that
+    /// tool; a server that cannot be asked is an error, never `None`. The default
+    /// says this engine reports no MCP Apps.
+    async fn mcp_app_tool_info(
+        &self,
+        _cwd: &std::path::Path,
+        _server: &str,
+        _tool: &str,
+    ) -> Result<Option<Value>> {
+        Err(crate::error::CoreError::Unsupported(
+            "This engine cannot read an MCP App's tools.".into(),
+        ))
+    }
+
     /// Sends a feedback report through the engine's own route. The default says
     /// this engine has none.
     async fn feedback(&self, _request: &EngineFeedbackRequest) -> Result<EngineFeedbackReceipt> {

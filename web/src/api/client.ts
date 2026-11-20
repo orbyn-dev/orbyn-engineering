@@ -250,6 +250,14 @@ export const api = {
       arguments: args,
       confirmed: true,
     }),
+  /** The app's own tool as its server advertises it: name, description and input schema. */
+  mcpAppToolInfo: (threadId: string, renderId: string, signal?: AbortSignal) =>
+    request<import("../generated/McpAppToolInfo").McpAppToolInfo>(
+      "GET",
+      `/api/threads/${q(threadId)}/mcp-apps/${q(renderId)}/tool-info`,
+      undefined,
+      signal,
+    ),
   /** An MCP App's message, queued as the person's own after they confirmed it. */
   mcpAppMessage: (threadId: string, renderId: string, text: string) =>
     request<QueuedMessage>("POST", `/api/threads/${q(threadId)}/mcp-apps/${q(renderId)}/message`, {

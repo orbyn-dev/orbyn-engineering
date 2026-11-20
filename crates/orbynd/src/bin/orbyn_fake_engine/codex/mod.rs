@@ -129,7 +129,47 @@ pub(crate) fn codex() {
                     state.tools_ready = true;
                 }
 
-                send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                let params = &message["params"];
+                // An MCP App's host reads one server by name; no name is the Tools page.
+                if let Some(server) = params["serverName"].as_str() {
+                    record_launch("codex-app-tools", &[params.to_string()]);
+                    if sibling_exists("mcp-app-server-down") {
+                        send(
+                            &json!({ "id": id, "error": { "code": -32000, "message": "SECRET-MARKER server refused" } }),
+                        );
+                    } else if sibling_exists("mcp-app-server-unavailable") {
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [] } }));
+                    } else {
+                        let tools = if sibling_exists("mcp-app-tool-missing") {
+                            json!({ "other_tool": { "name": "other_tool", "inputSchema": { "type": "object" } } })
+                        } else {
+                            json!({ "show_widget": {
+                                "name": "show_widget", "description": "Shows a widget",
+                                "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] },
+                                "title": "Show widget", "outputSchema": { "type": "object" },
+                                "annotations": { "readOnlyHint": true, "secret": "SECRET-MARKER" },
+                                "icons": [{ "src": "https://evil.example/icon.png" }],
+                                "_meta": { "secret": "SECRET-MARKER" },
+                            } })
+                        };
+                        let mut entry = json!({
+                            "name": server, "tools": tools, "authStatus": "unsupported",
+                            "runtimeStatus": "connected",
+                            "serverInfo": { "name": server, "version": "1", "description": "SECRET-MARKER server" },
+                        });
+                        if sibling_exists("mcp-app-tools-error") {
+                            entry["toolsError"] = json!("SECRET-MARKER cannot list");
+                            entry["runtimeStatus"] = json!("failed");
+                        }
+                        if sibling_exists("mcp-app-auth") {
+                            entry["authStatus"] = json!("notLoggedIn");
+                        }
+                        send(
+                            &json!({ "id": id, "result": { "nextCursor": null, "data": [entry] } }),
+                        );
+                    }
+                } else {
+                    send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
 
                     { "name": "orbyn_engineering", "tools": { "skill_search": {}, "skill_load": {} }, "authStatus": "unsupported" },
 
@@ -140,6 +180,7 @@ pub(crate) fn codex() {
                     { "name": "notion", "tools": {}, "toolsError": "needs login", "authStatus": "notLoggedIn" },
 
                 ] } }));
+                }
             }
 
             // As Codex 0.166.0 answered: a loaded thread is required, and the server's

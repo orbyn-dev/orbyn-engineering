@@ -49,7 +49,14 @@ const host = (over: Partial<AppHost> = {}): AppHost => ({
   ...over,
 });
 
-beforeEach(() => useUi.setState({ theme: "dark" }));
+/** The descriptor the fake service returns for the app's own tool. */
+const TOOL_INFO = { name: "show_widget", description: "Shows a widget", inputSchema: { type: "object" } };
+
+beforeEach(() => {
+  useUi.setState({ theme: "dark" });
+  // The service read never settles unless a test says so: the mount effect stays quiet.
+  vi.spyOn(api, "mcpAppToolInfo").mockReturnValue(new Promise(() => {}));
+});
 
 describe("MCP App marker", () => {
   it("attaches the page to its tool row", () => {
@@ -140,6 +147,16 @@ describe("MCP App bridge", () => {
         hostContext: { theme: "dark", displayMode: "inline", availableDisplayModes: ["inline"] },
       },
     });
+  });
+
+  it("offers its tool's descriptor and ignores one the page claims", async () => {
+    const reply = await answerApp(
+      { id: 1, method: "ui/initialize", params: { hostContext: { toolInfo: { tool: { name: "spoofed" } } } } },
+      host({ toolInfo: TOOL_INFO }),
+    );
+    expect(reply).toMatchObject({ result: { hostContext: { toolInfo: { tool: TOOL_INFO } } } });
+    const absent = await answerApp({ id: 2, method: "ui/initialize", params: {} }, host());
+    expect((absent as { result: { hostContext: Record<string, unknown> } }).result.hostContext).not.toHaveProperty("toolInfo");
   });
 
   it("refuses a request it does not serve and ignores unknown notifications", async () => {
@@ -245,6 +262,64 @@ describe("MCP App frame", () => {
     });
     expect(message).not.toHaveBeenCalled();
     expect(sent).toHaveBeenCalledWith({ jsonrpc: "2.0", id: 10, error: { code: -32000, message: "The person declined." } }, "*");
+  });
+
+  it("shows the page the descriptor the service read, not fields the page sent", async () => {
+    const read = vi.spyOn(api, "mcpAppToolInfo").mockResolvedValue(TOOL_INFO);
+    render(<McpApp item={appRow()} threadId={THREAD} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(read).toHaveBeenCalledWith(THREAD, RENDER);
+    const own = (screen.getByTitle("demo show_widget") as HTMLIFrameElement).contentWindow as Window;
+    const sent = vi.spyOn(own, "postMessage");
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            jsonrpc: "2.0",
+            id: 20,
+            method: "ui/initialize",
+            params: { hostContext: { toolInfo: { tool: { name: "spoofed", inputSchema: { type: "string" } } } } },
+          },
+          source: own,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reply = sent.mock.calls
+      .map(([message]) => message as { id?: number; result?: { hostContext?: Record<string, unknown> } })
+      .find((message) => message.id === 20);
+    expect(reply?.result?.hostContext?.toolInfo).toEqual({ tool: TOOL_INFO });
+  });
+
+  it("shows no descriptor at all when the service will not read one", async () => {
+    vi.spyOn(api, "mcpAppToolInfo").mockRejectedValue(new Error("engine_unavailable"));
+    render(<McpApp item={appRow()} threadId={THREAD} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const own = (screen.getByTitle("demo show_widget") as HTMLIFrameElement).contentWindow as Window;
+    const sent = vi.spyOn(own, "postMessage");
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { jsonrpc: "2.0", id: 21, method: "ui/initialize", params: {} },
+          source: own,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reply = sent.mock.calls
+      .map(([message]) => message as { id?: number; result?: { hostContext?: Record<string, unknown> } })
+      .find((message) => message.id === 21);
+    expect(reply?.result?.hostContext).not.toHaveProperty("toolInfo");
+    const claimed = sent.mock.calls
+      .map(([message]) => message as { method?: string; params?: Record<string, unknown> })
+      .filter((message) => message.method === "ui/notifications/host-context-changed" && message.params?.toolInfo !== undefined);
+    expect(claimed).toEqual([]);
   });
 
   it("shows the same frame full screen and back", () => {

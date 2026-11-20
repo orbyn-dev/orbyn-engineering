@@ -153,6 +153,7 @@
     ["GET","/api/threads/{id}/items/{item}","local"],
     ["GET","/api/threads/{id}/jj","local"],
     ["GET","/api/threads/{id}/limits","local"],
+    ["GET","/api/threads/{id}/mcp-apps/{render_id}/tool-info","local"],
     ["GET","/api/threads/{id}/mentions","local"],
     ["GET","/api/threads/{id}/messages","local"],
     ["GET","/api/threads/{id}/preparation","local"],
