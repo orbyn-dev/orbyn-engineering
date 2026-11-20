@@ -75,10 +75,10 @@ pub struct HostResources {
     #[ts(type = "number")]
     pub used_swap_bytes: u64,
     pub cpu_count: usize,
-    /// Load averages over 1, 5 and 15 minutes; zero where the system has none.
-    pub load_one: f64,
-    pub load_five: f64,
-    pub load_fifteen: f64,
+    /// Load averages over 1, 5 and 15 minutes; absent on Windows, which has no such measure.
+    pub load_one: Option<f64>,
+    pub load_five: Option<f64>,
+    pub load_fifteen: Option<f64>,
     #[ts(type = "number")]
     pub uptime_seconds: u64,
 }

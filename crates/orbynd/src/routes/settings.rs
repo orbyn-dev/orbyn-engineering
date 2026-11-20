@@ -153,13 +153,19 @@ async fn trace_diagnostics(
             }
             _ => {
                 return Err(orbyn_core::CoreError::Invalid(
-                    "since_minutes must be a whole number of minutes, at least 1.".into(),
+                    "since_minutes must be a whole number of minutes from 1 to 525600.".into(),
                 )
                 .into());
             }
         },
     };
-    Ok(Json(state.core.trace_diagnostics(since)?))
+    let core = state.core.clone();
+    let report = tokio::task::spawn_blocking(move || core.trace_diagnostics(since))
+        .await
+        .map_err(|error| {
+            orbyn_core::CoreError::Internal(format!("The trace read stopped: {error}."))
+        })??;
+    Ok(Json(report))
 }
 
 async fn stop_process(Path(pid): Path<u32>) -> ApiResult<StatusCode> {

@@ -172,7 +172,10 @@ pub fn host_resources() -> HostResources {
     let mut system = System::new();
     system.refresh_memory();
     system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
-    let load = System::load_average();
+    #[cfg(windows)]
+    let load: Option<sysinfo::LoadAvg> = None;
+    #[cfg(not(windows))]
+    let load = Some(System::load_average());
     HostResources {
         total_memory_bytes: system.total_memory(),
         used_memory_bytes: system.used_memory(),
@@ -180,9 +183,9 @@ pub fn host_resources() -> HostResources {
         total_swap_bytes: system.total_swap(),
         used_swap_bytes: system.used_swap(),
         cpu_count: system.cpus().len(),
-        load_one: load.one,
-        load_five: load.five,
-        load_fifteen: load.fifteen,
+        load_one: load.as_ref().map(|load| load.one),
+        load_five: load.as_ref().map(|load| load.five),
+        load_fifteen: load.as_ref().map(|load| load.fifteen),
         uptime_seconds: System::uptime(),
     }
 }

@@ -578,7 +578,11 @@ async fn host_resources_read_this_machine_and_not_the_service_tree() {
     assert!(host["cpu_count"].as_u64().unwrap() >= 1);
     assert!(host["uptime_seconds"].as_u64().unwrap() > 0);
     for key in ["load_one", "load_five", "load_fifteen"] {
-        assert!(host[key].as_f64().unwrap() >= 0.0, "{key}");
+        if cfg!(windows) {
+            assert!(host[key].is_null(), "{key} is not measured on Windows");
+        } else {
+            assert!(host[key].as_f64().unwrap() >= 0.0, "{key}");
+        }
     }
     // The whole machine holds far more than the service tree alone.
     let own: u64 = service.json("/api/diagnostics").await["processes"]
@@ -644,14 +648,22 @@ async fn trace_diagnostics_summarise_the_local_timings_and_refuse_a_bad_window()
     assert!(span["p50_ms"].as_f64().unwrap() <= span["max_ms"].as_f64().unwrap());
     let recent = service.json("/api/diagnostics/trace?since_minutes=5").await;
     assert!(recent["span_count"].as_u64().unwrap() >= 2);
-    for bad in ["0", "abc", "-3"] {
+    for bad in ["0", "abc", "-3", "525601"] {
         let response = service
             .get(&format!("/api/diagnostics/trace?since_minutes={bad}"))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), 400, "since_minutes={bad}");
+        let body: Value = response.json().await.unwrap();
+        assert!(body.to_string().contains("525600"), "{body}");
     }
+    let widest = service
+        .get("/api/diagnostics/trace?since_minutes=525600")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(widest.status(), 200);
     service.stop().await;
 }
 

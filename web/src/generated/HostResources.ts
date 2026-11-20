@@ -5,6 +5,6 @@
  */
 export type HostResources = { total_memory_bytes: number, used_memory_bytes: number, available_memory_bytes: number, total_swap_bytes: number, used_swap_bytes: number, cpu_count: number, 
 /**
- * Load averages over 1, 5 and 15 minutes; zero where the system has none.
+ * Load averages over 1, 5 and 15 minutes; absent on Windows, which has no such measure.
  */
-load_one: number, load_five: number, load_fifteen: number, uptime_seconds: number, };
+load_one: number | null, load_five: number | null, load_fifteen: number | null, uptime_seconds: number, };
