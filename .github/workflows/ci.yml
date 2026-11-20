@@ -5,7 +5,12 @@ name: CI
 # build (nextest and doc tests) about 6.6 from the start of the run, Rust clippy about 2.5,
 # all in parallel. Measured before this change: 10.8 minute median over 30 pull request runs,
 # with changes, Cheap checks and Rust in series (about 9.1 minutes on the critical path).
-# Expect about 8.3 minutes now (estimate). A run over the budget is a defect to fix at its
+# Expect about 8.3 minutes now (estimate). With the repository variable CI_RUNNER_SPLIT set to
+# 'local' (unset today), Rust build shard 2 and Web build run on the self-hosted runner and take
+# 2 hosted jobs off each run's share of the 20-job hosted cap; the critical path should stay about
+# the same, or lengthen if the local runner is busy (estimate, not measured). A job with no
+# available local runner waits in the queue and does not fall back to hosted, so unset
+# CI_RUNNER_SPLIT when the machine is down. A run over the budget is a defect to fix at its
 # slowest step, not drift to accept.
 #
 # On a pull request: Cheap checks, Web and Rust on Linux (clippy and tests as two parallel jobs), each scoped by
@@ -160,8 +165,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 30
-    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # The same switch, plus a partial one: the repository variable CI_RUNNER_SPLIT set to 'local' sends only the second Rust test shard (shard 2 of 2; shard 1 stays hosted) to the local runner (CI_RUNNER set to 'local' still sends every job it covers). Both need a pull request that is not from a fork and an actor that is not Dependabot. Unset or any other value means hosted. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy. Set CI_RUNNER_SPLIT only after the runner group serves this repository, and unset it when the machine is down: a job with no available local runner waits in the queue; it does not fall back to hosted.
+    runs-on: ${{ ((vars.CI_RUNNER == 'local' || (vars.CI_RUNNER_SPLIT == 'local' && matrix.shard == 2)) && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -392,8 +397,8 @@ jobs:
     name: Web build
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
-    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    # The same switch, plus a partial one: the repository variable CI_RUNNER_SPLIT set to 'local' sends only this Web build job to the local runner (CI_RUNNER set to 'local' still sends every job it covers). Both need a pull request that is not from a fork and an actor that is not Dependabot. Unset or any other value means hosted. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy. Set CI_RUNNER_SPLIT only after the runner group serves this repository, and unset it when the machine is down: a job with no available local runner waits in the queue; it does not fall back to hosted.
+    runs-on: ${{ ((vars.CI_RUNNER == 'local' || vars.CI_RUNNER_SPLIT == 'local') && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
