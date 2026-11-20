@@ -1,10 +1,14 @@
 name: CI
 
 # Time budget: a pull request runs a light set and should turn green within about 8
-# minutes (Cheap checks about 1, Web about 3, Linux Rust about 6 warm, in parallel). A run
-# over it is a defect to fix at its slowest step, not drift to accept.
+# minutes. Estimates until measured on a real run: Cheap checks about 1.4, Web about 3, Rust
+# build (nextest and doc tests) about 6.6 from the start of the run, Rust clippy about 2.5,
+# all in parallel. Measured before this change: 10.8 minute median over 30 pull request runs,
+# with changes, Cheap checks and Rust in series (about 9.1 minutes on the critical path).
+# Expect about 8.3 minutes now (estimate). A run over the budget is a defect to fix at its
+# slowest step, not drift to accept.
 #
-# On a pull request: Cheap checks, Web and Rust on Linux (clippy and tests), each scoped by
+# On a pull request: Cheap checks, Web and Rust on Linux (clippy and tests as two parallel jobs), each scoped by
 # the changes job to what the diff can affect. Nothing else builds: no browser suite, no
 # Windows or macOS Rust, no desktop build, no packaged app.
 # On push to main, the nightly schedule and manual runs: the full suite on every OS, as
@@ -98,8 +102,11 @@ jobs:
           echo "light pull request: rust=$r web=$w (add the full-ci label for the full suite)"
           printf '%s\n' "$files"
 
-  # Format, types and lint, in about a minute, before anything builds. The heavy jobs
-  # wait for it and fail at once when it failed, so a typo never costs a full run.
+  # Format, types and lint, in about a minute and a half. The Linux Rust and Web jobs no longer
+  # wait for it: they start with it, which takes it off the critical path (they used to start
+  # only after it ended). The required aggregates below still need it and fail when it failed,
+  # so a lint failure still turns the required check red; the heavy jobs now finish their run
+  # instead of being skipped. The Windows, macOS and browser jobs still wait for it.
   lint:
     name: Cheap checks
     needs: changes
@@ -136,12 +143,14 @@ jobs:
         run: npm run check
         working-directory: web
 
-  # Rust on Linux: the light pull request's Rust check (clippy and every test), and it also
-  # runs on main and with the full-ci label. The wire-types check is platform-independent, so
-  # it lives here, where every pull request runs it.
+  # Rust on Linux, tests half: every test, and it also runs on main and with the full-ci
+  # label. Clippy runs beside it in rust-linux-clippy. Both start with Cheap checks (they need
+  # only changes): clippy took about 1.1 minutes and the tests about 7, so waiting for lint and
+  # running them in series put about 2.5 minutes on the critical path.
+  # The wire-types check is platform-independent, so it lives here, where every pull request runs it.
   rust-linux-build:
     name: Rust build (ubuntu-24.04)
-    needs: [changes, lint]
+    needs: changes
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 30
     # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
@@ -156,11 +165,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: rust-linux
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The scripted-engine regressions launch the browser suite's Node fixtures.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - run: cargo clippy --workspace --all-targets -- -D warnings
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest
@@ -172,10 +181,38 @@ jobs:
           git add --intent-to-add web/src/generated
           git diff --exit-code --stat -- web/src/generated
 
-  # The required "Rust (linux)" check; see the note on the changes job.
+  # Rust on Linux, lint half: clippy in its own job so it runs beside the tests, not inside
+  # them. Same runner, scope and timeout as rust-linux-build, but its own cache key: a check build shares no artifacts with the test build, and one key would let whichever job finishes first on main save a cache the other cannot use. Not a required name:
+  # the required "Rust (linux)" aggregate below needs it.
+  rust-linux-clippy:
+    name: Rust clippy (ubuntu-24.04)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 30
+    # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
+    runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: rust-linux-clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The scripted-engine regressions launch the browser suite's Node fixtures.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # The required "Rust (linux)" check; see the note on the changes job. It needs the tests job
+  # and the clippy job and passes only when both succeeded or the scope left both out.
   rust-linux:
     name: Rust (linux)
-    needs: [changes, lint, rust-linux-build]
+    needs: [changes, lint, rust-linux-build, rust-linux-clippy]
     if: always()
     # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
     runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
@@ -186,11 +223,12 @@ jobs:
           LINT: ${{ needs.lint.result }}
           SCOPE: ${{ needs.changes.outputs.rust }}
           BUILD: ${{ needs.rust-linux-build.result }}
+          CLIPPY: ${{ needs.rust-linux-clippy.result }}
         run: |
-          echo "changes=$CHANGES lint=$LINT scope=$SCOPE build=$BUILD"
+          echo "changes=$CHANGES lint=$LINT scope=$SCOPE build=$BUILD clippy=$CLIPPY"
           # A job the scope skipped is fine; a job the scope asked for must have succeeded.
           need() { if [ "$2" = true ]; then [ "$1" = success ]; else [ "$1" = success ] || [ "$1" = skipped ]; fi; }
-          [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$BUILD" "$SCOPE"
+          [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$BUILD" "$SCOPE" && need "$CLIPPY" "$SCOPE"
 
   # macOS runs the whole Rust lane in one job. Windows is split below, because its tests are
   # slow to start processes (about 20 minutes in one job against 6 on macOS).
@@ -334,9 +372,11 @@ jobs:
           need() { if [ "$2" = true ]; then [ "$1" = success ]; else [ "$1" = success ] || [ "$1" = skipped ]; fi; }
           [ "$CHANGES" = success ] && [ "$LINT" = success ] && need "$SHARDS" "$SCOPE" && need "$CLIPPY" "$SCOPE"
 
+  # Starts with Cheap checks (needs only changes); the required "Web" aggregate below still
+  # needs lint and fails when it failed.
   web-build:
     name: Web build
-    needs: [changes, lint]
+    needs: changes
     if: needs.changes.outputs.web == 'true'
     # Local runner only when the repository variable CI_RUNNER is 'local', the pull request is not from a fork and the actor is not Dependabot. A pull request can still edit this expression for its own run: the real controls are the runner group's repository access and the fork approval policy.
     runs-on: ${{ (vars.CI_RUNNER == 'local' && github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]') && fromJSON('["self-hosted","orbyn-local"]') || 'ubuntu-24.04' }}
@@ -393,6 +433,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: e2e-shard
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build -p orbynd --bin orbynd --bin orbyn-fake-engine
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
