@@ -177,6 +177,9 @@ struct Projection {
     log: Follower,
     run_id: String,
     outgoing: VecDeque<Value>,
+    /// Text messages that are not the agent's own words, so their content and end
+    /// stay out too: the run's prompt echo, a steer and anything an engine echoes.
+    own_words: std::collections::HashSet<String>,
     finished: bool,
 }
 
@@ -184,10 +187,16 @@ impl Projection {
     fn project(&mut self, event: &ThreadEvent) {
         match &event.event {
             AgUiEvent::RunStarted { .. } => {}
-            AgUiEvent::TextMessageStart { message_id, .. }
-            | AgUiEvent::TextMessageContent { message_id, .. }
+            AgUiEvent::TextMessageStart { message_id, role } => {
+                if role.as_str() == "assistant" {
+                    self.forward(&event.event);
+                } else {
+                    self.own_words.insert(message_id.clone());
+                }
+            }
+            AgUiEvent::TextMessageContent { message_id, .. }
             | AgUiEvent::TextMessageEnd { message_id }
-                if message_id.ends_with(":prompt") => {}
+                if message_id.ends_with(":prompt") || self.own_words.contains(message_id) => {}
             AgUiEvent::RunFinished { outcome, .. } => {
                 self.finish(json!({
                     "type": "RUN_FINISHED",
@@ -397,6 +406,7 @@ pub async fn agui_run(
         },
         run_id,
         outgoing: VecDeque::from([started]),
+        own_words: std::collections::HashSet::new(),
         finished: false,
     };
     let frames = stream::unfold(projection, |mut projection| async move {
