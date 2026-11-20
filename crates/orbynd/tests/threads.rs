@@ -577,6 +577,88 @@ async fn message_search_opens_at_the_message_and_keeps_to_its_scope() {
 }
 
 #[tokio::test]
+async fn message_search_streams_the_same_matches_in_order() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "rename the billing helper").await;
+    service.finished(&thread).await;
+    service
+        .admit(&thread, "billing again after the rename")
+        .await;
+    service.finished(&thread).await;
+
+    let whole = search(&service, &[("q", "billing")]).await;
+    assert_eq!(
+        whole["hits"].as_array().unwrap().len(),
+        2,
+        "two prompts mention billing"
+    );
+    let frames = service
+        .sse_until("/api/search/messages/events?q=billing", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    let streamed: Vec<&Value> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "hit")
+        .map(|frame| &frame["hit"])
+        .collect();
+    assert_eq!(
+        streamed,
+        whole["hits"].as_array().unwrap().iter().collect::<Vec<_>>(),
+        "the stream returns the read's hits in the read's order"
+    );
+    let done = frames.last().unwrap();
+    assert_eq!(done["type"], "done");
+    assert_eq!(done["too_short"], false);
+    assert_eq!(done["truncated"], whole["truncated"]);
+
+    // A limit ends the stream early, exactly as it truncates the whole read.
+    let limited = service
+        .sse_until("/api/search/messages/events?q=billing&limit=1", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    assert_eq!(
+        limited
+            .iter()
+            .filter(|frame| frame["type"] == "hit")
+            .count(),
+        1
+    );
+    assert_eq!(limited.last().unwrap()["truncated"], true);
+
+    // No matches still finishes with a frame that says so.
+    let none = service
+        .sse_until("/api/search/messages/events?q=billing%20zebra", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    assert_eq!(none.len(), 1);
+    assert_eq!(none[0]["type"], "done");
+    assert_eq!(none[0]["truncated"], false);
+
+    // A too-short query answers as the read does, without searching.
+    let short = service
+        .sse_until("/api/search/messages/events?q=a", |frame| {
+            frame["type"] == "done"
+        })
+        .await;
+    assert_eq!(short.len(), 1);
+    assert_eq!(short[0]["too_short"], true);
+
+    // A query the read refuses is refused before any stream starts.
+    let refused = service
+        .get("/api/search/messages/events")
+        .query(&[("q", "x".repeat(201))])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 400);
+    service.stop().await;
+}
+
+#[tokio::test]
 async fn a_fork_is_searchable_and_a_rewind_hides_what_it_undid() {
     let dir = TempDir::new();
     let (service, thread) = setup(&dir, Options::default(), "codex").await;
