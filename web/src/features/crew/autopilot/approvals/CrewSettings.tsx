@@ -2,6 +2,7 @@ import { useRoute } from "../../../../product/state/route";
 import { AutonomyAreas } from "./AutonomyAreas";
 import { AutonomyThresholds } from "./AutonomyThresholds";
 import { AutopilotSettings } from "./AutopilotSettings";
+import { DigestTime } from "./DigestTime";
 import { PathClasses } from "./PathClasses";
 import { ProductionTargets } from "./ProductionTargets";
 import { EngineTiers } from "./EngineTiers";
@@ -22,6 +23,7 @@ export function CrewSettingsSection() {
         ) : (
           <>
             <AutopilotSettings />
+            <DigestTime />
             <WorkerProvider />
             <EngineTiers />
             <ProductionTargets />

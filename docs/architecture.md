@@ -2651,7 +2651,9 @@ and area breaker once. Completion remains pending after parent projection until 
 The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and the periodic tick only read effects that already reached publishing and never run the lane. Queueing publishes nothing; the person's merge route does, pushing the verified candidate by its commit id (never forced) with fixed code-written pull request text. A completed correction's checkout and object reference are removed once no review reads them; the pushed branch on the forge is left for the person. No local main ref is moved.
 Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
-without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
+without starting a provider turn. The digest is due at most once per local day, at or after the person's stored send time
+(`{time, utc_offset_minutes}`, a Person write), with that local day in the receipt; it sends nothing until a person has stored
+the offset, because a guessed local time could send early. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
 24 hours, observes at most 32 confirmed forge targets. Corrective tasks use the same guarded forge lane; no separate writer schedules effects. With Preview enabled, startup
 first reconciles up to 128 unfinished effects/confirmed receipts, re-verifies at most 128 pending corrections locally and watches the resulting merges even when periodic work is off;
 only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local

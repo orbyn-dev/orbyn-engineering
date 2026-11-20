@@ -331,3 +331,18 @@ h4.ap-sub { margin: 0; }
   .wp-row { grid-template-columns: minmax(0, 1fr); }
   .wp-seg { justify-self: start; }
 }
+
+/* Settings › Crew › Daily digest (Crew Designs, frame `settings-crew`): the same row as Worker provider, with the value
+   made editable where the design draws `17:00`. The field keeps the row's own type size and only draws a border on hover
+   or focus, so the screen still reads as the design's value row. At 640 px and below the control sits under the text. */
+.dg-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 18px; padding: 12px 0; border-top: 1px solid var(--color-border); align-items: center; font-size: 12.5px; color: var(--color-textSoft); }
+.dg-row b { font-weight: 500; color: var(--color-text); }
+.dg-row small { display: block; margin-top: 2px; color: var(--color-muted); font-size: 12px; line-height: 1.4; }
+.dg-time { font: inherit; font-size: 12px; color: var(--color-text); background: transparent; border: 1px solid transparent; border-radius: var(--radius-9); padding: 3px 6px; }
+.dg-time:hover, .dg-time:focus-visible { border-color: var(--color-border); background: var(--color-surface); }
+.dg-time[aria-busy="true"] { opacity: 0.6; }
+.dg-error { grid-column: 1 / -1; margin: 0; color: var(--color-danger); font-size: 12px; line-height: 1.4; }
+@media (max-width: 640px) {
+  .dg-row { grid-template-columns: minmax(0, 1fr); }
+  .dg-time { justify-self: start; }
+}

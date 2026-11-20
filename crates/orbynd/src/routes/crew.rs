@@ -98,6 +98,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/autopilot/digest/schedule/set",
+        "core crew_set_digest_schedule: the person's daily digest send time as HH:MM and the UTC offset their local time was in when they saved it, shape-checked by the preference catalog; one person-level preference, no notification is sent by it; local only",
+    ),
+    (
+        "POST",
         "/api/crew/autopilot/confirm",
         "core set_crew_autopilot_mode keeping the default as it is; local only",
     ),
@@ -280,6 +285,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(remove_review_lane),
         )
         .route("/api/crew/autopilot/mode", put(set_mode))
+        .route(
+            "/api/crew/autopilot/digest/schedule/set",
+            post(set_digest_schedule),
+        )
         .route("/api/crew/autopilot/confirm", post(confirm))
         .route(
             "/api/crew/autopilot/merge-queue/{task_id}/resolve",
@@ -348,6 +357,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/autopilot/merge-queue", get(merge_queue))
         .route("/api/crew/autopilot/watch", get(watch))
         .route("/api/crew/autopilot/digest", get(digest))
+        .route("/api/crew/autopilot/digest/schedule", get(digest_schedule))
         .route("/api/crew/autopilot/areas", get(areas))
         .route("/api/crew/autopilot/areas/history", get(area_history))
         .route("/api/crew/autopilot/thresholds", get(thresholds))
@@ -757,6 +767,17 @@ async fn digest(State(state): State<AppState>, query: QueryMap) -> ApiResult<imp
             .core
             .autopilot_digest(unix_now(), number(&query, "hours")?)?,
     ))
+}
+
+async fn digest_schedule(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_digest_schedule()?))
+}
+
+async fn set_digest_schedule(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<wire::AutopilotDigestScheduleInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_set_digest_schedule(&body)?))
 }
 
 /// The approval ledger: `task`, `kind`, `limit`, `offset`.

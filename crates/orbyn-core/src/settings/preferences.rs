@@ -132,7 +132,11 @@ const DEFINITIONS: &[Definition] = defs![
     "custom_models" Kind::List, [], false;
     "disabled_engines" Kind::List, [], true;
     "provider_instances" Kind::List, [], false;
+    "crew_digest" Kind::Object, {"time": "17:00"}, false;
 ];
+
+/// The daily digest's send time (issue #806): a Person route stores it, and the Crew watch reads it.
+pub(crate) const CREW_DIGEST: &str = "crew_digest";
 
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
@@ -192,6 +196,12 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
     if fits && definition.key == "source_control_writing_style" {
         crate::source_control::scm::writing::validate_style(value)?;
     }
+    if fits && definition.key == CREW_DIGEST && digest_schedule(value).is_none() {
+        return Err(CoreError::Invalid(
+            "A digest time is HH:MM and an offset in minutes east of UTC, like 17:00 and 660."
+                .into(),
+        ));
+    }
     if fits && definition.key == "default_model_options" && !model_options(value) {
         return Err(CoreError::Invalid(
             "Model options are option ids with one value each, and effort is set on its own."
@@ -206,6 +216,34 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
             definition.key
         )))
     }
+}
+
+/// The daily digest's stored send time: `(hour, minute, offset minutes east of UTC)`.
+/// `None` when the value is not a digest schedule at all. The offset is `None` until a person first
+/// saves; a schedule with no offset sends nothing, because "17:00 local" cannot be resolved.
+pub(crate) fn digest_schedule(value: &Value) -> Option<(u8, u8, Option<i32>)> {
+    let object = value.as_object()?;
+    if object
+        .keys()
+        .any(|key| key != "time" && key != "utc_offset_minutes")
+    {
+        return None;
+    }
+    let (hour, minute) = object.get("time")?.as_str()?.split_once(':')?;
+    let (hour, minute) = (hour.parse::<u8>().ok()?, minute.parse::<u8>().ok()?);
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    let offset = match object.get("utc_offset_minutes") {
+        None | Some(Value::Null) => None,
+        Some(offset) => {
+            let minutes = i32::try_from(offset.as_i64()?).ok()?;
+            let seconds = minutes.checked_mul(60)?;
+            time::UtcOffset::from_whole_seconds(seconds).ok()?;
+            Some(minutes)
+        }
+    };
+    Some((hour, minute, offset))
 }
 
 /// Default model options: short option ids, each with one value, and never effort,

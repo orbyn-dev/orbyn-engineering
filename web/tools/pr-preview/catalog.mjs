@@ -610,6 +610,7 @@ export const FRAMES = {
   "autonomy-empty": { route: AREAS, scenario: "crew-areas-empty" },
   "autonomy-repos": { route: AREAS, scenario: "crew" },
   "autonomy-entry": { route: "#/settings/crew", scenario: "crew-areas" },
+  "settings-crew": { route: "#/settings/crew", scenario: "crew" },
   "settings-crew-worker-provider": { route: "#/settings/crew", scenario: "crew" },
   "settings-crew-worker-provider-any": { route: "#/settings/crew", scenario: "crew-worker-provider-any" },
   "settings-crew-worker-provider-narrow": { route: "#/settings/crew", scenario: "crew", width: 640 },
