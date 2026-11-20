@@ -944,3 +944,72 @@ async fn an_unknown_engine_is_not_answered_from_a_kept_list() {
     );
     assert_eq!(*slow.heard.lock().unwrap(), ["models"]);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_discovery_runs_off_async_thread_and_preserves_results() {
+    let caller = std::thread::current().id();
+    let statuses: Vec<EngineStatus> = vec![
+        serde_json::from_value(serde_json::json!({
+            "id": "codex", "name": "Codex", "tier": "native",
+            "capabilities": {"streaming": true, "approvals": true, "resume": true, "mcp": true,
+                "sandbox": true, "managed": true, "skill_delivery": [], "goal_control": false,
+                "decline_feedback": false, "permission_modes": []},
+            "installed": true, "path": "/fake/codex", "version": null, "auth": "unknown",
+            "installer": "unknown", "latest": null, "support": "unknown",
+            "update_command": null, "manual_hint": null, "sign_in_command": null,
+            "updating": false, "problem": null
+        }))
+        .unwrap(),
+    ];
+    let facts = || {
+        (
+            vec!["antigravity"],
+            vec![crate::agents::provider_list::Refused {
+                id: "grok",
+                path: "/fake/grok".into(),
+            }],
+        )
+    };
+    let (apps, refused) = facts();
+    let expected = crate::agents::provider_list::list(&statuses, &apps, &refused);
+    let actual = EngineManager::provider_list_with_discovery(statuses, move || {
+        assert_ne!(
+            std::thread::current().id(),
+            caller,
+            "discovery ran on async caller"
+        );
+        facts()
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_discovery_panic_returns_internal_error() {
+    let result = EngineManager::provider_list_with_discovery(Vec::new(), || {
+        panic!("synthetic discovery failure")
+    })
+    .await;
+    assert!(matches!(result, Err(CoreError::Internal(_))));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_list_uses_cached_statuses() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    *engines.statuses.lock().await = Some(Vec::new());
+    let actual = engines.provider_list().await.unwrap();
+    let expected = crate::agents::provider_list::list(
+        &[],
+        &crate::agents::provider_list::installed_apps(),
+        &crate::agents::provider_list::refused_programs(),
+    );
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
