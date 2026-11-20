@@ -57,7 +57,7 @@ node scripts/sync-labels.mjs
 | Area | `area: core`, `area: contracts`, `area: service`, `area: web`, `area: desktop`, `area: library`, `area: ci`, `area: docs` |
 | Engine | `engine: claude`, `engine: codex`, `engine: acp` |
 | Platform | `platform: macos`, `platform: windows` |
-| Workflow | `needs triage`, `full-ci`, `parity`, `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix` |
+| Workflow | `needs triage`, `full-ci`, `ci: main red`, `parity`, `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix` |
 
 ## Titles
 
