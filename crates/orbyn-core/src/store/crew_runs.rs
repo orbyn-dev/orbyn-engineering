@@ -205,6 +205,27 @@ impl Store {
         turns_spent(&self.reader(), &run)
     }
 
+    /// The turns every task in a crew has spent, summed from the same per-task tally
+    /// (`crew_turns_spent`), so the crew-wide budget and a task's own budget cannot disagree. A
+    /// task whose run is not stored yet adds nothing.
+    pub fn crew_turns_spent_in_crew(&self, crew_id: &str) -> Result<u64> {
+        let conn = self.reader();
+        let runs: Vec<CrewRun> = {
+            let mut statement = conn.prepare(
+                "SELECT r.* FROM crew_runs r JOIN crew_tasks t ON t.id = r.task_id
+                 WHERE t.crew_id = ?1",
+            )?;
+            statement
+                .query_map([crew_id], run_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut total: u64 = 0;
+        for run in &runs {
+            total = total.saturating_add(turns_spent(&conn, run)?);
+        }
+        Ok(total)
+    }
+
     pub fn crew_run(&self, task_id: &str) -> Result<Option<CrewRun>> {
         Ok(self
             .reader()

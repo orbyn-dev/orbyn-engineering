@@ -353,6 +353,13 @@ retries with the reason. The same failure twice means one change of approach, an
     the brief's turns the task stops with the same `budget` reason and a result that counts them; a turn that passes on the last
     one still passes. With Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`):
     with the default 30 turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
+  - **A crew-wide turn budget** (owner ruling, 2026-11-20) is a device-local number of turns in Settings
+    (`crew_turn_budget`; unset or 0 is no crew budget). A crew's spend is the same per-task tally summed over its
+    tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
+    refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
+    stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
+    the number. There is no reset: a new crew starts at zero because its count is read from its tasks. Every new
+    task counts, including review lanes and fixes.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
   - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
     `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report
@@ -1708,7 +1715,8 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 - Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".
 - Login and quota are per engine on the person's machine. The router must fail clearly ("Codex isn't signed in") rather
   than silently falling back.
-- Cost: several engines at once multiply usage. A crew-wide budget is in slice 3, not later.
+- Cost: several engines at once multiply usage. The crew-wide turn budget (slice 3 above) refuses new tasks and
+  never stops in-flight work, so a crew over its number finishes what it started.
 - openbot is non-commercial: no code or text from it, only the ideas listed above.
 
 ## Appendices
