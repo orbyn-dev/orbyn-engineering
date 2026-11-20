@@ -43,7 +43,10 @@ describe("Settings › Crew › Daily digest", () => {
     fireEvent.blur(field());
     await waitFor(() => expect(writes()).toHaveLength(1));
     const [, init] = writes()[0]!;
-    expect(JSON.parse(String(init?.body))).toEqual({ time: "09:30", utc_offset_minutes: -new Date().getTimezoneOffset() });
+    // The page sends `-new Date().getTimezoneOffset()`. In UTC that is `-0`, and JSON carries it as `0`,
+    // so derive the same expression and normalise the sign instead of pinning one machine's offset.
+    const utcOffsetMinutes = -new Date().getTimezoneOffset() || 0;
+    expect(JSON.parse(String(init?.body))).toEqual({ time: "09:30", utc_offset_minutes: utcOffsetMinutes });
     expect(new Headers(init?.headers).get("x-orbyn-person")).toBeTruthy();
     await waitFor(() => expect(field()).toHaveValue("09:30"));
     expect(screen.queryByText(/Nothing is sent until you save a time/)).toBeNull();
