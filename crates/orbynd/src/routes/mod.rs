@@ -103,6 +103,8 @@ mod profiles_tests;
 mod secrets_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcripts_tests;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;

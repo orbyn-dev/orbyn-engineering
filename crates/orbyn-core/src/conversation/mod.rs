@@ -11,3 +11,4 @@ pub mod runs;
 pub mod scratch;
 pub mod search;
 pub mod threads;
+pub mod transcripts;

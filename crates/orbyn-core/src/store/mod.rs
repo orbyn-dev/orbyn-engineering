@@ -75,6 +75,7 @@ mod hub;
 mod installs;
 mod issues;
 pub(crate) mod project_repos;
+mod thread_import;
 pub(crate) mod thread_repos;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
@@ -1137,6 +1138,8 @@ fn thread_row(row: &Row<'_>) -> rusqlite::Result<Thread> {
             .get::<_, Option<String>>("removed_project_name")?
             .is_some(),
         removed_project_name: row.get("removed_project_name")?,
+        source: row.get("source")?,
+        imported_at: row.get("imported_at")?,
         cwd: row.get("cwd")?,
         worktree,
         skill_profile: row.get("skill_profile")?,
