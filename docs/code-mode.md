@@ -115,14 +115,15 @@ behind a small trait, so a different engine (`wasmtime` plus QuickJS, or `deno_c
 ```rust
 #[async_trait]
 pub trait CodeExecutor: Send + Sync {
-    /// Parses `source` (TypeScript already stripped) and prepares a run. Runs nothing.
-    fn prepare(&self, source: &str, limits: &Limits, seed: &RunSeed) -> Result<Box<dyn Run>, SyntaxError>;
+    /// Parses `source` (TypeScript types stripped) and prepares a run. Runs nothing.
+    async fn prepare(&self, source: &str, limits: Limits, seed: RunSeed, host: Arc<dyn ToolHost>)
+        -> Result<Box<dyn Run>, RunError>;
 }
 
 #[async_trait]
 pub trait Run: Send {
-    /// Drives the script until it finishes, fails, or `until` passes. A host call is awaited through `host`.
-    async fn drive(&mut self, host: &dyn ToolHost, until: Instant) -> Step;
+    /// Drives the script until it finishes, fails, or `until` passes (`Step::Yielded`).
+    async fn drive(&mut self, until: Instant) -> Step;
 }
 
 #[async_trait]
@@ -130,7 +131,7 @@ pub trait ToolHost: Send + Sync {
     async fn call(&self, name: &str, args: Value) -> Result<Value, ToolFailure>;
 }
 
-pub enum Step { Done { result: Value, logs: Vec<String> }, Failed { error: RunError, logs: Vec<String> }, Yielded }
+pub enum Step { Done { result, logs, truncated }, Failed { error, logs, truncated }, Yielded }
 ```
 
 The sandbox crate knows nothing about the gate, audit or Crew. `ToolHost` is the whole interface to Orbyn.
@@ -263,6 +264,8 @@ The callable set for a run is computed per call, from the binding:
   was not shown.
 - **Not in a script, ever:** `approve`, the three Code Mode tools, and anything that reads or answers the
   approval queue as the person.
+- **Not in a script in v1 (a v2 item):** `crew_*`, `computer_*` and `skill_load`. Each needs its own gate
+  path first.
 
 A tool added later is refused to a worker by default, as today, and reaches a script only through the same
 table `tools/list` reads. There is no second list to forget.
@@ -294,6 +297,19 @@ declare function orbyn_thread_send(args: {
 
 A test checks that every tool in `tools/list` has a declaration and that a declaration's required arguments
 match its `inputSchema`, so the two cannot drift.
+
+## Error texts
+
+`error.message` is shown to the person as is. Limits: "The script used more than its CPU time.", "The script
+used more than its memory limit (heap).", "The script used more than its stack limit.", "A script may make 200
+calls.", "The run took longer than its time limit.", "The script is over 65536 bytes." `denied` is the gate's
+own reason, verbatim (a timed-out approval is a refusal with the gate's timeout reason). `lost`: "This run
+was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.", and
+for a failed replay "The script changed or is not repeatable, so the recorded calls can't be replayed." or "A
+call that may have changed something was running when Orbyn restarted, so the run can't continue." There is
+no cancel in v1: a person ends a paused run by denying its pending approval. The list view of runs shows
+run id, status, start and end, call count and the first 120 characters of the script; the detail view adds the
+calls with their 4 KiB previews, and a call's full result is fetched on its own.
 
 ## Switches and what is not here yet
 
