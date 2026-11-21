@@ -7,6 +7,7 @@ import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
 import { useConnection } from "../../../product/state/connection";
 import { setRunLinkClient } from "../../crew";
+import { resetMergeOptions } from "../model/mergeOptions";
 import { PullDetail } from "./PullDetail";
 
 const pull = (over: Record<string, unknown> = {}): PullRequestDetail["pull"] =>
@@ -350,15 +351,31 @@ describe("one pull request as a page", () => {
     await show(detail({ review_state: "approved" }));
     fireEvent.click(screen.getByRole("button", { name: /Squash and merge/ }));
     const menu = screen.getByRole("menu", { name: "Merge method" });
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
-      "Squash and merge",
-      "Create a merge commit",
-      "Rebase and merge",
-      "Merge when checks pass",
-      "Delete branch after merge",
-    ]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Squash and merge", "Create a merge commit", "Rebase and merge"]);
+    expect(within(menu).getAllByRole("menuitemcheckbox").map((item) => item.textContent)).toEqual(["Merge when checks pass", "Delete branch after merge"]);
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Rebase and merge" }));
     expect(screen.getByRole("button", { name: /Rebase and merge/ })).toBeInTheDocument();
+  });
+
+  it("shares Merge when checks pass and Delete branch after merge between the menu and the dialog", async () => {
+    vi.spyOn(pullsApi, "creditsSetting").mockResolvedValue(false);
+    resetMergeOptions();
+    await show(detail({ review_state: "approved" }));
+    fireEvent.click(screen.getByRole("button", { name: /Squash and merge/ }));
+    // The two options are checkboxes with a plain check when on, and choosing one closes the menu.
+    fireEvent.click(within(screen.getByRole("menu", { name: "Merge method" })).getByRole("menuitemcheckbox", { name: "Merge when checks pass" }));
+    expect(screen.queryByRole("menu", { name: "Merge method" })).toBeNull();
+    fireEvent.click(merge());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByRole("checkbox", { name: "Merge when checks pass" })).toBeChecked();
+    // Ticking in the dialog shows ticked in the menu.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Delete the branch" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: /Squash and merge/ }));
+    const menu = screen.getByRole("menu", { name: "Merge method" });
+    expect(within(menu).getByRole("menuitemcheckbox", { name: "Merge when checks pass" })).toHaveAttribute("aria-checked", "true");
+    expect(within(menu).getByRole("menuitemcheckbox", { name: "Delete branch after merge" })).toHaveAttribute("aria-checked", "true");
+    expect(menu.querySelectorAll(".menu-check")).toHaveLength(2);
   });
 
   it("says it is offline, with Retry, and Merge waits for a connection", async () => {
