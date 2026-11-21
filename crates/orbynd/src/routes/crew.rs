@@ -744,7 +744,7 @@ async fn merge_queue(
     State(state): State<AppState>,
     query: QueryMap,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.autopilot_merge_queue(page(&query)?)?))
+    Ok(Json(state.core.autopilot_merge_queue(page(&query)?).await?))
 }
 
 async fn watch(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {

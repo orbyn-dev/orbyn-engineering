@@ -22,10 +22,10 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `guard` | The secret scan (H2) and the answer-key leak check (H1) |
 | `persist` | Storing a decision with its task, after both checks |
 | `tool` | The tool list and `crew_route`, the dry-run tool |
-| `start` | `crew_start`: validates the brief and key, routes, grants the leases and runs the worker through `delegate` |
+| `start` | `crew_start`: validates the brief and key, refuses a crew that spent its turn budget, routes, grants the leases and runs the worker through `delegate` |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
-| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use |
+| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
@@ -41,7 +41,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `background_daily` | The daily per-engine budget (slice 4h, PR 2, migration 57): runs and turns each engine may spend on one crew in a day, fixed at creation with the person's UTC offset, so the day is theirs and the budget resets at their midnight. Turns are counted from the engine event (`crew_worker_run_ended`, one call per turn, whatever the turn did) and minutes are wall time, in `store::crew_background`'s ledger of one row per run, day and engine, so no engine's count can touch another's. No engine takes a hard limit: a run already going is cancelled at the cap, stopped `budget` and waiting for the person with what the engine spent shown, never clamped; a failed verification checks the cap before it retries (`settle_failure`). A new event whose engine has spent the day is refused before anything is stored, never held or queued, with an audit row `crew.background.daily.refused` reading "daily budget spent: <engine>" and a sentence with the time the day turns; the check sits before the capacity pause, in `launch_crew_task`. A budget that cannot be read fails closed: a start is refused and a run in flight is stopped `budget`, never allowed on. A turn that ends after its run did still counts for the engine's day. The person's offset is fixed at creation, so after a daylight-saving change the reset is an hour off their wall clock until the crew is made again. A crew made before the slice has no daily budget (0 and 0): nothing is counted for it and nothing is refused |
 | `background_start` | Run now (slice 4h, PR 1): a person starts one run of an enabled background crew by hand (the `manual` event, `Core::crew_background_run_now`). It makes the run's lead thread (the run's id is the thread's id, the `crew_id` of its tasks; no engine ever runs it and `tell_lead` skips it), stores no Autopilot mode row: a background run's merges are `off` in code, so every merge of the run waits for a person, and starts the task through `launch_crew_task` as Crew-started and Low priority, so `capacity_start_check` can pause it (the refusal is a held `background` start with key `<crew>:manual`, and the run and thread are taken back). The crew's turns and minutes are the brief's budget: minutes are the existing task timer, turns are the worker's runs, checked when a verification fails, and each turn is also counted on the run row as its engine event ends (PR 2, `background_daily`), so the run's live spend is real, not reconstructed. A background worker's turn with no output fails the run (`NO_REPLY`, engine error) instead of being judged by what it leaves behind. A task's end ends the run: passed is `needs_review`; budget, repeated failure and engine error are `stopped` with that reason; anything else is `needs_review` with a plain sentence. The brief is code-owned per template (no event or repository text in it) and may write under the repository's top-level entries except `.orbyn/` and `.github/`; its checks are a file scope and a size cap, so a person reads every change. `issue_label` and `dependency_update` crews and crews that are off are refused, and a start whose engine has spent the crew's daily budget is refused before anything is stored (PR 2, `background_daily`). No listener, no route yet |
 | `triggers` | `.orbyn/crew.json` `background` triggers and templates, parsed and checked: kinds, budgets, engines, schedules, hidden text and name collisions. Pure policy: nothing starts, writes or calls a model |
-| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
+| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the budget stop for the brief's minutes or turns; the result for the lead; a worker's run ending |
 
 ## Rules to keep
 
@@ -72,6 +72,10 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   thread or messages to others (see the [bus](bus/README.md)).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
+  A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
+- A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
+  none). There is no Settings control yet: it can be set only through the settings API for now. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
+  task is refused once the crew has spent it, and a task already running is never stopped by it.
 
 ## Known limits of Preview
 
@@ -83,6 +87,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   the app data folder (#441).
 - An attachment tool takes a thread id; a worker may name only its own. `computer_*` and every `orbyn_*` tool
   off the allow list are refused to a worker.
+- A worker's shell command is not read, so it can still write outside its lease; the gate sees the engine's
+  file-change tools, not files a command writes (#441).
 - A key with protected paths and no record of them from the start fails closed (`needs_person`).
 
 ## Follow-ups
@@ -91,16 +97,21 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - Evidence names HEAD as its commit; when the checkout had uncommitted changes, `does_not_prove` says so.
 - `budget.minutes` ends a task even in the middle of a turn, through a timer that holds the core weakly and
   is set again after a restart. A verification gets what is left of the budget and stops once the task has
-  been stopped. Turn limits are #438.
+  been stopped. `budget.turns` stops the next failed attempt once the worker's turns and the approvals reserved
+  against the same budget reach the brief's turns. A crew whose turn budget is spent starts no new task,
+  and a task already running is not stopped by it. The check sits in `launch_crew_task`, so `crew_start`, background
+  Run-now, escape checks, review lanes and fixes pass it. Autopilot's merge corrections (`autopilot/merge/correction.rs`)
+  call `create_crew_task` directly and are not checked: they are deterministic and spend no worker turns. A task whose
+  worker thread exists or whose first prompt is still queued counts at least one turn, so a queued start is not free.
 - Windows: the leak test (`a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker`) is
   Unix-only. On Windows a command's echo can differ in quotes and line endings, so the withholding needs its
   own test there, and a check's deadline must kill every process the check started (the process owner does;
   no Windows test shows it yet).
 - The worker runs in the lead's checkout, as `delegate` does. A writing worker's own worktree
   (docs/crew.md, "Isolation") is not created yet, so the diff checks see the lead's changes too.
-- The check kinds `schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`, `manual`,
-  `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan` and
-  `licence_scan` report `skipped` and are listed as not verified.
+- The check kinds `http_probe`, `preview`, `visual_compare`, `manual`, `screenshot_only`,
+  `accessibility_audit`, `performance_budget` and `licence_scan` report `skipped` and are listed as
+  not verified; `schema`, `secret_scan` and `repo_required` run (docs/crew.md, "Verification without limits").
 - Tier words match whole words in a model's id or label; they are defaults to check against real ids.
 
 ## How it is tested

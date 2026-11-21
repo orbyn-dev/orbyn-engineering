@@ -186,7 +186,7 @@ const windowsOf = (report: EngineLimits | null): EngineLimits["windows"] => repo
 
 /** The `/usage-limits` result, above the composer until dismissed. */
 export function InlineLimits({ threadId, onClose }: { threadId: string; onClose(): void }) {
-  const limits = useAsync(`thread-limits:${threadId}`, (signal) => api.threadLimits(threadId, signal), { refreshOn: topics("limits", `limits:${engineOf(threadId)}`) });
+  const limits = useAsync(`thread-limits:${threadId}`, (signal) => api.threadLimits(threadId, signal), { fresh: true, refreshOn: topics("limits", `limits:${engineOf(threadId)}`) });
   const windows = windowsOf(limits.data);
   return (
     <section className="composer-panel" aria-label="Usage limits">

@@ -4,6 +4,37 @@ import { readKept, writeKept } from "./keptData";
 import { useAsync } from "./useAsync";
 
 describe("useAsync", () => {
+  it("keeps fresh data cleared while a queued event follows a foreground read", async () => {
+    const reads: ((value: string) => void)[] = [];
+    const { result } = renderHook(() => useAsync("fresh-queued", () => new Promise<string>((resolve) => reads.push(resolve)), { fresh: true }));
+    await waitFor(() => expect(reads).toHaveLength(1));
+    await act(async () => { reads[0]?.("first account"); });
+    let foreground!: Promise<void>;
+    act(() => { foreground = result.current.reloadNow(); });
+    expect(result.current.data).toBeNull();
+    await act(async () => { await result.current.refreshQuietly(); });
+    await act(async () => { reads[1]?.("superseded snapshot"); await foreground; });
+    expect(reads).toHaveLength(3);
+    expect(result.current.status).toBe("loading");
+    expect(result.current.data).toBeNull();
+    await act(async () => { reads[2]?.("current account"); });
+    expect(result.current.data).toBe("current account");
+  });
+
+  it("fresh reads discard unvalidated data even for a failed background reload", async () => {
+    let fail = false;
+    const { result } = renderHook(() => useAsync("private-limits", async () => {
+      if (fail) throw new Error("account unknown");
+      return "prior account";
+    }, { fresh: true, keep: true }));
+    await waitFor(() => expect(result.current.data).toBe("prior account"));
+    fail = true;
+    await act(async () => { await result.current.refreshQuietly(); });
+    expect(result.current.status).toBe("error");
+    expect(result.current.data).toBeNull();
+    expect(readKept("private-limits")).toBeUndefined();
+  });
+
   it("keeps confirmed data when a read started before setData finishes late", async () => {
     let finishRead!: (value: string) => void;
     const { result } = renderHook(() => useAsync("task", () => new Promise<string>((resolve) => {

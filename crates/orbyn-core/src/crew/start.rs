@@ -21,7 +21,12 @@ use super::stamp::Stamper;
 use super::tool::{LEAD_MEMBER, invalid, stamp_now};
 use crate::agents::driver::worker_identity::TASK_TRAILER;
 use crate::app::Core;
+use crate::settings::preferences::CREW_TURN_BUDGET;
 use crate::tools::mcp::McpBinding;
+
+/// What a person and the lead read when the crew-wide turn budget is spent. Code-owned text: no
+/// frame draws a start refusal, and the owner's ruling asks for a plain reason (2026-11-20).
+const CREW_TURNS_SPENT: &str = "The crew has spent its turn budget, so no new task can start.";
 
 /// What a launch adds to a plain start: the rows that make the task a review run or a fix.
 #[derive(Default)]
@@ -258,6 +263,9 @@ impl Core {
         let run_id = CrewId::new(crate::util::new_id()).map_err(invalid)?;
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
+        // Before anything is stored, routed or started: a crew that spent its turn budget starts
+        // no new task. It never stops a task already running.
+        self.refuse_spent_crew_budget(&brief)?;
         let now = crate::util::unix_now();
         // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
         // start is refused here with the reason, and no task, lease, run or ledger row exists.
@@ -508,6 +516,46 @@ impl Core {
                 Err(error)
             }
         }
+    }
+
+    /// The crew-wide turn budget from Settings (`crew_turn_budget`, device-local): whole turns per
+    /// crew, 0 or unset meaning no budget. A read failure lets the start go, as the per-task
+    /// budget's own read does.
+    fn crew_turn_budget(&self) -> Option<u64> {
+        match self.preference(CREW_TURN_BUDGET, None) {
+            Ok(value) => value.as_u64().filter(|turns| *turns > 0),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the crew's turn budget could not be read, so the start goes ahead"
+                );
+                None
+            }
+        }
+    }
+
+    /// Refuses a new task once its crew has spent the crew-wide turn budget. The spend is the same
+    /// per-task tally the brief's own budget reads, summed over the crew, so the two cannot
+    /// disagree. Checked before anything is stored or sent; a task already running keeps its turns
+    /// (owner ruling, 2026-11-20).
+    fn refuse_spent_crew_budget(&self, brief: &Brief) -> Result<(), CrewError> {
+        let Some(limit) = self.crew_turn_budget() else {
+            return Ok(());
+        };
+        let spent = match self.store.crew_turns_spent_in_crew(brief.crew_id.as_str()) {
+            Ok(spent) => spent,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the crew's turns could not be read, so the start goes ahead"
+                );
+                return Ok(());
+            }
+        };
+        if spent < limit {
+            return Ok(());
+        }
+        Err(CrewError::new(ErrorCode::NotAuthorized, CREW_TURNS_SPENT))
     }
 
     /// Routes the brief on the machine's engines before any task exists. The router leaves out an engine whose worker run would

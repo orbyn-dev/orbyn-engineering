@@ -276,6 +276,48 @@ async fn a_fix_for_the_wrong_file_is_refused() {
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
 }
 
+/// A confirmed finding outside the reviewed task's own `file_scope` checks sends no fix: the fix inherits those checks and
+/// would fail them after a wasted run. The lead is told a person must authorise a new task (#451).
+#[tokio::test]
+async fn a_fix_outside_the_tasks_scope_checks_is_refused() {
+    let key = json!({
+        "checks": [{
+            "id": "chk-scope", "kind": "file_scope", "params": { "only": ["src/lib.txt"] },
+            "proves": "Only the function's file changed."
+        }],
+        "protected_paths": []
+    });
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        1 => reviewed(vec![finding("src/base.txt", 1, "The base file is wrong.")]),
+        _ => Turn::Hang,
+    }))
+    .await;
+    let subject = w.built_with(key).await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+    let id = w.first_finding(&subject);
+    let (done, error) = w
+        .lead(
+            "crew_check_finding",
+            json!({ "finding": id, "repro": failing("r-outside", "src/base.txt") }),
+        )
+        .await;
+    assert!(!error, "{done}");
+    assert_eq!(done["fix"]["started"], false, "{done}");
+    assert_eq!(done["fix"]["stopped"], "refused_path", "{done}");
+    assert!(
+        done["fix"]["why"]
+            .as_str()
+            .is_some_and(|why| why.contains("scope")),
+        "{done}"
+    );
+    assert!(
+        w.core.store.crew_fixes_of(&subject).unwrap().is_empty(),
+        "no fix brief names a file the reviewed task's own checks do not allow"
+    );
+}
+
 /// With one vendor configured the independent second review is refused with a stored reason, never run on the same vendor.
 #[tokio::test]
 async fn the_second_review_needs_another_vendor() {

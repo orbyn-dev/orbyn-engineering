@@ -5,8 +5,10 @@
 
 mod autopilot;
 mod autopilot_areas;
+mod autopilot_bisect;
 mod autopilot_enforce;
 mod autopilot_engines;
+mod autopilot_forecast;
 mod autopilot_guard;
 mod autopilot_held;
 mod autopilot_merge;

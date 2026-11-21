@@ -1,7 +1,7 @@
 import { Activity, FileDiff, Gauge, Globe, Play, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, listThreadScripts, listThreadServers, stopThreadServer } from "../api";
-import type { EngineLimits, FileDiff as DiffFile, LocalServer } from "../../../api/types";
+import type { FileDiff as DiffFile, LocalServer } from "../../../api/types";
 import type { ProjectFileView } from "../../../generated/ProjectFileView";
 import type { ProjectScript } from "../../../generated/ProjectScript";
 import { useWaited as useWaitedFor } from "../../../lib/motion";
@@ -243,10 +243,6 @@ export function ScriptsRow({ threadId, scripts }: { threadId: string; scripts: R
   );
 }
 
-/** Automatic checks stay this far apart, however often the card appears. */
-const LIMITS_CHECK_MS = 5 * 60 * 1000;
-const lastLimits = new Map<string, { at: number; limits: Promise<EngineLimits> }>();
-
 /** The Limits row: a window only for Codex, which reports one. Claude, OpenCode and any custom engine read "Not reported". */
 export function LimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   if (engine !== "codex") {
@@ -258,17 +254,9 @@ export function LimitsRow({ threadId, engine }: { threadId: string; engine: stri
 /** What's left of each limit window for this thread's engine, when it reports one. */
 function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   const limits = useAsync(
-    `details-limits:${engine}`,
-    (_signal, how) => {
-      const kept = lastLimits.get(engine);
-      // A change the service announced reads again whatever this card kept.
-      if (!how.background && kept && Date.now() - kept.at < LIMITS_CHECK_MS) return kept.limits;
-      const fresh = api.threadLimits(threadId);
-      lastLimits.set(engine, { at: Date.now(), limits: fresh });
-      fresh.catch(() => lastLimits.delete(engine));
-      return fresh;
-    },
-    { refreshOn: topics("limits", `limits:${engine}`) },
+    `details-limits:${threadId}:${engine}`,
+    (signal) => api.threadLimits(threadId, signal),
+    { fresh: true, refreshOn: topics("limits", `limits:${engine}`) },
   );
   const windows = limits.data?.windows ?? [];
   if (windows.length === 0) return null;

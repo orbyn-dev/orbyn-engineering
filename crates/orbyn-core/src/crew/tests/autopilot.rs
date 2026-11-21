@@ -665,3 +665,200 @@ async fn under_off_a_person_is_asked_even_for_a_read_and_the_threads_accepting_m
     }
     assert_eq!(kinds(&w, &id), ["person", "person"]);
 }
+
+/// The scope a real run sends: the run's write scope lets a path through before the lease reads it.
+fn production(w: &super::harness::World, id: &str) -> crate::governance::approvals::RunScope {
+    crate::governance::approvals::RunScope {
+        write_scope: Some(crate::governance::approvals::WriteScope {
+            checkout: w.repo.clone(),
+            engine_cwd: w.repo.clone(),
+            excluded: Vec::new(),
+        }),
+        ..scope(w, id)
+    }
+}
+
+const OUTSIDE_THE_LEASE: &str = "outside the files the brief asked for";
+
+/// H10 at the boundary: a worker's file-change tool outside its lease is refused by the gate
+/// with the lease's own words, before the write, not only later by the verifier's `file_scope`.
+#[tokio::test]
+async fn a_workers_write_outside_its_lease_is_refused_at_the_gate() {
+    let (w, id) = running().await;
+    let inside = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+        )
+        .await;
+    assert_eq!(
+        inside,
+        Verdict::Allow,
+        "a write inside the lease still goes"
+    );
+    let stray = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, "docs/stray.md", &["docs/stray.md"]),
+        )
+        .await;
+    assert!(
+        words(&stray).contains(OUTSIDE_THE_LEASE),
+        "{}",
+        words(&stray)
+    );
+    // The key's protected paths keep their stronger refusal, and one refused write does not stop
+    // the task: it is the write that is refused, not the run.
+    let protected = request(&w, &id, ActionKind::FileChange, "tests/check.rs").await;
+    assert!(words(&protected).contains("N7"), "{}", words(&protected));
+    assert_eq!(w.task(&id).state, "running");
+}
+
+/// As a real run sends it: an absolute path inside the checkout, past the run's write scope.
+#[tokio::test]
+async fn an_absolute_write_outside_the_lease_is_refused_with_the_run_write_scope() {
+    let (w, id) = running().await;
+    let absolute = w
+        .repo
+        .join("docs/absolute.md")
+        .to_string_lossy()
+        .into_owned();
+    for scope in [scope(&w, &id), production(&w, &id)] {
+        let refused = w
+            .core
+            .gate
+            .request(&scope, ask(ActionKind::FileChange, &absolute, &[&absolute]))
+            .await;
+        assert!(
+            words(&refused).contains(OUTSIDE_THE_LEASE),
+            "{}",
+            words(&refused)
+        );
+    }
+}
+
+/// One path of several outside the lease refuses the whole change, and `..` does not hide it.
+#[tokio::test]
+async fn a_change_naming_several_paths_or_a_traversal_is_read_path_by_path() {
+    let (w, id) = running().await;
+    let many = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "src/a.txt",
+                &["src/a.txt", "src/b.txt", "docs/c.md"],
+            ),
+        )
+        .await;
+    assert!(words(&many).contains("docs/c.md"), "{}", words(&many));
+    assert!(words(&many).contains(OUTSIDE_THE_LEASE), "{}", words(&many));
+    let all_inside = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "src/a.txt",
+                &["src/a.txt", "src/b.txt"],
+            ),
+        )
+        .await;
+    assert_eq!(all_inside, Verdict::Allow);
+    // `src/..` lands on `docs/`, which the lease does not hold.
+    let sideways = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "src/../docs/x.md",
+                &["src/../docs/x.md"],
+            ),
+        )
+        .await;
+    assert!(
+        words(&sideways).contains(OUTSIDE_THE_LEASE),
+        "{}",
+        words(&sideways)
+    );
+    // A `..` past the checkout is not the lease's to read: the run's write scope refuses it.
+    let escaped = w
+        .core
+        .gate
+        .request(
+            &production(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "src/../../escape.txt",
+                &["src/../../escape.txt"],
+            ),
+        )
+        .await;
+    assert!(matches!(escaped, Verdict::Deny(_)), "{}", words(&escaped));
+}
+
+/// A refused write is a recorded denial that counts toward the trip wires.
+#[tokio::test]
+async fn lease_refusals_are_recorded_and_count_toward_the_trip_wires() {
+    let (w, id) = running().await;
+    for n in 0..2 {
+        let target = format!("docs/stray{n}.md");
+        let refused = w
+            .core
+            .gate
+            .request(
+                &scope(&w, &id),
+                ask(ActionKind::FileChange, &target, &[&target]),
+            )
+            .await;
+        assert!(
+            words(&refused).contains(OUTSIDE_THE_LEASE),
+            "{}",
+            words(&refused)
+        );
+        assert_eq!(w.task(&id).state, "running");
+    }
+    let denied = events(&w, &id, "denied");
+    assert_eq!(denied.len(), 2);
+    assert!(denied.iter().all(|e| e.body["decided_by"] == "lease"));
+    let third = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "docs/stray2.md",
+                &["docs/stray2.md"],
+            ),
+        )
+        .await;
+    assert!(
+        words(&third).contains("too many denials"),
+        "{}",
+        words(&third)
+    );
+    assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
+}
+
+/// The check never fails open: a task it cannot read is a refusal.
+#[tokio::test]
+async fn a_lease_check_that_cannot_read_the_task_refuses() {
+    let (w, _id) = running().await;
+    let refused = w.core.crew_refuse_lease_write(
+        "no-such-task",
+        "alpha",
+        &w.repo,
+        &ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
+    );
+    assert!(refused.is_some(), "a failed read let the write through");
+}

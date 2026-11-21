@@ -174,6 +174,8 @@ pub struct Core {
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
     pub(crate) crew_merges: tokio::sync::Mutex<()>,
+    /// Crew Preview: the progress of the bisect a watch is running now. In memory only; the outcome is stored.
+    pub(crate) crew_bisect: std::sync::Mutex<Option<orbyn_contracts::AutopilotBisect>>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
     _lock: OwnerLock,
@@ -325,6 +327,7 @@ impl Core {
             crew_bus: crate::crew::Bus::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
+            crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
             _lock: lock,
         };
