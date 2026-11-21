@@ -19,6 +19,9 @@ const SHOWS: Record<string, string[]> = {
   "needsyou-demoted": [...INBOX, "Autonomy 1", "web/auth moved from Full to On: 2 reverts in 14 days. Review or override.", "Autopilot by area · circuit breaker · 9 merges in the window", "Nothing is blocked. A High risk diff in web/auth now waits for you at the merge gate; Low and Medium still merge by themselves. Dismiss is remembered on this browser.", "Review", "Override…"],
   "needsyou-stop": ["Needs you 2", "Stops 2", NOTE, "Stopped · too many denials", "Dismiss hides this stop on this device.", "Dismiss", "Task 91c4e07", "3 denials in a row stopped the task. Nothing else is blocked; the other tasks keep going.", "Stopped · possible injected instructions", "Task 5b2d8a3", "A page the worker read contained text that looks like instructions. The task stopped before it ran anything the text asked for.", "Open"],
   "needsyou-background": ["Needs you 2", "Background 2", NOTE, "Paused: budget reached", "Background crew · Check dependencies weekly", "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", "Needs approval", "Background crew · Update the docs index", "A command is held for your approval before the run can go on.", "Open"],
+  "needsyou-daily-budget-stop": ["Needs you 2", "Background 2", NOTE, "Paused: budget reached", "Background crew · Check dependencies weekly", "Engine claude reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-08T00:00:00+01:00.", "This run stays stopped. New runs can start after the daily reset: 2026-11-08T00:00:00+01:00. The budget is fixed at creation.", "Background crew · Update the docs index", "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", "Open"],
+  "needsyou-daily-budget-stop-narrow": ["Background", "Paused: budget reached", "Background crew · Check dependencies weekly", "Engine claude reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-08T00:00:00+01:00.", "This run stays stopped. New runs can start after the daily reset: 2026-11-08T00:00:00+01:00. The budget is fixed at creation.", "Background crew · Update the docs index", "The crew's daily budget could not be read, so the run stopped instead of going on.", "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it.", "Open"],
+  "needsyou-daily-budget-stop-no-reset": ["Needs you 2", "Background 2", NOTE, "Paused: budget reached", "Background crew · Check dependencies weekly", "The crew's daily budget could not be read, so the run stopped instead of going on.", "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it.", "Background crew · Update the docs index", "The crew's daily budget could not be updated, so the run stopped instead of going on.", "Open"],
   "needsyou-source-error": ["Needs you 2", "Questions 1", "Main 1", NOTE, "Can’t read held commands. The rest is shown.", "One source of the inbox did not answer", "Try again", "3 questions from OpenCode, batched", "Main broke and the cause isn’t certain"],
 };
 
@@ -43,6 +46,18 @@ describe("the frames of the group", () => {
     const rows = [...container.querySelectorAll(".ny-item")];
     expect(rows.map((row) => row.querySelector(".ny-rk")?.textContent)).toEqual(["", "1", "2"]);
     expect(rows[0]).toHaveTextContent("Can’t read held commands. The rest is shown.");
+  });
+
+  it("the daily-budget frames are built from the same assembly as the live inbox: no button changes the budget, and a stop with no reset time names none", async () => {
+    const { openFrame } = await import("../shared/test-support");
+    for (const name of ["needsyou-daily-budget-stop", "needsyou-daily-budget-stop-narrow", "needsyou-daily-budget-stop-no-reset"]) {
+      const { container, unmount } = await openFrame(name);
+      const buttons = [...container.querySelectorAll("button")].map((button) => button.textContent);
+      expect(buttons.filter((label) => label === "Open").length).toBeGreaterThanOrEqual(2);
+      expect(container.textContent).not.toMatch(/raise|increase|change the budget/i);
+      if (name.endsWith("no-reset")) expect(container.textContent).not.toMatch(/daily reset: 2/);
+      unmount();
+    }
   });
 
   it("names the two it does not build, with nothing drawn for them", () => {

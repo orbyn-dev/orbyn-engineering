@@ -22,17 +22,37 @@ export function defaultTicks(rows: RepoRow[], limit: number): string[] {
 
 export const startLabel = (count: number) => (count === 1 ? "Start in 1 repository" : `Start in ${count} repositories`);
 
-/** A Git address or `owner/name`. Text the person typed or pasted is untrusted: nothing that Git could read as an option or that holds a control character passes. */
+/**
+ * A clone source, by the list in docs/multi-repo.md ("Clone and path input"): an `https://` URL, an `ssh://` URL or an scp-style
+ * `user@host:path`. Text the person typed or pasted is untrusted, and the service checks it again: a source that starts with `-`
+ * (Git reads it as an option), `ext::`, `fd::`, `file://`, a local path (so also `owner/name`), a newline or other control
+ * character, or a user name and password in the address is refused here and there.
+ */
 export function checkCloneSource(text: string): { ok: true; source: string } | { ok: false; reason: string } {
   const source = text.trim();
-  if (source === "") return { ok: false, reason: "Enter a Git URL or owner/name." };
+  if (source === "") return { ok: false, reason: "Enter a Git URL." };
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f\s]/.test(source)) return { ok: false, reason: "The address cannot hold spaces or control characters." };
   if (source.startsWith("-")) return { ok: false, reason: "The address cannot start with a dash." };
-  const ownerName = /^[\w.-]+\/[\w.-]+$/.test(source) && !/^\.{1,2}\//.test(source);
-  const url = /^(https:\/\/|ssh:\/\/|git@[\w.-]+:)[^\s]+$/.test(source);
-  return ownerName || url ? { ok: true, source } : { ok: false, reason: "Use a https or ssh address, git@host:path, or owner/name." };
+  const url = /^(https|ssh):\/\/([^/@]*@)?[^/@\s]+\/?[^\s]*$/.exec(source);
+  if (url) {
+    const userinfo = url[2]?.slice(0, -1) ?? "";
+    return userinfo.includes(":") ? { ok: false, reason: "The address cannot hold a user name and password." } : { ok: true, source };
+  }
+  if (/^[A-Za-z0-9_][\w.-]*@[A-Za-z0-9][\w.-]*:[^\s:-][^\s]*$/.test(source)) return { ok: true, source };
+  return { ok: false, reason: "Use a https or ssh address, or user@host:path." };
 }
+
+/** The name of a new folder (`create`): letters, digits, dash, underscore and dot, no leading dot or dash, no `..`, no separator and no drive prefix. */
+export const isFolderName = (text: string) => /^[A-Za-z0-9_][\w.-]*$/.test(text) && !text.includes("..");
+
+/** The hosts a repository can be published to. Only a ready one can be picked; the rest say Setup Required. The page's own list: the service takes no provider, so the step only shows where it goes. */
+export const PUBLISH_PROVIDERS = [
+  { id: "github", name: "GitHub", line: "Uses the gh sign-in on this computer", ready: true },
+  { id: "gitlab", name: "GitLab", line: "GitLab.com or your own server", ready: false },
+  { id: "azure", name: "Azure DevOps", line: "Repos in an organisation", ready: false },
+  { id: "forgejo", name: "Forgejo", line: "Your own Forgejo or Codeberg", ready: false },
+] as const;
 
 /** `owner/name` for a publish, both parts a plain host name. */
 export const isPublishName = (text: string) => /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(text.trim());

@@ -5,17 +5,18 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { useRepos } from "./api";
 import type { RepoRow, ReposView } from "./contract";
-import { AddFolderDialog, CloneDialog, PublishDialog, RemoveDialog, SetupGitDialog, TrustDialog } from "./Dialogs";
+import { AddFolderDialog, CancelCloneDialog, CloneDialog, CreateDialog, RemoveDialog, SetupGitDialog, TrustDialog } from "./Dialogs";
+import { PublishDialog } from "./Publish";
 import { cloneText, plain, repoState, STATE_LABEL } from "./model";
 import "./repos.css";
 
 type Open =
-  | { kind: "add-folder" | "clone" }
-  | { kind: "publish" | "remove" | "trust" | "git"; repo: RepoRow };
+  | { kind: "add-folder" | "clone" | "create" }
+  | { kind: "publish" | "remove" | "trust" | "git" | "cancel-clone"; repo: RepoRow };
 
 const CLONE_POLL_MS = 2000;
 
-function Row({ row, disabled, onAction, onMenu }: { row: RepoRow; disabled: boolean; onAction(kind: "trust" | "git", row: RepoRow): void; onMenu(anchor: HTMLElement, row: RepoRow): void }) {
+function Row({ row, disabled, onAction, onMenu }: { row: RepoRow; disabled: boolean; onAction(kind: "trust" | "git" | "cancel-clone", row: RepoRow): void; onMenu(anchor: HTMLElement, row: RepoRow): void }) {
   const state = repoState(row);
   const note = cloneText(row);
   return (
@@ -27,6 +28,7 @@ function Row({ row, disabled, onAction, onMenu }: { row: RepoRow; disabled: bool
       </span>
       <span className="repos-state">
         {note ? <Pill tone={row.clone?.state === "failed" ? "danger" : "info"}>{note}</Pill> : <Pill tone={state === "trusted" ? "accent" : "warn"}>{STATE_LABEL[state]}</Pill>}
+        {row.clone?.state === "cloning" ? <Button small disabled={disabled} onClick={() => onAction("cancel-clone", row)}>Cancel</Button> : null}
         {!note && state === "untrusted" ? <Button small disabled={disabled} onClick={() => onAction("trust", row)}>Trust…</Button> : null}
         {!note && state === "not_git" ? <Button small disabled={disabled} onClick={() => onAction("git", row)}>Set up Git</Button> : null}
         <IconButton label={`Actions for ${plain(row.name)}`} aria-haspopup="menu" disabled={disabled} onClick={(event) => onMenu(event.currentTarget, row)}>
@@ -61,7 +63,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
   const rowItems = (row: RepoRow): MenuItem[] => {
     const state = repoState(row);
     return [
-      ...(state !== "not_git" && !row.has_remote && row.clone === null ? [{ label: "Publish to GitHub…", onSelect: () => setOpen({ kind: "publish", repo: row }) }] : []),
+      ...(state === "trusted" && !row.has_remote && row.clone === null ? [{ label: "Publish to GitHub…", onSelect: () => setOpen({ kind: "publish", repo: row }) }] : []),
       ...(state === "untrusted" ? [{ label: "Trust this folder…", onSelect: () => setOpen({ kind: "trust", repo: row }) }] : []),
       { label: "Remove from project…", destructive: true, separatorBefore: true, onSelect: () => setOpen({ kind: "remove", repo: row }) },
     ];
@@ -82,6 +84,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
         <Button small disabled={disabled} icon={<Plus size={13} aria-hidden />} aria-haspopup="menu"
           onClick={(event) => setMenu({ ...place(event.currentTarget), items: [
             { label: "Add a folder…", title: "A folder on this computer", onSelect: () => setOpen({ kind: "add-folder" }) },
+            { label: "Create a new folder…", title: "A new folder with Git", onSelect: () => setOpen({ kind: "create" }) },
             { label: "Clone a repository…", title: "Git URL", onSelect: () => setOpen({ kind: "clone" }) },
           ] })}>Add repository</Button>
       </div>
@@ -90,7 +93,9 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
       </Presence>
       {open?.kind === "add-folder" ? <AddFolderDialog {...common} /> : null}
       {open?.kind === "clone" ? <CloneDialog {...common} projectName={projectName} directory={shown.clone_directory} /> : null}
-      {open?.kind === "publish" ? <PublishDialog {...common} repo={open.repo} /> : null}
+      {open?.kind === "create" ? <CreateDialog {...common} projectName={projectName} directory={shown.clone_directory} /> : null}
+      {open?.kind === "cancel-clone" ? <CancelCloneDialog {...common} repo={open.repo} /> : null}
+      {open?.kind === "publish" ? <PublishDialog {...common} onDone={reload} repo={open.repo} /> : null}
       {open?.kind === "remove" ? <RemoveDialog {...common} projectName={projectName} repo={open.repo} /> : null}
       {open?.kind === "trust" ? <TrustDialog {...common} repo={open.repo} /> : null}
       {open?.kind === "git" ? <SetupGitDialog {...common} repo={open.repo} /> : null}
