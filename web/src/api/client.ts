@@ -297,8 +297,8 @@ export const api = {
   /** The same for Settings: an engine, without a thread. */
   engineTools: (engine: string, refresh = false, signal?: AbortSignal) =>
     request<EngineTools>("GET", `/api/engines/${q(engine)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
-  threadLimits: (threadId: string, signal?: AbortSignal) =>
-    request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits`, undefined, signal),
+  threadLimits: (threadId: string, signal?: AbortSignal, force = false) =>
+    request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits${force ? "?force=true" : ""}`, undefined, signal),
   searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal) =>
     request<SearchHit[]>("GET", `/api/threads/${q(threadId)}/files/search?q=${q(query)}&content=${content}`, undefined, signal),
   /** `repoId` names one repository of a multi-repository thread (docs/multi-repo.md); left out, the primary repository's commits. */

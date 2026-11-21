@@ -6,6 +6,8 @@ import { useUi } from "../../../product/state/ui";
 import { DetailsDismiss } from "./DetailsDismiss";
 import { ChangesRow, LimitsRow, LimitValue, ServersRow, tokensShort } from "./DetailsRows";
 import * as api from "../api";
+import { dataChanged } from "../../../api/shell";
+import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -53,6 +55,12 @@ it("reads again on remount instead of showing another account's five-minute prom
   const first = render(<LimitsRow threadId="account-a" engine="codex" />);
   expect(await screen.findByText("5h 63% left")).toBeVisible();
   first.unmount();
+  // The account changed: the service says so, and the five-minute window is dropped with it.
+  const stop = startDataRefresh();
+  try {
+    act(() => { dataChanged("limits"); });
+    await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
+  } finally { stop(); }
   render(<LimitsRow threadId="account-b" engine="codex" />);
   await act(async () => { await Promise.resolve(); });
   expect(screen.queryByText("5h 63% left")).toBeNull();

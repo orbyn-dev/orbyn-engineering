@@ -6,6 +6,8 @@ import type { UsageReport } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
 import { LIMITS_WAIT_MS } from "./UsageLimits";
 import { UsagePage } from "./UsagePage";
+import { dataChanged } from "../../api/shell";
+import { COALESCE_MS, startDataRefresh } from "../../lib/dataRefresh";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -235,6 +237,12 @@ it("does not restore a prior account's session-kept window when Limits remounts"
   await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
   await screen.findByRole("meter");
   first.unmount();
+  // The account changed: the service says so, and the five-minute window is dropped with it.
+  const stop = startDataRefresh();
+  try {
+    act(() => { dataChanged("limits"); });
+    await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
+  } finally { stop(); }
   render(<UsagePage />);
   expect(screen.queryByRole("meter")).toBeNull();
   await act(async () => next.reject(new ApiFailure("unavailable", "Limits unavailable.", 503)));

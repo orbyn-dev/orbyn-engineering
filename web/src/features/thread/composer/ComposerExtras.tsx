@@ -10,6 +10,7 @@ import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button, IconButton } from "../../../ui/controls";
+import { limitsKey, readLimits } from "../../../lib/limitsStore";
 import type { StashedPrompt } from "../../../product/state/ui";
 
 export const usageShare = (usage: JsonValue | null | undefined): { used: number; window: number } | null => {
@@ -186,7 +187,7 @@ const windowsOf = (report: EngineLimits | null): EngineLimits["windows"] => repo
 
 /** The `/usage-limits` result, above the composer until dismissed. */
 export function InlineLimits({ threadId, onClose }: { threadId: string; onClose(): void }) {
-  const limits = useAsync(`thread-limits:${threadId}`, (signal) => api.threadLimits(threadId, signal), { fresh: true, refreshOn: topics("limits", `limits:${engineOf(threadId)}`) });
+  const limits = useAsync(`thread-limits:${threadId}`, (signal, context) => readLimits(limitsKey(engineOf(threadId), threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }), { fresh: true, refreshOn: topics("limits", `limits:${engineOf(threadId)}`) });
   const windows = windowsOf(limits.data);
   return (
     <section className="composer-panel" aria-label="Usage limits">
