@@ -65,3 +65,17 @@ Checked by hand: the bundled binary opened and closed a session against a real `
 Not done, so Planned: a real model turn, permission, cancel or steer against a live `opencode`; the v1 SDK (`@opencode-ai/sdk`,
 not added: no transcript covers it); background shells and subagent sessions as `background` frames; `models`, `usage`,
 `readHistory`, `rollback`, `stopTask`; question frames; attachments; per-send model; a silent-stream watchdog; Windows.
+
+`AskUserQuestion` is a `question` frame answered with `answers`.
+
+Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
+`usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
+
+Run-end rules: the prompt goes in with a `uuid`; a `result` that arrives after a `command_lifecycle` `queued` for it but
+before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
+background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
+transcript only. Two real runs (a one-word reply and a permissioned file write) matched the frame order; they did
+not send a `uuid`, so lifecycle frames are unconfirmed on a real run.
+
+Not done, so Planned: `rollback`, subagent
+transcripts, and any run against a real `claude` with a valid login.

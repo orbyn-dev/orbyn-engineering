@@ -70,7 +70,7 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `send` | `sessionId`, `message` (text, or text plus attachments by path), `options?` | `{runId, engineSessionId?, turnId?}` (accepted). Some SDKs assign the session id only on the first message; the host also sends a `session` frame (below) when the id or turn id becomes known later |
 | `steer` | `sendId`, `messageId`, `text` | `{outcome, messageId}` (`accepted` \| `queued` \| `rejected`); a refusal is recorded against that message |
 | `cancel` | `sendId` | `{cancelled: bool}` |
-| `respond` | `requestId`, `decision` = `{"behavior":"allow"\|"deny","message"?}` and nothing else | `null` |
+| `respond` | `requestId`, `decision`: for a `permission`, `{"behavior":"allow"\|"deny","message"?}` and nothing else; for a `question`, `{"answers":{"<question text>":"<answer>"}}` (several selections joined by a comma) or `{"behavior":"deny"}` when the person skips it | `null` |
 | `stopTask` | `sessionId`, `taskId` (from a `background` `started` event, which also carries the originating `toolCallId`) | `{stopped: bool}` |
 | `background` | `sendId` | `{backgrounded: bool}` |
 | `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
@@ -97,7 +97,7 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
 {"type":"response","id":7,"ok":false,"error":{"method":"send","cause":{...}}}
 {"type":"delta","sendId":7,"update":{...}}
 {"type":"permission","sendId":7,"requestId":"p-31","tool":"Edit","input":{...},"options":[...]}
-{"type":"question","sendId":7,"requestId":"q-4","prompt":"...","options":[...]}
+{"type":"question","sendId":7,"requestId":"q-4","tool":"AskUserQuestion","input":{"questions":[{"question":"...","header":"...","options":[{"label":"...","description":"..."}],"multiSelect":false}]}}
 {"type":"session","sendId":7,"engineSessionId":"...","turnId":"..."}
 {"type":"runDone","sendId":7,"ok":true,"result":{"reason":"completed","usage":{...}}}
 {"type":"runDone","sendId":7,"ok":false,"error":{"method":"send","cause":{...}}}
@@ -108,6 +108,7 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
 - `delta.update` is the engine's own event, passed through unmodified (the SDK message). The core
   maps it to timeline events in `HostDriver{family}`, exactly as the CLI drivers map their stream JSON
   today. The host does not translate, which keeps replay transcripts byte-comparable with T3's.
+- A `question` frame is the engine asking the person something (Claude's `AskUserQuestion`); `input` is the engine's own, untouched. It blocks like a `permission` (no host timeout, refused on cancel or run end) and is answered by `respond` with `answers`. A `question` is never auto-answered by policy.
 - A `permission` frame blocks the tool until `respond`. If the run is cancelled or the host's run
   ends first, the host resolves the pending SDK callback with a refusal and forgets the id; a late
   `respond` for an unknown id is ignored and counted in `log`, and the core drops its open approval for

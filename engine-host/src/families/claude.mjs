@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { AsyncQueue } from "../asyncQueue.mjs";
 
 // Claude on the host: query() from @anthropic-ai/claude-agent-sdk over the person's own `claude`.
@@ -9,7 +10,7 @@ const EXTRA_ENV_PREFIXES = ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_"];
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "killed", "stopped", "cancelled"]);
 
 function errorKind(status, text = "") {
-  if (status === 401 || status === 403 || /not logged in|authentication/i.test(text)) return "auth";
+  if (status === 401 || status === 403 || /not logged in|authenticat|oauth|\/login/i.test(text)) return "auth";
   if (status === 429) return "rate_limit";
   if (status === 529 || status === 503) return "network";
   if (/No conversation found/i.test(text)) return "session_lost";
@@ -20,7 +21,7 @@ export function claudeFamily({ loadSdk }) {
   return {
     name: "claude",
     sdk: { name: "@anthropic-ai/claude-agent-sdk", version: process.env.ORBYN_CLAUDE_SDK_VERSION ?? "unknown" },
-    capabilities: ["steer", "fork"],
+    capabilities: ["steer", "fork", "models", "usage", "stopTask", "background"],
     create(ctx) {
       const sessions = new Map();
       const pendingPermissions = new Map(); // requestId -> {resolve, sessionId}
@@ -78,9 +79,9 @@ export function claudeFamily({ loadSdk }) {
             pendingPermissions.delete(requestId);
             resolve(v);
           };
-          pendingPermissions.set(requestId, { resolve: settle, sessionId: session.id, input });
+          pendingPermissions.set(requestId, { resolve: settle, sessionId: session.id, input, tool: toolName });
           opts.signal?.addEventListener("abort", () => settle({ behavior: "deny", message: "The run was cancelled." }), { once: true });
-          ctx.send({ type: "permission", sendId: session.run?.sendId, requestId, tool: toolName, input });
+          ctx.send({ type: toolName === "AskUserQuestion" ? "question" : "permission", sendId: session.run?.sendId, requestId, tool: toolName, input });
         });
 
       const onMessage = (session, msg) => {
@@ -103,10 +104,24 @@ export function claudeFamily({ loadSdk }) {
             run?.held.delete(msg.task_id);
             ctx.send({ type: "background", sessionId: session.id, event: { type: "ended", id: msg.task_id, status } });
           }
+        } else if (msg.type === "command_lifecycle" && run && msg.command_uuid === run.uuid) {
+          run.lifecycle = true;
+          if (msg.state === "started") run.started = true;
         } else if (msg.type === "result") {
           session.resultWaiter?.();
           if (!run) return;
-          if (run.held.size > 0) return; // rule 1: background work the engine started holds the run
+          // rule 2: with lifecycle frames, a result before our prompt's command started belongs to a
+          // leftover turn the engine began for its own notifications; it never ends this run.
+          if (run.lifecycle && !run.started) {
+            ctx.log({ type: "leftoverResult", sendId: run.sendId });
+            return;
+          }
+          // rule 1: background work the engine started holds the first result; the follow-up turn ends the run.
+          if (run.held.size > 0 && !run.holdUsed) {
+            run.holdUsed = true;
+            ctx.log({ type: "holdingResult", sendId: run.sendId, tasks: run.held.size });
+            return;
+          }
           if (msg.subtype === "success" && !msg.is_error) {
             finish(session, { ok: true, result: { reason: "completed", threadDisposition: "reusable", usage: msg.usage, costUsd: msg.total_cost_usd } });
           } else {
@@ -159,8 +174,8 @@ export function claudeFamily({ loadSdk }) {
               if (!session) throw Object.assign(new Error("unknown session"), { name: "UnknownSession" });
               if (session.run) throw Object.assign(new Error("a run is already open on this session"), { name: "RunInProgress" });
               await ensureQuery(session);
-              session.run = { sendId: request.id, turnId: `turn-${request.id}`, held: new Set(), done: false };
-              session.inbox.push({ type: "user", message: { role: "user", content: request.message }, parent_tool_use_id: null });
+              session.run = { sendId: request.id, turnId: `turn-${request.id}`, uuid: randomUUID(), held: new Set(), done: false };
+              session.inbox.push({ type: "user", message: { role: "user", content: request.message }, parent_tool_use_id: null, uuid: session.run.uuid });
               return { runId: `run-${request.id}`, engineSessionId: session.engineSessionId ?? undefined, turnId: session.run.turnId };
             }
             case "steer": {
@@ -193,8 +208,51 @@ export function claudeFamily({ loadSdk }) {
               pendingPermissions.delete(request.requestId);
               const d = request.decision ?? {};
               // Once-only allow: no updatedPermissions, so the SDK never learns a session-wide rule.
+              if (p.tool === "AskUserQuestion" && d.answers && typeof d.answers === "object") {
+                p.resolve({ behavior: "allow", updatedInput: { ...p.input, answers: d.answers } });
+                return null;
+              }
+              if (p.tool === "AskUserQuestion" && d.behavior === "allow") {
+                p.resolve({ behavior: "deny", message: "The person did not answer." }); // a question is only answered with answers
+                return null;
+              }
               p.resolve(d.behavior === "allow" ? { behavior: "allow", updatedInput: p.input } : { behavior: "deny", message: d.message ?? "Denied." });
               return null;
+            }
+            case "stopTask": {
+              const session = sessions.get(request.sessionId);
+              if (!session?.query) return { stopped: false };
+              await session.query.stopTask(request.taskId);
+              return { stopped: true };
+            }
+            case "background": {
+              const session = [...sessions.values()].find((s) => s.run?.sendId === request.sendId);
+              if (!session?.query) return { backgrounded: false };
+              return { backgrounded: await session.query.backgroundTasks(request.toolCallId) };
+            }
+            case "usage": {
+              const session = sessions.get(request.sessionId);
+              if (!session?.query) throw Object.assign(new Error("no live query for this session"), { name: "NoLiveQuery" });
+              return await session.query.getContextUsage({ detail: "summary" });
+            }
+            case "models": {
+              // A throwaway query with no prompt: it starts the engine, answers, and is closed.
+              const { query } = await sdk();
+              const inbox = new AsyncQueue();
+              const probe = query({
+                prompt: inbox,
+                options: {
+                  cwd: request.cwd ?? process.cwd(),
+                  ...(request.claudePath ? { pathToClaudeCodeExecutable: request.claudePath } : {}),
+                  spawnClaudeCodeProcess: spawnProcess({ confinement: request.confinement }),
+                },
+              });
+              try {
+                return await probe.supportedModels();
+              } finally {
+                inbox.close();
+                probe.close?.();
+              }
             }
             case "closeSession": {
               const session = sessions.get(request.sessionId);
