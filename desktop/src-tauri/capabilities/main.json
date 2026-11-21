@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The static startup document can retry its service, show its log and quit; the bundled product document can ask the person to approve one held command (crew_presence) and read this launch's person key (person_key). Each command also checks its own origin at run time, so neither document can call the other's commands.",
+  "description": "The static startup document can retry its service, show its log and quit; the bundled product document can ask the person to approve one held command (crew_presence) and read this launch's person key (person_key) and open the native folder dialog (pick_folder). Each command also checks its own origin at run time, so neither document can call the other's commands.",
   "windows": [
     "main"
   ],
@@ -11,6 +11,7 @@
     "allow-show-core-log",
     "allow-quit-core",
     "allow-crew-presence",
-    "allow-person-key"
+    "allow-person-key",
+    "allow-pick-folder"
   ]
 }
