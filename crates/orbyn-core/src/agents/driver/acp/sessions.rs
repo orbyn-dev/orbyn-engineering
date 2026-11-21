@@ -13,10 +13,10 @@ use tokio::process::{ChildStdin, ChildStdout};
 use tokio::time::Instant;
 
 use super::UpdateMapper;
-use crate::agents::driver::pipes::{resolve_engine, spawn_engine_with};
+use crate::agents::driver::pipes::spawn_engine_with;
 use crate::agents::driver::{EngineEvent, NativeSessionReplay, ProbeDir};
 use crate::error::{CoreError, Result};
-use crate::host::process::ManagedChild;
+use crate::host::process::{ManagedChild, ResolvedCommand};
 
 pub(super) const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const MAX_MESSAGES: usize = 4096;
@@ -176,10 +176,14 @@ struct Connection {
 }
 
 impl Connection {
-    fn start(engine: &CustomEngine, env: &[(&str, &str)], dir: &Path) -> Result<Self> {
-        let command = resolve_engine(&engine.target)?;
+    fn start(
+        command: &ResolvedCommand,
+        engine: &CustomEngine,
+        env: &[(&str, &str)],
+        dir: &Path,
+    ) -> Result<Self> {
         let args: Vec<OsString> = engine.args.iter().map(OsString::from).collect();
-        let process = spawn_engine_with(&command, &args, dir, env)?;
+        let process = spawn_engine_with(command, &args, dir, env)?;
         Ok(Self {
             child: process.child,
             stdin: process.stdin,
@@ -324,6 +328,7 @@ impl Connection {
 }
 
 pub(super) async fn perform(
+    command: ResolvedCommand,
     engine: &CustomEngine,
     env: &[(&str, &str)],
     op: Operation<'_>,
@@ -354,7 +359,7 @@ pub(super) async fn perform(
         Operation::Capabilities => {}
     }
     let dir = ProbeDir::new()?;
-    let mut connection = Connection::start(engine, env, dir.path())?;
+    let mut connection = Connection::start(&command, engine, env, dir.path())?;
     let result = async {
         let (init, _) = connection.call("initialize", initialize_params(), None, None).await?;
         check_version(&init)?;

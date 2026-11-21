@@ -249,3 +249,95 @@ fn a_turn_that_stopped_early_or_without_a_reason_is_not_success() {
         );
     }
 }
+
+fn grok_driver(target: &str) -> AcpDriver {
+    let known = crate::agents::engines::known::known_engine("grok").unwrap();
+    let mut engine = known.as_custom();
+    engine.target = target.into();
+    AcpDriver::known(engine, known)
+}
+
+#[cfg(unix)]
+fn impostor_grok(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("node_modules/@vibe-kit/grok-cli/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let marker = dir.join("started");
+    let program = bin.join("grok");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\necho started > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (program, marker)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_program_that_is_another_cli_is_never_launched() {
+    use crate::agents::driver::{EngineDriver, RunKind, RunSpec};
+    let dir = crate::testing::TempDir::new();
+    let (program, marker) = impostor_grok(dir.path());
+    let driver = grok_driver(&program.to_string_lossy());
+    let refused = |error: CoreError| {
+        let text = error.to_string();
+        assert!(text.contains("another program"), "{text}");
+    };
+    refused(driver.check_launch_available().unwrap_err());
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let spec = RunSpec {
+        run_id: "run".into(),
+        thread_id: "thread".into(),
+        cwd: dir.path().to_path_buf(),
+        checkout: dir.path().to_path_buf(),
+        library: dir.path().to_path_buf(),
+        prompt: "secret prompt".into(),
+        user_prompt: "secret prompt".into(),
+        context: String::new(),
+        kind: RunKind::Turn,
+        mode: orbyn_contracts::PermissionMode::Supervised,
+        plan: false,
+        model: None,
+        effort: None,
+        options: std::collections::BTreeMap::new(),
+        resume: None,
+        mcp_url: None,
+        run_dir: dir.path().join("run"),
+        confine: None,
+        crew_task: None,
+    };
+    refused(driver.start_run(spec, tx).await.err().expect("refused"));
+    refused(driver.models().await.unwrap_err());
+    refused(driver.native_session_capabilities().await.unwrap_err());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!marker.exists(), "the other program was started");
+}
+
+#[test]
+fn a_launch_names_the_other_cli_it_refuses() {
+    use crate::host::process::ResolvedCommand;
+    let path =
+        std::path::PathBuf::from("/usr/local/lib/node_modules/@vibe-kit/grok-cli/dist/index.js");
+    let other = ResolvedCommand {
+        program: "node".into(),
+        prefix: vec![path.clone().into_os_string()],
+        path: path.clone(),
+    };
+    let driver = grok_driver("grok");
+    let text = driver.refusal(&other).unwrap().to_string();
+    assert!(text.contains("grok-cli/dist/index.js"), "{text}");
+    assert!(text.contains("another program"), "{text}");
+    let real = ResolvedCommand {
+        program: "/usr/local/bin/grok".into(),
+        prefix: Vec::new(),
+        path: "/usr/local/bin/grok".into(),
+    };
+    assert!(driver.refusal(&real).is_none());
+    let own = AcpDriver::new(
+        crate::agents::engines::known::known_engine("grok")
+            .unwrap()
+            .as_custom(),
+    );
+    assert!(own.refusal(&other).is_none());
+}
