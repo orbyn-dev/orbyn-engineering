@@ -199,6 +199,16 @@ They apply only to hosts the text reader extracts: bare single-label, numeric sh
 arguments of connecting programs are not consistently extracted. The synthetic N3 controls use
 explicit URL authorities; this admission change does not qualify those other command forms.
 
+The repository validation view reports invalid entries without their submitted values, using
+zero-based array indices. These notes do not block engines or change admission: a wrong JSON
+type still denies the whole configured list, while an invalid string is dropped individually.
+A one-label wildcard base (including `*.com` and `*.internal`) warns but still grants its base
+and all descendants. There is no public-suffix check; `*.co.uk` is not distinguished from other
+multi-label bases. The producer caps host notes at 16 plus an omission summary. Settings displays
+generic Rule notes with a separate 16-note cap and summary, and Check again reads the selected
+project's committed validation view. The actual three-engine replay and detector qualification
+remain outstanding under #457; synthetic parser and UI checks do not supply that evidence.
+
 It reads the kind, target and paths the gate is given, and for a command the simple commands inside it. It cannot see
 what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It follows a `cd` (so `cd .. && rm x` is outside), `git -C`, `git worktree add`, `find -delete`, `tar -C` and `unzip -d`, and counts a
 patch (`patch`, `git apply`), an interpreter reading a file, its input or a pipe, and `python -m` of a module that is not a well-known one

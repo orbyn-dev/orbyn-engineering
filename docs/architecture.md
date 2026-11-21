@@ -2820,6 +2820,15 @@ entry still includes its apex. Loopback and explicitly listed local/private/inte
 remain supported. This checks syntax only, without DNS resolution or proof of destination ownership;
 the detector's heuristic and sandbox limits remain in the Autopilot group README.
 
+The committed repository validation view reports malformed `allowed_hosts` entries as indexed,
+nonblocking notes without echoing their values. Wrong JSON types still grant no configured hosts;
+invalid strings in an all-string list still leave valid entries usable. A one-label wildcard base
+gets a warning but remains admitted for the base and all descendants. This is not public-suffix
+checking: multi-label public suffixes are not distinguished. Host diagnostics are capped at 16
+plus an omission summary. The generic Rule notes UI independently displays at most 16 notes plus
+its own summary, separately from working-copy and default-branch warnings. Check again only
+re-fetches the selected project's validation view; no file write or permission change occurs.
+
 With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
 are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
 data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
