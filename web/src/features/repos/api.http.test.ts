@@ -193,3 +193,30 @@ it("lets a refused thread repositories read through with the service's code", as
   stub(json({ code: "repo_untrusted", message: "Trust this repository before using it." }, 409));
   await expect(reposApi().threadRepos("t1")).rejects.toMatchObject({ code: "repo_untrusted", status: 409 });
 });
+
+it("sends the generated StartThreadInput and AddThreadRepo bodies, and reads the generated TaskFolder", async () => {
+  const folder = { root: "/data/threads/t1", branch: "orbyn/t1", repos: [{ repo_id: "a", name: "a", branch: "orbyn/t1", added: 0, deleted: 0, trusted: true, files: [] }], max_per_thread: 8 };
+  const fetching = stub(json({ id: "t1" }), json({ repo_id: "b", name: "b", branch: "orbyn/t1", added: 0, deleted: 0, trusted: true }), json(folder));
+  const api = reposApi();
+  await api.startThread("p1", { repos: [{ repo_id: "a", base_branch: "main" }, { repo_id: "b", base_branch: "dev" }], engine: "claude", model: null, permission_mode: "supervised", message: "go", branch_name: "feat/x" });
+  await api.addThreadRepo("t1", "b");
+  expect((await api.taskFolder("t1"))?.max_per_thread).toBe(8);
+  expect(call(fetching, 0)).toMatchObject({ method: "POST", path: "/api/projects/p1/repo-threads", key: expect.any(String), body: { repos: [{ repo_id: "a", base_branch: "main" }, { repo_id: "b", base_branch: "dev" }], engine: "claude", model: null, permission_mode: "supervised", message: "go", branch_name: "feat/x" } });
+  expect(call(fetching, 1)).toMatchObject({ method: "POST", path: "/api/threads/t1/repos", body: { repo_id: "b" }, key: expect.any(String) });
+  expect(call(fetching, 2)).toMatchObject({ method: "GET", path: "/api/threads/t1/task-folder", key: null });
+});
+
+it("passes the thread start and add refusals through with the service's code, status and message", async () => {
+  const refusals: [string, number, string][] = [
+    ["repo_limit", 409, "A thread works in at most 8 repositories."],
+    ["repo_untrusted", 409, "Trust b before starting a thread in it."],
+    ["not_git", 409, "b is not a Git repository."],
+    ["invalid", 400, "b already has a branch named feat/x."],
+    ["permission_mode_unsupported", 400, "no"],
+  ];
+  stub(...refusals.map(([code, status, message]) => json({ code, message }, status)), ...refusals.map(([code, status, message]) => json({ code, message }, status)));
+  for (const [code, status, message] of refusals) {
+    await expect(reposApi().startThread("p1", { repos: [], engine: "claude", model: null, permission_mode: "supervised" })).rejects.toMatchObject({ code, status, message });
+  }
+  for (const [code, status] of refusals.slice(0, 4)) await expect(reposApi().addThreadRepo("t1", "b")).rejects.toMatchObject({ code, status });
+});

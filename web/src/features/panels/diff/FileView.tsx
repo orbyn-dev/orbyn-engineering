@@ -79,9 +79,10 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   const markdown = previewKind(file.path) === "markdown" && canRender && file.status !== "deleted" && !binary;
   const rendered = markdown && renderedPref;
   const conflict = file.status === "conflicted";
-  // The editor and file tabs open a path of the thread's primary checkout and have no repository; opening another repository's file there would show the wrong file.
+  // A file of another repository opens as a tab of that repository (its path is already relative to it); the person's outside editor and
+  // the checkout path resolution know only the primary checkout.
   const open = async (as: "editor" | "tab") => {
-    if (repoId !== undefined) { useUi.getState().pushToast("Opening a file of another repository isn't available yet."); return; }
+    if (repoId !== undefined) { useUi.getState().openFileTab({ kind: "thread", path: file.path, repoId }); return; }
     await openChanged(threadId, cwd, file.path, as);
   };
   // A deleted or conflicted file has no lines to write back to.

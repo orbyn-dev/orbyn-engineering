@@ -5,6 +5,7 @@ import { createReposMock } from "../../../../mock/repos";
 import { api, ApiFailure } from "../../../api/client";
 import { pullsApi } from "../../../api/pulls";
 import type { FileDiff } from "../../../api/types";
+import { fileTabId, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { chooseRepo, setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
 import * as panelsApi from "../api";
@@ -144,4 +145,81 @@ it("says so when the repository is not in the project's list, and writes nothing
   await user.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Trust repository…" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: /^Trust/, hidden: true })).toBeNull());
   expect(mock.writes).toEqual([]);
+});
+
+// #1055: a file of another repository opens as a tab of that repository instead of a notice.
+it.each([["Open in editor"], ["Actions for auth/redirect.ts"]])("%s on a file of another repository opens its tab, with its repo_id, and no notice", async (label) => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  setup([FILE], "planner");
+  const resolve = vi.spyOn(api, "resolveThreadPath");
+  useUi.setState({ panelTab: "diff", panelTabOrder: ["diff"], toasts: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  await screen.findByRole("button", { name: "Repository: app" }).catch(() => undefined);
+  await waitFor(() => expect(screen.getAllByText("orbyn-planner").length).toBeGreaterThan(0));
+  if (label === "Open in editor") await user.click(await screen.findByRole("button", { name: "Open in editor" }));
+  else { await user.click(await screen.findByRole("button", { name: label })); await user.click(await screen.findByRole("menuitem", { name: "Open in editor" })); }
+  const id = fileTabId({ kind: "thread", path: "auth/redirect.ts", repoId: "planner" });
+  await waitFor(() => expect(useUi.getState().panelTab).toBe(id));
+  expect(useUi.getState().panelTabOrder).toContain(id);
+  expect(JSON.stringify(useUi.getState())).not.toContain("isn't available yet");
+  // The path is the repository's own: nothing is resolved against the primary checkout.
+  expect(resolve).not.toHaveBeenCalled();
+});
+
+// #1055: the turn picker's totals are the sum over the thread's trusted repositories.
+const patchOf = (additions: number, deletions: number, path: string): FileDiff => ({ path, status: "modified", additions, deletions, patch: "" });
+
+it("sums a turn's totals over the trusted repositories, names the one it did not count, and asks each repository with its own repo_id", async () => {
+  const user = userEvent.setup();
+  const all: ThreadRepo[] = [...repos, { repo_id: "docs", name: "docs", branch: "main", added: 0, deleted: 0, trusted: false, files: null }];
+  setReposApi(createReposMock({ threads: { t: all } }));
+  const { diff } = setup();
+  vi.spyOn(api, "checkpoints").mockResolvedValue([{ run_id: "r1", start: "s1", end: "e1", created_at: "2026-11-12T14:12:00" }]);
+  diff.mockImplementation(async (_t, _s, scope, repoId) => {
+    if (typeof scope === "string" && scope.startsWith("turn")) return repoId === "planner" ? [patchOf(2, 1, "b.ts"), patchOf(0, 2, "c.ts")] : [patchOf(1, 0, "a.ts")];
+    return [];
+  });
+  render(<DiffPanel threadId="t" />);
+  await screen.findByRole("button", { name: "Scope: Working tree" });
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
+  const picker = await screen.findByRole("menu", { name: "Turn" });
+  await waitFor(() => expect(within(picker).getByRole("menuitem")).toHaveTextContent("14:12 · +3 −3 · 3 files · 1 repo not counted"));
+  const turnReads = diff.mock.calls.filter((call) => call[2] === "turn&run=r1");
+  expect(new Set(turnReads.map((call) => call[3]))).toEqual(new Set([undefined, "planner"]));
+  expect(turnReads.every((call) => call[3] !== "docs")).toBe(true);
+});
+
+it("a repository whose turn read fails is not counted as zero changes", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { diff } = setup();
+  vi.spyOn(api, "checkpoints").mockResolvedValue([{ run_id: "r1", start: "s1", end: "e1", created_at: "2026-11-12T14:12:00" }]);
+  diff.mockImplementation(async (_t, _s, scope, repoId) => {
+    if (typeof scope === "string" && scope.startsWith("turn")) { if (repoId === "planner") throw new ApiFailure("not_found", "No checkpoint.", 404); return [patchOf(1, 0, "a.ts")]; }
+    return [];
+  });
+  render(<DiffPanel threadId="t" />);
+  await screen.findByRole("button", { name: "Scope: Working tree" });
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
+  const picker = await screen.findByRole("menu", { name: "Turn" });
+  await waitFor(() => expect(within(picker).getByRole("menuitem")).toHaveTextContent("14:12 · +1 −0 · 1 file · 1 repo not counted"));
+});
+
+it("an ordinary thread's turn totals read once, with the three arguments they always had", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: {} }));
+  const { diff } = setup();
+  vi.spyOn(api, "checkpoints").mockResolvedValue([{ run_id: "r1", start: "s1", end: "e1", created_at: "2026-11-12T14:12:00" }]);
+  diff.mockImplementation(async (_t, _s, scope) => (typeof scope === "string" && scope.startsWith("turn") ? [patchOf(1, 0, "a.ts")] : []));
+  render(<DiffPanel threadId="t" />);
+  await screen.findByRole("button", { name: "Scope: Working tree" });
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
+  const picker = await screen.findByRole("menu", { name: "Turn" });
+  await waitFor(() => expect(within(picker).getByRole("menuitem")).toHaveTextContent("14:12 · +1 −0 · 1 file"));
+  expect(within(picker).getByRole("menuitem")).not.toHaveTextContent("not counted");
+  expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "turn&run=r1");
 });

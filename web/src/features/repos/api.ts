@@ -4,7 +4,7 @@ import { ApiFailure, request } from "../../api/client";
 import type { Thread } from "../../api/types";
 import type { GitAction } from "../../generated/GitAction";
 import type { GitActionResult } from "../../generated/GitActionResult";
-import type { PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
+import type { AddThreadRepo, PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
 import { cleanScan, cleanTaskFolder } from "./scanModel";
 
 const q = encodeURIComponent;
@@ -79,7 +79,10 @@ const http: ReposApi = {
       throw error;
     }
   },
-  addThreadRepo: (threadId, repoId) => request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, { repo_id: repoId }),
+  addThreadRepo: (threadId, repoId) => {
+    const body: AddThreadRepo = { repo_id: repoId };
+    return request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, body);
+  },
   async threadGit(threadId, repoId, action) {
     // `repo_id` is a body field of `GitAction`; absent is the primary repository.
     const repo = repoId === null ? {} : { repo_id: repoId };
@@ -131,14 +134,16 @@ export function useRepos(projectId: string): { view: ReposView | null; settled: 
 }
 
 /** The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the service reports none. */
-export function useThreadRepos(threadId: string, refreshKey = 0): { repos: ThreadRepo[] | null; reload(): void } {
+export function useThreadRepos(threadId: string, refreshKey = 0, enabled = true): { repos: ThreadRepo[] | null; reload(): void } {
   const version = useApiVersion();
   const [repos, setRepos] = useState<ThreadRepo[] | null>(null);
   const read = useCallback(() => {
+    // Off: nothing is asked (a panel that needs the names only while a repository's file is open).
+    if (!enabled) return () => undefined;
     const abort = new AbortController();
     reposApi().threadRepos(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setRepos(next); }, () => { if (!abort.signal.aborted) setRepos(null); });
     return () => abort.abort();
-  }, [threadId, version, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId, version, refreshKey, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => read(), [read]);
   return { repos, reload: read };
 }

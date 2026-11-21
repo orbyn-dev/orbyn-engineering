@@ -237,9 +237,7 @@ The web client for the project repository routes (`web/src/features/repos/`) use
 - **Answers and codes.** `remove` is `204` with no body. A `404` on the list is "not offered": nothing is drawn, no error is shown and
   no other call is made. Error codes pass through as `{ code, message }`: `repo_exists`, `repo_limit`, `repo_untrusted` (409),
   `clone_refused`, `invalid` (400), `not_found` (404), `unsupported` (422).
-- Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `TaskFolder` (`repo-threads`, `task-folder` and
-  `POST /api/threads/{id}/repos` are not built; they stay hidden or Planned). `ThreadRepo` and the `repo_id` request fields (`GitAction`,
-  `CreateBranch`, `SwitchBranch`, `WriteFile`) are the generated types. The mock (`web/mock/repos.ts`, hidden behind the preview flag)
+- `StartThreadInput`, `TaskFolder`, `ThreadRepo` and the `repo_id` request fields are the generated types; the mock (`web/mock/repos.ts`, hidden behind the preview flag)
   follows the generated shapes and the service's answers above.
 
 Thread repositories and `repo_id` on Git and file calls, real against the first guess (`ThreadRepo`, `repo_id`; closes #1046):
@@ -273,12 +271,60 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
 - **Trust from a refused write.** `409 repo_untrusted` on a hunk revert, undo or line edit adds a "Trust repository…" button to the
   notice, which opens the same trust dialog the repository's Git menu opens (one click, one write, busy guard). Trusting clears the
   notice and re-reads; the refused write is not repeated, the person tries again. It is offered for a multi-repository thread only.
+- **Editor and file tabs of another repository's file.** A file tab can name a repository: its id is `["t", path, repo_id]` where a
+  primary-repository or ordinary-thread tab is still `["t", path]` (byte for byte what older sessions saved; those restore as before).
+  "Open" and "Open in editor" on a changed file of another repository open that tab, with the repo-relative path, instead of a notice.
+  The read is `GET .../files/content?path=&repo_id=`, the write sends `repo_id` in the body with the revision of that repository's own
+  read, and the editor session is keyed by repository and path, so the same path in two repositories is two files that never share
+  text. The title line names the repository and the tab's tooltip reads `README.md (name)`. `409 file_conflict` keeps its Changed on
+  disk banner (Keep mine, Reload); `409 repo_untrusted` on a read or a write shows the service's message and the existing trust
+  dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
+  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message", no outside editor and
+  no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because those routes
+  (`.../files/raw`, zip, office, download, `previews/file`, `open-in-editor`) take no `repo_id`.
+- **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
+  totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
+  An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
+  counting them as zero changes; if no repository could be read the row has no figures. `ThreadRepo.added`, `deleted` and `files` are
+  against `HEAD`, not per turn, so they are not used. An ordinary thread reads once, as before. Whether the service keeps a turn's
+  checkpoint in a repository other than the primary is not known; a refusal there shows as "not counted".
+- **The 200-file cap.** A repository's `ThreadRepo.files` is cut at 200 by the service. A repository group whose list holds 200
+  says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
-  chosen), the editor and file tabs, "Open in editor" and the Create pull request base check of the Changes footer act on the primary
-  repository; opening a file of another repository from the Changes panel shows a notice instead of opening the primary's file at the
-  same path. `ThreadRepo.files` is capped at 200 by the service; the list at that cap is unchecked.
+  chosen) and the Create pull request base check of the Changes footer act on the primary repository.
 - **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
   `orbynd` with `ORBYN_MULTI_REPO=1`.
+
+### As built: web UI (repo threads)
+
+The new-thread dialog, the Repos popover and the client now use the generated `StartThreadInput`, `StartRepoChoice`, `AddThreadRepo`,
+`TaskFolder` and `ThreadRepo`; this replaces "Still hand-written in `contract.ts`" above. Read against `routes/repos.rs` and
+`orbyn-core/src/repos/threads.rs`. Real against the first guess:
+
+- **Paths, methods, bodies and answers matched** (`POST .../repo-threads` answers the `Thread`; `POST /api/threads/{id}/repos` `{ repo_id }`
+  answers `ThreadRepo`; `GET .../task-folder`). `StartThreadInput.message` and `branch_name` are `string | null` and sent only when set.
+- **One repository is `400`, not a normal start.** The dialog allowed "Start in 1 repository". The service refuses fewer than two
+  (`400 invalid`), so Start is off below two ticked repositories, with a note that one repository uses the normal New thread. Past the
+  limit (checked first) is `409 repo_limit`; the dialog also stops ticking at `max_per_thread` from the list.
+- **A taken branch name is `400 invalid`** ("<repo> already has a branch named <name>."), not `409`. A base branch that is not a local
+  branch is `400 invalid` too, and a repository still cloning is `400`, not `repo_untrusted`.
+- **Messages are the service's own and are shown as written**, with the dialog kept open: `repo_limit`, `not_git`, `invalid`,
+  `not_found` and `permission_mode_unsupported` (this one with a short lead-in). `409 repo_untrusted` also reads the repository list again
+  and offers "Trust <name>…" (the existing trust dialog, one click one write) for each chosen repository that list now shows as not trusted.
+  Trusting does not start the thread; the person presses Start again. The client check (two to eight, a branch name by
+  `git check-ref-format`) only keeps the button honest; the service decides.
+- **Task folder.** The Repos popover shows `root` as text with a copy button, the one branch, and "N of `max_per_thread` repositories",
+  read again after an add. `404` (ordinary thread, flag off) draws nothing. A start opens the new thread (`navigate`).
+- **Add a repository** uses the popover's existing "Add a repository to this thread…" menu, which lists trusted, finished, Git repositories
+  of the project that are not in the thread; the service's refusal (`repo_limit`, `repo_untrusted`, `not_git`, `400` already in the thread,
+  a taken branch name, no branch checked out) shows as a notice and the list stays as it was. One click, one write, busy guard.
+- **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
+  explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
+  repository's tree. The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
+  stay on disk (the service does not remove them yet). The optional first `message` is not asked for in the dialog (the thread opens and
+  the person types). A repository's pull request summary and `repo_id` on pull request routes and `FileDiff` are still not built.
+- **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
+  client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
 
 ## As built: repo_id on Git and file calls
 

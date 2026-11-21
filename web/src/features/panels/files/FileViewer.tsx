@@ -14,6 +14,7 @@ import { mediaKind, rawUrl } from "../../../product/media/media";
 import { FilePreview, previewKind } from "./FilePreview";
 import { ZipViewer, isZipPath } from "./ZipViewer";
 import { openInEditor } from "./openInEditor";
+import { TrustOffer } from "../../repos";
 import { useWorkspace } from "../../../product/state/workspace";
 import { FileComments } from "./FileComments";
 import { formatBytes } from "../../../lib/format";
@@ -94,16 +95,18 @@ function FileBody({
 }
 
 /** A file of the thread's checkout, by what it holds. Exported so the bar's own controls can be tested from one file. */
-export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
+export function Viewer({ threadId, tabId, path, line, repoId, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** Another repository of a multi-repository thread: `path` is relative to it, and every read and write carries its `repo_id`. Absent is the thread's own checkout, as always. */ repoId?: string; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
-  const media = mediaKind(path);
+  // The raw, archive, document and download routes take no repository: another repository's file is read as text through the content route only.
+  const foreign = repoId !== undefined;
+  const media = foreign ? null : mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
   // reaches the hex view even though the service calls the file binary.
-  const zip = isZipPath(path);
+  const zip = !foreign && isZipPath(path);
   // A Word document is read the same way: its own bytes, through the worker.
-  const office = officeKind(path);
-  const read = useAsync(`file:${JSON.stringify([threadId, cwd, media ? "" : path])}`, async (signal) => {
-    const content = media ? null : await readThreadFile(threadId, path, signal);
+  const office = foreign ? null : officeKind(path);
+  const read = useAsync(`file:${JSON.stringify(foreign ? [threadId, cwd, path, repoId] : [threadId, cwd, media ? "" : path])}`, async (signal) => {
+    const content = media ? null : foreign ? await readThreadFile(threadId, path, signal, repoId) : await readThreadFile(threadId, path, signal);
     if ((useWorkspace.getState().threads[threadId]?.cwd ?? "") !== cwd) throw new DOMException("Checkout changed", "AbortError");
     return { cwd, path, content };
   });
@@ -134,8 +137,10 @@ export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = f
   };
   const open = () => openInEditor(threadId, path, line);
   // A plain text file is drawn as the editor (Engineer Designs v106), which has no bar of its own: what it offers is in the header and the tab menu.
-  const editing = !media && !zip && !office && !previewKind(path) && !!file.data && !file.data.binary && !file.data.truncated;
-  const plain = !media && !zip && !office && !previewKind(path);
+  // Another repository's file has no rendered preview (that would read the primary's), so every text file of it is the editor.
+  const editing = !media && !zip && !office && (foreign || !previewKind(path)) && !!file.data && !file.data.binary && !file.data.truncated;
+  const plain = !media && !zip && !office && (foreign || !previewKind(path));
+  const rawOnly = foreign && (mediaKind(path) !== null || isZipPath(path) || officeKind(path) !== null || !!file.data?.binary || !!file.data?.truncated);
   const locked = plain && !!file.data && file.data.binary;
   // Everything but an error, an unfinished read or a file too big to read in full wears the editor's own frame.
   const bare = plain && file.status !== "error" && !file.data?.truncated;
@@ -154,7 +159,7 @@ export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = f
   };
   return (
     <div className="files-viewer" data-thread-id={threadId} data-editor={bare || undefined}>
-      {bare ? null : (
+      {bare || foreign ? null : (
       <div className="panel-bar">
         {onBack ? (
           <Button small tone="quiet" onClick={onBack}>
@@ -196,13 +201,17 @@ export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = f
         </IconButton>
       </div>
       )}
-      {media ? (
+      {foreign && rawOnly ? (
+        <Empty title="This kind of file can't be shown for another repository yet." />
+      ) : media ? (
         <FileMedia kind={media} threadId={threadId} path={path} />
       ) : file.status === "loading" ? (
         plain ? <EditorLoading path={path} /> : <Loading label="Loading file" rows={6} />
+      ) : foreign && file.status === "error" && file.error.status === 409 && file.error.code === "repo_untrusted" ? (
+        <div className="ed-banner" data-tone="error" role="alert"><div><TrustOffer threadId={threadId} repoId={repoId} message={file.error.message} onDone={file.reload} /></div></div>
       ) : file.status === "error" && file.error.status === 404 ? (
         // A moved thread reads its files from the new checkout, which may not have this one.
-        <Empty title="This file isn't in this checkout." />
+        <Empty title={foreign ? "This file isn't in this repository." : "This file isn't in this checkout."} />
       ) : file.status === "error" ? (
         <ErrorState compact title="Couldn't read this file" failure={file.error} onRetry={file.reload} />
       ) : !file.data ? null : zip ? (
@@ -216,7 +225,7 @@ export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = f
       ) : file.data.truncated ? (
         <FileBytes threadId={threadId} path={path} size={file.data.size} as="text" />
       ) : editing ? (
-        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} cwd={cwd} locked={worktreeLocked} onReload={file.reload} />
+        <FileEditor threadId={threadId} tabId={tabId} path={path} file={file.data} line={line} cwd={cwd} {...(repoId === undefined ? {} : { repoId })} locked={worktreeLocked} onReload={file.reload} />
       ) : (
         <FileBody threadId={threadId} cwd={cwd} path={path} file={file.data} line={line} onSaved={file.reload} />
       )}
