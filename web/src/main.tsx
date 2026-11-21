@@ -27,6 +27,7 @@ import "./styles/detailsCard.css";
 import "./styles/tools.css";
 import "./styles/panelTabs.css";
 import "./styles/panelStrip.css";
+import "./styles/review.css";
 import "./styles/explorer.css";
 import "./styles/editor.css";
 import "./styles/pages.css";

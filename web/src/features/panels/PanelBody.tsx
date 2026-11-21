@@ -1,0 +1,20 @@
+import type { ReactNode } from "react";
+import type { Thread } from "../../api/types";
+import { isFileTab, type RightTab } from "../../product/state/ui";
+import { ToolsTab } from "../tools";
+import { ActivityPanel } from "./activity/ActivityPanel";
+import { BrowserPanel } from "./browser/BrowserPanel";
+import { DiffPanel } from "./diff/DiffPanel";
+import { FileTab } from "./files/FileTab";
+import { ReviewPanel } from "./review/ReviewPanel";
+
+/** What the open tab shows. The side chat is the host's own and arrives as `sideChat`. */
+export function PanelBody({ tab, thread, sideChat }: { tab: RightTab; thread: Thread; sideChat: ReactNode }) {
+  if (tab === "browser") return <BrowserPanel threadId={thread.id} />;
+  if (tab === "diff") return <DiffPanel threadId={thread.id} />;
+  if (isFileTab(tab)) return <FileTab key={tab} id={tab} threadId={thread.id} />;
+  if (tab === "activity") return <ActivityPanel key={thread.id} threadId={thread.id} />;
+  if (tab === "tools") return <ToolsTab key={thread.id} threadId={thread.id} engine={thread.engine} />;
+  if (tab === "review") return <ReviewPanel key={thread.id} threadId={thread.id} />;
+  return sideChat;
+}
