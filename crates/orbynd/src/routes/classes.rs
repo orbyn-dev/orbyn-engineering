@@ -116,6 +116,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/engines/{id}/update"),
     ("POST", "/api/shell/actions"),
     ("POST", "/api/updates/app/apply"),
+    ("POST", "/api/updates/app/download"),
     ("POST", "/api/updates/apply-all"),
     ("POST", "/api/workspace/rollback"),
     ("POST", "/api/workspace/setup"),
@@ -808,6 +809,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/updates/app/apply",
         "replaces the installed app",
+    ),
+    (
+        "POST",
+        "/api/updates/app/download",
+        "consents to an app download and reserves run admission",
     ),
     (
         "POST",

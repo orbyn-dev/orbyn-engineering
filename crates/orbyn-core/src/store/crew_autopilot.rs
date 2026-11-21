@@ -200,9 +200,7 @@ impl Store {
                 let body: Value = serde_json::from_str(&body)?;
                 return if body["engine"] == engine && body["attempt"] == attempt { Ok(()) } else { Err(CoreError::RunClosed) };
             }
-            let worker: i64 = tx.query_row("SELECT COUNT(*) FROM runs WHERE thread_id = ?1", [run.worker_thread_id.as_deref()], |row| row.get(0))?;
-            let approvals: i64 = tx.query_row("SELECT COUNT(*) FROM crew_autopilot_events WHERE task_id=?1 AND kind='approval_started'", [task_id], |row| row.get(0))?;
-            if worker.max(i64::from(run.attempts)).saturating_add(approvals) >= i64::from(brief.budget.turns) {
+            if super::crew_runs::turns_spent(tx, &run)? >= u64::from(brief.budget.turns) {
                 return Err(CoreError::EngineUnavailable("The task has no turn left for an approval.".into()));
             }
             let body = serde_json::json!({ "approval": approval, "engine": engine, "attempt": attempt, "turns": 1 });

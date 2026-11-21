@@ -7,8 +7,7 @@ import { useCommand } from "../../product/shell/shortcuts";
 import { useWaited } from "../../lib/motion";
 import { readJson, writeJson } from "../../lib/storage";
 import { under } from "../../lib/dataRefresh";
-import { toFailure, useAsync } from "../../lib/useAsync";
-import { useUi } from "../../product/state/ui";
+import { useAsync } from "../../lib/useAsync";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
@@ -42,7 +41,6 @@ export function UsagePage() {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const engines = useWorkspace((state) => state.engines.data);
-  const pushToast = useUi((state) => state.pushToast);
   const nameOf = (id: string) => engines?.find((engine) => engine.id === id)?.name ?? id;
 
   const usage = useUsageReport(days);
@@ -60,9 +58,9 @@ export function UsagePage() {
   }, [loadingFirst, skeletonShown]);
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
-  const limits = useAsync(`limits:${metric === "limits"}`, (signal) =>
-    metric === "limits" ? api.limits(false, signal) : Promise.resolve(null),
-  { keep: true, refreshOn: metric === "limits" ? under("limits") : undefined },
+  const limits = useAsync(`limits:${metric === "limits"}`, (signal, context) =>
+    metric === "limits" ? api.limits(context.force, signal) : Promise.resolve(null),
+  { fresh: true, refreshOn: metric === "limits" ? under("limits") : undefined },
 );
 
   // An engine that never answers must not leave the tab loading for good.
@@ -97,10 +95,7 @@ export function UsagePage() {
     }
     setRefreshing(true);
     try {
-      await api.limits(true);
-      void limits.reload();
-    } catch (failure) {
-      pushToast(`Couldn't refresh. ${toFailure(failure).message}`);
+      await limits.reloadNow();
     } finally {
       setRefreshing(false);
     }

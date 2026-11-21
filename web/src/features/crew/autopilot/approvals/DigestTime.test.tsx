@@ -71,6 +71,44 @@ describe("Settings › Crew › Daily digest", () => {
     expect(writes()).toHaveLength(0);
   });
 
+  it("turns the default on: saves 17:00 with the page offset when no offset is stored", async () => {
+    mock.reset("crew-digest-unsaved");
+    render(<DigestTime />);
+    await screen.findByText(/Nothing is sent until you save a time/);
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    const utcOffsetMinutes = -new Date().getTimezoneOffset() || 0;
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes(SAVE))[0]![1]?.body))).toEqual({
+      time: "17:00",
+      utc_offset_minutes: utcOffsetMinutes,
+    });
+    await waitFor(() => expect(screen.queryByText(/Nothing is sent until you save a time/)).toBeNull());
+  });
+
+  it("re-saves the same time when the stored offset differs from the page's, and not when it matches", async () => {
+    // The stored offset is 660 (UTC+11). A page now at UTC+10 (daylight saving ended) must be able to re-save 17:00.
+    const spy = vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-600);
+    try {
+      mock.reset("crew");
+      render(<DigestTime />);
+      await waitFor(() => expect(field()).toHaveValue("17:00"));
+      fireEvent.blur(field());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(writes()).toHaveLength(0);
+      fireEvent.change(field(), { target: { value: "09:00" } });
+      fireEvent.change(field(), { target: { value: "17:00" } });
+      fireEvent.blur(field());
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(JSON.parse(String(writes()[0]![1]?.body))).toEqual({ time: "17:00", utc_offset_minutes: 600 });
+      // Stored is now 600 and matches the page: saving the same time again is a no-op.
+      fireEvent.keyDown(field(), { key: "Enter" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(writes()).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("is drawn on the Crew settings page, after Autopilot", async () => {
     mock.reset("crew");
     render(<CrewSettingsSection />);

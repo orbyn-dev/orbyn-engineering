@@ -96,6 +96,10 @@ pub struct PullDetails {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub comment_count: Option<u32>,
+    /// Approved latest opinionated reviews, only when the host's connection is complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub approval_count: Option<u32>,
     /// The signed-in viewer's latest review: `approved`, `changes_requested`,
     /// `commented`, `dismissed`, `pending` or `none`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -198,6 +202,22 @@ pub struct PullFile {
     pub patch: Option<String>,
     /// Marked viewed in Orbyn. Marks are kept by this service, per project.
     pub viewed: bool,
+}
+}
+
+wire! {
+/// Counts by change kind over one pull request's changed files. A kind the forge
+/// names that is none of the four below counts only in `files`.
+pub struct PullChangeBreakdown {
+    pub files: u64,
+    pub added: u64,
+    pub modified: u64,
+    pub deleted: u64,
+    pub renamed: u64,
+    /// Lines added over every file.
+    pub additions: u64,
+    /// Lines deleted over every file.
+    pub deletions: u64,
 }
 }
 
@@ -551,4 +571,58 @@ wire! {
 pub struct RepositoryStarStatus {
     pub starred: bool,
 }
+}
+
+wire! {
+/// The person's starred GitHub repositories, read through their own `gh` CLI. One
+/// bounded page is read; `unavailable` says why none was, and an empty list there is
+/// never reported as "you starred nothing".
+pub struct StarredRepositories {
+    /// As the forge lists them, at most one page of 100.
+    pub repositories: Vec<StarredRepository>,
+    /// The forge holds more than the one page read.
+    pub truncated: bool,
+    /// Why no list could be read, in the person's words; `None` when one was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unavailable: Option<String>,
+}
+}
+
+wire! {
+/// One repository from the person's starred list. The app stores none of it.
+pub struct StarredRepository {
+    /// The owner's login, from `full_name`.
+    pub owner: String,
+    /// The repository's name, from `full_name`.
+    pub name: String,
+    /// `owner/name` as the forge spells it.
+    pub full_name: String,
+    pub url: String,
+    pub description: Option<String>,
+    pub private: bool,
+    pub archived: bool,
+    pub default_branch: Option<String>,
+    pub language: Option<String>,
+    /// Stars the forge reports.
+    pub stars: u32,
+}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PullDetails;
+    use serde_json::json;
+
+    #[test]
+    fn approval_count_is_additive_and_distinguishes_unknown_from_zero() {
+        let old = json!({"project_id":"p", "number":7});
+        let unknown: PullDetails = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(unknown).unwrap(), old);
+        for count in [0, 2] {
+            let known = json!({"project_id":"p", "number":7, "approval_count":count});
+            let details: PullDetails = serde_json::from_value(known.clone()).unwrap();
+            assert_eq!(serde_json::to_value(details).unwrap(), known);
+        }
+    }
 }

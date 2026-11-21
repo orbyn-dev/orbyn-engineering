@@ -218,3 +218,105 @@ setTimeout(() => process.exit(73), 30000).unref();
     );
     service.stop().await;
 }
+
+#[tokio::test]
+async fn a_command_output_subscription_pushes_live_output_and_ends_with_the_command() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let thread_info = service.json(&format!("/api/threads/{thread}")).await;
+    let cwd = PathBuf::from(thread_info["cwd"].as_str().unwrap());
+    let _release = ReleaseOutput(cwd.clone());
+    std::fs::write(
+        cwd.join("streamed.cjs"),
+        r#"
+const fs = require('node:fs');
+process.stdout.write('subscriber-ready\n');
+const gate = setInterval(() => {
+  if (fs.existsSync('release-output')) {
+    clearInterval(gate);
+    process.stdout.write('subscriber-live-marker\n');
+    process.stdout.write('command-finished\n', () => process.exit(0));
+  }
+}, 10);
+setTimeout(() => process.exit(72), 30000).unref();
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("orbyn.json"),
+        json!({"scripts":[{"name":"Streamed output", "command":"node streamed.cjs"}]}).to_string(),
+    )
+    .unwrap();
+    let (code, terminal) = service
+        .send(
+            &format!("/api/threads/{thread}/scripts"),
+            json!({"name":"Streamed output"}),
+        )
+        .await;
+    assert_eq!(code, 201, "{terminal}");
+    let id = terminal["id"].as_str().unwrap();
+    let mut reader = service
+        .sse(&format!(
+            "/api/threads/{thread}/terminals/{id}/output/events"
+        ))
+        .await;
+
+    // Read until the command's first line, so the subscription is attached while the
+    // command is still waiting.
+    let mut received = String::new();
+    let mut attached = false;
+    while let Some(frame) = reader.next().await {
+        let kind = frame["type"].as_str().unwrap_or_default();
+        assert!(
+            matches!(kind, "snapshot" | "chunk"),
+            "unexpected frame before the end: {frame}"
+        );
+        received.push_str(frame["text"].as_str().unwrap_or_default());
+        if received.contains("subscriber-ready") {
+            attached = true;
+            break;
+        }
+    }
+    assert!(attached, "the subscription saw no output: {received:?}");
+    assert!(
+        !received.contains("subscriber-live-marker"),
+        "the command did not wait for the subscription: {received:?}"
+    );
+
+    // From here, the command's output must arrive as pushes on the open stream, and
+    // the stream must close itself when the command's output ends.
+    std::fs::write(cwd.join("release-output"), "release").unwrap();
+    let mut sent = String::new();
+    let mut pushed = false;
+    let mut ended = None;
+    while let Some(frame) = reader.next().await {
+        match frame["type"].as_str() {
+            Some("chunk") => {
+                pushed = true;
+                sent.push_str(frame["text"].as_str().unwrap_or_default());
+            }
+            Some("snapshot") => sent.push_str(frame["text"].as_str().unwrap_or_default()),
+            Some("ended") => {
+                ended = Some(frame);
+                break;
+            }
+            other => panic!("unexpected frame {other:?}: {frame}"),
+        }
+    }
+    assert!(
+        pushed,
+        "no live chunk arrived after the subscription attached"
+    );
+    assert!(sent.contains("subscriber-live-marker"), "{sent:?}");
+    assert!(sent.contains("command-finished"), "{sent:?}");
+    let ended = ended.expect("the subscription must report the command's end");
+    assert!(
+        ended["exit_code"].is_null() || ended["exit_code"] == 0,
+        "{ended}"
+    );
+    assert!(
+        reader.next().await.is_none(),
+        "the service must close the stream after the ended frame"
+    );
+    service.stop().await;
+}

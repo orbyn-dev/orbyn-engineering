@@ -411,6 +411,25 @@ fn the_compiled_set_is_kept_per_settings_revision() {
 }
 
 #[test]
+fn the_terminal_set_is_one_cache_entry_however_many_projects_are_read() {
+    let dir = TempDir::new();
+    let core = core(&dir);
+    let one = project(&core, "one");
+    let two = project(&core, "two");
+    let every_project = core.redactor(Surface::Terminal, None).unwrap();
+    let first = core.redactor(Surface::Terminal, Some(&one)).unwrap();
+    let second = core.redactor(Surface::Terminal, Some(&two)).unwrap();
+    assert!(
+        std::sync::Arc::ptr_eq(&every_project, &first),
+        "the terminal set ignores the project"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "each project built its own terminal set"
+    );
+}
+
+#[test]
 fn the_list_never_carries_pattern_text_and_the_edit_dialog_reads_one() {
     let dir = TempDir::new();
     let core = core(&dir);

@@ -18,7 +18,7 @@ use crate::agents::driver::ItemRecord;
 use crate::app::Core;
 use crate::governance::approvals::ActionAsk;
 use crate::store::CrewTask;
-use crate::util::{sha256_hex, unix_now};
+use crate::util::{binding_hmac, unix_now};
 
 /// How long the watch waits for the engine to report the command finished, in seconds.
 pub const EXIT_WATCH_SECS: i64 = 10 * 60;
@@ -230,9 +230,13 @@ impl Core {
             "row": watch.row,
             "decided_by": "autopilot",
             "exit_code": code.map_or_else(|| json!("unknown"), |c| json!(c)),
-            "bound": format!("sha256:{}", sha256_hex(watch.command.as_bytes())),
             "action": { "kind": "command", "target": ledger::shown(&watch.command, &needles), "paths": [] },
         });
+        // The same keyed binding a hold's rows carry, never a plain digest: a reader of the ledger cannot test a guess at the
+        // command (which is redacted here) against its hash.
+        if let Some(bound) = binding_hmac(&watch.command) {
+            body["bound"] = json!(format!("hmac-sha256:{bound}"));
+        }
         if let Some(guard) = &watch.guard {
             body["guard"] = guard.clone();
         }

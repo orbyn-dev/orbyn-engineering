@@ -48,21 +48,24 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
 2. **Injection trip wire:** a request whose summary, target or (outside a file change) detail reads as injected
    instructions stops the task, `injection_suspected`. The ledger keeps the class, never the text.
 3. **Always denied:** N1 to N10, before any approver, rule, mode or person's saved allow. The lead is never asked.
-4. **Tier:** reads and writes inside the leased paths and the brief's own check commands need nobody. Network, installing
+4. **Lease:** every path a file change names must lie in the lease the brief granted this worker; a refusal is the lease's
+   own (H10) and refuses the write, never the task. It is recorded as a denial (`decided_by: lease`) and counts toward the
+   trip wires (rule 7), so a worker cannot retry out-of-lease writes without limit.
+5. **Tier:** reads and writes inside the leased paths and the brief's own check commands need nobody. Network, installing
    dependencies, running a script or code the worker wrote, and CI files need two keys. The rest is the lead's.
-5. **Chain:** the lead answers a [`Summary`](chain.rs) (kind, target, paths, the brief's outcome, the tier and why), never
+6. **Chain:** the lead answers a [`Summary`](chain.rs) (kind, target, paths, the brief's outcome, the tier and why), never
    raw page or tool text, and must give a reason (an approval without one is a denial). Two keys: a second approver on
    another vendor (`family`) must also say yes. A disagreement is denied and logged as its own row. A person's deny rule
    still wins over an approval, and an allow rule or no rule lets an approval through.
-5b. **Held for a person:** a denied command is held ([`held`](held.rs)). The person may approve that exact command once (bound to its
+6b. **Held for a person:** a denied command is held ([`held`](held.rs)). The person may approve that exact command once (bound to its
    text, arguments, paths, thread and task; one retry; 10 minutes), deny it or dismiss it, from the app's window only. The retry is checked
    against the always-denied list first and then lets the one approval through, with a ledger row (`decided_by: person`). Approving needs
    the person's click in the desktop app's own dialog (`presence`). Nothing on the always-denied list is ever held.
-5c. **Blast-radius guard** ([`blast`](blast.rs), [`targets`](targets.rs), [`exit`](exit.rs)): a destructive command (file deletion, database, cloud, containers, git) against a
+6c. **Blast-radius guard** ([`blast`](blast.rs), [`targets`](targets.rs), [`exit`](exit.rs)): a destructive command (file deletion, database, cloud, containers, git) against a
    production-linked target is tier `guard`, above the check commands and leases and below N3 and N8. Under On or Off it is denied and held for the person; under Full the lead and a
    second key on another vendor must both say yes. The person's one-time approval covers it. The lists of `prod` and `safe` targets are a table on this device, never a repository
    file; loosening them needs the desktop presence grant (the dialog is not built yet). A `command_exit` row records the exit status, or `unknown`. See docs/crew.md, "As built (slice 4i, guard)".
-6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
+7. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
 

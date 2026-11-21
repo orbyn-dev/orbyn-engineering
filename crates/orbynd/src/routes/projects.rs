@@ -30,6 +30,7 @@ pub fn routes() -> Router<AppState> {
             patch(rename_project).delete(remove_project),
         )
         .route("/api/projects/{id}/trust", post(trust_project))
+        .route("/api/projects/{id}/git/init", post(init_project_git))
         .route("/api/fs/browse", get(browse))
         .route("/api/projects/{id}/publish", post(publish_project))
         .route("/api/projects/{id}/icon", get(project_icon))
@@ -219,6 +220,16 @@ async fn trust_project(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.store.trust_project(&id, LOCAL_USER)?))
+}
+
+/// Starts Git in a registered project folder that was added without it. The handler
+/// returns the project row, as trust does; the core refuses the cases it cannot do
+/// safely.
+async fn init_project_git(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.init_project_git(&id).await?))
 }
 
 #[derive(Deserialize)]

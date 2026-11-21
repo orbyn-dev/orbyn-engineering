@@ -407,8 +407,9 @@ async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
     // Routes whose handler takes no body and acts on the machine or the network (updates, the skills workspace, every
     // engine's update) are not called with the key here: an empty request could do real work. The layer's behavior for them is
     // covered with a stub handler in `routes/classes.rs` (`the_layer_guards_every_enforced_route`).
-    const SKIPPED: [&str; 6] = [
+    const SKIPPED: [&str; 7] = [
         "/api/updates/app/apply",
+        "/api/updates/app/download",
         "/api/updates/apply-all",
         "/api/engines/update-all",
         "/api/workspace/update",

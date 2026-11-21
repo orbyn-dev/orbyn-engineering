@@ -11,6 +11,9 @@ import { crewApi } from "./api";
 
 const DEFAULT_TIME = "17:00";
 
+/** Minutes east of UTC at this page right now; `|| 0` keeps UTC from becoming `-0`. */
+const pageOffset = () => -new Date().getTimezoneOffset() || 0;
+
 function Row() {
   const read = useAsync("crew-digest-schedule", (signal) => crewApi.digestSchedule(signal));
   const [saved, setSaved] = useState<AutopilotDigestSchedule | null>(null);
@@ -21,13 +24,17 @@ function Row() {
   const stored = saved ?? read.data ?? null;
   const shown = stored?.time ?? DEFAULT_TIME;
   const draftTime = draft ?? shown;
-  const save = (next: string) => {
-    if (!next || next === shown || inflight.current) return;
+  // The same time is still worth saving when the stored offset is missing (the 17:00 default has never been turned
+  // on) or differs from the page's now (a daylight-saving change). An untouched field on blur writes nothing.
+  const offsetStale = stored !== null && stored.utc_offset_minutes !== pageOffset();
+  const save = (next: string, deliberate = false) => {
+    if (!next || inflight.current) return;
+    if (next === shown && !(offsetStale && (draft !== null || deliberate))) return;
     inflight.current = true;
     setBusy(true);
     setFailed(null);
     // The stored answer is the only thing shown after a save: a write that fails leaves the old time and says why.
-    crewApi.setDigestSchedule({ time: next, utc_offset_minutes: -new Date().getTimezoneOffset() }).then(
+    crewApi.setDigestSchedule({ time: next, utc_offset_minutes: pageOffset() }).then(
       (view) => {
         setSaved(view);
         setDraft(null);
@@ -60,7 +67,7 @@ function Row() {
         onChange={(event) => setDraft(event.target.value)}
         onBlur={() => save(draftTime)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") save(draftTime);
+          if (event.key === "Enter") save(draftTime, true);
         }}
       />
       {failed ? (

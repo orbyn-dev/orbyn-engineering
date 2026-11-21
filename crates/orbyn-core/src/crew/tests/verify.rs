@@ -11,6 +11,15 @@ fn check(value: serde_json::Value) -> orbyn_contracts::CrewCheck {
     serde_json::from_value(value).unwrap()
 }
 
+/// A check's site in a fixture checkout, with a deadline far enough away for a test.
+fn site_of<'a>(root: &'a std::path::Path, base: Option<&'a str>) -> Site<'a> {
+    Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base,
+    }
+}
+
 fn integrity_repo() -> crate::testing::TempDir {
     let dir = crate::testing::TempDir::new();
     crate::testing::run_git(dir.path(), &["init", "-q"]);
@@ -387,4 +396,191 @@ async fn no_check_runs_past_the_tasks_time_budget() {
     let ran = run_check(&run, &site).await;
     assert_eq!(ran.outcome, CheckOutcome::Error);
     assert!(ran.reason.unwrap().contains("time budget"));
+}
+
+/// Issue #437: a `schema` check validates the instance file against the schema file, both read
+/// from the checkout. A mismatch is a finding, never an error; an unreadable or invalid schema
+/// and a missing file are errors, and a schema is one file: it never reads another path.
+#[tokio::test]
+async fn schema_checks_validate_the_instance_against_the_schema_in_the_checkout() {
+    let dir = crate::testing::TempDir::new();
+    let root = dir.path();
+    std::fs::write(
+        root.join("schema.json"),
+        br#"{"type":"object","additionalProperties":false,"required":["name"],
+             "properties":{"name":{"type":"string"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("ok.json"), br#"{"name":"orbyn"}"#).unwrap();
+    std::fs::write(root.join("bad.json"), br#"{"name":7}"#).unwrap();
+    std::fs::write(root.join("not-json.json"), b"name: orbyn\n").unwrap();
+    std::fs::write(root.join("other.json"), br#"{"type":"object"}"#).unwrap();
+    std::fs::write(root.join("ref.json"), br#"{"$ref":"other.json"}"#).unwrap();
+    std::fs::write(root.join("broken.json"), b"{").unwrap();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    let schema = |instance: &str| {
+        check(json!({ "id": "chk-schema", "kind": "schema",
+            "proves": "The instance matches its schema.",
+            "params": { "schema": "schema.json", "instance": instance } }))
+    };
+    let pass = run_check(&schema("ok.json"), &site).await;
+    assert_eq!(pass.outcome, CheckOutcome::Pass);
+    assert_eq!(pass.command, "schema: chk-schema");
+    let fail = run_check(&schema("bad.json"), &site).await;
+    assert_eq!(fail.outcome, CheckOutcome::Fail);
+    assert!(
+        fail.names.iter().any(|name| name == "/name"),
+        "the failing instance location is not named"
+    );
+    // The value that broke the schema never reaches the reason a worker reads.
+    let reason = fail.reason.unwrap();
+    assert!(reason.contains("/name"), "the reason does not name /name");
+    assert!(
+        !reason.contains('7'),
+        "the reason repeats the value that broke the schema"
+    );
+    assert_eq!(
+        run_check(&schema("not-json.json"), &site).await.outcome,
+        CheckOutcome::Fail
+    );
+    // A missing file, a schema that is not JSON, and a schema that reaches for another file are
+    // errors: the check cannot run, so it never passes.
+    assert_eq!(
+        run_check(&schema("absent.json"), &site).await.outcome,
+        CheckOutcome::Error
+    );
+    let broken = check(json!({ "id": "chk-schema", "kind": "schema",
+        "proves": "The instance matches its schema.",
+        "params": { "schema": "broken.json", "instance": "ok.json" } }));
+    assert_eq!(run_check(&broken, &site).await.outcome, CheckOutcome::Error);
+    let external = check(json!({ "id": "chk-schema", "kind": "schema",
+        "proves": "The instance matches its schema.",
+        "params": { "schema": "ref.json", "instance": "ok.json" } }));
+    assert_eq!(
+        run_check(&external, &site).await.outcome,
+        CheckOutcome::Error
+    );
+}
+
+/// Issue #437: `secret_scan` reads the changed paths, never the whole repository, and reports the
+/// path, line and class, never the secret itself. A file too large to read in full is an error,
+/// never a pass over the part that was read.
+#[tokio::test]
+async fn secret_scans_fail_a_changed_file_holding_a_recognised_secret() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    let site = Site {
+        worktree: root,
+        deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
+        base: None,
+    };
+    let scan = check(json!({ "id": "chk-secrets", "kind": "secret_scan",
+        "proves": "The change holds no recognised secret.", "params": {} }));
+    std::fs::write(root.join("clean.txt"), "nothing to hide\n").unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Pass);
+    let token = format!("ghp_{}", "x".repeat(36));
+    std::fs::write(root.join("leak.txt"), format!("token = {token}\n")).unwrap();
+    let leak = run_check(&scan, &site).await;
+    assert_eq!(leak.outcome, CheckOutcome::Fail);
+    assert_eq!(leak.names, ["leak.txt"]);
+    let reason = leak.reason.unwrap();
+    // The test-log messages below stay constant on purpose. CodeQL's rust/cleartext-logging
+    // treats a call to `secret_scan` as a sensitive source (by its name) and then flags a test
+    // message that formats the check's own output into the test log, although that output holds
+    // only the path, line and class. The assertions are the guarantee; no suppression is used.
+    assert!(
+        reason.contains("leak.txt"),
+        "the reason does not name the file"
+    );
+    assert!(
+        reason.contains("line 1"),
+        "the reason does not name the line"
+    );
+    assert!(!reason.contains(&token), "the secret reached the reason");
+    assert!(!leak.log.contains(&token), "the secret reached the log");
+    // A changed file that is gone (deleted in the change) is not read and does not fail.
+    std::fs::remove_file(root.join("leak.txt")).unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Pass);
+    std::fs::remove_file(root.join("base.txt")).unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Pass);
+    // A file too large to read in full is an error, never a pass over the part that was read.
+    let big = std::fs::File::create(root.join("big.bin")).unwrap();
+    big.set_len(9 * 1024 * 1024).unwrap();
+    assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Error);
+}
+
+/// `repo_required` with no recorded starting commit is an error, never a read of the checkout's own HEAD.
+#[tokio::test]
+async fn repo_required_without_a_starting_commit_is_an_error() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    let repo = check(json!({ "id": "chk-repo", "kind": "repo_required",
+        "proves": "The repository's own checks pass.", "params": {} }));
+    assert_eq!(
+        run_check(&repo, &site_of(root, None)).await.outcome,
+        CheckOutcome::Error
+    );
+}
+
+/// Issue #437: `repo_required` runs the repository's own checks from `.orbyn/crew.json`, read at
+/// the commit the task started from, so a worker's edit to that file cannot lower the bar.
+#[tokio::test]
+async fn repo_required_runs_the_repositorys_own_checks_at_the_starting_commit() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".orbyn")).unwrap();
+    let write_rules = |text: &str| std::fs::write(root.join(".orbyn/crew.json"), text).unwrap();
+    write_rules(r#"{"checks":[{"run":"exit 0"}]}"#);
+    super::review_support::commit_all(root, "rules pass");
+    let passing = crate::crew::classes::base_commit(root).await.unwrap();
+    let repo = check(json!({ "id": "chk-repo", "kind": "repo_required",
+        "proves": "The repository's own checks pass.", "params": {} }));
+    let pass = run_check(&repo, &site_of(root, Some(&passing))).await;
+    assert_eq!(pass.outcome, CheckOutcome::Pass);
+    assert_eq!(pass.command, "repo_required: chk-repo");
+    assert!(
+        pass.log.contains("exit 0"),
+        "the log does not show the repository check"
+    );
+    // The same file in the checkout says otherwise: the check keeps to the starting commit.
+    write_rules(r#"{"checks":[{"run":"exit 1"}]}"#);
+    assert_eq!(
+        run_check(&repo, &site_of(root, Some(&passing)))
+            .await
+            .outcome,
+        CheckOutcome::Pass
+    );
+    // Rules that really fail fail the check, and name the check that failed.
+    super::review_support::commit_all(root, "rules fail");
+    let failing = crate::crew::classes::base_commit(root).await.unwrap();
+    let fail = run_check(&repo, &site_of(root, Some(&failing))).await;
+    assert_eq!(fail.outcome, CheckOutcome::Fail);
+    assert!(
+        fail.names.iter().any(|n| n.contains("exit 1")),
+        "the failure does not name the repository check"
+    );
+    // Rules that cannot be parsed are an error, never a pass.
+    write_rules("{");
+    super::review_support::commit_all(root, "rules broken");
+    let broken = crate::crew::classes::base_commit(root).await.unwrap();
+    assert_eq!(
+        run_check(&repo, &site_of(root, Some(&broken)))
+            .await
+            .outcome,
+        CheckOutcome::Error
+    );
+    // No file is no repository checks: the check runs and says so.
+    std::fs::remove_file(root.join(".orbyn/crew.json")).unwrap();
+    super::review_support::commit_all(root, "rules removed");
+    let absent = crate::crew::classes::base_commit(root).await.unwrap();
+    let none = run_check(&repo, &site_of(root, Some(&absent))).await;
+    assert_eq!(none.outcome, CheckOutcome::Pass);
+    assert!(
+        none.log.contains("no checks"),
+        "the log does not say the repository declares no checks"
+    );
 }
