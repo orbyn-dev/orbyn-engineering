@@ -302,6 +302,32 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   linked to a thread by number, and two repositories can share a number, so they need their own change; they act on the primary
   repository until then. Adding a repository to a thread (`POST /api/threads/{id}/repos`), `repo-threads`, the task folder.
 
+## As built: repository threads and the task folder
+
+Behind the same flag; no new migration (`thread_repos` is from the slice above). Built: `POST /api/projects/{id}/repo-threads`,
+`GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads.
+
+- **Start.** `StartThreadInput { repos, engine, model, permission_mode, message?, branch_name? }`, answered with the `Thread`. Two to eight
+  repositories (`409 repo_limit` past 8; fewer than two is `400`, one repository uses the normal start); each `base_branch` must be a
+  local branch of that repository (`400`); a repository chosen twice is `400`. Every chosen repository, the project's own folder
+  included, must be trusted, finished cloning and a Git repository: `409 repo_untrusted`, `400`, `409 not_git`. All of that is
+  checked before anything is created. `permission_mode` must be one the engine offers (`400 permission_mode_unsupported`).
+- **Branch.** One name for every repository: `branch_name` (a valid branch name, at most 200 characters), else `orbyn/<first 8 characters
+  of the thread id>`. A repository that already has the name refuses the start (`400`), so nothing is overwritten.
+- **Folder.** `<data>/threads/<thread id>/`, one worktree per repository at `<folder>/<name>` made with
+  `git worktree add -b <branch> -- <path> refs/heads/<base>`. The folder is not a repository. The thread's `cwd` is the folder, so the
+  engine's working directory and write scope contain every worktree and approvals name the absolute worktree path as always. If any
+  worktree, the thread or its rows cannot be made, the worktrees and branches made so far, the folder and the thread are removed. The
+  primary repository (the project's own folder, when chosen) is position 0; `permission_mode` is applied after creation and the optional
+  `message` is queued as the first turn.
+- **Reads.** `GET .../task-folder` answers `TaskFolder { root, branch, repos: ThreadRepo[], max_per_thread }`, `404` for an ordinary
+  thread. `GET .../files` and `.../files/metadata` take `repo_id` too, so the tree of one repository can be shown.
+- **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
+  in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
+  the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
+- **Not built.** Deleting a multi-repository thread does not remove its worktrees or branches yet (the folder stays under app data); removing
+  a repository from a thread; pull request routes with `repo_id`; per-repository settings.
+
 ## Not in the beta
 
 Per-repository settings, a thread that spans repositories of more than one project, committing across

@@ -64,6 +64,9 @@ pub enum CoreError {
     PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
+    /// A permission mode the engine does not offer.
+    #[error("{0}")]
+    PermissionModeUnsupported(String),
     /// A folder that is already a repository of a project.
     #[error("{0}")]
     RepoExists(String),
@@ -223,6 +226,7 @@ impl CoreError {
             Self::ProjectHasWork { .. } => "project_has_work",
             Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
+            Self::PermissionModeUnsupported(_) => "permission_mode_unsupported",
             Self::RepoExists(_) => "repo_exists",
             Self::RepoUntrusted(_) => "repo_untrusted",
             Self::RepoLimit(_) => "repo_limit",
@@ -271,7 +275,7 @@ impl CoreError {
         match self {
             Self::NotFound(_) => 404,
             Self::Updating => 503,
-            Self::Invalid(_) | Self::CloneRefused(_) => 400,
+            Self::Invalid(_) | Self::CloneRefused(_) | Self::PermissionModeUnsupported(_) => 400,
             Self::FileTooLarge { .. } => 413,
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
@@ -386,6 +390,7 @@ impl CoreError {
             },
             Self::PullHeadChanged => Self::PullHeadChanged,
             Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::PermissionModeUnsupported(s) => Self::PermissionModeUnsupported(s.clone()),
             Self::RepoExists(s) => Self::RepoExists(s.clone()),
             Self::RepoUntrusted(s) => Self::RepoUntrusted(s.clone()),
             Self::RepoLimit(s) => Self::RepoLimit(s.clone()),
