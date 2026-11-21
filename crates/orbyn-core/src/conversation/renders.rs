@@ -1,6 +1,8 @@
 //! Published pages. An agent writes HTML for a thread, Orbyn stores the page under
-//! that thread's own app-data folder and copies the checkout pictures it names, so a
-//! page that runs with no origin of its own can still show them. The page is never
+//! that thread's own app-data folder and inlines the checkout pictures it names as
+//! `data:` URIs, so a page that runs with no origin of its own can still show them
+//! (a relative URL would resolve without the render id and frame token, and an
+//! opaque-origin page cannot send the cookie the image route needs). The page is never
 //! read from the checkout at serve time, and one folder per render is the whole
 //! record: there is no database row, so the folder is removed with its thread (see
 //! `remove_renders`) and nothing accumulates across restarts by itself.
@@ -13,6 +15,8 @@
 //! asks that question and nothing else.
 
 use std::io::Read;
+
+use base64::Engine as _;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,9 +26,12 @@ use crate::util::{new_id, random_token, secrets_match, sha256_hex};
 
 /// A page may be this large; past it the publish is refused instead of stored.
 pub const MAX_RENDER_HTML_BYTES: u64 = 512 * 1024;
-/// One copied checkout image may be this large; a bigger one is left as written.
+/// One inlined checkout image may be this large; a bigger one is left as written
+/// and reported. The finished page, `data:` URIs included, must also fit
+/// `MAX_RENDER_HTML_BYTES`, so in practice about 384 KiB of images fit.
 pub const MAX_RENDER_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
-/// At most this many `<img>` srcs are copied; the rest are left as written.
+/// At most this many `<img>` srcs are inlined; the rest are left as written and
+/// reported.
 pub const MAX_RENDER_IMAGES: usize = 32;
 /// Renders kept per thread. The oldest folder goes when a newer one is published.
 pub const MAX_RENDERS_PER_THREAD: usize = 20;
@@ -134,33 +141,30 @@ pub fn image_srcs(html: &str) -> Vec<ImageSrc> {
 }
 
 /// Rewrites every found src that `keep` accepts. `keep` is asked once per src in
-/// document order and returns the relative name to write, or `None` to leave that
-/// src exactly as the author wrote it; it is not asked again once `limit` srcs have
-/// been rewritten. Returns the new document and how many srcs changed.
-pub fn embed_images(
-    html: &str,
-    limit: usize,
-    keep: &mut dyn FnMut(&str) -> Option<String>,
-) -> (String, usize) {
+/// document order and returns the text to write in its place, or `None` to leave that
+/// src exactly as the author wrote it. Returns the new document and how many srcs
+/// changed.
+pub fn embed_images(html: &str, keep: &mut dyn FnMut(&str) -> Option<String>) -> (String, usize) {
     let mut changes = Vec::new();
     for image in image_srcs(html) {
-        if changes.len() >= limit {
-            break;
-        }
-        let Some(name) = keep(&image.src) else {
+        let Some(replacement) = keep(&image.src) else {
             continue;
         };
-        // Never write a src the image route would refuse to serve back.
-        if !is_image_name(&name) {
-            continue;
-        }
-        changes.push((image.start, image.end, name));
+        changes.push((image.start, image.end, replacement));
     }
     let mut page = html.to_owned();
-    for (start, end, name) in changes.iter().rev() {
-        page.replace_range(*start..*end, name);
+    for (start, end, replacement) in changes.iter().rev() {
+        page.replace_range(*start..*end, replacement);
     }
     (page, changes.len())
+}
+
+/// `data:<type>;base64,<bytes>` for one image.
+fn data_uri(content_type: &str, bytes: &[u8]) -> String {
+    format!(
+        "data:{content_type};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
 }
 
 /// The checkout-relative path a src names, or `None` when the src is not a checkout
@@ -356,6 +360,9 @@ pub struct PublishedRender {
     pub frame_token: String,
     pub images: usize,
     pub bytes: usize,
+    /// Plain-language reasons a picture the page named was left as written. Empty
+    /// when every checkout picture was inlined.
+    pub notes: Vec<String>,
 }
 
 /// Where every thread's renders are kept.
@@ -396,6 +403,7 @@ pub fn publish_app_page(
         frame_token,
         images: 0,
         bytes: html.len(),
+        notes: Vec::new(),
     })
 }
 
@@ -410,9 +418,10 @@ impl Core {
         renders_root(&self.config.data_dir)
     }
 
-    /// Stores an agent's page under this thread's renders and copies the checkout
-    /// images it names. A page over the limit is refused whole; anything wrong with
-    /// one image is refused per image, leaving that src as written.
+    /// Stores an agent's page under this thread's renders and inlines the checkout
+    /// images it names as `data:` URIs. A page over the limit is refused whole;
+    /// anything wrong with one image is refused per image, leaving that src as
+    /// written, and a picture that would not fit the limits is reported in `notes`.
     pub fn publish_render(&self, thread_id: &str, html: &str) -> Result<PublishedRender> {
         let (_, scope) = self.file_scope(thread_id)?;
         if html_too_large(html.len()) {
@@ -435,27 +444,52 @@ impl Core {
         // is never written, and it is gone from this process once the caller has it.
         let frame_token = random_token()?;
         std::fs::write(dir.join(FRAME_FILE), sha256_hex(frame_token.as_bytes()))?;
-        let mut copied = 0usize;
-        let (page, images) = embed_images(html, MAX_RENDER_IMAGES, &mut |src| {
+        let mut notes = Vec::new();
+        // How far the page has grown from the author's text, so the finished page is
+        // what the page limit is checked against.
+        let mut size = html.len();
+        let mut inlined = 0usize;
+        let (page, images) = embed_images(html, &mut |src| {
             // `open_raw_file` is the same read every file route uses: it needs the
             // thread's trusted scope, resolves the path and refuses `..`, a link
             // out, `.git` and a non-file. A refusal here leaves the src alone.
             let path = checkout_relative(src, &scope.checkout)?;
             let raw = self.open_raw_file(thread_id, &path, false).ok()?;
-            if !raw.inline || image_too_large(raw.size) {
+            if !raw.inline {
                 return None;
             }
             let extension = Path::new(&path)
                 .extension()
-                .map(|it| it.to_string_lossy().to_ascii_lowercase())
-                .filter(|it| image_type(it).is_some())?;
+                .map(|it| it.to_string_lossy().to_ascii_lowercase())?;
+            let content_type = image_type(&extension)?;
+            if inlined >= MAX_RENDER_IMAGES {
+                notes.push(format!(
+                    "{path} was left as written: a page inlines at most {MAX_RENDER_IMAGES} pictures."
+                ));
+                return None;
+            }
+            if image_too_large(raw.size) {
+                notes.push(format!(
+                    "{path} was left as written: it is {} bytes, over the {} byte (8 MiB) picture limit.",
+                    raw.size, MAX_RENDER_IMAGE_BYTES
+                ));
+                return None;
+            }
             let mut bytes = Vec::with_capacity(usize::try_from(raw.size).unwrap_or(0));
             let mut file = raw.file;
             file.read_to_end(&mut bytes).ok()?;
-            let name = format!("image-{}.{extension}", copied + 1);
-            std::fs::write(dir.join(&name), &bytes).ok()?;
-            copied += 1;
-            Some(name)
+            let uri = data_uri(content_type, &bytes);
+            let grown = size - src.len() + uri.len();
+            if html_too_large(grown) {
+                notes.push(format!(
+                    "{path} was left as written: inlining it would make the page {grown} bytes, over the {} byte (512 KiB) render limit. Use a smaller or compressed picture.",
+                    MAX_RENDER_HTML_BYTES
+                ));
+                return None;
+            }
+            size = grown;
+            inlined += 1;
+            Some(uri)
         });
         // The page is written last, so a half-published render is never served.
         std::fs::write(dir.join(PAGE_FILE), page.as_bytes())?;
@@ -465,6 +499,7 @@ impl Core {
             frame_token,
             images,
             bytes: page.len(),
+            notes,
         })
     }
 
@@ -512,8 +547,9 @@ impl Core {
         })
     }
 
-    /// One image the page embedded. Only the names this service writes are served,
-    /// so no path separator or stray file in the folder can be reached.
+    /// One image a render folder holds. New publishes inline their pictures and write
+    /// none, so this only serves renders stored before that. Only the names this
+    /// service wrote are served, so no path separator or stray file can be reached.
     pub fn open_render_image(
         &self,
         thread_id: &str,
@@ -603,29 +639,46 @@ mod tests {
     }
 
     #[test]
-    fn embedding_rewrites_in_document_order_and_stops_at_the_limit() {
+    fn embedding_rewrites_in_document_order() {
         let html = "<img src=\"a.png\"><img src='b.png'><img src=c.png> remote https://x/y.png";
         let mut asked = Vec::new();
-        let (page, count) = embed_images(html, 2, &mut |src| {
+        let (page, count) = embed_images(html, &mut |src| {
             asked.push(src.to_owned());
-            Some(format!("image-{}.png", asked.len()))
+            Some(format!("data:x;base64,{}", asked.len()))
         });
-        assert_eq!(count, 2);
-        assert_eq!(asked, ["a.png", "b.png"]);
+        assert_eq!(count, 3);
+        assert_eq!(asked, ["a.png", "b.png", "c.png"]);
         assert_eq!(
             page,
-            "<img src=\"image-1.png\"><img src='image-2.png'><img src=c.png> remote https://x/y.png"
+            "<img src=\"data:x;base64,1\"><img src='data:x;base64,2'><img src=data:x;base64,3> remote https://x/y.png"
         );
     }
 
     #[test]
     fn a_refused_src_stays_exactly_as_written() {
         let html = "<img src=\"../outside.png\"><img src='ok.png'>";
-        let (page, count) = embed_images(html, MAX_RENDER_IMAGES, &mut |src| {
-            (src == "ok.png").then(|| "image-1.png".to_owned())
+        let (page, count) = embed_images(html, &mut |src| {
+            (src == "ok.png").then(|| "data:image/png;base64,AAAA".to_owned())
         });
         assert_eq!(count, 1);
-        assert_eq!(page, "<img src=\"../outside.png\"><img src='image-1.png'>");
+        assert_eq!(
+            page,
+            "<img src=\"../outside.png\"><img src='data:image/png;base64,AAAA'>"
+        );
+    }
+
+    #[test]
+    fn a_data_uri_carries_the_type_and_the_exact_bytes() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let uri = data_uri("image/svg+xml", &bytes);
+        let (head, body) = uri.split_once(',').unwrap();
+        assert_eq!(head, "data:image/svg+xml;base64");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(body)
+                .unwrap(),
+            bytes
+        );
     }
 
     #[test]

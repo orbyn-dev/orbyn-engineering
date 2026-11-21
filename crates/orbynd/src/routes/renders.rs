@@ -55,6 +55,7 @@ pub async fn publish(
             "url": render.url,
             "frame_token": render.frame_token,
             "images": render.images,
+            "notes": render.notes,
             "bytes": render.bytes,
         })),
     ))

@@ -1839,18 +1839,24 @@ any other worktree's file is read through the explorer, read-only, with a banner
 ## Renders
 
 An agent's page is stored in app data, never in the checkout:
-`<data_dir>/renders/<thread_id>/<render_id>/index.html`, with one `image-<n>.<ext>` beside
-it for each checkout picture the page named and `frame.sha256`, the digest of that
-render's frame token. One folder per render is the whole record — no database row — so the
+`<data_dir>/renders/<thread_id>/<render_id>/index.html`, with `frame.sha256`, the digest of that
+render's frame token. Checkout pictures the page names are inlined into `index.html` as
+`data:` URIs, not stored beside it (renders stored before that still hold `image-<n>.<ext>`). One folder per render is the whole record — no database row — so the
 folder is removed with its thread and the cap is counted from the folders that are there. A
 thread keeps 20 renders, and the oldest folder goes when a newer one is published.
 
 `POST /api/threads/:id/renders` takes `html` and answers with the render id, its route, its
-`frame_token`, the number of images copied and the stored size. A page over 512 KiB is
+`frame_token`, the number of images inlined, the stored size and `notes`. A page over 512 KiB is
 refused whole. Each `<img src>` is resolved with the same read rules every file route uses,
 so a path outside the checkout, a link out, `..`, `.git` or an untrusted folder is refused
-per image: that src is left exactly as written and the rest of the page still publishes. A
-picture over 8 MiB, or the 33rd one, is left as written too. A remote http(s) src is never
+per image: that src is left exactly as written and the rest of the page still publishes. An
+allowed picture becomes `data:<type>;base64,<bytes>`, typed from its extension. A relative URL
+cannot work in the frame: it resolves without the render id and frame token, and the opaque
+origin sends no cookie, so the page carries its pictures itself (the CSP already allows `data:`;
+an SVG in an `<img>` runs no script). The finished page, URIs included, must stay within 512
+KiB, so roughly 384 KiB of picture bytes fit. A picture over 8 MiB, the 33rd one, or one that
+would push the page past 512 KiB is left as written and named in `notes` with the reason; it is
+never dropped silently. A remote http(s) src is never
 fetched and is left as written; the policy below is what stops it loading. The scan matches
 the tag and the attribute name case-insensitively, in any attribute order, with single,
 double or unquoted values, and ignores `<script>`, `<style>` and comments. It is not an
@@ -1863,7 +1869,7 @@ with `default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; styl
 'self'; sandbox allow-scripts`, and every render response also carries `nosniff`,
 `Cross-Origin-Resource-Policy: same-origin`, `no-referrer` and `private, no-cache`.
 The CSP `sandbox allow-scripts` directive gives the page an opaque origin even when it is opened at top level (a new tab), where the frame's `sandbox` attribute does not apply.
-`.../:render_id/:file` serves only `image-<n>.<ext>`, typed from its extension; any other
+`.../:render_id/:file` serves only `image-<n>.<ext>` (stored by older publishes), typed from its extension; any other
 name, a separator in it, `frame.sha256` or another thread's render id is not found.
 
 A frame runs the page's own script, so the credential in its URL must not be the service
