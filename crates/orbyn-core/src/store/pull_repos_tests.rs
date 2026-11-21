@@ -1,4 +1,4 @@
-//! Migration 71: a pull request link is kept per repository, and every older link stays on the thread's own project.
+//! Migration 70: a pull request link is kept per repository, and every older link stays on the thread's own project.
 
 use rusqlite::Connection;
 
@@ -73,7 +73,7 @@ fn links_made_before_the_migration_stay_on_the_threads_own_project() {
          CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)",
     )
     .unwrap();
-    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 71) {
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 70) {
         conn.execute_batch(sql).unwrap();
         conn.execute(
             "INSERT INTO schema_migrations VALUES (?1,'fixture')",
@@ -98,7 +98,10 @@ fn links_made_before_the_migration_stay_on_the_threads_own_project() {
     drop(conn);
 
     let store = Store::open(&path, "epoch").unwrap();
-    assert_eq!(store.upgrade().expect("an upgrade").to, 71);
+    assert_eq!(
+        store.upgrade().expect("an upgrade").to,
+        migrations::MIGRATIONS.last().unwrap().0
+    );
     let first = store.linked_pulls("t1", "proj-a").unwrap();
     assert_eq!(
         first
