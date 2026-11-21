@@ -374,16 +374,18 @@ pub(crate) fn acp() {
                     continue;
                 }
 
-                acp_update(
-                    session,
-                    json!({
+                if !has(&prompt, "silent") {
+                    acp_update(
+                        session,
+                        json!({
 
-                        "sessionUpdate": "agent_message_chunk",
+                            "sessionUpdate": "agent_message_chunk",
 
-                        "content": { "type": "text", "text": answer },
+                            "content": { "type": "text", "text": answer },
 
-                    }),
-                );
+                        }),
+                    );
+                }
 
                 // A reply that ends the turn badly, or without saying how.
                 let reason = ["refusal", "max_tokens"]
