@@ -483,12 +483,17 @@ mod tests {
     /// On a Mac that can restrict: everything the worker's profile denies, and in addition no network, no other process's environment,
     /// no launchd job, no preference write, no clipboard, unreadable credential folders, and file writes only in its own scratch folder (and `/dev/null`). Where an unrestricted run has the
     /// ability, the same command is run unrestricted first, so the test proves the restriction and not a broken command.
+    ///
+    /// A Mac that cannot restrict fails here instead of returning: a green line must mean these rules ran, and this is the strongest
+    /// sandbox proof in the suite. The library's own macOS availability test fails the same way.
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_confined_run_has_every_worker_rule_and_the_proofs_own() {
-        if !confined() {
-            return;
-        }
+        assert!(
+            confined(),
+            "this Mac cannot confine a proof ({}), so its sandbox rules were not proven",
+            crate::host::confine::proof_unavailable().unwrap_or_default()
+        );
         let dir = TempDir::new();
         let data = std::fs::canonicalize(dir.path()).unwrap().join("data");
         let root = data.join("proof");

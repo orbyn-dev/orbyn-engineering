@@ -23,6 +23,7 @@ use super::risk::{
 use crate::app::Core;
 use crate::crew::autopilot::ledger;
 use crate::crew::autopilot::{IN_A_ROW, IN_A_RUN, Mode, ModeScope, RULES, review_window};
+use crate::crew::background::parse_wire;
 use crate::crew::{key_needles, redact, withhold};
 use crate::error::{CoreError, Result};
 use crate::store::{AutopilotEvent, EVENT_KINDS, MergeEntry, MergeRecord};
@@ -544,7 +545,8 @@ impl Core {
         })
     }
 
-    /// The after-merge Review queue, most urgent first, one page.
+    /// The after-merge Review queue and the background runs waiting with it: the merges most urgent first, one page, and
+    /// every background run that stopped without a merge, oldest first.
     pub fn autopilot_review_queue(
         &self,
         now: i64,
@@ -554,7 +556,40 @@ impl Core {
         let all = self.crew_review_queue(now)?;
         let mut scrubs = Scrubs::new(self)?;
         let mut areas = crate::crew::autopilot::AreaCache::new();
-        let items = slice(&all, page)
+        let total = all.merges.len();
+        let background_total = all.background.len();
+        // One window for both lists: the page continues while either one has more.
+        let next_offset = page.next(total.max(background_total));
+        // The person's own patterns mask the crew's name and the run's reason, as they mask every other field here.
+        let background_runs = slice(&all.background, page)
+            .into_iter()
+            .map(|item| {
+                let scrub = scrubs.of(&item.run_id);
+                Ok(wire::AutopilotBackgroundReviewItem {
+                    run_id: item.run_id,
+                    crew_id: item.crew_id,
+                    project_id: item.project_id,
+                    crew_name: scrub.text(&item.crew_name),
+                    template: parse_wire(&item.template)?,
+                    state: parse_wire(&item.state)?,
+                    stop_reason: item
+                        .stop_reason
+                        .as_deref()
+                        .map(parse_wire::<wire::BackgroundStopReason>)
+                        .transpose()?,
+                    review_reason: item.review_reason.as_deref().map(|why| scrub.text(why)),
+                    turns_spent: item.turns_spent,
+                    minutes_spent: item.minutes_spent,
+                    budget: wire::BackgroundBudget {
+                        turns: item.budget_turns,
+                        minutes: item.budget_minutes,
+                    },
+                    started_at: item.started_at,
+                    ended_at: item.ended_at,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let items = slice(&all.merges, page)
             .into_iter()
             .map(|item| {
                 let scrub = scrubs.of(&item.task_id);
@@ -601,8 +636,10 @@ impl Core {
             .collect();
         Ok(wire::AutopilotReviewQueue {
             items,
-            total: to_u32(all.len()),
-            next_offset: page.next(all.len()),
+            total: to_u32(total),
+            next_offset,
+            background_runs,
+            background_total: to_u32(background_total),
             now_unix: now,
         })
     }

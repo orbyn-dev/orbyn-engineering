@@ -62,6 +62,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/background/{id}/delete"],
   ["POST", "/api/crew/background/{id}/disable"],
   ["POST", "/api/crew/background/{id}/enable"],
+  ["POST", "/api/crew/background/{id}/run-now"],
   ["POST", "/api/crew/background/{id}/update"],
   ["POST", "/api/crew/guard/targets/add"],
   ["POST", "/api/crew/guard/targets/{id}/remove"],
@@ -214,6 +215,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
   // Transcript import (docs/attachments-transcripts.md): a thread made from an untrusted file. The export (`GET /api/threads/{id}/export`) is Local.
   ["POST", "/api/threads/import"],
+  // Transcript attach (docs/attachments-transcripts.md): an untrusted file becomes context for the thread's next message.
+  ["POST", "/api/threads/{id}/transcripts"],
 ];
 
 /**
@@ -231,8 +234,6 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
   // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
   ["POST", "/api/devices/{id}/actions"],
-  // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.
-  ["POST", "/api/threads/{id}/transcripts"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */

@@ -88,6 +88,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
+    ("POST", "/api/crew/background/{id}/run-now"),
     ("POST", "/api/crew/background/{id}/update"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
@@ -204,6 +205,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
     ("POST", "/api/threads/import"),
+    ("POST", "/api/threads/{id}/transcripts"),
     ("POST", "/api/issues/trackers/{tracker}/connect"),
     ("POST", "/api/issues/trackers/{tracker}/disconnect"),
     ("POST", "/api/issues/start-thread"),
@@ -531,6 +533,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/background/{id}/enable",
         "Crew write behind local_only: enables a background worker",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/run-now",
+        "Crew write behind local_only: the person starts one run of a background worker",
     ),
     (
         "POST",
@@ -906,6 +913,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/import",
         "creates a thread from a file the person picked: untrusted content that becomes history in their project",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/transcripts",
+        "attaches a file the person picked as untrusted context for the thread's next message",
     ),
     (
         "POST",

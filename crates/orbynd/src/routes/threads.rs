@@ -40,6 +40,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/threads/{id}/messages", get(thread_messages))
         .route("/api/threads/{id}/export", get(export_transcript))
         .route("/api/threads/import", post(import_transcript))
+        .route("/api/threads/{id}/transcripts", post(attach_transcript))
         .route("/api/threads/{id}/items/{item}", get(get_item))
         .route("/api/threads/{id}/usage", get(thread_usage))
         .route("/api/threads/{id}/fork", post(fork_thread))
@@ -440,6 +441,30 @@ async fn import_transcript(
             query.dry_run.unwrap_or(false),
         )
         .await?;
+    let status = if answer.dry_run {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((status, Json(answer)))
+}
+
+#[derive(Deserialize)]
+struct AttachQuery {
+    dry_run: Option<bool>,
+}
+
+/// The file as the client read it, as raw bytes; Core stores its text rendering as an attachment of the thread and changes
+/// nothing else. `201` with the attachment, `200` for a dry run.
+async fn attach_transcript(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<AttachQuery>,
+    body: axum::body::Bytes,
+) -> ApiResult<impl IntoResponse> {
+    let answer = state
+        .core
+        .attach_transcript(&id, &body, query.dry_run.unwrap_or(false))?;
     let status = if answer.dry_run {
         StatusCode::OK
     } else {
