@@ -1,13 +1,17 @@
 //! A person's removal of one worktree Orbyn made. Only the sibling `<repo>-wt` root is
-//! treated as Orbyn's own, and Git itself keeps uncommitted work: the removal runs
-//! `git worktree remove` with no force, so a dirty worktree is refused by Git.
+//! treated as Orbyn's own. Git's non-forced `git worktree remove` refuses modified and
+//! untracked files, but it deletes IGNORED files (`.env`, local config, build output),
+//! so the removal first refuses when `git status --porcelain --ignored` lists anything.
+//! A worktree with nothing to lose is removed; commits and branches are never touched.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-use super::{Core, CoreError, Result, Target, plain, write::finish};
-use crate::source_control::git::{git, primary_checkout, worktree_root};
+use super::{Core, CoreError, Result, Target, member, plain, write::finish};
+use crate::source_control::git::{
+    git, git_hardened, primary_checkout, worktree_records_hardened, worktree_root,
+};
 use crate::store::AuditRecord;
 
 impl Core {
@@ -39,11 +43,18 @@ impl Core {
             if !super::well_formed(id) {
                 return Err(CoreError::NotFound("worktree".into()));
             }
-            // Fresh membership: a kept list, even a refreshing one, is not removal
+            // Fresh membership: a kept list, even an in-flight refresh, is not removal
             // authority.
-            let target = self
-                .explorer_members(&project, true)
-                .await?
+            let path = PathBuf::from(&project.path);
+            let records = super::status::bounded(
+                super::status::DEADLINE,
+                worktree_records_hardened(&path),
+            )
+            .await?;
+            if crate::util::canonicalize(&path).is_ok_and(|now| now != path) {
+                return Err(CoreError::NotFound("worktree".into()));
+            }
+            let target = member::resolve(records, &plain(&path))?
                 .into_iter()
                 .map(|entry| Target::new(&project, entry))
                 .find(|target| target.id == id)
@@ -69,7 +80,7 @@ impl Core {
                     "Only a worktree Orbyn made can be removed here.".into(),
                 ));
             }
-            if self.thread_in(&target.path)?.is_some() {
+            if thread_in(&self.store, &target.path)?.is_some() {
                 return Err(CoreError::PolicyDenied(
                     "A thread still uses this worktree. Delete the thread first.".into(),
                 ));
@@ -81,36 +92,73 @@ impl Core {
             Ok(prepared) => prepared,
             Err(error) => return finish(&self.store, audit, Err(error)),
         };
-        // Recheck just before the effect: a thread can have been created meanwhile.
-        if self.thread_in(&target.path)?.is_some() {
-            return finish(
-                &self.store,
-                audit,
-                Err(CoreError::PolicyDenied(
-                    "A thread still uses this worktree. Delete the thread first.".into(),
-                )),
-            );
-        }
-        let path = target.path.to_string_lossy().into_owned();
-        let outcome = git(&primary, &["worktree", "remove", &path]).await;
-        if outcome.is_ok() {
-            self.explorer.changed(project_id);
-        }
-        finish(&self.store, audit, outcome.map(|_| ()))
-    }
-
-    /// The first thread whose folder is inside `path`, if any. Archived threads count
-    /// too: a thread row still names its checkout, and an archived thread can come back.
-    fn thread_in(&self, path: &Path) -> Result<Option<orbyn_contracts::Thread>> {
-        for project in self.store.list_projects()? {
-            for thread in self.store.list_all_threads(&project.id)? {
-                let cwd = plain(Path::new(&thread.cwd));
-                let real = crate::util::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
-                if [&cwd, &real].iter().any(|cwd| cwd.starts_with(path)) {
-                    return Ok(Some(thread));
+        let (store, workspace, explorer) = (
+            self.store.clone(),
+            self.workspace.clone(),
+            self.explorer.clone(),
+        );
+        let project_id = project_id.to_owned();
+        let runtime = tokio::runtime::Handle::current();
+        // Move the serialization permit into the blocking task: dropping an HTTP future
+        // cannot let a second action race a still-running filesystem call.
+        let permit = _writer;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            // Recheck and effect run inside the admission fence, so a thread created
+            // meanwhile is seen, and no run starts between the check and the removal.
+            let result = workspace.admit_with(|| {
+                if thread_in(&store, &target.path)?.is_some() {
+                    return Err(CoreError::PolicyDenied(
+                        "A thread still uses this worktree. Delete the thread first.".into(),
+                    ));
                 }
+                runtime.block_on(async {
+                    // Git's own removal deletes ignored files without asking.
+                    let status = git_hardened(
+                        &target.path,
+                        &[
+                            "status",
+                            "--porcelain",
+                            "--ignored",
+                            "--untracked-files=all",
+                            "-z",
+                        ],
+                    )
+                    .await
+                    .map_err(|_| {
+                        CoreError::Git("The worktree could not be checked for local files.".into())
+                    })?;
+                    if !status.is_empty() {
+                        return Err(CoreError::PolicyDenied(
+                            "This worktree has local files that would be lost. Remove or commit them first."
+                                .into(),
+                        ));
+                    }
+                    let path = target.path.to_string_lossy().into_owned();
+                    git(&primary, &["worktree", "remove", &path]).await.map(|_| ())
+                })
+            });
+            if result.is_ok() {
+                explorer.changed(&project_id);
+            }
+            finish(&store, audit, result)
+        })
+        .await
+        .map_err(|_| CoreError::Internal("The removal ended unexpectedly.".into()))?
+    }
+}
+
+/// The first thread whose folder is inside `path`, if any. Archived threads count
+/// too: a thread row still names its checkout, and an archived thread can come back.
+fn thread_in(store: &crate::store::Store, path: &Path) -> Result<Option<orbyn_contracts::Thread>> {
+    for project in store.list_projects()? {
+        for thread in store.list_all_threads(&project.id)? {
+            let cwd = plain(Path::new(&thread.cwd));
+            let real = crate::util::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
+            if [&cwd, &real].iter().any(|cwd| cwd.starts_with(path)) {
+                return Ok(Some(thread));
             }
         }
-        Ok(None)
     }
+    Ok(None)
 }

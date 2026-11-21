@@ -617,7 +617,10 @@ existing ref; and `DELETE /api/projects/:id/worktrees/:worktree` removes one wor
 it made (the reference client's `removeWorktree`). A folder outside Git is `400` for
 all four, and the removal needs the person key: it deletes files, so only a linked
 worktree under the project's sibling `<repo>-wt` root with no thread working in it is
-removed, and `git worktree remove` runs without force so Git keeps uncommitted work.
+removed. The removal is refused, with no paths in the error, when `git status --porcelain
+--ignored` lists anything in the worktree (modified, untracked or ignored files such as
+`.env` and build output), because `git worktree remove` without force still deletes
+ignored files. Commits and branches are never touched.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
 request of the checkout's branch. A merge settles the thread when `on_merge` is set
