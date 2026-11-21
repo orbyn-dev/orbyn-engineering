@@ -23,7 +23,7 @@ per-run confinement inputs supplied by Rust.
    the prompt's own turn, no-reply) are applied by the host adapter for its family and by the core
    on top; the transport adds no new way to end a run.
 4. **One process per family** (per instance where the SDK reads process-global environment, such as
-   `CLAUDE_CONFIG_DIR`). Cursor is pooled in one host. Idle hosts are stopped.
+   `CLAUDE_CONFIG_DIR`). Cursor is pooled in one host. Idle hosts are stopped by the core, which owns the idle timeout and never stops a host that still has an open `background` event; the host keeps no timer of its own.
 
 ## Transport
 
@@ -56,7 +56,7 @@ The host replies `{"type":"response","id":1,"ok":true,"result":{"ready":true}}`.
 - `capabilities` is the list of requests the family implements. The core never sends a request
   that is not listed; a listed request that fails is an ordinary error. Adding a capability is not a
   protocol bump; adding or changing a frame field is, unless the field is optional and ignorable.
-- A host that does not say `hello` within 10 seconds is killed and counted as a crash.
+- A host that does not say `hello` within 10 seconds is killed and counted as a crash. The first spawn after an install or update gets 30 seconds (a signed binary's first launch is scanned by the OS); restarts keep 10.
 
 ## Requests (core → host)
 
@@ -67,18 +67,19 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `type` | Fields | Result |
 |---|---|---|
 | `open` | `operation` (`create` \| `resume` \| `fork`), `sessionId`, `engineSessionId?`, `cwd`, `options` (model, effort, mode, MCP, system prompt; family-shaped, see below), `confinement` | `{engineSessionId}` |
-| `send` | `sessionId`, `message` (text, or text plus attachments by path), `options?` | `{runId}` (accepted) |
-| `steer` | `sendId`, `text` | `{outcome}` (`accepted` \| `queued` \| `rejected`) |
+| `send` | `sessionId`, `message` (text, or text plus attachments by path), `options?` | `{runId, engineSessionId?, turnId?}` (accepted). Some SDKs assign the session id only on the first message; the host also sends a `session` frame (below) when the id or turn id becomes known later |
+| `steer` | `sendId`, `messageId`, `text` | `{outcome, messageId}` (`accepted` \| `queued` \| `rejected`); a refusal is recorded against that message |
 | `cancel` | `sendId` | `{cancelled: bool}` |
-| `respond` | `requestId`, `decision` | `null` |
-| `stopTask` | `sessionId`, `taskId` | `{stopped: bool}` |
+| `respond` | `requestId`, `decision` = `{"behavior":"allow"\|"deny","message"?}` and nothing else | `null` |
+| `stopTask` | `sessionId`, `taskId` (from a `background` `started` event, which also carries the originating `toolCallId`) | `{stopped: bool}` |
 | `background` | `sendId` | `{backgrounded: bool}` |
-| `rollback` | `sessionId`, `toTurn` | `{ok: bool}` |
+| `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
 | `fork` | `sessionId`, `atTurn?` | `{engineSessionId}` |
 | `readHistory` | `sessionId` | list of messages (family-shaped, mapped by the core) |
 | `usage` | `sessionId` | context and cost counters |
 | `models` | none (host-wide) | model list with efforts and capabilities |
 | `closeSession` | `sessionId` | `null` |
+| `probe` | `sessionId`, `kind` (`confinement`) | `{refused: [...], allowed: [...]}`: the host runs a scripted attempt to write outside the roots and read a forbidden path through the engine and reports which were refused; the Crew probe per family and the Codex confinement probe use it |
 | `ping` | none | `null` (liveness; see crash and recovery) |
 | `close` | none | `null`, then the host exits |
 
@@ -95,8 +96,9 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
 {"type":"response","id":7,"ok":true,"result":{}}
 {"type":"response","id":7,"ok":false,"error":{"method":"send","cause":{...}}}
 {"type":"delta","sendId":7,"update":{...}}
-{"type":"permission","sendId":7,"requestId":"p-31","tool":"Edit","input":{...},"suggestions":[...]}
+{"type":"permission","sendId":7,"requestId":"p-31","tool":"Edit","input":{...},"options":[...]}
 {"type":"question","sendId":7,"requestId":"q-4","prompt":"...","options":[...]}
+{"type":"session","sendId":7,"engineSessionId":"...","turnId":"..."}
 {"type":"runDone","sendId":7,"ok":true,"result":{"reason":"completed","usage":{...}}}
 {"type":"runDone","sendId":7,"ok":false,"error":{"method":"send","cause":{...}}}
 {"type":"log","level":"warn","sessionId":"...","event":{...}}
@@ -108,12 +110,25 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
   today. The host does not translate, which keeps replay transcripts byte-comparable with T3's.
 - A `permission` frame blocks the tool until `respond`. If the run is cancelled or the host's run
   ends first, the host resolves the pending SDK callback with a refusal and forgets the id; a late
-  `respond` for an unknown id is ignored and counted in `log`.
+  `respond` for an unknown id is ignored and counted in `log`, and the core drops its open approval for
+  that `requestId`.
+- `permission.tool` and `permission.input` are the engine's own, passed through untouched: the host
+  adds no field to them and drops none (`requestId` and `sendId` live on the frame, outside `input`),
+  because the core binds an approval to every request field but a short bookkeeping list. ACP option
+  kinds are sent as received in `options`; the host never invents one. `respond` `allow` always reaches
+  the engine in its once-only form (Claude: allow with no `updatedPermissions`; ACP: `allow_once`); if
+  the engine offered only an always-allow option the host answers `deny`. The core never grants a
+  session-wide allow. There is no host-side timeout on a pending `permission` (a person may take
+  minutes), and `ping` keeps answering while one is pending. A `permission` pending at a host crash is
+  never retried after the restart; the core sends the next turn only on the person's next message.
 - `runDone` is sent exactly once per `send` (success, engine failure, cancel, or adapter-detected
   loss). After it the host sends no more frames for that `sendId`. `result.reason` is one of
-  `completed`, `cancelled`, `failed`, `maxTurns`, `refused`; the core maps these onto the existing
-  run outcomes. The host adds `threadDisposition: "reusable" | "broken"` so the core knows whether the
-  engine session can take another turn.
+  `completed`, `cancelled`, `failed`, `maxTurns`, `refused`. The core maps them: `completed` and
+  `cancelled` as named; `failed`, `maxTurns` and `refused` become `Failed(<plain sentence>)` with a
+  `detail` code; a `kind: session_lost` error becomes `SessionLost`. The host adds
+  `threadDisposition: "reusable" | "broken"`, and on a failure may add
+  `retry: {"afterMs"?, "why": "rate_limit"|"network"|"overloaded"}` and, for `rate_limit`, `resetsAt`
+  (unix seconds) so the core can emit its `Limited { resets_at }` event.
 - `background` frames report shells, subagents and workflows the engine started, so rule 1 of the
   run-end contract can hold or report them. The host keeps the run open per the family's rule
   (see [engine-run-contract.md](engine-run-contract.md)) and sends `runDone` only when the hold ends.
@@ -131,7 +146,7 @@ One shape everywhere an error crosses the wire:
 - `cause` nests up to 8 deep; a cycle ends with `{"name":"Error","message":"[Circular error cause]"}`.
 - Every property read is guarded: a hostile or broken getter never aborts serialization.
 - `kind` is a closed set the core can act on without parsing messages: `auth`, `rate_limit`,
-  `network`, `invalid_request`, `unsupported`, `cancelled`, `engine`, `host`. The host sets it from the
+  `network`, `invalid_request`, `unsupported`, `cancelled`, `engine`, `host`, `session_lost`. `session_lost` is returned by `open` with `resume`, and by `runDone` when the engine says the session is gone. The host sets it from the
   SDK's own error classes; absent means unknown. `auth` and `rate_limit` carry what the UI needs
   ("Sign in again", "Limit reached") and nothing that identifies a credential.
 - A request-level failure is `response` with `ok:false` and `error = {method, cause}`. A run-level
@@ -176,11 +191,12 @@ them) carries:
   the SDK's `spawnClaudeCodeProcess` hook; for a family with no spawn hook the whole host is started
   under the prefix (Cursor).
 - `env` is the complete allowlist. The host builds the engine's environment from it and from nothing
-  else. A key the host adds itself (`NODE_OPTIONS`, proxies) is reported back in `log` so it can be audited.
-- `ORBYN_WORKER_ID` and the worker identity variables are set by Rust; the host copies them and never
+  else. A key the host adds itself (`NODE_OPTIONS`, proxies) is reported in `log` before the engine starts, never after.
+- `ORBYN_WORKER_ID` and the other worker identity variables (the git identity that names the Crew task, and whatever else the core sets for a CLI worker today; the list lives in the Rust spawn code, not here) are set by Rust; the host copies them and never
   invents or changes them.
 - `writeRoots` are for the host's own pre-checks and `log`; the enforcement is the Seatbelt profile
   and `ApprovalGate`. Policy never depends on the host checking them.
+- If `confinement` is present and the family cannot apply `argvPrefix` (no spawn hook, or a pooled host), `open` fails with `kind: "unsupported"` and starts nothing. A pooled Cursor host cannot carry a per-run prefix, so a Crew writing worker on Cursor is refused until the host is started under the prefix per run.
 - A family passes a **confinement probe** (a run that tries to write outside the roots and to read a
   forbidden path) before Crew routes writing briefs to it. `CODEX_WORKERS_ALLOWED` stays false until
   Codex passes.
