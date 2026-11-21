@@ -8,6 +8,7 @@ import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { registerTerminal } from "../terminalControls";
 import { recordCommand } from "./history";
+import { offerProposal, useProposalSource } from "./proposal";
 import { TerminalInput } from "./TerminalInput";
 
 vi.mock("../../../../api/client", async (original) => {
@@ -53,6 +54,7 @@ beforeEach(() => {
   afterRefresh = () => undefined;
   useUi.setState({ pushToast: toast } as never);
   useThreadLogs.setState({ logs: {} });
+  useProposalSource.getState().reset();
   vi.mocked(api.startRun).mockReset().mockResolvedValue({ id: "r1" } as never);
   vi.mocked(api.cancelRun).mockReset().mockResolvedValue(undefined as never);
   vi.mocked(api.enqueue).mockReset().mockResolvedValue({ id: "q1" } as never);
@@ -94,19 +96,34 @@ describe("Undo after the engine started", () => {
   });
 });
 
-describe("the engine proposes a command", () => {
-  const propose = (command: string, note = "Lists the files changed. It does not change files.") =>
-    `Try this.\n<proposed_command>${command}</proposed_command><proposed_note>${note}</proposed_note>`;
+describe("the service proposes a command (typed field)", () => {
+  const propose = (command: string, note = "Lists the files changed. It does not change files.", runId = "r1") =>
+    act(() => offerProposal("th", runId, { command, note }));
   const asked = async () => {
+    useProposalSource.getState().setSource("service");
     const view = setup();
     await view.user.type(view.field, "list the files that changed since main?{Enter}");
     await screen.findByText(/Sent to Claude/);
     return view;
   };
 
+  it("draws nothing and parses no text when the service reports no field", async () => {
+    const view = setup();
+    await view.user.type(view.field, "list the files that changed since main?{Enter}");
+    await screen.findByText(/Sent to Claude/);
+    answer("Try this.\n<proposed_command>git status</proposed_command>");
+    act(() => offerProposal("th", "r1", { command: "git status" }));
+    expect(document.querySelector(".term-proposal")).toBeNull();
+    expect(write).not.toHaveBeenCalled();
+  });
+  it("ignores command text in the model's answer even when the source is on", async () => {
+    await asked();
+    answer("Try this.\n<proposed_command>rm -rf x</proposed_command>");
+    expect(document.querySelector(".term-proposal")).toBeNull();
+  });
   it("shows the command as plain text with Run, Edit and Cancel, and writes nothing by itself", async () => {
     await asked();
-    answer(propose("git diff --name-only main...HEAD"));
+    propose("git diff --name-only main...HEAD");
     expect(await screen.findByText("git diff --name-only main...HEAD")).toBeTruthy();
     expect(screen.getByText(/It does not run until you press Run/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
@@ -116,7 +133,7 @@ describe("the engine proposes a command", () => {
   });
   it("Run is one click and one write, however fast it is clicked", async () => {
     await asked();
-    answer(propose("git status"));
+    propose("git status");
     const run = await screen.findByRole("button", { name: "Run" });
     fireEvent.click(run);
     fireEvent.click(run);
@@ -125,7 +142,7 @@ describe("the engine proposes a command", () => {
   });
   it("Edit puts the command in the line and runs nothing", async () => {
     const { field, user } = await asked();
-    answer(propose("git status"));
+    propose("git status");
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     expect(field.value).toBe("git status");
     expect(write).not.toHaveBeenCalled();
@@ -133,21 +150,21 @@ describe("the engine proposes a command", () => {
   });
   it("Cancel dismisses the card and runs nothing", async () => {
     const { user } = await asked();
-    answer(propose("git status"));
+    propose("git status");
     await user.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("git status")).toBeNull();
     expect(write).not.toHaveBeenCalled();
   });
   it("shows markup as text", async () => {
     await asked();
-    answer(propose("echo <img src=x onerror=alert(1)>", "<b>bold</b> says hi"));
+    propose("echo <img src=x onerror=alert(1)>", "<b>bold</b> says hi");
     const code = await screen.findByText("echo <img src=x onerror=alert(1)>");
     expect(code.closest(".term-proposal")?.querySelector("img, p b")).toBeNull();
-    expect(screen.getByText("bold says hi")).toBeTruthy();
+    expect(screen.getByText("<b>bold</b> says hi")).toBeTruthy();
   });
   it("never fills in or runs a command that looks like a secret", async () => {
     const { field } = await asked();
-    answer(propose("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx"));
+    propose("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx");
     expect(await screen.findByText(/looks like a secret/i)).toBeTruthy();
     expect(screen.queryByText(/sk-abcdefghijklmnopqrstuvwx/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
@@ -155,9 +172,9 @@ describe("the engine proposes a command", () => {
     expect(field.value).toBe("");
     expect(write).not.toHaveBeenCalled();
   });
-  it("ignores an answer to some other run", async () => {
+  it("ignores a proposal for some other run", async () => {
     await asked();
-    answer(propose("git status"), "r99");
+    propose("git status", "n", "r99");
     expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
   });
 });

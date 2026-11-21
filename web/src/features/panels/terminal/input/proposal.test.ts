@@ -1,31 +1,35 @@
-import { describe, expect, it } from "vitest";
-import { proposedCommandIn } from "./proposal";
+import { beforeEach, describe, expect, it } from "vitest";
+import { acceptTypedProposal, offerProposal, useProposalSource } from "./proposal";
 
-const tag = (body: string, note = "") => `Here you go.\n<proposed_command>${body}</proposed_command>${note}`;
+beforeEach(() => useProposalSource.getState().reset());
 
-describe("proposedCommandIn", () => {
-  it("reads the command and the line that says what it does", () => {
-    const found = proposedCommandIn(tag("git diff --name-only main...HEAD", "<proposed_note>Lists the files changed. It does not change files.</proposed_note>"));
-    expect(found).toEqual({ command: "git diff --name-only main...HEAD", note: "Lists the files changed. It does not change files.", secret: false });
+describe("typed terminal proposal", () => {
+  it("is reported by nobody by default: production has no source, so nothing is offered", () => {
+    expect(useProposalSource.getState().source).toBe("none");
+    offerProposal("th", "r1", { command: "ls" });
+    expect(useProposalSource.getState().byRun).toEqual({});
   });
-  it("finds nothing when the engine did not propose a command", () => {
-    expect(proposedCommandIn("Run `git status` to see.")).toBeNull();
-    expect(proposedCommandIn(tag("   "))).toBeNull();
+  it("keeps a valid command and note when the service reports the field", () => {
+    useProposalSource.getState().setSource("service");
+    offerProposal("th", "r1", { command: "git diff --name-only", note: "Lists files." });
+    expect(useProposalSource.getState().byRun["th:r1"]).toEqual({ command: "git diff --name-only", note: "Lists files.", secret: false });
   });
-  it("strips one wrapping code fence", () => {
-    expect(proposedCommandIn(tag("```sh\nls -la\n```"))?.command).toBe("ls -la");
+  it("rejects an empty command, a second line, NUL or other control characters, and an overlong command", () => {
+    for (const command of ["   ", "ls\nrm x", "ls\u0000", "ls \u001b[2J", "ls\u0003", "ls\u007f", `echo ${"a".repeat(4100)}`]) {
+      expect(acceptTypedProposal({ command })).toBeNull();
+    }
   });
-  it("offers only one plain line: more lines, control characters and a huge command are not offered", () => {
-    expect(proposedCommandIn(tag("ls\nrm -rf x"))).toBeNull();
-    expect(proposedCommandIn(tag("ls \u001b[2J"))).toBeNull();
-    expect(proposedCommandIn(tag("ls\u0003"))).toBeNull();
-    expect(proposedCommandIn(tag(`echo ${"a".repeat(1100)}`))).toBeNull();
+  it("allows a tab inside the command", () => {
+    expect(acceptTypedProposal({ command: "echo\ta" })?.command).toBe("echo\ta");
   });
-  it("marks a secret-looking command so it is never filled in or run", () => {
-    expect(proposedCommandIn(tag("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx"))?.secret).toBe(true);
+  it("caps the note at 1024 characters and drops control characters from it", () => {
+    expect(acceptTypedProposal({ command: "ls", note: "x".repeat(2000) })?.note?.length).toBe(1024);
+    expect(acceptTypedProposal({ command: "ls", note: "a\u001b[2Jb\nc" })?.note).toBe("a[2Jb c");
   });
-  it("caps the note and drops markup it does not own", () => {
-    const found = proposedCommandIn(tag("ls", `<proposed_note>${"x".repeat(900)}</proposed_note>`));
-    expect(found?.note?.length).toBeLessThanOrEqual(280);
+  it("marks a secret-looking command", () => {
+    expect(acceptTypedProposal({ command: "export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx" })?.secret).toBe(true);
+  });
+  it("does not read text: a tagged string is not a proposal", () => {
+    expect(acceptTypedProposal("<proposed_command>ls</proposed_command>" as never)).toBeNull();
   });
 });
