@@ -736,6 +736,7 @@ async fn an_allowed_request_that_was_given_up_signs_nobody_in() {
     let dir = TempDir::new();
     let core = dev(&dir, "race");
     asking(&core, "late@example.com").await;
+    let serial = core.account.approval_serial().await.unwrap();
     let session = crate::account::SessionInfo {
         email: "late@example.com".into(),
         device_id: "dev-this".into(),
@@ -745,7 +746,7 @@ async fn an_allowed_request_that_was_given_up_signs_nobody_in() {
     core.account.cancel_second_factor().await.unwrap();
     assert_eq!(
         core.account
-            .finish_approval("req-mine", session)
+            .finish_approval("req-mine", serial, session)
             .await
             .unwrap(),
         None
@@ -805,6 +806,7 @@ async fn a_second_look_at_an_allowed_request_keeps_the_session_the_first_made() 
     let dir = TempDir::new();
     let core = dev(&dir, "twice");
     asking(&core, "late@example.com").await;
+    let serial = core.account.approval_serial().await.unwrap();
     core.account.stand_in().answer(Answer::Allow);
     let session = crate::account::SessionInfo {
         email: "late@example.com".into(),
@@ -822,7 +824,7 @@ async fn a_second_look_at_an_allowed_request_keeps_the_session_the_first_made() 
     assert_eq!(first.state, AccountApprovalState::Approved);
     assert_eq!(
         core.account
-            .finish_approval("req-mine", session)
+            .finish_approval("req-mine", serial, session)
             .await
             .unwrap(),
         None
@@ -1007,10 +1009,19 @@ async fn a_sign_in_that_reuses_the_id_is_not_touched_by_a_cancel_in_flight() {
     let dir = TempDir::new();
     let core = dev(&dir, "reuse");
     asking(&core, "late@example.com").await;
-    // Tab A cancels while tab B signs in again: B's request has the same id.
-    let (cancel, again) = tokio::join!(
+    // Tab A cancels while tab B signs in again: B's request has the same id. A look that
+    // arrives while the cancel is on its way still finds the sign-in waiting, not gone.
+    let (cancel, polled, again) = tokio::join!(
         core.account.cancel_second_factor(),
+        core.account.poll_approval(),
         core.account.sign_in("late@example.com", pw(PASSWORD))
+    );
+    assert_eq!(
+        polled
+            .unwrap()
+            .expect("the request was still there while the cancel was on its way")
+            .state,
+        AccountApprovalState::Waiting
     );
     cancel.unwrap();
     assert_eq!(again.unwrap(), AccountSignInOutcome::AwaitingApproval);
@@ -1019,6 +1030,44 @@ async fn a_sign_in_that_reuses_the_id_is_not_touched_by_a_cancel_in_flight() {
         AccountApprovalState::Waiting
     );
     assert_eq!(core.account.stand_in().cancelled().len(), 1);
+}
+
+#[tokio::test]
+async fn an_older_answer_does_not_touch_a_sign_in_that_reused_the_id() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "older-answer");
+    asking(&core, "late@example.com").await;
+    let older = core.account.approval_serial().await.unwrap();
+    // The person gives that request up and signs in again: the new request has the same id.
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(
+        core.account
+            .sign_in("late@example.com", pw(PASSWORD))
+            .await
+            .unwrap(),
+        AccountSignInOutcome::AwaitingApproval
+    );
+    let session = crate::account::SessionInfo {
+        email: "late@example.com".into(),
+        device_id: "dev-this".into(),
+        device_name: "This computer".into(),
+    };
+    // The older answer arrives late: it is not the live request, so nobody signs in and the
+    // newer request keeps waiting for its own answer.
+    assert_eq!(
+        core.account
+            .finish_approval("req-mine", older, session)
+            .await
+            .unwrap(),
+        None
+    );
+    let view = core.account.view("macos").await;
+    assert_eq!(
+        view.approval.unwrap().state,
+        AccountApprovalState::Waiting,
+        "the newer request is still open"
+    );
+    assert!(view.session.is_none(), "the older answer signed nobody in");
 }
 
 #[tokio::test]

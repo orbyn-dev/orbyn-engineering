@@ -119,13 +119,19 @@ impl AccountCenter {
                 }
             }
             Ok(ApprovalStatus::Denied) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
+                return Ok(self
+                    .close_approval(&id, serial, AccountApprovalState::Denied)
+                    .await);
             }
             Ok(ApprovalStatus::Locked) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
+                return Ok(self
+                    .close_approval(&id, serial, AccountApprovalState::Locked)
+                    .await);
             }
             Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
-                return Ok(self.close_approval(&id, AccountApprovalState::Denied).await);
+                return Ok(self
+                    .close_approval(&id, serial, AccountApprovalState::Denied)
+                    .await);
             }
             Err(error) => return Err(refusal(&error)),
         }
@@ -193,7 +199,7 @@ impl AccountCenter {
             (id, serial)
         };
         match backend.account.finish_approval(&id, &typed).await {
-            Ok(session) => self.finish_approval(&id, session).await,
+            Ok(session) => self.finish_approval(&id, serial, session).await,
             Err(DeviceError::WrongDigits { tries_left }) => {
                 let mut inner = self.inner.lock().await;
                 let Some(approval) = inner
@@ -214,12 +220,12 @@ impl AccountCenter {
                 approval.tries_left = Some(left);
                 Ok(Some(self.approval_view(approval)))
             }
-            Err(DeviceError::DigitsLocked) => {
-                Ok(self.close_approval(&id, AccountApprovalState::Locked).await)
-            }
-            Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
-                Ok(self.close_approval(&id, AccountApprovalState::Denied).await)
-            }
+            Err(DeviceError::DigitsLocked) => Ok(self
+                .close_approval(&id, serial, AccountApprovalState::Locked)
+                .await),
+            Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => Ok(self
+                .close_approval(&id, serial, AccountApprovalState::Denied)
+                .await),
             Err(error) => {
                 // Nothing reached the server, so the try was not used.
                 let mut inner = self.inner.lock().await;
@@ -232,33 +238,23 @@ impl AccountCenter {
     }
 
     /// Signs in on an allowed request, under one lock: if the person gave the request up
-    /// meanwhile, nobody is signed in here and the Engine is told to forget the session.
+    /// meanwhile, nobody is signed in here and the Engine is told to forget the session. Only
+    /// the request `serial` named is signed in or ended: a later sign-in that reuses the id is
+    /// left alone, and its session is not ended either.
     pub(crate) async fn finish_approval(
         &self,
         id: &str,
+        serial: u64,
         session: SessionInfo,
     ) -> Result<Option<AccountApprovalView>> {
         let backend = self.backend()?.clone();
         let mut inner = self.inner.lock().await;
-        let pending = inner
-            .approval
-            .as_ref()
-            .is_some_and(|approval| approval.request_id == id && approval.answer.is_none());
-        if !pending {
-            // Another look at the same allowed request may have signed in first: that session
-            // is this one, and must stay. Only a session this request did not make is ended.
-            let same = inner.session.as_ref().is_some_and(|current| {
-                current.device_id == session.device_id
-                    && current
-                        .email
-                        .trim()
-                        .eq_ignore_ascii_case(session.email.trim())
-            });
+        let current = inner.approval.as_ref().is_some_and(|approval| {
+            approval.request_id == id && approval.serial == serial && approval.answer.is_none()
+        });
+        if !current {
             drop(inner);
-            if !same {
-                let _ = backend.account.sign_out().await;
-            }
-            return Ok(None);
+            return self.discard_answer(&backend, serial, session).await;
         }
         let mut shown = match inner.approval.as_mut() {
             Some(approval) => {
@@ -270,6 +266,52 @@ impl AccountCenter {
         self.established_in(&mut inner, session, true).await?;
         shown.state = AccountApprovalState::Approved;
         Ok(Some(shown))
+    }
+
+    /// The answer to a request that is no longer the live one: a session this computer already
+    /// holds is kept, one it did not make is ended. The one-at-a-time gate keeps this away from a
+    /// sign-in on its way, and a later request that reuses the id is not touched at all.
+    async fn discard_answer(
+        &self,
+        backend: &super::Backend,
+        serial: u64,
+        session: SessionInfo,
+    ) -> Result<Option<AccountApprovalView>> {
+        let _one_at_a_time = self.cancelling.lock().await;
+        let inner = self.inner.lock().await;
+        if inner
+            .approval
+            .as_ref()
+            .is_some_and(|approval| approval.serial != serial)
+        {
+            // A later sign-in reused the id and is still open: its answer is its own.
+            return Ok(None);
+        }
+        // Another look at the same allowed request may have signed in first: that session
+        // is this one, and must stay. Only a session this request did not make is ended.
+        let same = inner.session.as_ref().is_some_and(|current| {
+            current.device_id == session.device_id
+                && current
+                    .email
+                    .trim()
+                    .eq_ignore_ascii_case(session.email.trim())
+        });
+        drop(inner);
+        if !same {
+            let _ = backend.account.sign_out().await;
+        }
+        Ok(None)
+    }
+
+    /// The serial of this computer's own request, so a test can answer the one before it.
+    #[cfg(test)]
+    pub(crate) async fn approval_serial(&self) -> Option<u64> {
+        self.inner
+            .lock()
+            .await
+            .approval
+            .as_ref()
+            .map(|approval| approval.serial)
     }
 
     /// Ends this computer's own request on the service and closes it with `state`, one cancel
@@ -300,19 +342,24 @@ impl AccountCenter {
                 .map(|a| self.approval_view(a));
         }
         let _ = backend.account.cancel_approval(id).await;
-        self.close_approval(id, state).await
+        self.close_approval(id, serial, state).await
     }
 
     /// The request ended without signing in: this computer is signed out, and the screen
-    /// keeps saying why until the person leaves it.
+    /// keeps saying why until the person leaves it. Only the request `serial` named is closed,
+    /// so an older end never closes a sign-in that reused the id.
     async fn close_approval(
         &self,
         id: &str,
+        serial: u64,
         state: AccountApprovalState,
     ) -> Option<AccountApprovalView> {
         let shown = {
             let mut inner = self.inner.lock().await;
-            let approval = inner.approval.as_mut().filter(|a| a.request_id == id)?;
+            let approval = inner
+                .approval
+                .as_mut()
+                .filter(|approval| approval.request_id == id && approval.serial == serial)?;
             approval.answer = Some(state);
             self.approval_view(approval)
         };
