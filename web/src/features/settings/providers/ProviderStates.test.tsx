@@ -133,9 +133,9 @@ it("shows Signed out for a signed-out engine even with no sign-in command", asyn
 });
 
 it("lists a refused program as a card that says so, with no action", async () => {
-  show([], [entry({ id: "grok", name: "Grok Build", group: "cant_start", labels: ["not_found"], registered: false, openable: false,
+  show([], [entry({ id: "grok", name: "Grok Build", group: "not_found", labels: ["not_found"], registered: false, openable: false,
     note: "Found a program named grok at /usr/local/bin/grok, but it is not xAI’s Grok CLI. Orbyn does not use it." })]);
-  await waitFor(() => expect(tables()).toEqual(["Found, can’t start"]));
+  await waitFor(() => expect(tables()).toEqual(["Not found"]));
   const row = rowOf("Grok Build");
   expect(within(row).getByText("Not found")).toBeVisible();
   expect(within(row).getByText(/Found a program named grok/)).toBeVisible();

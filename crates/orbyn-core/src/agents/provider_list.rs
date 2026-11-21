@@ -210,7 +210,7 @@ pub fn list(statuses: &[EngineStatus], apps: &[&str], refused: &[Refused]) -> Pr
             providers.push(ProviderEntry {
                 id: one.id.to_owned(),
                 name: known.name.to_owned(),
-                group: ProviderGroup::CantStart,
+                group: ProviderGroup::NotFound,
                 labels: vec![ProviderLabel::NotFound],
                 note: Some(format!(
                     "Found a program named {} at {}, but it is not xAI’s Grok CLI. Orbyn does not use it. Get xAI’s own Grok Build from xAI’s official page.",

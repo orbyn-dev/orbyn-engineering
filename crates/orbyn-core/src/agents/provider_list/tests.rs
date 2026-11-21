@@ -188,7 +188,7 @@ fn a_program_that_is_another_cli_is_a_card_that_says_so() {
     }];
     let found = super::list(&[], &[], &refused);
     let grok = row(&found, "grok");
-    assert_eq!(grok.group, ProviderGroup::CantStart);
+    assert_eq!(grok.group, ProviderGroup::NotFound);
     assert_eq!(grok.labels, [ProviderLabel::NotFound]);
     assert!(!grok.registered && !grok.openable);
     assert!(grok.note.as_deref().unwrap().starts_with(
