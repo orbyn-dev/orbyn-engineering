@@ -1,4 +1,5 @@
 import { useCompacting } from "../ThreadStates";
+import { steerWithMark } from "../../../product/state/steerMarks";
 import { composerMarkup } from "./composerMarkup";
 import { MentionMenu, type Suggestion } from "./MentionMenu";
 import { AttachmentStrip } from "./AttachmentStrip";
@@ -264,7 +265,7 @@ export function Composer({
       const start = () => withoutApprovals ? cursorThreadApi().sendWithoutApprovals(thread.id, { prompt: prompt.trim(), attachment_ids: ids }).then(overrideRun) : api.startRun(thread.id, prompt.trim(), ids);
       const run = busy ? null : await start();
       if (steering) {
-        const steered = await api.steer(thread.id, prompt.trim());
+        const steered = await steerWithMark(thread.id, prompt.trim());
         if (steered.state === "queued") useUi.getState().pushToast("This engine reads it on its next turn");
       } else if (busy) await api.enqueue(thread.id, prompt.trim(), ids);
       setAttachments([]);
@@ -364,8 +365,7 @@ export function Composer({
   useOwnCommand(side, "thread.steerQueuedMessage", () => {
     const oldest = queue.data?.[0];
     if (!oldest || !busy) return false;
-    void api
-      .steer(thread.id, oldest.prompt)
+    void steerWithMark(thread.id, oldest.prompt)
       .then(() => api.removeQueued(oldest.id))
       .then(reloadQueue, (failure: unknown) => setError(`Couldn't steer. ${toFailure(failure).message}`));
   });
