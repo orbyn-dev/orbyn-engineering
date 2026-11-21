@@ -20,7 +20,7 @@ export function claudeFamily({ loadSdk }) {
   return {
     name: "claude",
     sdk: { name: "@anthropic-ai/claude-agent-sdk", version: process.env.ORBYN_CLAUDE_SDK_VERSION ?? "unknown" },
-    capabilities: ["steer", "fork"],
+    capabilities: ["steer", "fork", "models", "usage", "stopTask", "background"],
     create(ctx) {
       const sessions = new Map();
       const pendingPermissions = new Map(); // requestId -> {resolve, sessionId}
@@ -195,6 +195,41 @@ export function claudeFamily({ loadSdk }) {
               // Once-only allow: no updatedPermissions, so the SDK never learns a session-wide rule.
               p.resolve(d.behavior === "allow" ? { behavior: "allow", updatedInput: p.input } : { behavior: "deny", message: d.message ?? "Denied." });
               return null;
+            }
+            case "stopTask": {
+              const session = sessions.get(request.sessionId);
+              if (!session?.query) return { stopped: false };
+              await session.query.stopTask(request.taskId);
+              return { stopped: true };
+            }
+            case "background": {
+              const session = [...sessions.values()].find((s) => s.run?.sendId === request.sendId);
+              if (!session?.query) return { backgrounded: false };
+              return { backgrounded: await session.query.backgroundTasks(request.toolCallId) };
+            }
+            case "usage": {
+              const session = sessions.get(request.sessionId);
+              if (!session?.query) throw Object.assign(new Error("no live query for this session"), { name: "NoLiveQuery" });
+              return await session.query.getContextUsage({ detail: "summary" });
+            }
+            case "models": {
+              // A throwaway query with no prompt: it starts the engine, answers, and is closed.
+              const { query } = await sdk();
+              const inbox = new AsyncQueue();
+              const probe = query({
+                prompt: inbox,
+                options: {
+                  cwd: request.cwd ?? process.cwd(),
+                  ...(request.claudePath ? { pathToClaudeCodeExecutable: request.claudePath } : {}),
+                  spawnClaudeCodeProcess: spawnProcess({ confinement: request.confinement }),
+                },
+              });
+              try {
+                return await probe.supportedModels();
+              } finally {
+                inbox.close();
+                probe.close?.();
+              }
             }
             case "closeSession": {
               const session = sessions.get(request.sessionId);

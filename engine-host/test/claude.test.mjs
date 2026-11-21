@@ -138,3 +138,46 @@ test("an authentication failure result ends the run with kind auth", async () =>
   assert.equal(done.ok, false);
   assert.equal(done.error.cause.kind, "auth");
 });
+
+test("models, usage, stopTask and background call the SDK query", async () => {
+  const { AsyncQueue } = await import("../src/asyncQueue.mjs");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const frames = [];
+  createInterface({ input: output }).on("line", (l) => frames.push(JSON.parse(l)));
+  const calls = [];
+  const query = ({ prompt }) => {
+    const out = new AsyncQueue();
+    return {
+      [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](),
+      close() { calls.push("close"); },
+      interrupt: async () => {},
+      supportedModels: async () => [{ value: "m1", supportedEffortLevels: ["low"] }],
+      getContextUsage: async (o) => ({ total_tokens: 5, opts: o }),
+      stopTask: async (id) => calls.push(`stop:${id}`),
+      backgroundTasks: async (id) => (calls.push(`bg:${id}`), true),
+    };
+  };
+  runHost({ family: claudeFamily({ loadSdk: async () => ({ query }) }), input, output });
+  const send = (f) => input.write(`${JSON.stringify(f)}\n`);
+  const reply = (id) => new Promise((resolve) => {
+    const t = setInterval(() => { const f = frames.find((x) => x.id === id); if (f) { clearInterval(t); resolve(f); } }, 5);
+  });
+  send({ id: 1, type: "init", protocol: 1 });
+  send({ id: 2, type: "models", claudePath: "/bin/claude" });
+  assert.equal((await reply(2)).result[0].value, "m1");
+  send({ id: 3, type: "open", operation: "create", sessionId: "s", cwd: "/tmp", options: { sdk: {} } });
+  await reply(3);
+  send({ id: 4, type: "usage", sessionId: "s" });
+  assert.equal((await reply(4)).ok, false, "no live query before the first send");
+  send({ id: 5, type: "send", sessionId: "s", message: "hi" });
+  await reply(5);
+  send({ id: 6, type: "usage", sessionId: "s" });
+  assert.deepEqual((await reply(6)).result, { total_tokens: 5, opts: { detail: "summary" } });
+  send({ id: 7, type: "stopTask", sessionId: "s", taskId: "t1" });
+  assert.equal((await reply(7)).result.stopped, true);
+  send({ id: 8, type: "background", sendId: 5, toolCallId: "tu1" });
+  assert.equal((await reply(8)).result.backgrounded, true);
+  assert.deepEqual(calls.filter((c) => c !== "close"), ["stop:t1", "bg:tu1"]);
+  assert.ok(calls.includes("close"), "the models probe is closed");
+});
