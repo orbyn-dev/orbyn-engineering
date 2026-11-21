@@ -2654,8 +2654,10 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 `final` is true only for `passed`, `stopped` and `cancelled`, and the lead is told through its queue when a run ends or
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
-the approvals reserved against the same budget, and a result counts them. A worker's file change is checked against its lease at
-the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
+the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
+a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; no Settings control yet, so it is set only through the settings API) refuses a new task once its crew
+has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
+against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
@@ -2761,7 +2763,8 @@ With Preview enabled the service registers request-scoped engine approvers. The 
 are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
 data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
 whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
-worker admissions; global worker-turn enforcement remains #438. Reported usage is recorded even when the answer is rejected, and
+worker admissions; a task whose turns are spent stops on its next failed attempt, and a crew that has spent its Settings turn
+budget starts no new task (see above). Reported usage is recorded even when the answer is rejected, and
 missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
 no session persistence and one turn, with a 1,024-output-token cap and $0.05 estimated-spend stop. Reported usage above 16,384 tokens
 or estimated cost above $0.05 rejects the answer after spending. The provider stop can overshoot; neither is a hard pre-spend total-token
