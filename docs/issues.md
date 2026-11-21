@@ -101,7 +101,7 @@ The service's usual error body `{ code, message }`. Codes for issues, with the s
 | Code | Status | When |
 |---|---|---|
 | `tracker_not_connected` | 409 | the tracker has no connection, or `gh` is missing or signed out |
-| `rate_limited` | 429 | the tracker said so; the body adds `retry_after_secs` |
+| `rate_limited` | 429 | the tracker said so; the message says when to try again |
 | `forbidden` | 403 | the tracker refused the token or the repository |
 | `not_found` | 404 | no such issue; a link to one is refused the same way |
 | `tracker_unavailable` | 502 | the tracker did not answer or answered nonsense |

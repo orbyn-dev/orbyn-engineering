@@ -23,6 +23,7 @@ mod explorer;
 mod files;
 mod governance;
 mod interactions;
+mod issues;
 mod mcp_apps;
 mod media;
 mod preview;
@@ -118,6 +119,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(issues::routes())
         .merge(explorer::routes())
         .merge(files::routes())
         .merge(raw_files::routes())
