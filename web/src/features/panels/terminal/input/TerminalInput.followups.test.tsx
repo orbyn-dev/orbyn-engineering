@@ -116,37 +116,43 @@ describe("the service proposes a command (typed field)", () => {
     expect(document.querySelector(".term-proposal")).toBeNull();
     expect(write).not.toHaveBeenCalled();
   });
-  it("shows the command as plain text with Accept and Dismiss, and writes nothing by itself", async () => {
-    await asked();
-    propose("git diff --name-only main...HEAD");
-    expect(await screen.findByText("git diff --name-only main...HEAD")).toBeTruthy();
-    expect(screen.getByText(/Nothing runs from here/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Accept" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Dismiss" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
-    expect(write).not.toHaveBeenCalled();
-  });
-  it("ignores command text in the model's answer", async () => {
+  it("ignores command text in the model's answer even when the source is on", async () => {
     await asked();
     answer("Try this.\n<proposed_command>rm -rf x</proposed_command>");
     expect(document.querySelector(".term-proposal")).toBeNull();
   });
-  it("Accept puts the command in the line once and runs nothing", async () => {
-    const { field } = await asked();
-    propose("git status");
-    const accept = await screen.findByRole("button", { name: "Accept" });
-    fireEvent.click(accept);
-    fireEvent.click(accept);
-    expect(field.value).toBe("git status");
+  it("shows the command as plain text with Run, Edit and Cancel, and writes nothing by itself", async () => {
+    await asked();
+    propose("git diff --name-only main...HEAD");
+    expect(await screen.findByText("git diff --name-only main...HEAD")).toBeTruthy();
+    expect(screen.getByText(/It does not run until you press Run/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
     expect(write).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Accept" })).toBeNull());
   });
-  it("Dismiss removes the card and touches nothing", async () => {
+  it("Run is one click and one write, however fast it is clicked", async () => {
+    await asked();
+    propose("git status");
+    const run = await screen.findByRole("button", { name: "Run" });
+    fireEvent.click(run);
+    fireEvent.click(run);
+    expect(write).toHaveBeenCalledExactlyOnceWith("git status\r");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Run" })).toBeNull());
+  });
+  it("Edit puts the command in the line and runs nothing", async () => {
     const { field, user } = await asked();
     propose("git status");
-    await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(field.value).toBe("git status");
+    expect(write).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+  });
+  it("Cancel dismisses the card and runs nothing", async () => {
+    const { user } = await asked();
+    propose("git status");
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("git status")).toBeNull();
-    expect(field.value).toBe("");
     expect(write).not.toHaveBeenCalled();
   });
   it("shows markup as text", async () => {
@@ -156,19 +162,20 @@ describe("the service proposes a command (typed field)", () => {
     expect(code.closest(".term-proposal")?.querySelector("img, p b")).toBeNull();
     expect(screen.getByText("<b>bold</b> says hi")).toBeTruthy();
   });
-  it("never fills in a command that looks like a secret", async () => {
+  it("never fills in or runs a command that looks like a secret", async () => {
     const { field } = await asked();
     propose("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwx");
     expect(await screen.findByText(/looks like a secret/i)).toBeTruthy();
     expect(screen.queryByText(/sk-abcdefghijklmnopqrstuvwx/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(field.value).toBe("");
     expect(write).not.toHaveBeenCalled();
   });
   it("ignores a proposal for some other run", async () => {
     await asked();
     propose("git status", "n", "r99");
-    expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
   });
 });
 

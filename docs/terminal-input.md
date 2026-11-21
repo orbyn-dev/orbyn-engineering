@@ -19,14 +19,17 @@ The service reports the field. The web never reads the model's answer text for a
 
 ## Behavior
 
+The card is the Designer's `english-proposed` frame; the field supplies only the command and the note.
+
 - Absent field, or `proposalSource` of `none`: the card is hidden. Nothing else changes.
-- Present: a card shows the command as escaped text (masked when it looks like a secret, with no Accept) and the note.
-- Accept puts the command in the input line once per click and removes the card. It writes nothing to the shell.
-- Dismiss removes the card and changes nothing.
+- Present: a card shows the command as escaped text and the note, with Run, Edit and Cancel.
+- Run writes the command to the shell on the person's click, once per click (busy guard), then removes the card. Nothing runs without that click.
+- Edit puts the command in the input line and runs nothing. Cancel removes the card.
+- A command that looks like a secret is shown masked with no Run or Edit, only Cancel.
 - A proposal is tied to the run the editor started; one for another run is ignored.
 
 ## Security
 
-- The card never executes. The person runs the line from the input with Enter, like any typed command.
-- Treat `command` as untrusted text from a model. Limits and the control-character rule keep one proposal to one visible line.
-- Only if the service itself ever executes a proposal is that Person-class (a person's explicit approval, never a model or agent). That is out of scope here and would need its own design.
+- The card never runs anything on its own; Run is the person's explicit click.
+- Treat `command` as untrusted text from a model. The limits and the control-character rule keep one proposal to one visible line.
+- Question for Eng 4: Run executes a service-supplied command on a click. Does that need Person-class handling (an explicit person approval recorded by the service) or is the click in the person's own terminal enough? The web does not invent an answer.
