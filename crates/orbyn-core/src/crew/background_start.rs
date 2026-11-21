@@ -139,12 +139,13 @@ impl Core {
         id: &str,
         actor: &str,
     ) -> Result<wire::BackgroundRun> {
-        self.crew_background_start(id, "manual").await
+        self.crew_background_start(id, "manual", actor).await
     }
 
     /// Opens one run of an enabled background crew and starts it, whatever event asked for it. `event` names the firing in the
     /// start's `PausedTrigger` key (`<crew>:<event>`) and nothing else: it is never part of the brief, the worker's prompt or any
-    /// text a model reads, which stays code-owned exactly as the manual start's is. The run is Low priority and Crew-started, so
+    /// text a model reads, which stays code-owned exactly as the manual start's is. `actor` is written on the run's audit rows and is
+    /// always a code-owned constant or the person's own actor, never event text. The run is Low priority and Crew-started, so
     /// review capacity may refuse it (nothing is stored then, and the refusal is a held `background` start); a crew that is off, a
     /// trigger kind nothing can start yet, a crew that already has a run in progress and a project that is not trusted are refused
     /// with a plain reason. Behind the Crew Preview flag.
@@ -152,6 +153,7 @@ impl Core {
         self: &Arc<Self>,
         id: &str,
         event: &str,
+        actor: &str,
     ) -> Result<wire::BackgroundRun> {
         self.crew_preview_only()?;
         let crew = self.background_row(id)?;

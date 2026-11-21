@@ -94,8 +94,8 @@ fn known_engine_ids(raw: Option<&std::ffi::OsStr>) -> Result<Option<Vec<String>>
     .transpose()
 }
 
-/// The background listeners' periodic pass, local startup policy only: 60 seconds to 24 hours, or unset for one
-/// startup pass. Neither HTTP nor a tool can change it.
+/// The background listeners' periodic pass, local startup policy only: 60 seconds to 24 hours, or unset for off:
+/// with no interval no pass runs at all. Neither HTTP nor a tool can change it.
 fn background_watch_interval(raw: Option<&std::ffi::OsStr>) -> Result<Option<Duration>, String> {
     raw.map(|raw| {
         let seconds = raw
@@ -103,7 +103,7 @@ fn background_watch_interval(raw: Option<&std::ffi::OsStr>) -> Result<Option<Dur
             .and_then(|s| s.parse::<u64>().ok())
             .filter(|n| (60..=86400).contains(n))
             .ok_or(
-                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for one startup pass.",
+                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for off.",
             )?;
         Ok(Duration::from_secs(seconds))
     })
@@ -479,14 +479,15 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         None
     };
-    let crew_background = if core.config.crew_preview {
-        let (core, background_stop) = (core.clone(), stop.child_token());
-        Some(tokio::spawn(async move {
-            core.run_crew_background_listeners(background_stop).await
-        }))
-    } else {
-        None
-    };
+    let crew_background =
+        if core.config.crew_preview && core.config.crew_background_watch_interval.is_some() {
+            let (core, background_stop) = (core.clone(), stop.child_token());
+            Some(tokio::spawn(async move {
+                core.run_crew_background_listeners(background_stop).await
+            }))
+        } else {
+            None
+        };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { activity.run_shell_activity(quit).await });

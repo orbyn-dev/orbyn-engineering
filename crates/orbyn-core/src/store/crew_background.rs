@@ -697,6 +697,40 @@ impl Store {
         })
     }
 
+    /// The newest schedule bucket this crew has fired (claimed), or none. A bucket at or before it never fires again, so a clock
+    /// that moves back cannot re-fire a bucket the crew already had, and a bucket that was only claimed counts as fired.
+    pub fn latest_schedule_bucket(&self, crew: &str) -> Result<Option<i64>> {
+        let low = format!("schedule:{crew}:");
+        // ':' is followed by ';' in byte order, so this range is every identity that starts with `low`.
+        let high = format!("schedule:{crew};");
+        let conn = self.reader();
+        Ok(conn.query_row(
+            "SELECT MAX(CAST(substr(identity, ?3) AS INTEGER)) FROM crew_background_events WHERE identity >= ?1 AND identity < ?2",
+            params![low, high, low.chars().count() as i64 + 1],
+            |row| row.get::<_, Option<i64>>(0),
+        )?)
+    }
+
+    /// A listener firing the start refused, as one audit row beside the refusal: which listener fired and a fixed category of the
+    /// refusal, never the refusal's text and never any event text. `kind` is `schedule` or `ci`, and `reason` is one of the
+    /// listener's own words.
+    pub fn audit_background_listener_refusal(
+        &self,
+        crew: &str,
+        kind: &str,
+        reason: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            audit(
+                tx,
+                "crew",
+                "crew.background.listener.refused",
+                crew,
+                json!({ "listener": kind, "reason": reason }),
+            )
+        })
+    }
+
     /// One run by id.
     pub fn background_run(&self, id: &str) -> Result<Option<BackgroundRunRow>> {
         Ok(self

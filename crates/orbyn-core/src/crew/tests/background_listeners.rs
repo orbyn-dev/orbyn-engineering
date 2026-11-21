@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,8 +17,9 @@ use tokio_util::sync::CancellationToken;
 use super::autopilot_merge::{gitq, main_branch};
 use super::harness::{Script, Turn, World, brief, key, report, world};
 use super::review_support::commit_all;
+use crate::crew::background_listeners::event_tag;
 use crate::crew::capacity::{CapacitySettings, PausedKind, Priority, Sampling};
-use crate::crew::fixtures::merge_record;
+use crate::crew::fixtures::{audit_actions, merge_record};
 use crate::source_control::forge::{Forge, with_crew_fixture};
 use crate::testing::run_git;
 
@@ -32,7 +34,8 @@ fn project(w: &World) -> String {
 fn crew_with(w: &World, name: &str, trigger: Value, on: bool) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(w), "name": name, "template": "fix_failing_ci",
-        "trigger": trigger, "budget": { "turns": 10, "minutes": 30 }
+        "trigger": trigger, "budget": { "turns": 10, "minutes": 30 },
+        "daily": { "runs": 100, "turns": 1000 }, "utc_offset_minutes": 600
     }))
     .unwrap();
     let crew = w.core.background_create(&body).unwrap();
@@ -334,61 +337,258 @@ async fn two_failed_checks_at_one_head_are_two_events_and_a_repeat_starts_nothin
             .unwrap()
             .collect::<std::result::Result<Vec<String>, _>>()
             .unwrap();
+        let mut expected = vec![
+            format!("ci:{id}:{head}:{}", event_tag("ci")),
+            format!("ci:{id}:{head}:{}", event_tag("lint")),
+        ];
+        expected.sort();
+        assert_eq!(claimed, expected);
+    })
+    .await;
+}
+
+/// A forge fixture that counts every read it answers.
+fn counting(state: Arc<Mutex<Remote>>, reads: Arc<AtomicUsize>) -> ForgeFixture {
+    let inner = remote_fixture(state);
+    Arc::new(move |forge: Forge, cwd: &Path, args: &[&str]| {
+        reads.fetch_add(1, Ordering::SeqCst);
+        inner(forge, cwd, args)
+    })
+}
+
+fn claims(w: &World) -> Vec<String> {
+    let reader = w.core.store.reader();
+    let mut statement = reader
+        .prepare("SELECT identity FROM crew_background_events ORDER BY identity")
+        .unwrap();
+    statement
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<std::result::Result<Vec<String>, _>>()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_off_crew_never_reaches_the_forge_or_claims_an_event() {
+    let w = world(true, hung()).await;
+    let branch = main_branch(&w.repo).await;
+    let head = gitq(&w.repo, &["rev-parse", &branch]).await;
+    add_origin(&w);
+    let id = ci_crew(&w, "Off", &branch, false);
+    let sched = schedule_crew(&w, "Off hourly", 1, false);
+    let before = threads(&w);
+    let remote = Arc::new(Mutex::new(Remote {
+        heads: [(branch.clone(), head.clone())].into_iter().collect(),
+        checks: vec![(head.clone(), "ci".into(), "failure".into())],
+    }));
+    let reads = Arc::new(AtomicUsize::new(0));
+    with_crew_fixture(counting(remote.clone(), reads.clone()), async {
+        w.core.crew_background_listeners_tick(NOW).await.unwrap();
         assert_eq!(
-            claimed,
-            [format!("ci:{id}:{head}:ci"), format!("ci:{id}:{head}:lint")]
+            reads.load(Ordering::SeqCst),
+            0,
+            "a crew that is off is never read from the forge"
+        );
+        assert!(
+            claims(&w).is_empty(),
+            "nothing was claimed for a crew that is off"
+        );
+        assert!(runs_of(&w, &id).is_empty() && runs_of(&w, &sched).is_empty());
+        assert_eq!(threads(&w), before);
+
+        // Turned on, the crew sees the head's failure and the current bucket as new events: nothing was spent while it was off.
+        w.core.background_set_enabled(&id, true).unwrap();
+        w.core.background_set_enabled(&sched, true).unwrap();
+        w.core
+            .crew_background_listeners_tick(NOW + 60)
+            .await
+            .unwrap();
+        assert_eq!(runs_of(&w, &id).len(), 1);
+        assert_eq!(runs_of(&w, &sched).len(), 1);
+        assert!(reads.load(Ordering::SeqCst) > 0);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_refused_event_is_never_retried_and_a_new_head_is_a_new_event() {
+    let w = world(true, hung()).await;
+    let branch = main_branch(&w.repo).await;
+    let head = gitq(&w.repo, &["rev-parse", &branch]).await;
+    add_origin(&w);
+    let id = ci_crew(&w, "Busy", &branch, true);
+    let remote = Arc::new(Mutex::new(Remote {
+        heads: [(branch.clone(), head.clone())].into_iter().collect(),
+        checks: vec![
+            (head.clone(), "ci".into(), "failure".into()),
+            (head.clone(), "lint".into(), "failure".into()),
+        ],
+    }));
+    with_crew_fixture(remote_fixture(remote.clone()), async {
+        // The first pass starts one run, for the first failing check only.
+        w.core.crew_background_listeners_tick(NOW).await.unwrap();
+        assert_eq!(runs_of(&w, &id).len(), 1);
+        assert_eq!(claims(&w), [format!("ci:{id}:{head}:{}", event_tag("ci"))]);
+
+        // The next pass reaches the second check while the first run still holds the crew: the start refuses it, one audit
+        // row says so, and the event is kept as spent, never retried on a timer.
+        w.core
+            .crew_background_listeners_tick(NOW + 60)
+            .await
+            .unwrap();
+        assert_eq!(runs_of(&w, &id).len(), 1);
+        assert_eq!(claims(&w).len(), 2);
+        assert_eq!(
+            audit_actions(&w.core, "crew.background.listener.refused").len(),
+            1
+        );
+        w.core
+            .crew_background_listeners_tick(NOW + 120)
+            .await
+            .unwrap();
+        assert_eq!(claims(&w).len(), 2, "a refused event is never retried");
+        assert_eq!(
+            audit_actions(&w.core, "crew.background.listener.refused").len(),
+            1
         );
     })
     .await;
 }
 
 #[tokio::test]
-async fn an_off_crew_is_refused_and_its_event_is_never_retried() {
+async fn one_pass_attempts_at_most_one_start_per_crew() {
     let w = world(true, hung()).await;
     let branch = main_branch(&w.repo).await;
     let head = gitq(&w.repo, &["rev-parse", &branch]).await;
     add_origin(&w);
-    let id = ci_crew(&w, "Off", &branch, false);
-    let before = threads(&w);
+    let id = ci_crew(&w, "Many failures", &branch, true);
+    waiting_merges(&w, 3).await;
+    capacity(&w, 2, true);
+    let names: Vec<String> = (0..6).map(|n| format!("check-{n}")).collect();
+    let remote = Arc::new(Mutex::new(Remote {
+        heads: [(branch.clone(), head.clone())].into_iter().collect(),
+        checks: names
+            .iter()
+            .map(|name| (head.clone(), name.clone(), "failure".to_owned()))
+            .collect(),
+    }));
+    with_crew_fixture(remote_fixture(remote), async {
+        w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    })
+    .await;
+    // Six failing checks at one head, review capacity full: one start was attempted and held, not six.
+    assert_eq!(claims(&w).len(), 1, "{:?}", claims(&w));
+    let held = w.core.store.crew_paused_starts(&project(&w)).unwrap();
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert_eq!(
+        audit_actions(&w.core, "crew.background.listener.refused").len(),
+        1
+    );
+    assert!(runs_of(&w, &id).is_empty());
+}
+
+#[tokio::test]
+async fn a_stop_before_a_firing_claims_and_starts_nothing() {
+    let w = world(true, hung()).await;
+    let branch = main_branch(&w.repo).await;
+    let head = gitq(&w.repo, &["rev-parse", &branch]).await;
+    add_origin(&w);
+    let sched = schedule_crew(&w, "Hourly", 1, true);
+    let ci = ci_crew(&w, "Fix CI", &branch, true);
     let remote = Arc::new(Mutex::new(Remote {
         heads: [(branch.clone(), head.clone())].into_iter().collect(),
         checks: vec![(head.clone(), "ci".into(), "failure".into())],
     }));
+
+    // Stopped before the pass: no claim and no start.
+    let stop = CancellationToken::new();
+    stop.cancel();
     with_crew_fixture(remote_fixture(remote.clone()), async {
-        w.core.crew_background_listeners_tick(NOW).await.unwrap();
-        assert!(runs_of(&w, &id).is_empty(), "an off crew is refused");
-        assert_eq!(threads(&w), before);
-
-        // The refused firing kept its claim, so turning the crew on does not retry the same event.
-        w.core.background_set_enabled(&id, true).unwrap();
         w.core
-            .crew_background_listeners_tick(NOW + 60)
+            .crew_background_listeners_pass(NOW, 0, &stop)
             .await
             .unwrap();
-        assert!(
-            runs_of(&w, &id).is_empty(),
-            "a refused event is never retried"
-        );
-
-        // A new head is a new event, and the crew that is now on starts it.
-        std::fs::write(w.repo.join("src/later.txt"), "later\n").unwrap();
-        run_git(&w.repo, &["add", "."]);
-        commit_all(&w.repo, "later");
-        let moved = gitq(&w.repo, &["rev-parse", &branch]).await;
-        {
-            let mut state = remote.lock().unwrap();
-            state.heads.insert(branch.clone(), moved.clone());
-            state
-                .checks
-                .push((moved.clone(), "ci".into(), "failure".into()));
-        }
-        w.core
-            .crew_background_listeners_tick(NOW + 120)
-            .await
-            .unwrap();
-        assert_eq!(runs_of(&w, &id).len(), 1);
     })
     .await;
+    assert!(claims(&w).is_empty());
+    assert!(runs_of(&w, &sched).is_empty() && runs_of(&w, &ci).is_empty());
+
+    // Stopped while the forge is being read, which is before any claim: still nothing claimed, no run left half made.
+    let stop = CancellationToken::new();
+    let cancel = stop.clone();
+    let inner = remote_fixture(remote.clone());
+    let fixture: ForgeFixture = Arc::new(move |forge: Forge, cwd: &Path, args: &[&str]| {
+        cancel.cancel();
+        inner(forge, cwd, args)
+    });
+    with_crew_fixture(fixture, async {
+        w.core
+            .crew_background_listeners_pass(NOW, 0, &stop)
+            .await
+            .unwrap();
+    })
+    .await;
+    assert!(
+        claims(&w)
+            .iter()
+            .all(|claim| claim.starts_with("schedule:")),
+        "{:?}",
+        claims(&w)
+    );
+    assert!(runs_of(&w, &ci).is_empty());
+    // The schedule that fired before the stop is a whole run: a task and a lead thread, never a run without one.
+    for run in runs_of(&w, &sched) {
+        assert_eq!(w.core.store.crew_tasks_in_crew(&run.id).unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn a_clock_that_moves_back_does_not_fire_an_earlier_bucket() {
+    let w = world(true, hung()).await;
+    let id = schedule_crew(&w, "Hourly", 1, true);
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1);
+    let bucket = NOW.div_euclid(3600);
+    assert_eq!(
+        w.core.store.latest_schedule_bucket(&id).unwrap(),
+        Some(bucket)
+    );
+    // An earlier bucket the crew never claimed (it was created after it) is still never fired.
+    w.core
+        .crew_background_listeners_tick(NOW - 3 * 3600)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 1);
+    assert_eq!(claims(&w), [format!("schedule:{id}:{bucket}")]);
+    assert_eq!(
+        w.core.store.latest_schedule_bucket("missing").unwrap(),
+        None
+    );
+}
+
+#[test]
+fn a_long_check_name_is_a_short_hash_in_the_claim_and_the_key() {
+    let long = "x".repeat(400);
+    let tag = event_tag(&long);
+    assert_eq!(tag.len(), 16);
+    assert!(tag.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_ne!(tag, event_tag("y"));
+    assert_eq!(tag, event_tag(&long));
+}
+
+#[test]
+fn the_watched_crews_rotate_so_none_past_the_cap_is_never_reached() {
+    use crate::crew::background_listeners::window_for_test as window;
+    let all: Vec<usize> = (0..5).collect();
+    assert_eq!(window(all.clone(), 0, 8), all, "under the cap: all");
+    assert_eq!(window(all.clone(), 0, 2), [0, 1]);
+    assert_eq!(window(all.clone(), 2, 2), [2, 3]);
+    assert_eq!(window(all.clone(), 4, 2), [4, 0]);
+    let mut seen = std::collections::BTreeSet::new();
+    for pass in 0..3 {
+        seen.extend(window(all.clone(), pass * 2, 2));
+    }
+    assert_eq!(seen.len(), 5, "every crew is reached over a few passes");
 }
 
 #[tokio::test]
@@ -484,7 +684,7 @@ async fn a_firing_refused_by_capacity_is_held_with_its_event_key() {
     }
     assert_eq!(keys.len(), 2, "{rows:?}");
     assert!(
-        keys.contains(&format!("{ci}:ci:{head}:ci")),
+        keys.contains(&format!("{ci}:ci:{head}:{}", event_tag("ci"))),
         "one event per head and failing check: {keys:?}"
     );
     assert!(
@@ -493,6 +693,41 @@ async fn a_firing_refused_by_capacity_is_held_with_its_event_key() {
     );
     assert!(runs_of(&w, &ci).is_empty());
     assert!(runs_of(&w, &sched).is_empty());
+    // Each refusal wrote one code-owned audit row.
+    assert_eq!(
+        audit_actions(&w.core, "crew.background.listener.refused").len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn a_very_long_check_name_still_makes_a_held_row_and_never_appears_in_it() {
+    let w = world(true, hung()).await;
+    let branch = main_branch(&w.repo).await;
+    let head = gitq(&w.repo, &["rev-parse", &branch]).await;
+    add_origin(&w);
+    let ci = ci_crew(&w, "Long name", &branch, true);
+    waiting_merges(&w, 3).await;
+    capacity(&w, 2, true);
+    let name = "n".repeat(300);
+    let remote = Arc::new(Mutex::new(Remote {
+        heads: [(branch.clone(), head.clone())].into_iter().collect(),
+        checks: vec![(head.clone(), name.clone(), "failure".into())],
+    }));
+    with_crew_fixture(remote_fixture(remote), async {
+        w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    })
+    .await;
+    let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "the start was held, not lost to a key too long"
+    );
+    assert_eq!(rows[0].key, format!("{ci}:ci:{head}:{}", event_tag(&name)));
+    assert!(rows[0].key.len() <= 128);
+    assert!(!rows[0].key.contains(&name));
+    assert!(claims(&w).iter().all(|claim| !claim.contains(&name)));
 }
 
 #[tokio::test]
@@ -547,7 +782,7 @@ async fn outside_event_text_selects_the_run_and_never_becomes_its_prompt() {
         "the run's lead thread is never prompted"
     );
 
-    // Where the event's name can reach: the dedupe key, ids and keys only, never a prompt.
+    // Where the event's name can reach: a hash of it in the dedupe key, never the name and never a prompt.
     let claimed: String = w
         .core
         .store
@@ -556,26 +791,25 @@ async fn outside_event_text_selects_the_run_and_never_becomes_its_prompt() {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(claimed, format!("ci:{id}:{head}:{POISON}"));
+    assert_eq!(claimed, format!("ci:{id}:{head}:{}", event_tag(POISON)));
+    assert!(!claimed.contains(POISON), "only a hash of the name is kept");
 }
 
 #[tokio::test]
-async fn the_service_awaits_the_listener_future_and_a_stop_ends_it() {
-    // With no interval the future runs its startup pass and returns, so the service's await finishes: the pass fired
-    // the due schedule on the way.
+async fn no_interval_means_no_pass_and_a_stop_ends_the_looping_future() {
+    // With no interval there is no pass at all, not even at startup: the future returns at once and fires nothing.
     let w = world(true, hung()).await;
     let id = schedule_crew(&w, "Hourly", 1, true);
     let token = CancellationToken::new();
     let (core, startup_token) = (w.core.clone(), token.clone());
     let listeners =
         tokio::spawn(async move { core.run_crew_background_listeners(startup_token).await });
-    w.until("the schedule fired", |w| !runs_of(w, &id).is_empty())
-        .await;
-    assert_eq!(runs_of(&w, &id)[0].state, wire::BackgroundRunState::Running);
     let done = tokio::time::timeout(Duration::from_secs(30), listeners)
         .await
-        .expect("the future ends after its startup pass");
+        .expect("the future ends at once with no interval");
     assert!(matches!(done, Ok(Ok(()))), "{done:?}");
+    assert!(runs_of(&w, &id).is_empty(), "no interval means no pass");
+    assert!(claims(&w).is_empty());
 
     // With an interval the future keeps looping until the service cancels its token, and the await still finishes.
     // A core of its own, with no crew, is enough: the pass is empty and the loop is what is under test.
