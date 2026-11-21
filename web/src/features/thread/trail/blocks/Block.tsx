@@ -12,13 +12,15 @@ import { GenericBlock } from "./GenericBlock";
 import { ListBlock } from "./ListBlock";
 import { fetchBlock, mcpBlock, subagentBlock } from "./RemoteBlocks";
 import { SearchBlock } from "./SearchBlock";
+import { CodeDescribeBlock, CodeRunBlock, CodeSearchBlock, codeToolOf } from "../../../codemode";
+import { InspectItem } from "./InspectItem";
 import type { BlockContext } from "./types";
 
 function stopNote(state: CallState): ReactNode {
   return state === "stopped" ? "Stopped" : null;
 }
 
-export function Block({ item, running, state, ms, cwd }: { item: ToolItem; running: boolean; state: CallState; ms: number | null; cwd: string | null }) {
+export function Block({ item, running, state, ms, cwd, live = false }: { item: ToolItem; running: boolean; state: CallState; ms: number | null; cwd: string | null; live?: boolean }) {
   const kind = callKind(item);
   const origin = { threadId: useThreadOfTimeline() ?? "", cwd: cwd ?? "" };
   const revealFile = useUi((s) => s.revealFile);
@@ -61,6 +63,12 @@ export function Block({ item, running, state, ms, cwd }: { item: ToolItem; runni
     showInBrowser,
     timing,
   };
+
+  // Orbyn's own Code Mode tools have their own blocks; the raw result stays one click away.
+  const code = codeToolOf(item.name);
+  if (code === "run") return <CodeRunBlock item={item} live={live} inspect={<InspectItem item={item} />} />;
+  if (code === "search") return <CodeSearchBlock item={item} ms={ms} inspect={<InspectItem item={item} />} />;
+  if (code === "describe") return <CodeDescribeBlock item={item} ms={ms} inspect={<InspectItem item={item} />} />;
 
   switch (kind) {
     case "command":
