@@ -1,0 +1,22 @@
+{
+  "name": "orbyn-engine-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node host that runs engine SDKs for the Rust core. See ../docs/engine-host-protocol.md.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build:sea": "node scripts/build-sea.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "postject": "^1.0.0-alpha.6"
+  },
+  "dependencies": {
+    "@muse-code/sdk": "1.4.6",
+    "@opencode/client": "2.3.2"
+  }
+}

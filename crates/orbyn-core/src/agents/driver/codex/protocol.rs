@@ -12,6 +12,10 @@ use crate::conversation::questions::Answers;
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::Verdict;
 
+/// Why a file change with no known path is declined.
+const UNKNOWN_PATHS: &str =
+    "Orbyn declined this file change because Codex did not say which files it changes.";
+
 /// Answers one server request on its own task so the turn keeps flowing while a
 /// person decides. Anything unrecognized is refused, never ignored.
 pub(super) fn answer_request(
@@ -49,6 +53,16 @@ pub(super) fn answer_request(
         });
         return;
     };
+    if request.has_no_known_path() {
+        tracing::warn!(%method, "declining a file change whose paths are unknown");
+        tokio::spawn(async move {
+            let verdict = Verdict::Deny(UNKNOWN_PATHS.to_owned());
+            let _ = rpc
+                .respond(id, approval_response(&method, &params, &verdict))
+                .await;
+        });
+        return;
+    }
     let events = events.clone();
     tokio::spawn(async move {
         let verdict = ask_paths(
@@ -153,6 +167,15 @@ pub(super) struct ClassifiedRequest {
     pub(super) target: String,
     pub(super) summary: String,
     paths: Vec<String>,
+}
+
+impl ClassifiedRequest {
+    /// A file change that names no path at all: an item Orbyn never recorded (a
+    /// sub-agent's) with no grant root. Nothing can say where it writes, so it is
+    /// never scoped to the checkout and no permission mode may accept it.
+    pub(super) fn has_no_known_path(&self) -> bool {
+        self.kind == ActionKind::FileChange && self.paths.is_empty()
+    }
 }
 
 pub(super) fn classify_request(

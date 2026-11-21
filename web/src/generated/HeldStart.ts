@@ -4,7 +4,9 @@ import type { HeldStartState } from "./HeldStartState";
 
 /**
  * One Crew-started Low-priority start that review capacity refused. No task text and no engine output: the trigger's
- * kind, a stable key (an id or hash, so a repeat is one row), the counts at the last refusal and the times.
+ * kind, a stable key (an id or hash, so a repeat is one row), the counts at the last refusal and the times. A background
+ * CI firing's key names the failing check so a repeat of that check is one row; that name is the forge's, not model output,
+ * and no screen renders the key today — a screen that does must treat it as plain text.
  */
 export type HeldStart = { id: string, kind: HeldStartKind, key: string, state: HeldStartState, 
 /**

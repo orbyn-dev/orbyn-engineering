@@ -1,6 +1,7 @@
 //! Background crews at rest: what the table itself refuses, whatever the caller does, and that a change and its audit row stand or fall
 //! together.
 
+use rusqlite::Connection;
 use serde_json::json;
 
 use super::*;
@@ -232,6 +233,57 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
         ),
         ("stopped", 10, true)
     );
+}
+
+#[test]
+fn migration_59_follows_58_and_adds_the_event_claim_table() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.contains(&59));
+    // the escape retention owns 58, so this fixture stops at the migration before 59.
+    let before = *versions
+        .iter()
+        .filter(|version| **version < 59)
+        .max()
+        .unwrap();
+
+    let dir = TempDir::new();
+    let path = dir.path().join("old.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 59) {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    // A crew written before this migration survives it.
+    conn.execute(
+        "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+         budget_turns, budget_minutes, created_at, updated_at)
+         VALUES ('crew-1', 'p', 'Hourly', 'fix_failing_ci', 'schedule', '{}', 10, 30, 't', 't')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let store = Store::open(&path, "event-upgrade").unwrap();
+    let upgrade = store.upgrade().expect("an upgrade");
+    assert_eq!((upgrade.from, upgrade.to), (before, 59));
+    assert_eq!(
+        store.background_crew("crew-1").unwrap().unwrap().name,
+        "Hourly"
+    );
+    // The table is empty on an upgraded database and claims first-write-wins from then on.
+    let claims: i64 = store
+        .reader()
+        .query_row("SELECT COUNT(*) FROM crew_background_events", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(claims, 0);
+    assert!(store.claim_background_event("schedule:crew-1:1").unwrap());
+    assert!(!store.claim_background_event("schedule:crew-1:1").unwrap());
 }
 
 /// A `CoreConfig` for a test that opens a `Core` on `dir`: no network, no engine lookup, engine programs that do not exist.

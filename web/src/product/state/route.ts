@@ -29,7 +29,7 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 export type Route =
@@ -47,7 +47,7 @@ export type Route =
       task?: string;
       /** With `task`: open the editor instead of the task page. */
       edit?: boolean;
-      /** Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent). */
+      /** Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent), or Review capacity (which picks its own project). */
       crewPage?: CrewSettingsPage;
       repo?: string;
     }
@@ -88,12 +88,12 @@ export function routeHref(route: Route): string {
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "settings": {
       const base = route.section ? `#/settings/${route.section}` : "#/settings";
-      const path = route.section === "crew" && route.crewPage ? `${base}/areas${route.crewPage === "thresholds" ? "/thresholds" : ""}` : base;
+      const path = route.section === "crew" && route.crewPage ? (route.crewPage === "capacity" ? `${base}/capacity` : `${base}/areas${route.crewPage === "thresholds" ? "/thresholds" : ""}`) : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
       if (route.selection?.kind === "checkout") params.set("checkout", route.selection.project_id);
-      if (route.repo !== undefined && route.crewPage) params.set("repo", route.repo);
+      if (route.repo !== undefined && route.crewPage && route.crewPage !== "capacity") params.set("repo", route.repo);
       if (route.task !== undefined) params.set("task", route.task);
       if (route.task !== undefined && route.edit) params.set("edit", "1");
       return params.size ? `${path}?${params}` : path;
@@ -157,6 +157,7 @@ export function parseRoute(hash: string): Route {
         section: SETTINGS_SECTIONS.find((section) => section === first) ?? null,
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),
+        ...(first === "crew" && second === "capacity" ? { crewPage: "capacity" as const } : {}),
         ...(first === "crew" && second === "areas" ? { crewPage: third === "thresholds" ? ("thresholds" as const) : ("areas" as const), ...(params.has("repo") ? { repo: params.get("repo") ?? "" } : {}) } : {}),
         ...(params.has("task") ? { task: params.get("task") ?? "", ...(params.get("edit") === "1" ? { edit: true } : {}) } : {}),
       };

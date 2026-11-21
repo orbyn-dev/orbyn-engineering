@@ -94,6 +94,22 @@ fn known_engine_ids(raw: Option<&std::ffi::OsStr>) -> Result<Option<Vec<String>>
     .transpose()
 }
 
+/// The background listeners' periodic pass, local startup policy only: 60 seconds to 24 hours, or unset for off:
+/// with no interval no pass runs at all. Neither HTTP nor a tool can change it.
+fn background_watch_interval(raw: Option<&std::ffi::OsStr>) -> Result<Option<Duration>, String> {
+    raw.map(|raw| {
+        let seconds = raw
+            .to_str()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|n| (60..=86400).contains(n))
+            .ok_or(
+                "ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS must be 60 to 86400, or unset for off.",
+            )?;
+        Ok(Duration::from_secs(seconds))
+    })
+    .transpose()
+}
+
 /// Local startup policy only. Neither HTTP nor a tool can change these values.
 fn crew_merge_config(
     preview: bool,
@@ -192,6 +208,13 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         std::env::var_os("ORBYN_CREW_REQUIRED_CHECKS").as_deref(),
         std::env::var_os("ORBYN_CREW_WATCH_INTERVAL_SECS").as_deref(),
     )?;
+    config.crew_background_watch_interval = if config.crew_preview {
+        background_watch_interval(
+            std::env::var_os("ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS").as_deref(),
+        )?
+    } else {
+        None
+    };
     Ok(config)
 }
 
@@ -456,6 +479,15 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     } else {
         None
     };
+    let crew_background =
+        if core.config.crew_preview && core.config.crew_background_watch_interval.is_some() {
+            let (core, background_stop) = (core.clone(), stop.child_token());
+            Some(tokio::spawn(async move {
+                core.run_crew_background_listeners(background_stop).await
+            }))
+        } else {
+            None
+        };
     if args.parent_stdin {
         let (activity, quit) = (core.clone(), stop.clone());
         tokio::spawn(async move { activity.run_shell_activity(quit).await });
@@ -502,6 +534,15 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "Crew escape scan stopped with an error"),
             Err(error) => tracing::warn!(%error, "Crew escape scan task did not complete"),
+        }
+    }
+    if let Some(background) = crew_background {
+        match background.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "Crew background listeners stopped with an error")
+            }
+            Err(error) => tracing::warn!(%error, "Crew background listeners task did not complete"),
         }
     }
     checks.abort();
@@ -600,6 +641,28 @@ mod crew_merge_config_tests {
         }
         for bad in ["0", "59", "86401", "invalid", "-1"] {
             assert!(crew_merge_config(true, None, Some(OsStr::new(bad))).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod background_watch_interval_tests {
+    use super::background_watch_interval;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn background_interval_is_off_by_default_and_bounded() {
+        assert_eq!(background_watch_interval(None).unwrap(), None);
+        assert_eq!(
+            background_watch_interval(Some(OsStr::new("60"))).unwrap(),
+            Some(std::time::Duration::from_secs(60))
+        );
+        assert_eq!(
+            background_watch_interval(Some(OsStr::new("86400"))).unwrap(),
+            Some(std::time::Duration::from_secs(86400))
+        );
+        for bad in ["0", "59", "86401", "invalid", "-1"] {
+            assert!(background_watch_interval(Some(OsStr::new(bad))).is_err());
         }
     }
 }

@@ -5,11 +5,13 @@
 //! test fails for a `Person` route that is not.
 //!
 //! The rule for `Person`: the route decides or grants something only the person may (an approval, a trust or policy
-//! grant, redaction), acts on the person's files or shell, replaces the app, or writes account or Crew state behind
+//! grant, redaction), acts on the person's files or shell, moves a checkout (initialises git, creates or switches a branch or
+//! ref: ruling F3, so a service-token agent cannot move the checkout under the person), replaces the app, or writes account or Crew state behind
 //! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`.
 //!
 //! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push). Two routes are `Local` as a whole but check the key
-//! in their handler for part of the request, listed in [`FIELD_LEVEL`]: `POST /api/threads/{id}/runs` when its body raises
+//! in their handler for part of the request, listed in [`FIELD_LEVEL`]: `POST /api/projects/{id}/pulls/{number}/checkout` when its
+//! body has `worktree: false` (a switch in the project's checkout), `POST /api/threads/{id}/runs` when its body raises
 //! `permission_mode` above the thread's current mode, and `POST /agui/threads/{id}` when its `resume[]` is non-empty (it
 //! answers an interrupt, as `decide` does). `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`; `queue` and
 //! `steer` take model, effort and options but no `permission_mode`. `PATCH /api/threads/{id}` also takes it and is `Person`
@@ -135,6 +137,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("PUT", "/api/settings/secrets/surfaces"),
     // Projects, approvals and questions.
     ("POST", "/api/approvals/{id}/decide"),
+    ("POST", "/api/projects/{id}/git/init"),
     ("POST", "/api/projects/{id}/publish"),
     ("POST", "/api/projects/{id}/pulls/close"),
     ("PATCH", "/api/projects/{id}/pulls/{number}"),
@@ -175,6 +178,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("GET", "/ws/terminal/{thread_id}/{terminal}"),
     // Threads: console, terminals, scripts, files, computer use, pull requests, permission mode.
     ("PATCH", "/api/threads/{id}"),
+    ("POST", "/api/threads/{id}/branches"),
+    ("POST", "/api/threads/{id}/branches/switch"),
     ("POST", "/api/threads/{id}/computer"),
     ("POST", "/api/threads/{id}/console"),
     ("PUT", "/api/threads/{id}/files/content"),
@@ -183,6 +188,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/pulls/{number}/review"),
     ("POST", "/api/threads/{id}/scripts"),
     ("POST", "/api/threads/{id}/terminals"),
+    ("POST", "/api/threads/{id}/vcs/refs"),
+    ("POST", "/api/threads/{id}/vcs/refs/switch"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -199,6 +206,11 @@ pub const FIELD_LEVEL: &[(&str, &str, &str)] = &[
         "POST",
         "/agui/threads/{id}",
         "a non-empty resume[], which answers an interrupt (routes/stream.rs)",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/checkout",
+        "worktree false, which switches the project's own checkout (routes/pulls.rs)",
     ),
 ];
 
@@ -624,6 +636,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/projects/{id}/git/init",
+        "turns the person's folder into a repository (writes .git in it)",
+    ),
+    (
+        "POST",
         "/api/projects/{id}/publish",
         "publishes the project to the forge",
     ),
@@ -779,6 +796,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/threads/{id}/branches",
+        "creates a branch and switches the person's checkout to it",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/branches/switch",
+        "moves the person's checkout to another branch",
+    ),
+    (
+        "POST",
         "/api/threads/{id}/computer",
         "computer use on the person's machine",
     ),
@@ -816,6 +843,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/terminals",
         "opens a shell as the person",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/vcs/refs",
+        "creates a ref in the person's repository",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/vcs/refs/switch",
+        "moves the person's checkout to another ref",
     ),
     (
         "POST",

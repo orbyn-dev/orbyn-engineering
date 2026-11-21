@@ -6,6 +6,7 @@ pub mod agents;
 pub mod app;
 pub mod browser;
 pub mod conversation;
+pub mod credentials;
 pub mod crew;
 pub mod error;
 pub mod governance;

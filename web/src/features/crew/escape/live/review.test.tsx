@@ -69,12 +69,13 @@ describe("the possible page", () => {
     expect(await screen.findByText(/1 in all/)).toBeInTheDocument();
   });
 
-  it("promises no check without the Planned pill, and trails no dot on empty areas", async () => {
+  it("says a check is proposed from the confirmed escape's own page, and trails no dot on empty areas", async () => {
     answers.possible = { status: 200, body: { project: "p-app", as_of: 1, total: 1, rows: [row({ id: "p", areas: [] })] } };
     render(<LiveEscapes view="possible" />);
     expect(await screen.findByText(/If you confirm/)).toBeInTheDocument();
-    expect(screen.queryByText(/ask Crew to propose a check/)).toBeNull();
-    expect(screen.getByText(/not on this page yet/)).toBeInTheDocument();
+    expect(screen.getByText(/You can then set its gap and ask Crew to propose a check/)).toBeInTheDocument();
+    expect(screen.queryByText(/not on this page yet/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Propose a check/ })).toBeNull();
     expect(screen.getByText(/^claude · found/)).toBeInTheDocument();
   });
 });

@@ -15,10 +15,9 @@ const markers = [
   "preview\\/crew",
   "mergequeue-narrow-panel",
   "crew-apq",
-  // Crew Designs v20 to v23 (features/crew/{escape,capacity,oracle,backtest,settings,shared}): the stage class, a frame id of each group
-  // and the design's own class prefix.
-  "cx-stage",
-  "cx-frame",
+  // Crew Designs v20 to v23 (features/crew/{escape,capacity,oracle,backtest,settings,shared}): a frame id of each group.
+  // The shared stage and frame classes (cx-stage, cx-frame) are not markers: the live capacity and escape screens, which ship
+  // behind crew_preview, are built on the same shared Frame, so those classes are in the production bundle by design.
   "escape-narrow-window",
   "capacity-coverage-narrow-window",
   "oracle-narrow-window",

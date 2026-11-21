@@ -5,6 +5,7 @@ mod app_update;
 mod chrome;
 mod core_process;
 mod desktop_origin;
+mod engine_host;
 mod image_picker;
 mod links;
 mod menu;
