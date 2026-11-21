@@ -2697,7 +2697,11 @@ A confirmed finding sends the core's own fix brief to a builder, checked like `c
 finding after a fix is not sent again. The brief inherits the reviewed task's checks and may write only the finding's file; a finding
 outside the task's lease or its own `file_scope` checks gets no brief, and a person may authorise a new task, so a fix never widens
 the reviewed scope. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
-([review group](../crates/orbyn-core/src/crew/review/README.md)).
+([review group](../crates/orbyn-core/src/crew/review/README.md)). A call starts lanes while the deadline of its own 45-second
+timer leaves room for the longest lane start seen so far plus a 5-second reserve (the first lane always starts), and is
+then an error that lists the lanes that started (with their task), those waiting on a person, those refused with the
+reason and those not reached, plus the `lanes` to pass to ask again. The lanes it started keep running, and only the
+not-reached ones are worth asking for. The lanes the repo's rules ask for are added on every call, so asking again re-runs them.
 
 Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
 subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch
@@ -3062,7 +3066,8 @@ A tool call answers within 45 seconds, under the minute engines allow, and one t
 can wait on a person gets 240. Going over drops the call, and a dropped wait expires its
 approval, so a late answer does nothing. Claude's `approve` is a run's permission prompt
 and stays on `ORBYN_APPROVAL_TIMEOUT_SECS`. `orbyn_thread_wait` waits at most 40 seconds
-and reports `ended: false`. A request can be 512 KiB and a reply is cut at 256 KiB.
+and reports `ended: false`. `crew_review` paces itself by that timer's own deadline: it stops starting lanes in time and its
+error lists the lanes that started, waited on a person, were refused and were not reached. A request can be 512 KiB and a reply is cut at 256 KiB.
 
 ## Service access
 
