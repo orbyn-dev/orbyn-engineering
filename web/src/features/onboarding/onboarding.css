@@ -726,13 +726,16 @@ input.welcome-radio:checked {
 .welcome-tracker small {
   color: var(--color-muted);
 }
+.welcome-tracker-act {
+  white-space: nowrap;
+}
 .welcome-mark {
   display: inline-grid;
   place-items: center;
   height: 18px;
   border-radius: 5px;
   background: var(--color-selected);
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 500;
 }
 @media (max-width: 640px) {
