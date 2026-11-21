@@ -275,7 +275,7 @@ exists: 98, partial: 68, missing: 60, preview-only: 5.)
 | 225 | `conn-service-restart` | Connection states | Restarting the Orbyn service | `features/thread/ConnectionStatus.tsx:30` | built | P1 | |
 | 226 | `conn-remote` | Connection states | Paired machine offline | `features/platform/PhoneOffline.tsx (preview only)` | preview-only | P2c | |
 | 227 | `panel-empty` | Side panel and terminal | Side panel: no tabs | `features/panels/strip/PanelEmpty.tsx; features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
-| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | built | P3 | Engineer Designs v98, shell PR 1a: Review and comments, Crew views and Open file are hidden until they exist |
+| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | built | P3 | Engineer Designs v98, shell PR 1a: Review and comments is now in the launcher (W7); Crew views and Open file are hidden until they exist |
 | 229 | `panel-tab-menu` | Side panel and terminal | Side panel: tab menu | `features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
 | 230 | `panel-tabs-single` | Side panel and terminal | Side panel tabs: one tab | `features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
 | 231 | `panel-tabs-drag` | Side panel and terminal | Side panel tabs: drag to reorder | `features/panels/strip/tabDrag.ts` | built | P3 | Engineer Designs v98, shell PR 1a |

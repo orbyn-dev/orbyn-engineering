@@ -67,7 +67,7 @@ describe("terminal drawer", () => {
   it("shows how long a running process has gone, and clears or interrupts it", async () => {
     const clear = vi.fn();
     const interrupt = vi.fn();
-    const stop = registerTerminal(terminalKey("th", "t2"), { clear, interrupt, output: () => "", find: vi.fn(), onResults: () => () => undefined });
+    const stop = registerTerminal(terminalKey("th", "t2"), { clear, write: vi.fn(), interrupt, output: () => "", find: vi.fn(), onResults: () => () => undefined });
     const user = await show([terminal({})]);
     expect(screen.getByText(/^Running · 1m 0\ds$/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear" }));
@@ -78,7 +78,7 @@ describe("terminal drawer", () => {
   });
 
   it("says a command failed with its code, sends the output to the agent and runs it again", async () => {
-    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), interrupt: vi.fn(), output: () => "1 failed | 47 passed", find: vi.fn(), onResults: () => () => undefined });
+    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), write: vi.fn(), interrupt: vi.fn(), output: () => "1 failed | 47 passed", find: vi.fn(), onResults: () => () => undefined });
     const user = await show([terminal({ alive: false, exit_code: 1 })]);
     expect(screen.getByText("Exited with code 1")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Send to the agent" }));
@@ -106,7 +106,7 @@ describe("terminal drawer", () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const user = await show([terminal({}), terminal({ id: "t3", group: "g3", title: "build", alive: false, exit_code: 0 })]);
-    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: () => () => undefined });
+    const stop = registerTerminal(terminalKey("th", "t2"), { clear: vi.fn(), write: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: () => () => undefined });
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "build" }) });
     expect(screen.getByRole("menuitem", { name: "Clear output" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Copy all output" })).toBeDisabled();
@@ -173,7 +173,7 @@ describe("terminal drawer", () => {
 
   it("searches the output: Ctrl+F opens the field, Enter moves to the next match, and the count says where you are", async () => {
     const find = vi.fn();
-    const stop = registerTerminal(terminalKey("th", undefined), { clear: vi.fn(), interrupt: vi.fn(), output: () => "", find, onResults: (listener) => { listener({ index: 1, count: 3 }); return () => undefined; } });
+    const stop = registerTerminal(terminalKey("th", undefined), { clear: vi.fn(), write: vi.fn(), interrupt: vi.fn(), output: () => "", find, onResults: (listener) => { listener({ index: 1, count: 3 }); return () => undefined; } });
     serve([]);
     const user = userEvent.setup();
     render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
@@ -318,7 +318,7 @@ describe("terminal focus, search keys and the hidden main shell", () => {
     (await screen.findByLabelText("xterm")).focus();
     await user.keyboard("{Control>}f{/Control}");
     await user.type(await screen.findByRole("textbox", { name: "Search the terminal" }), "x");
-    const stop = registerTerminal(terminalKey("th", undefined), { clear: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: (listener) => { listener({ index: 0, count: 2 }); return () => undefined; } });
+    const stop = registerTerminal(terminalKey("th", undefined), { clear: vi.fn(), write: vi.fn(), interrupt: vi.fn(), output: () => "", find: vi.fn(), onResults: (listener) => { listener({ index: 0, count: 2 }); return () => undefined; } });
     expect(await screen.findByText("1 of 2")).toBeInTheDocument();
     stop();
   });

@@ -1,7 +1,7 @@
-import { Activity, FileDiff, File as FileIcon, GitBranch, Globe, MessagesSquare, Network, Plug } from "lucide-react";
+import { Activity, FileDiff, File as FileIcon, GitBranch, Globe, MessageSquareText, MessagesSquare, Network, Plug } from "lucide-react";
 import { defaultOrder, fileName, parseFileTab, type BuiltinTab, type RightTab } from "../../../product/state/ui";
 
-/** The panel's five surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
+/** The panel's six surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
 export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff }[] = [
   { id: "diff", label: "Changes", icon: FileDiff },
   { id: "browser", label: "Browser", icon: Globe },
@@ -9,6 +9,7 @@ export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff 
   { id: "side", label: "Side chat", icon: MessagesSquare },
   { id: "tools", label: "Tools", icon: Plug },
   { id: "linked", label: "Linked threads", icon: Network },
+  { id: "review", label: "Review and comments", icon: MessageSquareText },
 ];
 
 export function tabOf(id: RightTab): { id: RightTab; label: string; icon: typeof FileDiff } {
