@@ -280,6 +280,37 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
 - **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
   `orbynd` with `ORBYN_MULTI_REPO=1`.
 
+### As built: web UI (repo threads)
+
+The new-thread dialog, the Repos popover and the client now use the generated `StartThreadInput`, `StartRepoChoice`, `AddThreadRepo`,
+`TaskFolder` and `ThreadRepo`; this replaces "Still hand-written in `contract.ts`" above. Read against `routes/repos.rs` and
+`orbyn-core/src/repos/threads.rs`. Real against the first guess:
+
+- **Paths, methods, bodies and answers matched** (`POST .../repo-threads` answers the `Thread`; `POST /api/threads/{id}/repos` `{ repo_id }`
+  answers `ThreadRepo`; `GET .../task-folder`). `StartThreadInput.message` and `branch_name` are `string | null` and sent only when set.
+- **One repository is `400`, not a normal start.** The dialog allowed "Start in 1 repository". The service refuses fewer than two
+  (`400 invalid`), so Start is off below two ticked repositories, with a note that one repository uses the normal New thread. Past the
+  limit (checked first) is `409 repo_limit`; the dialog also stops ticking at `max_per_thread` from the list.
+- **A taken branch name is `400 invalid`** ("<repo> already has a branch named <name>."), not `409`. A base branch that is not a local
+  branch is `400 invalid` too, and a repository still cloning is `400`, not `repo_untrusted`.
+- **Messages are the service's own and are shown as written**, with the dialog kept open: `repo_limit`, `not_git`, `invalid`,
+  `not_found` and `permission_mode_unsupported` (this one with a short lead-in). `409 repo_untrusted` also reads the repository list again
+  and offers "Trust <name>…" (the existing trust dialog, one click one write) for each chosen repository that list now shows as not trusted.
+  Trusting does not start the thread; the person presses Start again. The client check (two to eight, a branch name by
+  `git check-ref-format`) only keeps the button honest; the service decides.
+- **Task folder.** The Repos popover shows `root` as text with a copy button, the one branch, and "N of `max_per_thread` repositories",
+  read again after an add. `404` (ordinary thread, flag off) draws nothing. A start opens the new thread (`navigate`).
+- **Add a repository** uses the popover's existing "Add a repository to this thread…" menu, which lists trusted, finished, Git repositories
+  of the project that are not in the thread; the service's refusal (`repo_limit`, `repo_untrusted`, `not_git`, `400` already in the thread,
+  a taken branch name, no branch checked out) shows as a notice and the list stays as it was. One click, one write, busy guard.
+- **Not done.** `GET .../files` and `.../files/metadata` take `repo_id` on the service, but the web has no call to either route (the file
+  explorer uses the worktree routes and file reads already send `repo_id`), so there is nothing to change until a screen shows another
+  repository's tree. The delete confirm of a thread has no place for notes, so it does not say that a multi-repository thread's worktrees
+  stay on disk (the service does not remove them yet). The optional first `message` is not asked for in the dialog (the thread opens and
+  the person types). A repository's pull request summary and `repo_id` on pull request routes and `FileDiff` are still not built.
+- **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
+  client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
+
 ## As built: repo_id on Git and file calls
 
 Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is

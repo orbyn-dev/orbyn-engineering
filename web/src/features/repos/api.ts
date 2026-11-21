@@ -4,7 +4,7 @@ import { ApiFailure, request } from "../../api/client";
 import type { Thread } from "../../api/types";
 import type { GitAction } from "../../generated/GitAction";
 import type { GitActionResult } from "../../generated/GitActionResult";
-import type { PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
+import type { AddThreadRepo, PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
 import { cleanScan, cleanTaskFolder } from "./scanModel";
 
 const q = encodeURIComponent;
@@ -79,7 +79,10 @@ const http: ReposApi = {
       throw error;
     }
   },
-  addThreadRepo: (threadId, repoId) => request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, { repo_id: repoId }),
+  addThreadRepo: (threadId, repoId) => {
+    const body: AddThreadRepo = { repo_id: repoId };
+    return request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, body);
+  },
   async threadGit(threadId, repoId, action) {
     // `repo_id` is a body field of `GitAction`; absent is the primary repository.
     const repo = repoId === null ? {} : { repo_id: repoId };
