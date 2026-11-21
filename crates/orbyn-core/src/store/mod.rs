@@ -74,6 +74,8 @@ mod hub;
 mod installs;
 mod migrations;
 mod native_sessions;
+#[cfg(test)]
+mod plan_mode_reset_tests;
 mod project_changes;
 mod project_names;
 mod questions;

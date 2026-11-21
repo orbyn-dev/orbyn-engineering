@@ -211,7 +211,7 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
   `unsupported_platform`) covers `flag_off`; the host driver does not fall back to the CLI when a host is `cant_start` (the run is refused), so `unavailable` would be
   untrue today, and a build with no host has no entry to attach `not_installed` to.
 
-`web/src/features/enginehost/contract.ts` (`HostRow`) is an older hand-written, mocked shape and does not match the slice 1 names above.
+The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). The `HostRow` fields for the Planned items above, and for stop, restart and retry, are filled only by the dev mock: the real client leaves them empty, and the screens draw nothing for them (no Stop, Restart or Try again button until the Person routes of slice 2 exist).
 
 ## Crash and recovery
 

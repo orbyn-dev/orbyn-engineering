@@ -4,6 +4,7 @@ import { navigate } from "../../product/state/route";
 import { Button, IconButton } from "../../ui/controls";
 import { ToolbarPopover } from "../pulls";
 import { TRACKER_NAMES, type IssueQuery, type TrackerKind, type TrackerRow } from "./contract";
+import { PlannedControl } from "./Planned";
 import { activeChips, noQuery, parseSearch, shownLine } from "./model";
 
 const STATES = [["open", "Open"], ["closed", "Closed"], ["all", "All"]] as const;
@@ -131,6 +132,10 @@ export function IssuesToolbar(props: ToolbarProps) {
       <button type="button" className="iss-ctl" aria-haspopup="dialog" aria-expanded={menu?.kind === "filters"} onClick={(event) => toggle("filters", event.currentTarget)}>
         <ListFilter size={14} aria-hidden />{filterCount > 0 ? `Filters · ${filterCount}` : "Filters"}
       </button>
+      {phone ? null : (
+        // Sorting is Planned: the list is newest update first and nothing else is on offer yet.
+        <PlannedControl label="Sort: Updated" what="Sorting" className="iss-ctl">Sort: Updated<ChevronDown size={12} aria-hidden /></PlannedControl>
+      )}
       {chips.length > 0 ? (
         <div className="iss-chips">
           {chips.map((chip) => (

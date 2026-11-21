@@ -130,3 +130,52 @@ it("shows hostile names as text", async () => {
   expect(await screen.findByText("<img src=x onerror=alert(1)> · <b>x</b>")).toBeVisible();
   expect(document.querySelector("img")).toBeNull();
 });
+
+// ---- success notices: a proposal in the Engineer frames; the app showed none before ----
+const toastTexts = () => useUi.getState().toasts.map((toast) => toast.text);
+const withPr = { ...planner, pull_request: { number: 142, url: "https://github.com/o/p/pull/142" } };
+
+it("says in one plain notice that the pull request was merged, and only after the service answers", async () => {
+  useUi.setState({ toasts: [] });
+  const { mock, user } = draw(withPr);
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
+  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
+  expect(toastTexts()).toEqual([]);
+  await user.dblClick(within(merge).getByRole("button", { name: "Merge" }));
+  await waitFor(() => expect(toastTexts()).toEqual(["Merged pull request #142 of orbyn-planner."]));
+  expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge"]);
+});
+
+it("says in one plain notice that the review was sent", async () => {
+  useUi.setState({ toasts: [] });
+  const { user } = draw(withPr);
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Review pull request…" }));
+  const review = await screen.findByRole("dialog", { name: "Review the pull request for orbyn-planner" });
+  await user.type(within(review).getByRole("textbox", { name: "Comment" }), "Looks fine");
+  await user.click(within(review).getByRole("button", { name: "Send review" }));
+  await waitFor(() => expect(toastTexts()).toEqual(["Sent your review of pull request #142 of orbyn-planner."]));
+});
+
+it("shows no success notice when the merge fails: the dialog stays open with the service's words", async () => {
+  useUi.setState({ toasts: [] });
+  const { mock, user } = draw(withPr);
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
+  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
+  mock.failNext("thread-git");
+  await user.click(within(merge).getByRole("button", { name: "Merge" }));
+  expect(await within(merge).findByRole("alert")).toHaveTextContent("The service could not do that.");
+  expect(toastTexts()).toEqual([]);
+  expect(screen.getByRole("dialog", { name: "Merge the pull request for orbyn-planner" })).toBeVisible();
+});
+
+it("shows no notice for a push, commit or pull request: the frames draw none", async () => {
+  useUi.setState({ toasts: [] });
+  const { mock, user } = draw();
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Push" }));
+  await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:push"]));
+  expect(toastTexts()).toEqual([]);
+});

@@ -51,6 +51,7 @@ import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { ThreadFind } from "./ThreadFind";
 import { Transcript } from "./Transcript";
+import { EarlierMessages } from "./earlier/EarlierMessages";
 import { FavoriteEditorShortcut } from "./OpenInEditor";
 import { ProjectActionShortcuts } from "./ProjectActionShortcuts";
 
@@ -454,7 +455,12 @@ export function ThreadView({ id }: { id: string }) {
               threadId={id}
               active={thread.active_run !== null}
               readUpTo={lastVisit}
-              header={<LedgerPin threadId={id} />}
+              header={
+                <>
+                  <EarlierMessages threadId={id} />
+                  <LedgerPin threadId={id} />
+                </>
+              }
                 footer={
                   <>
                     <GoalLine thread={thread} canPause={engine?.capabilities.goal_control === true} />

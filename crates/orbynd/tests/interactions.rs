@@ -360,10 +360,7 @@ async fn leaving_full_access_is_stated_on_the_resume_and_the_turn() {
     service.admit(&thread, "one").await;
     assert_eq!(service.finished(&thread).await, "completed");
     service
-        .patch(
-            &thread,
-            json!({ "permission_mode": "supervised", "plan_mode": true }),
-        )
+        .patch(&thread, json!({ "permission_mode": "supervised" }))
         .await;
     service.admit(&thread, "two").await;
     assert_eq!(service.finished(&thread).await, "completed");
@@ -378,9 +375,9 @@ async fn leaving_full_access_is_stated_on_the_resume_and_the_turn() {
     assert_eq!(turns[0]["approvalPolicy"], "never");
     assert_eq!(threads[1]["threadId"], turns[0]["threadId"], "a resume");
     assert_eq!(threads[1]["approvalPolicy"], "on-request");
-    assert_eq!(threads[1]["sandbox"], "read-only");
+    assert_ne!(threads[1]["sandbox"], "read-only");
     assert_eq!(turns[1]["approvalPolicy"], "on-request");
-    assert_eq!(turns[1]["sandboxPolicy"]["type"], "readOnly");
+    assert_ne!(turns[1]["sandboxPolicy"]["type"], "readOnly");
     service.stop().await;
 }
 

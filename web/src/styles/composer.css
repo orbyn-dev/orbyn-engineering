@@ -344,6 +344,53 @@
   padding: 0 6px;
   border-radius: 9px;
 }
+/* A photo being converted or shrunk (B8): a spinner where the picture will be, the name and one line; red when it could not be read. */
+.attachment-strip li[data-conversion] {
+  max-width: 100%;
+  flex: none;
+}
+.photo-box {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 5px;
+  background: var(--color-background);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+  color: var(--color-textSoft);
+}
+.photo-spin {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+}
+.photo-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.photo-name,
+.photo-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.photo-line {
+  color: var(--color-muted);
+  font-size: 11.5px;
+}
+.attachment-strip li .photo-failure {
+  color: var(--color-danger);
+}
+.attachment-strip .photo-retry {
+  width: 22px;
+  height: 22px;
+}
 .attachment-strip button {
   display: grid;
   place-items: center;
@@ -489,4 +536,22 @@
   color: var(--color-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.context-chips li > .transcript-count {
+  flex: none;
+  color: var(--color-muted);
+}
+/* What a file dragged over the composer will do, said in the middle of the box (B43). */
+.composer-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-size: var(--text-body);
+  pointer-events: none;
 }
