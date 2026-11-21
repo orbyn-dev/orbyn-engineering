@@ -454,8 +454,8 @@ merge).
 - The tools are `crew_review` (lanes, no cap, also after a pass), `crew_finding` (a reviewer files a finding),
   `crew_check_finding` and `crew_review_status`, behind the Preview flag. A `crew_review` call starts lanes while the
   tool call's own deadline leaves room, and is then an error listing the lanes that started, those waiting on a person,
-  those refused and those not reached, with the `lanes` to ask for again. A rule lane already running or done on the commit is
-  skipped unless named; one that failed to start runs again. See the
+  those refused and those not reached, with the `lanes` to ask for again. The lanes the repo's rules ask for are added on
+  every call, so asking again re-runs them. See the
   [review README](../crates/orbyn-core/src/crew/review/README.md).
 - A finding is confirmed by code: a repro check the lead supplies that fails, or an independent second review on the
   other vendor that reports the same file within 3 lines. Otherwise it is unconfirmed and blocks nothing. Both

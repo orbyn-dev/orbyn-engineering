@@ -3,7 +3,7 @@
 //! start seen and a reserve), and a call the budget cuts short is an error listing the lanes that started, that
 //! wait on a person, that were refused and that were not reached, so a retry asks for only the last. A lane named after the
 //! work has passed runs like any other, and a lane the repo's rules ask for runs without being named, once per
-//! commit: a rule lane that is already running or done on the commit is left out unless named. A lane
+//! commit: the repo-rule lanes are added on every call, so asking again re-runs them. A lane
 //! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
 //! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
@@ -83,13 +83,6 @@ fn room_for_another(
     remaining >= longest_start + reserve
 }
 
-/// Whether a review task holds its lane on a commit: it is still running, or it ended well. A task that
-/// needs a person, failed, was stopped or cancelled does not, so its lane is run again.
-fn holds_the_lane(state: &str) -> bool {
-    state == "passed"
-        || !(crate::crew::lifecycle::is_final(state) || matches!(state, "needs_person" | "failed"))
-}
-
 /// The cut call's answer, built from what each lane's start returned: lanes that started (with their task),
 /// lanes waiting on a person, lanes that failed to start after their row was written (transient), lanes refused
 /// by a rule of the core with the reason (asking again changes nothing) and lanes not reached. Only the
@@ -152,7 +145,7 @@ fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
         );
     }
     note += &format!(
-        " Not reached: {}. Ask again with task {task} and lanes {}; a lane already started is not run again, and a lane only a repo rule asks for is skipped while it is running or done on this commit.",
+        " Not reached: {}. Ask again with task {task} and lanes {}; lanes the repo's rules ask for are added on every call, so asking again re-runs them, even one that started above.",
         rest.join(", "),
         json!(again)
     );
@@ -293,27 +286,9 @@ impl Core {
             .iter()
             .filter(|rule| rule.applies(touched.as_deref()))
             .collect();
-        // A lane the repo's rules ask for is added on every call, so asking again for only the lane a cut call
-        // did not reach would run it a second time: a rule lane that already has a review on this commit and
-        // is not named is left out. Naming it runs its next round.
-        let named: std::collections::BTreeSet<String> =
-            lanes.iter().map(|l| l.as_str().to_owned()).collect();
-        let done = self.store.crew_reviews_of(&task.id).map_err(internal)?;
-        let mut ran = Vec::new();
+        // The lanes the repo's rules ask for are added on every call, as before: asking again re-runs them.
         for rule in &from_rules {
-            // The row is written before the steps that can fail, so only a task still running or ended well
-            // holds the lane; one that needs a person, failed, was stopped or cancelled runs again.
-            let already = done.iter().any(|r| {
-                r.role == "review"
-                    && r.lane == rule.lane.as_str()
-                    && r.commit == commit
-                    && matches!(self.store.crew_task(&r.task_id), Ok(Some(t)) if holds_the_lane(&t.state))
-            });
-            if already && !named.contains(rule.lane.as_str()) {
-                ran.push(rule.lane.as_str().to_owned());
-            } else {
-                lanes.push(rule.lane.clone());
-            }
+            lanes.push(rule.lane.clone());
         }
         let controls = self
             .store
@@ -327,15 +302,9 @@ impl Core {
         let mut seen = std::collections::BTreeSet::new();
         lanes.retain(|lane| seen.insert(lane.as_str().to_owned()));
         if lanes.is_empty() {
-            return Err(invalid(if ran.is_empty() {
-                "lanes: name at least one lane; no rule of the repo asks for one for this change"
-                    .to_owned()
-            } else {
-                format!(
-                    "lanes: the lanes the repo's rules ask for ({}) are already running or done on this commit; name one to run its next round",
-                    ran.join(", ")
-                )
-            }));
+            return Err(invalid(
+                "lanes: name at least one lane; no rule of the repo asks for one for this change",
+            ));
         }
         let mut started = Vec::new();
         let mut longest = std::time::Duration::ZERO;
@@ -667,23 +636,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_running_or_passed_review_holds_its_lane() {
-        for held in [
-            "briefed",
-            "routed",
-            "running",
-            "verifying",
-            "changed_approach",
-            "passed",
-        ] {
-            assert!(holds_the_lane(held), "{held}");
-        }
-        for free in ["needs_person", "failed", "stopped", "cancelled"] {
-            assert!(!holds_the_lane(free), "{free}");
-        }
-    }
-
-    #[test]
     fn a_cut_note_separates_started_waiting_refused_and_not_reached() {
         let lanes: Vec<CrewToken> = ["a", "b", "c", "d", "f", "e"]
             .iter()
@@ -699,7 +651,7 @@ mod tests {
         let note = cut_note("task-0", &lanes, &answers);
         assert_eq!(
             note,
-            "lanes: the tool budget ran out. Started: a (task-a). Waiting on a person: b: no engine could take it (task-b), c: same-engine consent, asked again when the lane is named again. Failed to start, so worth a retry: f (engine did not start). Refused, so asking again changes nothing: d (too many rounds). Not reached: e. Ask again with task task-0 and lanes [\"f\",\"e\"]; a lane already started is not run again, and a lane only a repo rule asks for is skipped while it is running or done on this commit."
+            "lanes: the tool budget ran out. Started: a (task-a). Waiting on a person: b: no engine could take it (task-b), c: same-engine consent, asked again when the lane is named again. Failed to start, so worth a retry: f (engine did not start). Refused, so asking again changes nothing: d (too many rounds). Not reached: e. Ask again with task task-0 and lanes [\"f\",\"e\"]; lanes the repo's rules ask for are added on every call, so asking again re-runs them, even one that started above."
         );
     }
 }
