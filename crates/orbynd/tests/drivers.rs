@@ -87,6 +87,42 @@ async fn codex_run_ignores_a_completed_turn_that_is_not_its_own() {
     assert_eq!(text_of(&events), "hello from codex");
 }
 
+async fn assert_no_reply(service: &Service, thread: &str) {
+    assert_eq!(service.finished(thread).await, "failed");
+    let events = service.all_events(thread).await;
+    let last = events.last().expect("events");
+    assert!(
+        last["event"]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("No reply")),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn codex_words_of_an_earlier_turn_do_not_make_a_silent_prompt_a_reply() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "[leftover-turn] [silent]").await;
+    assert_no_reply(&service, &thread).await;
+    // The earlier turn's words are still shown.
+    assert!(text_of(&service.all_events(&thread).await).contains("the old turn spoke"));
+}
+
+#[tokio::test]
+async fn an_acp_update_for_another_session_does_not_make_a_silent_prompt_a_reply() {
+    let dir = TempDir::new();
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    custom_engine(&service, "acp", FAKE, json!(["acp"])).await;
+    let projects = service.json("/api/projects").await;
+    let thread = service
+        .thread(projects[0]["id"].as_str().unwrap(), "custom")
+        .await;
+    service.admit(&thread, "[stray] [silent]").await;
+    assert_no_reply(&service, &thread).await;
+    assert!(!text_of(&service.all_events(&thread).await).contains("STRAY"));
+}
+
 #[tokio::test]
 async fn a_codex_turn_waits_for_its_tools_to_start() {
     let dir = TempDir::new();
