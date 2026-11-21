@@ -421,6 +421,7 @@ mod admission;
 mod checkpoints;
 mod confine;
 mod execute;
+mod masked_files;
 mod stops;
 mod turn;
 
