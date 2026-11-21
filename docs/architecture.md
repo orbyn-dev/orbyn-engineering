@@ -2697,7 +2697,7 @@ A confirmed finding sends the core's own fix brief to a builder, checked like `c
 finding after a fix is not sent again. The brief inherits the reviewed task's checks and may write only the finding's file; a finding
 outside the task's lease or its own `file_scope` checks gets no brief, and a person may authorise a new task, so a fix never widens
 the reviewed scope. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
-([review group](../crates/orbyn-core/src/crew/review/README.md)).
+([review group](../crates/orbyn-core/src/crew/review/README.md)). A call starts lanes while the deadline of its own 45-second
 timer leaves room for the longest lane start seen so far plus a 5-second reserve (the first lane always starts), and is
 then an error that lists the lanes that started (with their task), those waiting on a person, those refused with the
 reason and those not reached, plus the `lanes` to pass to ask again. The lanes it started keep running, and only the
