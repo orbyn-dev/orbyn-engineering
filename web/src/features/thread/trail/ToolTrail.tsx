@@ -14,6 +14,7 @@ import { SurfacedWorkflows, WorkflowCards } from "../WorkflowControls";
 import { useThreadOfTimeline } from "../timelineThread";
 import { callKind, callLabel, callMs, callState, runLabel, runOutcomes, type CallKind, type CallRun, type CallState } from "../toolCalls";
 import { Block } from "./blocks/Block";
+import { useRunRow } from "../../codemode";
 
 const KIND_ICONS: Record<CallKind, LucideIcon> = {
   command: SquareTerminal,
@@ -89,16 +90,19 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
   const cwd = useWorkspace((s) => (threadId ? s.threads[threadId]?.cwd ?? null : null));
   const cancelled = useThreadLogs((s) => (threadId && item.runId ? s.logs[threadId]?.runs[item.runId]?.outcome === "cancelled" : false));
   const surfaced = use(SurfacedWorkflows);
-  const state = callState(item, live, cancelled);
-  const running = state === "running";
+  // A Code Mode run is drawn from its run, not from the call: it can be paused or failed while the call itself finished.
+  const codeRow = useRunRow(item, live);
+  const callStateNow = callState(item, live, cancelled);
+  const state: CallState = codeRow ? (codeRow.tone === "run" ? "running" : codeRow.tone === "fail" ? "failed" : "done") : callStateNow;
+  const running = callStateNow === "running";
   const now = useNow(running);
   const ms = callMs(item, running ? now : null);
   const kind = callKind(item);
-  const label = callLabel(item, cwd);
+  const label = codeRow ? { ...callLabel(item, cwd), note: codeRow.note } : callLabel(item, cwd);
   const Icon = KIND_ICONS[kind];
   const full = [label.verb, label.object, label.note].filter(Boolean).join(" ");
   const { tip, label: labelRef, props } = useTip();
-  const spoken = withState([full, spokenDuration(ms, state, item)].filter(Boolean).join(" "), state);
+  const spoken = withState([full, codeRow ? codeRow.due : spokenDuration(ms, state, item)].filter(Boolean).join(" "), state);
   const command = kind === "command" ? traceTool(item).command : null;
   return (
     <>
@@ -106,7 +110,7 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
         className="tcw"
         persistId={`tool:${item.key}`}
         data-live={running || undefined}
-        summaryClassName={`tcr ${stateClass(state)}`.trim()}
+        summaryClassName={`tcr ${codeRow?.tone === "wait" ? "s-wait" : stateClass(state)}`.trim()}
         summaryProps={{ ...props, "aria-label": spoken }}
         summary={
           <>
@@ -123,14 +127,18 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
                 </span>
               ) : null}
             </span>
-            <Duration ms={ms} state={state} item={item} />
+            {codeRow ? (
+              <span className="du">{codeRow.tone === "wait" ? <span className="am">{codeRow.due}</span> : codeRow.due}</span>
+            ) : (
+              <Duration ms={ms} state={state} item={item} />
+            )}
             <span className="tcv">
               <ChevronRight size={14} aria-hidden />
             </span>
           </>
         }
       >
-        <Block item={item} running={running} state={state} ms={ms} cwd={cwd} />
+        <Block item={item} running={running} state={callStateNow} ms={ms} cwd={cwd} live={live} />
       </Collapsible>
       {/* A published page is the result, so it stays visible with the details closed. */}
       <HtmlRender item={item} threadId={threadId} />

@@ -1374,3 +1374,46 @@ export function limits(scenario: string, checkedAt: string): LimitsOverview {
       return { pooled: [], engines: [claude, codex(weekly)], unavailable: [] };
   }
 }
+
+/**
+ * MOCK ONLY: the "codemode" scenario's thread log (docs/code-mode.md). It replaces the log of t-approval with a search, a
+ * describe, a finished run, a run that paused on an approval, and the approval itself with a `via`. The run records behind
+ * them are in mock/codemode.ts. Not a contract: the real shapes arrive with the backend.
+ */
+export function codeModeLog(): WireThreadEvent[] {
+  const server = "mcp__orbyn_engineering__";
+  const script = ["const all = await tools.orbyn_thread_list({});", "const failed = [];", "for (const t of all) {", "  const r = await tools.orbyn_thread_read({ thread_id: t.id });", '  if (r.status === "failed") failed.push(t.id);', "}", "console.log(failed.length + ' of ' + all.length + ' failed');", "await tools.orbyn_thread_send({ thread_id: failed[0], prompt: 'Re-run the failing test and report back.' });", "return failed;"].join("\n");
+  const first = (id: string, runId: string, status: "completed" | "paused") =>
+    tool(id, `${server}orbyn_code_run`, JSON.stringify({ code: script }), JSON.stringify(status === "completed" ? { status, runId, result: ["t_52"], logs: ["1 of 3 failed"] } : { status, runId, pending: [{ tool: "orbyn_thread_send", call: 5 }] }));
+  return sequence(
+    logOf("t-approval", "r-approval", -360, [
+      { type: "RUN_STARTED", threadId: "t-approval", runId: "r-approval" },
+      ...user("u1", "Find the threads that failed and ask the first one to re-run its test."),
+      ...assistant("a0", "I will check every thread with one script instead of one call each."),
+      ...tool("c1", `${server}orbyn_code_search`, '{"query":"send a message to a thread","detail":"summary","limit":10}', JSON.stringify({ results: [{ path: "orbyn_thread_send", description: "Queue a message on a thread." }, { path: "orbyn_thread_search", description: "Threads in this project matching every word." }] })),
+      ...tool("c2", `${server}orbyn_code_describe`, '{"paths":["orbyn_thread_send","orbyn_thread_sned"]}', JSON.stringify({ declarations: ["/** Queue a message on a thread. */\ndeclare function orbyn_thread_send(args: {\n  thread_id: string;\n  prompt: string;\n}): Promise<unknown>;"], unknown: ["orbyn_thread_sned"] })),
+      ...first("c3", "run_done", "completed"),
+      ...first("c4", "run_paused", "paused"),
+      codeModeApprovalSnapshot(),
+    ]),
+  );
+}
+
+const codeModeApprovalSnapshot = (): AgUiEvent => approvalSnapshot(codeModeApproval());
+
+/** MOCK ONLY: the pending approval an inner call of the paused run asked for, with the `via` the backend will add. */
+export function codeModeApproval(): Approval {
+  return {
+    id: "ap-code",
+    thread_id: "t-approval",
+    run_id: "r-approval",
+    kind: "tool",
+    summary: "Use orbyn_project_create in /Users/dev/code/orbyn-planner-experiments",
+    detail: { tool: "orbyn_project_create", folder: "/Users/dev/code/orbyn-planner-experiments", name: "Planner experiments", options: { git_init: true, template: "empty" }, files: ["README.md", "notes/ideas.md"] },
+    state: "pending",
+    decided_by: null,
+    decided_at: null,
+    created_at: iso(-60),
+    via: { code_run: "run_paused", call: 5, script_sha256: "3f9a1c8d2b7e4f60a1b2c3d4e5f60718293a4b5c6d7e8f9012345678901e07" },
+  } as Approval;
+}

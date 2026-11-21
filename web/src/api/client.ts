@@ -23,7 +23,6 @@ import type {
   GitActionResult,
   CommitInfo,
   MessageSearch,
-  RestoredFile,
   RunChanges,
   SearchHit,
   EngineLimits,
@@ -439,8 +438,6 @@ export const api = {
     request<Checkpoint[]>("GET", `/api/threads/${q(threadId)}/checkpoints`, undefined, signal),
   runChanges: (threadId: string, runId: string, signal?: AbortSignal) =>
     request<RunChanges>("GET", `/api/threads/${q(threadId)}/runs/${q(runId)}/changes`, undefined, signal),
-  restoreChanges: (threadId: string, runId: string, paths: string[]) =>
-    request<RestoredFile[]>("POST", `/api/threads/${q(threadId)}/runs/${q(runId)}/changes/restore`, { point: "start", paths }),
   rewindThread: (threadId: string, runId: string, restoreFiles: boolean) =>
     request<void>("POST", `/api/threads/${q(threadId)}/rewind`, { run_id: runId, restore_files: restoreFiles }),
   forkThread: (threadId: string, runId: string) =>
