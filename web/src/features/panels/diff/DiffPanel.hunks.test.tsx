@@ -39,6 +39,9 @@ function setup(options: { width?: number; files?: FileDiff[] } = {}) {
 const open = async () => {
   render(<DiffPanel threadId="t" />);
   await screen.findByRole("button", { name: "Scope: Working tree" });
+  // The scope button is in the header and is there before the diff has been read; every test below looks at the patch with a plain
+  // `getBy`, so wait for the patch here. Without this a loaded machine reads the screen between the two.
+  await screen.findByRole("group", { name: "Patch" });
 };
 
 beforeEach(() => {
@@ -338,4 +341,46 @@ it("a one-line hunk reads Line 15 goes back, in the same dialog", async () => {
   await user.click(screen.getByRole("button", { name: "Revert hunk" }));
   const dialog = await screen.findByRole("dialog", { name: "Revert this hunk?", hidden: true });
   expect(dialog).toHaveTextContent("Line 15 of auth/redirect.ts goes back to the last commit. You can undo it for 10 seconds afterwards.");
+});
+
+// F70: a file of a repository that is not the primary sends its repo_id on the read and the write.
+const inRepo = (repoId: string) => ({ ...REDIRECT, repo_id: repoId } as FileDiff);
+const revertHunk = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: "Revert hunk" }));
+  await user.click(within(await screen.findByRole("dialog", { hidden: true })).getByRole("button", { name: "Revert hunk" }));
+};
+
+it("sends the repo_id of a non-primary repository on the read and the revert, with the repo-relative path and no checkout lookup", async () => {
+  const user = userEvent.setup();
+  const { save, read } = setup({ files: [inRepo("planner")] });
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  await open();
+  await revertHunk(user);
+  await waitFor(() => expect(save).toHaveBeenCalledWith("t", { path: "auth/redirect.ts", content: BEFORE, base_revision: "r1", repo_id: "planner" }));
+  expect(read).toHaveBeenCalledWith("t", "auth/redirect.ts", undefined, "planner");
+  expect(api.resolveThreadPath).not.toHaveBeenCalled();
+  // Undo is a write of the same file in the same repository.
+  await user.click(within(await screen.findByRole("status")).getByRole("button", { name: /^Undo/ }));
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith("t", { path: "auth/redirect.ts", content: DISK, base_revision: "r2", repo_id: "planner" }));
+});
+
+it("leaves repo_id out for the primary repository, whose id is the project's", async () => {
+  const user = userEvent.setup();
+  const { save, read } = setup({ files: [inRepo("p")] });
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  await open();
+  await revertHunk(user);
+  await waitFor(() => expect(save).toHaveBeenCalledWith("t", { path: "auth/redirect.ts", content: BEFORE, base_revision: "r1" }));
+  expect(read).toHaveBeenCalledWith("t", "auth/redirect.ts", undefined, undefined);
+});
+
+it("saves a line edit with the repo_id of a non-primary repository", async () => {
+  const user = userEvent.setup();
+  const { save } = setup({ files: [inRepo("planner")] });
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  await open();
+  await user.click(screen.getAllByRole("button", { name: "Edit this line" })[2]!);
+  await user.type(screen.getByRole("textbox", { name: "Edit line 16" }), "!");
+  await user.keyboard("{Meta>}{Enter}{/Meta}");
+  await waitFor(() => expect(save).toHaveBeenCalledWith("t", expect.objectContaining({ path: "auth/redirect.ts", repo_id: "planner" })));
 });

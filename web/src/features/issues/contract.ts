@@ -99,11 +99,11 @@ export interface IssueDetail extends IssueSummary {
   /** The ids of the threads that link this issue. */
   linked_threads: string[];
   /**
-   * NOT IN THE BETA CONTRACT (docs/issues.md, "What T3 has that this does not": moving an issue to another state is Planned). Only
-   * the mock sends it, so the State menu can be seen in the preview; the real client drops it, so the menu never draws against a
-   * real service. Delete it with `setState` when the doc names a state-change route.
+   * The states this issue can move to, in the tracker's own words and order (docs/issues.md, "Issue writes and list controls").
+   * Absent: the service does not offer a state change, and the State row shows the state with a Planned note. `[]`: it does, but
+   * this tracker has no state to offer. The real client keeps only well-formed entries.
    */
-  transitions?: IssueState[];
+  states?: IssueState[];
 }
 
 /** What a thread's link keeps of an issue: enough for the chip, the list and the row marker. */
@@ -120,7 +120,10 @@ export interface IssueRef {
 /** The three fields that name one issue: a key is unique only within a tracker's scope. */
 export type IssueTarget = Pick<IssueRef, "tracker" | "scope" | "key">;
 
-/** The filters are state, label, assignee and search, and nothing else. */
+/** The newest first by that date; `updated` is the service's default. */
+export type IssueSort = "updated" | "created";
+
+/** The filters are state, label, assignee and search, and nothing else; `sort` is how the list is ordered, not a filter. */
 export interface IssueQuery {
   /** `null` is every connected tracker. */
   tracker: TrackerKind | null;
@@ -128,6 +131,8 @@ export interface IssueQuery {
   labels: string[];
   assignee: "any" | "me" | "none";
   text: string;
+  /** Absent: the service's own order (`updated`). Sent only when the person chose one. */
+  sort?: IssueSort;
 }
 
 export interface IssueList {
@@ -138,6 +143,26 @@ export interface IssueList {
   failed: { tracker: TrackerKind; message: string }[];
   /** Where each tracker and scope left off, `"<tracker> <scope>"` to an opaque cursor; only those with more are listed. Send it back as `cursors` for the next page. */
   next_cursors: Record<string, string>;
+}
+
+/**
+ * The body of `POST /api/issues/item/update`: only the fields present are written; `labels` and `assignees` are the whole new set.
+ * `labels` are names; `assignees` are the candidates' `id`s (docs/issues.md: "`id` is how the tracker addresses the person on a write").
+ * The client refuses a title over 256 characters or with a line break, a body over 64 KiB, more than 50 labels, more than 25
+ * assignees, and a body with none of the four, before anything is sent.
+ */
+export interface IssueUpdateInput {
+  title?: string;
+  body?: string;
+  labels?: string[];
+  assignees?: string[];
+}
+
+/** What a label or assignee picker offers, read when the picker opens: at most 200 of each, `truncated` when there were more. */
+export interface IssueCandidates {
+  labels: { name: string; color?: string | null }[];
+  assignees: { login: string; name?: string | null; id: string }[];
+  truncated: boolean;
 }
 
 export interface StartThreadInput {
@@ -153,8 +178,8 @@ export type StartedThread = import("../../api/types").Thread;
 export interface ThreadDraft { message: string }
 
 /**
- * Every call is a route in docs/issues.md. Every write is Person-class: its route is in `PENDING_PERSON_ROUTES` in
- * `web/src/api/personKey.ts` until the service lists it, so the key goes with it.
+ * Every call is a route in docs/issues.md. Every write is Person-class: its route is in `PERSON_ROUTES` or, until `routes.json`
+ * lists it (`update`, `setState`), `PENDING_PERSON_ROUTES` in `web/src/api/personKey.ts`, so the key goes with it.
  */
 export interface IssuesApi {
   /** `null` is "this service does not report issues" (the Issues flag is off, a 404): the screens hide and no other call is made. */
@@ -187,12 +212,17 @@ export interface IssuesApi {
   /** One write per call: creates the thread, links it to the issue and queues `message`, and answers with the thread. */
   startThread(issue: IssueTarget, input: StartThreadInput): Promise<StartedThread>;
   /**
-   * NOT IN THE BETA: state changes are Planned (docs/issues.md). The real client refuses it and sends nothing; the State control
-   * shows Planned and no production path reaches this call. When it lands it is a Person-class write,
-   * `POST /api/issues/item/state` with `{ tracker, scope, key, state }` where `state` is the name of one of the issue's `states`:
-   * add it to `PENDING_PERSON_ROUTES` then, and not before.
+   * Whether the service offers the Issue writes and the sort (docs/issues.md, "Issue writes and list controls"): `update`,
+   * `candidates` and `sort`. The live client asks once with a read that changes nothing, and a 404 or 405 is "not offered"; until it
+   * is known the answer is `false`, and the controls stay Planned. A State change is discovered per issue, by `IssueDetail.states`.
    */
-  setState(issue: IssueTarget, state: IssueState): Promise<void>;
+  offers(signal?: AbortSignal): Promise<boolean>;
+  /** The labels and people a picker can offer for this issue's scope. Read when a picker opens, never with the issue. */
+  candidates(issue: IssueTarget, signal?: AbortSignal): Promise<IssueCandidates>;
+  /** One write per call, Person-class: `POST /api/issues/item/update`. Answers the updated issue. */
+  update(issue: IssueTarget, input: IssueUpdateInput): Promise<IssueDetail>;
+  /** One write per call, Person-class: `POST /api/issues/item/state`, `state` (plus `close_reason` when the entry has one) one of the issue's `states`. Answers the updated issue. */
+  setState(issue: IssueTarget, state: IssueState): Promise<IssueDetail>;
 }
 
 export const TRACKER_NAMES: Record<TrackerKind, string> = {

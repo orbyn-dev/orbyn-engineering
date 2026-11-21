@@ -1,22 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
 import { createCredentialsApi } from "./credentialsApi";
+import { createHostControl } from "./hostControl";
 import { hostCrashes, hostRows } from "./hostStatus";
 import type { EngineHostApi, HostCrash, HostRow, KeyStorage } from "./contract";
 
 /**
  * The real client for the engine host and API key storage. `hosts` and `crashes` read `GET /api/engine-host` (Local read) with the generated
- * types; a 404 is nothing reported. Stop, restart and retry-host are Person routes of Eng 2's slice 2: they are not requested here, and
- * `writable: false` keeps their buttons off the screens. API key storage is real: `credentialsApi.ts` calls
+ * types; a 404 is nothing reported. Stop and restart are Person routes (`hostControl.ts`); Try again is the restart. API key storage is real: `credentialsApi.ts` calls
  * `/api/settings/engine-credentials/{engine}` (not yet run against a real service).
  */
 const credentials = createCredentialsApi();
+const control = createHostControl();
 const real: EngineHostApi = {
-  writable: false,
+  writable: true,
   hosts: (signal) => hostRows(signal),
   crashes: (signal) => hostCrashes(signal),
-  retry: async () => { throw new Error("This service cannot restart an engine host yet."); },
-  stop: async () => { throw new Error("This service cannot stop an engine host yet."); },
+  retry: (id, options) => control.restart(id, options),
+  stop: (id, options) => control.stop(id, options),
   storage: (signal) => credentials.storage(signal),
   decline: (id) => credentials.decline(id),
   saveKey: (id, key) => credentials.saveKey(id, key),
@@ -73,7 +74,7 @@ export function useEngineHosts(): { hosts: HostRow[] | null; reload(): void } {
   return { hosts, reload };
 }
 
-/** True unless the service has no stop, restart or retry-host route. */
+/** True unless the service has no stop or restart route. */
 export const hostWritable = (): boolean => engineHostApi().writable !== false;
 
 export function useEngineHostCrashes(): HostCrash[] {

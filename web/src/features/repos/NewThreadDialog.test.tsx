@@ -94,3 +94,32 @@ it("never offers an untrusted repository: it cannot be ticked and is not sent", 
   await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
   await waitFor(() => expect(mock.writes).toEqual(["start:orbyn-engineering@main,orbyn-planner@feat/calendar"]));
 });
+
+it("shows the branch name only when two or more repositories are ticked", async () => {
+  const { dialog } = await open();
+  const user = userEvent.setup();
+  expect(within(dialog).getByRole("textbox", { name: "Branch name" })).toBeVisible();
+  await user.click(within(dialog).getByRole("checkbox", { name: /orbyn-planner/ }));
+  expect(within(dialog).queryByRole("textbox", { name: "Branch name" })).toBeNull();
+});
+
+it("sends one validated branch name for every repository, and none when it is left empty", async () => {
+  const first = await open();
+  await userEvent.type(within(first.dialog).getByRole("textbox", { name: "Branch name" }), " feat/login-fix ");
+  await userEvent.click(within(first.dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(first.mock.branchNames).toEqual(["feat/login-fix"]));
+});
+
+it("starts without a branch name when the field is empty", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.branchNames).toEqual([undefined]));
+});
+
+it("refuses a branch name Git would refuse, in words, and does not start", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.type(within(dialog).getByRole("textbox", { name: "Branch name" }), "bad name");
+  expect(within(dialog).getByText(/cannot hold spaces/)).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeDisabled();
+  expect(mock.writes).toEqual([]);
+});

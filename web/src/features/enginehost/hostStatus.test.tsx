@@ -4,11 +4,9 @@ import type { EngineHostState } from "../../generated/EngineHostState";
 import type { EngineHostStatus } from "../../generated/EngineHostStatus";
 import { EngineHostCard } from "../settings/engineHost/HostCard";
 import { EngineHostGroup } from "../settings/engineHost/HostGroup";
-import { HostProcessRows, useHostProcesses } from "../settings/engineHost/HostProcesses";
-import { engineHostApi, setEngineHostApi, useEngineHosts } from "./index";
+import { setEngineHostApi, useEngineHosts } from "./index";
 import { hostCrashes, hostRows, toHostRow } from "./hostStatus";
 import { processLine, stateLine } from "./hostText";
-import { ComposerHostLine } from "./HostUi";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const status = (patch: Partial<EngineHostStatus> & { family: string; state: EngineHostState }): EngineHostStatus => ({ restart_count: 0, ...patch });
@@ -105,22 +103,6 @@ it("lists each family's last crash for Maintenance", async () => {
   vi.stubGlobal("fetch", answer([status({ family: "claude", state: "running" }),
     status({ family: "codex", state: "restarting", last_crash: { at: "2026-11-21T09:41:00Z", error_kind: "stalled", message: "m", stderr_tail: "t", exit_code: 1 } })]));
   expect(await hostCrashes()).toEqual([{ id: "codex:2026-11-21T09:41:00Z", family: "codex", at: "2026-11-21T09:41:00Z", message: "m", error_kind: "stalled", exit_code: 1, signal: undefined, stderr_tail: "t" }]);
-});
-
-it("draws no Stop, Restart or Try again button: those routes do not exist yet, and nothing is requested for them", async () => {
-  const fetching = answer([status({ family: "claude", state: "running", host_version: "0.1.0" }), status({ family: "acp", state: "cant_start" })]);
-  vi.stubGlobal("fetch", fetching);
-  expect(engineHostApi().writable).toBe(false);
-  function Rows() { const { rows, reload } = useHostProcesses(); return <ul aria-label="Processes"><HostProcessRows rows={rows} reload={reload} /></ul>; }
-  render(<><EngineHostGroup /><Rows /></>);
-  expect(await screen.findAllByRole("listitem")).toHaveLength(2);
-  expect(screen.queryByRole("button")).toBeNull();
-  const host = toHostRow(status({ family: "acp", state: "cant_start" }))!;
-  render(<ComposerHostLine line={{ host, engineName: "ACP", fallback: false }} />);
-  expect(screen.queryByRole("button")).toBeNull();
-  expect(screen.getByRole("alert")).toHaveTextContent("ACP can’t send");
-  expect(fetching.mock.calls.every(([, init]) => init!.method === "GET")).toBe(true);
-  await expect(engineHostApi().stop("claude")).rejects.toThrow();
 });
 
 function Poller() {
