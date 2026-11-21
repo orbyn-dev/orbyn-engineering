@@ -380,6 +380,7 @@
     ["POST","/api/threads/{id}/title","local"],
     ["POST","/api/threads/{id}/workflows/{item}/stop","local"],
     ["POST","/api/updates/app/apply","person"],
+    ["POST","/api/updates/app/download","person"],
     ["POST","/api/updates/apply-all","person"],
     ["POST","/api/updates/check","local"],
     ["POST","/api/usage","local"],

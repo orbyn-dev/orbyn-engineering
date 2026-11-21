@@ -2243,19 +2243,68 @@ the first failure, and is refused while any run is active (`409 runs_active`). E
 applied update is audited. `GET /api/updates/events` sends the status, then each
 change, for the UI's badge.
 
-With `--parent-stdin` a desktop shell owns app updates over newline JSON. It sends
-`app_update_available`, `app_update_none`, `app_update_unconfigured`,
-`app_update_progress`, `app_update_check_failed` and `app_update_failed` on stdin;
-unknown or malformed lines are ignored, and EOF still means shut down. After the ready line `orbynd` sends
-`check_app_update` and `install_app_update` on stdout. Install first checks for
-active runs and then holds admission (`503 updating`) under the admission lock, until
-exit or until the shell reports an install failure.
+With `--parent-stdin` the desktop shell owns the updater handle and verified package bytes in memory.
+Checks are read-only and report an opaque `release_id` bound to the captured release, target, URL and
+signature. Overlapping checks discard an older completion. A new check can replace the available
+candidate without retargeting an in-flight package. A fresh successful check for a different release
+revokes the older download consent and stage; a failed check retains a verified stage. Identical
+release descriptors keep the same id. The shell cancels the old network task and waits for settlement
+before publishing the new candidate, then late callbacks cannot restore old readiness.
+An already-running installer keeps its exclusion until it actually settles; only then can a changed
+candidate replace its operation state. The explicit download and install requests carry
+that release id and the operation generation shown in `AppUpdateStatus`; stale consent is refused.
 
-`app_update_check_failed` reports a check error without clearing install progress
-or releasing admission: a check may finish while an install is in progress.
-`app_update_failed` reports an install failure, clears its progress and releases
-admission. Both messages carry the error in `message`; check failures keep the
-last known release version and notes.
+`POST /api/updates/app/download` starts only a download. `UpdateCenter` serializes duplicate actions,
+atomically refuses active runs and holds admission (`503 updating`) through downloading and preparing.
+The shell rechecks availability before each attempt, including retries; a different release is reported
+for renewed consent and is never substituted into the transfer. Progress reports carry the operation
+and release id, so callbacks from another transfer are ignored. The download-finish callback means
+preparing, not ready: only a successful awaited `Update::download` (after its signature verification)
+permits `app_update_ready`. Byte completion and an unknown total do not establish readiness.
+An explicit download releases admission at ready and never installs or restarts.
+
+`POST /api/updates/app/apply` installs only that ready generation. It rechecks active runs and holds
+admission until exit or failure. The shell installs the same captured handle and verified bytes on a
+blocking worker; the plugin verifies them again. On Windows the plugin launches the installer and
+exits; neither its pre-exit callback nor a process exit proves the new version installed. On macOS
+installation returns before the shell requests restart. There is no completed-install status based on
+those events. An install error retains the verified payload for an explicit retry and releases admission;
+a download/verification error retains no stage and releases admission. Check errors preserve the
+candidate, operation and admission; operation errors have their own `update_error` and `failed_phase`.
+
+An explicit `POST /api/updates/app/apply?complete=true` requests download followed by install for the
+exact `AppUpdateRequest` release id and operation. The typed boolean defaults to false, preserving the
+UI's install-only request. Complete waits for explicit verified Ready and keeps admission held across
+both phases. It cannot upgrade a concurrent download-only operation's consent; that request is refused.
+A duplicate Complete for the same correlated operation starts no second effect. Stale release or
+operation consent is refused without substituting a newly checked candidate.
+`orbyn update` sends this complete request from its single checked status, after its existing version,
+channel and downgrade checks; missing/empty release ids or invalid operation generations are refused
+before POST. This does not grant new authority: the route remains enforced Person, and production CLI
+or browser callers without the desktop launch's person key still receive `403 desktop_required`.
+The CLI request contract is tested with a fake shell and development-authorized service only.
+
+The default notify mode requires separate Download update and Restart to update consent. Manual
+mode gains no background download. Automatic mode retains its two-minute idle/no-active-run gate;
+it and Update everything explicitly request download followed by install through this same lifecycle,
+keeping admission held across verified readiness. Leaving the page does not cancel a shell-owned
+transfer. No stage is persisted: a shell crash/restart loses readiness and the next session must check
+and download again. A restarted service does not infer readiness from bytes or saved UI state.
+The shell fences updater commands and callbacks to a service generation. A service crash cancels its
+owned network future and discards that generation's candidate/stage. A blocking installer owns a
+shell lease until its effect actually settles, including unwind; a dropped join handle cannot release
+it. Automatic or explicit service restart waits behind that lease, so a replacement core cannot admit
+work while an earlier installer still acts. Cancelled downloads and installer failures settle through
+RAII, then permit an already-authorized deferred restart. App shutdown revokes deferred restart.
+Download consent is an enforced Person route and requires this launch's person key. Failed operations
+carry their captured display version separately from a newer available candidate; failure copy never
+names a release that the operation did not attempt.
+
+Shell messages are `app_update_available`, `app_update_none`, `app_update_unconfigured`,
+`app_update_progress`, `app_update_preparing`, `app_update_ready`, `app_update_check_failed` and
+`app_update_failed`; operation messages include `release_id` and `operation`. Service commands are
+`check_app_update`, `download_app_update` and `install_app_update`. Unknown or malformed lines are
+ignored, and EOF still means shut down.
 
 With no shell, `--update-manifest` names a release manifest `{version, notes}` to
 compare with the running version; with none, the app reports `unconfigured`. A
@@ -3315,7 +3364,8 @@ every method, path and which routes need a credential.
 | `POST /api/shell/actions` | `ShellRequest` (`202`, `422` with no shell) |
 | `GET /api/updates`, `POST /api/updates/check` | `UpdateStatus`; a check only reads |
 | `GET /api/updates/events` | SSE `UpdateStatus` on each change |
-| `POST /api/updates/app/apply` | Ask the shell to install (`202`, `409 runs_active`, `422` on a server) |
+| `POST /api/updates/app/download` | `AppUpdateRequest`: download and verify one release without installing (`202`, `409 runs_active`, `422` stale/unavailable) |
+| `POST /api/updates/app/apply` | `AppUpdateRequest`: install the verified staged release; typed `?complete=true` explicitly requests download then install for that same correlation (`202`, `409 runs_active`, `422` stale/unavailable or server; enforced Person) |
 | `POST /api/updates/apply-all` | `ApplyAllResult`; engines, library, app; stops at the first failure |
 | `POST /api/threads/:id/runs` | Admit a run with an optional `model`, `effort` and `options` (`202`, `409 thread_busy`, `403 folder_untrusted`, `422 unsupported_option`) |
 | `GET, POST /api/threads/:id/queue` | `QueuedMessage[]`; queue a message, which starts at once if idle and can carry a selection (`422 unsupported_option`) |
