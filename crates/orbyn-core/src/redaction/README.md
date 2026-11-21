@@ -16,6 +16,7 @@ decide where each applies (Settings › Secrets, W4).
 | Surface | Set | Settings can change it |
 | --- | --- | --- |
 | Crew: H2 scan, ledger rows, evidence, every Crew object | `Redactor::locked`, every format | No, never. It reads no setting |
+| What is shown back to a person: the Crew ledger and the audit log's `detail` | The person's own patterns | Patterns, by adding or editing one |
 | Engine failure text and server error text (`agents`) | `Redactor::locked`, on top of their own rules | No |
 | Terminal blocks | Formats left on, then the person's patterns | Yes, one switch |
 | What agents read | The same, unless the project is switched off | Yes, one switch, and one per project |
@@ -25,7 +26,8 @@ Terminal blocks are not built yet. What agents read is masked once, where a run 
 (`runs/admission.rs`): the message, queued follow-ups, steers, review text and Crew briefs that go through
 `launch` or `steer`. Each value becomes `[hidden: label]`. The person's own message, queue and timeline keep
 what was typed. Attached files, an engine's own tool output and Crew messages held for a worker turn are not
-masked here (Crew's own locked rule covers what Crew stores).
+masked here (Crew's own locked rule covers what Crew stores). What is shown back to a person
+(the Crew ledger and an audit row's `detail`) is masked on the read with the person's own patterns.
 
 ## Rules
 
