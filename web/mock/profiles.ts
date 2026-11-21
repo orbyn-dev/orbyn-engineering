@@ -2,10 +2,10 @@
  * MOCK of the profile routes of docs/execution-profiles-and-library.md, Part 1, for tests and the dev-only preview (`#/preview/profiles`),
  * which install it through `setProfilesApi`. The app's own client is the real HTTP one in src/features/profiles/api.ts. Fixtures
  * follow the Engineer frames `profile-*` and the three built-ins of the doc. It refuses what the doc says the service refuses:
- * `name_taken`, `revision_conflict`, `builtin_profile`, `profile_limit`, `confirm_required`, `engine_unavailable`, `invalid_input`.
+ * `name_taken`, `revision_conflict`, `builtin_profile`, `profile_limit`, `confirm_required`, `engine_unavailable`, `run_active`, `desktop_required`, `invalid_input`. Wire shapes are the generated ones.
  */
 import { ApiFailure } from "../src/api/client.ts";
-import { PROFILE_LIMIT, type ApplyAnswer, type ApplyBody, type Availability, type GrantCode, type Profile, type ProfileCheck, type ProfileDraft, type ProfileList, type ProfilesApi } from "../src/features/profiles/contract.ts";
+import { PROFILE_LIMIT, type ApplyProfileAnswer, type ApplyBody, type ProfileAvailability, type ProfileGrant, type Profile, type ProfileCheck, type ProfileDraft, type ProfileList, type ProfilesApi } from "../src/features/profiles/contract.ts";
 
 const NOW = "2026-11-22T00:00:00Z";
 const built = (slug: string, name: string, draft: Partial<Profile>): Profile => ({
@@ -42,6 +42,8 @@ const STATUS: Record<string, [number, string]> = {
   engine_unavailable: [409, "That engine is not available."],
   mode_not_offered: [409, "That engine does not offer this permission mode."],
   tier_unmapped: [409, "That engine has no model for this tier."],
+  run_active: [409, "The thread’s engine can’t change during a run."],
+  desktop_required: [403, "This needs the Orbyn desktop app."],
   not_found: [404, "That profile is not in the list any more."],
   invalid_input: [400, "Check the highlighted field."],
 };
@@ -61,22 +63,23 @@ export function createProfilesMock(init: { profiles?: Profile[] | null; delayMs?
   const preflight = (): void => {
     if (fail) { const code = fail; fail = null; refuse(code); }
   };
-  const availabilityOf = (engine: string | null): Availability => (engine === null ? { engine: "none" } : engine === "claude" || engine === "codex" ? { engine: "ok" } : { engine: "not_found", reason: "That engine is not installed." });
+  const availabilityOf = (engine: string | null): ProfileAvailability => (engine === null ? { engine: "none" } : engine === "claude" || engine === "codex" ? { engine: "ok" } : { engine: "not_found", reason: "That engine is not installed." });
   const find = (id: string): Profile => store.get(id) ?? refuse("not_found");
   const clash = (name: string, except: string | null) => [...store.values()].some((one) => one.id !== except && one.name.trim().toLowerCase() === name.trim().toLowerCase());
   const valid = (draft: ProfileDraft) => {
     const name = draft.name.trim();
     if (name.length < 1 || name.length > 60 || (draft.permission_mode as string) === "read_only") refuse("invalid_input");
   };
-  const grants = (profile: Profile): GrantCode[] => [...(profile.permission_mode === "full_access" ? (["full_access"] as const) : []), ...(profile.autopilot_mode === "full" ? (["autopilot_full"] as const) : [])];
-  const apply = (scope: "thread" | "crew", id: string, body: ApplyBody): ApplyAnswer => {
+  const grants = (profile: Profile): ProfileGrant[] => [...(profile.permission_mode === "full_access" ? (["full_access"] as const) : []), ...(profile.autopilot_mode === "full" ? (["autopilot_full"] as const) : [])];
+  const apply = (scope: "thread" | "crew", id: string, body: ApplyBody): ApplyProfileAnswer => {
     preflight();
     if (body.profile_id === null) return { applied: {}, ignored: [], application: null };
     const profile = find(body.profile_id);
     if (body.seen_revision !== undefined && body.seen_revision !== profile.revision) refuse("revision_conflict");
-    const need = grants(profile);
     const seen = body.ack_grants ?? [];
-    if (need.some((code) => !seen.includes(code))) refuse("confirm_required", { grants: need });
+    // The service names only the grants the acknowledgement did not cover.
+    const missing = grants(profile).filter((code) => !seen.includes(code));
+    if (missing.length > 0) refuse("confirm_required", { grants: missing });
     const availability = profile.availability ?? availabilityOf(profile.engine);
     if (availability.engine !== "ok" && availability.engine !== "none") refuse("engine_unavailable");
     writes.push(`apply:${scope}:${id}:${profile.id}:ack=${seen.join("+")}`);
