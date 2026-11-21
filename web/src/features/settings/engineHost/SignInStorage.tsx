@@ -150,8 +150,12 @@ function GroupRow({ row, replace }: { row: SignInStorage; replace(next: SignInSt
 /** The Sign-in storage group of the Providers page. Nothing is drawn until the service offers at least one engine. */
 export function SignInStorageGroup() {
   const { rows, set } = useSignInStorage();
+  const latest = useRef<SignInStorage[] | null>(null);
+  latest.current = rows;
   if (!rows || rows.length === 0) return null;
-  const replace = (next: SignInStorage) => set(rows.map((row) => (row.engine_id === next.engine_id ? next : row)));
+  // `replace` runs after an await: it reads the rows as they are then, not as they were at the click, so a slower
+  // answer for one engine cannot put an older copy of another engine's row back.
+  const replace = (next: SignInStorage) => set((latest.current ?? rows).map((row) => (row.engine_id === next.engine_id ? next : row)));
   return (
     <>
       <div className="set-grp">Sign-in storage</div>
@@ -180,8 +184,10 @@ function DetailRow({ row, replace }: { row: SignInStorage; replace(next: SignInS
 /** The Sign-in storage row on one engine's detail page. Nothing when the service does not offer this engine. */
 export function SignInStorageRow({ engineId }: { engineId: string }) {
   const { rows, set } = useSignInStorage();
+  const latest = useRef<SignInStorage[] | null>(null);
+  latest.current = rows;
   const row = rows?.find((entry) => entry.engine_id === engineId);
   if (!rows || !row) return null;
-  const replace = (next: SignInStorage) => set(rows.map((entry) => (entry.engine_id === next.engine_id ? next : entry)));
+  const replace = (next: SignInStorage) => set((latest.current ?? rows).map((entry) => (entry.engine_id === next.engine_id ? next : entry)));
   return <DetailRow row={row} replace={replace} />;
 }
