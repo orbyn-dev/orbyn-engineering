@@ -127,7 +127,7 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
           {read("scripts", <ScriptsRow threadId={thread.id} scripts={loads.scripts} />)}
           {/* Every engine has this row; one the service has a notice for adds it once answered. A note, not a row to turn off. */}
-          <EngineNote engine={thread.engine} engineName={engineName} modelName={modelName} />
+          <EngineNote projectId={thread.project_id} engine={thread.engine} engineName={engineName} modelName={modelName} />
           {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
         </div>
       </DetailsDismiss.Provider>

@@ -1,9 +1,10 @@
 import { Info } from "lucide-react";
 import type { CrewRoleFields } from "./contract";
+import { displayText } from "./refusal";
 
 /**
- * Crew's own words for why (frame crew-cursor-reviewer-only): the limit is Crew's rule, not a setting, so the tooltip is drawn
- * here and not taken from the service's `crew_role_reason`, which is display data for other screens.
+ * Crew's own words (frame crew-cursor-reviewer-only), used only when the service sends no `crew_role_reason`. The service's reason
+ * is specified (docs/cursor-thread-contract.md, Crew) and wins when present.
  */
 export const CREW_ROLE_TOOLTIP = "Cursor can run writing briefs only after Orbyn’s confinement check passes for it under the engine host; until then it reviews only.";
 
@@ -16,7 +17,7 @@ export function crewRoleLabel(engine: CrewRoleFields | null | undefined): string
 export function CrewRoleNote({ engine, engineName }: { engine: CrewRoleFields | null | undefined; engineName?: string }) {
   const label = crewRoleLabel(engine);
   if (!label) return null;
-  const tooltip = engineName && engineName !== "Cursor" ? CREW_ROLE_TOOLTIP.replace("Cursor", engineName) : CREW_ROLE_TOOLTIP;
+  const tooltip = displayText(engine?.crew_role_reason) ?? (engineName && engineName !== "Cursor" ? CREW_ROLE_TOOLTIP.replace("Cursor", engineName) : CREW_ROLE_TOOLTIP);
   return (
     <span className="ct-role" title={tooltip} tabIndex={0}>
       <Info size={12} aria-hidden />

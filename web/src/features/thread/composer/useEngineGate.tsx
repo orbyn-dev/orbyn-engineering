@@ -6,7 +6,8 @@ import { cursorThreadApi, displayText, ModeRefusedCard, NoticeCard, runRefusal }
 
 /**
  * What a thread on an engine that never asks before acting adds to the composer, all read from the service's answers:
- * the first-run notice card (409 `engine_notice_required`) and the refused-mode card (409 `engine_mode_refused`). Nothing here names an engine.
+ * the first-run notice card (409 `engine_notice_required`, once per project) and the refused-mode card (409 `engine_mode_refused`).
+ * When both apply the notice card is drawn first and the refusal card returns once the notice is answered. Nothing here names an engine.
  */
 export function useEngineGate(thread: Thread, engine: EngineStatus | null, setError: (message: string | null) => void) {
   const [noticeOpen, setNoticeOpen] = useState(false);
@@ -40,7 +41,7 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
     writing.current = true;
     setAcknowledging(true);
     try {
-      await cursorThreadApi().acknowledge(thread.engine);
+      await cursorThreadApi().acknowledge(thread.project_id, thread.engine);
       setNoticeOpen(false);
       resend();
     } catch (failure) {
