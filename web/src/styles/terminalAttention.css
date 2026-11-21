@@ -1,0 +1,115 @@
+/* Terminal-agent attention: the Needs you item of a thread (docs/cli-agent-attention.md). Amber marks Needs you. */
+.ta {
+  container: ta / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.ta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-warnBorder);
+  border-radius: var(--radius-10);
+  background: var(--color-warnSoft);
+}
+.ta-head,
+.ta-title,
+.ta-why {
+  margin: 0;
+}
+.ta-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-warnText);
+}
+.ta-title {
+  font-weight: 600;
+}
+.ta-box {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-10);
+  background: var(--color-background);
+  overflow: hidden;
+}
+.ta-engine {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--color-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+.ta-lines {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 9em;
+  overflow: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ta-line[data-question] {
+  font-weight: 600;
+}
+.ta-why,
+.ta-told,
+.ta-cleared,
+.ta-q {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.ta-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ta-told {
+  margin-inline-start: auto;
+}
+.ta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ta-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ta-name {
+  font-weight: 600;
+}
+.ta-q {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ta-cleared {
+  margin: 0;
+  padding: 2px 4px;
+}
+/* Narrow: the box keeps the question line only, and the buttons stay on one row. */
+@container ta (max-width: 420px) {
+  .ta-engine,
+  .ta-line:not([data-question]) {
+    display: none;
+  }
+  .ta-acts {
+    flex-wrap: nowrap;
+  }
+  .ta-told {
+    display: none;
+  }
+}
