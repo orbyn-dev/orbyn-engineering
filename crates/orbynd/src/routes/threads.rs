@@ -125,7 +125,10 @@ async fn delete_thread(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    state.core.delete_thread(&id, LOCAL_USER)?;
+    state
+        .core
+        .delete_thread_and_worktrees(&id, LOCAL_USER)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

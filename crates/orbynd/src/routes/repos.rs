@@ -21,6 +21,10 @@ pub fn routes() -> Router<AppState> {
             "/api/threads/{id}/repos",
             get(thread_repos).post(add_thread_repo),
         )
+        .route(
+            "/api/threads/{id}/repos/{repo_id}",
+            axum::routing::delete(remove_thread_repo),
+        )
         .route("/api/threads/{id}/task-folder", get(task_folder))
         .route("/api/projects/{id}/repo-threads", post(start_thread))
         .route("/api/projects/{id}/repos/add-folder", post(add_folder))
@@ -128,6 +132,14 @@ async fn add_thread_repo(
     ApiJson(body): ApiJson<AddThreadRepo>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.add_thread_repo(&id, body).await?))
+}
+
+async fn remove_thread_repo(
+    State(state): State<AppState>,
+    Path((id, repo_id)): Path<(String, String)>,
+) -> ApiResult<axum::http::StatusCode> {
+    state.core.remove_thread_repo(&id, &repo_id).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 async fn task_folder(

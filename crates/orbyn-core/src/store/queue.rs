@@ -407,13 +407,14 @@ impl Store {
             .ok_or_else(|| CoreError::NotFound("attachment".into()))
     }
 
-    pub fn link_pull(&self, thread_id: &str, pull: &PullRequest) -> Result<()> {
+    /// Links a pull request of one repository of the thread; the thread's own project is its primary repository.
+    pub fn link_pull(&self, thread_id: &str, repo_id: &str, pull: &PullRequest) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
                 "INSERT INTO thread_pull_requests
-                    (thread_id, number, url, title, state, head, base, author)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                 ON CONFLICT (thread_id, number) DO UPDATE SET url = excluded.url,
+                    (thread_id, repo_id, number, url, title, state, head, base, author)
+                 VALUES (?1, ?9, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT (thread_id, repo_id, number) DO UPDATE SET url = excluded.url,
                     title = excluded.title, state = excluded.state, head = excluded.head,
                     base = excluded.base, author = excluded.author",
                 params![
@@ -424,28 +425,31 @@ impl Store {
                     pull.state,
                     pull.head,
                     pull.base,
-                    pull.author
+                    pull.author,
+                    repo_id
                 ],
             )?;
             Ok(())
         })
     }
 
-    pub fn linked_pulls(&self, thread_id: &str) -> Result<Vec<PullRequest>> {
+    /// The pull requests a thread linked in one repository.
+    pub fn linked_pulls(&self, thread_id: &str, repo_id: &str) -> Result<Vec<PullRequest>> {
         let conn = self.reader();
         let mut statement = conn.prepare_cached(
-            "SELECT * FROM thread_pull_requests WHERE thread_id = ?1 ORDER BY number",
+            "SELECT * FROM thread_pull_requests WHERE thread_id = ?1 AND repo_id = ?2 ORDER BY number",
         )?;
-        let rows = statement.query_map([thread_id], pull_row)?;
+        let rows = statement.query_map(params![thread_id, repo_id], pull_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Threads with a pull request not yet known to be finished.
-    pub fn threads_with_open_pulls(&self) -> Result<Vec<String>> {
+    /// The (thread, repository) pairs with a pull request not yet known to be finished.
+    pub fn threads_with_open_pulls(&self) -> Result<Vec<(String, String)>> {
         let conn = self.reader();
-        let mut statement = conn
-            .prepare("SELECT DISTINCT thread_id FROM thread_pull_requests WHERE state = 'open'")?;
-        let rows = statement.query_map([], |row| row.get(0))?;
+        let mut statement = conn.prepare(
+            "SELECT DISTINCT thread_id, repo_id FROM thread_pull_requests WHERE state = 'open'",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -590,15 +594,17 @@ impl Store {
             .optional()?)
     }
 
-    pub fn unlink_pull(&self, thread_id: &str, number: u64) -> Result<()> {
+    /// Drops a link. A watch is of the primary repository only, so it goes with a primary link and no other.
+    pub fn unlink_pull(&self, thread_id: &str, repo_id: &str, number: u64) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
-                "DELETE FROM pull_watches WHERE thread_id = ?1 AND number = ?2",
-                params![thread_id, number as i64],
+                "DELETE FROM pull_watches WHERE thread_id = ?1 AND number = ?2
+                   AND ?3 = (SELECT project_id FROM threads WHERE id = ?1)",
+                params![thread_id, number as i64, repo_id],
             )?;
             let changed = tx.execute(
-                "DELETE FROM thread_pull_requests WHERE thread_id = ?1 AND number = ?2",
-                params![thread_id, number as i64],
+                "DELETE FROM thread_pull_requests WHERE thread_id = ?1 AND repo_id = ?2 AND number = ?3",
+                params![thread_id, repo_id, number as i64],
             )?;
             if changed == 0 {
                 return Err(CoreError::NotFound("pull request".into()));
