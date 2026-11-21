@@ -52,6 +52,14 @@ export interface StartRepoChoice {
   base_branch: string;
 }
 
+/** What the new-thread dialog sends: the repositories, and the engine and permission the thread starts with (GUESSED). */
+export interface StartThreadInput {
+  repos: StartRepoChoice[];
+  engine: string;
+  model: string | null;
+  permission_mode: import("../../api/types").PermissionMode;
+}
+
 /** One repository a thread works in. */
 export interface ThreadRepo {
   repo_id: string;
@@ -61,6 +69,8 @@ export interface ThreadRepo {
   added: number;
   deleted: number;
   trusted: boolean;
+  /** GUESSED: the changed files that belong to this repository, as the Changes list names them. Absent when the service does not say. */
+  files?: string[];
 }
 
 export type StartedThread = import("../../api/types").Thread;
@@ -80,8 +90,8 @@ export interface ReposApi {
   setupGit(projectId: string, repoId: string): Promise<RepoRow>;
   /** One write per call: stops tracking the repository in this project. Files and threads stay. */
   remove(projectId: string, repoId: string): Promise<void>;
-  /** One write per call: creates the thread in these repositories, each on its own branch. */
-  startThread(projectId: string, repos: StartRepoChoice[]): Promise<StartedThread>;
+  /** One write per call: creates the thread in these repositories, each on its own branch, with this engine and permission. */
+  startThread(projectId: string, input: StartThreadInput): Promise<StartedThread>;
   /** The repositories a thread works in; `null` when the thread is not a multi-repository thread. */
   threadRepos(threadId: string, signal?: AbortSignal): Promise<ThreadRepo[] | null>;
   /** One write per call: adds one trusted repository of the project to the thread. */

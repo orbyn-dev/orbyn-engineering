@@ -1,5 +1,5 @@
 import { FolderGit2, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type { Thread } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 import { useLayoutWidth } from "../../lib/useLayout";
@@ -8,22 +8,10 @@ import { IconButton, Pill } from "../../ui/controls";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { ToolbarPopover } from "../pulls";
-import { reposApi, useApiVersion, useRepos } from "./api";
+import { reposApi, useRepos, useThreadRepos } from "./api";
 import type { ThreadRepo } from "./contract";
 import { canJoinThread, plain } from "./model";
 import "./repos.css";
-
-function useThreadRepos(threadId: string) {
-  const version = useApiVersion();
-  const [repos, setRepos] = useState<ThreadRepo[] | null>(null);
-  const read = useCallback(() => {
-    const abort = new AbortController();
-    reposApi().threadRepos(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setRepos(next); }, () => { if (!abort.signal.aborted) setRepos(null); });
-    return () => abort.abort();
-  }, [threadId, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => read(), [read]);
-  return { repos, reload: read };
-}
 
 function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; reload(): void }) {
   const pushToast = useUi((state) => state.pushToast);

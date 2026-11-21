@@ -801,3 +801,29 @@ it("a turn shows its files without a per-file restore, and the whole-turn restor
   expect(await screen.findByRole("dialog", { name: "Restore files?" })).toBeInTheDocument();
   expect(restore).not.toHaveBeenCalled();
 });
+
+// multi-repository thread: files grouped by repository, and nothing changes for any other thread
+it("groups the files by repository only when the service reports repositories for the thread", async () => {
+  setup();
+  const { createReposMock } = await import("../../../../mock/repos");
+  const { setReposApi } = await import("../../repos");
+  setReposApi(createReposMock({ threads: { t: [
+    { repo_id: "e", name: "orbyn-engineering", branch: "fix/login", added: 4, deleted: 3, trusted: true, files: ["auth/redirect.ts", "auth/redirect.test.ts"] },
+    { repo_id: "p", name: "orbyn-planner", branch: "fix/login", added: 3, deleted: 0, trusted: true, files: ["calendar/feed.ts"] },
+  ] } }));
+  try {
+    await open();
+    expect(await screen.findByRole("heading", { name: /orbyn-engineering/ })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /orbyn-planner/ })).toBeNull();
+    expect(rowsOf()).toHaveLength(2);
+  } finally {
+    setReposApi(null);
+  }
+});
+
+it("keeps one flat list for a thread the service reports no repositories for", async () => {
+  setup();
+  await open();
+  expect(screen.queryByRole("heading", { name: /orbyn/ })).toBeNull();
+  expect(rowsOf()).toHaveLength(2);
+});

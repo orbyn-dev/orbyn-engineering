@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
-import type { ReposApi, ReposView } from "./contract";
+import type { ReposApi, ReposView, ThreadRepo } from "./contract";
 
 const unavailable = () => { throw new Error("This service does not offer repositories in a project yet."); };
 
@@ -58,4 +58,17 @@ export function useRepos(projectId: string): { view: ReposView | null; settled: 
   const seen = useApiVersion();
   const read = useAsync(`repos:${projectId}:${seen}`, (signal) => reposApi().list(projectId, signal));
   return { view: read.status === "ready" ? read.data : null, settled: read.status !== "loading", reload: read.reload };
+}
+
+/** The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the service reports none. */
+export function useThreadRepos(threadId: string, refreshKey = 0): { repos: ThreadRepo[] | null; reload(): void } {
+  const version = useApiVersion();
+  const [repos, setRepos] = useState<ThreadRepo[] | null>(null);
+  const read = useCallback(() => {
+    const abort = new AbortController();
+    reposApi().threadRepos(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setRepos(next); }, () => { if (!abort.signal.aborted) setRepos(null); });
+    return () => abort.abort();
+  }, [threadId, version, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => read(), [read]);
+  return { repos, reload: read };
 }

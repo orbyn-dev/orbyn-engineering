@@ -1,4 +1,4 @@
-import type { RepoRow } from "./contract";
+import type { RepoRow, ThreadRepo } from "./contract";
 
 export type RepoState = "trusted" | "untrusted" | "not_git";
 
@@ -47,3 +47,21 @@ export function cloneText(row: RepoRow): string | null {
 /** Folder names the service reports, kept to a single line of plain text for a title. */
 // eslint-disable-next-line no-control-regex
 export const plain = (text: string) => text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+
+/**
+ * The changed files of a multi-repository thread, one group per repository in the thread's own order, then the files no repository
+ * claims. A repository with no file in the list has no group. `[]` means the service did not say which repository a file belongs to,
+ * and the list stays flat.
+ */
+export function groupByRepo<T extends { path: string }>(files: readonly T[], repos: readonly ThreadRepo[]): { repo: ThreadRepo | null; files: T[] }[] {
+  if (!repos.some((repo) => (repo.files?.length ?? 0) > 0)) return [];
+  const claimed = new Set<string>();
+  const groups = repos.flatMap((repo) => {
+    const mine = new Set(repo.files ?? []);
+    const found = files.filter((file) => mine.has(file.path) && !claimed.has(file.path));
+    found.forEach((file) => claimed.add(file.path));
+    return found.length > 0 ? [{ repo, files: found }] : [];
+  });
+  const rest = files.filter((file) => !claimed.has(file.path));
+  return rest.length > 0 ? [...groups, { repo: null, files: rest }] : groups;
+}

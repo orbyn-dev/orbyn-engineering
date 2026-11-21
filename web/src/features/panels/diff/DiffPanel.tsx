@@ -22,6 +22,7 @@ import { ChangesHeader, DIFF_SOURCES, NARROW, WIDE, type ComparePair, type DiffS
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
 import { commitItems, turnItems, type TurnTotals } from "./pickers";
+import { useThreadRepos } from "../../repos";
 import { findHits, shownLimit, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 
 const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
@@ -70,6 +71,8 @@ const linesOf = (file: FileDiff, ignoreSpace: boolean): DiffLine[] => {
 
 export function DiffPanel({ threadId }: { threadId: string }) {
   const version = useThreadLogs((state) => state.diffVersion[threadId] ?? 0);
+  // A thread in several repositories groups its files; any other thread gets nothing here and keeps one flat list.
+  const threadRepos = useThreadRepos(threadId, version);
   const [source, setSource] = useState<DiffSource>("worktree");
   const checkpoints = useAsync(`checkpoints:${threadId}:${source === "turn" ? version : "off"}`, (signal) =>
     source === "turn" ? api.checkpoints(threadId, signal) : Promise.resolve([]),
@@ -308,6 +311,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       onFilter={setFilter}
       onPick={setPickedPath}
       onMore={() => setAllFiles(true)}
+      repos={threadRepos.repos}
     />
   );
 
