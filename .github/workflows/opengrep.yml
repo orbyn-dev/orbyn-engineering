@@ -1,0 +1,124 @@
+name: Opengrep
+
+# Advisory static analysis, built from a pinned source commit. Not a required check, not part of ci.yml, and it
+# never fails a pull request on findings: it reports them in the run summary and keeps the JSON as an artifact.
+# A failing rule test or a broken engine build does fail this workflow, so a broken rule cannot pass unnoticed.
+# It does not replace CodeQL: see .opengrep/README.md for what it covers and when it could.
+# The engine is LGPL-2.1 and is built here from the pinned commit; nothing from it is committed.
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "desktop/**"
+      - "web/**"
+      - "scripts/**"
+      - ".opengrep/**"
+      - ".github/workflows/opengrep.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "desktop/**"
+      - "web/**"
+      - "scripts/**"
+      - ".opengrep/**"
+      - ".github/workflows/opengrep.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opengrep-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Release v2.0.0. Change it only through a reviewed upstream comparison, together with the library's pin file.
+  OPENGREP_COMMIT: 526deafe6f0519c272bbee316fea8df26dd85dfa
+  OPENGREP_OCAML: 5.5.1
+
+jobs:
+  scan:
+    name: Opengrep (advisory)
+    runs-on: ubuntu-24.04
+    # The first run builds OCaml and the engine (about 15 minutes on a laptop, more on a hosted runner); later runs
+    # restore the binary from the cache.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore the pinned engine
+        id: engine
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/opengrep-bin
+          key: opengrep-${{ runner.os }}-${{ runner.arch }}-${{ env.OPENGREP_COMMIT }}
+      - name: Libraries the engine links
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libpcre2-dev libgmp-dev libev-dev
+      - name: OCaml
+        if: steps.engine.outputs.cache-hit != 'true'
+        uses: ocaml/setup-ocaml@ff66428f72b64472e749b22e0ad4dded4b2ddca6 # v3.9.1
+        with:
+          ocaml-compiler: ${{ env.OPENGREP_OCAML }}
+      - name: Build the engine from the pinned commit
+        if: steps.engine.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout https://github.com/opengrep/opengrep "$RUNNER_TEMP/opengrep"
+          cd "$RUNNER_TEMP/opengrep"
+          git checkout --detach "$OPENGREP_COMMIT"
+          test "$(git rev-parse HEAD)" = "$OPENGREP_COMMIT"
+          git submodule update --init --recursive
+          opam install -y dune
+          make setup
+          make core
+          mkdir -p ~/opengrep-bin
+          cp -L bin/opengrep ~/opengrep-bin/opengrep
+      - name: Engine version
+        run: ~/opengrep-bin/opengrep --version
+      - name: Test the rules
+        run: |
+          set -euo pipefail
+          ~/opengrep-bin/opengrep test --config .opengrep/rules/rust.yaml .opengrep/tests/rust.rs
+          ~/opengrep-bin/opengrep test --config .opengrep/rules/web.yaml .opengrep/tests/web.ts
+      - name: Scan
+        shell: bash
+        run: |
+          set +e
+          ~/opengrep-bin/opengrep scan --config .opengrep/rules --exclude .opengrep --exclude node_modules --exclude generated \
+            --timeout 20 --json -o opengrep.json . > opengrep.log 2>&1
+          code=$?
+          set -e
+          echo "scan exit code: $code"
+          tail -n 5 opengrep.log
+          python3 - "$code" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import collections, json, sys
+          print(f"## Opengrep (advisory)\n\nScan exit code {sys.argv[1]}. Local rules only; no ruleset was downloaded.\n")
+          try:
+              data = json.load(open("opengrep.json"))
+          except Exception as error:
+              print(f"No result file: {error}")
+              raise SystemExit(0)
+          counts = collections.Counter(r["check_id"].split(".")[-1] for r in data["results"])
+          print(f"{len(data['results'])} findings in {len({r['path'] for r in data['results']})} files; "
+                f"{len(data['paths']['scanned'])} files scanned.\n")
+          print("| Rule | Findings |\n| --- | --- |")
+          for rule, count in counts.most_common():
+              print(f"| {rule} | {count} |")
+          errors = data.get("errors", [])
+          print(f"\n### Files the engine could not read: {len(errors)}\n")
+          print("A clean result says nothing about these files.\n")
+          for error in errors[:30]:
+              print("- " + error.get("message", "").splitlines()[0][:160])
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: opengrep-results
+          path: |
+            opengrep.json
+            opengrep.log
+          retention-days: 14
+          if-no-files-found: ignore
