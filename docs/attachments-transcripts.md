@@ -11,9 +11,15 @@ changes only if the service pull request says so. Rows: B8, B43, K36 in [parity]
 | Transcript import and export | `pc-b43-drag-over`, `-dropped`, `-dropped-many`, `-rejected`, `-narrow` | Eng 3 (export and transcript, per Products Research) |
 | Earlier messages of an imported thread | `pc-k36-earlier`, `pc-k36-unreadable` | Eng 2 and Eng 4 (read the provider's history) |
 
-None of the routes below is Person-class: each is a write or read on the thread's own files and history, like the attachment upload
-that exists today (`POST /api/threads/{id}/attachments` is not in `PERSON_ROUTES`). If an owner makes one Person-class, add it to
-`PENDING_PERSON_ROUTES` in `web/src/api/personKey.ts` with the route, and move it into `PERSON_ROUTES` when `routes.json` lists it.
+Photo conversion and the earlier-messages read are not Person-class: each is a write or read on the thread's own files and history, like
+the attachment upload that exists today (`POST /api/threads/{id}/attachments` is not in `PERSON_ROUTES`). **Transcript import is
+Person-class** (Products Research ruling): it creates thread context from an untrusted file, so the page sends the person key with it,
+and it is listed in `PENDING_PERSON_ROUTES` in `web/src/api/personKey.ts` until `routes.json` lists it (then move it into `PERSON_ROUTES`).
+Transcript export stays Local.
+
+Owners (Products Research): transcript export and import: Eng 3, after W8/W9, including `source` and `imported_at` on the thread;
+photo conversion: Luan, as an issue, reviewed by Eng 2; the earlier-messages read: Eng 2's R list, after HostDriver. The "Reading
+transcript…" chip reuses the converting chip (no new frame).
 
 ## Shared rules
 
@@ -58,6 +64,7 @@ that exists today (`POST /api/threads/{id}/attachments` is not in `PERSON_ROUTES
   web are placeholders until the export exists; the owner fixes the real ones and the two constants in
   `web/src/features/thread/composer/transcriptDrop.ts` follow. The web recognises a transcript by that ending only to choose this route;
   the service decides from the bytes.
+- Person-class. Transcript files are untrusted: the size cap, the parse limits and "nothing executes" below are security-queue checks.
 - Cap: 50 MiB (`413 file_too_large`), the same as a file.
 - The service validates the format version, parses with limits (message count, depth, text length), keeps the transcript for this
   thread and answers `200`:
