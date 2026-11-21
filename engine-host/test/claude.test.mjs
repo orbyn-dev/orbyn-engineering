@@ -110,3 +110,31 @@ async function promptOf(name) {
   const first = readFileSync(fixture(name), "utf8").split("\n").map((l) => l && JSON.parse(l)).find((l) => l?.frame?.type === "prompt.offer");
   return first.frame.message.message.content;
 }
+
+test("an authentication failure result ends the run with kind auth", async () => {
+  const { AsyncQueue } = await import("../src/asyncQueue.mjs");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const frames = [];
+  createInterface({ input: output }).on("line", (l) => frames.push(JSON.parse(l)));
+  const query = ({ prompt }) => {
+    const out = new AsyncQueue();
+    (async () => {
+      for await (const _ of prompt) {
+        out.push({ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate: OAuth session expired and could not be refreshed", session_id: "x" });
+      }
+    })();
+    return out[Symbol.asyncIterator] ? { [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](), close() {}, interrupt: async () => {} } : null;
+  };
+  runHost({ family: claudeFamily({ loadSdk: async () => ({ query }) }), input, output });
+  const send = (f) => input.write(`${JSON.stringify(f)}\n`);
+  send({ id: 1, type: "init", protocol: 1 });
+  send({ id: 2, type: "open", operation: "create", sessionId: "s", cwd: "/tmp", options: { sdk: {} } });
+  send({ id: 3, type: "send", sessionId: "s", message: "hi" });
+  await new Promise((resolve) => {
+    const t = setInterval(() => frames.some((f) => f.type === "runDone") && (clearInterval(t), resolve()), 5);
+  });
+  const done = frames.find((f) => f.type === "runDone");
+  assert.equal(done.ok, false);
+  assert.equal(done.error.cause.kind, "auth");
+});
