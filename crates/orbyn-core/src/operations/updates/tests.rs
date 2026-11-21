@@ -515,6 +515,26 @@ async fn the_setting_turns_background_checks_off() {
 }
 
 #[tokio::test]
+async fn offline_sends_the_desktop_shell_no_automatic_check() {
+    // The fixture is offline (`lookup_latest` is false), as with ORBYN_OFFLINE.
+    let f = fixture("exit 0").await;
+    let mut lines = f.core.updates.attach_shell();
+    let stop = CancellationToken::new();
+    let checks = {
+        let (updates, stop) = (f.core.updates.clone(), stop.clone());
+        tokio::spawn(async move { updates.run_checks(stop).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    stop.cancel();
+    checks.await.unwrap();
+    assert!(
+        lines.try_recv().is_err(),
+        "no app update check reaches the shell while offline"
+    );
+    assert!(f.core.updates.status().await.checked_at.is_none());
+}
+
+#[tokio::test]
 async fn the_polled_status_is_kept_until_something_changes_and_then_announced() {
     let f = fixture("exit 0").await;
     // `Core` already wires the status to the shell's event stream, which windows follow.

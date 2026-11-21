@@ -7,9 +7,10 @@ import { setReposApi } from "./api";
 
 afterEach(() => { setReposApi(null); window.location.hash = ""; });
 
-const open = async (mock = createReposMock()) => {
+const open = async (mock = createReposMock(), note: string | null = null) => {
   setReposApi(mock);
-  render(<NewThreadDialog projectId="p1" projectName="orbyn" onClose={() => {}} />);
+  render(<NewThreadDialog projectId="p1" projectName="orbyn" start={{ engine: "claude", model: "opus", permission_mode: "auto_edits" }}
+    engineControl={<button type="button">Claude Code · Opus</button>} permissionControl={<button type="button">Auto-accept edits</button>} note={note} onClose={() => {}} />);
   const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
   await within(dialog).findAllByRole("checkbox");
   return { mock, dialog };
@@ -39,6 +40,18 @@ it("starts only in the ticked repositories, each from its chosen branch, with on
   expect(window.location.hash).toMatch(/^#\/threads\//);
 });
 
+it("draws the Engine and Permission rows the host hands in, and starts with that engine and permission, in one write", async () => {
+  const { mock, dialog } = await open(createReposMock(), "Cursor does not ask before acting, so Supervised is not available here.");
+  expect(within(dialog).getByText("Engine")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Claude Code · Opus" })).toBeVisible();
+  expect(within(dialog).getByText("Permission")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Auto-accept edits" })).toBeVisible();
+  expect(within(dialog).getByText(/Supervised is not available here/)).toBeVisible();
+  await userEvent.dblClick(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.starts).toEqual([{ engine: "claude", model: "opus", permission_mode: "auto_edits" }]);
+});
+
 it("cannot start with nothing ticked", async () => {
   const { dialog } = await open();
   const user = userEvent.setup();
@@ -61,4 +74,23 @@ it("keeps the dialog open when the service refuses", async () => {
   mock.failNext("start");
   await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent("The service could not do that.");
+});
+
+it("shows why a permission mode the engine does not offer was refused, and keeps the dialog open to try again", async () => {
+  const mock = createReposMock({ permissionModes: { claude: ["supervised"] } });
+  const { dialog } = await open(mock);
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  const alert = await within(dialog).findByRole("alert");
+  expect(alert).toHaveTextContent("This engine does not offer that permission.");
+  expect(alert).toHaveTextContent("claude does not offer the auto_edits permission mode.");
+  expect(screen.getByRole("dialog", { name: /New thread in orbyn/ })).toBeVisible();
+  expect(window.location.hash).not.toMatch(/^#\/threads\//);
+  expect(within(dialog).getByRole("button", { name: "Start in 2 repositories" })).toBeEnabled();
+});
+
+it("never offers an untrusted repository: it cannot be ticked and is not sent", async () => {
+  const { mock, dialog } = await open();
+  await userEvent.click(within(dialog).getByRole("checkbox", { name: /orbyn-engine\b/ }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.writes).toEqual(["start:orbyn-engineering@main,orbyn-planner@feat/calendar"]));
 });

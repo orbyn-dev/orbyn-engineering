@@ -1,11 +1,12 @@
-import { useId, useMemo, useState } from "react";
+import { ApiFailure } from "../../api/client";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { navigate } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Pill } from "../../ui/controls";
 import { ActionDialog } from "./ActionDialog";
 import { reposApi, useRepos } from "./api";
-import type { RepoRow } from "./contract";
+import type { RepoRow, StartThreadInput } from "./contract";
 import { canJoinThread, defaultTicks, plain, repoState, startLabel, STATE_LABEL } from "./model";
 import "./repos.css";
 
@@ -31,11 +32,31 @@ function Choice({ row, ticked, branch, disabled, limitReached, onTick, onBranch 
   );
 }
 
+/** One labelled row of the dialog, the label beside the control the host puts in it. */
+const Row = ({ label, children }: { label: string; children: ReactNode }) => (
+  <div className="repos-start-row"><span className="repos-start-label">{label}</span><span className="repos-start-control">{children}</span></div>
+);
+
 /**
- * New thread in a project with several repositories: which of them the thread works in, and the branch each starts from. An
- * untrusted repository is dimmed and cannot be ticked, so nothing runs in one. Start is one click and one write.
+ * New thread in a project with several repositories: which of them the thread works in, the branch each starts from, and the
+ * engine and permission it starts with. An untrusted repository is dimmed and cannot be ticked, so nothing runs in one. Start is
+ * one click and one write. A permission the engine does not offer is refused by the service (`permission_mode_unsupported`, 400)
+ * before anything is made: the reason shows and the dialog stays open. An untrusted repository is listed but cannot be ticked.
+ *
+ * The engine and permission pickers are the new-thread flow's own: the host that already owns them hands them in as `engineControl`
+ * and `permissionControl`, with the choice they edit as `start`, so this feature does not import the thread feature (which imports
+ * this one). `note` is the one sentence that says which permission modes the engine does not offer.
  */
-export function NewThreadDialog({ projectId, projectName, onClose }: { projectId: string; projectName: string; onClose(): void }) {
+export function NewThreadDialog({ projectId, projectName, start, engineControl, permissionControl, note, onClose }: {
+  projectId: string;
+  projectName: string;
+  /** The engine, model and permission the thread starts with, as the host's pickers hold them right now. */
+  start: Pick<StartThreadInput, "engine" | "model" | "permission_mode">;
+  engineControl: ReactNode;
+  permissionControl: ReactNode;
+  note?: string | null;
+  onClose(): void;
+}) {
   const { view } = useRepos(projectId);
   const putThread = useWorkspace((state) => state.putThread);
   const pushToast = useUi((state) => state.pushToast);
@@ -51,7 +72,12 @@ export function NewThreadDialog({ projectId, projectName, onClose }: { projectId
     <ActionDialog title={<>New thread in {plain(projectName)} <Pill tone="info">Beta</Pill></>} confirmLabel={startLabel(ticked.length)} disabled={ticked.length === 0 || !view}
       onClose={onClose}
       onConfirm={async () => {
-        const thread = await reposApi().startThread(projectId, ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })));
+        const thread = await reposApi().startThread(projectId, { repos: ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })), ...start })
+          .catch((failure: unknown) => {
+            // The engine does not offer this permission mode: say so, and the dialog stays open for another choice.
+            if (failure instanceof ApiFailure && failure.code === "permission_mode_unsupported") throw new ApiFailure(failure.code, `This engine does not offer that permission. ${failure.message} Pick another permission and start again.`, failure.status);
+            throw failure;
+          });
         putThread(thread);
         pushToast(`Started a thread in ${ticked.length === 1 ? "1 repository" : `${ticked.length} repositories`}`);
         navigate({ name: "thread", id: thread.id });
@@ -66,6 +92,9 @@ export function NewThreadDialog({ projectId, projectName, onClose }: { projectId
           ))}
         </ul>
       ) : <p className="field-hint">Loading repositories…</p>}
+      <Row label="Engine">{engineControl}</Row>
+      <Row label="Permission">{permissionControl}</Row>
+      {note ? <p className="field-hint" role="note">{note}</p> : null}
       {refused.length > 0 ? <p className="field-hint" role="note">{refused.map((row) => plain(row.name)).join(", ")} {refused.length === 1 ? "is" : "are"} not trusted, so it cannot be included. Trust it in Settings › Projects.</p> : null}
       {ticked.length >= limit ? <p className="field-hint" role="note">A thread works in up to {limit} repositories.</p> : null}
     </ActionDialog>

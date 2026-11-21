@@ -3,6 +3,7 @@ import { ArrowDown } from "lucide-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useThreadLogs, type LocalPrompt } from "../../product/state/threadLogs";
 import { useUi } from "../../product/state/ui";
+import { useSteerMarks, withSteerMarks } from "../../product/state/steerMarks";
 import { Button } from "../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../product/ui/states";
 import { TimelineRow } from "./items";
@@ -76,9 +77,10 @@ export function Transcript({
   const log = useThreadLogs((state) => state.logs[threadId]);
   const stream = useThreadLogs((state) => state.streams[threadId]);
   const prompts = useThreadLogs((state) => state.prompts[threadId]);
+  const steerMarks = useSteerMarks((state) => state.marks[threadId]);
   const items = useMemo(
-    () => withLocalPrompts(log?.items ?? [], prompts ?? []),
-    [log, prompts],
+    () => withSteerMarks(withLocalPrompts(log?.items ?? [], prompts ?? []), steerMarks ?? []),
+    [log, prompts, steerMarks],
   );
 
   const entries = useMemo(

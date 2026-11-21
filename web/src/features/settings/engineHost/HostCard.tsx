@@ -1,8 +1,6 @@
 import { SettingRow } from "../rows/SettingRow";
 import { SettingsBanner } from "../rows/SettingsBanner";
-import type { HostRow } from "./contract";
-import { useEngineHosts } from "./hostApi";
-import { bannerLine, capabilityLine, stateLine } from "./hostText";
+import { type HostRow, useEngineHosts, bannerLine, capabilityLine, stateLine } from "../../enginehost";
 import { CauseChain, DetailsToggle, HostChip, useToggle } from "./HostParts";
 
 function useHostRow(engineId: string): HostRow | null {

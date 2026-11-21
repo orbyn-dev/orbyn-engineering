@@ -1,11 +1,11 @@
 /**
- * The repositories of a project and the writes the screens make, as the screens need them.
+ * The repositories of a project and the writes the screens make: the shapes of docs/multi-repo.md (Eng 4, PR #923), written by hand
+ * until `orbyn-contracts` generates them. When the generated types land, replace these in the same commit. Field names follow the
+ * T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
  *
- * GUESSED CONTRACT. No multi-repository route, Rust type or generated type is on main: Eng 4 is writing docs/multi-repo.md.
- * Nothing here is generated, and the only implementation of `ReposApi` besides the "reports nothing" client in api.ts is the
- * mock in web/mock/repos.ts. Field NAMES follow the T3 Code workspace folder schema (MIT, 9168ca73d, names only, no code
- * copied) in snake_case; every shape and every route a real client would call is a guess for Eng 4 to correct. When the
- * routes land, replace these hand-written types with the generated ones in the same commit that adds the real client.
+ * One thing the screens use is NOT in that document and is marked below: `ThreadRepo.pull_request`. The thread Git actions send
+ * the existing thread routes with an optional `repo_id` ("Per-repository Git routes"). Removing a repository from a thread is not in
+ * the beta, so there is no call for it.
  *
  * Nothing here can carry a secret. Names, paths, URLs and branch names are text from the disk or a remote: untrusted. Render
  * them as text only, never as a link, a command or markup.
@@ -27,6 +27,8 @@ export interface RepoRow {
   branches: string[];
   /** A repository with no remote can be published. */
   has_remote: boolean;
+  /** The project's own folder, its first repository (`id` equal to the project id). */
+  primary: boolean;
   /** Present while the repository is being cloned, or when that clone failed. */
   clone: { state: "cloning" | "failed"; percent: number | null; message?: string | null } | null;
 }
@@ -40,6 +42,7 @@ export interface ReposView {
   max_per_thread: number;
 }
 
+/** What a publish sends. The service answers the updated `RepoRow`. The host (GitHub) is not a field: the page's provider step only chooses where to publish. */
 export interface PublishInput {
   /** `owner/name` on the host. */
   name: string;
@@ -52,6 +55,19 @@ export interface StartRepoChoice {
   base_branch: string;
 }
 
+/**
+ * What the new-thread dialog sends. The permission mode is checked against the engine's `permission_modes`: a mode the engine does
+ * not offer is refused with `permission_mode_unsupported` (400) before anything is created. A `model` of `null` is the engine's default.
+ */
+export interface StartThreadInput {
+  repos: StartRepoChoice[];
+  engine: string;
+  model: string | null;
+  permission_mode: import("../../api/types").PermissionMode;
+  /** The optional first message. */
+  message?: string;
+}
+
 /** One repository a thread works in. */
 export interface ThreadRepo {
   repo_id: string;
@@ -61,29 +77,54 @@ export interface ThreadRepo {
   added: number;
   deleted: number;
   trusted: boolean;
+  /** The paths of this repository's changed files, relative to the repository root, so two repositories can each have a `README.md`. Absent when the service has not read the changes yet. */
+  files?: string[];
+  /** NOT IN docs/multi-repo.md: the pull request of this repository's branch. The service sends none today, so the menu says "Create pull request". */
+  pull_request?: { number: number; url: string } | null;
 }
+
+/**
+ * One Git action on ONE repository of a thread; no action spans repositories. Each is an existing thread route that takes an
+ * optional `repo_id` (docs/multi-repo.md, "Per-repository Git routes"): commit, push and pull request are `POST .../git/action`,
+ * merge and review are `POST .../pulls/{number}/merge` and `.../review`. There is no pull (fetch) action: the document defines none.
+ */
+export type ThreadGitAction =
+  | { kind: "commit"; message: string }
+  | { kind: "push" }
+  | { kind: "pull_request"; title: string }
+  | { kind: "merge"; number: number; method: "merge" | "squash" | "rebase" }
+  | { kind: "review"; number: number; event: "comment" | "approve" | "request_changes"; body: string };
 
 export type StartedThread = import("../../api/types").Thread;
 
+/** `null` from a read is "this service has no multi-repository projects" (`404`): the screens hide and no write is made. Every write is Person-class and one write per call. */
 export interface ReposApi {
-  /** `null` is "this service has no multi-repository projects": the screens hide and no other call is made. */
   list(projectId: string, signal?: AbortSignal): Promise<ReposView | null>;
-  /** One write per call: adds a folder in place. Nothing is copied. */
+  /** Adds a folder in place. Nothing is copied. It is not trusted. */
   addFolder(projectId: string, path: string): Promise<RepoRow>;
-  /** One write per call: starts a clone that joins the project. It runs in the background. */
+  /** Makes a new folder named `name` under `clone_directory` and runs `git init` in it. */
+  create(projectId: string, name: string): Promise<RepoRow>;
+  /** Starts a clone that joins the project; it runs in the background (`clone.state: "cloning"`). The service chooses the destination. */
   clone(projectId: string, source: string): Promise<RepoRow>;
-  /** One write per call: creates the repository on the host and pushes the current branch. */
+  /** Stops a running clone and removes its partial folder. */
+  cancelClone(projectId: string, repoId: string): Promise<RepoRow>;
+  /** Creates the repository on the host and pushes the current branch. */
   publish(projectId: string, repoId: string, input: PublishInput): Promise<RepoRow>;
-  /** One write per call: trusts this folder only. */
+  /** Trusts this folder only. The only way an untrusted repository becomes usable. */
   trust(projectId: string, repoId: string): Promise<RepoRow>;
-  /** One write per call: runs `git init` in a folder that has none. */
+  /** Runs `git init` in a folder that has none. */
   setupGit(projectId: string, repoId: string): Promise<RepoRow>;
-  /** One write per call: stops tracking the repository in this project. Files and threads stay. */
+  /** Stops tracking the repository in this project. Files, branches and threads stay. */
   remove(projectId: string, repoId: string): Promise<void>;
-  /** One write per call: creates the thread in these repositories, each on its own branch. */
-  startThread(projectId: string, repos: StartRepoChoice[]): Promise<StartedThread>;
-  /** The repositories a thread works in; `null` when the thread is not a multi-repository thread. */
+  /** Creates the thread in these repositories, each on its own branch (`POST /api/projects/{id}/repo-threads`). */
+  startThread(projectId: string, input: StartThreadInput): Promise<StartedThread>;
+  /** The repositories a thread works in; `null` (`404`) when the thread is not a multi-repository thread. */
   threadRepos(threadId: string, signal?: AbortSignal): Promise<ThreadRepo[] | null>;
-  /** One write per call: adds one trusted repository of the project to the thread. */
+  /** Adds one trusted repository of the project to the thread. */
   addThreadRepo(threadId: string, repoId: string): Promise<ThreadRepo>;
+  /**
+   * One Git action in one repository of the thread. `repoId` is `null` for the project's primary repository: `repo_id` is then left
+   * out and the service uses the primary. A repository that is not the thread's is `404 not_found`; an untrusted one is `409 repo_untrusted`.
+   */
+  threadGit(threadId: string, repoId: string | null, action: ThreadGitAction): Promise<void>;
 }

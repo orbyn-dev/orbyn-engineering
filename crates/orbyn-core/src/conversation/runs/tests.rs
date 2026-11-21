@@ -426,6 +426,26 @@ async fn second_admission_is_thread_busy() {
 }
 
 #[tokio::test]
+async fn stopping_an_engine_family_cancels_only_its_running_runs_and_counts_them() {
+    let script: Script = Arc::new(|_, events, cancel| {
+        tokio::spawn(async move {
+            cancel.cancelled().await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Cancelled))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    until_state(&f.core, &run.id, RunState::Running).await;
+    assert_eq!(f.core.stop_engine_runs("cursor"), 0, "another family");
+    assert_eq!(f.core.store.run(&run.id).unwrap().state, RunState::Running);
+    assert_eq!(f.core.stop_engine_runs("script"), 1);
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Cancelled);
+    assert_eq!(f.core.stop_engine_runs("script"), 0, "nothing left to stop");
+}
+
+#[tokio::test]
 async fn accepted_cancel_before_driver_start_finishes_wins_over_its_failure() {
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());

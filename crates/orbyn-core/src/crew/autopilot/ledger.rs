@@ -10,20 +10,24 @@ use serde_json::{Value, json};
 use crate::app::Core;
 use crate::crew::{redact, refuse_leak, refuse_secret, withhold};
 use crate::error::Result;
+use crate::redaction::{Redactor, cut_safely};
 use crate::store::CrewTask;
 
 const LONGEST: usize = 400;
 
-fn clean(value: &Value, needles: &[String]) -> Value {
+fn clean(value: &Value, needles: &[String], person: &Redactor) -> Value {
     match value {
         Value::String(text) => {
-            let text = withhold(&redact(text), needles);
-            Value::String(text.chars().take(LONGEST).collect())
+            // The person's patterns see the whole text; the cut never leaves part of a value behind.
+            let text = person.labelled(&withhold(&redact(text), needles));
+            Value::String(cut_safely(&text, LONGEST))
         }
-        Value::Array(items) => Value::Array(items.iter().map(|v| clean(v, needles)).collect()),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| clean(v, needles, person)).collect())
+        }
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(key, item)| (key.clone(), clean(item, needles)))
+                .map(|(key, item)| (key.clone(), clean(item, needles, person)))
                 .collect(),
         ),
         other => other.clone(),
@@ -31,8 +35,14 @@ fn clean(value: &Value, needles: &[String]) -> Value {
 }
 
 /// The row as it is stored: cleaned, then scanned; free text is dropped if the scan still objects.
+/// The stored row is never masked by the person's own patterns (see `safe_masked`).
 pub(in crate::crew) fn safe(body: &Value, needles: &[String]) -> Value {
-    let cleaned = clean(body, needles);
+    safe_masked(body, needles, &Redactor::default())
+}
+
+/// `safe` with the person's patterns applied to the text before it is cut, for a row that is shown.
+pub(super) fn safe_masked(body: &Value, needles: &[String], person: &Redactor) -> Value {
+    let cleaned = clean(body, needles, person);
     if refuse_secret(&cleaned).is_ok() && refuse_leak(&cleaned, needles).is_ok() {
         cleaned
     } else {
@@ -42,8 +52,13 @@ pub(in crate::crew) fn safe(body: &Value, needles: &[String]) -> Value {
 
 /// The words the requester reads: redacted, the key's text withheld, and never empty.
 pub(super) fn shown(reason: &str, needles: &[String]) -> String {
-    let text = withhold(&redact(reason), needles);
-    let text: String = text.trim().chars().take(300).collect();
+    shown_masked(reason, needles, &Redactor::default())
+}
+
+/// `shown` with the person's patterns applied before the text is cut.
+pub(super) fn shown_masked(reason: &str, needles: &[String], person: &Redactor) -> String {
+    let text = person.labelled(withhold(&redact(reason), needles).trim());
+    let text = cut_safely(&text, 300);
     if text.is_empty() || refuse_leak(&json!(text), needles).is_err() {
         "No reason can be shown.".to_owned()
     } else {
@@ -81,5 +96,51 @@ mod tests {
         assert!(!stored.contains("orbyn-key-marker-77"));
         assert!(!stored.contains("ghp_"));
         assert_eq!(shown("", &needles), "No reason can be shown.");
+    }
+
+    #[test]
+    fn a_cut_never_leaves_the_front_of_a_value_behind() {
+        let secret = format!("ACME-{}", "Q9Z8".repeat(8));
+        // The secret straddles the 400 (stored) and 300 (shown) cuts, either side of the edge.
+        for lead in [372, 390, 398, 400] {
+            let text = format!("{}{secret} tail", "a ".repeat(lead / 2));
+            let stored = safe(&json!({ "reason": text }), &[]).to_string();
+            assert!(
+                !stored.contains("ACME") && !stored.contains("Q9Z8"),
+                "{lead}"
+            );
+        }
+        for lead in [272, 290, 298, 300] {
+            let text = format!("{}{secret} tail", "a ".repeat(lead / 2));
+            let shown = shown(&text, &[]);
+            assert!(!shown.contains("ACME") && !shown.contains("Q9Z8"), "{lead}");
+        }
+    }
+
+    #[test]
+    fn a_shown_row_has_the_persons_patterns_applied_before_it_is_cut() {
+        use crate::redaction::Custom;
+        let person = Redactor::only(vec![Custom {
+            name: "Acme key",
+            regex: regex::Regex::new("ACME-[A-Z0-9]{32}").unwrap(),
+            applies_to: orbyn_contracts::PatternScope::Anywhere,
+        }]);
+        let secret = format!("ACME-{}", "Q9Z8".repeat(8));
+        for lead in [272, 280, 290, 298] {
+            let text = format!("{}{secret} tail", "a ".repeat(lead / 2));
+            let reason = shown_masked(&text, &[], &person);
+            assert!(
+                !reason.contains("ACME") && !reason.contains("Q9Z8"),
+                "{lead}"
+            );
+            assert_eq!(
+                reason.matches("[hidden: ").count(),
+                reason.matches(']').count()
+            );
+        }
+        let text = format!("{}{secret} tail", "a ".repeat(190));
+        let row = safe_masked(&json!({ "reason": text }), &[], &person).to_string();
+        assert!(!row.contains("ACME") && !row.contains("Q9Z8"));
+        assert!(row.contains("[hidden: Acme key]"));
     }
 }

@@ -41,3 +41,24 @@
 .repos-counts { color: var(--color-muted); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
 .repos-pop-add { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; border: 0; background: none; color: var(--color-accent); font: inherit; cursor: pointer; text-align: left; }
 .repos-pop-add:disabled { color: var(--color-muted); cursor: default; }
+
+/* Add a folder: the path field with the desktop app's Browse button beside it. */
+.repos-folder-field { display: flex; gap: 8px; align-items: center; }
+.repos-folder-field .dialog-field { flex: 1; min-width: 0; }
+
+/* New thread: the Engine and Permission rows. */
+.repos-start-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.repos-start-label { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-start-control { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* Publish: three steps in one dialog. */
+.repos-step { margin: 0 0 8px; color: var(--color-muted); font-size: var(--text-meta); }
+.repos-providers { display: flex; flex-direction: column; gap: 6px; border: 0; margin: 0; padding: 0; }
+.repos-provider, .repos-visibility-cards label { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.repos-provider:has(input:disabled) { opacity: 0.6; }
+.repos-provider-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.repos-provider-setup { color: var(--color-muted); font-size: var(--text-meta); white-space: nowrap; }
+.repos-visibility-cards { flex-direction: column; gap: 6px; }
+.repos-published { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.repos-published p { margin: 0; }
+.repos-published-tick { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--color-rowHover); color: var(--color-accent); }

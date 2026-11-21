@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelInfo, ModelOption, PermissionMode } from "../../../api/types";
-import { ACCESS } from "../../../product/composer/access";
+import { ACCESS, oneModeLabel, oneModeReason, refusalModeName } from "../../../product/composer/access";
 import { effortOption, effortValue } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";
 import { Presence } from "../../../ui/Presence";
@@ -8,9 +8,22 @@ import { usePopover } from "../../../ui/usePopover";
 import { EffortGlyph } from "./EffortGlyph";
 import { FloatingPicker } from "./ModelPicker";
 
-export { ACCESS, offeredModes, refusalSentence, refusedModes, shownAccess } from "../../../product/composer/access";
+export { ACCESS, neverAsks, offeredModes, refusalSentence, refusedModes, shownAccess } from "../../../product/composer/access";
 
 const MODES = Object.keys(ACCESS) as PermissionMode[];
+
+/** What the composer's access control shows: its label, and for an engine with one mode the reason it cannot be opened (dimmed while a refusal is open). */
+export interface AccessView {
+  label: string;
+  locked: string | null;
+  dimmed: boolean;
+}
+
+/** The access control's label and lock: an engine with one mode reads it, and shows the saved mode (dimmed) while a refusal is open. */
+export function accessViewOf(oneMode: boolean, engineName: string, saved: PermissionMode, shown: PermissionMode, refused: boolean): AccessView {
+  if (!oneMode) return { label: ACCESS[shown].label, locked: null, dimmed: false };
+  return { label: refused ? refusalModeName(saved) : oneModeLabel(engineName), locked: oneModeReason(engineName), dimmed: refused };
+}
 
 /** Modes the engine refuses at run start: drawn dimmed in the menu, with the reason at its foot, and never picked. */
 export interface RefusedAccess {
@@ -175,12 +188,15 @@ export function EffortTrigger({
   model,
   effort,
   access,
+  accessLabel,
   disabled,
   onOpen,
 }: {
   model: ModelInfo | null;
   effort: string | null;
   access: PermissionMode | null;
+  /** The access label the pill names, when it is not the mode's own. */
+  accessLabel?: string;
   disabled?: boolean;
   onOpen(element: HTMLElement): void;
 }) {
@@ -191,7 +207,7 @@ export function EffortTrigger({
   // never a bare "Effort", and the way to pick one never disappears.
   if (!option) return null;
   const level = current?.label ?? "Default";
-  const parts = [`Effort: ${level}`, access ? `Permissions: ${ACCESS[access].label}` : null];
+  const parts = [`Effort: ${level}`, access ? `Permissions: ${accessLabel ?? ACCESS[access].label}` : null];
   const levels = option.values;
   const at = levels.findIndex((value) => value.id === current?.id);
   const named = current === null || current.id === "max";

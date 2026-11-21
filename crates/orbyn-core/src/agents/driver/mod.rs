@@ -7,6 +7,8 @@ pub mod agui;
 pub mod claude;
 pub mod codex;
 pub mod diagnostics;
+pub mod failure;
+pub mod host;
 pub(crate) mod pipes;
 pub mod rpc;
 pub mod terminal;
@@ -24,6 +26,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+pub use failure::{Failure, RetryInfo, RetryWhy, ThreadDisposition};
 
 use crate::conversation::questions::Answers;
 use crate::error::Result;
@@ -200,6 +204,8 @@ pub enum EngineOutcome {
     Completed,
     Cancelled,
     Failed(String),
+    /// A failure the engine described beyond its message (the engine host does).
+    FailedWith(Failure),
     /// The engine does not have the session this run tried to resume.
     SessionLost,
 }

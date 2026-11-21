@@ -22,7 +22,8 @@ import { SettingsBanner, SettingsEmpty } from "../rows/SettingsBanner";
 import { useConnection } from "../../../product/state/connection";
 import { FallbackNotice, Library } from "../projects/Projects";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
-import { useEngineHostCrashes } from "../engineHost/hostApi";
+import { useEngineHostCrashes } from "../../enginehost";
+import { HostProcessRows, useHostProcesses } from "../engineHost/HostProcesses";
 import { mergeProblems, problemReport, ProblemLine } from "../engineHost/HostCrashRow";
 
 /** Past this, the space a repair gets back is worth a mention. */
@@ -386,7 +387,7 @@ function DiagnosticsGroup() {
   const [showProblems, setShowProblems] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [stopping, setStopping] = useState<ServiceProcess | null>(null);
-  const crashes = useEngineHostCrashes();
+  const crashes = useEngineHostCrashes(), hostProcesses = useHostProcesses();
   const [openCrash, setOpenCrash] = useState<string | null>(null);
   const run = async (action: () => Promise<unknown>, done: string) => {
     setNote(null);
@@ -440,7 +441,8 @@ function DiagnosticsGroup() {
         </div> : null}
       </>}
       <p className="set-grp">Processes</p>
-      {stoppable.length === 0 ? <p className="setting-line-desc">Nothing is running long.</p> : <ul className="setting-list" aria-label="Processes">
+      {stoppable.length === 0 && hostProcesses.rows.length === 0 ? <p className="setting-line-desc">Nothing is running long.</p> : <ul className="setting-list" aria-label="Processes">
+        <HostProcessRows rows={hostProcesses.rows} reload={hostProcesses.reload} />
         {stoppable.map((process) => (
           <li key={process.pid}>
             <SettingRow title={process.name} description={`Running ${uptime(process.running_seconds)}`}>

@@ -169,6 +169,9 @@
 .file-comment-list { flex: none; max-height: 35%; overflow: auto; list-style: none; overflow-wrap: anywhere; }
 .file-comment-list li + li { margin-top: 12px; }
 .file-comment-list p { white-space: pre-wrap; }
+.file-comment-list li[data-stale] { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.file-comment-stale { display: flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: var(--text-meta); }
+.file-comment-was { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-meta); }
 .context-chips .review-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .review-chip-excerpt { max-height: 35vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg-actions {

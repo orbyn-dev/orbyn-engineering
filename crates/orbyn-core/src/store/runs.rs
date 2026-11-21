@@ -513,6 +513,17 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The id and engine of every run that has not ended.
+    pub fn active_run_engines(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, engine FROM runs WHERE state IN {}",
+            super::ACTIVE_STATES
+        ))?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Threads flagged unread that are still in the list: not archived.
     pub fn unread_threads(&self) -> Result<usize> {
         let count: i64 = self.reader().query_row(

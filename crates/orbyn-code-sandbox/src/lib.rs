@@ -2,9 +2,12 @@
 //! except one function that calls tools. It knows nothing of Orbyn's gate, audit or Crew; the
 //! [`ToolHost`] it is given is the whole interface (see `docs/code-mode.md`).
 
+#[cfg(feature = "quickjs")]
 mod quickjs;
+#[cfg(feature = "quickjs")]
 mod strip;
 
+#[cfg(feature = "quickjs")]
 pub use quickjs::QuickJsExecutor;
 
 use async_trait::async_trait;

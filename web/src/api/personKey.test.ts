@@ -90,10 +90,12 @@ describe("which requests carry the person key", () => {
 describe("the Cursor thread routes, which are not on the service yet", () => {
   it("send the key on the override and the acknowledgement, and on no read of the notice", () => {
     expect(sendsPersonKey("POST", "/api/threads/t1/send-without-approvals")).toBe(true);
-    expect(sendsPersonKey("POST", "/api/engines/cursor/notice/acknowledge")).toBe(true);
-    expect(sendsPersonKey("GET", "/api/engines/cursor/notice")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/engines/cursor/notice/acknowledge")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/engines/cursor/notice")).toBe(false);
+    // The old engine-wide path is gone: the notice is per project.
+    expect(sendsPersonKey("POST", "/api/engines/cursor/notice/acknowledge")).toBe(false);
     expect(sendsPersonKey("GET", "/api/threads/t1/send-without-approvals")).toBe(false);
-    expect(sendsPersonKey("POST", "/api/engines/cursor/notice")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/engines/cursor/notice")).toBe(false);
   });
 
   it("stay out of PERSON_ROUTES until routes.json lists them, and leave once it does", () => {
@@ -115,8 +117,23 @@ describe("the Cursor thread routes, which are not on the service yet", () => {
     expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
     const acknowledged = ok();
     vi.stubGlobal("fetch", acknowledged);
-    await request("POST", "/api/engines/cursor/notice/acknowledge");
+    await request("POST", "/api/projects/p1/engines/cursor/notice/acknowledge");
     expect(sentHeaders(acknowledged).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});
+
+describe("the multi-repository writes of docs/multi-repo.md", () => {
+  const writes = [
+    "/api/projects/p1/repos/add-folder", "/api/projects/p1/repos/create", "/api/projects/p1/repos/clone", "/api/projects/p1/repos/r1/publish",
+    "/api/projects/p1/repos/r1/trust", "/api/projects/p1/repos/r1/setup-git", "/api/projects/p1/repos/r1/remove", "/api/projects/p1/repos/r1/clone/cancel",
+    "/api/projects/p1/repo-threads", "/api/threads/t1/repos",
+  ];
+  it("send the key on every write and on no read", () => {
+    for (const path of writes) expect(sendsPersonKey("POST", path), path).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/repos")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/repos")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/repos")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/repos/r1")).toBe(false);
   });
 });
 
@@ -181,4 +198,18 @@ describe("the key, from the shell", () => {
 
 it("download consent is a person-only update effect", () => {
   expect(sendsPersonKey("POST", "/api/updates/app/download")).toBe(true);
+});
+
+describe("the device actions of docs/devices.md", () => {
+  it("send the key for every action type through one route, and not for the reads", async () => {
+    expect(sendsPersonKey("POST", "/api/devices/android%3APixel_Fold/actions")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/devices/ios%3AUDID/actions")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/devices")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/devices/android%3Aa")).toBe(false);
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/devices/android%3Aa/actions", { type: "screenshot" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+  });
 });

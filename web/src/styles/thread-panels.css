@@ -358,6 +358,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.files-viewer .panel-bar > :not(code) {
+  flex: none;
+}
 
 .timeline {
   display: flex;
@@ -462,7 +465,8 @@
   width: 100%;
 }
 /* Centred content never shrinks, so none of it ends up above the scroll start. */
-.home-stack > .no-projects {
+.home-stack > .no-projects,
+.home-stack > .welcome-page {
   flex: 1 0 auto;
   height: auto;
 }

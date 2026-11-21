@@ -7,7 +7,7 @@ import { useConnection } from "../../../product/state/connection";
 import { useWorkspace } from "../../../product/state/workspace";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 import { MaintenanceSection } from "../maintenance/Maintenance";
-import { setEngineHostApi } from "./hostApi";
+import { setEngineHostApi } from "../../enginehost";
 
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
@@ -76,4 +76,13 @@ it("copies the report with the open crash, stack included, and without it when c
   await user.click(screen.getByRole("button", { name: "Copy report" }));
   expect(written[1]).toContain("write EPIPE");
   expect(written[1]).toContain("HostProcess.onExit (host.mjs:212)");
+});
+
+it("lists the engine hosts under Processes, above the ordinary ones, and leaves Processes alone while none is reported", async () => {
+  render(<MaintenanceSection />);
+  expect(await screen.findByText("Nothing is running long.")).toBeVisible();
+  setEngineHostApi(createEngineHostMock({ hosts: [{ id: "claude", name: "Claude Code", state: "running", since: minutes(184), host_version: "0.1.0", can_retry: false }] }));
+  const list = await screen.findByRole("list", { name: "Processes" });
+  expect(within(list).getByText("Claude Code engine host")).toBeVisible();
+  expect(within(list).getByRole("button", { name: "Stop Claude Code engine host" })).toBeVisible();
 });

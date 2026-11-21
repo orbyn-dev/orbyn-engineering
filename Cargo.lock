@@ -2186,6 +2186,7 @@ dependencies = [
  "image",
  "libc",
  "notify",
+ "orbyn-code-sandbox",
  "orbyn-contracts 0.1.0",
  "orbyn-core",
  "orbyn-device-client",
@@ -2324,6 +2325,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

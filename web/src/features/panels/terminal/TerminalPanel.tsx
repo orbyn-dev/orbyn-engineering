@@ -13,6 +13,7 @@ import { registerTerminal, terminalKey } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
 import { linkProvider } from "./terminalLinks";
 import { ShellMarks, type Position, type ShellCommand } from "./shellMarks";
+import { TerminalInput } from "./input/TerminalInput";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 type Connection = "connecting" | "open" | "closed";
@@ -244,6 +245,9 @@ export function TerminalPanel({
           return () => hear.dispose();
         },
         clear: () => terminal.clear(),
+        write: (data) => {
+          if (!observe && socket.readyState === WebSocket.OPEN) socket.send(encoder.encode(data));
+        },
         interrupt: () => {
           if (!observe && socket.readyState === WebSocket.OPEN) socket.send(encoder.encode("\x03"));
         },
@@ -326,6 +330,7 @@ export function TerminalPanel({
         )}
       </div>
       <div ref={host} className="terminal-host" role="group" aria-label="Terminal" />
+      {observe || connection !== "open" ? null : <TerminalInput threadId={threadId} keyOf={terminalKey(threadId, terminalId)} />}
     </div>
   );
 }

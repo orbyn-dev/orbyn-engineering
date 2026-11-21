@@ -302,6 +302,7 @@ input.welcome-radio:checked {
 }
 /* The design's two buttons: a raised ghost and a solid one, 30px tall. */
 .no-projects-actions .btn,
+.welcome-project-actions .btn,
 .trust-actions .btn {
   min-height: 30px;
   padding: 0 12px;
@@ -312,17 +313,20 @@ input.welcome-radio:checked {
   font-size: var(--text-nav);
 }
 .no-projects-actions .btn:hover:not(:disabled),
+.welcome-project-actions .btn:hover:not(:disabled),
 .trust-actions .btn:hover:not(:disabled) {
   border-color: transparent;
   background: var(--color-selected);
 }
 .no-projects-actions .btn-primary,
+.welcome-project-actions .btn-primary,
 .trust-actions .btn-primary {
   padding: 0 13px;
   background: var(--color-primary);
   color: var(--color-onAccent);
 }
 .no-projects-actions .btn-primary:hover:not(:disabled),
+.welcome-project-actions .btn-primary:hover:not(:disabled),
 .trust-actions .btn-primary:hover:not(:disabled) {
   background: var(--color-primaryHover);
 }
@@ -566,4 +570,167 @@ input.welcome-radio:checked {
   border-color: transparent;
   border-radius: var(--radius-9);
   font-size: var(--text-nav);
+}
+
+/* The Welcome page (Engineer Designs t3gap-welcome-page*): actions, agents, recent projects. */
+.welcome-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 28px 40px;
+}
+.welcome-page header h1 {
+  margin: 0;
+  font-size: var(--text-page);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+.welcome-page header p {
+  margin: 4px 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.welcome-page h2 {
+  margin: 0 0 8px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+.welcome-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--color-chip);
+  color: var(--color-text);
+  font-size: var(--text-small);
+}
+.welcome-banner > span {
+  flex: 1;
+  min-width: 0;
+}
+.welcome-project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.welcome-subhead {
+  margin: 0 0 6px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+.welcome-agent-list,
+.welcome-project-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.welcome-agent-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--color-border);
+}
+.welcome-agent-row:first-child {
+  border-top: 0;
+}
+.welcome-agent-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.welcome-agent-name small {
+  overflow: hidden;
+  color: var(--color-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-agent-state {
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
+.welcome-agent-state[data-state="signin"] {
+  color: var(--color-text);
+}
+.welcome-agent-act {
+  display: inline-flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.welcome-project-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 6px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.welcome-project-row:hover {
+  background: var(--color-hover);
+}
+.welcome-project-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.welcome-project-name b {
+  font-weight: 500;
+}
+.welcome-project-name .mono {
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome-tracker {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+.welcome-tracker small {
+  color: var(--color-muted);
+}
+.welcome-tracker-act {
+  white-space: nowrap;
+}
+.welcome-mark {
+  display: inline-grid;
+  place-items: center;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--color-selected);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+@media (max-width: 640px) {
+  .welcome-page {
+    padding-inline: 16px;
+  }
+  .welcome-agent-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+  .welcome-agent-state {
+    display: none;
+  }
+  .welcome-project-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .welcome-project-row > .welcome-quiet:last-child {
+    display: none;
+  }
 }

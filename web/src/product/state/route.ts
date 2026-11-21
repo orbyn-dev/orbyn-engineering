@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS = [
   "projects",
   "source-control",
   "worktrees",
+  "browser",
   "crew",
   "secrets",
   "maintenance",
@@ -24,6 +25,10 @@ export const SETTINGS_SECTIONS = [
   "archive",
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+/** The pages inside a Settings page, by the section that holds them: `#/settings/appearance/theme-editor`. */
+const SETTINGS_SUBPAGES = new Map<SettingsSection, readonly string[]>([["appearance", ["theme-editor"]]]);
+export type SettingsSubPage = "theme-editor";
 
 /** The Crew screens built so far; the rest join as they land. */
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
@@ -46,6 +51,10 @@ export type Route =
   | {
       name: "settings";
       section: SettingsSection | null;
+      /** A page inside the section (the Theme editor in Appearance). */
+      sub?: SettingsSubPage;
+      /** The page name an address carried that Settings does not have: General opens with a note. Never written back to an address. */
+      unknown?: string;
       selection?: ProjectSettingsSelection;
       machine?: string;
       task?: string;
@@ -64,14 +73,16 @@ export type Route =
       id?: string;
     }
   | { name: "usage" }
+  /** The Welcome page: open or clone a project, connect a tracker, pick the engine, go back to a project. */
+  | { name: "welcome" }
   | { name: "skills"; skill?: string }
   | { name: "tasks" }
   /** Crew Preview: drawn only while the service says Crew is on. */
   | { name: "crew"; tab: CrewTab; task?: string }
   /** The list, or one pull request of one project. */
   | { name: "pulls"; project?: string; number?: number }
-  /** The issues of the connected trackers, or one issue by its tracker and key. Drawn only while the service reports issues. */
-  | { name: "issues"; tracker?: string; key?: string };
+  /** The issues of the connected trackers, or one issue by its tracker, scope and key (a key is unique only within a scope). Drawn only while the service reports issues. */
+  | { name: "issues"; tracker?: string; scope?: string; key?: string };
 
 const enc = encodeURIComponent;
 
@@ -110,6 +121,8 @@ export function routeHref(route: Route): string {
       return `#/trust/${enc(route.projectId)}${route.threadId ? `/${enc(route.threadId)}` : ""}`;
     case "usage":
       return "#/usage";
+    case "welcome":
+      return "#/welcome";
     case "skills":
       return route.skill === undefined ? "#/skills" : `#/skills/${enc(route.skill)}`;
     case "tasks":
@@ -120,10 +133,11 @@ export function routeHref(route: Route): string {
     case "pulls":
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "issues":
-      return route.tracker !== undefined && route.key !== undefined ? `#/issues/${enc(route.tracker)}/${enc(route.key)}` : "#/issues";
+      return route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? `#/issues/${enc(route.tracker)}/${enc(route.scope)}/${enc(route.key)}` : "#/issues";
     case "settings": {
       const base = route.section ? `#/settings/${route.section}` : "#/settings";
-      const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}` : base;
+      const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}`
+        : route.section && route.sub && SETTINGS_SUBPAGES.get(route.section)?.includes(route.sub) ? `${base}/${route.sub}` : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
@@ -189,6 +203,8 @@ export function parseRoute(hash: string): Route {
       return first ? { name: "trust", projectId: first, threadId: second ?? null } : { name: "home" };
     case "usage":
       return { name: "usage" };
+    case "welcome":
+      return { name: "welcome" };
     case "skills":
       return first ? { name: "skills", skill: first } : { name: "skills" };
     case "tasks":
@@ -200,15 +216,19 @@ export function parseRoute(hash: string): Route {
       return first && Number.isInteger(number) && number > 0 ? { name: "pulls", project: first, number } : { name: "pulls" };
     }
     case "issues":
-      return first && second ? { name: "issues", tracker: first, key: second } : { name: "issues" };
+      return first && second && third ? { name: "issues", tracker: first, scope: second, key: third } : { name: "issues" };
     case "settings": {
       // Presence matters: stale and empty IDs remain explicit instead of widening scope.
       const selection: ProjectSettingsSelection | undefined = params.has("checkout")
         ? { kind: "checkout", group_key: params.get("project") ?? "", project_id: params.get("checkout") ?? "" }
         : params.has("project") ? { kind: "project_group", group_key: params.get("project") ?? "" } : undefined;
+      const section = SETTINGS_SECTIONS.find((entry) => entry === first) ?? null;
+      const sub = section && second ? SETTINGS_SUBPAGES.get(section)?.find((entry) => entry === second) : undefined;
       return {
         name: "settings",
-        section: SETTINGS_SECTIONS.find((section) => section === first) ?? null,
+        section,
+        ...(sub ? { sub: sub as SettingsSubPage } : {}),
+        ...(first && !section ? { unknown: first } : {}),
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),
         ...(first === "crew" ? crewPageOf(second, third, params) : {}),

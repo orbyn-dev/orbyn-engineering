@@ -5,6 +5,7 @@ describe("routes", () => {
   it.each<Route>([
     { name: "home" },
     { name: "tasks" },
+    { name: "welcome" },
     { name: "crew", tab: "flow", task: `sha256:${"a".repeat(64)}` },
     { name: "crew", tab: "flow", task: "task_1-a.b" },
     { name: "skills" },
@@ -12,7 +13,7 @@ describe("routes", () => {
     { name: "pulls" },
     { name: "pulls", project: "p/1 x", number: 42 },
     { name: "issues" },
-    { name: "issues", tracker: "github", key: "ORB 87/#1" },
+    { name: "issues", tracker: "github", scope: "orbyn-dev/orbyn engineering", key: "ORB 87/#1" },
     { name: "thread", id: "t/1 x" },
     { name: "new", projectId: null },
     { name: "new", projectId: "p1" },
@@ -20,6 +21,7 @@ describe("routes", () => {
     { name: "trust", projectId: "p", threadId: "t" },
     { name: "settings", section: null },
     { name: "settings", section: "projects" },
+    { name: "settings", section: "appearance", sub: "theme-editor" },
     { name: "settings", section: "threads", machine: "remote/missing" },
     { name: "settings", section: "worktrees", selection: { kind: "project_group", group_key: "group:/one?x" } },
     { name: "settings", section: "threads", selection: { kind: "checkout", group_key: "group:/one", project_id: "id/2" } },
@@ -76,7 +78,10 @@ describe("routes", () => {
 
   it("falls back to the issue list for an issue link without a key", () => {
     expect(parseRoute("#/issues/github")).toEqual({ name: "issues" });
-    expect(parseRoute("#/issues/github/412")).toEqual({ name: "issues", tracker: "github", key: "412" });
+    // A key is unique only within a scope, so a link without one is the list.
+    expect(parseRoute("#/issues/github/412")).toEqual({ name: "issues" });
+    expect(parseRoute("#/issues/github/orbyn-dev%2Forbyn-engineering/412")).toEqual({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" });
+    expect(routeHref({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" })).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   });
 
   it("refuses malformed or action-bearing Crew task locators", () => {
@@ -110,8 +115,22 @@ describe("routes", () => {
     expect(window.location.hash).toBe("#/settings/threads?project=g");
   });
 
+  it("reads a page inside a page, and keeps an unknown page name as data, never as a lookup key", () => {
+    expect(parseRoute("#/settings/appearance/theme-editor")).toEqual({ name: "settings", section: "appearance", sub: "theme-editor" });
+    // A sub-page the section does not have is the section itself; so is one under a section with none.
+    expect(parseRoute("#/settings/appearance/nope")).toEqual({ name: "settings", section: "appearance" });
+    expect(parseRoute("#/settings/chat/theme-editor")).toEqual({ name: "settings", section: "chat" });
+    expect(routeHref({ name: "settings", section: "chat", sub: "theme-editor" })).toBe("#/settings/chat");
+    for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(parseRoute(`#/settings/${name}`)).toEqual({ name: "settings", section: null, unknown: name });
+      expect(parseRoute(`#/settings/appearance/${name}`)).toEqual({ name: "settings", section: "appearance" });
+    }
+    // The note is shown once; an address never carries it.
+    expect(routeHref({ name: "settings", section: null, unknown: "voice" })).toBe("#/settings");
+  });
+
   it("treats unknown hashes as home and unknown sections as none", () => {
     expect(parseRoute("#/nowhere")).toEqual({ name: "home" });
-    expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null });
+    expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null, unknown: "nope" });
   });
 });

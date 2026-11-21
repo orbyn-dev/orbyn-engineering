@@ -8,6 +8,7 @@ import type { ThreadLog } from "../timeline/types";
 import { useWorkspace } from "./workspace";
 import { useUi } from "./ui";
 import { permissionToasts } from "./healthToasts";
+import { applySteerEvents } from "./steerMarks";
 
 export interface LocalPrompt {
   runId: string;
@@ -69,6 +70,7 @@ export const useThreadLogs = create<ThreadLogState>((set, get) => ({
           ? { ...state.queueVersion, [threadId]: (state.queueVersion[threadId] ?? 0) + 1 }
           : state.queueVersion,
     }));
+    applySteerEvents(threadId, fresh);
     // Only news that arrives while the thread is open is announced, not a first replay.
     if (previousSeq > 0) for (const text of permissionToasts(fresh)) useUi.getState().pushToast(text);
     if (fresh.some(refreshesThread)) {

@@ -23,6 +23,8 @@ export interface MessageItem extends ItemBase {
   done: boolean;
   /** Attachments this user message carried; absent when it had none. */
   attachments?: readonly SentAttachment[];
+  /** Where this mid-turn message went, when it was sent into a running turn. */
+  steer?: "pending" | "delivered" | "queued" | "failed";
 }
 export interface ReasoningItem extends ItemBase {
   kind: "reasoning";

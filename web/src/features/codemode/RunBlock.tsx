@@ -108,7 +108,8 @@ function Footer({ view, now, inspect }: { view: RunView; now: number; inspect: R
     parts.push("Lost");
     // A call that was in flight when the core restarted is not a recorded call.
     const recorded = view.calls.filter((call) => call.status !== "interrupted").length;
-    if (view.hasRecord) add(`${recorded} ${recorded === 1 ? "call" : "calls"} recorded`);
+    const unknown = view.calls.length - recorded;
+    if (view.hasRecord) add(unknown > 0 ? `${recorded} ${recorded === 1 ? "call" : "calls"} done, ${unknown} unknown` : `${recorded} ${recorded === 1 ? "call" : "calls"} recorded`);
   } else {
     parts.push("Failed");
     if (view.hasRecord) add(callWord(calls));
@@ -184,9 +185,6 @@ export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: bo
       {error ? (
         <Section error title={<>Error · <span className="mono">{error.kind}</span>{typeof error.line === "number" ? ` · line ${error.line}` : ""}</>}>
           <div className="co">{error.message}</div>
-          {error.kind === "lost" ? (
-            <div className="cm-banner">Resume replays the script with the recorded calls. Calls that finished do not run again. A call with an effect that was still running ends the replay.</div>
-          ) : null}
         </Section>
       ) : null}
       <Footer view={view} now={now} inspect={inspect} />

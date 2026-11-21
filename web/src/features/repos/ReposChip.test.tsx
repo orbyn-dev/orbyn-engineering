@@ -10,13 +10,13 @@ import { setReposApi } from "./api";
 afterEach(() => { setReposApi(null); vi.unstubAllGlobals(); });
 const thread = (id: string) => ({ id, project_id: "p1" }) as Thread;
 
-it("draws nothing and makes no request while the service reports no repositories", async () => {
-  const fetching = vi.fn();
+it("draws nothing, and no error, when the thread's repos route answers 404", async () => {
+  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<ReposChip thread={thread("thread-1")} />);
+  await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
-  expect(fetching).not.toHaveBeenCalled();
 });
 
 it("draws no chip for a thread in one repository", async () => {

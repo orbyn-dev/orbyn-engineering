@@ -286,8 +286,8 @@ export const api = {
   resumeQueue: (threadId: string) => request<void>("POST", `/api/threads/${q(threadId)}/queue/resume`),
   removeQueued: (id: string) => request<void>("DELETE", `/api/queue/${q(id)}`),
   sendQueuedNow: (id: string) => request<void>("POST", `/api/queue/${q(id)}/send-now`),
-  steer: (threadId: string, prompt: string) =>
-    request<SteerResult>("POST", `/api/threads/${q(threadId)}/steer`, { prompt }),
+  steer: (threadId: string, prompt: string, messageId?: string) =>
+    request<SteerResult>("POST", `/api/threads/${q(threadId)}/steer`, messageId ? { prompt, message_id: messageId } : { prompt }),
   restartSession: (threadId: string) => request<void>("POST", `/api/threads/${q(threadId)}/restart-session`),
   patchThread: (id: string, body: UpdateThread) =>
     request<Thread>("PATCH", `/api/threads/${q(id)}`, body),
@@ -301,8 +301,9 @@ export const api = {
     request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits`, undefined, signal),
   searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal) =>
     request<SearchHit[]>("GET", `/api/threads/${q(threadId)}/files/search?q=${q(query)}&content=${content}`, undefined, signal),
-  commits: (threadId: string, signal?: AbortSignal) =>
-    request<CommitInfo[]>("GET", `/api/threads/${q(threadId)}/commits`, undefined, signal),
+  /** `repoId` names one repository of a multi-repository thread (docs/multi-repo.md); left out, the primary repository's commits. */
+  commits: (threadId: string, signal?: AbortSignal, repoId?: string) =>
+    request<CommitInfo[]>("GET", `/api/threads/${q(threadId)}/commits${repoId === undefined ? "" : `?repo_id=${q(repoId)}`}`, undefined, signal),
   keybindings: (signal?: AbortSignal) =>
     request<KeybindingsView>("GET", "/api/keybindings", undefined, signal),
   threadItem: (threadId: string, itemId: string, signal?: AbortSignal) =>

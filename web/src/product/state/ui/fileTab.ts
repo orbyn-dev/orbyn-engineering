@@ -5,7 +5,9 @@ export type FileTarget =
   | { kind: "thread"; path: string }
   | { kind: "explorer"; projectId: string; worktreeId: string; path: string }
   /** A worktree with nothing to browse (its folder is missing): the tab says so. */
-  | { kind: "worktree"; projectId: string; worktreeId: string };
+  | { kind: "worktree"; projectId: string; worktreeId: string }
+  /** An issue opened beside the thread: it rides the file tab's identity, order, saving and closing, and reads from the tracker, not a folder. */
+  | { kind: "issue"; tracker: string; scope: string; key: string };
 
 /** A file tab's id is its identity (the project and worktree ids and the path), never a display name, so a rename changes nothing. */
 export function fileTabId(target: FileTarget): FileTabId {
@@ -14,7 +16,9 @@ export function fileTabId(target: FileTarget): FileTabId {
       ? ["t", target.path]
       : target.kind === "worktree"
         ? ["w", target.projectId, target.worktreeId]
-        : ["x", target.projectId, target.worktreeId, target.path];
+        : target.kind === "issue"
+          ? ["i", target.tracker, target.scope, target.key]
+          : ["x", target.projectId, target.worktreeId, target.path];
   return `file:${encodeURIComponent(JSON.stringify(parts))}`;
 }
 
@@ -26,6 +30,8 @@ export function parseFileTab(id: string): FileTarget | null {
     if (!Array.isArray(parts) || !parts.every((part) => typeof part === "string")) return null;
     const [kind, ...rest] = parts as string[];
     if (kind === "w" && rest.length === 2) return { kind: "worktree", projectId: rest[0]!, worktreeId: rest[1]! };
+    // An issue tab saved before the scope was part of its name (two parts) cannot be opened, so it is dropped by the caller.
+    if (kind === "i" && rest.length === 3) return { kind: "issue", tracker: rest[0]!, scope: rest[1]!, key: rest[2]! };
     if (kind === "t" && rest.length === 1) return { kind: "thread", path: rest[0]! };
     // A tab saved before names left the id carries two more parts, which are ignored.
     if (kind === "x" && (rest.length === 3 || rest.length === 5)) {
@@ -47,3 +53,9 @@ export function canonicalFileTab(id: unknown): unknown {
   const target = parseFileTab(id);
   return target ? fileTabId(target) : id;
 }
+
+/** How an issue's key is written on its tab: a bare number is `#412`, anything else (`ORB-87`) as it is. */
+export const issueTabLabel = (key: string): string => {
+  const capped = key.length > 24 ? `${key.slice(0, 23)}…` : key;
+  return /^\d+$/.test(capped) ? `#${capped}` : capped;
+};

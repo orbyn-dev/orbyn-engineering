@@ -27,7 +27,10 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    takes one (today only Cursor). It lives in the OS keychain alone (`orbyn-core`
    `credentials`), only while that engine's setting is on, is never shown again, and
    leaves the keychain only as the engine host's spawn environment, never in a frame, a
-   log or an answer. The person can remove it at any time.
+   log or an answer. The person can remove it at any time. The routes are
+   `/api/settings/engine-credentials/{engine}` (status, `Local`, booleans only; opt-in `PUT`) and
+   `.../{engine}/key` (`PUT` save, `DELETE` remove): all writes are `Person` routes and the key travels
+   in the request body only.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
    sessions because it ignores OAuth login.
@@ -2511,8 +2514,9 @@ characters, without words that look like a path, an address (`host:port`), an `@
 value or a 20-character token, and cut at 160 characters. It is not log text.
 It follows the system light or dark appearance; the app's own theme choice lives in the
 product origin and does not reach this page, and Dim is not offered here.
-There are no default core/plugin command permissions. Of the five app-owned commands,
-the product document may call only `crew_presence` and `person_key`; the main window
+There are no default core/plugin command permissions. Of the six app-owned commands,
+the product document may call only `crew_presence`, `person_key` and `pick_folder` (the native folder dialog for the add-repository field;
+it returns the chosen path or null and reads nothing); the main window
 capability and each command's runtime origin check enforce that split. The explicit
 macOS title-bar capability grants only dragging and toggle-maximize. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask

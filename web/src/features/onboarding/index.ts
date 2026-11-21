@@ -5,3 +5,4 @@ export { NoProjects } from "./NoProjects";
 export { SignIn } from "./SignIn";
 export { TrustFolder } from "./TrustFolder";
 export { WelcomeHost } from "./WelcomeWizard";
+export { WelcomePage } from "./WelcomePage";
