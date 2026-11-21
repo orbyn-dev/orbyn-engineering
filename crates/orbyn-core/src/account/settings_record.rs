@@ -245,7 +245,7 @@ mod tests {
         let unique: BTreeSet<_> = SYNCED_KEYS.iter().collect();
         assert_eq!(unique.len(), 11);
         let catalog: BTreeSet<_> = crate::settings::preferences::catalog_keys().collect();
-        assert_eq!(catalog.len(), 63);
+        assert_eq!(catalog.len(), 64);
         assert!(SYNCED_KEYS.iter().all(|key| catalog.contains(key)));
         // The four that escalate, and the stamp, are never staged.
         for never in [
@@ -266,6 +266,8 @@ mod tests {
             // A peer could turn model calls back on.
             "auto_thread_titles",
             "branch_naming_mode",
+            // When the crew digest sends is this device's: another device must not move it.
+            "crew_digest",
             // A spending limit belongs to this device: another device must not set it.
             "crew_turn_budget",
         ] {

@@ -18,6 +18,8 @@ import { InstallBanner, InstallBody, InstallLog, useInstallView, VendorInstall }
 import { FeedbackAction, hasFeedback, UpdateAction, useCustomModels } from "./ProviderParts";
 import type { InstanceStore } from "./ProviderInstances";
 import { patchInstance } from "./providerInstanceData";
+import { EngineHostBanner, EngineHostCard } from "../engineHost/HostCard";
+import { SignInStorageRow } from "../engineHost/SignInStorage";
 
 function AddModelDialog({ onClose, add, disabled, error }: { onClose(): void; add(id: string, label: string): Promise<boolean>; disabled: boolean; error: string | null }) {
   const [id, setId] = useState("");
@@ -126,6 +128,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
       {engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
         {engine.path ? `Couldn’t run ${engine.path}. ` : ""}{engine.problem}
       </SettingsBanner> : null}
+      <EngineHostBanner engineId={engine.id} />
       {failure ? <p className="field-error" role="alert">{failure}</p> : null}
       {!engine.installed ? <VendorInstall engine={engine} view={install} checking={checking} onCheck={() => void recheck()} /> : null}
       <InstallBanner engine={engine} view={install} />
@@ -143,8 +146,10 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
           {signIn && engine.sign_in_command ? <CopyCommand command={engine.sign_in_command} label="Copy sign-in command" /> : null}
           {engine.auth === "logged_out" ? <Button small busy={checking} onClick={() => void recheck()}>Check again</Button> : null}
         </SettingRow>
+        <SignInStorageRow engineId={engine.id} />
         <SettingRow title="Location"><code className="set-path">{engine.path ?? "Not found"}</code></SettingRow>
       </SettingGroup>
+      <EngineHostCard engineId={engine.id} />
       {engine.installed && !engine.update_command && engine.manual_hint && !engine.compatibility ? <p className="setting-line-desc">{engine.manual_hint}</p> : null}
       {engine.installed && !opencode ? <CodeModeSetting engine={engine} /> : null}
       {engine.installed ? (engine.auth === "logged_out"

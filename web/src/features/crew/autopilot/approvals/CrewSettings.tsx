@@ -6,6 +6,7 @@ import { LiveEscapes } from "../../escape/live/LiveEscapes";
 import { AutonomyAreas } from "./AutonomyAreas";
 import { AutonomyThresholds } from "./AutonomyThresholds";
 import { AutopilotSettings } from "./AutopilotSettings";
+import { DigestTime } from "./DigestTime";
 import { BacktestEntry, EscapesEntry, OracleEntry } from "./CrewEntries";
 import { PathClasses } from "./PathClasses";
 import { ProductionTargets } from "./ProductionTargets";
@@ -43,6 +44,7 @@ export function CrewSettingsSection() {
         ) : (
           <>
             <AutopilotSettings />
+            <DigestTime />
             <CapacityEntry />
             <EscapesEntry />
             <OracleEntry />

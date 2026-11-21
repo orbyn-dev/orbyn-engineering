@@ -18,6 +18,8 @@ import { SettingsBanner } from "../rows/SettingsBanner";
 import { followEngineUpdates } from "./engineUpdates";
 import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
 import { hasProviderDetail } from "./providerDetailFamily";
+import { EngineHostGroup } from "../engineHost/HostGroup";
+import { SignInStorageGroup } from "../engineHost/SignInStorage";
 
 const POLL_WHILE_UPDATING_MS = 1500;
 
@@ -160,6 +162,8 @@ export function ProvidersSection() {
         <SettingRow title="ACP registry" description="Add other agents that speak ACP">
           <Button small onClick={() => setView({ page: "registry" })}>Browse</Button>
         </SettingRow>
+        <EngineHostGroup />
+        <SignInStorageGroup />
       </>)}
       {editInstance ? <InstanceEditor store={store} engines={base} instance={editInstance} onClose={() => setEditing(null)} /> : null}
       {adding ? (

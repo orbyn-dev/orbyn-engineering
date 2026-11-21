@@ -2924,7 +2924,9 @@ Local compatibility watch retains its verified bisect/revert behavior. While it 
 keeps in memory (the phase, the runs made and the bound, the window the cause is between and each answer), cleared when the
 watch ends; the outcome stays the stored rows and ledger. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
-without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
+without starting a provider turn. The digest is due at most once per local day, at or after the person's stored send time
+(`{time, utc_offset_minutes}`, a Person write), with that local day in the receipt; it sends nothing until a person has stored
+the offset, because a guessed local time could send early. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
 24 hours, observes at most 32 confirmed forge targets. Corrective tasks use the same guarded forge lane; no separate writer schedules effects. With Preview enabled, startup
 first reconciles up to 128 unfinished effects/confirmed receipts, re-verifies at most 128 pending corrections locally and watches the resulting merges even when periodic work is off;
 only `ORBYN_CREW_WATCH_INTERVAL_SECS` enables subsequent ticks. `ORBYN_CREW_REQUIRED_CHECKS` is a validated local

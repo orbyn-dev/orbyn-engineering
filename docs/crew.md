@@ -725,9 +725,9 @@ gets `403 person_required`. What [#441](https://github.com/orbyn-dev/orbyn-engin
 sandbox and the store read.
 Reads: `GET /api/crew/preview`, `/autopilot` (modes, `confirmed`), `/autopilot/guards`, `/autopilot/risk/{task}`, `/autopilot/review`,
 `/autopilot/review/{task}/revert-check` (later merges), `/autopilot/merge-queue` (with what goes next), `/autopilot/watch`,
-`/autopilot/digest?hours=`, `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
+`/autopilot/digest?hours=`, `/autopilot/digest/schedule` (from issue #806: the stored send time), `/approvals` (the ledger, newest first), `/stops` (trip wires), `/trust` (revert rates by area and engine; `?project=` limits it to one repository) and, from slice 4j, `/autopilot/areas`, `/autopilot/areas/history` and `/autopilot/thresholds`.
 Lists take `limit` (1 to 200) and `offset`. Changes, each through the core function that holds the rule and local only:
-`PUT /autopilot/mode`, `POST /autopilot/confirm`, and `POST /autopilot/review/{task}/{looks-good,comment,revert}`.
+`PUT /autopilot/mode`, `POST /autopilot/confirm`, `POST /autopilot/review/{task}/{looks-good,comment,revert}`, and, from issue #806, `POST /autopilot/digest/schedule/set`.
 
 What a change may and may not do: no route takes a command from the client or runs one, and no route pushes or merges. A revert runs
 only the repository's own checks (`.orbyn/crew.json` at the commit before the merge) in a scratch checkout under the data folder, always
@@ -874,8 +874,18 @@ ledger rows hold the lead's and second key's reasons but not the asker's model, 
 class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
 comment is kept and is not yet a fix brief.
 
-Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g),
-background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), and
+background crews' triggers and runs (4h; their stored state is below).
+
+**As built (issue [#806](https://github.com/orbyn-dev/orbyn-engineering/issues/806), the digest's send time):** the daily digest is stored as
+`{time: "HH:MM", utc_offset_minutes}` in the `crew_digest` setting, the scheduled-tasks shape, so it needs no table and no migration.
+`GET /api/crew/autopilot/digest/schedule` reads it and `POST /api/crew/autopilot/digest/schedule/set` saves it: a Person write, local only, listed
+in `crew::changes::STATE_CHANGING`. The page sends `-new Date().getTimezoneOffset()` with the time, as Settings › Scheduled tasks does. The
+watch resolves the local day from the stored offset and sends the digest at most once on that day, at or after the stored time; the local day is
+in the dedupe identity, so a restart the same day sends nothing twice, and a day with nothing to say sends nothing. The default is 17:00 with
+no offset stored yet, and then nothing is sent: without an offset "17:00 local" cannot be resolved and a guess could send early. Settings ›
+Crew draws the row, with a time field where the design's `settings-crew` frame draws the value (the frame draws no editor). The offset is
+fixed at the save, like a scheduled task's, so a daylight-saving change keeps the old offset until the person saves again.
 
 **As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
 a second key, even in Full, and the person can always approve it alone, once. It extends the always-denied list (N8 stays above it) and the
