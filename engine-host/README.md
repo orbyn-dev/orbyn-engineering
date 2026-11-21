@@ -24,9 +24,10 @@ npm i && npm run build:sea     # writes dist/orbyn-engine-host (about 110 MB, un
 `scripts/build-sea.mjs` bundles with esbuild, builds a Node 22 SEA blob and injects it with postject.
 Checked on macOS arm64 with Node 22.16: the binary answers the handshake and a fake turn, and runs
 ad hoc signed with the hardened runtime and `entitlements.plist` (allow-jit, allow-unsigned-executable-memory,
-disable-library-validation, the set T3 ships). Not checked: Developer ID signing, notarization,
-Gatekeeper first launch, Windows, Linux, Intel macOS (T3 found SEA crashes there, so Intel keeps the
-Rust drivers). The release job owns signing with the app's certificate; no certificate is used here.
+disable-library-validation, the set T3 ships). Decision (owner): ad hoc signing only, for the host and the app,
+as `release.yml` does without the `APPLE_*` secrets. Developer ID signing and notarization: Planned.
+Not checked: launching the ad hoc signed host from inside the ad hoc signed app bundle (`externalBin`), Windows,
+Linux, Intel macOS (T3 found SEA crashes there, so Intel keeps the Rust drivers).
 The Tauri `externalBin` wiring and `scripts/check-desktop-assets.mjs` entry come with the first real family.
 
 ## Claude family (behind a flag)
