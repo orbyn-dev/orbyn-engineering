@@ -5,3 +5,12 @@
 .bp-name input[aria-invalid="true"] { border-color: var(--color-danger); }
 .bp-name input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .bp-acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; }
+
+/* In a narrow window each profile is one row: the name over its status on the left, the actions on the right, no Status column (pb-h10-list-narrow). */
+@media (max-width: 599px) {
+  .bp-table .bp-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name acts" "state acts"; align-items: center; row-gap: 2px; padding-block: 8px; }
+  .bp-table .bp-row.h { display: none; }
+  .bp-table .bp-row > :nth-child(1) { grid-area: name; }
+  .bp-table .bp-row > :nth-child(2) { grid-area: state; justify-self: start; }
+  .bp-table .bp-row > :nth-child(3) { grid-area: acts; }
+}

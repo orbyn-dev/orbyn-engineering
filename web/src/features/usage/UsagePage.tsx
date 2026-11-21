@@ -19,6 +19,7 @@ import { USAGE_PERIODS, type UsageDays, type UsageMetric } from "./usageModel";
 import { UsageView } from "./UsageView";
 import { ScanStatus, Segment } from "./UsageParts";
 import { LIMITS_WAIT_MS, LimitsAsking, LimitsView } from "./UsageLimits";
+import { forgetLimits, readLimits } from "../../lib/limitsStore";
 
 const PREFS_KEY = "orbyn.usage.v1";
 
@@ -59,7 +60,7 @@ export function UsagePage() {
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
   const limits = useAsync(`limits:${metric === "limits"}`, (signal, context) =>
-    metric === "limits" ? api.limits(context.force, signal) : Promise.resolve(null),
+    metric === "limits" ? readLimits("overview", (force) => api.limits(force, signal), { force: context.force }) : Promise.resolve(null),
   { fresh: true, refreshOn: metric === "limits" ? under("limits") : undefined },
 );
 
@@ -108,6 +109,8 @@ export function UsagePage() {
     } catch {
       /* the page reads the failure again below */
     }
+    // The one engine now has a newer answer than the page's memory of the overview.
+    forgetLimits("overview");
     void limits.reload();
   };
   const check = async () => {

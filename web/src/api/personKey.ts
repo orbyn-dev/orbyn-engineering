@@ -167,6 +167,12 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Runs and AG-UI resume: only when the body raises `permission_mode` (or has a non-empty `resume`).
   ["POST", "/api/threads/{id}/runs"],
   ["POST", "/agui/threads/{id}"],
+  // Issue trackers (beta; behind the issues flag).
+  ["POST", "/api/issues/trackers/{tracker}/connect"],
+  ["POST", "/api/issues/trackers/{tracker}/disconnect"],
+  ["POST", "/api/issues/start-thread"],
+  ["POST", "/api/threads/{id}/issue-links"],
+  ["POST", "/api/threads/{id}/issue-links/remove"],
 ];
 
 /**

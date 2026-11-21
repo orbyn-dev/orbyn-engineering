@@ -64,6 +64,18 @@ pub enum CoreError {
     PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
+    /// An issue tracker with no connection, or whose tool is missing or signed out.
+    #[error("{0}")]
+    TrackerNotConnected(String),
+    /// A tracker asked us to slow down; the message says for how long when it told us.
+    #[error("{0}")]
+    TrackerRateLimited(String),
+    /// A tracker refused the token or the repository.
+    #[error("{0}")]
+    TrackerForbidden(String),
+    /// A tracker did not answer, or answered something we cannot read.
+    #[error("{0}")]
+    TrackerUnavailable(String),
     /// A service limit or the operating system's file watching is busy or failing right
     /// now; the same request can succeed later.
     #[error("{0}")]
@@ -186,6 +198,10 @@ impl CoreError {
             Self::ProjectHasWork { .. } => "project_has_work",
             Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
+            Self::TrackerNotConnected(_) => "tracker_not_connected",
+            Self::TrackerRateLimited(_) => "rate_limited",
+            Self::TrackerForbidden(_) => "forbidden",
+            Self::TrackerUnavailable(_) => "tracker_unavailable",
             Self::WatchUnavailable(_) => "watch_unavailable",
             Self::UnsupportedOption(_) => "unsupported_option",
             Self::UpdateUnavailable(_) => "update_unavailable",
@@ -263,6 +279,7 @@ impl CoreError {
             | Self::SharedDirectory(_)
             | Self::RunsActive
             | Self::PullHeadChanged
+            | Self::TrackerNotConnected(_)
             | Self::Git(_)
             | Self::ProjectHasWork { .. }
             | Self::EngineBusy(_)
@@ -277,7 +294,12 @@ impl CoreError {
             | Self::UnsupportedOption(_)
             | Self::PatternRefused { .. } => 422,
             Self::WatchUnavailable(_) => 503,
-            Self::EngineUnavailable(_) | Self::Computer(_) | Self::UpdateFailed(_) => 502,
+            Self::TrackerRateLimited(_) => 429,
+            Self::TrackerForbidden(_) => 403,
+            Self::EngineUnavailable(_)
+            | Self::Computer(_)
+            | Self::UpdateFailed(_)
+            | Self::TrackerUnavailable(_) => 502,
             _ => 500,
         }
     }
@@ -327,6 +349,10 @@ impl CoreError {
             },
             Self::PullHeadChanged => Self::PullHeadChanged,
             Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::TrackerNotConnected(s) => Self::TrackerNotConnected(s.clone()),
+            Self::TrackerRateLimited(s) => Self::TrackerRateLimited(s.clone()),
+            Self::TrackerForbidden(s) => Self::TrackerForbidden(s.clone()),
+            Self::TrackerUnavailable(s) => Self::TrackerUnavailable(s.clone()),
             Self::WatchUnavailable(s) => Self::WatchUnavailable(s.clone()),
             Self::UnsupportedOption(s) => Self::UnsupportedOption(s.clone()),
             Self::UpdateUnavailable(s) => Self::UpdateUnavailable(s.clone()),

@@ -72,6 +72,9 @@ mod crew_tier_settings;
 mod crew_worker_provider;
 mod hub;
 mod installs;
+mod issues;
+pub use issues::TrackerConnection;
+pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;
 mod native_sessions;
 #[cfg(test)]

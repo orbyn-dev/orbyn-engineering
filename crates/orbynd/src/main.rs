@@ -205,6 +205,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
     config.code_mode = env_flag("ORBYN_CODE_MODE");
+    config.issues = env_flag("ORBYN_ISSUES");
     (
         config.crew_merge_required_checks,
         config.crew_merge_watch_interval,

@@ -29,6 +29,8 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 /** The pages inside a Settings page, by the section that holds them: `#/settings/appearance/theme-editor`. */
 const SETTINGS_SUBPAGES = new Map<SettingsSection, readonly string[]>([["appearance", ["theme-editor"]]]);
 export type SettingsSubPage = "theme-editor";
+/** What a row key in an address may be: lower-case words joined by hyphens, short. Anything else names no row. */
+const ROW_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** The Crew screens built so far; the rest join as they land. */
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
@@ -53,6 +55,8 @@ export type Route =
       section: SettingsSection | null;
       /** A page inside the section (the Theme editor in Appearance). */
       sub?: SettingsSubPage;
+      /** A row on the page the address names (`#/settings/chat/search-engine`): the page's own row key, never a row id. Settings looks it up in its row list and ignores one it does not have. */
+      row?: string;
       /** The page name an address carried that Settings does not have: General opens with a note. Never written back to an address. */
       unknown?: string;
       selection?: ProjectSettingsSelection;
@@ -137,7 +141,8 @@ export function routeHref(route: Route): string {
     case "settings": {
       const base = route.section ? `#/settings/${route.section}` : "#/settings";
       const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}`
-        : route.section && route.sub && SETTINGS_SUBPAGES.get(route.section)?.includes(route.sub) ? `${base}/${route.sub}` : base;
+        : route.section && route.sub && SETTINGS_SUBPAGES.get(route.section)?.includes(route.sub) ? `${base}/${route.sub}`
+        : route.section && route.section !== "crew" && route.row && ROW_KEY.test(route.row) ? `${base}/${route.row}` : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
@@ -224,10 +229,12 @@ export function parseRoute(hash: string): Route {
         : params.has("project") ? { kind: "project_group", group_key: params.get("project") ?? "" } : undefined;
       const section = SETTINGS_SECTIONS.find((entry) => entry === first) ?? null;
       const sub = section && second ? SETTINGS_SUBPAGES.get(section)?.find((entry) => entry === second) : undefined;
+      const row = section && section !== "crew" && !sub && second && ROW_KEY.test(second) ? second : undefined;
       return {
         name: "settings",
         section,
         ...(sub ? { sub: sub as SettingsSubPage } : {}),
+        ...(row ? { row } : {}),
         ...(first && !section ? { unknown: first } : {}),
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),

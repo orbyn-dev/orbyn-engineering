@@ -108,3 +108,29 @@ describe("an address Settings does not have (K55)", () => {
     expect(screen.queryByText(/There is no setting called/)).toBeNull();
   });
 });
+
+describe("an address naming a page that is off on this device (pb-k55-gated)", () => {
+  it("opens General with a note that says the page is off, not that it does not exist", async () => {
+    render(<SettingsPage section="crew" onClose={() => undefined} />);
+    const note = await screen.findByRole("status");
+    expect(note).toHaveTextContent("That page is off on this device: “Crew”. Showing General instead.");
+    expect(screen.queryByText(/There is no setting called/)).toBeNull();
+    expect(within(crumbs()).getByText("General")).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("link", { name: "Crew" })).toBeNull();
+  });
+
+  it("says the same for Account while sign-in is off, and Dismiss only closes the note", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage section="account" onClose={() => undefined} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("That page is off on this device: “Account”.");
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText(/That page is off/)).toBeNull();
+    expect(screen.getByRole("link", { name: "General" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows no note for a page that is on", async () => {
+    render(<SettingsPage section="chat" onClose={() => undefined} />);
+    await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(screen.queryByText(/off on this device/)).toBeNull();
+  });
+});
