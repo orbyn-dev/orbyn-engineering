@@ -42,7 +42,7 @@ write is, and goes in `ENFORCED` and `PERSON_ROUTES` (`personKey.ts`).
 | `GET /api/issues/trackers` | no | `TrackerRow[]` (below) |
 | `POST /api/issues/trackers/{tracker}/connect` | **yes** | `TrackerRow`. Body `{ host?, scope?, token? }`; `token` is absent for `github` |
 | `POST /api/issues/trackers/{tracker}/disconnect` | **yes** | `TrackerRow`. Removes the host, scopes and keychain token |
-| `GET /api/issues` | no | `IssueList`. Query: `tracker`, `state`, `label` (repeat), `assignee`, `q`, `limit`, `cursors` |
+| `GET /api/issues` | no | `IssueList`. Query: `tracker`, `state`, `label` (repeat), `assignee`, `q`, `limit`, `cursors` (below) |
 | `GET /api/issues/item` | no | `IssueDetail`. Query: `tracker`, `scope`, `key` |
 | `GET /api/issues/links` | no | `Record<thread_id, IssueRef[]>`, oldest link first |
 | `GET /api/issues/find` | no | `IssueRef[]`. Query `q`: a number, words or a pasted issue link |
@@ -78,6 +78,12 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 
 - **Filters** are `state` (`open | closed | all`), `label` (every one must match), `assignee` (`any | me | none`
   or a login) and `q` (text the tracker itself matches). Nothing else; no sort option (newest update first).
+- **Paging.** `next_cursors` maps `"<tracker> <scope>"` to an opaque cursor (one per tracker and scope that has
+  more). To carry on, send `cursors` once, as that same object encoded as JSON and then URL-encoded
+  (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. Only the scopes named
+  in `cursors` are read, one page each, and the answer holds just those pages and their next cursors. The
+  cursor is opaque: the page never builds or edits one, and the service refuses one it did not issue for that
+  scope and filter (`400 invalid`). The beta UI may leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
@@ -130,11 +136,17 @@ into them, so they are **data**, never instructions to an engine, and never reac
 
 ## What T3 has that this does not (Planned)
 
-Creating, editing and commenting on issues, reactions, moving an issue to another state, issue templates,
+Creating, editing and commenting on issues, reactions, moving an issue to another state (`setState` and
+the states an issue can move to; T3 has both), issue templates,
 the event timeline, "involved/mentioned" filters, a sort option, and more than one page of comments. None is
 in the beta; each is a later row.
 
 ## Differences from the web side's guessed contract
+
+- **State changes are not in the beta.** The guessed contract has a state change; the beta issue contract is
+  read-only against the tracker, so the page shows it as Planned and calls nothing. When it lands it is a
+  Person-class write, `POST /api/issues/item/state` with `{ tracker, scope, key, state }`, where `state` is the
+  name of one of the issue's `states` (a list `IssueDetail` will then carry).
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).

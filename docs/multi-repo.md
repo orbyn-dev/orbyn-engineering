@@ -23,7 +23,7 @@ differences in the last section. The Rust types live in `orbyn-contracts` and ge
 - At most **8** repositories per thread (`max_per_thread`).
 - **Git actions are per repository**: stage, commit, push, pull request, branch and the Changes list take a
   `repo_id`, default the project's primary repository, so a one-repository thread sees no change. A commit
-  or push never spans repositories.
+  or push never spans repositories. See "Per-repository Git routes" below.
 - Removing a repository from a project stops tracking it. Files, branches and the threads that used it stay;
   a thread that still has a worktree of it keeps working.
 
@@ -46,6 +46,23 @@ write is, and goes in `ENFORCED` and `PERSON_ROUTES` (`personKey.ts`).
 | `POST /api/projects/{id}/repo-threads` | **yes** | `Thread`. Body `StartThreadInput` |
 | `GET /api/threads/{id}/repos` | no | `ThreadRepo[]`; `404` when the thread is not a multi-repository thread |
 | `POST /api/threads/{id}/repos` | **yes** | `ThreadRepo`. Body `{ repo_id }`; adds a trusted repository of the project |
+
+### Per-repository Git routes
+
+No new Git routes. The thread routes that exist take an optional `repo_id`, in the JSON body for a `POST` and
+in the query for a `GET`; absent means the primary repository, so a one-repository thread is unchanged:
+
+- `POST /api/threads/{id}/git/action` (stage, commit, push, create a branch and the rest of its actions): body
+  `repo_id`. The action runs in that repository's worktree only.
+- `GET /api/threads/{id}/commits` and the Changes reads: query `repo_id`; each changed file in the answer
+  carries its `repo_id` and a repo-relative path.
+- `POST /api/threads/{id}/pulls` (link or open a pull request), `.../pulls/{number}/merge` and `.../review`:
+  `repo_id` says which repository's pull request; a thread may link one pull request per repository.
+
+A `repo_id` that is not one of the thread's repositories is `404 not_found`; one whose repository is no longer
+trusted is `409 repo_untrusted`. These routes keep the class they have today (the Person-class ones stay
+Person-class; push stays as the existing route classifies it). Removing a repository from a thread is not in
+the beta: a thread keeps its worktrees, and `.../repos/{repo_id}/remove` above removes it from the project only.
 
 Repository settings (default branch, setup and cleanup scripts) are not in the beta: they are the project's
 settings today, applied to every repository. Per-repository settings are Planned.
