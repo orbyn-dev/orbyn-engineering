@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type { Project } from "../../../../api/types";
+import type { EscapeCheckRow } from "../../../../generated/EscapeCheckRow";
 import type { EscapeDetail } from "../../../../generated/EscapeDetail";
 import type { EscapeLog } from "../../../../generated/EscapeLog";
 import type { EscapePossible } from "../../../../generated/EscapePossible";
@@ -25,6 +26,28 @@ export const row = (over: Partial<EscapeRow> = {}): EscapeRow => ({
   found_unix: 1_762_500_000,
   decided_unix: null,
   decided_by: null,
+  ...over,
+});
+
+/** The check of the design's samples: the return-to check as the person and the core leave it. */
+export const checkRow = (over: Partial<EscapeCheckRow> = {}): EscapeCheckRow => ({
+  state: "proposed",
+  path: "tests/auth/return-to.test.ts",
+  asserts: "An old returnTo link still redirects to its path",
+  run: "npm test -- tests/auth/return-to.test.ts",
+  fix_commit: "e41a9c0a1b2c3d4e5f60718293a4b5c6d7e8f90a",
+  task_id: null,
+  proof: null,
+  note: null,
+  attempts: 1,
+  diff_commit: null,
+  diff_hash: null,
+  diff_paths: [],
+  awaiting_approval: false,
+  approved: false,
+  line: "Proposed: add tests/auth/return-to.test.ts. Nothing runs until a person accepts.",
+  proposed_unix: 1_762_503_000,
+  updated_unix: 1_762_503_000,
   ...over,
 });
 
@@ -85,7 +108,10 @@ const json = (answer: Answer): Response => {
 export type Call = { url: string; init?: RequestInit };
 
 /** One fetch stub for the escape screens: answer each route from `answers` and record every call. */
-export function stubFetch(answers: { preview: Answer; projects: Answer; log: Answer; logConfirmed: Answer; possible: Answer; detail: Answer; decide: Answer; gap: Answer }, calls: Call[]) {
+export function stubFetch(
+  answers: { preview: Answer; projects: Answer; log: Answer; logConfirmed: Answer; possible: Answer; detail: Answer; decide: Answer; gap: Answer; check?: Answer; thresholds?: Answer },
+  calls: Call[],
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: string, init?: RequestInit) => {
@@ -93,9 +119,13 @@ export function stubFetch(answers: { preview: Answer; projects: Answer; log: Ans
       calls.push({ url, init });
       if (url.startsWith("/api/projects")) return json(answers.projects);
       if (url.includes("/api/crew/preview")) return json(answers.preview);
+      if (url.includes("/api/crew/escapes/thresholds"))
+        return json(answers.thresholds ?? { status: 200, body: { report_days: 60, follow_up_days: 14, min_merges: 10, rate_multiple: 2, stored: false } });
       if (url.includes("/api/crew/escapes/possible")) return json(answers.possible);
       if (url.includes("/api/crew/escapes?") && url.includes("state=confirmed")) return json(answers.logConfirmed);
       if (url.includes("/api/crew/escapes?")) return json(answers.log);
+      // The five check routes: one answer serves them all, and a test that forgets it sees a refused route, never a pass.
+      if (url.includes("/check")) return json(answers.check ?? { status: 404, body: { code: "not_found", message: "No such route." } });
       if (url.includes("/confirm")) return json(answers.decide);
       if (url.includes("/dismiss")) return json(answers.decide);
       if (url.includes("/gap")) return json(answers.gap);

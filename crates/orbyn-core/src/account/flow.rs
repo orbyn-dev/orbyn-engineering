@@ -347,6 +347,8 @@ impl AccountCenter {
     pub async fn sign_in(&self, email: &str, password: Password) -> Result<AccountSignInOutcome> {
         let backend = self.backend()?;
         let email = clean_email(email)?;
+        // Not while a cancel is on its way: it must not meet the request this one starts.
+        let _one_at_a_time = self.cancelling.lock().await;
         self.status.update(|s| s.state = SyncState::SigningIn);
         let outcome = backend.account.sign_in(&email, &password).await;
         match outcome {
@@ -372,8 +374,10 @@ impl AccountCenter {
 
     /// This computer's own request to sign in now waits for a trusted device.
     async fn await_approval(&self, request_id: String) {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.inner.lock().await.approval = Some(Approval {
             request_id,
+            serial: SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             asked: Instant::now(),
             allowed: false,
             tries_left: None,
@@ -389,6 +393,7 @@ impl AccountCenter {
         if self.inner.lock().await.second_factor.is_none() {
             return Err(invalid("sign_in_closed", "Start signing in again."));
         }
+        let _one_at_a_time = self.cancelling.lock().await;
         match backend.account.second_factor(code).await {
             Ok(SignInOutcome::Signed(session)) => self.established(session, true).await,
             Ok(SignInOutcome::AwaitingApproval(pending)) => {
@@ -427,21 +432,51 @@ impl AccountCenter {
     }
 
     /// Gives up the sign-in that waits for its code or for a trusted device: the person is
-    /// back at the password, or at the Account page.
+    /// back at the password, or at the Account page. A request still waiting on a trusted
+    /// device is ended on the service too. The sign-in stays in place while the service is
+    /// asked, so it still shows as waiting; when the service does not take the cancel that
+    /// is answered instead of a silent 204, and the sign-in stays open. Cancels run one at
+    /// a time, so a second one is answered from what the first left.
     pub async fn cancel_second_factor(&self) -> Result<()> {
         let backend = self.backend()?.clone();
-        let mut inner = self.inner.lock().await;
-        let asked = inner.approval.take();
-        if inner.second_factor.take().is_some() || asked.is_some() {
-            drop(inner);
-            if let Some(Approval {
-                request_id,
-                answer: None,
-                ..
-            }) = asked
-            {
-                let _ = backend.account.cancel_approval(&request_id).await;
+        let _one_at_a_time = self.cancelling.lock().await;
+        let open = {
+            let inner = self.inner.lock().await;
+            if inner.second_factor.is_none() && inner.approval.is_none() {
+                return Ok(());
             }
+            // Only a request that is still open needs the service's help to end; a sign-in
+            // waiting for its code, or a request that already has its answer, is ours alone.
+            inner
+                .approval
+                .as_ref()
+                .filter(|approval| approval.answer.is_none())
+                .map(|approval| (approval.request_id.clone(), approval.serial))
+        };
+        if let Some((id, _)) = &open {
+            match backend.account.cancel_approval(id).await {
+                Ok(()) => {}
+                // The request is already over: there is nothing left to cancel.
+                Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {}
+                Err(error) => return Err(refusal(&error)),
+            }
+        }
+        let mut inner = self.inner.lock().await;
+        // Only the request that was cancelled is cleared: a sign-in started meanwhile stays,
+        // even when it reuses the id.
+        let cleared = match (&open, &inner.approval) {
+            (Some((_, serial)), Some(approval)) => approval.serial == *serial,
+            // Someone else ended the request meanwhile: this cancel cleared nothing.
+            (Some(_), None) => false,
+            (None, _) => true,
+        };
+        if cleared {
+            inner.approval = None;
+            inner.second_factor = None;
+        }
+        let signed_out = cleared && inner.session.is_none();
+        drop(inner);
+        if signed_out {
             self.status
                 .update(|s| s.state = SyncState::SignedOut { reason: None });
         }
@@ -538,6 +573,7 @@ impl AccountCenter {
     /// told once, and a failure changes nothing here.
     pub async fn sign_out(&self, discard_unsynced: bool) -> Result<()> {
         let backend = self.backend()?.clone();
+        let _one_at_a_time = self.cancelling.lock().await;
         let mut inner = self.inner.lock().await;
         if inner.session.is_none() {
             return Ok(());
