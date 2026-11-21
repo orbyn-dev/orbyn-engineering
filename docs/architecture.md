@@ -1860,8 +1860,9 @@ seen.
 `GET /api/threads/:id/renders/:render_id` serves that page as `text/html; charset=utf-8`
 with `default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; style-src
 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors
-'self'`, and every render response also carries `nosniff`,
+'self'; sandbox allow-scripts`, and every render response also carries `nosniff`,
 `Cross-Origin-Resource-Policy: same-origin`, `no-referrer` and `private, no-cache`.
+The CSP `sandbox allow-scripts` directive gives the page an opaque origin even when it is opened at top level (a new tab), where the frame's `sandbox` attribute does not apply.
 `.../:render_id/:file` serves only `image-<n>.<ext>`, typed from its extension; any other
 name, a separator in it, `frame.sha256` or another thread's render id is not found.
 
