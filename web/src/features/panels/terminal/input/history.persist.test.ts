@@ -115,4 +115,51 @@ describe("saved history", () => {
     expect(saved.h["t29:main"]).toBeDefined();
     expect(saved.h["t0:main"]).toBeUndefined();
   });
+
+  it("keeps a multi-line command, newlines and all, across a reload", async () => {
+    const first = await fresh();
+    const command = "for f in *.ts; do\n  echo $f\ndone";
+    first.recordCommand("k:main", command, 1);
+    expect(JSON.parse(stored() ?? "null").h["k:main"][0].command).toBe(command);
+    const again = await fresh();
+    expect(again.historyOf("k:main").map((e) => e.command)).toEqual([command]);
+    expect(again.historyAcross(["k"]).map((e) => e.command)).toEqual([command]);
+  });
+
+  it("drops the whole entry when a later line is a secret, at write and at load", async () => {
+    const mod = await fresh();
+    mod.recordCommand("k", "echo start\nexport TOKEN=abcdef\necho end", 1);
+    mod.recordCommand("k", "echo a\necho b", 2);
+    expect(mod.historyOf("k").map((e) => e.command)).toEqual(["echo a\necho b"]);
+    expect(stored()).not.toContain("TOKEN");
+    window.localStorage.setItem(
+      STORE,
+      JSON.stringify({ v: 1, h: { k: [{ command: "echo start\nexport TOKEN=abcdef\necho end", ok: null, at: 1 }, { command: "pwd\nls", ok: null, at: 2 }] } }),
+    );
+    const again = await fresh();
+    expect(again.historyOf("k").map((e) => e.command)).toEqual(["pwd\nls"]);
+  });
+
+  it("still refuses a carriage return and every other control character but tab, at write and at load", async () => {
+    const mod = await fresh();
+    for (const bad of ["a\rb", "a\u001bb", "a\u0000b", "a\u007fb", "a\nb\u0007"]) mod.recordCommand("k", bad, 1);
+    mod.recordCommand("k", "a\tb\nc", 2);
+    const saved = JSON.parse(stored() ?? "null") as { h: Record<string, { command: string }[]> };
+    expect(saved.h.k?.map((e) => e.command)).toEqual(["a\tb\nc"]);
+    const entries = ["a\rb", "a\u001bb", "a\u0000b", "a\u007fb", "a\u000bb", "a\u000cb", "ok\nline"].map((command, at) => ({ command, ok: null, at }));
+    window.localStorage.setItem(STORE, JSON.stringify({ v: 1, h: { k: entries } }));
+    const again = await fresh();
+    expect(again.historyOf("k").map((e) => e.command)).toEqual(["ok\nline"]);
+  });
+
+  it("keeps the 4096 cap on a multi-line entry", async () => {
+    const line = (n: number) => `${"x".repeat(n - 1)}\n`;
+    const edge = line(2048) + "y".repeat(2048);
+    expect(edge).toHaveLength(4096);
+    const mod = await fresh();
+    mod.recordCommand("k", edge, 1);
+    mod.recordCommand("k", `${edge}z`, 2);
+    const again = await fresh();
+    expect(again.historyOf("k").map((e) => e.command)).toEqual([edge]);
+  });
 });

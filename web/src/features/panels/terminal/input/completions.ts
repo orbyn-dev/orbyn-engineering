@@ -23,6 +23,11 @@ export interface CompleteContext {
   history: readonly string[];
   /** The entries of a folder, relative to the worktree root and ending in "/" (empty for the root); null when not known. */
   listDir(dir: string): readonly PathEntry[] | null;
+  /**
+   * The folder the shell is in, relative to the worktree root, "" for the root itself or "a/b/". Relative paths are
+   * completed against it. Empty when the shell has not said, or has said a folder outside the worktree.
+   */
+  cwd?: string;
 }
 
 export interface CompletionResult {
@@ -132,11 +137,28 @@ export function completeAt(line: string, cursor: number, context: CompleteContex
   return items.length === 0 ? null : { from: word.from, to: cursor, items: items.slice(0, LIMIT) };
 }
 
+/**
+ * The folder to list for a typed folder `dir` (what comes before the last slash, with its slash), as the root-relative
+ * "" or "a/b/", resolved against the shell's folder `cwd`. Null for an absolute or home path, or a path that climbs
+ * out of the worktree: the listing is the explorer's, which has no view of anything else.
+ */
+export function resolveDir(cwd: string, dir: string): string | null {
+  if (dir.startsWith("/") || dir.startsWith("~")) return null;
+  const names = cwd.split("/").filter(Boolean);
+  for (const name of dir.split("/")) {
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      if (names.length === 0) return null;
+      names.pop();
+    } else names.push(name);
+  }
+  return names.length === 0 ? "" : `${names.join("/")}/`;
+}
+
 function pathItems(text: string, context: CompleteContext): Completion[] {
-  // Only paths inside the worktree: the listing is the explorer's, which has no view of other folders.
-  if (text.startsWith("/") || text.startsWith("~") || text.split("/").includes("..")) return [];
   const slash = text.lastIndexOf("/");
-  const dir = text.slice(0, slash + 1).replace(/^\.\//, "");
+  const dir = resolveDir(context.cwd ?? "", text.slice(0, slash + 1));
+  if (dir === null) return [];
   const base = text.slice(slash + 1);
   const entries = context.listDir(dir);
   if (!entries) return [];
