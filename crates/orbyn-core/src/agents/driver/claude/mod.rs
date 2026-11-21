@@ -18,6 +18,7 @@ mod workflows;
 pub use args::{capability_args, console_args, run_args, session_cwd};
 pub use catalog::parse_capabilities;
 pub(crate) use mcp::McpListed;
+pub(crate) use protocol::prompt_uuid;
 pub(crate) use sdk::SdkMapper;
 
 use std::path::{Path, PathBuf};

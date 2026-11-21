@@ -86,6 +86,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/tasks/{id}/retry-elsewhere"],
   // Engines, updates, workspace and the shell.
   ["POST", "/api/acp/registry/{id}"],
+  ["POST", "/api/engine-host/{family}/restart"],
+  ["POST", "/api/engine-host/{family}/stop"],
   ["POST", "/api/engines/custom"],
   ["POST", "/api/engines/probe-binary"],
   ["POST", "/api/engines/update-all"],

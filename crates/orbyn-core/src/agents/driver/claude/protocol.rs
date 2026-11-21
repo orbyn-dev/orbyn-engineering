@@ -163,7 +163,7 @@ fn user_message(spec: &RunSpec, uuid: &str) -> String {
 
 /// The CLI asks for a UUID, and echoes it back with `--replay-user-messages` when it takes the
 /// prompt up.
-fn prompt_uuid() -> String {
+pub(crate) fn prompt_uuid() -> String {
     let n = ulid::Ulid::generate().0;
     // Version 4, variant 1: the shape the CLI validates.
     format!(

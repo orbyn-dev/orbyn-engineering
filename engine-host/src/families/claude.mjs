@@ -174,9 +174,11 @@ export function claudeFamily({ loadSdk }) {
               if (!session) throw Object.assign(new Error("unknown session"), { name: "UnknownSession" });
               if (session.run) throw Object.assign(new Error("a run is already open on this session"), { name: "RunInProgress" });
               await ensureQuery(session);
-              session.run = { sendId: request.id, turnId: `turn-${request.id}`, uuid: randomUUID(), held: new Set(), done: false };
+              // The core names its prompt so it can tell the prompt's own turn from a leftover one in the engine's frames.
+              const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.messageId ?? "") ? request.messageId : randomUUID();
+              session.run = { sendId: request.id, turnId: `turn-${request.id}`, uuid, held: new Set(), done: false };
               session.inbox.push({ type: "user", message: { role: "user", content: request.message }, parent_tool_use_id: null, uuid: session.run.uuid });
-              return { runId: `run-${request.id}`, engineSessionId: session.engineSessionId ?? undefined, turnId: session.run.turnId };
+              return { runId: `run-${request.id}`, engineSessionId: session.engineSessionId ?? undefined, turnId: session.run.turnId, messageId: uuid };
             }
             case "steer": {
               const session = [...sessions.values()].find((s) => s.run?.sendId === request.sendId);

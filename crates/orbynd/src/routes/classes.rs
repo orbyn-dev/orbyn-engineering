@@ -112,6 +112,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
+    ("POST", "/api/engine-host/{family}/restart"),
+    ("POST", "/api/engine-host/{family}/stop"),
     ("POST", "/api/engines/custom"),
     ("POST", "/api/engines/probe-binary"),
     ("POST", "/api/engines/update-all"),
@@ -599,6 +601,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/tasks/{id}/retry-elsewhere",
         "Crew write behind local_only: the person's retry of a task that could not start, on another engine",
+    ),
+    (
+        "POST",
+        "/api/engine-host/{family}/restart",
+        "restarts an engine host, which ends the runs on it and resets its crash history",
+    ),
+    (
+        "POST",
+        "/api/engine-host/{family}/stop",
+        "stops an engine host, which ends the runs on it",
     ),
     (
         "POST",
