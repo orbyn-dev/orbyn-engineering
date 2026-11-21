@@ -171,11 +171,14 @@ impl Core {
             notice.push_str(&self.ended_worker_held_summary(&task, run));
         }
         let full = format!("{notice}{}", held.text());
-        match self.runs.enqueue(&run.lead_thread_id, &full, &[]) {
+        match self.runs.enqueue_crew_note(&run.lead_thread_id, &full, &[]) {
             Ok(_) => self.commit_held(&held),
             Err(first) => {
                 tracing::warn!(error = %first, "could not send the lead a crew result with its held messages");
-                if let Err(error) = self.runs.enqueue(&run.lead_thread_id, &notice, &[]) {
+                if let Err(error) = self
+                    .runs
+                    .enqueue_crew_note(&run.lead_thread_id, &notice, &[])
+                {
                     tracing::warn!(%error, "could not tell the lead a crew task's result");
                 }
             }

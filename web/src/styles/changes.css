@@ -725,3 +725,10 @@
   gap: 6px;
   margin-left: auto;
 }
+
+/* A multi-repository thread: the changed files grouped under one heading per repository. */
+.fl-repo-head { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 8px 8px 4px; font-size: var(--text-meta); font-weight: 500; }
+.fl-repo-head .nm { overflow-wrap: anywhere; }
+.fl-repo-head code { color: var(--color-muted); overflow-wrap: anywhere; min-width: 0; }
+.fl-repo-head .num { margin-left: auto; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.fl-repo + .fl-repo { border-top: 1px solid var(--color-border); }

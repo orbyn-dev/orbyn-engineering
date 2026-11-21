@@ -39,6 +39,7 @@ import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
 import { FamilyChip, FamilyLine, FamilyPanel } from "../family";
 import { IssueChip } from "../issues";
+import { ReposChip } from "../repos";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "../../product/timeline/timeline";
@@ -53,7 +54,7 @@ import { Transcript } from "./Transcript";
 import { FavoriteEditorShortcut } from "./OpenInEditor";
 import { ProjectActionShortcuts } from "./ProjectActionShortcuts";
 
-function TopBar({
+export function TopBar({
   thread,
   project,
   detailsShown,
@@ -102,12 +103,12 @@ function TopBar({
           <FamilyLine thread={thread} />
           {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
-        {narrow ? <><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></> : null}
+        {narrow ? <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></> : null}
       </div>
       <GitActions thread={thread} />
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
-        {narrow ? null : <><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></>}
+        {narrow ? null : <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></>}
         <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup="dialog" icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>

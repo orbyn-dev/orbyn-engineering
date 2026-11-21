@@ -1,0 +1,52 @@
+/* Repositories of a project: the settings group, its dialogs, the new-thread picker and the thread's Repos chip. */
+.repos-list { list-style: none; margin: 0; padding: 0; }
+.repos-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) minmax(90px, 1fr) auto; align-items: center; gap: 12px; min-height: 40px; padding: 4px; border-top: 1px solid var(--color-border); }
+.repos-row:last-child { border-bottom: 1px solid var(--color-border); }
+.repos-name { font-weight: 500; overflow-wrap: anywhere; }
+.repos-path { color: var(--color-muted); font-size: var(--text-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.repos-branch { display: inline-flex; align-items: center; gap: 4px; color: var(--color-muted); font-size: var(--text-meta); min-width: 0; overflow-wrap: anywhere; }
+.repos-state { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.repos .form-actions { padding-top: 10px; }
+.repos-dialog { max-width: min(480px, calc(100vw - 24px)); }
+.repos-visibility { display: flex; gap: 16px; border: 0; margin: 8px 0; padding: 0; }
+.repos-visibility legend { padding: 0 0 4px; color: var(--color-muted); font-size: var(--text-meta); }
+.repos-visibility label { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Narrow window: the rows stack: name, folder, then branch, trust state and the row's one action. Nothing scrolls sideways. */
+@media (max-width: 720px) {
+  .repos-row { grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 8px 4px; }
+  .repos-state { justify-content: flex-start; }
+  .repos-path { white-space: normal; overflow-wrap: anywhere; }
+}
+
+/* New thread: pick repositories. */
+.repos-picks { list-style: none; margin: 8px 0; padding: 0; }
+.repos-pick { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.repos-pick[data-dim] { opacity: 0.6; }
+.repos-pick-text { display: flex; flex-direction: column; min-width: 0; }
+.repos-branch-pick { max-width: 160px; }
+@media (max-width: 520px) {
+  .repos-pick { grid-template-columns: auto minmax(0, 1fr); }
+  .repos-pick > select, .repos-pick > .pill { grid-column: 2; justify-self: start; }
+}
+
+/* The Repos chip and its popover. */
+.repos-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 1px solid var(--color-divider); border-radius: 6px; background: none; color: inherit; font: inherit; font-size: var(--text-meta); cursor: pointer; }
+.repos-chip[aria-expanded="true"] { background: var(--color-rowHover); }
+.repos-pop { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.repos-pop-head { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-pop ul { list-style: none; margin: 0; padding: 0; }
+.repos-pop-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--color-border); }
+.repos-pop-row .repos-branch, .repos-pop-row .pill { grid-row: 2; justify-self: start; }
+.repos-counts { color: var(--color-muted); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
+.repos-pop-add { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; border: 0; background: none; color: var(--color-accent); font: inherit; cursor: pointer; text-align: left; }
+.repos-pop-add:disabled { color: var(--color-muted); cursor: default; }
+
+/* Add a folder: the path field with the desktop app's Browse button beside it. */
+.repos-folder-field { display: flex; gap: 8px; align-items: center; }
+.repos-folder-field .dialog-field { flex: 1; min-width: 0; }
+
+/* New thread: the Engine and Permission rows. */
+.repos-start-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.repos-start-label { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-start-control { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
