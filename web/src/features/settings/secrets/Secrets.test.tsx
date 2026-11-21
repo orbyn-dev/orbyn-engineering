@@ -31,18 +31,18 @@ describe("Settings › Secrets", () => {
     expect(screen.queryByRole("switch", { name: "What agents read" })).toBeNull();
     expect(screen.getByText("What agents read")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(1);
-    expect(screen.getByText("On by default. Switched off per project.")).toBeVisible();
+    expect(screen.getByText(/On by default. Switched off per project. Text you send is masked/)).toBeVisible();
     expect(screen.getByText("Crew ledger and Crew objects")).toBeVisible();
     expect(screen.getByText(/Crew blocks every recognised format/)).toBeVisible();
     expect(screen.queryByText(/Reveal/)).toBeNull();
     expect(screen.queryByText(/apply to new output/)).toBeNull();
-    expect(screen.getByText(/Today they apply to the Crew ledger when you read it, old rows included/)).toBeVisible();
+    expect(screen.getByText(/They apply to the Crew ledger when you read it, old rows included, and to what agents read/)).toBeVisible();
     expect(screen.getByText("Always on")).toBeVisible();
     expect(screen.queryByRole("switch", { name: /Crew ledger/ })).toBeNull();
     expect(screen.getByText("None. Redaction is on in every project.")).toBeVisible();
     // What is not built is said so, not promised.
     expect(screen.getByRole("status")).toHaveTextContent("not applied yet");
-    expect(screen.getAllByText("Not applied yet")).toHaveLength(2);
+    expect(screen.getAllByText("Not applied yet")).toHaveLength(1);
     expect(screen.getAllByText(/Not applied yet to terminal blocks/)).toHaveLength(1);
     for (const format of view().formats) expect(row(format.label)).toBeChecked();
     expect(screen.getByText("Environment values named like a secret", { selector: ".setting-line-title" })).toBeVisible();
@@ -112,7 +112,7 @@ describe("Settings › Secrets", () => {
     const warning = await screen.findByRole("dialog", { name: `Turn off redaction for ${name}?` });
     expect(within(warning).getByText("Agents will see real secrets in this project.")).toBeVisible();
     expect(within(warning).getByText("Only this project is affected. You can turn it back on at any time.")).toBeVisible();
-    expect(within(warning).getByText(/Not applied yet: agents are not protected today/)).toBeVisible();
+    expect(within(warning).getByText(/the engine reads text you send in this project unmasked/)).toBeVisible();
     expect(within(warning).getByRole("button", { name: "Cancel" })).toHaveFocus();
     await user.click(within(warning).getByRole("button", { name: "Cancel" }));
     expect(view().projects_off).toEqual([]);

@@ -144,6 +144,26 @@ fn ordinary_hits(redactor: &Redactor) -> (usize, usize) {
     redactor.chars_hidden(&lines)
 }
 
+/// The detectors for a surface, read from the store. The run manager has no `Core`, so it comes
+/// through here; `Core::redactor` is the same call.
+pub(crate) fn redactor_from(
+    store: &crate::store::Store,
+    surface: Surface,
+    project_id: Option<&str>,
+) -> Result<Arc<Redactor>> {
+    let text = store.redaction_json()?;
+    let raw = text.as_deref().unwrap_or("");
+    let key = match surface {
+        // The terminal set reads no project, so every project shares its one entry.
+        Surface::Terminal => format!("terminal|{raw}"),
+        // The agents set is keyed by project: a project can be switched off on its own.
+        Surface::Agents => format!("agents|{}|{raw}", project_id.unwrap_or("")),
+    };
+    Ok(cached(key, || {
+        Stored::parse(text.as_deref()).redactor(surface, project_id)
+    }))
+}
+
 impl Core {
     fn stored_redaction(&self) -> Result<Stored> {
         Ok(Stored::parse(self.store.redaction_json()?.as_deref()))
@@ -152,17 +172,7 @@ impl Core {
     /// The detectors for a surface, from the settings as saved. Crew does not come through here:
     /// it uses `Redactor::locked`, which no setting reaches.
     pub fn redactor(&self, surface: Surface, project_id: Option<&str>) -> Result<Arc<Redactor>> {
-        let text = self.store.redaction_json()?;
-        let raw = text.as_deref().unwrap_or("");
-        let key = match surface {
-            // The terminal set reads no project, so every project shares its one entry.
-            Surface::Terminal => format!("terminal|{raw}"),
-            // The agents set is keyed by project: a project can be switched off on its own.
-            Surface::Agents => format!("agents|{}|{raw}", project_id.unwrap_or("")),
-        };
-        Ok(cached(key, || {
-            Stored::parse(text.as_deref()).redactor(surface, project_id)
-        }))
+        redactor_from(&self.store, surface, project_id)
     }
 
     /// The person's own patterns alone, for text shown back to them: the ledger and its rows are
