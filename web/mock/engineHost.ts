@@ -82,6 +82,7 @@ export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?:
       if (fail) { const code = fail; fail = null; throw new ApiFailure(code, code === KEYCHAIN_LOCKED ? "The keychain is locked." : "The keychain refused.", 409); }
       return put(id, "saved", { saved_at: new Date().toISOString() });
     },
+    removeOptIn: async (id) => { writes.push(`optout:${id}`); await wait(); return put(id, "not_asked", { saved_at: null }); },
     removeKey: async (id) => {
       writes.push(`remove:${id}`);
       await wait();

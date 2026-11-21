@@ -18,6 +18,7 @@ const real: EngineHostApi = {
   storage: (signal) => credentials.storage(signal),
   decline: (id) => credentials.decline(id),
   saveKey: (id, key) => credentials.saveKey(id, key),
+  removeOptIn: (id) => credentials.removeOptIn(id),
   removeKey: (id) => credentials.removeKey(id),
   retryKeychain: (id) => credentials.retryKeychain(id),
 };
