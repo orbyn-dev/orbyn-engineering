@@ -1295,6 +1295,8 @@ before the page hears it, so outside the desktop app a `mod+w` rule also matches
 key with `alt` in place of `mod`; the editor says which applies. It allows comments and trailing commas, and a
 bad entry is reported while the rest apply. A key with two commands in one exact
 context is a conflict; a key in two contexts is not.
+Saving a rule compares chords without case or spaces around `+`, including when it
+identifies the displaced rule to remove from the account record.
 
 The Worktrees Cleanup form edits the new policy through scoped membership and
 row revisions. Project and checkout selections expose Inherit, Off and Custom;

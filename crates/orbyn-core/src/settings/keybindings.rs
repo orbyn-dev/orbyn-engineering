@@ -278,13 +278,17 @@ impl Core {
         }
         // What this rule displaces leaves a removal marker for the account's record, or
         // another device would keep the old rule beside the new one.
+        let key = crate::account::settings_record::normalize_key(&rule.key);
+        let same_key = |known: &KeybindingRule| {
+            crate::account::settings_record::normalize_key(&known.key) == key
+        };
         let displaced: Vec<KeybindingRule> = own
             .iter()
             .filter(|known| {
                 (known.command == rule.command && known.when == rule.when)
-                    || (known.key == rule.key && known.command == rule.command)
+                    || (same_key(known) && known.command == rule.command)
             })
-            .filter(|known| !(known.key == rule.key && known.when == rule.when))
+            .filter(|known| !(same_key(known) && known.when == rule.when))
             .map(|known| KeybindingRule {
                 remove: true,
                 ..known.clone()
@@ -292,7 +296,7 @@ impl Core {
             .collect();
         own.retain(|known| {
             !(known.command == rule.command && known.when == rule.when)
-                && !(known.key == rule.key && known.command == rule.command)
+                && !(same_key(known) && known.command == rule.command)
         });
         own.push(rule.clone());
         write_rules(&path, &own)?;
@@ -379,6 +383,63 @@ mod tests {
             when: when.map(str::to_owned),
             remove: false,
         }
+    }
+
+    #[test]
+    fn saving_equivalent_chord_in_another_context_replaces_and_stages_the_old_rule() {
+        use crate::account::settings_record::{ZONE, keybinding_name};
+        use crate::{CoreConfig, testing::TempDir};
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        core.store
+            .account_enable(ZONE, &[], false, Some("test-device"))
+            .unwrap();
+        let old = rule("Mod + Y", "example.action", Some("editor"));
+        let other = rule("mod+y", "other.action", Some("browser"));
+        let other_chord = rule("alt+z", "example.action", Some("terminal"));
+        for value in [&old, &other, &other_chord] {
+            core.save_keybinding(value).unwrap();
+        }
+        let replacement = rule("mod+y", "example.action", Some("sidebar"));
+        core.save_keybinding(&replacement).unwrap();
+        let (own, issues) = read(&core.keybindings_path());
+        assert!(issues.is_empty());
+        assert_eq!(own.len(), 3, "{own:?}");
+        assert!(own.iter().any(|r| r.key == replacement.key
+            && r.when == replacement.when
+            && r.command == replacement.command));
+        assert!(
+            own.iter()
+                .any(|r| r.key == other.key && r.when == other.when && r.command == other.command)
+        );
+        assert!(own.iter().any(|r| r.key == other_chord.key
+            && r.when == other_chord.when
+            && r.command == other_chord.command));
+        let record = core.store.account_record(ZONE).unwrap();
+        let previous = &record[&keybinding_name(&old.key, old.when.as_deref())].value;
+        assert_eq!(previous["remove"], true);
+        let current =
+            &record[&keybinding_name(&replacement.key, replacement.when.as_deref())].value;
+        assert_eq!(current["remove"], false);
+        assert_eq!(current["command"], replacement.command);
+        let same_field = rule("MOD + Y", "example.action", Some("sidebar"));
+        core.save_keybinding(&same_field).unwrap();
+        let record = core.store.account_record(ZONE).unwrap();
+        let current = &record[&keybinding_name(&same_field.key, same_field.when.as_deref())].value;
+        assert_eq!(current["remove"], false);
+        assert_eq!(current["key"], "MOD + Y");
+        let removed = KeybindingRule {
+            remove: true,
+            ..same_field
+        };
+        core.save_keybinding(&removed).unwrap();
+        let record = core.store.account_record(ZONE).unwrap();
+        assert_eq!(
+            record[&keybinding_name(&removed.key, removed.when.as_deref())].value["remove"],
+            true
+        );
     }
 
     #[test]
