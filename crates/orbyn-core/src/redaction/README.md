@@ -16,12 +16,14 @@ decide where each applies (Settings › Secrets, W4).
 | Surface | Set | Settings can change it |
 | --- | --- | --- |
 | Crew: H2 scan, ledger rows, evidence, every Crew object | `Redactor::locked`, every format | No, never. It reads no setting |
+| What is shown back to a person: the Crew ledger and the audit log's `detail` | The person's own patterns | Patterns, by adding or editing one |
 | Engine failure text and server error text (`agents`) | `Redactor::locked`, on top of their own rules | No |
 | Terminal blocks | Formats left on, then the person's patterns | Yes, one switch |
 | What agents read | The same, unless the project is switched off | Yes, one switch, and one per project |
 
 Terminal blocks and the agent context are not built yet; `Core::redactor(surface, project)` is the
-one door they will use. Until then only Crew and the two failure-text paths apply redaction.
+one door they will use. Until then only Crew, what is shown back to a person (`display_redactor`)
+and the two failure-text paths apply redaction.
 
 ## Rules
 
