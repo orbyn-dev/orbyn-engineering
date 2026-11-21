@@ -89,7 +89,10 @@ pub async fn tool_info(
     State(state): State<AppState>,
     Path((id, render_id)): Path<(String, String)>,
 ) -> ApiResult<impl IntoResponse> {
-    let info = state.core.mcp_app_tool_info(&id, &render_id).await?;
+    let info = state
+        .core
+        .mcp_app_tool_info(&id, &render_id, LOCAL_USER)
+        .await?;
     Ok(Json(info))
 }
 

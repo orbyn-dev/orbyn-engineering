@@ -17,6 +17,8 @@ use crate::error::{CoreError, Result};
 use crate::governance::policy;
 use crate::store::AuditRecord;
 
+use super::flight::TOOL_INFO_READS;
+
 /// The resource scheme MCP Apps use for their pages.
 pub const RESOURCE_SCHEME: &str = "ui://";
 /// The MIME type of an MCP App page.
@@ -316,30 +318,63 @@ impl Core {
         Ok(result)
     }
 
+    /// A deny rule on `mcp_app:<server>:tool_info` refuses the read, as one on the
+    /// other app targets refuses theirs. The rules are only evaluated: the default
+    /// `ask` and an allow rule both pass, because the read grants nothing and executes
+    /// nothing. Only a refusal is audited, and it is written before anything starts.
+    fn tool_info_gate(&self, thread_id: &str, server: &str, actor: &str) -> Result<()> {
+        let target = app_target(server, "tool_info");
+        let rules = self.store.list_rules()?;
+        let decision = policy::evaluate(&rules, ActionKind::Tool, &target, "direct");
+        if decision.effect != PolicyEffect::Deny {
+            return Ok(());
+        }
+        self.store.append_audit(&AuditRecord {
+            actor: actor.to_owned(),
+            action: "action.deny".into(),
+            target,
+            decision: Some(PolicyEffect::Deny),
+            source: decision.source,
+            thread_id: Some(thread_id.to_owned()),
+            run_id: None,
+            detail: json!({ "reason": decision.reason, "kind": ActionKind::Tool }),
+        })?;
+        Err(CoreError::PolicyDenied(
+            "A rule denies reading this app's tool.".into(),
+        ))
+    }
+
     /// The app's own tool as its server advertises it: name, description and input
     /// schema only. The page and the request name nothing: the tool is the render's own
     /// recorded one and every field comes from the server's answer. A server that
-    /// cannot be asked is an error, never empty or stale metadata.
+    /// cannot be asked is an error, never empty or stale metadata. Reads are bounded:
+    /// at most a few engine sessions at once for the whole service, and identical
+    /// concurrent reads of one render share one session (see `flight`).
     pub async fn mcp_app_tool_info(
         &self,
         thread_id: &str,
         render_id: &str,
+        actor: &str,
     ) -> Result<McpAppToolInfo> {
         let (thread, scope) = self.file_scope(thread_id)?;
         let app = self.render_app(thread_id, render_id)?;
         let (server, tool) =
             recorded_app_parts(&app).ok_or_else(|| CoreError::NotFound("app".into()))?;
+        self.tool_info_gate(thread_id, server, actor)?;
         let driver = self.engines.driver(&thread.engine)?;
-        let read = driver.mcp_app_tool_info(&scope.checkout, server, tool);
-        let Some(descriptor) =
-            tokio::time::timeout(APP_CALL_BUDGET, read)
-                .await
-                .map_err(|_| {
-                    CoreError::EngineUnavailable(
-                        "The app's server took too long to list its tools.".into(),
-                    )
-                })??
-        else {
+        let (checkout, server_name, tool_name) =
+            (scope.checkout.clone(), server.to_owned(), tool.to_owned());
+        let read = async move {
+            let read = driver.mcp_app_tool_info(&checkout, &server_name, &tool_name);
+            match tokio::time::timeout(APP_CALL_BUDGET, read).await {
+                Ok(read) => read,
+                Err(_) => Err(CoreError::EngineUnavailable(
+                    "The app's server took too long to list its tools.".into(),
+                )),
+            }
+        };
+        let key = (thread_id.to_owned(), render_id.to_owned());
+        let Some(descriptor) = TOOL_INFO_READS.run(key, read).await? else {
             return Err(CoreError::NotFound("tool".into()));
         };
         advertised_tool_info(&descriptor, tool)

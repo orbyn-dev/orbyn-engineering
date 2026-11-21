@@ -538,3 +538,138 @@ async fn an_app_tool_info_read_fails_closed_when_its_server_cannot_answer() {
         service.stop().await;
     }
 }
+
+#[tokio::test]
+async fn concurrent_identical_tool_info_reads_share_one_engine_session() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    std::fs::write(dir.path().join("mcp-app-tools-slow"), b"").unwrap();
+
+    // Six cards (or six mounts of one) ask at once: they share a single engine session.
+    let route = format!("/api/threads/{thread}/mcp-apps/{render}/tool-info");
+    let replies = futures_util::future::join_all((0..6).map(|_| service.get(&route).send())).await;
+    for reply in replies {
+        let reply = reply.unwrap();
+        assert_eq!(reply.status(), 200);
+        let info: Value = reply.json().await.unwrap();
+        assert_eq!(info["name"], "show_widget");
+        assert_eq!(info["description"], "Shows a widget");
+    }
+    assert_eq!(
+        launches(&launch_file, "codex-app-tools").len(),
+        1,
+        "one spawn for six identical concurrent reads"
+    );
+
+    // Single-flight is not a cache: a read after the flight ended asks the engine again.
+    let (status, _) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        launches(&launch_file, "codex-app-tools").len(),
+        2,
+        "nothing is kept once the flight completed"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn a_deny_rule_refuses_a_tool_info_read_before_any_server_starts() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    let info_rows = |rows: &[(i64, String, String)]| {
+        rows.iter()
+            .filter(|(_, _, target)| target == "mcp_app:demo:tool_info")
+            .map(|(_, action, _)| action.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // The default is Ask, which never refuses a read that grants nothing; a success
+    // writes no audit row.
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(info_rows(&audit_targets(&service, &thread).await).is_empty());
+    assert_eq!(launches(&launch_file, "codex-app-tools").len(), 1);
+
+    // A deny rule on another server does not touch this app.
+    let (status, body) = service
+        .send(
+            "/api/policy/rules",
+            json!({ "effect": "deny", "kind": "tool", "pattern": "mcp_app:elsewhere:*" }),
+        )
+        .await;
+    assert!(status < 300, "{body}");
+    assert_eq!(tool_info(&service, &thread, &render).await.0, 200);
+    assert!(info_rows(&audit_targets(&service, &thread).await).is_empty());
+
+    // A deny rule on this app's server refuses the read before the engine is started.
+    let (status, body) = service
+        .send(
+            "/api/policy/rules",
+            json!({ "effect": "deny", "kind": "tool", "pattern": "mcp_app:demo:*" }),
+        )
+        .await;
+    assert!(status < 300, "{body}");
+    let spawned = launches(&launch_file, "codex-app-tools").len();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        launches(&launch_file, "codex-app-tools").len(),
+        spawned,
+        "a refused read starts no server"
+    );
+    assert_eq!(
+        info_rows(&audit_targets(&service, &thread).await),
+        vec!["action.deny".to_owned()],
+        "one deny row, and no row for the successful reads"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn an_app_tool_info_read_with_no_tools_object_is_a_502_not_a_404() {
+    // The server answered but sent no tools object (or a non-object): its state is
+    // unknown, which is not the same as "not advertised".
+    for marker in ["mcp-app-tools-absent", "mcp-app-tools-not-object"] {
+        let dir = TempDir::new();
+        let launch_file = dir.path().join("launches.jsonl");
+        let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+        let render = app_render(&service, &thread).await;
+        std::fs::write(dir.path().join(marker), b"").unwrap();
+        let (status, body) = tool_info(&service, &thread, &render).await;
+        assert_eq!(status, 502, "{marker}: {body}");
+        assert_eq!(body["code"], "engine_unavailable", "{marker}: {body}");
+        service.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn an_app_tool_info_filters_a_multi_entry_reply_by_exact_server_name() {
+    // A reply that lists several servers, the asked one between two others that carry a
+    // tool of the same name: only the asked server's own descriptor comes back.
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    std::fs::write(dir.path().join("mcp-app-multi"), b"").unwrap();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["description"], "Shows a widget", "{body}");
+    assert!(!body.to_string().contains("SERVER"), "{body}");
+    service.stop().await;
+
+    // An engine that ignores serverName and answers with another server only cannot
+    // make that server's tool the app's: it is a 502, never the other descriptor.
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    std::fs::write(dir.path().join("mcp-app-ignores-server"), b"").unwrap();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 502, "{body}");
+    assert!(!body.to_string().contains("OTHER SERVER"), "{body}");
+    service.stop().await;
+}

@@ -133,7 +133,40 @@ pub(crate) fn codex() {
                 // An MCP App's host reads one server by name; no name is the Tools page.
                 if let Some(server) = params["serverName"].as_str() {
                     record_launch("codex-app-tools", &[params.to_string()]);
-                    if sibling_exists("mcp-app-server-down") {
+                    if sibling_exists("mcp-app-tools-slow") {
+                        // A read that stays in flight long enough for concurrent ones to arrive.
+                        std::thread::sleep(std::time::Duration::from_millis(700));
+                    }
+                    if sibling_exists("mcp-app-ignores-server") {
+                        // An older engine that ignores `serverName`: it answers with a
+                        // different server only, whose tool carries the same name.
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            other_server_entry(),
+                        ] } }));
+                    } else if sibling_exists("mcp-app-multi") {
+                        // Every configured server, in a fixed order that puts the asked one
+                        // between two others: the exact name must pick it.
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            other_server_entry(),
+                            { "name": server, "authStatus": "unsupported", "runtimeStatus": "connected",
+                              "tools": { "show_widget": {
+                                  "name": "show_widget", "description": "Shows a widget",
+                                  "inputSchema": { "type": "object" } } } },
+                            { "name": "third", "authStatus": "unsupported", "runtimeStatus": "connected",
+                              "tools": { "show_widget": {
+                                  "name": "show_widget", "description": "THIRD SERVER",
+                                  "inputSchema": { "type": "object" } } } },
+                        ] } }));
+                    } else if sibling_exists("mcp-app-tools-absent") {
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            { "name": server, "authStatus": "unsupported", "runtimeStatus": "connected" },
+                        ] } }));
+                    } else if sibling_exists("mcp-app-tools-not-object") {
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            { "name": server, "authStatus": "unsupported", "runtimeStatus": "connected",
+                              "tools": [{ "name": "show_widget" }] },
+                        ] } }));
+                    } else if sibling_exists("mcp-app-server-down") {
                         send(
                             &json!({ "id": id, "error": { "code": -32000, "message": "SECRET-MARKER server refused" } }),
                         );
@@ -480,4 +513,14 @@ pub(crate) fn codex() {
             }
         }
     }
+}
+
+/// A configured server that is not the one asked for, with a tool of the same name.
+fn other_server_entry() -> serde_json::Value {
+    json!({
+        "name": "other", "authStatus": "unsupported", "runtimeStatus": "connected",
+        "tools": { "show_widget": {
+            "name": "show_widget", "description": "OTHER SERVER",
+            "inputSchema": { "type": "object" } } },
+    })
 }
