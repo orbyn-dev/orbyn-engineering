@@ -2358,7 +2358,10 @@ characters, without words that look like a path, an address (`host:port`), an `@
 value or a 20-character token, and cut at 160 characters. It is not log text.
 It follows the system light or dark appearance; the app's own theme choice lives in the
 product origin and does not reach this page, and Dim is not offered here.
-There are no default core/plugin command permissions; the one product command, `crew_presence`, is described below. The startup document is embedded,
+There are no default core/plugin command permissions. Of the five app-owned commands,
+the product document may call only `crew_presence` and `person_key`; the main window
+capability and each command's runtime origin check enforce that split. The explicit
+macOS title-bar capability grants only dragging and toggle-maximize. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
 the service, which asks the shell over stdin/stdout; results return through
 `GET /api/shell/events`, which also carries `data_changed` when data the service answers from
@@ -2379,8 +2382,11 @@ first without using it, runs its other checks, then takes it. A service without 
 nonce in `x-orbyn-confirm` is `403 presence_required`. No caller that only speaks HTTP to the
 service can approve once, with or without the service token. This is not OS-level presence: a
 process of the same OS user can still drive the native dialog (Accessibility, SendInput), read the
-shell's memory or write into its pipe. The devtools feature is on in release builds, so a script in
-the page can call `invoke` but cannot click the native dialog (known exposure, issue #532).
+shell's memory or write into its pipe. Ordinary release builds omit devtools and its menu/shortcut;
+debug builds and technical-tester builds with the explicit Cargo `devtools` feature retain them
+(see docs/setup.md). This removes the shipped inspector, not the product page's IPC authority:
+a hostile script in the product origin can still call its allowed `invoke` commands, but cannot
+click the native dialog. The startup commands still require the separate startup document.
 The shell's side is `desktop/src-tauri/src/presence.rs`: the Tauri command `crew_presence(hold_id)`,
 granted to the `main` window by the `allow-crew-presence` permission and allowed at run time only
 from the bundled product document (`desktop_origin::is_application`). It sends `presence_describe`,
