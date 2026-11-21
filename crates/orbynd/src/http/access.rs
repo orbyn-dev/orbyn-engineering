@@ -50,6 +50,9 @@ impl CallerClass {
 pub struct PersonRefusal {
     pub method: String,
     pub route: String,
+    /// The name of the one request field a handler refused (`FIELD_LEVEL`), a fixed label and never a value. `None` for a
+    /// route that is `Person` as a whole.
+    pub field: Option<&'static str>,
     pub caller: CallerClass,
     pub code: &'static str,
 }
@@ -62,6 +65,14 @@ pub const REFUSAL_WINDOW: Duration = Duration::from_secs(60);
 /// Most `(route, caller)` pairs remembered. Routes come from the matched-pattern table, so the real count is far below
 /// this; the bound keeps the map small whatever a caller sends.
 const REFUSAL_KEYS: usize = 1024;
+
+/// The audit target: `METHOD route`, plus ` [field]` for a handler-level refusal.
+pub fn refusal_target(method: &str, route: &str, field: Option<&str>) -> String {
+    match field {
+        Some(field) => format!("{method} {route} [{field}]"),
+        None => format!("{method} {route}"),
+    }
+}
 
 struct Refusals {
     sink: RefusalSink,
@@ -176,17 +187,38 @@ impl Access {
     }
 
     /// Who is calling, from the credential and the origin. `require_auth` has already passed.
-    pub fn caller_class(&self, request: &Request<Body>) -> CallerClass {
-        if self.cookie_valid(request.headers()) || request.headers().contains_key(header::ORIGIN) {
+    pub fn caller_class(&self, headers: &HeaderMap) -> CallerClass {
+        if self.cookie_valid(headers) || headers.contains_key(header::ORIGIN) {
             CallerClass::Browser
         } else {
             CallerClass::ServiceToken
         }
     }
 
-    /// Writes one audit row for a refused `Person` call unless the same route and class already wrote one this minute.
-    /// A failed write is logged and nothing more: the caller still gets its refusal.
-    pub fn audit_person_refusal(&self, method: &str, route: &str, caller: CallerClass) {
+    /// `person_check` for a handler that checks the key for part of its request (`FIELD_LEVEL`). A refusal is audited
+    /// through the same path as the route-level one, under `field`, and returned unchanged. `route` is the matched route
+    /// pattern (`MatchedPath`), never the URL.
+    pub fn person_check_field(
+        &self,
+        headers: &HeaderMap,
+        method: &str,
+        route: &str,
+        field: &'static str,
+    ) -> Result<(), ApiFailure> {
+        self.person_check(headers).inspect_err(|_| {
+            self.audit_person_refusal(method, route, Some(field), self.caller_class(headers));
+        })
+    }
+
+    /// Writes one audit row for a refused `Person` call unless the same route, field and class already wrote one this
+    /// minute. A failed write is logged and nothing more: the caller still gets its refusal.
+    pub fn audit_person_refusal(
+        &self,
+        method: &str,
+        route: &str,
+        field: Option<&'static str>,
+        caller: CallerClass,
+    ) {
         let Some(refusals) = &self.refusals else {
             return;
         };
@@ -196,7 +228,7 @@ impl Access {
                 .seen
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let key = (format!("{method} {route}"), caller);
+            let key = (refusal_target(method, route, field), caller);
             if seen
                 .get(&key)
                 .is_some_and(|last| now.saturating_duration_since(*last) < REFUSAL_WINDOW)
@@ -214,6 +246,7 @@ impl Access {
         let refusal = PersonRefusal {
             method: method.to_owned(),
             route: route.to_owned(),
+            field,
             caller,
             code: self.refusal_code(),
         };

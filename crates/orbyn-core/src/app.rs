@@ -419,19 +419,24 @@ impl Core {
         })
     }
 
-    /// Records a refused request to a person-only route. The row names the route pattern and the caller class, and holds
+    /// Records a refused request to a person-only route. The row names the route pattern (and, for a handler-level refusal, the name of the field) and the caller class, and holds
     /// no body, header or token. `thread_id` is empty: a refusal belongs to no thread.
     pub fn record_person_route_refusal(
         &self,
         method: &str,
         route: &str,
+        field: Option<&str>,
         caller: &str,
         code: &str,
     ) -> Result<i64> {
+        let target = match field {
+            Some(field) => format!("{method} {route} [{field}]"),
+            None => format!("{method} {route}"),
+        };
         self.store.append_audit(&crate::store::AuditRecord {
             actor: caller.to_owned(),
             action: "person_route.refused".to_owned(),
-            target: format!("{method} {route}"),
+            target,
             decision: Some(orbyn_contracts::PolicyEffect::Deny),
             source: "access".to_owned(),
             thread_id: None,
@@ -439,6 +444,7 @@ impl Core {
             detail: serde_json::json!({
                 "route": route,
                 "method": method,
+                "field": field,
                 "caller": caller,
                 "code": code,
                 "note": "A person-only route was refused. Repeats inside a minute write no new row.",

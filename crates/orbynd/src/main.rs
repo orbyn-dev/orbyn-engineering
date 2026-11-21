@@ -414,6 +414,7 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
                     core.record_person_route_refusal(
                         &refusal.method,
                         &refusal.route,
+                        refusal.field,
                         refusal.caller.as_str(),
                         refusal.code,
                     )
