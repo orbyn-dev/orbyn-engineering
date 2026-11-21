@@ -90,6 +90,7 @@ impl Core {
 
     /// One pass of both listeners with nothing to stop it and no rotation: the schedules that are due, the CI failures
     /// at the heads the crews watch, and the file triggers that have no crew.
+    #[cfg(test)]
     pub(crate) async fn crew_background_listeners_tick(self: &Arc<Self>, now: i64) -> Result<()> {
         self.crew_background_listeners_pass(now, 0, &CancellationToken::new())
             .await
