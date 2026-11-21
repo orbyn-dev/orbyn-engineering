@@ -28,7 +28,13 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "capacity" },
     { name: "settings", section: "crew", crewPage: "coverage" },
     { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app", from: "capacity" },
+    { name: "settings", section: "crew", crewPage: "coverage", from: "escapes" },
+    { name: "settings", section: "crew", crewPage: "capacity", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "escapes" },
+    { name: "settings", section: "crew", crewPage: "escapes", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "possible", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "escape-settings" },
     { name: "settings", section: "crew", crewPage: "escape", id: "esc/1" },
     { name: "settings", section: "crew", crewPage: "backtest" },
     { name: "settings", section: "crew", crewPage: "estimate" },
@@ -47,6 +53,18 @@ describe("routes", () => {
     expect(parseRoute("#/settings/crew/nope")).toEqual({ name: "settings", section: "crew" });
     // An id belongs only to the pages that name one.
     expect(parseRoute("#/settings/crew/escapes?id=x")).toEqual({ name: "settings", section: "crew", crewPage: "escapes" });
+  });
+
+  it("names the new escape pages and where the coverage map was opened from, and nothing else", () => {
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "possible" })).toBe("#/settings/crew/escapes/possible");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "escape-settings" })).toBe("#/settings/crew/escapes/settings");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "coverage", repo: "p-app", from: "escapes" })).toBe("#/settings/crew/capacity/coverage?repo=p-app&from=escapes");
+    // The origin belongs to the coverage page only, and only the two known origins are read: anything else is no origin.
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "escapes", from: "capacity" })).toBe("#/settings/crew/escapes");
+    expect(parseRoute("#/settings/crew/capacity/coverage?from=capacity")).toEqual({ name: "settings", section: "crew", crewPage: "coverage", from: "capacity" });
+    expect(parseRoute("#/settings/crew/capacity/coverage?from=elsewhere")).toEqual({ name: "settings", section: "crew", crewPage: "coverage" });
+    expect(parseRoute("#/settings/crew/capacity/coverage?from=")).toEqual({ name: "settings", section: "crew", crewPage: "coverage" });
+    expect(parseRoute("#/settings/crew/escapes?from=capacity")).toEqual({ name: "settings", section: "crew", crewPage: "escapes" });
   });
 
   it("falls back to the list for a pull request link without a number", () => {

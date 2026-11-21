@@ -2,6 +2,7 @@ import { useRoute } from "../../../../product/state/route";
 import { LiveBacktest } from "../../backtest/live/LiveBacktest";
 import { CapacityEntry } from "../../capacity/live/CapacityEntry";
 import { LiveCapacity } from "../../capacity/live/LiveCapacity";
+import { LiveEscapeSettings } from "../../escape/live/LiveEscapeSettings";
 import { LiveEscapes } from "../../escape/live/LiveEscapes";
 import { AutonomyAreas } from "./AutonomyAreas";
 import { AutonomyThresholds } from "./AutonomyThresholds";
@@ -19,6 +20,7 @@ export function CrewSettingsSection() {
   const page = route.name === "settings" ? route.crewPage : undefined;
   const repo = route.name === "settings" ? route.repo : undefined;
   const id = route.name === "settings" ? route.id : undefined;
+  const from = route.name === "settings" ? route.from : undefined;
   return (
     <>
       <h1 className="sr-only" tabIndex={-1} data-page-title>Crew</h1>
@@ -28,11 +30,15 @@ export function CrewSettingsSection() {
         ) : page === "thresholds" ? (
           <AutonomyThresholds />
         ) : page === "capacity" ? (
-          <LiveCapacity view="settings" />
+          <LiveCapacity view="settings" initial={repo} />
         ) : page === "coverage" ? (
-          <LiveCapacity view="coverage" initial={repo} />
+          <LiveCapacity view="coverage" initial={repo} from={from} />
         ) : page === "escapes" ? (
-          <LiveEscapes view="log" />
+          <LiveEscapes view="log" initial={repo} />
+        ) : page === "possible" ? (
+          <LiveEscapes view="possible" initial={repo} />
+        ) : page === "escape-settings" ? (
+          <LiveEscapeSettings />
         ) : page === "escape" ? (
           <LiveEscapes view="detail" id={id} />
         ) : page === "backtest" ? (
