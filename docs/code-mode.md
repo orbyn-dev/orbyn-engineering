@@ -369,3 +369,9 @@ own reply. Swap the client for the generated types and routes when the backend m
 - **Untrusted text.** The script, logs, results and call previews are React text, never markup or links, never logged, never opened.
 - **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
   the Orbyn group when an engine reports them.
+- **When the real route lands.** `PUT /api/engines/:id/code-mode` changes what an engine may call, so it is a Person-class write
+  (`web/src/api/personKey.ts` and the route class table in `crates/orbynd`); add it there with the route, not after.
+- **Model-chosen text.** Run ids, tool names and statuses come from a model: records are kept in maps, an unknown status is shown as
+  unknown, the tool in "Always allow covers X" comes from the approval's own tool field and never from its summary, and arguments
+  are summarised (lists, objects, cut text with an ellipsis, "N more fields") so a card never looks complete when it is not.
+  Every call of a run keeps its Allow and Deny; only the first shows the script.

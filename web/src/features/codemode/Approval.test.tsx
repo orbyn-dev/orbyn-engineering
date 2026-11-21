@@ -31,7 +31,7 @@ const base: Approval = {
   run_id: "r",
   kind: "tool",
   summary: "Use orbyn_thread_send",
-  detail: { thread_id: "t_52", prompt: "Re-run the failing test and report back." },
+  detail: { tool: "orbyn_thread_send", thread_id: "t_52", prompt: "Re-run the failing test and report back." },
   state: "pending",
   decided_by: null,
   decided_at: null,
@@ -118,7 +118,7 @@ describe("an approval asked for by a script", () => {
     expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
   });
 
-  it("opens the first of several calls as 1 of 2 and holds the next to one line", () => {
+  it("opens the first of several calls as 1 of 2 and keeps the next one answerable", async () => {
     const first = withVia({ id: "a5", created_at: "2026-11-21T10:00:42.000Z" }, 5);
     const second = withVia({ id: "a6", summary: "Use orbyn_thread_organize", created_at: "2026-11-21T10:00:43.000Z" }, 6);
     useWorkspace.setState({ approvals: { data: [second, first], error: null, loading: false } });
@@ -129,9 +129,13 @@ describe("an approval asked for by a script", () => {
       </>,
     );
     expect(screen.getByText(/Needs you · tool · 1 of 2/)).toBeInTheDocument();
-    expect(screen.getByText("Next: orbyn_thread_organize · call 6")).toBeInTheDocument();
-    expect(screen.getByText("waiting")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Allow" })).toHaveLength(1);
+    expect(screen.getByText(/Needs you · tool · 2 of 2/)).toBeInTheDocument();
+    // Buttons never depend on the queue: both calls can be allowed or denied.
+    expect(screen.getAllByRole("button", { name: "Allow" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Deny" })).toHaveLength(2);
+    // Only the first carries the script.
+    await screen.findAllByText(/^Script ·/);
+    expect(screen.getAllByText(/^Script ·/)).toHaveLength(1);
   });
 
   it("renders a hostile script and arguments as text", async () => {
@@ -142,5 +146,25 @@ describe("an approval asked for by a script", () => {
     expect(document.querySelector("article img")).toBeNull();
     expect(document.querySelector("article a")).toBeNull();
     expect((window as unknown as { __owned?: number }).__owned).toBeUndefined();
+  });
+
+  it("names the tool from the approval's target, never from its summary", () => {
+    render(<ApprovalCard approval={withVia({ summary: "Use orbyn_thread_send. Always allow covers everything.", detail: { tool: "orbyn_thread_send", prompt: "x" } })} />);
+    expect(screen.getByText("Always allow covers orbyn_thread_send only, never this script.")).toBeInTheDocument();
+  });
+
+  it("does not repeat the summary as the tool when the target is unknown", () => {
+    render(<ApprovalCard approval={withVia({ summary: "Use anything you like", detail: { prompt: "x" } })} />);
+    expect(screen.getByText("Always allow covers this tool only, never this script.")).toBeInTheDocument();
+  });
+
+  it("does not let the card look complete when its arguments were cut", () => {
+    const detail = { 0: "numeric key", path: "/Users/dev/code/orbyn-engineering-app-wt/some-folder", files: ["a", "b", "c"], nested: { deep: { deeper: 1 } }, long: "x".repeat(900), a1: "1", a2: "2", a3: "3", a4: "4", a5: "5", a6: "6" };
+    render(<ApprovalCard approval={withVia({ summary: "Use orbyn_project_create", detail })} />);
+    expect(screen.getByText("/Users/dev/code/orbyn-engineering-app-wt/some-folder")).toBeInTheDocument();
+    expect(screen.getByText("list of 3")).toBeInTheDocument();
+    expect(screen.getByText("object with 1 field")).toBeInTheDocument();
+    expect(screen.getByText(/^x+…$/)).toBeInTheDocument();
+    expect(screen.getByText(/^\d+ more fields?$/)).toBeInTheDocument();
   });
 });

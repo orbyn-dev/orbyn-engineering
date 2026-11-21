@@ -14,8 +14,24 @@ import type { ApprovalVia } from "./types";
  * nothing in this file writes. The script and the calls come from the run record and are shown as text.
  */
 
-/** The tool the approval is for, from its "Use <tool>" summary. */
-export const toolOfApproval = (approval: Approval): string => approval.summary.replace(/^Use\s+/, "");
+/**
+ * The tool the approval is for, from the approval's own tool field (`detail.tool` or `detail.target`), never from its summary,
+ * which a model can influence. Null when the approval does not say: the card then says "this tool".
+ */
+export function toolOfApproval(approval: Approval): string | null {
+  const detail = approval.detail;
+  if (typeof detail !== "object" || detail === null || Array.isArray(detail)) return null;
+  for (const key of ["tool", "target"]) {
+    const value = detail[key];
+    if (typeof value === "string" && /^[A-Za-z0-9_.:-]{1,80}$/.test(value)) return value;
+  }
+  return null;
+}
+
+const callTitle = (approval: Approval): string => {
+  const tool = toolOfApproval(approval);
+  return tool ? `Use ${tool}` : approval.summary;
+};
 
 /** Where an approval stands among the pending approvals of the same run: first is open, the rest wait their turn. */
 export function useViaQueue(approval: Approval, via: ApprovalVia | null): { index: number; total: number } {
@@ -28,33 +44,58 @@ export function useViaQueue(approval: Approval, via: ApprovalVia | null): { inde
   return at < 0 ? { index: 0, total: 1 } : { index: at, total: mine.length };
 }
 
-/** The tool's own arguments as rows, when the approval's detail carries them as plain values. */
-function factRows(detail: JsonValue): [string, string][] {
-  if (typeof detail !== "object" || detail === null || Array.isArray(detail)) return [];
-  return Object.entries(detail)
-    .flatMap(([key, value]): [string, string][] => (typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? [[key, String(value).slice(0, 400)]] : []))
-    .slice(0, 8);
+const MAX_ROWS = 8;
+const MAX_VALUE = 400;
+const INDEX_KEY = /^(0|[1-9]\d*)$/;
+
+/** One argument as a short line. A list or an object is summarised, never dropped; a cut string ends in an ellipsis. */
+function shown(value: JsonValue): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `list of ${value.length}`;
+  if (typeof value === "object") {
+    const count = Object.keys(value).length;
+    return `object with ${count} ${count === 1 ? "field" : "fields"}`;
+  }
+  const text = String(value);
+  return text.length > MAX_VALUE ? `${text.slice(0, MAX_VALUE)}…` : text;
+}
+
+/**
+ * The tool's own arguments as rows. Named fields come before numeric keys (a JS object lists those first), at most eight
+ * rows show, and a line says how many more there are, so the card never looks complete when it is not.
+ */
+function factRows(detail: JsonValue): { rows: [string, string][]; more: number } {
+  if (typeof detail !== "object" || detail === null || Array.isArray(detail)) return { rows: [], more: 0 };
+  const entries = Object.entries(detail);
+  const ordered = [...entries.filter(([key]) => !INDEX_KEY.test(key)), ...entries.filter(([key]) => INDEX_KEY.test(key))];
+  return { rows: ordered.slice(0, MAX_ROWS).map(([key, value]) => [key.slice(0, 80), shown(value)]), more: Math.max(0, ordered.length - MAX_ROWS) };
 }
 
 /** What the call is: its tool, then its arguments, then where it came from. */
 export function ViaFacts({ approval, via, withTool = true }: { approval: Approval; via: ApprovalVia; withTool?: boolean }) {
-  const rows = factRows(approval.detail);
+  const { rows, more } = factRows(approval.detail);
   return (
     <>
       {withTool ? (
         <div className="approval-targets">
           <p className="approval-target">
             <Wrench size={14} aria-hidden />
-            <code>{approval.summary}</code>
+            <code>{callTitle(approval)}</code>
           </p>
         </div>
       ) : null}
-      {rows.map(([key, value]) => (
-        <p key={key} className="approval-kv">
+      {rows.map(([key, value], at) => (
+        <p key={`${at}-${key}`} className="approval-kv">
           <span>{key}</span>
           <b className="mono">{value}</b>
         </p>
       ))}
+      {more > 0 ? (
+        <p className="approval-kv">
+          <span>…</span>
+          <b>{more} more {more === 1 ? "field" : "fields"}</b>
+        </p>
+      ) : null}
       <p className="approval-kv">
         <span>From</span>
         <b>A Code Mode script · call {via.call}</b>
@@ -78,17 +119,7 @@ export function ViaContext({ via }: { via: ApprovalVia }) {
 
 /** The line under the buttons: Always allow is about the tool, never about the script. */
 export function ViaAlways({ approval }: { approval: Approval }) {
-  return <p className="cm-always">Always allow covers {toolOfApproval(approval)} only, never this script.</p>;
-}
-
-/** An approval that waits behind another call of the same run: one quiet line, opened when the one before it is answered. */
-export function ViaNext({ approval, via }: { approval: Approval; via: ApprovalVia }) {
-  return (
-    <div className="cm-next">
-      <span>Next: {toolOfApproval(approval)} · call {via.call}</span>
-      <span className="t3">waiting</span>
-    </div>
-  );
+  return <p className="cm-always">Always allow covers {toolOfApproval(approval) ?? "this tool"} only, never this script.</p>;
 }
 
 /** An answered approval: one quiet block with the tool, the answer, and what the script saw. */
@@ -98,7 +129,7 @@ export function ViaDone({ approval, via }: { approval: Approval; via: ApprovalVi
     <article className="cm-done" aria-label={approval.summary}>
       <div className="cm-tool">
         <Wrench size={14} aria-hidden />
-        <span>{approval.summary}</span>
+        <span>{callTitle(approval)}</span>
         <span className="cm-callno">call {via.call}</span>
       </div>
       <p className="cm-res">{allowed ? "Approved" : "Declined"}</p>

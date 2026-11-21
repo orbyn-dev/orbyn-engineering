@@ -68,7 +68,7 @@ export function CallList({ title, calls }: { title: string; calls: readonly Code
   return (
     <div className="cm-sec" role="group" aria-label={title}>
       <div className="cm-h">{title} · {calls.length}</div>
-      {shown.map((call) => <Row key={call.index} call={call} />)}
+      {shown.map((call, at) => <Row key={`${at}-${call.index}`} call={call} />)}
       {folded ? (
         <div className="cm-c cm-skip">
           <span className="ci" />

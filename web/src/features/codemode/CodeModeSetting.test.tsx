@@ -108,4 +108,24 @@ describe("the Code Mode switch of an engine", () => {
     render(<CodeModeSetting engine={engine({ id: "codex", name: "Codex" })} />);
     expect(await screen.findByText(/Codex also has its own code mode\. Both work, and neither needs the other\./)).toBeInTheDocument();
   });
+
+  it("ignores a write's answer that comes back after the engine changed", async () => {
+    let finish!: () => void;
+    vi.mocked(fetch).mockImplementation(async (_input, init) => {
+      if ((init as RequestInit | undefined)?.method === "PUT") {
+        await new Promise<void>((resolve) => (finish = resolve));
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ enabled: false }), { status: 200 });
+    });
+    const { rerender } = render(<CodeModeSetting engine={engine()} />);
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    rerender(<CodeModeSetting engine={engine({ id: "codex", name: "Codex" })} />);
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Use Code Mode" })).toBeEnabled());
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole("switch", { name: "Use Code Mode" })).not.toBeChecked();
+  });
 });

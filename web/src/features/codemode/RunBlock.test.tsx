@@ -327,3 +327,32 @@ describe("the other tools of the server", () => {
     expect(row).not.toHaveClass("s-wait");
   });
 });
+
+describe("a run id the model chose", () => {
+  it.each(["__proto__", "constructor", "toString"])("does not crash the card for %s", async (id) => {
+    render(<Trail items={[item(null, { endedAt: undefined }, { run_id: id })]} live />);
+    const row = await open();
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/api/code-runs/"))).toBe(true));
+    expect(row).toHaveClass("s-run");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector("button.tcr")).not.toBeNull();
+  });
+
+  it("does not crash when the reply names such a run", async () => {
+    render(<Trail items={[item({ status: "completed", runId: "__proto__", result: 1 })]} />);
+    await open();
+    expect(await screen.findByText("1")).toBeInTheDocument();
+  });
+});
+
+describe("text the model controls is capped", () => {
+  it("cuts an error message and a script with no record, and keeps keys unique", async () => {
+    const long = "e".repeat(50_000);
+    render(<Trail items={[item({ status: "error", runId: "run_x", error: { kind: "runtime", message: long } }, {}, { code: "x\n".repeat(100_000) })]} />);
+    await open();
+    const err = await screen.findByText(/^e+…?$/);
+    expect(err.textContent!.length).toBeLessThanOrEqual(4_100);
+    expect(document.querySelectorAll(".cm-line").length).toBeLessThanOrEqual(5);
+    expect(screen.getByLabelText("Script").textContent!.length).toBeLessThan(2_000);
+  });
+});

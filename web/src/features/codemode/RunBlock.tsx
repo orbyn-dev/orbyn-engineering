@@ -6,7 +6,7 @@ import { useNow } from "../../lib/useNow";
 import { parsed } from "../../product/timeline/toolTrace";
 import type { ToolItem } from "../../product/timeline/types";
 import { CallList } from "./CallList";
-import { boundedLines, callWord, codeToolOf, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
+import { boundedLines, callWord, capText, codeToolOf, MAX_SCRIPT_CHARS, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
 import { ScriptBox } from "./ScriptBox";
 import { useCodeRun } from "./useCodeRun";
 import type { RunView } from "./types";
@@ -70,10 +70,10 @@ function WaitingOn({ view }: { view: RunView }) {
   return (
     <div className="cm-sec cm-pend" role="group" aria-label="Waiting on">
       <div className="cm-h">Waiting on · {rows.length}</div>
-      {rows.map((entry) => {
+      {rows.map((entry, at) => {
         const held = view.calls.find((call) => call.index === entry.call)?.status;
         return (
-          <div key={entry.call} className="cm-c cm-wait">
+          <div key={`${at}-${entry.call}`} className="cm-c cm-wait">
             <span className="ci"><span className="status-dot" aria-hidden /></span>
             <span className="cn">{entry.call}</span>
             <span className="ct">{entry.tool}</span>
@@ -139,8 +139,8 @@ export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: bo
     const code = typeof args.code === "string" ? args.code : null;
     return (
       <div className="cb">
-        {code ? <ScriptBox script={code} /> : null}
-        <pre className="co" tabIndex={0}>{(item.result ?? item.output ?? "").slice(0, 4_000)}</pre>
+        {code ? <ScriptBox script={code.slice(0, MAX_SCRIPT_CHARS)} /> : null}
+        <pre className="co" tabIndex={0}>{capText(item.result ?? item.output ?? "", 4_000)}</pre>
         <div className="cf"><span className="tfm" />{inspect}</div>
       </div>
     );

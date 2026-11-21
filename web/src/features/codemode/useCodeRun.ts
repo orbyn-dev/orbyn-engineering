@@ -6,23 +6,23 @@ import type { CodeRunRecord } from "./types";
 const POLL_MS = 2_000;
 
 interface RunStore {
-  records: Record<string, CodeRunRecord>;
+  records: ReadonlyMap<string, CodeRunRecord>;
   /** Runs whose record could not be read (gone after seven days, or not this project's). They are not asked again. */
-  missing: Record<string, true>;
+  missing: ReadonlySet<string>;
 }
 
-const useRuns = create<RunStore>(() => ({ records: {}, missing: {} }));
+const useRuns = create<RunStore>(() => ({ records: new Map(), missing: new Set() }));
 const inflight = new Map<string, Promise<void>>();
 
 const settled = (record: CodeRunRecord | undefined) => record !== undefined && (record.status === "completed" || record.status === "error");
 
-/** One read of a run record, shared by every block that shows the run. A failed read marks the run missing; it never throws. */
+/** One read of a run record, shared by every block that shows the run. (Maps and sets, not plain objects: a run id comes from a model and may be `__proto__`.) A failed read marks the run missing; it never throws. */
 function refresh(runId: string): Promise<void> {
   const open = inflight.get(runId);
   if (open) return open;
   const read = getCodeRun(runId)
-    .then((record) => useRuns.setState((state) => ({ records: { ...state.records, [runId]: record }, missing: { ...state.missing } })))
-    .catch(() => useRuns.setState((state) => ({ missing: { ...state.missing, [runId]: true } })))
+    .then((record) => useRuns.setState((state) => ({ records: new Map(state.records).set(runId, record) })))
+    .catch(() => useRuns.setState((state) => ({ missing: new Set(state.missing).add(runId) })))
     .finally(() => inflight.delete(runId));
   inflight.set(runId, read);
   return read;
@@ -31,7 +31,7 @@ function refresh(runId: string): Promise<void> {
 /** Forgets everything read, for tests. */
 export function resetCodeRuns() {
   inflight.clear();
-  useRuns.setState({ records: {}, missing: {} });
+  useRuns.setState({ records: new Map(), missing: new Set() });
 }
 
 /**
@@ -40,14 +40,14 @@ export function resetCodeRuns() {
  * reply then. In a production build nothing is read.
  */
 export function useCodeRun(runId: string | null, keepWatching = false): CodeRunRecord | null {
-  const record = useRuns((state) => (runId ? state.records[runId] : undefined));
+  const record = useRuns((state) => (runId ? state.records.get(runId) : undefined));
   useEffect(() => {
     if (!runId || !codeModeLive) return;
     let stopped = false;
     const tick = () => {
       const now = useRuns.getState();
-      if (stopped || now.missing[runId]) return;
-      if (settled(now.records[runId]) && !keepWatching) return;
+      if (stopped || now.missing.has(runId)) return;
+      if (settled(now.records.get(runId)) && !keepWatching) return;
       void refresh(runId);
     };
     tick();

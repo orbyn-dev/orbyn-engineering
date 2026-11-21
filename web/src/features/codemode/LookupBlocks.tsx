@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import "./codemode.css";
 import { callDuration } from "../../lib/format";
+import { capText } from "./model";
 import { parsed } from "../../product/timeline/toolTrace";
 import type { ToolItem } from "../../product/timeline/types";
 
@@ -33,10 +34,11 @@ export function hitsOf(text: string | null): Hit[] | null {
   const list = Array.isArray(value) ? value : isRecord(value) ? [value.results, value.hits, value.tools, value.paths].find(Array.isArray) : null;
   if (!Array.isArray(list)) return null;
   return list.flatMap((entry): Hit[] => {
-    if (typeof entry === "string") return [{ path: entry, line: null }];
+    if (typeof entry === "string") return [{ path: capText(entry, 200), line: null }];
     if (!isRecord(entry)) return [];
     const path = asText(entry.path) ?? asText(entry.name);
-    return path ? [{ path, line: asText(entry.signature) ?? asText(entry.summary) ?? asText(entry.description) }] : [];
+    const line = asText(entry.signature) ?? asText(entry.summary) ?? asText(entry.description);
+    return path ? [{ path: capText(path, 200), line: line === null ? null : capText(line, 400) }] : [];
   }).slice(0, 50);
 }
 
@@ -53,7 +55,7 @@ export function declarationsOf(text: string | null): { code: string; unknown: st
 const argRows = (item: ToolItem): [string, string][] =>
   Object.entries(parsed(item.args)).flatMap(([key, value]) => {
     const shown = typeof value === "string" || typeof value === "number" ? String(value) : Array.isArray(value) ? value.filter((part) => typeof part === "string").join(", ") : null;
-    return shown === null ? [] : [[key, shown]];
+    return shown === null ? [] : [[key.slice(0, 80), capText(shown, 400)]];
   });
 
 function Frame({ item, ms, inspect, children }: { item: ToolItem; ms: number | null; inspect: ReactNode; children: ReactNode }) {
@@ -62,9 +64,9 @@ function Frame({ item, ms, inspect, children }: { item: ToolItem; ms: number | n
     <div className="cb">
       {rows.length ? (
         <div className="kvs">
-          {rows.flatMap(([key, value]) => [
-            <b key={`k-${key}`} data-find-skip>{key}</b>,
-            <span key={`v-${key}`}>{value}</span>,
+          {rows.flatMap(([key, value], at) => [
+            <b key={`k-${at}-${key}`} data-find-skip>{key}</b>,
+            <span key={`v-${at}-${key}`}>{value}</span>,
           ])}
         </div>
       ) : null}
@@ -87,8 +89,8 @@ export function CodeSearchBlock({ item, ms, inspect }: { item: ToolItem; ms: num
         <div className="cm-hits">
           <div className="cm-h">{hits.length} {hits.length === 1 ? "tool" : "tools"}</div>
           {hits.length === 0 ? <div className="co mute">No tool matches that.</div> : null}
-          {hits.map((hit) => (
-            <div key={hit.path} className="cm-hit">
+          {hits.map((hit, at) => (
+            <div key={`${at}-${hit.path}`} className="cm-hit">
               <b>{hit.path}</b>
               {hit.line ? <span>{hit.line}</span> : null}
             </div>
@@ -111,7 +113,7 @@ export function CodeDescribeBlock({ item, ms, inspect }: { item: ToolItem; ms: n
           {found.unknown.length > 0 ? (
             <div className="cm-sec">
               <div className="cm-h">Not available · {found.unknown.length}</div>
-              <div className="co">{found.unknown.map((path) => <span key={path} className="mono">{path}{"\n"}</span>)}</div>
+              <div className="co">{found.unknown.slice(0, 16).map((path, at) => <span key={`${at}-${path}`} className="mono">{capText(path, 200)}{"\n"}</span>)}</div>
             </div>
           ) : null}
         </>

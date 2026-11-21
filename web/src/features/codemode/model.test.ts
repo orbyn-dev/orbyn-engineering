@@ -147,3 +147,11 @@ describe("the row", () => {
     expect(rowSummary(v, now).note).toBe("· 1 call");
   });
 });
+
+describe("names a model chose are only ever data", () => {
+  it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])("reads %s as an unknown word, not a property", (word) => {
+    expect(normalizeCall({ index: 1, tool: "t", status: word }).status).toBe("unknown");
+    const v = runView(record({ status: "error", error: { kind: word as "syntax", message: "x" } }), null)!;
+    expect(rowSummary(v, 0).note).toBe("· runtime error");
+  });
+});

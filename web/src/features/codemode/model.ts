@@ -1,6 +1,6 @@
 import { callDuration } from "../../lib/format";
 import type { Approval } from "../../api/types";
-import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeReply, CodeRunCallWire, CodeRunRecord, CodeRunStatus, RunView } from "./types";
+import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeRunError, CodeReply, CodeRunCallWire, CodeRunRecord, CodeRunStatus, RunView } from "./types";
 
 export const CODE_TOOLS = ["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run"] as const;
 export type CodeTool = "search" | "describe" | "run";
@@ -51,6 +51,12 @@ export function boundedLines(lines: readonly string[], max: number, chars: numbe
   return { shown: kept.map((line) => (line.length > chars ? `${line.slice(0, chars)}…` : line)), hidden: lines.length - kept.length };
 }
 
+/** Text a model or script controls is cut before it is drawn: `…` marks the cut. */
+export const capText = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+
+export const MAX_SCRIPT_CHARS = 65_536;
+const MAX_MESSAGE_CHARS = 4_000;
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The approval's `via`, or null. Display only: nothing that decides an approval reads it. */
@@ -62,7 +68,7 @@ export function viaOf(approval: Approval): ApprovalVia | null {
   return { codeRun: run, call, scriptSha256: typeof sha === "string" ? sha : null };
 }
 
-const CALL_WORDS: Record<string, CallStatus> = {
+const CALL_WORDS = new Map<string, CallStatus>(Object.entries({
   running: "running",
   started: "running",
   waiting: "waiting",
@@ -86,14 +92,14 @@ const CALL_WORDS: Record<string, CallStatus> = {
   in_flight: "interrupted",
   interrupted: "interrupted",
   lost: "interrupted",
-};
+}));
 
 /** A call from the record. A status this file does not know is "unknown", never a success. */
 export function normalizeCall(call: CodeRunCallWire): CodeCall {
   return {
     index: call.index,
     tool: call.tool,
-    status: CALL_WORDS[call.status] ?? "unknown",
+    status: (typeof call.status === "string" ? CALL_WORDS.get(call.status) : undefined) ?? "unknown",
     preview: typeof call.preview === "string" ? call.preview.slice(0, LIMITS.callPreviewChars) : null,
     resultBytes: typeof call.result_bytes === "number" ? call.result_bytes : null,
     durationMs: typeof call.duration_ms === "number" ? call.duration_ms : null,
@@ -134,20 +140,23 @@ export function readReply(text: string | null): CodeReply | null {
 
 /** What the block draws: the run record when it was read, otherwise only what the engine's reply carried. */
 export function runView(record: CodeRunRecord | null, reply: CodeReply | null, script: string | null = null): RunView | null {
+  const cap = (value: string | null) => (value === null ? null : value.slice(0, MAX_SCRIPT_CHARS));
+  const fit = (error: CodeRunError | null | undefined): CodeRunError | null =>
+    error ? { ...error, kind: KINDS.find((known) => known === error.kind) ?? "runtime", message: capText(String(error.message), MAX_MESSAGE_CHARS) } : null;
   if (record) {
     return {
       runId: record.run_id,
       status: record.status,
-      script: record.script ?? script,
+      script: cap(record.script ?? script),
       scriptSha256: record.script_sha256 ?? null,
       startedAt: record.started_at,
       endedAt: record.ended_at,
-      calls: record.calls.slice(0, LIMITS.calls).map(normalizeCall),
+      calls: (Array.isArray(record.calls) ? record.calls : []).slice(0, LIMITS.calls).map(normalizeCall),
       logs: record.logs ?? reply?.logs ?? [],
       logsTotal: record.logs_total ?? null,
       result: record.result !== undefined ? record.result : reply?.result,
       hasResult: record.result !== undefined || (reply !== null && "result" in reply),
-      error: record.error ?? reply?.error ?? null,
+      error: fit(record.error ?? reply?.error),
       pending: record.pending ?? reply?.pending ?? [],
       truncated: record.truncated === true || reply?.truncated === true,
       resumes: record.resumes ?? 0,
@@ -160,7 +169,7 @@ export function runView(record: CodeRunRecord | null, reply: CodeReply | null, s
   return {
     runId: reply.runId ?? null,
     status: reply.status,
-    script,
+    script: cap(script),
     scriptSha256: null,
     startedAt: null,
     endedAt: null,
@@ -169,7 +178,7 @@ export function runView(record: CodeRunRecord | null, reply: CodeReply | null, s
     logsTotal: null,
     result: reply.result,
     hasResult: "result" in reply,
-    error: reply.error ?? null,
+    error: fit(reply.error),
     pending: reply.pending ?? [],
     truncated: reply.truncated === true,
     resumes: 0,
@@ -181,13 +190,13 @@ export function runView(record: CodeRunRecord | null, reply: CodeReply | null, s
 
 export type RowTone = "run" | "done" | "wait" | "fail";
 
-const ERROR_NOTES: Record<CodeErrorKind, string> = {
+const ERROR_NOTES = new Map<string, string>(Object.entries({
   syntax: "· syntax error",
   runtime: "· runtime error",
   limit: "· limit",
   denied: "· denied",
   lost: "· core restarted",
-};
+}));
 
 export const callWord = (count: number): string => `${count} ${count === 1 ? "call" : "calls"}`;
 
@@ -207,7 +216,7 @@ export function rowSummary(view: RunView, now: number): { note: string; due: str
   const calls = view.calls.length;
   if (view.status === "error") {
     const kind = view.error?.kind ?? "runtime";
-    return { note: ERROR_NOTES[kind], due: kind === "lost" ? "Lost" : "Failed", tone: "fail" };
+    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due: kind === "lost" ? "Lost" : "Failed", tone: "fail" };
   }
   if (view.status === "paused") {
     const finished = view.calls.filter((call) => call.status !== "waiting" && call.status !== "running").length;

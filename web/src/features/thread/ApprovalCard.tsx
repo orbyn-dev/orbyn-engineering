@@ -9,7 +9,7 @@ import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { touchesOf } from "./approvalDetail";
 import { approvalFromContent } from "../../product/timeline/projection";
-import { ViaAlways, ViaClosed, ViaContext, ViaDone, ViaFacts, ViaNext, useViaQueue, viaOf } from "../codemode";
+import { ViaAlways, ViaClosed, ViaContext, ViaDone, ViaFacts, useViaQueue, viaOf } from "../codemode";
 
 const outcome = {
   allowed: { icon: CircleCheck, label: "Approved" },
@@ -79,7 +79,6 @@ export function ApprovalCard({ approval, minimapKey }: { approval: Approval; min
     if (approval.state === "expired") return <ViaClosed approval={approval} via={via} />;
     return <ViaDone approval={approval} via={via} />;
   }
-  if (via && queue.index > 0) return <ViaNext approval={approval} via={via} />;
   return (
     <article className={via ? "approval cm-apr" : "approval"} data-minimap={minimapKey} data-pending={decided ? undefined : ""} aria-label={approval.summary} tabIndex={decided ? undefined : -1}>
       {decided ? null : (
@@ -104,7 +103,8 @@ export function ApprovalCard({ approval, minimapKey }: { approval: Approval; min
           ))}
         </div>
       )}
-      {via ? <ViaContext via={via} /> : null}
+      {/* Only the first of several calls of one run carries the script: the rest are quieter, never without their buttons. */}
+      {via && queue.index === 0 ? <ViaContext via={via} /> : null}
       {decided || via ? null : (
         <>
           {why ? (

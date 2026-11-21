@@ -17,12 +17,18 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const writing = useRef(false);
+  const current = useRef(engine.id);
+  current.current = engine.id;
   const codex = (engine.instance_of ?? engine.id) === "codex";
 
   useEffect(() => {
     if (!codeModeLive) return;
     const stop = new AbortController();
     setOn(null);
+    // A write still out for the engine this page just left does not hold this one.
+    writing.current = false;
+    setBusy(false);
+    setFailure(null);
     getCodeMode(engine.id, stop.signal)
       .then((stored) => setOn(stored.enabled === true))
       .catch((reason: unknown) => {
@@ -35,18 +41,23 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
 
   const flip = async () => {
     // One click, one write: a second press while the first is out does nothing.
-    if (writing.current || on === null) return;
+    // Dead code in a production build, where there is no route to write to.
+    if (!codeModeLive || writing.current || on === null) return;
     writing.current = true;
     setBusy(true);
     setFailure(null);
+    const target = engine.id;
     try {
-      const stored = await putCodeMode(engine.id, !on);
-      setOn(stored.enabled === true);
+      const stored = await putCodeMode(target, !on);
+      // The page may have moved to another engine while the write was out: its answer is not this engine's.
+      if (current.current === target) setOn(stored.enabled === true);
     } catch (reason) {
-      setFailure(`${toFailure(reason).message} Try again.`);
+      if (current.current === target) setFailure(`${toFailure(reason).message} Try again.`);
     } finally {
-      writing.current = false;
-      setBusy(false);
+      if (current.current === target) {
+        writing.current = false;
+        setBusy(false);
+      }
     }
   };
 
