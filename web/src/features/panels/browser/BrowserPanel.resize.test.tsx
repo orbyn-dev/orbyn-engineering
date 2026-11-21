@@ -91,8 +91,14 @@ async function openToolbar(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "More page actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Show device toolbar" }));
   await user.selectOptions(screen.getByRole("combobox", { name: "Device" }), "phone");
-  await waitFor(() => expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toHaveTextContent("393 by 852"));
+  await waitFor(() => expectSize(393, 852));
 }
+
+/** What the toolbar's two fields read: the page's real size. */
+const expectSize = (width: number, height: number) => {
+  expect(screen.getByRole("spinbutton", { name: "Width" })).toHaveValue(String(width));
+  expect(screen.getByRole("spinbutton", { name: "Height" })).toHaveValue(String(height));
+};
 
 /** jsdom has no pointer capture, so the test provides it and watches the calls. */
 function stubPointerCapture() {
@@ -121,9 +127,9 @@ it("resizes the page once from a dragged edge, then shows it as custom", async (
   expect(capture.taken).toHaveBeenCalledWith(1);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 520, clientY: 300 });
   // The page follows the pointer while the button is held.
-  expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toHaveTextContent("450 by 852");
+  expectSize(450, 852);
   fireEvent.pointerMove(handle, { pointerId: 1, clientX: 540, clientY: 300 });
-  expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toHaveTextContent("507 by 852");
+  expectSize(507, 852);
   expect(resizes(calls)).toHaveLength(before);
   fireEvent.pointerUp(handle, { pointerId: 1, clientX: 540, clientY: 300 });
   expect(capture.given).toHaveBeenCalledWith(1);
@@ -131,7 +137,7 @@ it("resizes the page once from a dragged edge, then shows it as custom", async (
   await waitFor(() => expect(resizes(calls)).toHaveLength(before + 1));
   expect(resizes(calls).at(-1)).toEqual({ width: 507, height: 852 });
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Device" })).toHaveValue("custom"));
-  expect(screen.getByRole("option", { name: "Custom, 507 by 852" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Custom" })).toBeInTheDocument();
 });
 
 it("commits a run of arrow keys as one resize", async () => {
@@ -145,7 +151,7 @@ it("commits a run of arrow keys as one resize", async () => {
   fireEvent.keyDown(handle, { key: "ArrowRight" });
   fireEvent.keyDown(handle, { key: "ArrowRight" });
   fireEvent.keyDown(handle, { key: "ArrowDown", shiftKey: true });
-  expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toHaveTextContent("413 by 902");
+  expectSize(413, 902);
 
   await waitFor(() => expect(resizes(calls)).toHaveLength(before + 1));
   expect(resizes(calls).at(-1)).toEqual({ width: 413, height: 902 });
@@ -160,7 +166,7 @@ it("leaves the page alone when a drag never moved", async () => {
   const handle = screen.getByRole("button", { name: /Resize the page from the left edge/ });
   fireEvent.pointerDown(handle, { pointerId: 2, button: 0, clientX: 100, clientY: 300 });
   fireEvent.pointerUp(handle, { pointerId: 2, clientX: 100, clientY: 300 });
-  expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toHaveTextContent("393 by 852");
+  expectSize(393, 852);
   expect(resizes(calls)).toHaveLength(before);
 });
 
@@ -178,7 +184,7 @@ it("keeps the size it had when the service refuses the resize", async () => {
   await waitFor(() =>
     expect(useUi.getState().toasts.at(-1)?.text).toContain("Couldn't resize the page. That size is refused."),
   );
-  expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toHaveTextContent("393 by 852");
+  await waitFor(() => expectSize(393, 852));
   expect(screen.getByRole("combobox", { name: "Device" })).toHaveValue("phone");
 });
 
@@ -196,7 +202,7 @@ it("draws the floating page as it is, with nothing to drag", async () => {
   expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 });
 
-it("keeps a sized page in its own box after the toolbar is hidden, with nothing left to drag", async () => {
+it("keeps a sized page in its own box after the toolbar is hidden, with its handles and a pill that brings the toolbar back", async () => {
   const user = userEvent.setup();
   const { calls } = serve();
   await openToolbar(user);
@@ -207,6 +213,117 @@ it("keeps a sized page in its own box after the toolbar is hidden, with nothing 
   expect(screen.queryByRole("toolbar", { name: "Device toolbar" })).toBeNull();
   // The page still has the size the preset gave it, so it keeps that shape.
   expect(document.querySelector(".browser-box")).not.toBeNull();
-  expect(screen.queryByRole("button", { name: /Resize the page/ })).toBeNull();
+  expect(screen.getAllByRole("button", { name: /Resize the page/ })).toHaveLength(5);
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(sent);
+  await user.click(screen.getByRole("button", { name: /393 by 852.*Show device toolbar/ }));
+  expect(screen.getByRole("toolbar", { name: "Device toolbar" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Show device toolbar/ })).toBeNull();
+});
+
+it("resizes once from a typed width on Enter, then reads Custom", async () => {
+  const user = userEvent.setup();
+  const { calls } = serve();
+  await openToolbar(user);
+  const before = resizes(calls).length;
+  const width = screen.getByRole("spinbutton", { name: "Width" });
+  await user.clear(width);
+  await user.type(width, "500");
+  expect(resizes(calls)).toHaveLength(before);
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(resizes(calls)).toHaveLength(before + 1));
+  expect(resizes(calls).at(-1)).toEqual({ width: 500, height: 852 });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Device" })).toHaveValue("custom"));
+  expectSize(500, 852);
+});
+
+it("resizes when the field is left, and steps by 1 or 10 with the arrow keys", async () => {
+  const user = userEvent.setup();
+  const { calls } = serve();
+  await openToolbar(user);
+  const before = resizes(calls).length;
+  const height = screen.getByRole("spinbutton", { name: "Height" });
+  await user.click(height);
+  await user.keyboard("{ArrowUp}{ArrowUp}{Shift>}{ArrowDown}{/Shift}");
+  expect(height).toHaveValue("844");
+  expect(resizes(calls)).toHaveLength(before);
+  await user.tab();
+  await waitFor(() => expect(resizes(calls)).toHaveLength(before + 1));
+  expect(resizes(calls).at(-1)).toEqual({ width: 393, height: 844 });
+});
+
+it("turns a size out of range red, sends nothing, and puts the old number back on Escape or on leaving", async () => {
+  const user = userEvent.setup();
+  const { calls } = serve();
+  await openToolbar(user);
+  const before = resizes(calls).length;
+  const width = screen.getByRole("spinbutton", { name: "Width" });
+  await user.clear(width);
+  await user.type(width, "80");
+  expect(width).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByRole("alert")).toHaveTextContent("Sizes run from 100 to 4096 pixels.");
+  await user.keyboard("{Enter}");
+  expect(width).toHaveValue("393");
+  expect(screen.queryByRole("alert")).toBeNull();
+  await user.clear(width);
+  await user.type(width, "5000");
+  await user.keyboard("{Escape}");
+  expect(width).toHaveValue("393");
+  await user.clear(width);
+  await user.type(width, "99");
+  await user.tab();
+  expect(width).toHaveValue("393");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(resizes(calls)).toHaveLength(before);
+});
+
+it("keeps the ratio of the moment the lock went on, swaps it on Rotate, and forgets it when the toolbar closes", async () => {
+  const user = userEvent.setup();
+  const { calls } = serve();
+  await openToolbar(user);
+  const lock = screen.getByRole("button", { name: "Lock aspect ratio" });
+  expect(lock).toHaveAttribute("aria-pressed", "false");
+  await user.click(lock);
+  expect(lock).toHaveAttribute("aria-pressed", "true");
+  const width = screen.getByRole("spinbutton", { name: "Width" });
+  await user.clear(width);
+  await user.type(width, "500{Enter}");
+  await waitFor(() => expect(resizes(calls).at(-1)).toEqual({ width: 500, height: 1084 }));
+  await waitFor(() => expectSize(500, 1084));
+  await user.click(screen.getByRole("button", { name: "Rotate" }));
+  await waitFor(() => expectSize(1084, 500));
+  const height = screen.getByRole("spinbutton", { name: "Height" });
+  await user.clear(height);
+  await user.type(height, "1000{Enter}");
+  await waitFor(() => expect(resizes(calls).at(-1)).toEqual({ width: 2168, height: 1000 }));
+  await user.click(screen.getByRole("button", { name: "More page actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Hide device toolbar" }));
+  await user.click(screen.getByRole("button", { name: /Show device toolbar/ }));
+  expect(screen.getByRole("button", { name: "Lock aspect ratio" })).toHaveAttribute("aria-pressed", "false");
+});
+
+it("keeps the ratio for a dragged edge while the lock is on", async () => {
+  const user = userEvent.setup();
+  const { calls } = serve();
+  stubPointerCapture();
+  await openToolbar(user);
+  await user.click(screen.getByRole("button", { name: "Lock aspect ratio" }));
+  const handle = screen.getByRole("button", { name: /Resize the page from the right edge/ });
+  fireEvent.pointerDown(handle, { pointerId: 9, button: 0, clientX: 500, clientY: 300 });
+  fireEvent.pointerMove(handle, { pointerId: 9, clientX: 540, clientY: 300 });
+  expectSize(507, 1099);
+  fireEvent.pointerUp(handle, { pointerId: 9, clientX: 540, clientY: 300 });
+  await waitFor(() => expect(resizes(calls).at(-1)).toEqual({ width: 507, height: 1099 }));
+});
+
+it("leaves the fields off while the page follows the panel", async () => {
+  const user = userEvent.setup();
+  serve();
+  vi.stubGlobal("WebSocket", FakeSocket);
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(domRect(STAGE.width, STAGE.height));
+  render(<BrowserPanel threadId="t" />);
+  await screen.findByRole("button", { name: "More page actions" });
+  await user.click(screen.getByRole("button", { name: "More page actions" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Show device toolbar" }));
+  expect(screen.getByRole("spinbutton", { name: "Width" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Lock aspect ratio" })).toBeDisabled();
 });

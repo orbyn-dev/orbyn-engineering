@@ -42,6 +42,7 @@ export const defaults: Prefs = {
   followUpBehavior: "queue",
   diffLayout: "stacked",
   previewSearchEngine: "duckduckgo",
+  previewSearchAddress: "",
   proactivePanels: false,
   recentUrls: [],
   linkTarget: "system",
