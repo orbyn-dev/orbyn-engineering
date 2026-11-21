@@ -425,6 +425,15 @@ impl Core {
         }
     }
 
+    /// What a task's run spent: the worker's turns (the runs of its worker thread) and the wall minutes since the task began.
+    pub(super) fn crew_background_run_spent(&self, task: &CrewTask) -> (u32, u32) {
+        let turns = self.store.crew_worker_turns(&task.id).unwrap_or(0);
+        let minutes = crate::util::parse_time(&task.created_at).map_or(0, |at| {
+            u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
+        });
+        (turns, minutes)
+    }
+
     /// Whether `thread_id` is the lead thread of a background run.
     pub(super) fn crew_background_lead(&self, thread_id: &str) -> bool {
         matches!(self.store.background_run(thread_id), Ok(Some(_)))
@@ -488,10 +497,7 @@ impl Core {
         if run.state != "running" {
             return;
         }
-        let turns = self.store.crew_worker_turns(&task.id).unwrap_or(0);
-        let minutes = crate::util::parse_time(&task.created_at).map_or(0, |at| {
-            u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
-        });
+        let (turns, minutes) = self.crew_background_run_spent(task);
         if let Err(error) =
             self.store
                 .end_background_run_spent(&run.id, end, Some((turns, minutes)))

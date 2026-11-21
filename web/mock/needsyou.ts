@@ -39,6 +39,7 @@ const crew = (): BackgroundCrew => ({
   template: "fix_failing_ci",
   trigger: { kind: "ci_failure" },
   budget: { turns: 40, minutes: 30 },
+  daily: { runs: 2, turns: 80 },
   enabled: true,
   state: "needs_review",
   reviews_waiting: 1,
