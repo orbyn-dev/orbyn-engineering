@@ -21,6 +21,8 @@ async-trait.workspace = true
 # Seals the Engine snapshot on disk (docs/account.md, "The device and its keys"); the same crate and version the Engine uses.
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"], optional = true }
 base64 = "0.22"
+# The JSON Schema validator behind a `schema` check (docs/crew.md, "Verification without limits").
+boon.workspace = true
 ed25519-dalek.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true

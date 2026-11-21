@@ -621,6 +621,17 @@
   gap: 8px;
   color: var(--color-muted);
 }
+/* The updater's 11px ring follows the published Maintenance state frames. */
+.set-update-spinner {
+  display: inline-block;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 1.6px solid var(--color-borderStrong);
+  border-top-color: var(--color-textSoft);
+  border-radius: 50%;
+}
+
 /* OpenTelemetry endpoints: mono, 300px; a failed check outlines red and says so (s-x-maint-otel). */
 .settings-page .setting-line-control input.set-endpoint-input {
   width: 300px;

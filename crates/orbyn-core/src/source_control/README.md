@@ -8,7 +8,8 @@ Source control on a thread's checkout, always through the person's own installed
 | `scm::writing` | Diff-derived text for a confirmed Git action: the writing request (`mod.rs`), the bounded checkout reads (`candidate`) and the writing style (`style`) |
 | `git` | Git through the installed CLI, worktrees in the sibling `<repo>-wt` root |
 | `jj` | Non-colocated Jujutsu checkouts, read through the installed `jj` |
-| `forge` | GitHub and GitLab through their own CLIs: `Forge` and the public functions (`mod.rs`), one CLI call (`process`), answer parsing (`parse`, `github`, `gitlab`), list details (`details`), reads (`pulls`), comments and reviews (`review`), edits and merges (`merge`), creating and publishing (`create`), sign-in status (`status`) |
+| `forge` | GitHub and GitLab through their own CLIs: `Forge` and the public functions (`mod.rs`), one CLI call (`process`), answer parsing (`parse`, `github`, `gitlab`), list details (`details`), reads (`pulls`), comments and reviews (`review`), edits and merges (`merge`), creating and publishing (`create`), sign-in status and the starred-repository read (`status`) |
+| `repository` | Which registered checkouts the app already has name one repository: the lookup by `owner/name` over local Git identity, with no forge call |
 | `forge::cache` | Short-lived memory of GitHub pull request details |
 | `pull_guides` | An agent's reading order for one pull request |
 

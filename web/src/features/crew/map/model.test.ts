@@ -2,7 +2,8 @@ import { describe, expectTypeOf, expect, it } from "vitest";
 import type { FlowFact } from "../../../generated/FlowFact";
 import type { FlowMessage } from "../../../generated/FlowMessage";
 import type { FlowNode } from "../../../generated/FlowNode";
-import { checkWord, clock, deliveryWord, engineProblem, engineStatusWord, findingStatusWord, kindLabel, laneFacts, leaseWord, modelWord, ordered, quietWord, stateWord, subagentsWord } from "./model";
+import type { FlowEdge } from "../../../generated/FlowEdge";
+import { checkWord, clock, deliveryWord, elapsedWord, engineProblem, engineStatusWord, findingStatusWord, kindLabel, laneFacts, leaseWord, modelWord, ordered, quietWord, stateWord, subagentsWord, swimLayout, treeLayout } from "./model";
 
 describe("the node's words", () => {
   it("words a task's state, with Needs you the only amber, Failed red and the lead plain", () => {
@@ -88,5 +89,149 @@ describe("findings and reviewer lanes", () => {
     expect(laneFacts({ tier: "lead", commit: "a41c9e2c0ffee", same_engine: false })).toEqual(["lead tier", "read a41c9e2", "Different engine from the author"]);
     expect(laneFacts({ tier: null, commit: null, same_engine: true })).toEqual(["Same engine as author"]);
     expect(laneFacts({})).toEqual([]);
+  });
+});
+
+const node = (member: string, role: "lead" | "worker", extra: Partial<FlowNode> = {}): FlowNode => ({
+  member,
+  role,
+  engine: "claude",
+  model: "Sonnet 5.5",
+  effort: "medium",
+  state: role === "lead" ? null : "running",
+  quiet: "active",
+  engine_status: "ready",
+  subagents: "reported",
+  outcome: "Use next when it points inside the app",
+  lease: ["auth/redirect.ts"],
+  read_only: false,
+  unread: 0,
+  started_by: role === "lead" ? null : "lead",
+  created_at: "2026-11-07T14:30:00Z",
+  updated_at: "2026-11-07T14:58:00Z",
+  ...extra,
+});
+
+describe("the wide tree's layout", () => {
+  const nodes = [node("lead", "lead", { unread: 0, lease: [], outcome: "" }), node("implement", "worker", { unread: 1 }), node("tests", "worker", { engine: "codex" })];
+  const edges: FlowEdge[] = [
+    { from: "implement", to: "tests", kind: "fact", label: "a fact", count: 1, delivery: "live" },
+    { from: "lead", to: "all", kind: "answer", label: "an answer", count: 2, delivery: null },
+  ];
+
+  it("puts the lead in the first column, one worker under another, and each worker's subagent report beside it", () => {
+    const view = treeLayout(nodes, edges);
+    expect(view.cards.map((card) => [card.node.member, card.x, card.y])).toEqual([
+      ["lead", 0, 80],
+      ["implement", 290, 0],
+      ["tests", 290, 160],
+    ]);
+    expect(view.subs.map((sub) => [sub.node.member, sub.x, sub.y])).toEqual([
+      ["implement", 596, 0],
+      ["tests", 596, 160],
+    ]);
+    expect(view.width).toBe(832);
+    expect(view.height).toBe(290);
+  });
+
+  it("draws a solid line from the lead to each worker it started and a dashed line for each message, with the message's own label at the middle", () => {
+    const view = treeLayout(nodes, edges);
+    expect(view.starts.map((path) => path.d)).toEqual(["M232,145 H261 V65 H290", "M232,145 H261 V225 H290"]);
+    const talks = view.talks.filter((edge) => edge.to !== "all");
+    expect(talks).toHaveLength(1);
+    expect(talks[0]!.d).toBe("M300,130 V160");
+    expect(talks[0]!.label).toBe("a fact");
+    expect(talks[0]!.delivery).toBe("live");
+    expect(talks[0]!.title).toBe("implement → tests: 1 message, a fact, newest live");
+    // A message to everyone is drawn to each member, and its label says so once.
+    const broadcast = view.talks.filter((edge) => edge.to === "all");
+    expect(broadcast.map((edge) => edge.from + "→" + edge.to).sort()).toEqual(["lead→all", "lead→all"]);
+    expect(broadcast.filter((edge) => edge.label !== "").length).toBe(1);
+  });
+
+  it("draws no edge for a member the map does not carry, and none from a node to itself", () => {
+    const view = treeLayout([nodes[0]!, nodes[1]!], [
+      { from: "implement", to: "ghost", kind: "fact", label: "a fact", count: 1, delivery: null },
+      { from: "lead", to: "lead", kind: "fact", label: "a fact", count: 1, delivery: null },
+    ]);
+    expect(view.talks).toHaveLength(0);
+    expect(view.starts).toHaveLength(1);
+  });
+});
+
+describe("the swim lanes' layout", () => {
+  const at = (minute: number) => new Date(Date.parse("2026-11-07T15:00:00Z") - minute * 60_000).toISOString();
+  const nodes = [node("lead", "lead", { created_at: at(60), updated_at: at(1) }), node("implement", "worker", { created_at: at(36), updated_at: at(2) }), node("tests", "worker", { engine: "codex", created_at: at(30), updated_at: at(3) })];
+  const messages: FlowMessage[] = [
+    { id: "m1", at: at(36), from: "implement", to: "tests", kind: "fact", label: "a fact", delivery: "live" },
+    { id: "m2", at: at(20), from: "lead", to: "all", kind: "answer", label: "an answer", delivery: null },
+    { id: "m3", at: at(2), from: "tests", to: "lead", kind: "handoff", label: "a handoff", delivery: "tool_result" },
+  ];
+  const now = Date.parse("2026-11-07T15:00:00Z");
+
+  it("puts one lane per member, the lead first, on a time axis taken from the messages", () => {
+    const view = swimLayout(nodes, messages, now);
+    expect(view.rows.map((row) => [row.node.member, row.y])).toEqual([["lead", 39], ["implement", 101], ["tests", 163]]);
+    // The axis starts at the 10-minute mark at or before the earliest message and ends at the one at or after the newest.
+    const labels = view.ticks.map((tick) => tick.label);
+    expect(labels.length).toBeGreaterThanOrEqual(3);
+    expect(view.ticks[0]!.at % 600_000).toBe(0);
+    expect(view.ticks.at(-1)!.at % 600_000).toBe(0);
+    expect(view.ticks.at(-1)!.at).toBeGreaterThanOrEqual(Date.parse(at(2)));
+    expect(new Set(labels).size).toBe(labels.length);
+    for (const tick of view.ticks) expect(tick.label).toMatch(/^\d\d:\d\d$/);
+  });
+
+  it("draws each message as an arrow from its sender's lane to its receiver's, labelled with how it arrived and its kind", () => {
+    const view = swimLayout(nodes, messages, now);
+    const direct = view.arrows.filter((arrow) => arrow.to !== "all");
+    expect(direct).toHaveLength(2);
+    expect(direct[0]!.label).toBe("live · a fact");
+    expect(direct[0]!.title).toMatch(/^\d\d:\d\d implement → tests: a fact, live$/);
+    expect(direct[1]!.label).toBe("tool result · a handoff");
+    // A message to everyone goes to every other lane, with one label reading as the design's.
+    const broadcast = view.arrows.filter((arrow) => arrow.to === "all");
+    expect(broadcast.map((arrow) => arrow.from).sort()).toEqual(["lead", "lead"]);
+    expect(broadcast.filter((arrow) => arrow.label !== "").length).toBe(1);
+    for (const arrow of view.arrows) expect(arrow.d).toMatch(/^M[\d.]+,[\d.]+ L[\d.]+,[\d.]+$/);
+  });
+
+  it("draws a bar of each worker's outcome over its run, and none for a crew label or a lane level the map does not carry", () => {
+    const view = swimLayout(nodes, messages, now);
+    expect(view.bars.map((bar) => [bar.node.member, bar.text])).toEqual([
+      ["implement", "Use next when it points inside the app"],
+      ["tests", "Use next when it points inside the app"],
+    ]);
+    expect(view.bars.every((bar) => bar.w > 0)).toBe(true);
+    expectTypeOf(view).not.toHaveProperty("levels");
+  });
+
+  it("draws no lane, tick or arrow before anything is said", () => {
+    const view = swimLayout(nodes, [], now);
+    expect(view.rows).toHaveLength(3);
+    expect(view.ticks).toEqual([]);
+    expect(view.arrows).toEqual([]);
+    expect(view.bars.every((bar) => bar.w === 0)).toBe(true);
+  });
+});
+
+
+describe("how long a worker has been going", () => {
+  const start = "2026-11-07T14:00:00Z";
+  const later = Date.parse("2026-11-10T14:00:00Z");
+  it("runs a live worker's time to now", () => {
+    expect(elapsedWord({ state: "running", created_at: start, updated_at: "2026-11-07T14:05:00Z" }, later)).toBe("3d");
+  });
+  it("ends a finished worker's time at its last update, however long ago", () => {
+    for (const state of ["passed", "failed", "stopped", "cancelled"]) {
+      expect(elapsedWord({ state, created_at: start, updated_at: "2026-11-07T14:28:30Z" }, later)).toBe("28m 30s");
+    }
+  });
+  it("gives a finished worker with no readable last update no time, never a growing one", () => {
+    expect(elapsedWord({ state: "passed", created_at: start, updated_at: null }, later)).toBeNull();
+    expect(elapsedWord({ state: "failed", created_at: start, updated_at: "garbage" }, later)).toBeNull();
+  });
+  it("gives the lead, which has no task state, a running clock", () => {
+    expect(elapsedWord({ state: null, created_at: start, updated_at: null }, Date.parse("2026-11-07T14:10:00Z"))).toBe("10m");
   });
 });
