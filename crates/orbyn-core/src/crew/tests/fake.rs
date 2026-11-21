@@ -85,6 +85,8 @@ pub fn engine(id: &str) -> EngineView {
         models: Some(models),
         used_percent: None,
         crew_refusal: None,
+        crew_role: orbyn_contracts::EngineCrewRole::Any,
+        crew_role_reason: None,
     }
 }
 

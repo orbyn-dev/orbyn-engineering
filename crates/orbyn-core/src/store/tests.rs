@@ -1215,6 +1215,25 @@ fn automatic_continuations_run_out_and_your_message_resets_them() {
     assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
 }
 
+#[test]
+fn a_refunded_continuation_leaves_the_tries_for_a_start_that_runs() {
+    let f = fixture();
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+        f.store.refund_resume_try(&f.thread).unwrap();
+    }
+    // Three refused starts used nothing: all three tries are still there.
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+    }
+    assert!(!f.store.take_resume_try(&f.thread, 3).unwrap());
+    // A refund never goes below zero.
+    let run = running(&f.store, &f.thread);
+    f.store.finish_run(&run, RunState::Completed, None).unwrap();
+    f.store.refund_resume_try(&f.thread).unwrap();
+    assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+}
+
 fn permission_updates(store: &Store, thread: &str) -> Vec<serde_json::Value> {
     store
         .events_after(thread, 0, 500)

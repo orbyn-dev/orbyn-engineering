@@ -346,6 +346,13 @@ export const approvalWords = (count: number): string => `${count} ${count === 1 
 /** The Conflicts line of the status card: what the service says, and nothing it does not (which file, how many). */
 export const conflictWords = (mergeable: string | null): string => (mergeable === "conflicting" ? "Yes" : mergeable === "mergeable" ? "None" : "\u2014");
 
+/**
+ * The line under Merge when the person's own latest review asked for changes: it names them, and the
+ * approval still owed when that is what blocks the merge. Null when the person did not ask.
+ */
+export const requestedByMeHint = (gateHint: string, askedByMe: boolean): string | null =>
+  !askedByMe ? null : gateHint === "Merge needs an approval." ? "You requested changes. Merge needs an approval." : "You requested changes.";
+
 /** The word a review leaves in the list's Reviewers cell, after the avatars. Null while no review has ruled. */
 export function reviewersWord(pull: Pick<PullRequest, "author" | "review_state" | "draft">, viewers: readonly string[]): { label: string; tone: "act" | "quiet" } | null {
   if (pull.draft) return null;

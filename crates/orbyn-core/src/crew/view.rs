@@ -30,6 +30,10 @@ pub struct EngineView {
     /// Set when a crew worker on this engine would be refused at run start (`host::confine::worker_refusal`). The router
     /// never assigns a worker to such an engine. `None` where workers are not confined.
     pub crew_refusal: Option<crate::host::confine::WorkerRefusal>,
+    /// `reviewer_only` for an engine whose writing work is not confined yet (Cursor on the host).
+    pub crew_role: orbyn_contracts::EngineCrewRole,
+    /// The plain reason for a `reviewer_only` role.
+    pub crew_role_reason: Option<String>,
 }
 
 impl EngineView {
@@ -52,6 +56,8 @@ impl EngineView {
             models: None,
             used_percent: None,
             crew_refusal: None,
+            crew_role: status.crew_role,
+            crew_role_reason: status.crew_role_reason.clone(),
         })
     }
 

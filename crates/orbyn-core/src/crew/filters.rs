@@ -4,8 +4,8 @@
 //! `needs`, a model for the tier, and quota left.
 
 use orbyn_contracts::{
-    Brief, BriefEffect, CrewShortText, EngineCapabilities, EngineTier, LeaseMode, ModelInfo,
-    RejectionWhy, RouteRejection, RouteTier,
+    Brief, BriefEffect, CrewShortText, EngineCapabilities, EngineCrewRole, EngineTier, LeaseMode,
+    ModelInfo, RejectionWhy, RouteRejection, RouteTier,
 };
 
 use crate::agents::provider_facts::{Unavailable, WriteBlock};
@@ -241,6 +241,18 @@ pub fn screen<'a>(
                 ));
             }
         }
+    }
+    // An engine whose writing work is not confined yet may review and never write.
+    if want.writes && !want.reviewer && view.crew_role == EngineCrewRole::ReviewerOnly {
+        let why = view
+            .crew_role_reason
+            .as_deref()
+            .unwrap_or("it can't write yet");
+        return Err(rejection(
+            view,
+            RejectionWhy::MissingCapability,
+            format!("{name} is reviewer only: {}.", why.trim_end_matches('.')),
+        ));
     }
     for need in want.needs.iter().filter(|need| *need != "image") {
         match engine_need(need, &view.capabilities) {
