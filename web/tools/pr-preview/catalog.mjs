@@ -6,6 +6,7 @@
 //   pre       network behaviour set up before the page opens: { route, delay } holds a request for `delay` ms, { route, status } answers it
 //   steps     what to do once it has loaded, in order:
 //               { do: "click", role, name, prefix?, exact?, within? }   a button, tab, checkbox ... by its accessible name (`within`: only inside the region of that name)
+//               { do: "hover", role, name, prefix? }  or  { do: "hover", selector, text? }   rest the pointer there (a CSS selector, and the text it must hold)
 //               { do: "fill", label, value, exact? }          a field by its label (exact when another label contains it)
 //               { do: "press", key }
 //               { do: "route", route, delay | status }        network behaviour from here on
@@ -26,6 +27,12 @@ const filterNeedsMyReview = [
   click("checkbox", "Needs my review"),
   { do: "press", key: "Escape" },
 ];
+
+const openFilters = click("button", "Filters", { prefix: true });
+const needsAndFailing = [openFilters, click("checkbox", "Needs my review"), click("checkbox", "Failing")];
+const filterChips = [...needsAndFailing, { do: "press", key: "Escape" }];
+/** The reviewer filter on, then a refresh the service answers with the rate limit (mock "pulls-limited*": the first details read is whole). */
+const limitedAfterRefresh = [...filterNeedsMyReview, click("button", "Refresh"), { do: "wait", ms: 900 }];
 
 /** Opens Cargo.toml from the left bar's Files view, which puts it in the editor. */
 const openFile = [click("tab", "Files"), click("treeitem", "Cargo.toml", { prefix: true })];
@@ -66,6 +73,9 @@ export const FRAMES = {
   "shell-home": { route: "#/" },
   "update-sources": { route: "#/", scenario: "updates-unconfigured" },
   "shell-new-thread": { route: "#/new" },
+  // The sidebar: the strip over a thread row under the pointer, and a project row with its hover controls.
+  "shell-thread-row-actions": { route: "#/threads/t-done", steps: [{ do: "hover", selector: ".thread-row", text: "Keep the checks running" }] },
+  "shell-project-controls": { route: "#/threads/t-done", steps: [{ do: "hover", selector: ".folder-head" }] },
   "shell-ledger": {
     route: "#/threads/t-done",
     steps: [
@@ -106,6 +116,44 @@ export const FRAMES = {
     wait: 700,
   },
 
+  // Pull requests, the toolbar (Engineer Designs pr-tb-*): each menu and state of the row above the list.
+  "pr-tb-default": { route: "#/pulls", scenario: "pulls" },
+  "pr-tb-search": { route: "#/pulls", scenario: "pulls", steps: [{ do: "fill", label: "Search pull requests", value: "label:bug login" }] },
+  "pr-tb-filters": { route: "#/pulls", scenario: "pulls", steps: needsAndFailing },
+  "pr-tb-chips": { route: "#/pulls", scenario: "pulls", steps: filterChips },
+  "pr-tb-sort": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Sort", { prefix: true })] },
+  "pr-tb-project": { route: "#/pulls", scenario: "pulls", steps: [click("button", "All projects", { prefix: true })] },
+  // The read is held back, so the header says Refreshing and the rows stay.
+  "pr-tb-refreshing": {
+    route: "#/pulls",
+    scenario: "pulls",
+    steps: [{ do: "route", route: "**/api/pulls?*", delay: 20000 }, click("button", "Refresh")],
+    wait: 900,
+  },
+  "pr-tb-loading": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls?*", delay: 20000 }] },
+  // A project, a search and two filters that match nothing.
+  "pr-tb-empty": {
+    route: "#/pulls",
+    scenario: "pulls",
+    steps: [click("button", "All projects", { prefix: true }), click("menuitemradio", "orbyn-engineering-app", { prefix: true }), ...filterChips],
+  },
+  "pr-tb-author": { route: "#/pulls", scenario: "pulls", steps: [openFilters, { do: "fill", label: "Search people", value: "ri" }] },
+  "pr-tb-author-none": { route: "#/pulls", scenario: "pulls", steps: [openFilters, { do: "fill", label: "Search people", value: "zq" }] },
+  "pr-tb-filter-rate-limited": { route: "#/pulls", scenario: "pulls-limited", steps: limitedAfterRefresh },
+  // The pause ends two seconds after every read; the check at that time finds the limit still on, and the banner says when the next one is.
+  "pr-tb-filter-still-limited": { route: "#/pulls", scenario: "pulls-limited-still", steps: [...limitedAfterRefresh, { do: "wait", ms: 3200 }] },
+  "pr-tb-narrow": { route: "#/pulls", scenario: "pulls", width: 900, steps: filterChips },
+  "pr-tb-phone": { route: "#/pulls", scenario: "pulls", width: 390, steps: filterChips },
+  "pr-list-narrow-900": { route: "#/pulls", scenario: "pulls", width: 900 },
+  // The cell's tooltip says why a value is missing.
+  "pr-row-tooltips": { route: "#/pulls", scenario: "pulls", steps: [{ do: "hover", selector: ".pull-rows > li:last-child .pull-reviewers-cell" }] },
+  // Two rows selected, the pointer on the Ready to merge row: its Merge and Close appear at its end.
+  "pr-row-actions-hover": {
+    route: "#/pulls",
+    scenario: "pulls-ready",
+    steps: [click("checkbox", "Select #139"), click("checkbox", "Select #138"), { do: "hover", selector: ".pull-rows > li", text: "Settings scoped rows" }],
+  },
+
   // Pull requests: one pull request as a page, in each state (201 running ... 209 draft, see mock/fixtures.ts pageStates).
   "pr-detail-running": { route: pull(201), scenario: "pulls" },
   "pr-detail-failed": { route: pull(202), scenario: "pulls" },
@@ -123,6 +171,10 @@ export const FRAMES = {
   "pr-detail-loading": { route: pull(201), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/201", delay: 20000 }] },
   "pr-detail-error": { route: pull(201), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/201", status: 502 }] },
   "pr-detail-signedout": { route: pull(201), scenario: "pulls-signed-out", pre: [{ route: "**/api/projects/*/pulls/201", status: 502 }] },
+  // Nothing cached: the header says Pull request #N and the page only that the details did not load (the same frame as pr-detail-error, opened cold).
+  "pr-detail-error-uncached": { route: pull(142), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/142", status: 502 }] },
+  "pr-detail-menu": { route: pull(205), scenario: "pulls", steps: [click("button", "More actions")] },
+  "pr-detail-merge-dialog": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
   "pr-detail-offline": { route: pull(201), scenario: "pulls", steps: [{ do: "offline" }] },
   "pr-detail-filtered": {
     route: pull(202),
