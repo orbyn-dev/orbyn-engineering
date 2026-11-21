@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::harness::{Script, Turn, World, brief, report, world};
 use super::review_support::commit_all;
 use crate::crew::{MergeOutcome, MergeTarget, Mode, ModeScope, ReviewAnswer, Risk};
+use crate::error::CoreError;
 use crate::source_control::git::{git, text};
 use crate::testing::run_git;
 
@@ -794,23 +795,22 @@ async fn two_reverts_of_one_merge_act_once_and_a_looks_good_cannot_undo_a_revert
     );
     let made = first.ok().or(second.ok()).flatten().unwrap();
     assert_eq!(m.tip().await, made);
-    let count = gitq(
-        &m.w.repo,
-        &["rev-list", "--count", &format!("{}..{}", m.main, "HEAD")],
-    )
-    .await;
-    let _ = count;
     // A looks-good racing a revert, in either order, never leaves anything but "reverted".
     let (reverted, good) = tokio::join!(
         core.crew_answer_review(&tasks[1], ReviewAnswer::Revert, target, NOW + 21),
         core.crew_answer_review(&tasks[1], ReviewAnswer::LooksGood, target, NOW + 21),
     );
-    assert!(reverted.is_ok() || good.is_ok());
-    let state = core.store.crew_merge(&tasks[1]).unwrap().unwrap();
-    if reverted.is_ok() {
-        assert_eq!(state.review_state, "reverted", "{good:?}");
-        assert!(state.reverted_commit.is_some());
+    // Answers run one at a time. A revert wins whichever order they take: LooksGood first is overwritten by the
+    // revert; LooksGood second is refused because the merge is already reverted.
+    let commit = reverted.unwrap().expect("the revert records its commit");
+    match &good {
+        Ok(None) => {}
+        Err(CoreError::Invalid(why)) => assert!(why.contains("already reverted"), "{why}"),
+        other => panic!("a racing looks-good must win first or be refused: {other:?}"),
     }
+    let state = core.store.crew_merge(&tasks[1]).unwrap().unwrap();
+    assert_eq!(state.review_state, "reverted", "{good:?}");
+    assert_eq!(state.reverted_commit.as_deref(), Some(commit.as_str()));
     // And a late answer to a reverted merge is refused by the store, not just by the check before it.
     let late = core.store.set_merge_review(&tasks[2], "looks_good", None);
     assert!(late.is_err());
