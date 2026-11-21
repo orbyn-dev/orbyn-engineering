@@ -72,7 +72,8 @@
   "plugins": {
     "updater": {
       "pubkey": "",
-      "endpoints": []
+      "endpoints": [],
+      "requireSignedVersion": true
     },
     "deep-link": {
       "desktop": {
