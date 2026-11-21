@@ -1295,6 +1295,8 @@ before the page hears it, so outside the desktop app a `mod+w` rule also matches
 key with `alt` in place of `mod`; the editor says which applies. It allows comments and trailing commas, and a
 bad entry is reported while the rest apply. A key with two commands in one exact
 context is a conflict; a key in two contexts is not.
+Saving a rule compares chords without case or spaces around `+`, including when it
+identifies the displaced rule to remove from the account record.
 
 The Worktrees Cleanup form edits the new policy through scoped membership and
 row revisions. Project and checkout selections expose Inherit, Off and Custom;
@@ -2765,7 +2767,10 @@ browser agents use, and needs a trusted folder and an `http` or `https` URL. Up 
 four run at once, and they close when their thread settles, archives or is deleted.
 Frames are polled about five times a second, only while someone watches or records,
 and a frame that did not change is not sent. `/ws/preview` sends each as base64 JPEG
-text. Watching gives no control: input needs a person to take the page first.
+text. A tab refreshes its title and declared icon about once a second on its own, so a
+tab nobody watches still reads correctly; a read that a document swap drops skips that
+look and is retried on the next one. Watching gives no control: input needs a person to
+take the page first.
 The separate authenticated `/ws/preview/:thread/:tab/pointer` feed carries only
 server-created ephemeral cues after successful agent click or scroll input.
 Each tab owns a monotonic sequence; positions are frame pixels, with zoom applied
@@ -3240,7 +3245,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 ## HTTP API
 
-All bodies are JSON and errors are `ApiError` with a stable `code`. Auth is
+All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
+read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
+the value that was sent (an account body can carry a password or a sign-in code). Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
