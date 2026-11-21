@@ -355,6 +355,7 @@ impl Core {
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
         core.crew_backtest_recover();
+        core.code_runs_recover();
         // Settled here, with nothing left in this function that can fail before the held tasks get their results: a failed open after
         // this commit would leave them with no result and their leases granted, since the next open finds no run to recover.
         let background_starts = core.store.recover_background_starts()?;
@@ -405,6 +406,33 @@ impl Core {
             thread_id: Some(thread_id.to_owned()),
             run_id: None,
             detail,
+        })
+    }
+
+    /// Records a refused request to a person-only route. The row names the route pattern and the caller class, and holds
+    /// no body, header or token. `thread_id` is empty: a refusal belongs to no thread.
+    pub fn record_person_route_refusal(
+        &self,
+        method: &str,
+        route: &str,
+        caller: &str,
+        code: &str,
+    ) -> Result<i64> {
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: caller.to_owned(),
+            action: "person_route.refused".to_owned(),
+            target: format!("{method} {route}"),
+            decision: Some(orbyn_contracts::PolicyEffect::Deny),
+            source: "access".to_owned(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "route": route,
+                "method": method,
+                "caller": caller,
+                "code": code,
+                "note": "A person-only route was refused. Repeats inside a minute write no new row.",
+            }),
         })
     }
 

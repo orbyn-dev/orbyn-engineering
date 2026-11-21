@@ -1,0 +1,49 @@
+/* The Library panel (frames workflow-*): tabs, search, grouped lists, an item page, the forms and the dialogs. */
+.lib { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0; overflow: auto; }
+.lib-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lib-tab { border: 0; background: none; color: var(--color-muted); font: inherit; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.lib-tab[aria-selected="true"] { color: var(--color-text); background: var(--color-rowHover); }
+.lib-spacer { flex: 1; }
+.lib-search { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lib-search .input { flex: 1; min-width: 0; }
+.lib-count, .lib-note, .lib-notice { margin: 0; color: var(--color-muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.lib-link { border: 0; background: none; padding: 0; font: inherit; color: var(--color-accentText); cursor: pointer; text-decoration: underline; }
+.lib-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.lib-group-title { margin: 8px 0 4px; font-size: var(--text-meta); font-weight: 500; color: var(--color-muted); }
+.lib-list { list-style: none; margin: 0; padding: 0; }
+.lib-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 6px; border: 0; border-top: 1px solid var(--color-border); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.lib-row[aria-pressed="true"] { background: var(--color-rowHover); }
+.lib-name { overflow-wrap: anywhere; font-weight: 500; }
+.lib-line { color: var(--color-muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.lib-detail { border-top: 1px solid var(--color-border); padding-top: 10px; min-width: 0; }
+.lib-page { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lib-h { margin: 0; font-size: var(--text-body); font-weight: 500; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.lib-label { display: block; margin-bottom: 4px; font-size: var(--text-meta); color: var(--color-muted); }
+.lib-pre { margin: 0; padding: 8px; max-height: 240px; overflow: auto; border: 1px solid var(--color-border); border-radius: 6px; font-family: var(--font-mono); font-size: var(--text-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
+.lib-prose { font-family: inherit; }
+.lib-table { width: 100%; border-collapse: collapse; font-size: var(--text-meta); }
+.lib-table th, .lib-table td { text-align: left; padding: 4px 6px; border-top: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.lib-source { margin: 0; color: var(--color-muted); font-size: var(--text-meta); }
+.lib-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.lib-keys { list-style: none; margin: 0; padding: 0; }
+.lib-key { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0; border-top: 1px solid var(--color-border); }
+.lib-key code { overflow-wrap: anywhere; }
+.lib-key-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+.lib-masked { color: var(--color-muted); letter-spacing: 1px; }
+.lib-value { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding: 8px; border: 1px solid var(--color-border); border-radius: 8px; }
+.lib-value-label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); }
+.lib-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 0; }
+.lib-problems { color: var(--color-muted); font-size: var(--text-meta); }
+.lib-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.lib-textarea { width: 100%; resize: vertical; }
+.lib-mono { font-family: var(--font-mono); }
+.lib-param { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; align-items: center; padding: 6px 0; border-top: 1px solid var(--color-border); }
+.lib-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-meta); }
+.lib-sets { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.lib-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px; border: 1px solid var(--color-border); border-radius: 8px; font-size: var(--text-meta); }
+.lib-done { margin: 0; color: var(--color-info); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.lib-dialog { width: min(520px, calc(100vw - 32px)); }
+.lib-dialog-wide { width: min(640px, calc(100vw - 32px)); }
+.lib-lists { min-width: 0; }
+.lib-group { min-width: 0; }
+@media (min-width: 700px) { .lib-body { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } .lib-detail { border-top: 0; padding-top: 0; } }

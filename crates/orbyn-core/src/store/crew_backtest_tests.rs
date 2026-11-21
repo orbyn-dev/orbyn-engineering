@@ -564,7 +564,7 @@ fn a_lane_keeps_the_kind_it_was_started_as_and_a_row_from_before_it_has_none() {
         vec![Some(LaneKind::Check), Some(LaneKind::Review)],
         "each lane keeps the kind it was started as"
     );
-    // A lane recorded before migration 63 has no kind. It reads none, never a guessed review.
+    // A lane recorded before migration 65 has no kind. It reads none, never a guessed review.
     store
         .writer()
         .execute("UPDATE crew_backtest_lanes SET kind = NULL", [])

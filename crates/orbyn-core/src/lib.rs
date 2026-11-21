@@ -13,6 +13,7 @@ pub mod governance;
 pub mod host;
 pub mod issues;
 pub mod operations;
+pub mod profiles;
 pub mod project;
 pub mod redaction;
 pub mod settings;

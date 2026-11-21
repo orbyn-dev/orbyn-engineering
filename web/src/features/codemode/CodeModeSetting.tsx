@@ -2,18 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import "./codemode.css";
 import type { EngineStatus } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
-import { codeModeLive, getCodeMode, putCodeMode } from "./api";
+import { getCodeMode, putCodeMode } from "./api";
 
 /**
  * Settings › Providers › an engine: the Code Mode group. One switch, off by default, per engine. It writes only from a click
- * (one click is one PUT) and is read once when the page opens. While the service has no route for it (a production build,
- * `codeModeLive` false) the switch is shown off and cannot be pressed: nothing is read or written. The Planned pill stays
- * until Code Mode ships.
+ * (one click is one PUT) and is read once when the page opens. The service answers 404 on both routes when Code Mode is off
+ * (`ORBYN_CODE_MODE` unset): that is "not offered", and the switch stays off and cannot be pressed, with the Planned pill and no
+ * error. The pill goes only once the service has answered the read.
  *
  * The markup is the settings rows' own class names, so this feature needs no import from the settings feature.
  */
 export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
-  const [on, setOn] = useState<boolean | null>(codeModeLive ? null : false);
+  const [on, setOn] = useState<boolean | null>(null);
+  /** null until the service answered; false on a 404; true once it answered with a value. */
+  const [offered, setOffered] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const writing = useRef(false);
@@ -22,15 +24,19 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
   const codex = (engine.instance_of ?? engine.id) === "codex";
 
   useEffect(() => {
-    if (!codeModeLive) return;
     const stop = new AbortController();
     setOn(null);
+    setOffered(null);
     // A write still out for the engine this page just left does not hold this one.
     writing.current = false;
     setBusy(false);
     setFailure(null);
     getCodeMode(engine.id, stop.signal)
-      .then((stored) => setOn(stored.enabled === true))
+      .then((stored) => {
+        if (stop.signal.aborted) return;
+        setOffered(stored !== null);
+        setOn(stored?.enabled === true);
+      })
       .catch((reason: unknown) => {
         if (stop.signal.aborted) return;
         setOn(false);
@@ -40,9 +46,8 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
   }, [engine.id]);
 
   const flip = async () => {
-    // One click, one write: a second press while the first is out does nothing.
-    // Dead code in a production build, where there is no route to write to.
-    if (!codeModeLive || writing.current || on === null) return;
+    // One click, one write: a second press while the first is out does nothing, and nothing is written until the service answered the read.
+    if (writing.current || on === null || offered !== true) return;
     writing.current = true;
     setBusy(true);
     setFailure(null);
@@ -50,7 +55,15 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
     try {
       const stored = await putCodeMode(target, !on);
       // The page may have moved to another engine while the write was out: its answer is not this engine's.
-      if (current.current === target) setOn(stored.enabled === true);
+      if (current.current === target) {
+        // A 404 here means the service stopped offering Code Mode since the read.
+        if (stored === null) {
+          setOffered(false);
+          setOn(false);
+        } else {
+          setOn(stored.enabled === true);
+        }
+      }
     } catch (reason) {
       if (current.current === target) setFailure(`${toFailure(reason).message} Try again.`);
     } finally {
@@ -66,7 +79,7 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
     <>
       <p className="set-grp">
         Code Mode
-        <span className="set-pill planned dot">Planned</span>
+        {offered === true ? null : <span className="set-pill planned dot">Planned</span>}
       </p>
       <section className="setting-group">
         <div className="setting-list">
@@ -78,7 +91,7 @@ export function CodeModeSetting({ engine }: { engine: EngineStatus }) {
               <span className="setting-line-desc">{description}</span>
             </div>
             <div className="setting-line-control">
-              <input type="checkbox" role="switch" aria-label="Use Code Mode" checked={on === true} disabled={!codeModeLive || busy || on === null} onChange={() => void flip()} />
+              <input type="checkbox" role="switch" aria-label="Use Code Mode" checked={on === true} disabled={offered !== true || busy || on === null} onChange={() => void flip()} />
             </div>
           </div>
           <div className="setting-line">

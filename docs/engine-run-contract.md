@@ -30,8 +30,8 @@ a question. A driver that can tell a leftover turn from the prompt's wraps what 
 the core shows it as it shows any event, and does not count it. A silent prompt turn after a leftover turn that spoke
 therefore ends as "No reply". The Claude CLI driver wraps what arrives after a `task_notification` and before the echo of the
 prompt; the engine host's Claude family wraps what arrives after the prompt's own `command_lifecycle` `queued` and before its
-`started` (the core sends the prompt's `messageId`, the host sends it as the SDK message `uuid`). A driver with no such
-signal wraps nothing, so nothing it says is dropped. Codex's prompt turn id is still open work.
+`started` (the core sends the prompt's `messageId`, the host sends it as the SDK message `uuid`). Codex wraps what a notification names with another turn's `turnId` than the prompt's. A driver with no such
+signal wraps nothing, so nothing it says is dropped. ACP runs one process per run and drops another session's updates, so no leftover turn reaches the core.
 
 ## How each rule is met
 

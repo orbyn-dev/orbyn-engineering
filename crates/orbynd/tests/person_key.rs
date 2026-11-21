@@ -293,6 +293,51 @@ async fn a_service_without_a_desktop_shell_has_no_key_and_refuses_person_routes(
     assert!(!f.dir.path().join("app/made.txt").exists());
 }
 
+/// A refused `Person` call writes one audit row through the real service: the route pattern and the caller class, with no
+/// body, header or token, and a second refusal of the same route inside the minute adds none. The refusal itself is unchanged.
+#[tokio::test]
+async fn a_refused_person_call_leaves_one_audit_row_without_the_request() {
+    let f = fixture(true).await;
+    let path = f.file_actions();
+    let body = json!({ "action": "create_file", "path": "made-secret-name.txt" });
+    for _ in 0..3 {
+        let (status, reply) = f.call(&path, body.clone(), Some("not-the-key")).await;
+        assert_eq!((status, &reply["code"]), (403, &json!("person_required")));
+    }
+    let rows: Vec<Value> = f
+        .service
+        .json("/api/audit?limit=200")
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["action"] == "person_route.refused")
+        .cloned()
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(
+        row["target"],
+        "POST /api/projects/{id}/worktrees/{worktree}/file-actions"
+    );
+    assert_eq!(
+        (row["actor"].as_str(), row["decision"].as_str()),
+        (Some("service_token"), Some("deny"))
+    );
+    assert_eq!(row["detail"]["code"], "person_required");
+    assert!(row["ts"].as_str().is_some_and(|ts| !ts.is_empty()));
+    let text = row.to_string();
+    for secret in [
+        f.service.token.as_str(),
+        "not-the-key",
+        "made-secret-name",
+        f.project.as_str(),
+        f.worktree.as_str(),
+    ] {
+        assert!(!text.contains(secret), "{secret} is in the row: {text}");
+    }
+}
+
 /// Every file under `root`, read whole, for the bytes of `needle`.
 fn files_holding(root: &Path, needle: &[u8], found: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(root) else {

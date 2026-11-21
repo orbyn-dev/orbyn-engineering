@@ -55,6 +55,12 @@ const markers = [
   "preview\\/command-blocks",
   "createCommandBlocksMock",
   "cbp-drawer",
+  // Execution profiles design preview (features/profiles): the dev-only hash route and its mock. The real screens ship hidden behind a client that answers 404.
+  "preview/profiles",
+  "createProfilesMock",
+  // Personal library design preview (features/library): the dev-only hash route and its mock. The real panel ships hidden behind a client that answers 404.
+  "preview/library",
+  "createLibraryMock",
   // Terminal-agent attention design preview (features/panels/terminal/attention): the dev-only hash route (plain and as a regex source), its mock and its page class.
   "preview/attention",
   "preview\\/attention",
