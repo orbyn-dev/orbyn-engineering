@@ -366,6 +366,7 @@ async fn a_refused_steer_logs_a_typed_failure_with_the_client_message_id() {
         failed["event"]["value"],
         json!({ "message_id": "client-refused-1", "prompt": "next please" })
     );
+    // `failed` always wins over `delivered` for a message: a client reads the last mark.
     let marked: Vec<&Value> = events
         .iter()
         .filter(|event| event["event"]["name"] == "steer.state")

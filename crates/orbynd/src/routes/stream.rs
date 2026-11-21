@@ -229,6 +229,9 @@ impl Projection {
                     }));
                 }
             }
+            // They carry the person's typed prompt text, which an external run never sees.
+            // They carry the person's typed prompt text, which an external run never sees.
+            AgUiEvent::Custom { name, .. } if name == "steer.failed" || name == "steer.state" => {}
             other => self.forward(other),
         }
     }
@@ -449,5 +452,48 @@ mod tests {
         ]});
         assert_eq!(prompt_of(&input).as_deref(), Some("second"));
         assert_eq!(prompt_of(&json!({ "messages": [] })), None);
+    }
+
+    #[tokio::test]
+    async fn steer_markers_stay_out_of_an_external_run() {
+        let dir = std::env::temp_dir().join(format!(
+            "orbynd-stream-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let core = Arc::new(
+            Core::open(orbyn_core::CoreConfig::new(
+                dir.join("data"),
+                "http://127.0.0.1:1".into(),
+            ))
+            .unwrap(),
+        );
+        let mut projection = Projection {
+            log: follower(&core, "t", 0),
+            run_id: "r".into(),
+            outgoing: VecDeque::new(),
+            own_words: std::collections::HashSet::new(),
+            finished: false,
+        };
+        let custom = |name: &str| ThreadEvent {
+            seq: 1,
+            thread_id: "t".into(),
+            run_id: None,
+            ts: String::new(),
+            event: AgUiEvent::Custom {
+                name: name.into(),
+                value: json!({ "message_id": "m", "prompt": "typed text" }),
+            },
+        };
+        for name in ["steer.failed", "steer.state"] {
+            projection.project(&custom(name));
+        }
+        assert!(projection.outgoing.is_empty(), "{:?}", projection.outgoing);
+        projection.project(&custom("other.marker"));
+        assert_eq!(projection.outgoing.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

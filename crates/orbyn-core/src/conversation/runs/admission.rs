@@ -433,8 +433,14 @@ impl RunManager {
             .and_then(|active| active.input.clone());
         let Some(input) = input else {
             let queued = self.enqueue(thread_id, prompt, &[])?;
-            self.store
-                .append_thread_event(thread_id, &steer_state(&message_id, SteerDelivery::Queued))?;
+            // The message is queued: a failed mark must not fail the request, or a retry
+            // would queue it twice.
+            if let Err(error) = self
+                .store
+                .append_thread_event(thread_id, &steer_state(&message_id, SteerDelivery::Queued))
+            {
+                tracing::warn!(%error, "could not mark a queued steer");
+            }
             return Ok(SteerResult {
                 message_id,
                 state: SteerState::Queued,
@@ -513,10 +519,14 @@ impl RunManager {
         input
             .send(steer.clone())
             .map_err(|_| CoreError::RunClosed)?;
-        self.store.append_thread_event(
+        // The engine has the message: a failed mark must not fail the request, or a
+        // retry would send it twice.
+        if let Err(error) = self.store.append_thread_event(
             thread_id,
             &steer_state(&steer.message_id, SteerDelivery::Delivered),
-        )?;
+        ) {
+            tracing::warn!(%error, "could not mark a delivered steer");
+        }
         Ok(())
     }
 
