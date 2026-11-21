@@ -9,7 +9,6 @@ import type { LaneScore } from "../../../../generated/LaneScore";
  * engine. A start is also refused by the service until a live replay engine is connected (A5).
  */
 export const WHY = {
-  settings: "the Settings › Reviewer backtest page is drawn only; no route serves it, so there is nothing to open",
   lanes: "the app has no read of the reviewer-backtest lanes, their engines or their models",
   budgets: "the app has no read of the per-engine token budgets: the Settings rows are drawn and the values are Proposed",
   tokens:

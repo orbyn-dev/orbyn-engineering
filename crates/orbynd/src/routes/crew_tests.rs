@@ -379,6 +379,74 @@ async fn reads_answer_empty_views_and_every_list_is_bounded() {
 }
 
 #[tokio::test]
+async fn the_daily_digest_time_is_read_by_anyone_and_saved_only_by_the_person_with_crew_on() {
+    let app = serve("digest-time", true, false).await;
+    let (status, body) = app
+        .call("GET", "/api/crew/autopilot/digest/schedule", None)
+        .await;
+    assert_eq!(status, 200);
+    // The default is 17:00 with no offset, which sends nothing until a person first saves a time.
+    assert_eq!(body, json!({ "time": "17:00", "utc_offset_minutes": null }));
+    for (asked, want) in [
+        (json!({ "time": "09:30", "utc_offset_minutes": 660 }), 200),
+        (json!({ "time": "25:00", "utc_offset_minutes": 0 }), 400),
+        (json!({ "time": "09:60", "utc_offset_minutes": 0 }), 400),
+        (json!({ "time": "nine", "utc_offset_minutes": 0 }), 400),
+        (json!({ "time": "09:30", "utc_offset_minutes": 5000 }), 400),
+        (json!({ "time": "09:30" }), 400),
+        (
+            json!({ "time": "09:30", "utc_offset_minutes": 0, "extra": true }),
+            400,
+        ),
+    ] {
+        let (status, answer) = app
+            .call(
+                "POST",
+                "/api/crew/autopilot/digest/schedule/set",
+                Some(asked.clone()),
+            )
+            .await;
+        assert_eq!(status, want, "{asked}");
+        if want == 200 {
+            assert_eq!(answer, asked);
+        } else {
+            assert_eq!(answer["code"], "invalid_input", "{asked}");
+        }
+    }
+    let (_, saved) = app
+        .call("GET", "/api/crew/autopilot/digest/schedule", None)
+        .await;
+    assert_eq!(saved, json!({ "time": "09:30", "utc_offset_minutes": 660 }));
+    // With Crew off the route is not there, for either method.
+    let off = serve("digest-time-off", false, false).await;
+    for method in ["GET", "POST"] {
+        let (status, _) = off
+            .call(
+                method,
+                "/api/crew/autopilot/digest/schedule",
+                Some(json!({ "time": "09:30", "utc_offset_minutes": 0 })),
+            )
+            .await;
+        assert_eq!(status, 404, "{method} is hidden with Crew off");
+    }
+    // A remote viewer reads it and cannot save it.
+    let remote = serve("digest-time-remote", true, true).await;
+    let (status, _) = remote
+        .call("GET", "/api/crew/autopilot/digest/schedule", None)
+        .await;
+    assert_eq!(status, 200);
+    let (status, body) = remote
+        .call(
+            "POST",
+            "/api/crew/autopilot/digest/schedule/set",
+            Some(json!({ "time": "09:30", "utc_offset_minutes": 0 })),
+        )
+        .await;
+    assert_eq!(status, 403);
+    assert_eq!(body["code"], "local_only");
+}
+
+#[tokio::test]
 async fn the_area_reads_are_bounded_read_only_and_never_write() {
     let app = serve("areas", true, false).await;
     let (status, thresholds) = app

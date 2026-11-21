@@ -7,10 +7,12 @@ queue that would open `escape-report`'s mark dialog and the scan from the merge 
 is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
 (`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
 the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
-previews flag. **No Crew tab or Settings page links to the escape screens yet** (log, possible list, detail, settings): the designs
-draw them under a Crew "Review" tab (and `escape-settings` under Settings › Crew › Escapes) that the beta does not have, marked
-"reached another way". The entry point is a design question and nothing here invents one. The reach through the app is therefore
-unchanged; see "Propose a check" below for the one act that is now wired inside the detail page.
+previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row ("Open Escapes", no value
+chip) that opens the live log at `#/settings/crew/escapes`; a row of the log opens that escape's page at `#/settings/crew/escapes/detail?id=`;
+the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants).
+Not reached: the possible list (`escape-possible`) and the thresholds page (`escape-settings`) have no drawn entry, the Review-tab
+Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the "Back to" controls are the
+Designer's follow-up; browser Back works. See "Propose a check" below for the act wired inside the detail page.
 
 ## What an escape is
 
@@ -63,7 +65,7 @@ against the engine, model and area copied from the merge **when logged**. A hard
 ## Screens and the reads they need
 
 All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, reachable only in a build with the dev-only previews flag
-(`__ORBYN_PREVIEWS__`); no Crew tab, Settings page or other screen opens them in the app (no entry is drawn, see above). Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
+(`__ORBYN_PREVIEWS__`); the log and an escape's page are also reached from Settings › Crew (see above), the other frames are not. Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
 service. The table keeps the read each frame needs; `web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs`
 (path in `docs/match-kit.md`).
 

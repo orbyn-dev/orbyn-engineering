@@ -4,6 +4,7 @@ import { ApiFailure, NETWORK_ERROR } from "../../../../api/client";
 import { Loading } from "../../../../product/ui/states";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
 import { Frame } from "../../shared/Frame";
+import { useCrewHref } from "../../shared/nav";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
 import { againstOf, count, dayMoment, sourceLabel, WHY } from "./model";
@@ -56,6 +57,7 @@ function Card({ row, busy, onDecide }: { row: EscapeRow; busy: boolean; onDecide
  * page only reads.
  */
 export function LiveEscapePossible({ project, name, projects, onPick }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void }) {
+  const href = useCrewHref();
   const possible = usePossible(project);
   const confirmed = useEscapeLog(project, "confirmed");
   const [busy, setBusy] = useState<string | null>(null);
@@ -157,7 +159,7 @@ export function LiveEscapePossible({ project, name, projects, onPick }: { projec
               <EscapeTable
                 rows={confirmed.data.rows}
                 onOpen={(id) => {
-                  window.location.hash = `#/preview/crew/escape-detail?id=${encodeURIComponent(id)}`;
+                  window.location.hash = href({ page: "escape", id });
                 }}
               />
             </>

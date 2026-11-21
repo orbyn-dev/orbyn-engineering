@@ -5,6 +5,7 @@ import { Loading } from "../../../../product/ui/states";
 import { Planned } from "../../capacity/Planned";
 import { ProjectChip } from "../../escape/live/parts";
 import { Frame } from "../../shared/Frame";
+import { useCrewHref } from "../../shared/nav";
 import { Btn, Ic } from "../../shared/parts";
 import {
   count,
@@ -65,6 +66,7 @@ function Stopped({ run }: { run: BacktestRun }) {
  * field. Reads only: no load sends a write.
  */
 export function LiveReport({ id, projects, onPick }: { id: string; projects: readonly Project[]; onPick(id: string): void }) {
+  const href = useCrewHref();
   const read = useBacktestReport(id);
   const run = read.status === "ready" ? read.data : null;
   const projectName = run ? (projects.find((entry) => entry.id === run.project)?.name ?? run.project) : null;
@@ -87,7 +89,7 @@ export function LiveReport({ id, projects, onPick }: { id: string; projects: rea
             <span className="cx-t10sp">
               {run && projectName ? <ProjectChip name={projectName} projects={projects} current={run.project} onPick={onPick} /> : null}
               <Planned why={WHY.runAgain} style={{ marginLeft: "0", marginRight: "4px" }} />
-              <Btn className="cx-ghost" reason={WHY.settings}>Settings</Btn>
+              <a className="cx-ghost" href={href({ page: "backtest" })}>Settings</a>
               <Btn className="cx-btn" reason={`Planned: ${WHY.runAgain}`}>Run again</Btn>
             </span>
           </div>

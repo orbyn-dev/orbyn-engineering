@@ -699,6 +699,27 @@ pub struct AutopilotDigest {
 }
 }
 
+wire! {
+/// The daily digest's send time, as Settings › Crew stores it: `HH:MM` in the offset the person saved it in.
+/// `17:00` is the default. `utc_offset_minutes` is minutes east of UTC (`660` for UTC+11) and is `null`
+/// until a person first saves, because nothing knows the local time before then.
+pub struct AutopilotDigestSchedule {
+    pub time: String,
+    #[ts(type = "number | null")]
+    pub utc_offset_minutes: Option<i32>,
+}
+}
+
+wire! {
+/// `POST /api/crew/autopilot/digest/schedule/set`: a person's save. Both fields, so the send time always
+/// resolves in their local time; `utc_offset_minutes` is `-new Date().getTimezoneOffset()` in the page.
+#[serde(deny_unknown_fields)]
+pub struct AutopilotDigestScheduleInput {
+    pub time: String,
+    pub utc_offset_minutes: i32,
+}
+}
+
 wire_enum! {
 /// Where a held command stands. A held command is decided once: `approved`, `denied` or `dismissed`. An approval is then
 /// `used` by the one retry it covers, or ends unused as `expired`.
