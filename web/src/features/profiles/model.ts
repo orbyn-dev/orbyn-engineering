@@ -1,4 +1,4 @@
-import { DESCRIPTION_MAX, NAME_MAX, type Availability, type AutopilotModeId, type GrantCode, type ModelTier, type PermissionModeId, type Profile, type ProfileDraft } from "./contract";
+import { DESCRIPTION_MAX, NAME_MAX, type ProfileAvailability, type AutopilotMode, type ProfileGrant, type ProfileTier, type PermissionMode, type Profile, type ProfileDraft } from "./contract";
 
 /** Text the service or the person chose: cut so no line can grow a row. React escapes it; it is never markup. */
 export const plain = (text: unknown, max = 80): string => {
@@ -12,9 +12,9 @@ const label = (names: ReadonlyMap<string, string>, key: unknown, fallback: strin
 const TIERS = new Map<string, string>([["lead", "Lead"], ["builder", "Builder"], ["scout", "Scout"]]);
 const MODES = new Map<string, string>([["supervised", "Supervised"], ["auto_edits", "Auto edits"], ["auto", "Auto"], ["full_access", "Full access"]]);
 const AUTOPILOT = new Map<string, string>([["off", "Off"], ["on", "On"], ["full", "Full"]]);
-export const tierLabel = (tier: ModelTier | string): string => label(TIERS, tier, "Unknown");
-export const modeLabel = (mode: PermissionModeId | string): string => label(MODES, mode, "Unknown");
-export const autopilotLabel = (mode: AutopilotModeId | string): string => label(AUTOPILOT, mode, "Unknown");
+export const tierLabel = (tier: ProfileTier | string): string => label(TIERS, tier, "Unknown");
+export const modeLabel = (mode: PermissionMode | string): string => label(MODES, mode, "Unknown");
+export const autopilotLabel = (mode: AutopilotMode | string): string => label(AUTOPILOT, mode, "Unknown");
 
 /** What each permission mode means, in the words of the Engineer frames. */
 export const MODE_HINTS: ReadonlyMap<string, string> = new Map([
@@ -28,13 +28,13 @@ export const AUTOPILOT_HINTS: ReadonlyMap<string, string> = new Map([
   ["on", "Crew merges low-risk work."],
   ["full", "High risk waits for you before merging."],
 ]);
-export const TIERS_IN_ORDER: readonly ModelTier[] = ["lead", "builder", "scout"];
-export const MODES_IN_ORDER: readonly PermissionModeId[] = ["supervised", "auto_edits", "auto", "full_access"];
-export const AUTOPILOT_IN_ORDER: readonly AutopilotModeId[] = ["off", "on", "full"];
+export const TIERS_IN_ORDER: readonly ProfileTier[] = ["lead", "builder", "scout"];
+export const MODES_IN_ORDER: readonly PermissionMode[] = ["supervised", "auto_edits", "auto", "full_access"];
+export const AUTOPILOT_IN_ORDER: readonly AutopilotMode[] = ["off", "on", "full"];
 
 /** The grants a profile carries: `full_access` for the permission mode and `autopilot_full` for Autopilot. Careful, Fast and Cheap carry none. */
-export function grantsOf(profile: Pick<Profile, "permission_mode" | "autopilot_mode">): GrantCode[] {
-  const grants: GrantCode[] = [];
+export function grantsOf(profile: Pick<Profile, "permission_mode" | "autopilot_mode">): ProfileGrant[] {
+  const grants: ProfileGrant[] = [];
   if (profile.permission_mode === "full_access") grants.push("full_access");
   if (profile.autopilot_mode === "full") grants.push("autopilot_full");
   return grants;
@@ -47,14 +47,14 @@ const GRANT_TEXT = new Map<string, string>([
 export const grantText = (code: string): string => GRANT_TEXT.get(code) ?? "A grant this app does not know. Check the profile before you apply it.";
 
 /** Grant codes the service named on a `confirm_required`, read defensively: only the codes this app knows, once each. */
-export function grantsFromFailure(detail: unknown): GrantCode[] {
+export function grantsFromFailure(detail: unknown): ProfileGrant[] {
   const raw = typeof detail === "object" && detail !== null && Array.isArray((detail as { grants?: unknown }).grants) ? (detail as { grants: unknown[] }).grants : [];
-  const known = raw.filter((code): code is GrantCode => code === "full_access" || code === "autopilot_full");
+  const known = raw.filter((code): code is ProfileGrant => code === "full_access" || code === "autopilot_full");
   return [...new Set(known)];
 }
 
 /** The reason an engine cannot run a profile, for its row. `null` when nothing needs saying. */
-export function availabilityText(availability: Availability | undefined, engineName: string): { text: string; fix: boolean } | null {
+export function availabilityText(availability: ProfileAvailability | undefined, engineName: string): { text: string; fix: boolean } | null {
   if (!availability) return null;
   const reason = plain(availability.reason, 120);
   switch (availability.engine) {
@@ -75,7 +75,7 @@ export function availabilityText(availability: Availability | undefined, engineN
 }
 
 /** The pill on a row: the short label the doc gives ("Engine not found", "Can't start"). */
-export function availabilityPill(availability: Availability | undefined): string | null {
+export function availabilityPill(availability: ProfileAvailability | undefined): string | null {
   switch (availability?.engine) {
     case "not_found": return "Engine not found";
     case "cannot_start": return "Can’t start";
@@ -85,7 +85,7 @@ export function availabilityPill(availability: Availability | undefined): string
 }
 
 /** A profile whose engine is not startable is shown disabled with its reason. Orbyn never falls back to another engine. */
-export const usable = (profile: Pick<Profile, "availability">): boolean => {
+export const usable = (profile: { availability?: ProfileAvailability }): boolean => {
   const kind = profile.availability?.engine;
   return kind === undefined || kind === "ok" || kind === "none" || kind === "unmanaged";
 };
