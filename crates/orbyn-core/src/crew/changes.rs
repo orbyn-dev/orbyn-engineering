@@ -36,6 +36,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/enable"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
+    ("POST", "/api/crew/background/{id}/run-now"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),

@@ -26,7 +26,7 @@ pub(crate) use gitops::repo_checks;
 pub use guard::{check_words, owed_lanes, sensitive};
 pub use holds::lane_ran;
 pub use queue::{MergeOutcome, MergeTarget};
-pub use review_queue::{ReviewAnswer, ReviewItem};
+pub use review_queue::{ReviewAnswer, ReviewItem, ReviewQueue};
 pub use risk::{DiffFacts, Rate, RecentTotals, Risk, Scored, area_of, areas_of, score};
 pub use tool::MERGE_TOOLS;
 pub(crate) use tool::specs as merge_tool_specs;

@@ -147,7 +147,13 @@ async fn a_high_risk_diff_waits_for_a_person_under_on_and_merges_once_released()
     // A person released it, so that was the review.
     let record = m.w.core.store.crew_merge(&id).unwrap().unwrap();
     assert_eq!(record.review_state, "looks_good");
-    assert!(m.w.core.crew_review_queue(NOW + 10).unwrap().is_empty());
+    assert!(
+        m.w.core
+            .crew_review_queue(NOW + 10)
+            .unwrap()
+            .merges
+            .is_empty()
+    );
     // Every step is in the ledger, with no secret and no check text.
     assert_eq!(
         super::autopilot_support::kinds(&m.w, &id),
@@ -194,7 +200,7 @@ async fn under_full_a_high_risk_diff_merges_and_goes_to_the_top_of_the_review_qu
     );
 
     // Ranked by risk: the high one first, with a 4 hour window; the low one has none.
-    let queue = m.w.core.crew_review_queue(NOW + 2).unwrap();
+    let queue = m.w.core.crew_review_queue(NOW + 2).unwrap().merges;
     let order: Vec<(&str, Risk)> = queue.iter().map(|i| (i.task_id.as_str(), i.risk)).collect();
     assert_eq!(
         order,
@@ -202,8 +208,20 @@ async fn under_full_a_high_risk_diff_merges_and_goes_to_the_top_of_the_review_qu
     );
     assert_eq!(queue[0].due_unix, Some(NOW + 2 + 4 * 3600));
     assert_eq!(queue[1].due_unix, None);
-    assert!(m.w.core.crew_review_queue(NOW + 2 + 5 * 3600).unwrap()[0].overdue);
-    assert!(!m.w.core.crew_review_queue(NOW + 2 + 5 * 3600).unwrap()[1].overdue);
+    assert!(
+        m.w.core
+            .crew_review_queue(NOW + 2 + 5 * 3600)
+            .unwrap()
+            .merges[0]
+            .overdue
+    );
+    assert!(
+        !m.w.core
+            .crew_review_queue(NOW + 2 + 5 * 3600)
+            .unwrap()
+            .merges[1]
+            .overdue
+    );
     assert!(queue[0].not_verified.iter().any(|n| n.contains("coverage")));
     assert_eq!(queue[0].proof["merge_checks_run"], 1);
 
@@ -220,7 +238,13 @@ async fn under_full_a_high_risk_diff_merges_and_goes_to_the_top_of_the_review_qu
             .unwrap()
             .unwrap();
     assert_eq!(m.tip().await, revert);
-    assert!(m.w.core.crew_review_queue(NOW + 3).unwrap().is_empty());
+    assert!(
+        m.w.core
+            .crew_review_queue(NOW + 3)
+            .unwrap()
+            .merges
+            .is_empty()
+    );
     let gone = git(
         &m.w.repo,
         &[
@@ -273,7 +297,7 @@ async fn low_and_medium_follow_the_mode() {
         [MergeOutcome::Merged { .. }]
     ));
     assert_eq!(
-        on.w.core.crew_review_queue(NOW).unwrap()[0].due_unix,
+        on.w.core.crew_review_queue(NOW).unwrap().merges[0].due_unix,
         Some(NOW + 24 * 3600)
     );
 
