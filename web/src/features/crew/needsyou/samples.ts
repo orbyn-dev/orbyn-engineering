@@ -1,5 +1,8 @@
 // Sample items for the drawn frames, copied from Crew Designs (needsyou-*). Samples only: nothing here is read from a route.
 // Two kinds still have no route behind them (questions and conflict); the live inbox assembles the rest, autonomy from the areas read.
+import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
+import type { BackgroundRun } from "../../../generated/BackgroundRun";
+import { backgroundItems } from "./assemble";
 import type { NeedsItem } from "./model";
 
 const item = (over: Partial<NeedsItem> & Pick<NeedsItem, "id" | "kind" | "title" | "actions">): NeedsItem => ({
@@ -114,6 +117,28 @@ export const BACKGROUND_ITEMS: NeedsItem[] = [
   item({ id: "s-bg-budget", kind: "background", title: "Paused: budget reached", from: "Background crew · Check dependencies weekly", cost: "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", actions: [{ key: "open", label: "Open", primary: true }] }),
   item({ id: "s-bg-approval", kind: "background", title: "Needs approval", from: "Background crew · Update the docs index", cost: "A command is held for your approval before the run can go on.", actions: [{ key: "open", label: "Open", primary: true }] }),
 ];
+
+/**
+ * needsyou-daily-budget-stop, -narrow and -no-reset: runs the core stopped at the daily budget, read the way the live inbox reads them
+ * (the sentences are the core's, `backgroundItems` makes the rows). The reset time is the one the sentence ends with, never worked out.
+ */
+const bgCrew = (id: string, name: string) => ({ id, name, reviews_waiting: 1 }) as BackgroundCrew;
+const bgStop = (id: string, crew: string, reason: string, stop_reason = "budget"): BackgroundRun => ({
+  id, crew_id: crew, state: "needs_review", turns_spent: 3, minutes_spent: 4, budget: { turns: 2, minutes: 30 }, review_waiting: true, review_reason: reason,
+  stop_reason, started_at: "2026-11-07T13:00:00Z", updated_at: "2026-11-07T14:00:00Z",
+}) as BackgroundRun;
+const WEEKLY = bgCrew("bg-weekly", "Check dependencies weekly");
+const DOCS = bgCrew("bg-docs", "Update the docs index");
+const CAP = "Engine claude reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-08T00:00:00+01:00.";
+const UNREADABLE = "The crew's daily budget could not be read, so the run stopped instead of going on.";
+const NOT_UPDATED = "The crew's daily budget could not be updated, so the run stopped instead of going on.";
+const LIFETIME = "The run reached its budget and stopped.";
+/** The cap reached, and beside it the lifetime budget stop so the two can be compared. */
+export const DAILY_STOP_ITEMS: NeedsItem[] = backgroundItems([{ crew: WEEKLY, runs: [bgStop("d1", WEEKLY.id, CAP)] }, { crew: DOCS, runs: [bgStop("l1", DOCS.id, LIFETIME)] }]);
+/** A daily budget that could not be read, and one that could not be updated: neither carries a reset time. */
+export const DAILY_NO_RESET_ITEMS: NeedsItem[] = backgroundItems([{ crew: WEEKLY, runs: [bgStop("d2", WEEKLY.id, UNREADABLE)] }, { crew: DOCS, runs: [bgStop("d3", DOCS.id, NOT_UPDATED)] }]);
+/** The 320 px panel: the cap reached, then a daily budget that could not be read. */
+export const DAILY_NARROW_ITEMS: NeedsItem[] = backgroundItems([{ crew: WEEKLY, runs: [bgStop("d1", WEEKLY.id, CAP)] }, { crew: DOCS, runs: [bgStop("d2", DOCS.id, UNREADABLE)] }]);
 
 /** needsyou-many: the top four of 27, one line each. */
 export const MANY_ITEMS: NeedsItem[] = [

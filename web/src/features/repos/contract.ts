@@ -44,7 +44,16 @@ export interface PublishInput {
   /** `owner/name` on the host. */
   name: string;
   visibility: "private" | "public";
+  /** GUESSED: the host. Only `github` is ready in the beta; the others are "Setup Required" and cannot be picked. */
+  provider?: "github";
+  /** GUESSED: the Git remote the repository is added as. The dialog's Advanced default is `origin`. */
+  remote?: string;
+  /** GUESSED: how the remote is addressed. */
+  protocol?: "ssh" | "https";
 }
+
+/** What a publish answers: the repository row, and whether the current branch was pushed. `pushed: false` means only the remote was added. */
+export type PublishedRepo = RepoRow & { pushed?: boolean };
 
 export interface StartRepoChoice {
   repo_id: string;
@@ -71,7 +80,16 @@ export interface ThreadRepo {
   trusted: boolean;
   /** GUESSED: the changed files that belong to this repository, as the Changes list names them. Absent when the service does not say. */
   files?: string[];
+  /** GUESSED: the pull request of this repository's branch, when it has one. */
+  pull_request?: { number: number; url: string } | null;
 }
+
+/** One Git action on ONE repository of a thread. There is no action that spans repositories. GUESSED: the service takes `repo_id` on its Git route. */
+export type ThreadGitAction =
+  | { kind: "commit"; message: string }
+  | { kind: "push" }
+  | { kind: "pull" }
+  | { kind: "pull_request"; title: string };
 
 export type StartedThread = import("../../api/types").Thread;
 
@@ -83,7 +101,7 @@ export interface ReposApi {
   /** One write per call: starts a clone that joins the project. It runs in the background. */
   clone(projectId: string, source: string): Promise<RepoRow>;
   /** One write per call: creates the repository on the host and pushes the current branch. */
-  publish(projectId: string, repoId: string, input: PublishInput): Promise<RepoRow>;
+  publish(projectId: string, repoId: string, input: PublishInput): Promise<PublishedRepo>;
   /** One write per call: trusts this folder only. */
   trust(projectId: string, repoId: string): Promise<RepoRow>;
   /** One write per call: runs `git init` in a folder that has none. */
@@ -96,4 +114,8 @@ export interface ReposApi {
   threadRepos(threadId: string, signal?: AbortSignal): Promise<ThreadRepo[] | null>;
   /** One write per call: adds one trusted repository of the project to the thread. */
   addThreadRepo(threadId: string, repoId: string): Promise<ThreadRepo>;
+  /** One write per call: one Git action in one trusted repository of the thread. The service refuses a repository that is not trusted. */
+  threadGit(threadId: string, repoId: string, action: ThreadGitAction): Promise<ThreadRepo>;
+  /** One write per call: the thread stops working in this repository. The worktree's files stay. */
+  removeThreadRepo(threadId: string, repoId: string): Promise<void>;
 }

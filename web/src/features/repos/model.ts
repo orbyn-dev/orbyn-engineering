@@ -34,6 +34,17 @@ export function checkCloneSource(text: string): { ok: true; source: string } | {
   return ownerName || url ? { ok: true, source } : { ok: false, reason: "Use a https or ssh address, git@host:path, or owner/name." };
 }
 
+/** The hosts a repository can be published to. Only a ready one can be picked; the rest say Setup Required. GUESSED: the service reports no readiness yet. */
+export const PUBLISH_PROVIDERS = [
+  { id: "github", name: "GitHub", line: "Uses the gh sign-in on this computer", ready: true },
+  { id: "gitlab", name: "GitLab", line: "GitLab.com or your own server", ready: false },
+  { id: "azure", name: "Azure DevOps", line: "Repos in an organisation", ready: false },
+  { id: "forgejo", name: "Forgejo", line: "Your own Forgejo or Codeberg", ready: false },
+] as const;
+
+/** A Git remote name: letters, digits, dot, dash and underscore, never starting with a dash (Git would read it as an option). */
+export const isRemoteName = (text: string) => /^[A-Za-z0-9][\w.-]*$/.test(text.trim());
+
 /** `owner/name` for a publish, both parts a plain host name. */
 export const isPublishName = (text: string) => /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(text.trim());
 

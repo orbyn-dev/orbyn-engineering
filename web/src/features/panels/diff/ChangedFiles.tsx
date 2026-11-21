@@ -3,7 +3,7 @@ import { useRef, type KeyboardEvent } from "react";
 import type { FileDiff } from "../../../api/types";
 import { ChangeLetter, MiddleName } from "../../workspace";
 import { Button } from "../../../ui/controls";
-import { groupByRepo, plain, type ThreadRepo } from "../../repos";
+import { groupByRepo, plain, RepoGitMenu, type ThreadRepo } from "../../repos";
 import { changeOf, isBinaryPatch, renameOf } from "./diffModel";
 
 /** What a row says before its name, so the name reads as one phrase. */
@@ -30,7 +30,7 @@ export function fileName(file: FileDiff): string {
 }
 
 /** The filter and the changed files, one row each. The row of the file on show is marked, and the arrow keys move between rows. */
-export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, onMore, repos }: {
+export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, onMore, repos, threadId, onRepoChanged }: {
   files: readonly FileDiff[];
   /** How many files the list has not drawn yet; Show adds all of them. */
   more: number;
@@ -41,6 +41,10 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
   onMore(): void;
   /** The repositories of a multi-repository thread: the files are then grouped under them. `null` or none keeps one flat list. */
   repos?: readonly ThreadRepo[] | null;
+  /** With `repos`: the thread, so each repository's group gets its own Git menu. Without it the groups carry none. */
+  threadId?: string;
+  /** Called after a Git action in one repository, so the list reads again. */
+  onRepoChanged?(): void;
 }) {
   const groups = repos ? groupByRepo(files, repos) : [];
   const list = useRef<HTMLDivElement>(null);
@@ -85,6 +89,7 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
                 <span className="nm">{plain(group.repo.name)}</span>
                 <code>{plain(group.repo.branch)}</code>
                 <span className="num">{`+${count(group.repo.added)} −${count(group.repo.deleted)}`}</span>
+                {threadId ? <RepoGitMenu threadId={threadId} repo={group.repo} onChanged={onRepoChanged ?? (() => {})} /> : null}
               </h3>
             ) : <h3 className="fl-repo-head"><span className="nm">Other files</span></h3>}
             {group.files.map(row)}

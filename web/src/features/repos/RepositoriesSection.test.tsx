@@ -55,6 +55,14 @@ it("offers Publish only on a repository with no remote, and Trust only while it 
   expect(await screen.findByRole("menuitem", { name: "Trust this folder…" })).toBeVisible();
 });
 
+it("offers no Publish on a repository that is not trusted: publishing pushes", async () => {
+  show(createReposMock({ repositories: repoFixtures().map((row) => (row.id === "orbyn-planner" ? { ...row, trusted: false } : row)) }));
+  const user = userEvent.setup();
+  await user.click(within(await rowOf("orbyn-planner")).getByRole("button", { name: "Actions for orbyn-planner" }));
+  expect(await screen.findByRole("menuitem", { name: "Trust this folder…" })).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Publish to GitHub…" })).toBeNull();
+});
+
 it("removes a repository only after the dialog's Remove, once, and says the files stay", async () => {
   const mock = show();
   const user = userEvent.setup();
@@ -97,24 +105,6 @@ it("sets up Git after a confirmation", async () => {
   expect(mock.writes).toEqual([]);
   await user.click(within(await screen.findByRole("dialog", { name: "Set up Git in orbyn-notes?" })).getByRole("button", { name: "Set up Git" }));
   await waitFor(() => expect(mock.writes).toEqual(["git:orbyn-notes"]));
-});
-
-it("publishes with the name and visibility chosen, naming the folder and the branch pushed", async () => {
-  const mock = show();
-  const user = userEvent.setup();
-  await user.click(within(await rowOf("orbyn-planner")).getByRole("button", { name: "Actions for orbyn-planner" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Publish to GitHub…" }));
-  const dialog = await screen.findByRole("dialog", { name: "Publish orbyn-planner?" });
-  expect(within(dialog).getByText("feat/calendar")).toBeVisible();
-  expect(within(dialog).getByRole("radio", { name: "Private" })).toBeChecked();
-  await user.click(within(dialog).getByRole("radio", { name: "Public" }));
-  await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
-  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "not a name");
-  expect(within(dialog).getByRole("button", { name: "Publish" })).toBeDisabled();
-  await user.clear(within(dialog).getByRole("textbox", { name: "Name" }));
-  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "orbyn-dev/planner");
-  await user.click(within(dialog).getByRole("button", { name: "Publish" }));
-  await waitFor(() => expect(mock.writes).toEqual(["publish:orbyn-planner:orbyn-dev/planner:public"]));
 });
 
 it("clones from a Git URL or owner/name, naming the project it joins, and never from text Git could read as an option", async () => {

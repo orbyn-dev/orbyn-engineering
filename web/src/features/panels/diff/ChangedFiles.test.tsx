@@ -37,3 +37,14 @@ it("shows hostile repository names and branches as text", () => {
   expect(document.querySelector("img")).toBeNull();
   expect(document.querySelector("b")).toBeNull();
 });
+
+it("gives each repository's group its own Git menu only when it is told the thread, and never an all-repositories one", () => {
+  const files = [file("auth/redirect.ts"), file("calendar/feed.ts")];
+  const repos = [repo("engineering", ["auth/redirect.ts"]), repo("planner", ["calendar/feed.ts"])];
+  const { unmount } = draw(files, repos);
+  expect(screen.queryByRole("button", { name: /Git actions/ })).toBeNull();
+  unmount();
+  render(<ChangedFiles files={files} more={0} selected={null} filter="" onFilter={() => {}} onPick={() => {}} onMore={() => {}} repos={repos} threadId="t1" />);
+  expect(screen.getAllByRole("button", { name: /Git actions for/ }).map((button) => button.getAttribute("aria-label"))).toEqual(["Git actions for engineering", "Git actions for planner"]);
+  expect(screen.queryByText(/all repositories/i)).toBeNull();
+});

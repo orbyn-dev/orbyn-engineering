@@ -20,6 +20,8 @@ const unreported: ReposApi = {
   startThread: async () => unavailable(),
   threadRepos: async () => null,
   addThreadRepo: async () => unavailable(),
+  threadGit: async () => unavailable(),
+  removeThreadRepo: async () => unavailable(),
 };
 
 let current: ReposApi = unreported;

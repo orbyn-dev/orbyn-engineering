@@ -5,7 +5,8 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { useRepos } from "./api";
 import type { RepoRow, ReposView } from "./contract";
-import { AddFolderDialog, CloneDialog, PublishDialog, RemoveDialog, SetupGitDialog, TrustDialog } from "./Dialogs";
+import { AddFolderDialog, CloneDialog, RemoveDialog, SetupGitDialog, TrustDialog } from "./Dialogs";
+import { PublishDialog } from "./Publish";
 import { cloneText, plain, repoState, STATE_LABEL } from "./model";
 import "./repos.css";
 
@@ -61,7 +62,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
   const rowItems = (row: RepoRow): MenuItem[] => {
     const state = repoState(row);
     return [
-      ...(state !== "not_git" && !row.has_remote && row.clone === null ? [{ label: "Publish to GitHub…", onSelect: () => setOpen({ kind: "publish", repo: row }) }] : []),
+      ...(state === "trusted" && !row.has_remote && row.clone === null ? [{ label: "Publish to GitHub…", onSelect: () => setOpen({ kind: "publish", repo: row }) }] : []),
       ...(state === "untrusted" ? [{ label: "Trust this folder…", onSelect: () => setOpen({ kind: "trust", repo: row }) }] : []),
       { label: "Remove from project…", destructive: true, separatorBefore: true, onSelect: () => setOpen({ kind: "remove", repo: row }) },
     ];
@@ -90,7 +91,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
       </Presence>
       {open?.kind === "add-folder" ? <AddFolderDialog {...common} /> : null}
       {open?.kind === "clone" ? <CloneDialog {...common} projectName={projectName} directory={shown.clone_directory} /> : null}
-      {open?.kind === "publish" ? <PublishDialog {...common} repo={open.repo} /> : null}
+      {open?.kind === "publish" ? <PublishDialog {...common} onDone={reload} repo={open.repo} /> : null}
       {open?.kind === "remove" ? <RemoveDialog {...common} projectName={projectName} repo={open.repo} /> : null}
       {open?.kind === "trust" ? <TrustDialog {...common} repo={open.repo} /> : null}
       {open?.kind === "git" ? <SetupGitDialog {...common} repo={open.repo} /> : null}
