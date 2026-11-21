@@ -1,0 +1,63 @@
+/* The engine host in the thread: the picker's state rows and the composer's red line (Engineer frames enginehost-picker-*,
+   enginehost-thread-fallback, enginehost-thread-send-disabled). Tokens only. */
+.eh-gap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 9px;
+  border-radius: var(--radius-md);
+  color: var(--color-textSoft);
+}
+.eh-gap-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.eh-gap-text b {
+  font-size: var(--text-nav);
+  font-weight: 500;
+}
+.eh-gap-text small {
+  color: var(--color-muted);
+  font-size: var(--text-label);
+  overflow-wrap: anywhere;
+}
+.eh-gap-end {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 45%;
+}
+.eh-gap .set-pill.info {
+  background: var(--color-infoSoft);
+  color: var(--color-info);
+}
+.eh-gap .set-pill.err {
+  background: var(--color-dangerSoft);
+  color: var(--color-danger);
+}
+.eh-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-xl);
+  background: var(--color-dangerSoft);
+  color: var(--color-danger);
+  font-size: var(--text-small);
+}
+.eh-line > svg {
+  flex: none;
+}
+.eh-line > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

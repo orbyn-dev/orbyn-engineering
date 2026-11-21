@@ -5,6 +5,7 @@ import type { EngineStatus } from "../../../api/types";
 import { useCommand } from "../../../product/shell/shortcuts";
 import { useUi } from "../../../product/state/ui";
 import { EngineGlyph } from "../../../product/ui/badges";
+import { pickerGap, PickerGapRow, useEngineHosts, type Gap, type HostRow } from "../../enginehost";
 import { closingProps, Presence } from "../../../ui/Presence";
 import { usePopover } from "../../../ui/usePopover";
 import {
@@ -191,6 +192,20 @@ function ModelPopover({
       ? allRows
       : allRows.filter((row) => row.engine === chip);
   const groups = groupRows(rows, engines);
+  // An engine whose host is not ready shows one state row in place of its models. None while the service reports no host, and none
+  // while searching: the rows are not models, so there is nothing to find in them.
+  const { hosts } = useEngineHosts();
+  const gaps = useMemo(() => {
+    const found = new Map<string, { gap: Gap; host: HostRow | null }>();
+    if (!hosts) return found;
+    for (const engine of engines) {
+      const host = hosts.find((row) => row.id === engine.id) ?? null;
+      const gap = pickerGap(engine, host);
+      if (gap) found.set(engine.id, { gap, host });
+    }
+    return found;
+  }, [engines, hosts]);
+  const gapIds = new Set(searching ? [] : [...gaps.keys()].filter((id) => chip === ALL || chip === id));
   const ordered = groups.flatMap((group) => group.rows.map((entry) => entry.row));
   const ids = [ALL, ...engines.map((engine) => engine.id)];
   const pick = (row: PickerRow) => {
@@ -328,7 +343,18 @@ function ModelPopover({
       </div>
       <div className="model-list" data-above={more.above || undefined} data-below={more.below || undefined}>
         <div ref={list} id={listId} className="model-rows" role="listbox" aria-label="Models" onScroll={measure}>
-          {groups.map((group) => (
+          {engines.filter((engine) => gapIds.has(engine.id) || groups.some((group) => group.engine === engine.id)).map((engine) => {
+            const state = gapIds.has(engine.id) ? gaps.get(engine.id) : undefined;
+            if (state) {
+              return (
+                <div key={engine.id} role="group" aria-label={engineName(engine.id)}>
+                  <div className="model-heading" aria-hidden>{engineName(engine.id)}</div>
+                  <PickerGapRow gap={state.gap} host={state.host} />
+                </div>
+              );
+            }
+            const group = groups.find((entry) => entry.engine === engine.id);
+            return group ? (
             <div key={group.engine} role="group" aria-label={engineName(group.engine)}>
               <div className="model-heading" aria-hidden>
                 {engineName(group.engine)}
@@ -355,8 +381,9 @@ function ModelPopover({
                 );
               })}
             </div>
-          ))}
-          {ordered.length === 0 ? (
+            ) : null;
+          })}
+          {ordered.length === 0 && gapIds.size === 0 ? (
             <p className="model-empty" role="status">
               {loading ? "Loading models…" : failure ? failure : searching ? "No models found" : "No models listed"}
             </p>

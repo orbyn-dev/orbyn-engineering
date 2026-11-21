@@ -1,11 +1,11 @@
 /**
- * The engine host's status and the sign-in storage choice, as the settings screens read them.
+ * The engine host's status and the API key storage choice, as the settings screens read them.
  *
  * PLANNED CONTRACT. The Rust side of these routes is not merged: no type here is generated, and the only
  * implementation of `EngineHostApi` that exists is the mock in `web/mock/engineHost.ts`. When the routes land,
  * replace these hand-written types with the generated ones in the same commit that adds the real client.
  *
- * Nothing in this file can carry a secret. A sign-in is never a field: the storage choice is a word and a date.
+ * Nothing a screen reads can carry a secret: the API key storage choice is a word and a date. The key goes outward once, as the argument of `saveKey`.
  */
 
 /** The nine labels a host row can carry (the protocol's Handshake and Crash and recovery sections). */
@@ -58,6 +58,12 @@ export interface HostRow {
   last_error?: HostError | null;
   /** Only a family marked unavailable waits for the person. */
   can_retry: boolean;
+  /** GUESSED SHAPE: threads running on this host now, for the Stop question in Maintenance. */
+  running_threads?: number;
+  /** GUESSED SHAPE (not in docs/engine-host-protocol.md): the app has a Rust driver the run can fall back to when the host is unavailable. */
+  has_driver?: boolean;
+  /** GUESSED SHAPE: this build does not carry the engine's SDK. */
+  sdk_missing?: boolean;
 }
 
 /** A host crash for Maintenance diagnostics, the only place a stack is ever shown. */
@@ -72,18 +78,21 @@ export interface HostCrash {
   stack?: string | null;
 }
 
-/** What the person chose for one engine's sign-in. `removing`, `locked` and `denied` are never chosen, only reached. */
-export type StorageChoice = "not_asked" | "allowed" | "declined" | "removing" | "locked" | "denied";
+/**
+ * Where an engine's API key stands. `not_asked`, `saved`, `declined` and `rejected` are what the service reports;
+ * `saving`, `removing`, `locked`, `denied` and `remove_failed` are only ever reached by a click on this screen.
+ * `rejected` is the engine reporting an auth error while using the saved key.
+ */
+export type StorageChoice = "not_asked" | "saved" | "declined" | "rejected" | "saving" | "removing" | "locked" | "denied" | "remove_failed";
 
-export interface SignInStorage {
+/** One engine's API key row. It is a state and a date: the key itself is never a field, in either direction of a read. */
+export interface KeyStorage {
   /** `EngineStatus.id` of the engine. */
   engine_id: string;
   name: string;
   choice: StorageChoice;
-  /** ISO time the person allowed it. */
-  allowed_at?: string | null;
-  /** Threads running on this engine now; revoking stops them. */
-  running_threads: number;
+  /** ISO time the key was saved. */
+  saved_at?: string | null;
 }
 
 /** A refused keychain write: the service answers with one of these codes and nothing else about why. */
@@ -97,12 +106,24 @@ export const KEYCHAIN_DENIED = "keychain_denied";
 export interface EngineHostApi {
   hosts(signal?: AbortSignal): Promise<HostRow[] | null>;
   crashes(signal?: AbortSignal): Promise<HostCrash[]>;
-  /** The engines that may keep a sign-in in the keychain, or `null` when the service has none to offer. */
-  storage(signal?: AbortSignal): Promise<SignInStorage[] | null>;
-  /** Start a family that is marked unavailable. */
+  /** The engines that may keep an API key in the keychain, or `null` when the service has none to offer. */
+  storage(signal?: AbortSignal): Promise<KeyStorage[] | null>;
+  /**
+   * Start a family that is marked unavailable, or restart a running one (which ends its threads like `stop`).
+   * The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`): it changes what runs.
+   */
   retry(hostId: string): Promise<void>;
-  /** Keep (`allow`) or never keep (`decline`) this engine's sign-in in the system keychain. Rejects with `KEYCHAIN_LOCKED` or `KEYCHAIN_DENIED`. */
-  choose(engineId: string, choice: "allow" | "decline"): Promise<SignInStorage>;
-  /** Delete the stored item and stop the threads running on the engine. */
-  revoke(engineId: string): Promise<SignInStorage>;
+  /** Stop a running or restarting host; the threads on it end with the host's own sentence. The real route must be Person-class (ENFORCED). */
+  stop(hostId: string): Promise<void>;
+  /** Never keep this engine's API key (a decision, kept). The real route must be Person-class (ENFORCED). */
+  decline(engineId: string): Promise<KeyStorage>;
+  /**
+   * Save the key in the system keychain. This is the one place a secret crosses the contract, and only outward: the argument is
+   * passed once, never stored, echoed, logged or read back. Rejects with `KEYCHAIN_LOCKED` or `KEYCHAIN_DENIED`.
+   * The real route must be Person-class (ENFORCED), carry the key in the JSON body and never in the path or query, and must not
+   * echo the key in any reply or error text.
+   */
+  saveKey(engineId: string, key: string): Promise<KeyStorage>;
+  /** Delete the key Orbyn saved; the engine's own sign-in is untouched and running threads keep going. The real route must be Person-class (ENFORCED). */
+  removeKey(engineId: string): Promise<KeyStorage>;
 }

@@ -103,3 +103,19 @@ export interface ApprovalVia {
   call: number;
   scriptSha256: string | null;
 }
+
+/**
+ * GUESSED SHAPE, not in docs/code-mode.md or any generated type: one row of the per-thread list of runs. The document says only that
+ * the list shows "run id, status, start and end, call count and the first 120 characters of the script", and that the error kind
+ * belongs to the run, not the list.
+ */
+export interface CodeRunSummary {
+  run_id: string;
+  status: string;
+  started_at: string;
+  ended_at: string | null;
+  /** How many calls the run made. */
+  calls: number;
+  /** The first 120 characters of the script, when the service sends them. */
+  script_head?: string | null;
+}

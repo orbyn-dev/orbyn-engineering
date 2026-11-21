@@ -86,3 +86,13 @@
 .eh-problem-detail {
   grid-column: 2 / -1;
 }
+.eh-key {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+}
+.eh-key input {
+  width: 100%;
+  font-family: var(--font-mono);
+}

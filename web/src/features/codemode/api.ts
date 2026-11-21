@@ -7,7 +7,7 @@
 // false in a production build, where nothing here sends a request and the screens say Planned instead. When the real routes
 // are merged, swap the three functions for the generated types and delete the flag.
 import { request } from "../../api/client";
-import type { CodeRunRecord } from "./types";
+import type { CodeRunRecord, CodeRunSummary } from "./types";
 
 const q = encodeURIComponent;
 
@@ -27,4 +27,9 @@ export function getCodeMode(engineId: string, signal?: AbortSignal) {
 /** One write per click: the new value, and the service answers with what it stored. */
 export function putCodeMode(engineId: string, enabled: boolean) {
   return request<{ enabled: boolean }>("PUT", `/api/engines/${q(engineId)}/code-mode`, { enabled });
+}
+
+/** The runs of one thread, newest first, limited by the service to the caller's own project. GUESSED path, mock only. */
+export function listCodeRuns(threadId: string, signal?: AbortSignal) {
+  return request<{ runs: CodeRunSummary[] }>("GET", `/api/threads/${q(threadId)}/code-runs`, undefined, signal);
 }
