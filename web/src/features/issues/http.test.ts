@@ -190,7 +190,18 @@ describe("the routes", () => {
     await createHttpIssuesApi().setState(REF, { category: "closed", name: "Closed", close_reason: "completed" });
     expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("POST /api/issues/item/state");
     expect(calls[0]!.headers.get(PERSON_HEADER)).toBe("shell-key");
-    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, state: "Closed" });
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, state: "Closed", close_reason: "completed" });
+  });
+
+  it("sends close_reason with a state that has one, so GitHub's two Closed states do not collide, and omits it otherwise", async () => {
+    service(() => json({ ...REF, body: "b", states: [] }));
+    const api = createHttpIssuesApi();
+    await api.setState(REF, { category: "closed", name: "Closed", close_reason: "not_planned" });
+    await api.setState(REF, { category: "open", name: "Open" });
+    await api.setState(REF, { category: "open", name: "Open", close_reason: null });
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, state: "Closed", close_reason: "not_planned" });
+    expect(JSON.parse(calls[1]!.body!)).toEqual({ ...REF, state: "Open" });
+    expect(JSON.parse(calls[2]!.body!)).toEqual({ ...REF, state: "Open" });
   });
 
   it("reads the candidates for a scope, capped, with no entry a write could not use", async () => {
