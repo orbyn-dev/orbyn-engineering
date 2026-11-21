@@ -12,8 +12,8 @@ import { useCodeRun } from "./useCodeRun";
 import type { RunView } from "./types";
 
 /**
- * The run behind one `orbyn_code_run` call: the run record when it can be read (a dev or test build with the stand-in
- * service), otherwise only what the engine's own reply carried. The call's arguments supply the script when the record does
+ * The run behind one `orbyn_code_run` call: the run record when it can be read (`GET /api/code-runs/{id}`; not when the run is
+ * gone or the service does not offer Code Mode), otherwise only what the engine's own reply carried. The call's arguments supply the script when the record does
  * not; a call that only resumes (`run_id`) has none.
  */
 export function useRunView(item: ToolItem, live: boolean): RunView | null {

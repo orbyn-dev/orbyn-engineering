@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import "./codemode.css";
 import { useAsync } from "../../lib/useAsync";
 import type { ToolItem } from "../../product/timeline/types";
-import { codeModeLive, listCodeRuns } from "./api";
+import { listCodeRuns } from "./api";
 import { callWord, capText } from "./model";
 import { CodeRunBlock } from "./RunBlock";
-import type { CodeRunStatus, CodeRunSummary } from "./types";
+import type { CodeRunSummary } from "./types";
 
 const POLL_MS = 2_000;
 const HEAD_CHARS = 120;
@@ -39,7 +39,7 @@ const head = (text: string): string => {
 
 /** The same block as in the thread, for one run: the record is read by its id, and the reply carries only the status. */
 function RunDetail({ run }: { run: CodeRunSummary }) {
-  const status = run.status as CodeRunStatus;
+  const status = run.status;
   const item: ToolItem = {
     kind: "tool", key: `runs-list:${run.run_id}`, callId: run.run_id, seq: 0, runId: "", ts: run.started_at, endedAt: run.ended_at ?? undefined,
     name: RUN_TOOL, args: JSON.stringify({ run_id: run.run_id }), output: "", result: JSON.stringify({ status, runId: run.run_id }), done: true, exitCode: null,
@@ -50,16 +50,12 @@ function RunDetail({ run }: { run: CodeRunSummary }) {
 /**
  * The runs of this thread, newest first: id, status, when, call count and the first 120 characters of the script. The list holds no
  * calls; opening a run shows the same block as in the thread. There is no Stop: a paused run ends when its pending approval is
- * declined. Where this opens is not settled, so it sits under the Tools tab for now. Without the stand-in service (any production
- * build) nothing is read and nothing is drawn.
+ * declined. Where this opens is not settled, so it sits under the Tools tab for now. When the service does not offer Code Mode
+ * (every route answers 404) or the thread has no runs, nothing is drawn.
  */
 export function CodeRunsList({ threadId }: { threadId: string }) {
-  const read = useAsync(`code-runs:${threadId}:${codeModeLive}`, async (signal) => {
-    if (!codeModeLive) return [];
-    // A reply that is not a list is no list: nothing is drawn.
-    const reply = await listCodeRuns(threadId, signal);
-    return Array.isArray(reply?.runs) ? reply.runs : [];
-  });
+  // `null` (Code Mode not offered) and a reply that is not a list are no list: nothing is drawn.
+  const read = useAsync(`code-runs:${threadId}`, async (signal) => (await listCodeRuns(threadId, signal)) ?? []);
   const [open, setOpen] = useState<string | null>(null);
   const runs = read.status === "ready" ? read.data : [];
   const moving = runs.some((run) => run.status === "running" || run.status === "paused");
@@ -69,7 +65,7 @@ export function CodeRunsList({ threadId }: { threadId: string }) {
     const timer = setInterval(() => void refreshQuietly(), POLL_MS);
     return () => clearInterval(timer);
   }, [moving, refreshQuietly]);
-  if (!codeModeLive || runs.length === 0) return null;
+  if (runs.length === 0) return null;
   return (
     <section className="cm-runs" aria-label="Code runs">
       <div className="cm-runs-h">Code runs</div>
