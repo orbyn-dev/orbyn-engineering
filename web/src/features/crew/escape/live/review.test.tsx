@@ -53,6 +53,11 @@ describe("the log's own words", () => {
 });
 
 describe("the possible page", () => {
+  // With none waiting the page draws only its empty state (Crew Designs v87), so the confirmed list is read under one that waits.
+  beforeEach(() => {
+    answers.possible = { status: 200, body: { project: "p-app", as_of: 1, total: 1, rows: [row({ id: "w" })] } };
+  });
+
   it("heads the confirmed list with the all-escapes total", async () => {
     answers.logConfirmed = { status: 200, body: log({ confirmed: 1, total: 4, rows: [row({ id: "c", state: "confirmed" })] }) };
     render(<LiveEscapes view="possible" />);

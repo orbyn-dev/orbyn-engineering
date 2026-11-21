@@ -3,12 +3,14 @@ import type { Project } from "../../../../api/types";
 import { ApiFailure, NETWORK_ERROR } from "../../../../api/client";
 import { Loading } from "../../../../product/ui/states";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
+import { useNarrow } from "../../board/useWidth";
 import { Frame } from "../../shared/Frame";
 import { useCrewHref } from "../../shared/nav";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
 import { againstOf, count, dayMoment, sourceLabel, WHY } from "./model";
-import { EscapeTable, ProjectChip, StateChip } from "./parts";
+import { LogHead, PanelHead, type LogVariant } from "./LogHead";
+import { EscapeTable, StateChip } from "./parts";
 import { escapeApi } from "./api";
 import { useEscapeLog, usePossible } from "./useEscapes";
 
@@ -56,9 +58,13 @@ function Card({ row, busy, onDecide }: { row: EscapeRow; busy: boolean; onDecide
  * screen ever sends; both are final in v1, so each asks for no reason. The scan itself runs on the service's tick: this
  * page only reads.
  */
-export function LiveEscapePossible({ project, name, projects, onPick }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void }) {
+export function LiveEscapePossible({ project, name, projects, onPick, panel = false }: { project: string; name: string; projects: readonly Project[]; onPick(id: string): void; panel?: boolean }) {
   const href = useCrewHref();
+  const [measure, narrow] = useNarrow();
+  const variant: LogVariant = panel ? "panel" : narrow ? "window" : "full";
   const possible = usePossible(project);
+  // The tab strip's count and the window the empty state names come from the log read, as the log's own Possible tile does.
+  const all = useEscapeLog(project);
   const confirmed = useEscapeLog(project, "confirmed");
   const [busy, setBusy] = useState<string | null>(null);
   const [refused, setRefused] = useState<{ id: string; why: string; stale: boolean } | null>(null);
@@ -76,6 +82,7 @@ export function LiveEscapePossible({ project, name, projects, onPick }: { projec
         setBusy(null);
         void possible.reload();
         void confirmed.reload();
+        void all.reload();
       })
       .catch((error: unknown) => {
         setBusy(null);
@@ -84,25 +91,24 @@ export function LiveEscapePossible({ project, name, projects, onPick }: { projec
         // A refusal may mean the page's copy is out of date: read both lists again.
         void possible.reload();
         void confirmed.reload();
+        void all.reload();
       });
   };
 
+  const days = all.status === "ready" ? all.data.window_days : null;
   return (
-    <Frame live>
-      <div className="cx-cwpg">
-        <div className="cx-flcr">
-          <span>Dashboard</span>
-          <Ic n="right" sm />
-          <b>Escape log</b>
-        </div>
-        <div className="cx-t14pg">
-          <div className="cx-t10hd">
+    <Frame live panel={panel}>
+      {panel ? <PanelHead onOpen={() => { window.location.hash = href({ page: "possible", project }); }} /> : null}
+      <div className="cx-cwpg" ref={measure}>
+        {variant === "full" ? (
+          <div className="cx-flcr">
+            <span>Dashboard</span>
+            <Ic n="right" sm />
             <b>Escape log</b>
-            <span className="cx-rtag cx-lo">This device only</span>
-            <span className="cx-t10sp">
-              <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />
-            </span>
           </div>
+        ) : null}
+        <div className="cx-t14pg">
+          <LogHead variant={variant} project={project} name={name} projects={projects} onPick={onPick} read={all} tab="possible" coverage={false} />
           {possible.status === "loading" ? <Loading label="Reading possible escapes" rows={4} /> : null}
           {possible.status === "error" ? (
             <div className="cx-cwbn cx-red" style={{ margin: "0" }} role="alert">
@@ -113,18 +119,22 @@ export function LiveEscapePossible({ project, name, projects, onPick }: { projec
               </span>
             </div>
           ) : null}
-          {rows ? (
+          {rows && total === 0 ? (
+            <div className="cx-cwstate" style={{ margin: "48px auto 0" }}>
+              <b>Nothing waits for you</b>
+              <p>
+                No escape is waiting for a decision{days === null ? "" : ` in the last ${count(days)} days`}. A revert appears here at once as a possible escape; so can a later fix or a failed check Crew notices. Each stays here until you confirm or dismiss it.
+              </p>
+            </div>
+          ) : null}
+          {rows && total > 0 ? (
             <>
               <div className="cx-cwbn">
                 <Ic n="info" sm />
                 <span>
-                  {total === 0 ? (
-                    <b>No possible escapes.</b>
-                  ) : (
-                    <b>
-                      {count(total)} possible {total === 1 ? "escape" : "escapes"}.
-                    </b>
-                  )}{" "}
+                  <b>
+                    {count(total)} possible {total === 1 ? "escape" : "escapes"}.
+                  </b>{" "}
                   Crew is not sure. They aren’t counted unless you confirm them.
                 </span>
               </div>
@@ -150,7 +160,7 @@ export function LiveEscapePossible({ project, name, projects, onPick }: { projec
               </span>
             </div>
           ) : null}
-          {confirmed.status === "ready" ? (
+          {confirmed.status === "ready" && !(rows && total === 0) ? (
             <>
               <h5 className="cx-t10h5">
                 Confirmed escapes <span className="cx-t10r">{count(confirmed.data.total)} in all</span>

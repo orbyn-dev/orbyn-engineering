@@ -7,14 +7,11 @@ import { useNarrow } from "../../board/useWidth";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
-import { CoverageLink } from "../../capacity/live/CoverageLink";
 import { useCrewHref } from "../../shared/nav";
 import { asOf, count, dayMoment, ESCAPES_LIMIT, merges, nameOf, sourceLabel, WHY } from "./model";
-import { EscapeTable, GapChip, ProjectChip, StateChip } from "./parts";
+import { LogHead, PanelHead, type LogVariant } from "./LogHead";
+import { EscapeTable, GapChip, StateChip } from "./parts";
 import { useEscapeLog } from "./useEscapes";
-
-/** The log's own width: the page alone (`full`), the same page in a 640 px window, or the 320 px side panel. */
-export type LogVariant = "full" | "window" | "panel";
 
 /** How many escape cards the 320 px panel draws, as `escape-narrow-panel` does: the first four, and its line says so. */
 const PANEL_CARDS = 4;
@@ -294,20 +291,9 @@ export function LiveEscapeLog({
   const open = (id: string) => {
     window.location.hash = href({ page: "escape", id });
   };
-  const chip = <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />;
-  // The Coverage link sits before the project chip, so it never moves when the window picker changes.
-  const coverage = <CoverageLink project={project} />;
   return (
     <Frame live panel={panel}>
-      {panel ? (
-        <div className="cx-phd2">
-          <b>Crew</b>
-          <span className="cx-cwpv">Preview</span>
-          <span className="cx-pha">
-            <button type="button" className="cx-ghost" style={{ height: "24px", fontSize: "12px", padding: "0 9px" }} onClick={() => { window.location.hash = href({ page: "escapes" }); }}>Open in Crew</button>
-          </span>
-        </div>
-      ) : null}
+      {panel ? <PanelHead onOpen={() => { window.location.hash = href({ page: "escapes", project }); }} /> : null}
       <div className="cx-cwpg" ref={measure}>
         {variant === "full" ? (
           <div className="cx-flcr">
@@ -317,25 +303,7 @@ export function LiveEscapeLog({
           </div>
         ) : null}
         <div className="cx-t14pg">
-          <div className="cx-t10hd">
-            <b style={variant === "panel" ? { fontSize: "13px" } : undefined}>Escape log</b>
-            <span className="cx-rtag cx-lo">This device only</span>
-            {variant === "full" ? (
-              <span className="cx-t10sp">
-                {coverage}
-                {chip}
-                {log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null}
-              </span>
-            ) : null}
-          </div>
-          {variant === "panel" ? <div style={{ display: "flex" }}>{coverage}</div> : null}
-          {variant === "window" ? (
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
-              {coverage}
-              {chip}
-              {log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null}
-            </div>
-          ) : null}
+          <LogHead variant={variant} project={project} name={name} projects={projects} onPick={onPick} read={read} tab="all" coverage />
           {read.status === "loading" ? <Loading label="Reading escapes" rows={variant === "full" ? 4 : 2} /> : null}
           {read.status === "error" ? <LogError failure={read.error} onRetry={() => void read.reload()} dash={variant === "full" ? "tiles" : "card"} /> : null}
           {log ? (

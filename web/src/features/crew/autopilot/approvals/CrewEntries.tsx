@@ -9,7 +9,7 @@ import { EntryRow } from "../../shared/EntryRow";
  */
 export function EscapesEntry() {
   return (
-    <EntryRow id="escapes-entry-title" title="Escapes" action={<Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "escapes" })}>Open Escapes</Button>}>
+    <EntryRow id="escapes-entry-title" title="Escapes" action={<Button small aria-label="Open Escapes" onClick={() => navigate({ name: "settings", section: "crew", crewPage: "escapes" })}>Open</Button>}>
       Every revert, and every bug found after a merge that you don’t revert, is a possible escape. You confirm it; from a confirmed escape you can ask Crew to propose a check. Nothing runs until you accept it.
     </EntryRow>
   );

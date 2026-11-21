@@ -226,7 +226,7 @@ function Body({ state, project, apply }: { state: CapacityState; project: string
           </div>
           <span style={{ display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" }}>
             <span className="cx-sv cx-ro">Recorded at merge</span>
-            <CoverageLink project={project} />
+            <CoverageLink project={project} from="capacity" />
           </span>
         </div>
       </div>

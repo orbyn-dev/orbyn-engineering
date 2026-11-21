@@ -29,8 +29,12 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "escapes", "escape", "backtest", "estimate", "report"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
+
+/** Where the coverage map was opened from. It comes from the address the link carried, never from history: no origin, no way back drawn. */
+export const CREW_ORIGINS = ["capacity", "escapes"] as const;
+export type CrewOrigin = (typeof CREW_ORIGINS)[number];
 
 export type Route =
   | { name: "home" }
@@ -54,6 +58,8 @@ export type Route =
        */
       crewPage?: CrewSettingsPage;
       repo?: string;
+      /** With the coverage page: the page whose link opened it, so it can offer the way back. */
+      from?: CrewOrigin;
       /** The escape or backtest run an `escape` or `report` page names. */
       id?: string;
     }
@@ -74,12 +80,15 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   capacity: "capacity",
   coverage: "capacity/coverage",
   escapes: "escapes",
+  possible: "escapes/possible",
+  "escape-settings": "escapes/settings",
   escape: "escapes/detail",
   backtest: "backtest",
   estimate: "backtest/estimate",
   report: "backtest/report",
 };
-const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "coverage"];
+const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "escapes", "possible"];
+const CREW_PAGES_WITH_ORIGIN: readonly CrewSettingsPage[] = ["coverage"];
 const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report"];
 
 // Same grammar as Core Flow valid_id. A locator identifies a read, never an action.
@@ -116,6 +125,7 @@ export function routeHref(route: Route): string {
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
       if (route.selection?.kind === "checkout") params.set("checkout", route.selection.project_id);
       if (route.repo !== undefined && route.crewPage && CREW_PAGES_WITH_REPO.includes(route.crewPage)) params.set("repo", route.repo);
+      if (route.from !== undefined && route.crewPage && CREW_PAGES_WITH_ORIGIN.includes(route.crewPage)) params.set("from", route.from);
       if (route.id !== undefined && route.crewPage && CREW_PAGES_WITH_ID.includes(route.crewPage)) params.set("id", route.id);
       if (route.task !== undefined) params.set("task", route.task);
       if (route.task !== undefined && route.edit) params.set("edit", "1");
@@ -125,13 +135,15 @@ export function routeHref(route: Route): string {
 }
 
 /** The Settings › Crew page an address names, with the project or id it carries; an unknown page is the Crew page itself. */
-function crewPageOf(second: string | undefined, third: string | undefined, params: URLSearchParams): { crewPage?: CrewSettingsPage; repo?: string; id?: string } {
+function crewPageOf(second: string | undefined, third: string | undefined, params: URLSearchParams): { crewPage?: CrewSettingsPage; repo?: string; from?: CrewOrigin; id?: string } {
   const both = [second, third].filter(Boolean).join("/");
   // A longer address wins; an unknown sub-page is its parent (`areas/xyz` is Autopilot by area).
   const page = CREW_SETTINGS_PAGES.find((entry) => CREW_PAGE_PATH[entry] === both) ?? CREW_SETTINGS_PAGES.find((entry) => CREW_PAGE_PATH[entry] === second);
   if (!page) return {};
+  const origin = CREW_ORIGINS.find((entry) => entry === params.get("from"));
   return {
     crewPage: page,
+    ...(CREW_PAGES_WITH_ORIGIN.includes(page) && origin ? { from: origin } : {}),
     ...(CREW_PAGES_WITH_REPO.includes(page) && params.has("repo") ? { repo: params.get("repo") ?? "" } : {}),
     ...(CREW_PAGES_WITH_ID.includes(page) && params.has("id") ? { id: params.get("id") ?? "" } : {}),
   };
