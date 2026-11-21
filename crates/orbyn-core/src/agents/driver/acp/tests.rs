@@ -340,6 +340,7 @@ fn a_launch_names_the_other_cli_it_refuses() {
             .as_custom(),
     );
     assert!(own.refusal(&other).is_none());
+}
 
 #[test]
 fn a_move_is_checked_at_every_location() {
