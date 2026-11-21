@@ -22,6 +22,8 @@ import { SettingsBanner, SettingsEmpty } from "../rows/SettingsBanner";
 import { useConnection } from "../../../product/state/connection";
 import { FallbackNotice, Library } from "../projects/Projects";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
+import { useEngineHostCrashes } from "../engineHost/hostApi";
+import { mergeProblems, problemReport, ProblemLine } from "../engineHost/HostCrashRow";
 
 /** Past this, the space a repair gets back is worth a mention. */
 const REPAIR_NOTICE_BYTES = 1024 ** 3;
@@ -384,6 +386,8 @@ function DiagnosticsGroup() {
   const [showProblems, setShowProblems] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [stopping, setStopping] = useState<ServiceProcess | null>(null);
+  const crashes = useEngineHostCrashes();
+  const [openCrash, setOpenCrash] = useState<string | null>(null);
   const run = async (action: () => Promise<unknown>, done: string) => {
     setNote(null);
     try {
@@ -402,7 +406,7 @@ function DiagnosticsGroup() {
   // Only processes that have run longer than 2 s: a short-lived one is not something to stop, and listing it only for a
   // moment made the section flicker.
   const stoppable = data.processes.filter((process) => process.pid !== data.pid && process.running_seconds > LONG_RUNNING_SECONDS);
-  const recent = data.events.filter((event) => Date.now() - Date.parse(event.at) <= DAY_MS);
+  const recent = mergeProblems(data.events.filter((event) => Date.now() - Date.parse(event.at) <= DAY_MS), crashes, DAY_MS);
   const memory = data.history.at(-1)?.memory_bytes;
   const facts: [string, string][] = [
     ["Service", `Running · ${data.version}`],
@@ -412,7 +416,7 @@ function DiagnosticsGroup() {
   ];
   const copy = () => {
     const lines = [...facts.map(([label, value]) => `${label}: ${value}`),
-      ...recent.map((event) => `${problemTime(event.at)} ${event.message}`)];
+      ...recent.flatMap((event) => problemReport(event, problemTime(event.at), openCrash))];
     void navigator.clipboard?.writeText(lines.join("\n")).then(() => pushToast("Report copied"), () => undefined);
   };
   return (
@@ -432,9 +436,7 @@ function DiagnosticsGroup() {
           <Button small aria-expanded={showProblems} onClick={() => setShowProblems(!showProblems)}>{showProblems ? "Hide" : "Show"}</Button>
         </SettingRow>
         {showProblems ? <div className="set-tbl" role="table" aria-label="Recent problems">
-          {recent.map((event, at) => <div key={at} role="row" className="set-tr" style={{ gridTemplateColumns: "90px minmax(0, 1fr)" }}>
-            <span role="cell" className="set-time">{problemTime(event.at)}</span><span role="cell">{event.message}</span>
-          </div>)}
+          {recent.map((event, at) => <ProblemLine key={"id" in event ? event.id : at} row={event} time={problemTime(event.at)} open={"id" in event && openCrash === event.id} onToggle={() => setOpenCrash("id" in event && openCrash !== event.id ? event.id : null)} />)}
         </div> : null}
       </>}
       <p className="set-grp">Processes</p>

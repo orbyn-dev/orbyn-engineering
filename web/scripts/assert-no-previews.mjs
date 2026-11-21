@@ -26,6 +26,9 @@ const markers = [
   // Crew Designs Flow (features/crew/flow): a frame id.
   "flow-narrow-panel",
   "needsyou-narrow-panel",
+  // Engine host design preview (features/settings/engineHost): the dev-only hash route and its mock.
+  "preview/engine-host",
+  "createEngineHostMock",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>
