@@ -1,7 +1,7 @@
 //! Subscription snapshots have no validated current account/workspace cache key.
-//! Read afresh, and fence responses that a newer read or forget has superseded.
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+//! Read afresh, and fence responses that a forget (account change or sign-out) has superseded.
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use orbyn_contracts::{EngineLimits, LimitsOverview, LimitsUnavailable};
 use serde_json::Value;
@@ -12,33 +12,21 @@ use crate::error::{CoreError, Result};
 use crate::util::now;
 use crate::util::swr::Notify;
 
-type ActiveReads = Arc<Mutex<HashMap<String, Arc<()>>>>;
-
 #[derive(Default)]
 pub(super) struct LimitsReads {
-    active: ActiveReads,
+    generation: Arc<AtomicU64>,
     notify: OnceLock<Notify>,
 }
 
 impl LimitsReads {
-    fn begin(&self, engine: &str) -> Read {
-        let token = Arc::new(());
-        self.active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(engine.to_owned(), token.clone());
-        Read {
-            active: self.active.clone(),
-            engine: engine.to_owned(),
-            token,
-        }
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 
+    /// Fences reads in flight across an account change or sign-out. Overlapping
+    /// reads do not fence one another.
     pub(super) fn forget(&self) {
-        self.active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(notify) = self.notify.get() {
             notify("limits");
         }
@@ -49,37 +37,6 @@ impl LimitsReads {
     }
 }
 
-struct Read {
-    active: ActiveReads,
-    engine: String,
-    token: Arc<()>,
-}
-
-impl Read {
-    fn current(&self) -> bool {
-        self.active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&self.engine)
-            .is_some_and(|token| Arc::ptr_eq(token, &self.token))
-    }
-}
-
-impl Drop for Read {
-    fn drop(&mut self) {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if active
-            .get(&self.engine)
-            .is_some_and(|token| Arc::ptr_eq(token, &self.token))
-        {
-            active.remove(&self.engine);
-        }
-    }
-}
-
 impl Core {
     /// Reads the engine's current subscription report without keeping a fallback.
     /// Neither its signed-in boolean nor its plan proves the account/workspace.
@@ -87,10 +44,10 @@ impl Core {
     pub async fn engine_limits(&self, id: &str, _force: bool) -> Result<EngineLimits> {
         // Observe invalidation before lookup can resolve an older configuration.
         let epoch = self.engines.change_epoch();
-        let read = self.usage.limits.begin(id);
+        let generation = self.usage.limits.generation();
         let driver = self.engines.driver(id)?;
         let report = driver.limits().await;
-        if !read.current() || epoch != self.engines.change_epoch() {
+        if generation != self.usage.limits.generation() || epoch != self.engines.change_epoch() {
             return Err(CoreError::EngineUnavailable(
                 "The engine's limits changed while they were being read. Read them again.".into(),
             ));
@@ -121,14 +78,7 @@ impl Core {
     pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
         let mut engines = Vec::new();
         let mut unavailable = Vec::new();
-        let installed: Vec<String> = self
-            .engines
-            .limits_statuses()
-            .await?
-            .into_iter()
-            .filter(|status| status.installed)
-            .map(|status| status.id)
-            .collect();
+        let installed = self.engines.limits_engine_ids().await?;
         let reads = installed.iter().map(|id| self.engine_limits(id, force));
         for (id, read) in installed
             .iter()

@@ -1,4 +1,5 @@
 //! Subscription reads use fake providers only; their account names are test labels.
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
@@ -153,7 +154,7 @@ async fn missing_identity_and_repeated_success_always_read_the_current_provider(
 }
 
 #[tokio::test]
-async fn a_late_old_read_cannot_answer_after_a_newer_failed_read() {
+async fn an_overlapping_read_still_answers_and_a_forgotten_one_does_not() {
     let dir = TempDir::new();
     let core = core(&dir);
     let driver = FakeLimits::new("account-fixture", "codex");
@@ -161,17 +162,31 @@ async fn a_late_old_read_cannot_answer_after_a_newer_failed_read() {
     let (started, wait_started) = tokio::sync::oneshot::channel();
     let (release, wait_release) = tokio::sync::oneshot::channel();
     *driver.gate.lock().unwrap() = Some((started, wait_release));
+    let first = core.engine_limits(driver.id, false);
+    let overlap = async {
+        wait_started.await.unwrap();
+        assert!(core.engine_limits(driver.id, true).await.is_ok());
+        release.send(()).unwrap();
+    };
+    let (first, ()) = tokio::join!(first, overlap);
+    assert!(
+        first.is_ok(),
+        "a newer overlapping read must not fail this one"
+    );
+
+    let (started, wait_started) = tokio::sync::oneshot::channel();
+    let (release, wait_release) = tokio::sync::oneshot::channel();
+    *driver.gate.lock().unwrap() = Some((started, wait_release));
     let old = core.engine_limits(driver.id, false);
     let switch = async {
         wait_started.await.unwrap();
-        driver.failed.store(true, Ordering::SeqCst);
-        assert!(core.engine_limits(driver.id, true).await.is_err());
+        core.usage.forget();
         release.send(()).unwrap();
     };
     let (old, ()) = tokio::join!(old, switch);
     assert!(
         old.is_err(),
-        "a superseded read must not return the prior account's windows"
+        "a read in flight across forget must not return the prior account's windows"
     );
     assert!(core.cached_limits(driver.id).is_none());
 }
