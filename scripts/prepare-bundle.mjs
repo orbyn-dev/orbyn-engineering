@@ -1,7 +1,7 @@
 // Builds the UI and the release service, then stages them for the Tauri bundle,
 // along with a snapshot of the skills library so first launch needs no network.
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,4 +57,18 @@ for (const program of ["orbynd", "orbyn"]) {
     join(root, "target", target, profile, `${program}${suffix}`),
     join(root, "desktop/src-tauri/binaries", `${program}-${target}${suffix}`),
   );
+}
+
+// The engine host (Node single executable) ships for macOS arm64 only. Every other target stages an empty
+// placeholder, because Tauri needs each `externalBin` file to exist; the app treats an empty file as "no host"
+// and the service keeps the Rust drivers. Intel Macs stay on the Rust drivers (the executable crashes there).
+const hostFile = join(root, "desktop/src-tauri/binaries", `orbyn-engine-host-${target}${suffix}`);
+if (target === "aarch64-apple-darwin" && process.platform === "darwin" && process.arch === "arm64") {
+  const hostDir = join(root, "engine-host");
+  run("npm", ["ci"], hostDir);
+  run("npm", ["run", "build:sea"], hostDir);
+  cpSync(join(hostDir, "dist/orbyn-engine-host"), hostFile);
+  chmodSync(hostFile, 0o755);
+} else {
+  writeFileSync(hostFile, "");
 }
