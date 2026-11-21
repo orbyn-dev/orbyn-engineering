@@ -36,3 +36,23 @@ describe("a refresh the person pressed", () => {
     expect(forges).toContain("/api/forges?rescan=true");
   });
 });
+
+describe("pullsApi.creditsSetting", () => {
+  const read = async (rows: unknown) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const value = await pullsApi.creditsSetting("p 1");
+    return { value, url: (fetchMock.mock.calls[0] as unknown as [string])[0] };
+  };
+
+  it("reads the setting as it applies to the project", async () => {
+    const { value, url } = await read([{ key: "remove_agent_credits_on_merge", value: true }]);
+    expect(value).toBe(true);
+    expect(url).toContain("/api/preferences?project_id=p%201");
+  });
+
+  it("says nothing is known when the service does not list it", async () => {
+    expect((await read([{ key: "other", value: true }])).value).toBeNull();
+    expect((await read([{ key: "remove_agent_credits_on_merge", value: "yes" }])).value).toBeNull();
+  });
+});

@@ -1,6 +1,6 @@
 //! The engine host driver: runs an engine SDK in `orbyn-engine-host` and speaks
 //! docs/engine-host-protocol.md to it. Off unless the desktop shell sets `ORBYN_ENGINE_HOST`
-//! and the family's own flag (`ORBYN_ENGINE_HOST_CLAUDE=1`) is on; with either missing the
+//! and the family's own flag (`ORBYN_ENGINE_HOST_CLAUDE=1`, `ORBYN_ENGINE_HOST_CURSOR=1`) is on; with either missing the
 //! Rust drivers run exactly as before.
 //!
 //! One responsibility per file: `frames` (wire format), `process` (spawn, handshake),
@@ -45,6 +45,8 @@ pub struct HostConfig {
     pub program: PathBuf,
     /// `ORBYN_ENGINE_HOST_CLAUDE=1`.
     pub claude: bool,
+    /// `ORBYN_ENGINE_HOST_CURSOR=1`.
+    pub cursor: bool,
     pub timings: Timings,
 }
 
@@ -56,8 +58,16 @@ impl HostConfig {
             program: PathBuf::from(program),
             // The host reads the same flag and wants exactly `1`.
             claude: claude_flag == Some("1"),
+            cursor: false,
             timings: Timings::default(),
         })
+    }
+
+    /// Also reads `ORBYN_ENGINE_HOST_CURSOR`, which wants exactly `1` as the Claude flag does.
+    #[must_use]
+    pub fn with_cursor(mut self, cursor_flag: Option<&str>) -> Self {
+        self.cursor = cursor_flag == Some("1");
+        self
     }
 }
 
@@ -121,10 +131,27 @@ impl HostHub {
                 Some(secrets_from(core.clone(), "claude")),
             ))
         };
-        Self {
-            slots: vec![claude],
-            core,
+        let mut slots = vec![claude];
+        // Off means no slot at all: nothing about Cursor changes until the flag is on.
+        if config.cursor {
+            slots.push(if platform_supported() {
+                Slot::Pool(Pool::new(
+                    "cursor",
+                    HostSpec {
+                        program: config.program.clone(),
+                        args: vec!["cursor".into()],
+                        env: vec![("ORBYN_ENGINE_HOST_CURSOR".into(), "1".into())],
+                        instance: "cursor-default".into(),
+                    },
+                    config.timings.clone(),
+                    // The key is `CURSOR_API_KEY` in the host's spawn environment, from the core and no other place.
+                    Some(secrets_from(core.clone(), "cursor")),
+                ))
+            } else {
+                Slot::NotUsed("cursor", NotUsed::UnsupportedPlatform)
+            });
         }
+        Self { slots, core }
     }
 
     /// Hands the hub the core that owns the person's keys. Called once, when the core is shared.

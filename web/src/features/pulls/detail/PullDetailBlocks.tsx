@@ -284,8 +284,8 @@ export function MergeRow({
 }) {
   const items: MenuItem[] = [
     ...METHODS.map((entry) => ({ label: entry.label, selected: method === entry.value, onSelect: () => onMethod(entry.value) })),
-    { label: "Merge when checks pass", icon: <Clock size={14} aria-hidden />, selected: auto, separatorBefore: true, onSelect: () => onAuto(!auto) },
-    { label: "Delete branch after merge", icon: <Trash2 size={14} aria-hidden />, selected: deleteBranch, onSelect: () => onDeleteBranch(!deleteBranch) },
+    { label: "Merge when checks pass", icon: <Clock size={14} aria-hidden />, selected: auto, checkbox: true, separatorBefore: true, onSelect: () => onAuto(!auto) },
+    { label: "Delete branch after merge", icon: <Trash2 size={14} aria-hidden />, selected: deleteBranch, checkbox: true, onSelect: () => onDeleteBranch(!deleteBranch) },
   ];
   const label = METHODS.find((entry) => entry.value === method)?.label ?? METHODS[0].label;
   return (

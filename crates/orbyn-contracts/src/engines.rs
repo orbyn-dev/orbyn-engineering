@@ -159,6 +159,33 @@ pub struct EngineCapabilities {
 }
 
 wire_enum! {
+/// Which Crew roles an engine may take.
+pub enum EngineCrewRole {
+    /// Any role.
+    Any,
+    /// May review, never writes: its writing work is not confined yet.
+    ReviewerOnly,
+}
+}
+
+#[allow(clippy::derivable_impls)] // the enum's derives come from `wire_enum!`
+impl Default for EngineCrewRole {
+    fn default() -> Self {
+        Self::Any
+    }
+}
+
+wire! {
+/// Whether a project has acknowledged an engine's one-time notice (docs/cursor-thread-contract.md). A flag and a date, never a secret.
+pub struct EngineNotice {
+    pub engine: String,
+    pub project_id: String,
+    pub acknowledged: bool,
+    pub acknowledged_at: Option<String>,
+}
+}
+
+wire_enum! {
 pub enum AuthState {
     LoggedIn,
     LoggedOut,
@@ -292,6 +319,14 @@ pub struct EngineStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub account: Option<String>,
+    /// Which Crew roles this engine may take. `reviewer_only` engines never write.
+    #[serde(default)]
+    #[ts(optional, as = "Option<EngineCrewRole>")]
+    pub crew_role: EngineCrewRole,
+    /// Why, in plain words, when `crew_role` is `reviewer_only`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub crew_role_reason: Option<String>,
 }
 }
 

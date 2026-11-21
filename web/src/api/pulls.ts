@@ -17,6 +17,7 @@ import type {
   PullRequestDetail,
   PullStack,
   PullTimelineEvent,
+  PreferenceView,
   PullWatch,
   ReviewLineComment,
   UpdatePull,
@@ -72,6 +73,12 @@ export const pullsApi = {
     request<void>("POST", `${base(projectId, number)}/review`, { event, body, comments }),
   update: (projectId: string, number: number, change: UpdatePull) =>
     request<void>("PATCH", base(projectId, number), change),
+  /** The account setting Remove agent credits on merge as it applies to the project; null where the service does not say. */
+  creditsSetting: async (projectId: string, signal?: AbortSignal): Promise<boolean | null> => {
+    const rows = await request<PreferenceView[]>("GET", `/api/preferences?project_id=${q(projectId)}`, undefined, signal);
+    const row = rows.find((one) => one.key === "remove_agent_credits_on_merge");
+    return typeof row?.value === "boolean" ? row.value : null;
+  },
   merge: (projectId: string, number: number, options: MergePull) =>
     request<void>("POST", `${base(projectId, number)}/merge`, options),
   action: (projectId: string, number: number, action: string) =>

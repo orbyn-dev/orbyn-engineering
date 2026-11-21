@@ -22,12 +22,13 @@ pub const DETAILS_ROW_LIMIT: usize = 100;
 const DETAILS_REVIEW_LIMIT: usize = 100;
 
 /// The `PullDetails` fields one batched request supplies, by wire name.
-pub const DETAIL_FIELDS: [&str; 5] = [
+pub const DETAIL_FIELDS: [&str; 6] = [
     "created_at",
     "requested_reviewers",
     "viewer_review_state",
     "comment_count",
     "approval_count",
+    "mergeable",
 ];
 
 /// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
@@ -54,17 +55,19 @@ pub enum DetailsOutcome {
 }
 
 /// One GraphQL request for every listed pull request, aliased `p<number>`: when it was
-/// opened, who is asked to review, the viewer's latest review (the viewer comes from
-/// the same request), and conversation comments plus the comments inside each review.
+/// opened, whether it merges cleanly, who is asked to review, the viewer's latest review
+/// (the viewer comes from the same request), and conversation comments plus the comments
+/// inside each review. A reviewer connection that may continue past its first page cannot
+/// name everyone asked, so it is asked for its page flag too and withheld when it continues.
 pub(super) fn details_query(numbers: &[u64]) -> String {
     let aliases: String = numbers
         .iter()
         .map(|number| {
             format!(
-                "p{number}:pullRequest(number:{number}){{createdAt \
-reviewRequests(first:50){{nodes{{requestedReviewer{{__typename ...on User{{login}} \
+                "p{number}:pullRequest(number:{number}){{createdAt mergeable \
+reviewRequests(first:50){{pageInfo{{hasNextPage}} nodes{{requestedReviewer{{__typename ...on User{{login}} \
 ...on Mannequin{{login}} ...on Team{{slug}}}}}}}} \
-latestReviews(first:50){{nodes{{state author{{login}}}}}} \
+latestReviews(first:50){{pageInfo{{hasNextPage}} nodes{{state author{{login}}}}}} \
 latestOpinionatedReviews(first:100,writersOnly:true){{totalCount pageInfo{{hasNextPage}} nodes{{state}}}} \
 comments{{totalCount}} reviews(first:{DETAILS_REVIEW_LIMIT}){{totalCount pageInfo{{hasNextPage}} nodes{{comments{{totalCount}}}}}}}}"
             )
@@ -94,9 +97,19 @@ fn comment_count(pull: &Value) -> Option<u32> {
         .try_fold(total(pull)?, |sum, review| sum.checked_add(total(review)?))
 }
 
+/// Whether a connection came back whole. One that may continue past its first page, or
+/// that does not say, cannot be read as the whole list.
+fn whole(connection: &Value) -> bool {
+    connection
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
 /// Reads known facts independently. An incomplete comment count stays absent while
 /// valid reviewer facts remain available. A missing/null or wholly unknown row is
-/// omitted; the viewer's review state is absent when no viewer is named.
+/// omitted; the viewer's review state is absent when no viewer is named, and the facts a
+/// truncated reviewer connection would undercount are absent rather than partial.
 pub(super) fn parse_details(
     response: &Value,
     project_id: &str,
@@ -111,10 +124,14 @@ pub(super) fn parse_details(
             let pull = response.pointer(&format!("/data/repository/p{number}"))?;
             pull.as_object()?;
             let created_at = optional(pull, "createdAt");
+            // `MERGEABLE`, `CONFLICTING` or `UNKNOWN`, in the words the rest of the contract uses.
+            let mergeable = optional(pull, "mergeable").map(|word| word.to_lowercase());
             let comment_count = comment_count(pull);
             let approval_count = approval_count(pull);
             let requested_reviewers = pull
-                .pointer("/reviewRequests/nodes")
+                .get("reviewRequests")
+                .filter(|connection| whole(connection))
+                .and_then(|connection| connection.get("nodes"))
                 .and_then(Value::as_array)
                 .map(|nodes| {
                     nodes
@@ -134,7 +151,11 @@ pub(super) fn parse_details(
                         .collect()
                 });
             let viewer_review_state = viewer.and_then(|viewer| {
-                let reviews = pull.pointer("/latestReviews/nodes")?.as_array()?;
+                let reviews = pull
+                    .get("latestReviews")
+                    .filter(|connection| whole(connection))?
+                    .get("nodes")?
+                    .as_array()?;
                 let mine = reviews.iter().find(|review| {
                     review
                         .pointer("/author/login")
@@ -150,6 +171,7 @@ pub(super) fn parse_details(
                 && viewer_review_state.is_none()
                 && comment_count.is_none()
                 && approval_count.is_none()
+                && mergeable.is_none()
             {
                 return None;
             }
@@ -163,6 +185,7 @@ pub(super) fn parse_details(
                     comment_count,
                     approval_count,
                     viewer_review_state,
+                    mergeable,
                 },
             ))
         })

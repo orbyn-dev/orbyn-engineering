@@ -325,4 +325,24 @@ describe("one details chunk failing", () => {
     await settle();
     expect(row().querySelector(".pull-count")).toHaveTextContent("5");
   });
+
+  it("says Conflicts from the row's details instead of Ready to merge, and offers no Merge", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { review_state: "approved" }), entry(2, { review_state: "approved" })], failed: [] });
+    vi.mocked(pullsApi.details).mockImplementation(async (body) => ({
+      details: body.pulls.map((one) => details(Number(one.number), { mergeable: Number(one.number) === 1 ? "conflicting" : "mergeable" })),
+      paused: [],
+    }));
+    render(<PullsPage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect([...document.querySelectorAll(".pull-state-word")].map((one) => one.textContent)).toEqual(["Conflicts", "Ready to merge"]);
+    expect(screen.getAllByRole("button", { name: /^Merge #/ }).map((one) => one.getAttribute("aria-label"))).toEqual(["Merge #2"]);
+  });
+
+  it("leaves the state word alone when the details do not say whether it merges", async () => {
+    vi.mocked(pullsApi.list).mockResolvedValue({ pulls: [entry(1, { review_state: "approved" })], failed: [] });
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [details(1, {})], paused: [] });
+    render(<PullsPage />);
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(document.querySelector(".pull-state-word")).toHaveTextContent("Ready to merge");
+  });
 });
