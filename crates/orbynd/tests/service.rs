@@ -786,6 +786,56 @@ async fn folder_browser_lists_directories_only() {
     assert_eq!(listing["parent"], dir.path().to_str().unwrap());
 }
 
+/// A hidden folder, a system folder and a junction say nothing a person picks as a project,
+/// and Windows marks the loop-prone aliases in a profile exactly this way. `attrib` and
+/// `mklink` are used because a junction, unlike a symlink, needs no administrator.
+#[cfg(windows)]
+#[tokio::test]
+async fn folder_browser_skips_windows_hidden_system_and_junction_folders() {
+    let dir = TempDir::new();
+    let service = Service::start(&dir.path().join("data"), Options::default());
+    let root = dir.path().join("root");
+    for folder in ["plain", "hidden", "system", "target"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    for (attribute, folder) in [("+h", "hidden"), ("+s", "system")] {
+        let output = std::process::Command::new("attrib")
+            .arg(attribute)
+            .arg(root.join(folder))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "attrib {attribute} {folder}");
+    }
+    let junction = root.join("junction");
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(root.join("target"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "mklink /J: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let listing = service
+        .get("/api/fs/browse")
+        .query(&[("path", root.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let names: Vec<_> = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["plain", "target"]);
+}
+
 #[tokio::test]
 async fn external_agui_projects_a_pause_and_resumes_the_same_process() {
     let dir = TempDir::new();

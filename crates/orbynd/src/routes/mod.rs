@@ -100,6 +100,8 @@ mod library_tests;
 #[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
+mod projects_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
 mod tests;
