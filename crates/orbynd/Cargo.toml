@@ -23,7 +23,7 @@ path = "src/bin/orbyn_fake_engine/main.rs"
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
-orbyn-core = { path = "../orbyn-core", features = ["engine-credentials"] }
+orbyn-core = { path = "../orbyn-core", features = ["engine-credentials", "code-mode"] }
 axum.workspace = true
 clap.workspace = true
 futures-util.workspace = true

@@ -14,10 +14,13 @@ test-support = []
 # The macOS keychain behind the engine API-key setting (src/credentials). On in the service's normal
 # build; on other platforms the dependency does not exist and the store says unavailable.
 engine-credentials = ["dep:security-framework"]
+# Code Mode scripts run in QuickJS (swc parses TypeScript), which only the service binary needs.
+code-mode = ["orbyn-code-sandbox/quickjs"]
 engine-client = ["dep:orbyn-device-client", "dep:chacha20poly1305", "dep:security-framework"]
 
 [dependencies]
 orbyn-contracts = { path = "../orbyn-contracts" }
+orbyn-code-sandbox = { path = "../orbyn-code-sandbox", default-features = false }
 # The Engine's device client, by tag: the one Engine crate the app names (docs/account.md, "Engine pin").
 orbyn-device-client = { git = "https://github.com/orbyn-dev/orbyn-engine", tag = "engine-v0.2.4", optional = true }
 async-trait.workspace = true
