@@ -28,19 +28,115 @@ export function maskSecrets(text: string): string {
   });
 }
 
-const history = new Map<string, HistoryEntry[]>();
+const STORE_KEY = "orbyn.terminal.history.v1";
+const MAX_KEYS = 50;
+const MAX_BYTES = 1_000_000;
+const MAX_COMMAND = 4096;
+const MAX_KEY = 256;
+// Control characters other than tab; a stored line with one is not a command this editor wrote.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f]/;
 
-/** Remembers a command run from the editor, for this terminal only and this session. A secret-looking line is never kept. */
+const history = new Map<string, HistoryEntry[]>();
+let loaded = false;
+
+/** The one place the browser's storage is touched. Every read and write is guarded: blocked or throwing storage is a no-op. */
+const storage = {
+  read(): string | null {
+    try {
+      return window.localStorage.getItem(STORE_KEY);
+    } catch {
+      return null;
+    }
+  },
+  write(value: string | null): void {
+    try {
+      if (value === null) window.localStorage.removeItem(STORE_KEY);
+      else window.localStorage.setItem(STORE_KEY, value);
+    } catch {
+      // Blocked, full or private: the history stays in memory for this session.
+    }
+  },
+};
+
+/** The shape a stored line must have. A line is checked for secrets when it is recorded and again when it is loaded. */
+const fits = (entry: HistoryEntry): boolean => entry.command.length <= MAX_COMMAND && !CONTROL.test(entry.command) && Number.isFinite(entry.at);
+
+function readEntry(raw: unknown): HistoryEntry | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const { command, ok, at } = raw as Record<string, unknown>;
+  if (typeof command !== "string" || typeof at !== "number" || !(typeof ok === "boolean" || ok === null)) return null;
+  const entry = { command, ok, at };
+  return command.trim() === "" || !fits(entry) || looksSecret(command) ? null : entry;
+}
+
+/** Reads the stored history once. Anything that is not the expected shape is dropped whole, never repaired. */
+function load(): void {
+  if (loaded) return;
+  loaded = true;
+  const text = storage.read();
+  if (text === null) return;
+  try {
+    const data: unknown = JSON.parse(text);
+    if (typeof data !== "object" || data === null || (data as { v?: unknown }).v !== 1) return;
+    const table = (data as { h?: unknown }).h;
+    if (typeof table !== "object" || table === null || Array.isArray(table)) return;
+    const next = new Map<string, HistoryEntry[]>();
+    for (const [key, list] of Object.entries(table)) {
+      if (key === "" || key.length > MAX_KEY || !Array.isArray(list)) return;
+      const entries: HistoryEntry[] = [];
+      for (const raw of list) {
+        const entry = readEntry(raw);
+        if (entry) entries.push(entry);
+      }
+      if (entries.length > 0) next.set(key, entries.slice(-KEPT));
+    }
+    for (const key of [...next.keys()].slice(0, Math.max(0, next.size - MAX_KEYS))) next.delete(key);
+    for (const [key, list] of next) history.set(key, list);
+  } catch {
+    // Not JSON: discard.
+  }
+}
+
+/** Writes this device's history: only the thread-based key and the lines, within the key and size caps, oldest dropped first. */
+function save(): void {
+  const table = new Map<string, HistoryEntry[]>();
+  for (const [key, list] of history) {
+    const kept = key.length <= MAX_KEY ? list.filter(fits) : [];
+    if (kept.length > 0) table.set(key, kept);
+  }
+  while (table.size > MAX_KEYS) table.delete(table.keys().next().value as string);
+  const encode = () => JSON.stringify({ v: 1, h: Object.fromEntries(table) });
+  let text = encode();
+  while (text.length > MAX_BYTES && table.size > 0) {
+    const [oldest, list] = table.entries().next().value as [string, HistoryEntry[]];
+    if (table.size === 1) list.splice(0, Math.max(1, Math.ceil(list.length / 4)));
+    else table.delete(oldest);
+    if (list.length === 0) table.delete(oldest);
+    text = encode();
+  }
+  storage.write(text);
+}
+
+/** Remembers a command run from the editor, per terminal, and keeps it on this device. A secret-looking line is never kept. */
 export function recordCommand(key: string, command: string, now = Date.now()): void {
   const text = command.trim();
   if (text === "" || looksSecret(text)) return;
+  load();
   const list = history.get(key) ?? [];
   list.push({ command: text, ok: null, at: now });
   if (list.length > KEPT) list.splice(0, list.length - KEPT);
+  // Re-insert so the least recently used terminal is first in line to age out.
+  history.delete(key);
   history.set(key, list);
+  while (history.size > MAX_KEYS) history.delete(history.keys().next().value as string);
+  save();
 }
 
-export const historyOf = (key: string): readonly HistoryEntry[] => history.get(key) ?? [];
+export const historyOf = (key: string): readonly HistoryEntry[] => {
+  load();
+  return history.get(key) ?? [];
+};
 
 /** Newest first, one row per distinct command, filtered by a case-insensitive match on the masked text. */
 export function searchHistory(entries: readonly HistoryEntry[], query: string, limit = 8): HistoryMatch[] {
@@ -71,6 +167,7 @@ export function suggestion(entries: readonly HistoryEntry[], line: string): stri
 
 /** The lines run in every terminal of the given threads, oldest first, as if they were one history. */
 export function historyAcross(threadIds: readonly string[]): HistoryEntry[] {
+  load();
   const out: HistoryEntry[] = [];
   for (const [key, list] of history) if (threadIds.some((id) => key.startsWith(`${id}:`))) out.push(...list);
   return out.sort((a, b) => a.at - b.at);
