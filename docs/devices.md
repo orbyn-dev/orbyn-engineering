@@ -1,7 +1,7 @@
 # Devices contract
 
 What the web Device panel needs from the service: a list of Android AVDs and iOS simulators, and typed controls for them (toolbar
-actions, fold, unfold, hinge). **Planned**: nothing here is built. Eng 4 owns the service side. A name here changes only if the service
+actions, fold, unfold, hinge). **Planned**: the web side is built hidden against a mock (see "As built"); the service is not built. Eng 4 owns the service side. A name here changes only if the service
 PR says so. Rows: H20-H25 in [parity](parity.md) (H24 and H25 are the fold and hinge controls).
 
 Source: T3 Code at `9168ca73d` (MIT), ideas and field names only, no code copied. T3's contract is `packages/contracts/src/device.ts`
@@ -138,6 +138,33 @@ Body: `{code, message, ...}`. The web acts on `code` and shows `message`.
 
 ## As built
 
-Nothing is built. The web side is not built yet: no `web/src/features/devices`, no routes and no generated types. The service side
-(Eng 4) is not started either. Nothing here is verified against `adb` or `xcrun`; the hinge preset values and foldable detection
-keys are marked to confirm.
+**Web (built hidden, not run against a real service).** `web/src/features/devices` holds the typed client interface (`contract.ts`), the
+real HTTP client (`api.ts`) and the panel (`DevicesPanel.tsx`). The mock is `web/mock/devices.ts` (`createDevicesMock`); the dev-only
+route `#/preview/devices` installs it, and `scripts/assert-no-previews.mjs` fails a build that ships the route or the mock.
+
+- **Hidden until reported.** The panel strip asks `GET /api/devices` once. `404`, any failure, or an answer that is not a device list
+  means no Devices tab and no "+" entry, and no error. An empty `devices` array with platform messages shows the messages.
+- **Panel.** A Devices tab (closed by default, opened from the "+") with the list (name, platform and version, state, a Foldable tag)
+  and, for the selected device, a bar, a stage for the last screenshot (capped to 360 px high, PNG only, base64 within the 16 MiB
+  cap), a toolbar and a hinge popover. Frames `device-fold-*` are Planned; the live screen, Record, Type text and Device tools are drawn as
+  Planned pills.
+- **Toolbar by platform (Eng 4's rulings).** Android, booted: Back, Home and Recents (`button`), Rotate, Screenshot, Power off. iOS,
+  booted: Screenshot and Power off only; Rotate and Home are disabled and marked Planned. iOS devices are never foldable in the UI and
+  show no fold or hinge control. Controls appear only when the device's `GET /api/devices/{id}` `actions` lists them. A device that is not
+  `booted` shows no controls. `state` is `shutdown`, `booting` or `booted`; any other word shows as Unknown.
+- **Fold (2D, no 3D).** Fold, Unfold (one shows at a time by the returned posture; both when it is unreported), a hinge slider 1 to 179
+  with a Set angle button (one write), and the presets Closed, Half open and Open (`hinge_preset`, never a raw number). The panel shows
+  the posture and angle the service answered (`Open · 180°`), whatever the request was, and never assumes `half_opened` at 130.
+- **One click, one write.** A ref guards every write, the controls are disabled while one runs, and a failure shows the service's
+  message with Try again. `404 device_not_found` drops the device and reads the list again. All writes go through the pending Person route
+  `POST /api/devices/{id}/actions` (`web/src/api/personKey.ts`).
+- **Text.** Device names and messages are cut (name 60, message 160 to 200 characters) and rendered as text; states, platforms and
+  postures are looked up in `Map`s so a service-chosen key such as `__proto__` is Unknown. Device ids come only from the list.
+
+Guessed where the doc is silent: the screenshot answer is `{ok, device, image}` (the doc says `{ok, image}`; the web reads `image` and
+keeps the `device`); Rotate cycles portrait, landscape left, upside down, landscape right from an assumed portrait start (no orientation
+is in the contract); the unfold step uses the `unfold` action, not `hinge_preset: open`; the hinge slider starts at the reported angle or 90.
+Not verified: every route and field against a real service, `adb` and `simctl` behavior, the hinge preset values (0, 130, 180) and the
+1 to 179 bound.
+
+**Service.** Eng 4's side is not started. Nothing here is verified against `adb` or `xcrun`.

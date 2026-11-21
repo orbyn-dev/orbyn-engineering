@@ -5,7 +5,7 @@ const ui = () => useUi.getState();
 
 beforeEach(() => {
   ui().setLayoutKey(DRAFT_LAYOUT);
-  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review"], panelTabsClosed: ["tools", "linked", "review"] });
+  useUi.setState({ layouts: {}, panelOpen: false, panelTab: null, terminalOpen: false, panelWidth: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"], panelTabsClosed: ["tools", "linked", "review", "devices"] });
 });
 
 describe("thread layouts", () => {
@@ -123,11 +123,11 @@ describe("panel tab row", () => {
     ui().movePanelTab("side", 0);
     ui().closePanelTab("activity");
     ui().setLayoutKey("b");
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
     ui().setLayoutKey("a");
-    expect(ui().panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "linked", "review"]);
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "tools", "linked", "review", "activity"]);
+    expect(ui().panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "linked", "review", "devices"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "tools", "linked", "review", "devices", "activity"]);
     expect(ui().panelTab).toBe("side");
   });
 
@@ -139,19 +139,19 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBeNull();
-    expect(fresh.panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "linked", "review"]);
-    expect(fresh.panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(fresh.panelTabOrder).toEqual(["side", "diff", "browser", "activity", "tools", "linked", "review", "devices"]);
+    expect(fresh.panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
   });
 
   it("starts every thread's side panel with no tab open, and the order and closed set are per thread", () => {
     ui().setLayoutKey("fresh");
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
     ui().reopenPanelTab("browser");
     expect(ui().panelTabsClosed).not.toContain("browser");
     ui().closeAllPanelTabs();
     expect(ui().panelTab).toBeNull();
     expect(ui().panelOpen).toBe(true);
-    expect(ui().panelTabsClosed).toHaveLength(7);
+    expect(ui().panelTabsClosed).toHaveLength(8);
   });
 
   it("closes the other tabs and keeps the one chosen, and Reset tab order leaves the open tabs alone", () => {
@@ -161,10 +161,10 @@ describe("panel tab row", () => {
     ui().reopenPanelTab("side");
     ui().movePanelTab("side", 0);
     ui().resetPanelTabs();
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
-    expect(ui().panelTabsClosed).toEqual(["activity", "tools", "linked", "review"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
+    expect(ui().panelTabsClosed).toEqual(["activity", "tools", "linked", "review", "devices"]);
     ui().closeOtherPanelTabs("browser");
-    expect(ui().panelTabsClosed).toEqual(["diff", "activity", "side", "tools", "linked", "review"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "activity", "side", "tools", "linked", "review", "devices"]);
     expect(ui().panelTab).toBe("browser");
   });
 
@@ -174,13 +174,13 @@ describe("panel tab row", () => {
     ui().openFileTab(target);
     ui().openFileTab(target);
     const id = fileTabId(target);
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", id]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices", id]);
     expect(ui().panelTab).toBe(id);
     expect(ui().panelOpen).toBe(true);
     expect(parseFileTab(id)).toEqual(target);
     ui().closePanelTab(id);
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
-    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
+    expect(ui().panelTabsClosed).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
     expect(ui().panelTab).toBeNull();
   });
 
@@ -193,13 +193,13 @@ describe("panel tab row", () => {
     ui().reopenPanelTab("diff");
     ui().movePanelTab(two, 0);
     ui().setLayoutKey("b");
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
     ui().setLayoutKey("a");
-    expect(ui().panelTabOrder).toEqual([two, "diff", "browser", "activity", "side", "tools", "linked", "review", one]);
+    expect(ui().panelTabOrder).toEqual([two, "diff", "browser", "activity", "side", "tools", "linked", "review", "devices", one]);
     ui().resetPanelTabs();
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", two, one]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices", two, one]);
     ui().closeOtherPanelTabs("diff");
-    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(ui().panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
     expect(ui().panelTab).toBe("diff");
   });
 
@@ -225,9 +225,9 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     expect(fresh.panelTab).toBe(id);
-    expect(fresh.panelTabOrder).toEqual(["diff", id, "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", id, "browser", "activity", "side", "tools", "linked", "review", "devices"]);
     // A surface the saved row never listed starts closed.
-    expect(fresh.panelTabsClosed).toEqual(["browser", "activity", "side", "tools", "linked", "review"]);
+    expect(fresh.panelTabsClosed).toEqual(["browser", "activity", "side", "tools", "linked", "review", "devices"]);
   });
 
   it("gives a saved row from before the Tools tab existed that tab, closed, whatever its closed list was", async () => {
@@ -240,9 +240,9 @@ describe("panel tab row", () => {
     );
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
-    expect(fresh.panelTabsClosed).toEqual(["tools", "linked", "review"]);
-    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
-    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools", "linked", "review"]);
+    expect(fresh.panelTabsClosed).toEqual(["tools", "linked", "review", "devices"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
+    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools", "linked", "review", "devices"]);
   });
 
   it("moves a row saved in the old default order onto the new one, and keeps an order a person changed", async () => {
@@ -259,12 +259,12 @@ describe("panel tab row", () => {
     vi.resetModules();
     const fresh = (await import("./ui")).useUi.getState();
     // Nobody reordered these, so "Reset tab order" must not show for them.
-    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
-    expect(fresh.panelTabsClosed).toEqual(["tools", "linked", "review"]);
-    expect(fresh.layouts["a"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
-    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools", "linked", "review"]);
+    expect(fresh.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
+    expect(fresh.panelTabsClosed).toEqual(["tools", "linked", "review", "devices"]);
+    expect(fresh.layouts["a"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
+    expect(fresh.layouts["a"]?.panelTabsClosed).toEqual(["tools", "linked", "review", "devices"]);
     // The order a person changed is kept, less the Files tab the explorer replaced.
-    expect(fresh.layouts["b"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review"]);
+    expect(fresh.layouts["b"]?.panelTabOrder).toEqual(["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"]);
   });
 
   it("skips a saved layout that is not an object instead of failing to load", async () => {
