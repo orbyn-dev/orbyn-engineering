@@ -104,7 +104,7 @@ async fn a_codex_turn_waits_for_its_tools_to_start() {
 }
 
 #[tokio::test]
-async fn codex_plan_mode_and_leaving_it_reach_native_collaboration() {
+async fn codex_runs_in_default_collaboration_even_with_plan_mode_saved() {
     let dir = TempDir::new();
     let file = dir.path().join("launches");
     let options = Options {
@@ -132,7 +132,7 @@ async fn codex_plan_mode_and_leaving_it_reach_native_collaboration() {
         .map(|entry| serde_json::from_str(entry["args"][0].as_str().unwrap()).unwrap())
         .collect();
     assert_eq!(turns.len(), 2);
-    for (turn, mode) in turns.iter().zip(["plan", "default"]) {
+    for (turn, mode) in turns.iter().zip(["default", "default"]) {
         assert_eq!(turn["collaborationMode"]["mode"], mode);
         assert_eq!(turn["collaborationMode"]["settings"]["model"], "fake-big");
         assert_eq!(

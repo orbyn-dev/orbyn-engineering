@@ -32,7 +32,8 @@ impl RunManager {
                         saved,
                     )
                 }),
-            plan: lifecycle.is_some_and(|l| l.plan_mode),
+            // Plan mode is gone from the product: a saved flag never restricts a run.
+            plan: false,
         };
         let run_dir = self.runs_dir.join(&run_id);
         let mut token = None;
@@ -180,7 +181,7 @@ impl RunManager {
             &descriptor.capabilities.permission_modes,
             saved,
         );
-        let plan = lifecycle.is_some_and(|l| l.plan_mode);
+        let plan = false; // a saved plan_mode never restricts a run
         let scope = RunScope {
             run_id: format!("warm-{}", new_id()),
             thread_id: thread.id.clone(),
