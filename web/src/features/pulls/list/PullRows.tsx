@@ -1,7 +1,7 @@
-import { CircleCheck, CircleDot, CircleX, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, MessageSquare } from "lucide-react";
+import { CircleCheck, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, MessageSquare, SquareCheck } from "lucide-react";
 import type { PullListEntry } from "../../../api/types";
 import { compactAge } from "../../../lib/format";
-import { IconButton } from "../../../ui/controls";
+import { Button, IconButton } from "../../../ui/controls";
 import { ChecksCell, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
 import { detailsKey, type DetailsByKey } from "../model/pullModel";
 
@@ -24,7 +24,10 @@ export function PullsHead() {
     <div className="pulls-head" aria-hidden>
       <span />
       <span>Title and state</span>
-      <span>Checks</span>
+      <span className="h-checks" aria-hidden>
+        <span className="h-checks-word">Checks</span>
+        <SquareCheck size={14} className="h-checks-icon" aria-hidden />
+      </span>
       <span className="h-reviewers">Reviewers</span>
       <span className="h-yours">Your review</span>
       <span className="h-comments">
@@ -118,9 +121,9 @@ export function PullRows(props: PullRowsProps) {
             <span className="pull-age h-age">{pull.updated_at ? compactAge(pull.updated_at) : ""}</span>
             <span className="pull-row-actions">
               {pull.state === "closed" ? (
-                <IconButton label={`Reopen #${pull.number}`} onClick={() => props.onReopen(entry)}>
-                  <CircleDot size={14} aria-hidden />
-                </IconButton>
+                <Button small aria-label={`Reopen #${pull.number}`} onClick={() => props.onReopen(entry)}>
+                  Reopen
+                </Button>
               ) : null}
               {pull.state === "open" && pull.draft ? (
                 <IconButton label={`Ready for review #${pull.number}`} onClick={() => props.onReady(entry)}>
@@ -130,13 +133,13 @@ export function PullRows(props: PullRowsProps) {
               {pull.state === "open" ? (
                 <>
                   {stateWord(pull) === "Ready to merge" && props.online ? (
-                    <IconButton label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
-                      <GitMerge size={14} aria-hidden />
-                    </IconButton>
+                    <Button small tone="primary" aria-label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
+                      Merge
+                    </Button>
                   ) : null}
-                  <IconButton label={`Close #${pull.number}`} onClick={() => props.onClose(entry)}>
-                    <CircleX size={14} aria-hidden />
-                  </IconButton>
+                  <Button small aria-label={`Close #${pull.number}`} onClick={() => props.onClose(entry)}>
+                    Close
+                  </Button>
                 </>
               ) : null}
             </span>

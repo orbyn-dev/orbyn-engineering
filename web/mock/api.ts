@@ -76,8 +76,13 @@ export type Scenario =
   | "pulls"
   | "pulls-details-failed"
   | "pulls-rate-limited"
+  /** The first details read is answered in full, then the service pauses every detail field (as it does when GitHub's limit is spent) and names when it resumes, so a filter set on the details is already on when the pause comes (press Refresh): "pulls-limited" in ten minutes (pr-tb-filter-rate-limited), "pulls-limited-still" two seconds from every read, so the check at that time finds the limit still on (pr-tb-filter-still-limited). */
+  | "pulls-limited"
+  | "pulls-limited-still"
   | "pulls-signed-out"
   | "pulls-none"
+  /** One row is Ready to merge (#137 approved, checks passing): its hover actions offer Merge. */
+  | "pulls-ready"
   | "pulls-unreachable"
   /** The Usage page's Limits tab: Claude Code reads Not reported, Codex reports its windows, and the other providers have no route. */
   | "limits"
@@ -146,6 +151,8 @@ export function createMockApi(options: MockOptions = {}) {
   let clones: unknown[] = [];
   /** The notes of the reviews sent from a pull request page, by number. */
   const reviewsSent = new Map<number, string[]>();
+  /** The details reads since the scenario began: the limited scenarios answer the first in full and then hit the limit. */
+  let detailsReads = 0;
   let delayMs = 0;
   let idCounter = 0;
   let preferenceValues: Record<string, JsonValue> = {};
@@ -189,6 +196,7 @@ export function createMockApi(options: MockOptions = {}) {
     failures = [];
     clones = [];
     reviewsSent.clear();
+    detailsReads = 0;
     delayMs = 0;
     const blank = next === "empty" || next === "first-run" || next === "no-skills";
     projects = blank ? [] : structuredClone(fixtures.projects);
@@ -835,12 +843,30 @@ export function createMockApi(options: MockOptions = {}) {
           const closed = fixtures.pullList().map((entry) => ({ ...entry, pull: { ...entry.pull, number: entry.pull.number + 1000, state: "closed" } }));
           return { status: 200, body: { pulls: closed, failed: [] } };
         }
+        if (scenario === "pulls-ready") {
+          const ready = fixtures.pullList().map((one) => (one.pull.number === 137 ? { ...one, pull: { ...one.pull, review_state: "approved" } } : one));
+          return { status: 200, body: { pulls: ready, failed: [] } };
+        }
         return { status: 200, body: { pulls: scenario.startsWith("pulls") ? fixtures.pullList() : fixtures.pulls(), failed: [] } };
       case "POST /api/pulls": {
         if (seg[2] !== "details") break;
         if (scenario === "pulls-details-failed") return err(502, "forge_unreachable", "GitHub did not answer.");
         const asked = ((data.pulls ?? []) as { project_id: string; number: number }[]).map((one) => `${one.project_id}:${one.number}`);
         const all = scenario.startsWith("pulls") ? [...fixtures.pullDetails(), ...fixtures.pullDetails().map((one) => ({ ...one, number: one.number + 1000 }))] : [];
+        if ((scenario === "pulls-limited" || scenario === "pulls-limited-still") && detailsReads++ > 0) {
+          // Like the service: every detail field is withheld, no row carries one, and the answer says when the pause ends.
+          const fields = ["created_at", "requested_reviewers", "viewer_review_state", "comment_count", "approval_count"];
+          return {
+            status: 200,
+            body: {
+              details: all
+                .filter((one) => asked.includes(`${one.project_id}:${one.number}`))
+                .map((one) => Object.fromEntries(Object.entries(one).filter(([name]) => !fields.includes(name)))),
+              paused: fields,
+              resume_at: new Date(Date.now() + (scenario === "pulls-limited" ? 600_000 : 2_000)).toISOString(),
+            },
+          };
+        }
         return {
           status: 200,
           body: {
