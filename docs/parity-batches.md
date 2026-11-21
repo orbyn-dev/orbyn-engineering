@@ -56,8 +56,8 @@ claims below remain the 7 November snapshot, not the current pickup queue.
 ## Remaining work and evidence
 
 [Parity rows](parity.md) retain the exact `remaining:`, scope and refusal notes.
-`python scripts/count-parity.py` reports 732 rows, 463 source checkboxes ticked,
-and 547 included rows: 382 declared checked, 117 partial, 44 open and 4 not doable.
+`python scripts/count-parity.py` reports 733 rows, 463 source checkboxes ticked,
+and 548 included rows: 382 declared checked, 117 partial, 45 open and 4 not doable.
 There are 185 excluded and zero unresolved-scope rows. Issue closure changes none
 of those declarations and supplies no new runtime evidence.
 
