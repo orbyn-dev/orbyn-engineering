@@ -1344,6 +1344,7 @@ async fn a_queued_follow_up_reaches_the_engine_masked_and_stays_queued_as_typed(
         let gate = gate.clone();
         tokio::spawn(async move {
             gate.notified().await;
+            let _ = events.send(text("done")).await;
             let _ = events
                 .send(EngineEvent::Finished(EngineOutcome::Completed))
                 .await;
@@ -1395,6 +1396,7 @@ async fn a_steer_reaches_the_engine_masked_and_the_timeline_keeps_it_as_typed() 
         let gate = gate.clone();
         tokio::spawn(async move {
             gate.notified().await;
+            let _ = events.send(text("done")).await;
             let _ = events
                 .send(EngineEvent::Finished(EngineOutcome::Completed))
                 .await;
@@ -1469,4 +1471,32 @@ async fn the_agents_switch_and_a_person_pattern_decide_what_the_engine_reads() {
         seen.lock().unwrap()[0].user_prompt.contains(&secret),
         "with the switch off nothing is hidden"
     );
+}
+
+#[tokio::test]
+async fn a_person_pattern_is_masked_for_the_engine_before_any_cut() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    f.core
+        .save_redaction_pattern(
+            "t",
+            None,
+            &orbyn_contracts::RedactionPatternInput {
+                name: "Project code".into(),
+                pattern: "corp_[a-z]{6}".into(),
+                kind: orbyn_contracts::PatternKind::Regex,
+                applies_to: orbyn_contracts::PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, "the code is corp_abcdef ok", "t")
+        .unwrap();
+    until_terminal(&f.core, &run.id).await;
+    let sent = seen.lock().unwrap()[0].user_prompt.clone();
+    assert_eq!(sent, "the code is [hidden: Project code] ok");
+    assert!(timeline(&f).contains("corp_abcdef"));
 }
