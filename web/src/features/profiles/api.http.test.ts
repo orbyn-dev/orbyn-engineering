@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { sendsPersonKey } from "../../api/personKey";
 import { profilesApi, setProfilesApi } from "./api";
-import { emptyDraft } from "./model";
+import { emptyDraft, grantsFromFailure } from "./model";
 
 afterEach(() => { setProfilesApi(null); });
 const answer = (status: number, body: unknown) => vi.fn(async (_url: string, _init?: RequestInit) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
@@ -9,6 +9,22 @@ const sent = (fetching: ReturnType<typeof answer>) => { const [url, init] = fetc
 
 it("answers a 404 from the list as no feature, with no error", async () => {
   vi.stubGlobal("fetch", answer(404, { code: "not_found", message: "No such route." }));
+  await expect(profilesApi().list()).resolves.toBeNull();
+});
+
+it("reads the real answer, a bare array, and drops entries that are not profiles", async () => {
+  vi.stubGlobal("fetch", answer(200, [{ id: "builtin:careful", name: "Careful" }, "junk", { id: "01j0", name: "Mine" }]));
+  const list = await profilesApi().list();
+  expect(list?.profiles.map((one) => one.id)).toEqual(["builtin:careful", "01j0"]);
+});
+
+it("answers an empty bare array as an empty list, not as no feature", async () => {
+  vi.stubGlobal("fetch", answer(200, []));
+  await expect(profilesApi().list()).resolves.toEqual({ profiles: [], limit: 50 });
+});
+
+it("answers the old wrapper shape as no feature", async () => {
+  vi.stubGlobal("fetch", answer(200, { profiles: [{ id: "builtin:careful" }], limit: 50 }));
   await expect(profilesApi().list()).resolves.toBeNull();
 });
 
@@ -22,11 +38,35 @@ it("lets any other failure through, so it is not mistaken for a missing feature"
   await expect(profilesApi().list()).rejects.toMatchObject({ code: "tool_failed" });
 });
 
-it("reads the list and defaults the limit to 50", async () => {
-  vi.stubGlobal("fetch", answer(200, { profiles: [{ id: "builtin:careful", name: "Careful" }, "junk"] }));
-  const list = await profilesApi().list();
-  expect(list?.profiles).toHaveLength(1);
-  expect(list?.limit).toBe(50);
+it("takes the limit of 50 from the client constant, since the answer carries none", async () => {
+  vi.stubGlobal("fetch", answer(200, [{ id: "builtin:careful", name: "Careful" }]));
+  expect((await profilesApi().list())?.limit).toBe(50);
+});
+
+it("reads a clear (profile_id null) answering application null", async () => {
+  const fetching = answer(200, { applied: {}, ignored: [], application: null });
+  vi.stubGlobal("fetch", fetching);
+  const result = await profilesApi().applyToThread("t1", { profile_id: null });
+  expect(result.application).toBeNull();
+  expect(sent(fetching)).toMatchObject({ method: "PUT", body: { profile_id: null } });
+  expect(sent(fetching).body).not.toHaveProperty("ack_grants");
+});
+
+it("applies to a crew at POST /api/crew/profile/apply and reads applied.autopilot_mode", async () => {
+  const fetching = answer(200, { applied: { engine: "claude", model: "m", permission_mode: "auto", autopilot_mode: "full" }, ignored: [], application: { profile_id: "01j0", name: "N", revision: 1, customized: false, applied_at: "t" } });
+  vi.stubGlobal("fetch", fetching);
+  const result = await profilesApi().applyToCrew("c1", { profile_id: "01j0", ack_grants: ["autopilot_full"] });
+  expect(result.applied.autopilot_mode).toBe("full");
+  expect(sent(fetching)).toMatchObject({ method: "POST", body: { crew_id: "c1", profile_id: "01j0", ack_grants: ["autopilot_full"] } });
+  expect(new URL(sent(fetching).url, "http://x").pathname).toBe("/api/crew/profile/apply");
+  expect(sendsPersonKey("POST", "/api/crew/profile/apply")).toBe(true);
+});
+
+it("carries the grants of a 409 confirm_required in its detail", async () => {
+  vi.stubGlobal("fetch", answer(409, { code: "confirm_required", message: "Confirm.", detail: { grants: ["full_access", "autopilot_full", "new_one"] } }));
+  const failure = await profilesApi().applyToThread("t1", { profile_id: "01j0" }).catch((error: unknown) => error);
+  expect(failure).toMatchObject({ code: "confirm_required", status: 409 });
+  expect(grantsFromFailure((failure as { detail: unknown }).detail)).toEqual(["full_access", "autopilot_full"]);
 });
 
 it("sends each write to its route with the typed body, and the seen revision on a change", async () => {

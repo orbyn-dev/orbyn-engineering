@@ -71,7 +71,7 @@ export function createProfilesMock(init: { profiles?: Profile[] | null; delayMs?
   const grants = (profile: Profile): GrantCode[] => [...(profile.permission_mode === "full_access" ? (["full_access"] as const) : []), ...(profile.autopilot_mode === "full" ? (["autopilot_full"] as const) : [])];
   const apply = (scope: "thread" | "crew", id: string, body: ApplyBody): ApplyAnswer => {
     preflight();
-    if (body.profile_id === null) return { applied: {}, ignored: [], application: { profile_id: "", name: "", revision: 0, customized: false, applied_at: NOW } };
+    if (body.profile_id === null) return { applied: {}, ignored: [], application: null };
     const profile = find(body.profile_id);
     if (body.seen_revision !== undefined && body.seen_revision !== profile.revision) refuse("revision_conflict");
     const need = grants(profile);
@@ -81,7 +81,7 @@ export function createProfilesMock(init: { profiles?: Profile[] | null; delayMs?
     if (availability.engine !== "ok" && availability.engine !== "none") refuse("engine_unavailable");
     writes.push(`apply:${scope}:${id}:${profile.id}:ack=${seen.join("+")}`);
     return {
-      applied: { ...(profile.engine ? { engine: profile.engine } : {}), model: `model-for-${profile.model_tier}`, permission_mode: profile.permission_mode },
+      applied: { ...(profile.engine ? { engine: profile.engine } : {}), model: `model-for-${profile.model_tier}`, permission_mode: profile.permission_mode, ...(scope === "crew" ? { autopilot_mode: profile.autopilot_mode } : {}) },
       ignored: scope === "thread" ? ["autopilot_mode"] : [],
       application: { profile_id: profile.id, name: profile.name, revision: profile.revision, customized: false, applied_at: NOW },
     };
