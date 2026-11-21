@@ -1,0 +1,73 @@
+# Starter Opengrep rules for this project. Advisory: see .opengrep/README.md.
+# Every rule has a matching case and a safe look-alike in .opengrep/tests, run by the workflow.
+rules:
+  - id: orbyn-rust-command-nonliteral
+    languages: [rust]
+    severity: WARNING
+    message: "Process spawned from a non-literal program name: confirm the value is not influenced by a request or a repository file"
+    patterns:
+      - pattern: Command::new($CMD)
+      - pattern-not: Command::new("...")
+    metadata: {category: security, subcategory: [audit], confidence: LOW, cwe: ["CWE-78: OS Command Injection"]}
+  - id: orbyn-rust-shell-spawn
+    languages: [rust]
+    severity: WARNING
+    message: "A shell is spawned: arguments reach a shell parser"
+    pattern-either:
+      - pattern: Command::new("sh")
+      - pattern: Command::new("bash")
+      - pattern: Command::new("zsh")
+      - pattern: Command::new("cmd")
+      - pattern: Command::new("powershell")
+    metadata: {category: security, subcategory: [audit], confidence: MEDIUM, cwe: ["CWE-78: OS Command Injection"]}
+  - id: orbyn-rust-sql-format
+    languages: [rust]
+    severity: ERROR
+    message: "SQL text built with format!: use bound parameters"
+    pattern-either:
+      - pattern: $C.execute(&format!(...), ...)
+      - pattern: $C.prepare(&format!(...))
+      - pattern: $C.execute_batch(&format!(...))
+    metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-89: SQL Injection"]}
+  - id: orbyn-rust-tls-verify-off
+    languages: [rust]
+    severity: ERROR
+    message: "TLS certificate verification is switched off"
+    pattern: $B.danger_accept_invalid_certs(true)
+    metadata: {category: security, subcategory: [vuln], confidence: HIGH, cwe: ["CWE-295: Improper Certificate Validation"]}
+  - id: orbyn-rust-unsafe-block
+    languages: [rust]
+    severity: INFO
+    message: "unsafe block: record why it is sound"
+    pattern: unsafe { ... }
+    metadata: {category: security, subcategory: [audit], confidence: LOW}
+  - id: orbyn-rust-secret-named-value-in-log
+    languages: [rust]
+    severity: WARNING
+    message: "A secret-named value is passed to a log or console macro: log a redacted form or nothing"
+    patterns:
+      - pattern-either:
+          - pattern: println!(..., $X, ...)
+          - pattern: eprintln!(..., $X, ...)
+          - pattern: print!(..., $X, ...)
+          - pattern: eprint!(..., $X, ...)
+          - pattern: dbg!($X)
+          - pattern: info!(..., $X, ...)
+          - pattern: tracing::info!(..., $X, ...)
+          - pattern: log::info!(..., $X, ...)
+          - pattern: warn!(..., $X, ...)
+          - pattern: tracing::warn!(..., $X, ...)
+          - pattern: log::warn!(..., $X, ...)
+          - pattern: error!(..., $X, ...)
+          - pattern: tracing::error!(..., $X, ...)
+          - pattern: log::error!(..., $X, ...)
+          - pattern: debug!(..., $X, ...)
+          - pattern: tracing::debug!(..., $X, ...)
+          - pattern: log::debug!(..., $X, ...)
+          - pattern: trace!(..., $X, ...)
+          - pattern: tracing::trace!(..., $X, ...)
+          - pattern: log::trace!(..., $X, ...)
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i)^&?(self\.)?[a-z_]*(secret|token|password|passwd|api_?key|private_?key|bearer)[a-z_]*$
+    metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-532: Insertion of Sensitive Information into Log File"]}

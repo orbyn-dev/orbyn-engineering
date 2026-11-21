@@ -39,22 +39,25 @@ const coverage = (over: Partial<ReviewCoverage> = {}): ReviewCoverage => ({
   ...over,
 });
 
-type Answer = { status: number; body?: unknown } | "never";
+type Answer = { status: number; body?: unknown } | "never" | "reject";
 let hold: { project: string; answer: Promise<Response> } | null;
-let answers: { preview: Answer; capacity: Answer; coverage: Answer; projects: Answer; coverageBy: Record<string, Answer> };
+let answers: { preview: Answer; capacity: Answer; save: Answer; coverage: Answer; projects: Answer; coverageBy: Record<string, Answer> };
 const sent = () => vi.mocked(fetch).mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${String(url)}`);
 
 beforeEach(() => {
   hold = null;
-  answers = { preview: { status: 200, body: { enabled: true } }, capacity: { status: 200, body: state() }, coverage: { status: 200, body: coverage() }, projects: { status: 200, body: [project] }, coverageBy: {} };
+  answers = { preview: { status: 200, body: { enabled: true } }, capacity: { status: 200, body: state() }, save: { status: 200, body: state() }, coverage: { status: 200, body: coverage() }, projects: { status: 200, body: [project] }, coverageBy: {} };
   useWorkspace.setState({ projects: { data: [project], loading: false, error: null } });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string) => {
+    vi.fn(async (input: string, init?: RequestInit) => {
       const url = String(input);
-      const answer = url.startsWith("/api/projects") ? answers.projects : url.includes("/api/crew/preview") ? answers.preview : url.includes("/api/crew/capacity/coverage") ? (answers.coverageBy[new URL(url, "http://x").searchParams.get("project") ?? ""] ?? answers.coverage) : url.includes("/api/crew/capacity") ? answers.capacity : { status: 404 };
+      // A write answers from its own set: a save's answer is never the read's.
+      const answer = init?.method === "POST" ? answers.save : url.startsWith("/api/projects") ? answers.projects : url.includes("/api/crew/preview") ? answers.preview : url.includes("/api/crew/capacity/coverage") ? (answers.coverageBy[new URL(url, "http://x").searchParams.get("project") ?? ""] ?? answers.coverage) : url.includes("/api/crew/capacity") ? answers.capacity : { status: 404 };
       if (hold && url.includes("/api/crew/capacity/coverage") && new URL(url, "http://x").searchParams.get("project") === hold.project) return hold.answer;
       if (answer === "never") return new Promise<Response>(() => undefined);
+      // The device lost its network: `request` turns this into its own network failure.
+      if (answer === "reject") throw new TypeError("Failed to fetch");
       return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status });
     }),
   );
@@ -146,37 +149,137 @@ describe("Review capacity on the real routes", () => {
     expect(container.textContent).not.toMatch(/\$\d/);
   });
 
-  it("never sends a write on load, and every control on the screen is a disabled, planned one", async () => {
+  it("draws the saved page read-only on load: no control writes, and nothing is sent until the person acts", async () => {
     const { container } = render(<LiveCapacity view="settings" />);
     await screen.findByText("8 changes");
     expect(sent().filter((call) => !call.startsWith("GET "))).toEqual([]);
     expect(container.querySelectorAll("input, select, textarea")).toHaveLength(0);
-    for (const control of container.querySelectorAll("button")) expect(control).toBeDisabled();
+    // The one control on the page opens the editor; it writes nothing by itself.
+    expect([...container.querySelectorAll("button")].map((one) => one.textContent)).toEqual(["Change the limit"]);
+    expect(screen.queryByText("Planned")).toBeNull();
   });
 
-  it("marks the editor Planned: the limit row has a disabled Change the limit beside a Planned pill, and clicking it sends nothing", async () => {
+  it("opens the editor from Change the limit with the stored limit, sampling and pause switch, and sends nothing", async () => {
     const user = userEvent.setup();
     render(<LiveCapacity view="settings" />);
-    await screen.findByText("8 changes");
-    const button = screen.getByRole("button", { name: "Change the limit" });
-    expect(button).toBeDisabled();
-    expect(screen.getAllByText("Planned")).toHaveLength(1);
-    await user.click(button);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    expect(screen.getByRole("spinbutton", { name: "How many changes you can review" })).toHaveAttribute("aria-valuenow", "8");
+    expect(screen.getByRole("switch", { name: "Pause new Low-priority starts" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "Review every batch" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Review a sample" })).not.toBeChecked();
+    expect(screen.getByText("Nothing is sent until you press Save.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(sent().filter((call) => !call.startsWith("GET "))).toEqual([]);
   });
 
-  it("with no limit saved the banner offers a disabled Set a limit (Planned), and the pause and low-risk rows use the unset wording", async () => {
+  it("a stepper, a switch and a radio change only what is drawn until Save is pressed", async () => {
+    const user = userEvent.setup();
+    render(<LiveCapacity view="settings" />);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    await user.click(screen.getByRole("button", { name: "One change more" }));
+    await user.click(screen.getByRole("button", { name: "One change more" }));
+    await user.click(screen.getByRole("switch", { name: "Pause new Low-priority starts" }));
+    await user.click(screen.getByRole("radio", { name: "Review a sample" }));
+    expect(screen.getByRole("spinbutton", { name: "How many changes you can review" })).toHaveAttribute("aria-valuenow", "10");
+    expect(screen.getByRole("switch", { name: "Pause new Low-priority starts" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Review a sample" })).toBeChecked();
+    expect(sent().filter((call) => !call.startsWith("GET "))).toEqual([]);
+  });
+
+  it("sends the person's save once, with the limit, sampling and pause as entered, and the rows return to the stored values", async () => {
+    const user = userEvent.setup();
+    answers.save = { status: 200, body: state({ limit: 10, sampling: "one_in_four", pause_enabled: true }) };
+    render(<LiveCapacity view="settings" />);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    await user.click(screen.getByRole("button", { name: "One change more" }));
+    await user.click(screen.getByRole("button", { name: "One change more" }));
+    await user.click(screen.getByRole("switch", { name: "Pause new Low-priority starts" }));
+    await user.click(screen.getByRole("radio", { name: "Review a sample" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(sent()).toContain("POST /api/crew/capacity/settings"));
+    const writes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(String(writes[0]![1]?.body))).toEqual({ project: "p-app", limit: 10, sampling: "one_in_four", pause_enabled: true });
+    expect(await screen.findByText("10 changes")).toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(screen.getByText("Pause new Low-priority starts")).toBeInTheDocument();
+    expect(screen.getByText("Review a sample")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
+  it("Cancel closes the editor, keeps the stored values and sends nothing", async () => {
+    const user = userEvent.setup();
+    render(<LiveCapacity view="settings" />);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    await user.click(screen.getByRole("button", { name: "One change more" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("8 changes")).toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(sent().filter((call) => !call.startsWith("GET "))).toEqual([]);
+  });
+
+  it("a failed save keeps what the person entered, says why in one banner, and Try again sends the same values once more", async () => {
+    const user = userEvent.setup();
+    answers.save = { status: 403, body: { code: "person_required", message: "Only a person can change this." } };
+    render(<LiveCapacity view="settings" />);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    await user.click(screen.getByRole("button", { name: "One change more" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const banner = await screen.findByRole("alert");
+    expect(banner.textContent).toContain("Can’t save review capacity");
+    expect(banner.textContent).toContain("Only a person can change this.");
+    expect(screen.getByRole("spinbutton", { name: "How many changes you can review" })).toHaveAttribute("aria-valuenow", "9");
+    answers.save = { status: 200, body: state({ limit: 9 }) };
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(await screen.findByText("9 changes")).toBeInTheDocument();
+    const bodies = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST").map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(bodies[0]).toMatchObject({ project: "p-app", limit: 9 });
+  });
+
+  it("shows the service's own refusal for a limit it will not take, instead of inventing a rule", async () => {
+    const user = userEvent.setup();
+    answers.save = { status: 400, body: { code: "invalid", message: "the capacity limit must be at least 1" } };
+    render(<LiveCapacity view="settings" />);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    for (let n = 0; n < 8; n += 1) await user.click(screen.getByRole("button", { name: "One change fewer" }));
+    expect(screen.getByRole("spinbutton", { name: "How many changes you can review" })).toHaveAttribute("aria-valuenow", "0");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("the capacity limit must be at least 1");
+    const call = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(JSON.parse(String(call[1]?.body))).toMatchObject({ limit: 0 });
+  });
+
+  it("says the service can’t be reached in words when the save's network is gone, and nothing was saved", async () => {
+    const user = userEvent.setup();
+    answers.save = "reject";
+    render(<LiveCapacity view="settings" />);
+    await user.click(await screen.findByRole("button", { name: "Change the limit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const banner = await screen.findByRole("alert");
+    expect(banner.textContent).toContain("Can’t save review capacity");
+    expect(banner.textContent).toContain("Check that the Orbyn service is running. Your changes are still here, and nothing was saved.");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("with no limit saved the banner's Set a limit opens the editor on the default 8, pausing off and every batch", async () => {
+    const user = userEvent.setup();
     answers.capacity = { status: 200, body: state({ settings_saved: false, waiting: 3 }) };
     const { container } = render(<LiveCapacity view="settings" />);
     expect(await screen.findByText("No limit is set.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Set a limit" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Change the limit" })).toBeNull();
-    expect(screen.getByText("Planned")).toBeInTheDocument();
     expect(container.textContent).toContain("Review every low-risk batch, or review a sample sized to the batch.");
     expect(container.textContent).not.toContain("Paused starts begin by themselves");
     expect(screen.queryByText("What the limit does and doesn’t do")).toBeNull();
-    expect(screen.getByRole("button", { name: "Set a limit" })).toHaveAttribute("title", expect.stringMatching(/^Planned: /));
     expect(container.textContent).not.toContain("Crew is not connected");
+    await user.click(screen.getByRole("button", { name: "Set a limit" }));
+    expect(screen.getByRole("spinbutton", { name: "How many changes you can review" })).toHaveAttribute("aria-valuenow", "8");
+    expect(screen.getByRole("switch", { name: "Pause new Low-priority starts" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "Review every batch" })).toBeChecked();
+    expect(sent().filter((call) => !call.startsWith("GET "))).toEqual([]);
   });
 
   it("a saved limit with pausing off and every batch reviewed reads Off and Review every batch, with no default suffix, no plan and no banner", async () => {
@@ -477,7 +580,7 @@ describe("Review coverage states and the project picker", () => {
 
 describe("the capacity writes", () => {
   it("send the person's settings to the Person route with the pause switch as given", async () => {
-    answers.capacity = { status: 200, body: state({ pause_enabled: true }) };
+    answers.save = { status: 200, body: state({ pause_enabled: true }) };
     await capacityApi.saveSettings({ project: "p-app", limit: 6, sampling: "off", pause_enabled: true });
     const call = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === "POST")!;
     expect(String(call[0])).toBe("/api/crew/capacity/settings");
@@ -485,7 +588,7 @@ describe("the capacity writes", () => {
   });
 
   it("surface a refusal as the service's own failure, and refuse a bad task id before any request", async () => {
-    answers.capacity = { status: 403, body: { code: "person_required", message: "Only a person can change this." } };
+    answers.save = { status: 403, body: { code: "person_required", message: "Only a person can change this." } };
     await expect(capacityApi.saveSettings({ project: "p-app", limit: 6, sampling: "off", pause_enabled: true })).rejects.toMatchObject({ code: "person_required", status: 403 });
     const before = sent().length;
     expect(() => capacityApi.saveTask("../x", { priority: "low" })).toThrow(ApiFailure);

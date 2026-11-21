@@ -14,6 +14,9 @@ export const WHY = {
   check: "the create-check screen (the form for the path, what it asserts and the run command) is still a drawn sample, so no live screen collects a proposal yet",
   tooling: "a created check only adds test files in v1; a tooling gap is logged with no proposal",
   pruning: "pruning the oldest dismissed and possible escapes is not built; the writer refuses instead",
+  openItself: "a choice to open the check task by itself is not built",
+  put: "the constants are read from this device; changing them (PUT /api/crew/escapes/thresholds) is not built",
+  router: "confirmed escapes do not feed the Router in v1, so a tie-break between equal engines decides nothing",
 } as const;
 
 /** The core’s own cap on one project’s escapes (ESCAPES_PER_PROJECT_MAX). The log read carries the count, so the page can

@@ -17,9 +17,11 @@ function Card({ children }: { children: ReactNode }) {
  * read, while the service's Crew Preview is off. A Preview hash opens before the app shell loads the workspace, so the
  * log and the possible list read the project list themselves; one project is shown at a time, the first one listed until
  * a person chooses another from the page's project chip. The detail names its escape in the hash (`?id=`), so it needs
- * no project of its own: the escape says which project it belongs to.
+ * no project of its own: the escape says which project it belongs to. The log also draws narrow: below 640 px it measures its own width
+ * (`escape-narrow-window`: two tiles and a card per escape), and `panel` is the 320 px side panel (`escape-narrow-panel`,
+ * one counts card, a card per escape and an Open in Crew button that only navigates).
  */
-export function LiveEscapes({ view, id }: { view: "log" | "possible" | "detail"; id?: string }) {
+export function LiveEscapes({ view, id, panel = false }: { view: "log" | "possible" | "detail"; id?: string; panel?: boolean }) {
   const on = useCrewPreview();
   const projects = useVisibleProjects();
   const failure = useWorkspace((state) => state.projects.error);
@@ -33,7 +35,7 @@ export function LiveEscapes({ view, id }: { view: "log" | "possible" | "detail";
     return <Card>{failure ? <ErrorState title="Can’t read the projects" failure={failure} onRetry={() => void refresh()} /> : <Loading label="Reading projects" rows={2} />}</Card>;
   const project = projects.find((entry) => entry.id === chosen) ?? projects[0];
   if (!project) return <Card><Empty title="No project to show" /></Card>;
-  if (view === "log") return <LiveEscapeLog key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} />;
+  if (view === "log") return <LiveEscapeLog key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} panel={panel} />;
   if (view === "possible") return <LiveEscapePossible key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} />;
   return <LiveEscapeDetail id={id ?? ""} />;
 }

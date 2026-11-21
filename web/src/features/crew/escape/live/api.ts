@@ -13,6 +13,7 @@ import type { EscapeLog } from "../../../../generated/EscapeLog";
 import type { EscapePossible } from "../../../../generated/EscapePossible";
 import type { EscapeRow } from "../../../../generated/EscapeRow";
 import type { EscapeState } from "../../../../generated/EscapeState";
+import type { EscapeThresholds } from "../../../../generated/EscapeThresholds";
 
 /** The same shape the service's every crew id check accepts. */
 const validEscapeId = (id: string): boolean => id.length <= 96 && /^[A-Za-z0-9:_-][A-Za-z0-9:_.-]*$/.test(id);
@@ -32,6 +33,8 @@ export const escapeApi = {
     request<EscapePossible>("GET", `/api/crew/escapes/possible?${query(project)}`, undefined, signal),
   /** One escape and its trail, oldest first. */
   detail: (id: string, signal?: AbortSignal) => request<EscapeDetail>("GET", path(id), undefined, signal),
+  /** The four constants the log reads, as stored on this device (or the defaults). A read, never a write: the PUT is Planned. */
+  thresholds: (signal?: AbortSignal) => request<EscapeThresholds>("GET", "/api/crew/escapes/thresholds", undefined, signal),
   /** A person confirms one possible escape. Their own click sends it; the answer is the escape as it now stands. */
   confirm: (id: string, body: EscapeDecide) => request<EscapeRow>("POST", `${path(id)}/confirm`, body),
   /** A person dismisses one possible escape. Their own click sends it; the answer is the escape as it now stands. */

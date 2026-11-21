@@ -668,4 +668,22 @@ export const FRAMES = {
   "escape-check-withdraw": { route: "#/preview/crew/escape-check-withdraw?id=esc-proven", scenario: "crew-escapes-checks", steps: [click("button", "Withdraw")] },
   "escape-check-withdrawn": { route: "#/preview/crew/escape-check-withdrawn?id=esc-withdrawn", scenario: "crew-escapes-checks" },
   "escape-limit": { route: "#/preview/crew/escape-limit", scenario: "crew-escapes-limit", wait: 2500 },
+  /** The same log at a narrow width (Crew Designs v79): a 640 px window and the 320 px side panel, cards instead of the table. */
+  "escape-narrow-window": { route: "#/preview/crew/escape-narrow-window", scenario: "crew-escapes", width: 640 },
+  "escape-narrow-panel": { route: "#/preview/crew/escape-narrow-panel", scenario: "crew-escapes", width: 320 },
+  /** The settings sheet on the real thresholds read (the defaults; `crew-escapes-stored` draws a person's stored values). */
+  "escape-settings": { route: "#/preview/crew/escape-settings", scenario: "crew-escapes" },
+  /** Drawn samples with no read behind them, matched to Crew Designs v79: the mark dialog (no Review queue to open it from),
+   *  the dashboard (no report route) and the Route escape counts (no per-area counts route). */
+  "escape-report": { route: "#/preview/crew/escape-report" },
+  "escape-dashboard": { route: "#/preview/crew/escape-dashboard" },
+  "escape-route-counts": { route: "#/preview/crew/escape-route-counts" },
+  "escape-route-shifted": { route: "#/preview/crew/escape-route-shifted" },
+
+  /** Crew, Settings › Review capacity (Crew Designs v77), on the real capacity and settings routes: the editor that
+   *  Change the limit and Set a limit open, that editor in a 640 px window, and a save the service refused for want of
+   *  the person key. The mock's crew-capacity scenarios answer the two reads and the Person-only settings write. */
+  "capacity-settings-editor": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", steps: [click("button", "Change the limit")] },
+  "capacity-settings-editor-narrow": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", width: 640, steps: [click("button", "Change the limit")] },
+  "capacity-settings-editor-error": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity-save-fails", steps: [click("button", "Change the limit"), click("button", "Save")] },
 };
