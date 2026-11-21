@@ -16,4 +16,5 @@ starts. Startup failures carry it in their existing error; a successful startup
 clears it and keeps draining the pipe until the browser session closes.
 `computer/cdp/start` waits for that start: a browser still running when its first
 bounded wait ends gets one more bounded wait, while an exited browser fails at once
-with the retained stderr and the startup flags.
+with the retained stderr and the startup flags. A browser that died by a fault gets
+one more process, because that crash is the browser's; a refusal is reported at once.

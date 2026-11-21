@@ -1,21 +1,27 @@
-import { CircleCheck, CircleDot, CircleX, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, MessageSquare } from "lucide-react";
+import { CircleCheck, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, MessageSquare, SquareCheck } from "lucide-react";
 import type { PullListEntry } from "../../../api/types";
 import { compactAge } from "../../../lib/format";
-import { IconButton } from "../../../ui/controls";
+import { Button, IconButton } from "../../../ui/controls";
 import { ChecksCell, CommentsCell, ReviewersCell, YourReviewCell, type CellEnv } from "./PullCells";
 import { detailsKey, type DetailsByKey } from "../model/pullModel";
 
-/** The one word after the title. Conflicts and Ready to merge wait for the list to carry whether it merges cleanly. */
-export const stateWord = (pull: PullListEntry["pull"]) =>
+/**
+ * The one word after the title. A known conflict is the state label, so it wins over Ready to merge.
+ * The list carries mergeability from its details read; a forge that does not say, or details that have
+ * not arrived, leave the word as it was rather than hiding a row's merge.
+ */
+export const stateWord = (pull: PullListEntry["pull"], mergeable?: string | null) =>
   pull.state === "merged"
     ? "Merged"
     : pull.state === "closed"
       ? "Closed"
       : pull.draft
         ? "Draft"
-        : pull.review_state === "approved" && pull.checks_state === "pass"
-          ? "Ready to merge"
-          : null;
+        : mergeable === "conflicting"
+          ? "Conflicts"
+          : pull.review_state === "approved" && pull.checks_state === "pass"
+            ? "Ready to merge"
+            : null;
 const STATE_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
 
 /** The table's column titles. The comments column is named by its icon. */
@@ -24,7 +30,10 @@ export function PullsHead() {
     <div className="pulls-head" aria-hidden>
       <span />
       <span>Title and state</span>
-      <span>Checks</span>
+      <span className="h-checks" aria-hidden>
+        <span className="h-checks-word">Checks</span>
+        <SquareCheck size={14} className="h-checks-icon" aria-hidden />
+      </span>
       <span className="h-reviewers">Reviewers</span>
       <span className="h-yours">Your review</span>
       <span className="h-comments">
@@ -82,6 +91,8 @@ export function PullRows(props: PullRowsProps) {
         const { project_id: project, pull } = entry;
         const isPicked = picked.some((one) => one.project_id === project && one.pull.number === pull.number);
         const row = details.get(detailsKey(project, pull.number));
+        // Whether it merges cleanly comes with the row's details, so the word waits for them.
+        const word = stateWord(pull, row?.mergeable);
         return (
           <li
             key={`${project}:${pull.number}`}
@@ -107,7 +118,7 @@ export function PullRows(props: PullRowsProps) {
                 <span className="pull-row-name" data-quiet={pull.draft || pull.state !== "open" || undefined}>
                   {pull.title}
                 </span>
-                {stateWord(pull) ? <span className="pull-state-word">{stateWord(pull)}</span> : null}
+                {word ? <span className="pull-state-word">{word}</span> : null}
               </span>
               <small>{[`#${pull.number}`, pull.head, props.projectName(project), pull.author].filter(Boolean).join(" · ")}</small>
             </button>
@@ -118,9 +129,9 @@ export function PullRows(props: PullRowsProps) {
             <span className="pull-age h-age">{pull.updated_at ? compactAge(pull.updated_at) : ""}</span>
             <span className="pull-row-actions">
               {pull.state === "closed" ? (
-                <IconButton label={`Reopen #${pull.number}`} onClick={() => props.onReopen(entry)}>
-                  <CircleDot size={14} aria-hidden />
-                </IconButton>
+                <Button small aria-label={`Reopen #${pull.number}`} onClick={() => props.onReopen(entry)}>
+                  Reopen
+                </Button>
               ) : null}
               {pull.state === "open" && pull.draft ? (
                 <IconButton label={`Ready for review #${pull.number}`} onClick={() => props.onReady(entry)}>
@@ -129,14 +140,14 @@ export function PullRows(props: PullRowsProps) {
               ) : null}
               {pull.state === "open" ? (
                 <>
-                  {stateWord(pull) === "Ready to merge" && props.online ? (
-                    <IconButton label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
-                      <GitMerge size={14} aria-hidden />
-                    </IconButton>
+                  {word === "Ready to merge" && props.online ? (
+                    <Button small tone="primary" aria-label={`Merge #${pull.number}`} onClick={() => props.onMerge(entry)}>
+                      Merge
+                    </Button>
                   ) : null}
-                  <IconButton label={`Close #${pull.number}`} onClick={() => props.onClose(entry)}>
-                    <CircleX size={14} aria-hidden />
-                  </IconButton>
+                  <Button small aria-label={`Close #${pull.number}`} onClick={() => props.onClose(entry)}>
+                    Close
+                  </Button>
                 </>
               ) : null}
             </span>

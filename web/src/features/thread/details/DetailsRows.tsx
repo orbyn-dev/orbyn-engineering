@@ -18,6 +18,9 @@ import { IconButton } from "../../../ui/controls";
 import { useDismissDetails as useDismiss } from "./DetailsDismiss";
 import { usageShare } from "../composer/ComposerExtras";
 import { pluralize } from "../toolCalls";
+import { limitsKey, readLimits } from "../../../lib/limitsStore";
+import { useLimitsChecked } from "../../../lib/limitsChecked";
+import { LimitsRefresh } from "../../../product/ui/LimitsChecked";
 
 
 /** A row's read: its state and the way to read it again. */
@@ -255,12 +258,24 @@ export function LimitsRow({ threadId, engine }: { threadId: string; engine: stri
 function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   const limits = useAsync(
     `details-limits:${threadId}:${engine}`,
-    (signal) => api.threadLimits(threadId, signal),
-    { fresh: true, refreshOn: topics("limits", `limits:${engine}`) },
+    (signal, context) => readLimits(limitsKey(engine, threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }),
+    { fresh: true, keepOnManual: true, refreshOn: topics("limits", `limits:${engine}`) },
   );
+  const checked = useLimitsChecked(limitsKey(engine, threadId), limits);
   const windows = limits.data?.windows ?? [];
   if (windows.length === 0) return null;
-  return <DRow icon={<Activity size={16} aria-hidden />} label="Limits" value={<LimitValue windows={windows} />} />;
+  return (
+    <DRow
+      icon={<Activity size={16} aria-hidden />}
+      label="Limits"
+      value={<LimitValue windows={windows} />}
+      subLines={[
+        ...(checked.failed ? [<span key="bad" className="limits-bad" role="alert">Couldn{"\u2019"}t check limits</span>] : []),
+        ...(checked.label ? [<span key="age" role={checked.checking ? "status" : undefined}>{checked.label}</span>] : []),
+      ]}
+      extra={<LimitsRefresh checked={checked} onRefresh={() => void limits.reloadNow()} />}
+    />
+  );
 }
 
 /**

@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect } from "react";
 import type { FileContent } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
+import { TrustOffer } from "../../repos";
 import { readThreadFile } from "../api";
 import { EditorSurface } from "./EditorSurface";
 import { fileKey, isDirty, saveSession, useEditorSessions } from "./editorSessions";
@@ -13,8 +14,8 @@ import { endingLabel, endingsOf, toLF } from "./editorModel";
  * through the service's write route, which checks the path and writes only if the file is still what this edit started
  * from; nothing is saved on its own.
  */
-export function FileEditor({ threadId, tabId, path, file, line, cwd, locked = false, onReload }: { threadId: string; tabId: string; path: string; file: FileContent; line: number | null; cwd: string; /** The worktree is locked: the file reads, and nothing is saved. */ locked?: boolean; onReload(): void }) {
-  const key = fileKey(threadId, cwd, path);
+export function FileEditor({ threadId, tabId, path, file, line, cwd, repoId, locked = false, onReload }: { threadId: string; tabId: string; path: string; file: FileContent; line: number | null; cwd: string; /** Another repository of the thread whose worktree holds `path`: the read and the write carry it. */ repoId?: string; /** The worktree is locked: the file reads, and nothing is saved. */ locked?: boolean; onReload(): void }) {
+  const key = fileKey(threadId, cwd, path, repoId);
   const session = useEditorSessions((state) => state.sessions[key]);
   // A session that goes missing while the file is showing (given up on a close that was then cancelled) is made again.
   const missing = session === undefined;
@@ -28,11 +29,11 @@ export function FileEditor({ threadId, tabId, path, file, line, cwd, locked = fa
       return;
     }
     useEditorSessions.getState().put({
-      key, threadId, cwd, path, tabs, line,
+      key, threadId, cwd, path, ...(repoId === undefined ? {} : { repoId }), tabs, line,
       text: toLF(file.content), saved: toLF(file.content), ...endingsOf(file.content),
       revision: file.revision, saving: false, trouble: null,
     });
-  }, [key, tabId, threadId, cwd, path, file.content, file.revision, locked, missing, line]);
+  }, [key, tabId, threadId, cwd, path, repoId, file.content, file.revision, locked, missing, line]);
   const { patch } = useEditorSessions.getState();
   const text = session?.text ?? toLF(file.content);
 
@@ -52,7 +53,7 @@ export function FileEditor({ threadId, tabId, path, file, line, cwd, locked = fa
 
   const reload = async () => {
     try {
-      const fresh = await readThreadFile(threadId, path);
+      const fresh = repoId === undefined ? await readThreadFile(threadId, path) : await readThreadFile(threadId, path, undefined, repoId);
       patch(key, { text: toLF(fresh.content), saved: toLF(fresh.content), ...endingsOf(fresh.content), revision: fresh.revision, trouble: null });
       onReload();
     } catch (failure) {
@@ -86,7 +87,8 @@ export function FileEditor({ threadId, tabId, path, file, line, cwd, locked = fa
       text={text}
       eolLabel={endingLabel(ends.eol, ends.mixed)}
       reveal={line}
-      comments={{ threadId, cwd, revision: session?.revision ?? file.revision, text: session?.saved ?? toLF(file.content) }}
+      // Comments name a checkout and a path, not a repository, so another repository's file takes none.
+      {...(repoId === undefined ? { comments: { threadId, cwd, revision: session?.revision ?? file.revision, text: session?.saved ?? toLF(file.content) } } : {})}
       standing={dirty ? "unsaved" : "saved"}
       onChange={(next) => patch(key, { text: next })}
       onSave={() => void saveSession(key)}
@@ -101,6 +103,13 @@ export function FileEditor({ threadId, tabId, path, file, line, cwd, locked = fa
               <Button small onClick={() => void saveSession(key)}>
                 Try again
               </Button>
+            </div>
+          </div>
+        ) : trouble?.kind === "untrusted" && repoId !== undefined ? (
+          <div className="ed-banner" data-tone="error" role="alert">
+            <AlertTriangle size={14} aria-hidden />
+            <div>
+              <TrustOffer threadId={threadId} repoId={repoId} message={`${trouble.reason} Your changes are still here.`} onDone={() => patch(key, { trouble: null })} />
             </div>
           </div>
         ) : trouble?.kind === "endings" ? (

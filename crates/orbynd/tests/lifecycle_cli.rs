@@ -159,6 +159,39 @@ async fn update_checks_refuses_other_versions_and_installs_the_latest_through_th
     assert_eq!(install["operation"], download["operation"]);
 }
 
+/// A release build enforces the person key, and the CLI holds only the service token: it must
+/// report the update and point at the desktop app, not show the 403 or fail.
+#[tokio::test]
+async fn update_with_the_person_key_enforced_only_checks_and_points_at_the_desktop_app() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    let mut options = desktop();
+    options
+        .env
+        .push(("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()));
+    let mut service = Service::start(&data, options);
+    say(
+        &mut service,
+        r#"{"type":"app_update_available","release_id":"cli-release-99","version":"99.0.0","notes":"n"}"#,
+    );
+    until_latest(&service, "99.0.0").await;
+    for args in [&["update"][..], &["update", "--version", "99.0.0"][..]] {
+        let output = orbyn(&data, args).await;
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("Orbyn 99.0.0 is available"), "{stdout}");
+        assert!(stdout.contains("desktop app"), "{stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("403") && !stderr.contains("person"),
+            "{stderr}"
+        );
+    }
+    let app = service.json("/api/updates").await["app"].clone();
+    assert_eq!(app["phase"], "available");
+    assert_eq!(app["operation"], 0, "nothing was requested");
+}
+
 #[tokio::test]
 async fn a_server_without_a_shell_reports_and_cannot_install() {
     let dir = TempDir::new();

@@ -69,15 +69,20 @@ export type Scenario =
   /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
   /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
-  /** Code Mode (stand-in routes, mock/codemode.ts): the first thread with a search, a describe, a finished run, and a paused run with its approval. */
+  /** Code Mode (dev and test stand-in for the service routes, mock/codemode.ts): the first thread with a search, a describe, a finished run, and a paused run with its approval. */
   | "codemode"
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
   | "pulls"
   | "pulls-details-failed"
   | "pulls-rate-limited"
+  /** The first details read is answered in full, then the service pauses every detail field (as it does when GitHub's limit is spent) and names when it resumes, so a filter set on the details is already on when the pause comes (press Refresh): "pulls-limited" in ten minutes (pr-tb-filter-rate-limited), "pulls-limited-still" two seconds from every read, so the check at that time finds the limit still on (pr-tb-filter-still-limited). */
+  | "pulls-limited"
+  | "pulls-limited-still"
   | "pulls-signed-out"
   | "pulls-none"
+  /** One row is Ready to merge (#137 approved, checks passing): its hover actions offer Merge. */
+  | "pulls-ready"
   | "pulls-unreachable"
   /** The Usage page's Limits tab: Claude Code reads Not reported, Codex reports its windows, and the other providers have no route. */
   | "limits"
@@ -86,7 +91,12 @@ export type Scenario =
   | "limits-reached"
   | "limits-signedout"
   | "limits-error"
-  | "limits-providers";
+  | "limits-providers"
+  /** Settings › Browser: named profiles (one in use, one with a very long name); "browser-profiles-empty" has none. */
+  | "browser-profiles"
+  | "browser-profiles-empty"
+  /** The first thread on Cursor: the first send answers 409 engine_notice_required, every later one 409 engine_mode_refused (use with #/preview/cursor-thread). */
+  | "cursor-thread";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -133,12 +143,16 @@ export function createMockApi(options: MockOptions = {}) {
   /** Files the editor saved, by thread and path, with the revision the next save must start from. */
   const savedFiles = new Map<string, { content: string; revision: string; count: number }>();
   let tasks: ScheduledTask[] = [];
+  let cursorSends = 0;
+  let browserProfiles: { id: string; name: string; in_use: boolean }[] = [];
   /** Tasks whose webhook has an address; the token itself is never kept, as in the service. */
   const hooks = new Set<string>(["task-hook"]);
   let failures: Failure[] = [];
   let clones: unknown[] = [];
   /** The notes of the reviews sent from a pull request page, by number. */
   const reviewsSent = new Map<number, string[]>();
+  /** The details reads since the scenario began: the limited scenarios answer the first in full and then hit the limit. */
+  let detailsReads = 0;
   let delayMs = 0;
   let idCounter = 0;
   let preferenceValues: Record<string, JsonValue> = {};
@@ -182,6 +196,7 @@ export function createMockApi(options: MockOptions = {}) {
     failures = [];
     clones = [];
     reviewsSent.clear();
+    detailsReads = 0;
     delayMs = 0;
     const blank = next === "empty" || next === "first-run" || next === "no-skills";
     projects = blank ? [] : structuredClone(fixtures.projects);
@@ -190,6 +205,15 @@ export function createMockApi(options: MockOptions = {}) {
     threads = blank ? [] : fixtures.threads();
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
+    cursorSends = 0;
+    if (next === "cursor-thread") threads = threads.map((t) => (t.id === "t-bg-stopped" ? { ...t, engine: "cursor" } : t));
+    browserProfiles = next === "browser-profiles"
+      ? [
+          { id: "bp-work", name: "Work", in_use: true },
+          { id: "bp-personal", name: "Personal sign-ins", in_use: false },
+          { id: "bp-long", name: "Staging environment for the checkout flow with the long customer name", in_use: false },
+        ]
+      : [];
     logs = blank ? {} : fixtures.logs();
     if (next === "reference") {
       const state = fixtures.referenceState(Date.now());
@@ -263,6 +287,12 @@ export function createMockApi(options: MockOptions = {}) {
       return err(403, "folder_untrusted", "Trust this folder before running an engine in it.");
     }
     if (thread.active_run) return err(409, "thread_busy", "This thread already has an active run.");
+    if (scenario === "cursor-thread" && thread.engine === "cursor") {
+      cursorSends += 1;
+      return cursorSends === 1
+        ? err(409, "engine_notice_required", "Cursor does not ask before acting.")
+        : err(409, "engine_mode_refused", "Cursor cannot run in Supervised mode.");
+    }
     const runId = nextId("run");
     const run = {
       id: runId,
@@ -740,6 +770,15 @@ export function createMockApi(options: MockOptions = {}) {
         threads = threads.filter((thread) => thread.project_id !== project.id);
         return { status: 200, body: { files_removed: deleteFiles, kept_path: deleteFiles ? null : project.path } };
       }
+      case "GET /api/browser-profiles":
+        return scenario.startsWith("browser-profiles") ? { status: 200, body: browserProfiles } : err(404, "not_found", "Not found.");
+      case "POST /api/browser-profiles": {
+        const name = typeof data.name === "string" ? data.name.trim() : "";
+        if (!name) return err(400, "invalid_input", "A profile needs a name.");
+        const made = { id: `bp-${++idCounter}`, name, in_use: false };
+        browserProfiles = [...browserProfiles, made];
+        return { status: 200, body: made };
+      }
       case "GET /api/keybindings":
         return { status: 200, body: keybindingsView() };
       case "GET /api/info":
@@ -804,12 +843,30 @@ export function createMockApi(options: MockOptions = {}) {
           const closed = fixtures.pullList().map((entry) => ({ ...entry, pull: { ...entry.pull, number: entry.pull.number + 1000, state: "closed" } }));
           return { status: 200, body: { pulls: closed, failed: [] } };
         }
+        if (scenario === "pulls-ready") {
+          const ready = fixtures.pullList().map((one) => (one.pull.number === 137 ? { ...one, pull: { ...one.pull, review_state: "approved" } } : one));
+          return { status: 200, body: { pulls: ready, failed: [] } };
+        }
         return { status: 200, body: { pulls: scenario.startsWith("pulls") ? fixtures.pullList() : fixtures.pulls(), failed: [] } };
       case "POST /api/pulls": {
         if (seg[2] !== "details") break;
         if (scenario === "pulls-details-failed") return err(502, "forge_unreachable", "GitHub did not answer.");
         const asked = ((data.pulls ?? []) as { project_id: string; number: number }[]).map((one) => `${one.project_id}:${one.number}`);
         const all = scenario.startsWith("pulls") ? [...fixtures.pullDetails(), ...fixtures.pullDetails().map((one) => ({ ...one, number: one.number + 1000 }))] : [];
+        if ((scenario === "pulls-limited" || scenario === "pulls-limited-still") && detailsReads++ > 0) {
+          // Like the service: every detail field is withheld, no row carries one, and the answer says when the pause ends.
+          const fields = ["created_at", "requested_reviewers", "viewer_review_state", "comment_count", "approval_count"];
+          return {
+            status: 200,
+            body: {
+              details: all
+                .filter((one) => asked.includes(`${one.project_id}:${one.number}`))
+                .map((one) => Object.fromEntries(Object.entries(one).filter(([name]) => !fields.includes(name)))),
+              paused: fields,
+              resume_at: new Date(Date.now() + (scenario === "pulls-limited" ? 600_000 : 2_000)).toISOString(),
+            },
+          };
+        }
         return {
           status: 200,
           body: {
@@ -967,6 +1024,7 @@ export function createMockApi(options: MockOptions = {}) {
     }
 
     if (method === "POST" && seg[0] === "api") {
+      if (seg[1] === "browser-profiles" && seg[3] === "clear") return { status: 204 };
       if (seg[1] === "projects" && seg[3] === "trust") {
         const project = projects.find((p) => p.id === seg[2]);
         if (!project) return err(404, "not_found", "Project not found.");
@@ -1137,6 +1195,10 @@ export function createMockApi(options: MockOptions = {}) {
     }
 
     if (method === "DELETE" && seg[0] === "api") {
+      if (seg[1] === "browser-profiles" && seg[2]) {
+        browserProfiles = browserProfiles.filter((entry) => entry.id !== seg[2]);
+        return { status: 204 };
+      }
       if (seg[1] === "engines" && seg[2] === "custom") {
         if (threads.some((t) => t.engine === seg[3] && t.active_run)) {
           return err(409, "engine_busy", `${seg[3]} has an active run or update`);
@@ -1178,7 +1240,7 @@ export function createMockApi(options: MockOptions = {}) {
         failure.remaining -= 1;
         return err(failure.status, failure.code, failure.message);
       }
-      if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname)) {
+      if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname) || /^\/api\/threads\/[^/]+\/code-runs$/.test(parsed.pathname)) {
         const answered = codeModeMock.handle(method, parsed.pathname, body);
         if (answered) return answered;
       }
@@ -1187,7 +1249,7 @@ export function createMockApi(options: MockOptions = {}) {
       if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
-    /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes. */
+    /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
     /** Changes the account has waiting to upload, for the offline and paused wording. */
     setAccountWaiting(count: number) {

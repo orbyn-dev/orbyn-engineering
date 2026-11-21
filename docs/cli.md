@@ -65,7 +65,7 @@ session. `ORBYN_LIBRARY_BUNDLE` selects a bundled library and
 | Command | Behavior |
 | --- | --- |
 | `orbyn update --check` | Ask the running service to check, and report the current and latest release. Changes nothing. |
-| `orbyn update` | Check, then ask the desktop app's installer to install the latest release. |
+| `orbyn update` | Check, then ask the desktop app's installer to install the latest release. Where the service enforces the person key (every release build) installing is a person action this command cannot take, so it only reports the update, says to install it from the desktop app and exits 0. |
 | `orbyn update --version VERSION` | The same, only when `VERSION` (with or without a leading `v`) is the latest release; the running version reports that it is installed. |
 | `orbyn update --channel NAME` | Accepted only when `NAME` is the build's own channel (`/api/info` `channel`); switching is refused with exit 1. |
 | `orbyn update --downgrade` | Refused with exit 1 before any service is contacted. |

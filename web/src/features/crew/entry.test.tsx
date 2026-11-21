@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../mock/api";
@@ -42,7 +42,7 @@ describe("Settings › Crew: the four entry rows (settings-crew, entry-crew-sett
     mock.reset("crew-escapes");
     render(<SettingsPage section="crew" onClose={() => undefined} />);
     const rows = await screen.findAllByRole("region", { name: /Review capacity|Escapes|Independent oracle|Reviewer backtest/ });
-    expect(rows.map((row) => within(row).getByRole("button").textContent)).toEqual(["Open Review capacity", "Open Escapes", "Open Independent oracle", "Open Reviewer backtest"]);
+    expect(rows.map((row) => within(row).getByRole("button").textContent)).toEqual(["Open Review capacity", "Open", "Open Independent oracle", "Open Reviewer backtest"]);
     expect(reads("/api/crew/escapes")).toHaveLength(0);
     expect(reads("/api/crew/backtest")).toHaveLength(0);
     expect(writes()).toEqual([]);
@@ -56,7 +56,10 @@ describe("Settings › Crew: the four entry rows (settings-crew, entry-crew-sett
     expect(within(row).getByText(/Every revert, and every bug found after a merge that you don’t revert, is a possible escape/)).toBeInTheDocument();
     expect(within(row).queryByText("Defaults")).toBeNull();
     expect(within(row).queryByText("Reading")).toBeNull();
-    await user.click(within(row).getByRole("button", { name: "Open Escapes" }));
+    // The button says "Open"; its name for a screen reader keeps the page it opens.
+    const button = within(row).getByRole("button", { name: "Open Escapes" });
+    expect(button).toHaveTextContent(/^Open$/);
+    await user.click(button);
     expect(window.location.hash).toBe("#/settings/crew/escapes");
   });
 
@@ -101,7 +104,7 @@ describe("Settings › Crew › Escapes (entry-crew-settings-escapes-*, entry-cr
     open("#/settings/crew/escapes");
     expect((await screen.findAllByText("Escape log")).length).toBeGreaterThan(0);
     const link = await screen.findByRole("link", { name: "Coverage" });
-    expect(link).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app");
+    expect(link).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app&from=escapes");
     expect((await screen.findAllByText(/Old returnTo links stopped redirecting/)).length).toBeGreaterThan(0);
     expect(writes()).toEqual([]);
   });
@@ -126,6 +129,103 @@ describe("Settings › Crew › Escapes (entry-crew-settings-escapes-*, entry-cr
   });
 });
 
+/** The "Settings" link that goes to `href`: the breadcrumb (K55) has a "Settings" link of its own, to the Settings home. */
+async function settingsLink(href: string): Promise<HTMLElement> {
+  return await waitFor(() => {
+    const found = screen.getAllByRole("link", { name: "Settings" }).find((a) => a.getAttribute("href") === href);
+    if (!found) throw new Error(`no Settings link to ${href}`);
+    return found;
+  });
+}
+
+describe("Settings › Crew › Escapes: the Settings link and the Possible tab (v87 follow-up)", () => {
+  it("the log's Settings link opens the escape settings in the app, read only", async () => {
+    mock.reset("crew-escapes");
+    const user = userEvent.setup();
+    open("#/settings/crew/escapes");
+    // The breadcrumb (K55) also has a "Settings" link; the log's own link is the one that points at the escape settings.
+    const link = await settingsLink("#/settings/crew/escapes/settings");
+    expect(link).toHaveAttribute("href", "#/settings/crew/escapes/settings");
+    await user.click(link);
+    expect(window.location.hash).toBe("#/settings/crew/escapes/settings");
+    expect(await screen.findByText("Crew › Escapes")).toBeVisible();
+    expect(reads("/api/crew/escapes/thresholds").length).toBeGreaterThan(0);
+    expect(window.location.hash).not.toContain("preview");
+    expect(writes()).toEqual([]);
+  });
+
+  it("the Possible tab opens the possible list in the app, for the same project, and All escapes returns", async () => {
+    mock.reset("crew-escapes");
+    const user = userEvent.setup();
+    open("#/settings/crew/escapes");
+    await user.click(await screen.findByRole("tab", { name: "Possible 2" }));
+    expect(window.location.hash).toBe("#/settings/crew/escapes/possible?repo=p-app");
+    expect(await screen.findByText(/2 possible escapes\./)).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Possible 2" })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: "All escapes" }));
+    expect(window.location.hash).toBe("#/settings/crew/escapes?repo=p-app");
+    expect(await screen.findByRole("tab", { name: "All escapes" })).toHaveAttribute("aria-selected", "true");
+    expect(writes()).toEqual([]);
+  });
+
+  it("an unreadable log says can’t read on the tab, never 0", async () => {
+    mock.reset("crew-escapes-unreadable");
+    open("#/settings/crew/escapes");
+    expect(await screen.findByRole("tab", { name: "Possible can’t read" })).toBeVisible();
+    expect(screen.queryByRole("tab", { name: /Possible 0/ })).toBeNull();
+  });
+});
+
+describe("Settings › Crew › Review coverage: the way back (entry-crew-coverage-back-*)", () => {
+  it("opened from the Review capacity sheet, offers Back to Review capacity, which returns to that sheet for the project", async () => {
+    mock.reset("crew-capacity");
+    const user = userEvent.setup();
+    open("#/settings/crew/capacity");
+    await user.click(await screen.findByRole("link", { name: "Coverage" }));
+    expect(window.location.hash).toBe("#/settings/crew/capacity/coverage?repo=p-app&from=capacity");
+    const back = await screen.findByRole("link", { name: "Back to Review capacity" });
+    expect(back).toHaveAttribute("href", "#/settings/crew/capacity?repo=p-app");
+    expect(screen.queryByRole("link", { name: "Back to escapes" })).toBeNull();
+    await user.click(back);
+    expect(await screen.findByText("Recorded at merge")).toBeVisible();
+    expect(writes()).toEqual([]);
+  });
+
+  it("opened from the escape log, offers Back to escapes, which returns to the log for the project", async () => {
+    mock.reset("crew-escapes");
+    const user = userEvent.setup();
+    open("#/settings/crew/escapes");
+    await user.click(await screen.findByRole("link", { name: "Coverage" }));
+    expect(window.location.hash).toBe("#/settings/crew/capacity/coverage?repo=p-app&from=escapes");
+    const back = await screen.findByRole("link", { name: "Back to escapes" });
+    expect(back).toHaveAttribute("href", "#/settings/crew/escapes?repo=p-app");
+    expect(screen.queryByRole("link", { name: "Back to Review capacity" })).toBeNull();
+    await user.click(back);
+    expect(await screen.findByRole("tab", { name: "All escapes" })).toHaveAttribute("aria-selected", "true");
+    expect(writes()).toEqual([]);
+  });
+
+  it("draws no way back when the address names no origin, or one it doesn’t know, and never guesses from history", async () => {
+    mock.reset("crew-capacity");
+    window.history.pushState(null, "", "#/settings/crew/capacity");
+    open("#/settings/crew/capacity/coverage?repo=p-app");
+    expect(await screen.findByText("Review coverage")).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Back to/ })).toBeNull();
+    cleanup();
+    open("#/settings/crew/capacity/coverage?repo=p-app&from=somewhere");
+    expect(await screen.findByText("Review coverage")).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Back to/ })).toBeNull();
+  });
+
+  it("the way back is the first thing on the page, above the title", async () => {
+    mock.reset("crew-capacity");
+    open("#/settings/crew/capacity/coverage?repo=p-app&from=capacity");
+    const back = await screen.findByRole("link", { name: "Back to Review capacity" });
+    const title = screen.getByText("Review coverage");
+    expect(back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe("Settings › Crew › Review capacity › Coverage (entry-crew-coverage-link-capacity)", () => {
   it("the Review coverage row has a Coverage link beside its value that opens the coverage map for the project", async () => {
     mock.reset("crew-capacity");
@@ -133,7 +233,7 @@ describe("Settings › Crew › Review capacity › Coverage (entry-crew-coverag
     open("#/settings/crew/capacity");
     expect(await screen.findByText("Recorded at merge")).toBeVisible();
     const link = screen.getByRole("link", { name: "Coverage" });
-    expect(link).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app");
+    expect(link).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app&from=capacity");
     await user.click(link);
     expect(await screen.findByText("Review coverage")).toBeVisible();
     expect(reads("/api/crew/capacity/coverage").length).toBeGreaterThan(0);
@@ -179,7 +279,7 @@ describe("Settings › Crew › Reviewer backtest (entry-crew-backtest-page and 
     open("#/settings/crew/backtest");
     await user.click(await screen.findByRole("link", { name: "Open the estimate" }));
     expect(window.location.hash).toBe("#/settings/crew/backtest/estimate");
-    await user.click(await screen.findByRole("link", { name: "Settings" }));
+    await user.click(await settingsLink("#/settings/crew/backtest"));
     expect(window.location.hash).toBe("#/settings/crew/backtest");
   });
 

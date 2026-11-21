@@ -2,6 +2,7 @@
 //! A token is random per run, reaches only that run's engine and dies with the run.
 
 pub mod apps;
+pub(crate) mod code;
 mod flight;
 pub mod tools;
 
@@ -27,7 +28,7 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const QUESTION_TOOL: &str = "AskUserQuestion";
 /// Tools this server provides. Each governs itself, so `approve` does not ask again.
-const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
+pub(crate) const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
 
 /// Engines give up on a tool call at about a minute, so a reply has to be sent first. `crew_review` keeps
 /// inside this itself: it reads the call's own deadline (`call_deadline`), stops starting lanes in time and
@@ -85,6 +86,15 @@ impl McpService {
             .get()
             .and_then(Weak::upgrade)
             .is_some_and(|core| core.crew_enabled())
+    }
+
+    /// Whether the Code Mode tools exist for `engine`: off until `CoreConfig::code_mode`, then only for an engine whose
+    /// own switch is on.
+    fn code_mode_enabled(&self, engine: &str) -> bool {
+        self.host
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|core| core.code_mode_on(engine))
     }
 
     pub fn new(
@@ -185,6 +195,9 @@ impl McpService {
                 if self.crew_enabled() {
                     tools.extend(crate::crew::tool_specs());
                 }
+                if self.code_mode_enabled(&binding.scope.engine) {
+                    tools.extend(code::specs());
+                }
                 Ok(json!({ "tools": tools }))
             }
             "tools/call" => {
@@ -242,6 +255,13 @@ impl McpService {
                     return Ok(text_result("This service is not ready.", true));
                 };
                 let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
+                Ok(text_result(&text, failed))
+            }
+            tool if code::is_tool(tool) && self.code_mode_enabled(&binding.scope.engine) => {
+                let Some(core) = self.host.get().and_then(Weak::upgrade) else {
+                    return Ok(text_result("This service is not ready.", true));
+                };
+                let (text, failed) = core.code_tool_text(binding, tool, &args).await;
                 Ok(text_result(&text, failed))
             }
             other if crate::tools::mcp_tools::is_tool(other) => {
@@ -318,7 +338,8 @@ impl McpService {
     }
 }
 
-fn parse_questions(input: &Value) -> Vec<Question> {
+/// The questions of an `AskUserQuestion` input, by question text.
+pub(crate) fn parse_questions(input: &Value) -> Vec<Question> {
     let text = |value: &Value, key: &str| {
         value
             .get(key)

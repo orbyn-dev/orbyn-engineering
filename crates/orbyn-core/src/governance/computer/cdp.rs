@@ -5,15 +5,12 @@
 mod start;
 
 use std::collections::VecDeque;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
-use tokio::process::Command;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
@@ -313,36 +310,8 @@ impl NavigationWait {
 
 impl BrowserSession {
     pub async fn launch(path: &Path, profile: &Path, options: LaunchOptions) -> Result<Self> {
-        std::fs::create_dir_all(profile)?;
-        let port_file = profile.join("DevToolsActivePort");
-        let _ = std::fs::remove_file(&port_file);
-        let mut profile_arg = OsString::from("--user-data-dir=");
-        profile_arg.push(profile);
-        let mut command = Command::new(path);
-        command
-            .arg("--remote-debugging-port=0")
-            .arg(profile_arg)
-            .args(["--no-first-run", "--no-default-browser-check"]);
-        let flags = launch_flags(path, options.headless, options.in_process_gpu);
-        command.args(&flags);
-        command
-            .arg("about:blank")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(unix)]
-        command.process_group(0);
-        crate::host::child_env::for_tool(command.as_std_mut());
-        let mut child = ManagedChild::spawn(command)?;
-        let mut stderr = BrowserStderr::start(
-            child
-                .child_mut()
-                .stderr
-                .take()
-                .ok_or_else(|| failed("browser stderr is missing"))?,
-        );
-        let url = start::wait_until_ready(&mut child, &port_file, &mut stderr, &flags).await?;
+        let start::Started { child, stderr, url } =
+            start::start(path, profile, options.headless, options.in_process_gpu).await?;
         stderr.startup_complete();
         let mut session = Self::connect(&url, Some(child)).await?;
         session._stderr = Some(stderr);

@@ -11,12 +11,12 @@ export interface ToastAction { label: string; run(): void }
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
 /** The panel's own surfaces. A file opened from the left bar is a tab too (`FileTabId`). */
-export type BuiltinTab = "diff" | "activity" | "browser" | "side" | "tools";
+export type BuiltinTab = "diff" | "activity" | "browser" | "side" | "linked" | "tools" | "review" | "devices" | "library";
 /** A file tab's id: `file:` and an encoded target (see `features/panels/files/fileTab.ts`). */
 export type FileTabId = `file:${string}`;
 export type RightTab = BuiltinTab | FileTabId;
 /** The panel's surfaces in their default order, the launcher's order. Terminal is the header button and the drawer, never a tab. */
-export const RIGHT_TAB_IDS: readonly BuiltinTab[] = ["diff", "browser", "activity", "side", "tools"];
+export const RIGHT_TAB_IDS: readonly BuiltinTab[] = ["diff", "browser", "activity", "side", "tools", "linked", "review", "devices", "library"];
 
 export const isFileTab = (id: unknown): id is FileTabId => typeof id === "string" && id.length > 5 && id.startsWith("file:");
 export const isPanelTab = (id: unknown): id is RightTab => isFileTab(id) || RIGHT_TAB_IDS.includes(id as BuiltinTab);
@@ -104,6 +104,8 @@ export interface Prefs {
   followUpBehavior: "queue" | "steer";
   diffLayout: "stacked" | "split";
   previewSearchEngine: string;
+  /** The Custom engine's address, with %s where the words go. Only a valid one is kept, and it stays when a built-in engine is chosen. */
+  previewSearchAddress: string;
   /** Opens Changes after a large turn. */
   proactivePanels: boolean;
   recentUrls: string[];
@@ -130,8 +132,6 @@ export interface Prefs {
   persistentComposerContext: boolean;
   /** Lists skills in the `/` menu as well as under `$`. */
   skillsInSlashMenu: boolean;
-  /** Offers Plan with its button, commands and Shift+Tab. */
-  planControls: boolean;
   /** The circle in the composer showing how full the context is. */
   contextMeter: boolean;
   /** Saved prompts by thread, newest first. */

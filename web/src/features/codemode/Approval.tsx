@@ -1,9 +1,11 @@
 import { Wrench } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import "./codemode.css";
 import type { Approval, JsonValue } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
 import { CallList } from "./CallList";
-import { normalizeCall, viaOf } from "./model";
+import { callsOf, isRunId, viaOf } from "./model";
+import { openRun } from "./openRun";
 import { ScriptBox } from "./ScriptBox";
 import { useCodeRun } from "./useCodeRun";
 import type { ApprovalVia } from "./types";
@@ -71,6 +73,33 @@ function factRows(detail: JsonValue): { rows: [string, string][]; more: number }
   return { rows: ordered.slice(0, MAX_ROWS).map(([key, value]) => [key.slice(0, 80), shown(value)]), more: Math.max(0, ordered.length - MAX_ROWS) };
 }
 
+/**
+ * "Open the run": goes to the approval's own thread and scrolls to the run's block. Drawn only for a usable run id; one click, no
+ * writes. When the block is not in the transcript (the record expired, or the thread has not loaded it) it says so quietly.
+ */
+function OpenRun({ threadId, codeRun }: { threadId: string; codeRun: string }) {
+  const [missing, setMissing] = useState(false);
+  const cancel = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancel.current?.(), []);
+  if (!isRunId(codeRun)) return null;
+  return (
+    <p className="approval-kv cm-open">
+      <button
+        type="button"
+        className="cm-link"
+        onClick={() => {
+          cancel.current?.();
+          setMissing(false);
+          cancel.current = openRun(threadId, codeRun, (found) => setMissing(!found));
+        }}
+      >
+        Open the run
+      </button>
+      {missing ? <span className="cm-open-note" role="status">That run is not in this thread's transcript.</span> : null}
+    </p>
+  );
+}
+
 /** What the call is: its tool, then its arguments, then where it came from. */
 export function ViaFacts({ approval, via, withTool = true }: { approval: Approval; via: ApprovalVia; withTool?: boolean }) {
   const { rows, more } = factRows(approval.detail);
@@ -100,6 +129,7 @@ export function ViaFacts({ approval, via, withTool = true }: { approval: Approva
         <span>From</span>
         <b>A Code Mode script · call {via.call}</b>
       </p>
+      <OpenRun threadId={approval.thread_id} codeRun={via.codeRun} />
     </>
   );
 }
@@ -108,10 +138,10 @@ export function ViaFacts({ approval, via, withTool = true }: { approval: Approva
 export function ViaContext({ via }: { via: ApprovalVia }) {
   const record = useCodeRun(via.codeRun, true);
   if (!record) return null;
-  const made = record.calls.map(normalizeCall).filter((call) => call.index !== via.call && call.status !== "running" && call.status !== "waiting");
+  const made = callsOf(record).filter((call) => call.index !== via.call && call.status !== "running" && call.status !== "waiting");
   return (
     <>
-      {record.script !== null ? <ScriptBox script={record.script} sha={via.scriptSha256 ?? record.script_sha256 ?? null} /> : null}
+      {typeof record.script === "string" ? <ScriptBox script={record.script} sha={via.scriptSha256 ?? record.script_sha256 ?? null} /> : null}
       {made.length > 0 ? <CallList title="Calls so far" calls={made} /> : null}
     </>
   );

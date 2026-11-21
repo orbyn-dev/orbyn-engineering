@@ -82,6 +82,7 @@ fn pending(store: &Store, run: &str) -> orbyn_contracts::Approval {
                 source: "default".into(),
                 reason: "no rule".into(),
             },
+            via: None,
         })
         .unwrap()
 }
@@ -715,6 +716,7 @@ fn finishing_expires_pending_approvals_and_blocks_new_ones() {
             source: "default".into(),
             reason: String::new(),
         },
+        via: None,
     });
     assert!(matches!(late, Err(CoreError::RunClosed)));
 }
@@ -1213,6 +1215,25 @@ fn automatic_continuations_run_out_and_your_message_resets_them() {
     assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
 }
 
+#[test]
+fn a_refunded_continuation_leaves_the_tries_for_a_start_that_runs() {
+    let f = fixture();
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+        f.store.refund_resume_try(&f.thread).unwrap();
+    }
+    // Three refused starts used nothing: all three tries are still there.
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+    }
+    assert!(!f.store.take_resume_try(&f.thread, 3).unwrap());
+    // A refund never goes below zero.
+    let run = running(&f.store, &f.thread);
+    f.store.finish_run(&run, RunState::Completed, None).unwrap();
+    f.store.refund_resume_try(&f.thread).unwrap();
+    assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+}
+
 fn permission_updates(store: &Store, thread: &str) -> Vec<serde_json::Value> {
     store
         .events_after(thread, 0, 500)
@@ -1245,6 +1266,41 @@ fn a_mode_change_during_a_live_run_says_it_applies_next_run() {
         permission_updates(&f.store, &f.thread),
         vec![json!({ "mode": "full_access", "applies": "next_run" })]
     );
+}
+
+/// A run keeps whether Crew queued its prompt; a plain message, and a row from before the
+/// flag existed, are the person's.
+#[test]
+fn a_run_keeps_whether_crew_queued_its_prompt() {
+    let f = fixture();
+    let person = f
+        .store
+        .enqueue(
+            &f.thread,
+            "hello",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (first, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap(), "{person:?}");
+    f.store.mark_starting(&first.id).unwrap();
+    f.store.mark_running(&first.id).unwrap();
+    f.store
+        .finish_run(&first.id, RunState::Completed, None)
+        .unwrap();
+    f.store
+        .enqueue_crew_note(
+            &f.thread,
+            "result",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (second, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(f.store.run_is_crew_note(&second.id).unwrap());
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap());
+    assert!(!f.store.run_is_crew_note("no-such-run").unwrap());
 }
 
 #[test]

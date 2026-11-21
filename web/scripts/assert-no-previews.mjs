@@ -23,12 +23,49 @@ const markers = [
   "oracle-narrow-window",
   "backtest-narrow-window",
   "settings-crew",
+  // Crew dashboard (features/crew/dashboard): a frame id and the sample client the Preview frames use. The page itself ships behind Crew Preview.
+  "dash-narrow-window",
+  "createCrewDashboardMock",
   // Crew Designs Flow (features/crew/flow): a frame id.
   "flow-narrow-panel",
   "needsyou-narrow-panel",
   // Engine host design preview (features/settings/engineHost): the dev-only hash route and its mock.
   "preview/engine-host",
   "createEngineHostMock",
+  // Issues design preview (features/issues): the dev-only hash route and its mock.
+  "preview/issues",
+  "createIssuesMock",
+  // Cursor thread design preview (features/cursorthread): the dev-only hash route and its mock.
+  "preview/cursor-thread",
+  "createCursorThreadMock",
+  // Repositories design preview (features/repos): the dev-only hash route and its mock.
+  "preview/repos",
+  "createReposMock",
+  // Devices design preview (features/devices): the dev-only hash route and its mock.
+  "preview/devices",
+  "createDevicesMock",
+  // Photo conversion, transcript drop and earlier-messages design previews (features/thread/composer, features/thread/earlier): the dev-only hash routes and their mocks.
+  "preview/attachments",
+  "createPhotoConversionMock",
+  "createTranscriptsMock",
+  "preview/earlier",
+  "createEarlierMock",
+  // Command blocks design preview (features/panels/terminal/blocks): the dev-only hash route (plain and as a regex source), its mock and its page class.
+  "preview/command-blocks",
+  "preview\\/command-blocks",
+  "createCommandBlocksMock",
+  "cbp-drawer",
+  // Execution profiles design preview (features/profiles): the dev-only hash route and its mock. The real screens ship hidden behind a client that answers 404.
+  "preview/profiles",
+  "createProfilesMock",
+  // Personal library design preview (features/library): the dev-only hash route and its mock. The real panel ships hidden behind a client that answers 404.
+  "preview/library",
+  "createLibraryMock",
+  // Terminal-agent attention design preview (features/panels/terminal/attention): the dev-only hash route (plain and as a regex source), its mock and its page class.
+  "preview/attention",
+  "preview\\/attention",
+  "createAttentionMock",
+  "atp-thread",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

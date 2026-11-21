@@ -111,7 +111,7 @@ describe("Composer", () => {
     start.mockRestore(); enqueue.mockRestore(); steer.mockRestore();
   });
 
-  it.each(["/plan", "/compact", "/goal resume", "/side explain"])("keeps review context when %s cannot carry it", async (command) => {
+  it.each(["/compact", "/goal resume", "/side explain"])("keeps review context when %s cannot carry it", async (command) => {
     const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
     useComposerChips.setState({ chips: { t1: [reviewChip] } });
     setup();
@@ -149,7 +149,7 @@ describe("Composer", () => {
     start.mockRestore();
   });
 
-  it.each(["/plan", "/compact", "/goal resume"])('refuses %s while a terminal selection is attached', async (command) => {
+  it.each(["/compact", "/goal resume"])('refuses %s while a terminal selection is attached', async (command) => {
     const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
     const patch = vi.spyOn(api, "patchThread").mockResolvedValue(thread);
     withTerminalChip();
@@ -189,6 +189,7 @@ describe("Composer", () => {
           state: "pending",
           decided_by: null,
           decided_at: null,
+          via: null,
           created_at: "",
         }],
       },
@@ -272,7 +273,7 @@ describe("Composer", () => {
     const remove = vi.spyOn(api, "removeQueued").mockResolvedValue();
     setup({ active_run: { ...run, state: "running" } as Run });
     await userEvent.click(await screen.findByRole("button", { name: /^Add to the running turn/ }));
-    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests"));
+    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests", expect.any(String)));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("q1"));
     queue.mockRestore();
     steer.mockRestore();

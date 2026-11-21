@@ -269,7 +269,10 @@ fn migration_59_follows_58_and_adds_the_event_claim_table() {
     drop(conn);
     let store = Store::open(&path, "event-upgrade").unwrap();
     let upgrade = store.upgrade().expect("an upgrade");
-    assert_eq!((upgrade.from, upgrade.to), (before, 59));
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (before, migrations::MIGRATIONS.last().unwrap().0)
+    );
     assert_eq!(
         store.background_crew("crew-1").unwrap().unwrap().name,
         "Hourly"

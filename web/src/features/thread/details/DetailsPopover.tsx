@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
+import { resolveModel, useEngineModels } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { detailsMenuItems } from "../../../product/ui/details";
@@ -8,6 +9,8 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Button } from "../../../ui/controls";
 import { usePopover } from "../../../ui/usePopover";
+import { IssuesRow } from "../../issues";
+import { EngineNote } from "../../cursorthread";
 import { ToolsRow } from "../../tools";
 import { BranchRow } from "../GitControl";
 import { OpenInEditor } from "../OpenInEditor";
@@ -50,6 +53,8 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
   const loads = useDetailsLoads(thread.id, shows);
   const projectBranch = useWorkspace((state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null);
   const branch = thread.worktree?.branch ?? projectBranch;
+  const engineName = useWorkspace((state) => state.engines.data?.find((entry) => entry.id === thread.engine)?.name ?? thread.engine);
+  const modelName = resolveModel(useEngineModels(thread.engine), thread.model)?.label ?? thread.model;
 
   // Anchored to the button's right edge, whatever the window's width.
   useLayoutEffect(() => {
@@ -114,12 +119,15 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           {branch && shows("branch") ? <BranchRow thread={thread} branch={branch} /> : null}
           {read("changes", <ChangesRow diff={loads.diff} />)}
           {shows("pulls") ? <PullsRow thread={thread} /> : null}
+          {shows("issues") ? <IssuesRow thread={thread} onOpened={() => dismiss("select")} /> : null}
           {shows("automations") ? <ThreadAutomations threadId={thread.id} /> : null}
           {shows("tools") ? <ToolsRow thread={thread} onOpen={() => dismiss("select")} /> : null}
           {read("servers", <ServersRow threadId={thread.id} servers={loads.servers} />)}
           {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
           {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
           {read("scripts", <ScriptsRow threadId={thread.id} scripts={loads.scripts} />)}
+          {/* Every engine has this row; one the service has a notice for adds it once answered. A note, not a row to turn off. */}
+          <EngineNote projectId={thread.project_id} engine={thread.engine} engineName={engineName} modelName={modelName} />
           {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
         </div>
       </DetailsDismiss.Provider>

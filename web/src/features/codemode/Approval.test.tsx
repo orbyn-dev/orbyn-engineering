@@ -5,6 +5,7 @@ import type { MockApi } from "../../../mock/api";
 import { api } from "../../api/client";
 import type { Approval } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
+import { codeRun } from "../../../mock/codemode";
 import { installMockFetch } from "../../test-support";
 import { ApprovalCard } from "../thread/ApprovalCard";
 import { resetCodeRuns } from "./useCodeRun";
@@ -12,7 +13,7 @@ import type { CodeRunRecord } from "./types";
 
 const SCRIPT = Array.from({ length: 12 }, (_, at) => `const line${at + 1} = ${at + 1};`).join("\n");
 
-const record = (): CodeRunRecord => ({
+const record = (): CodeRunRecord => codeRun({
   run_id: "run_7c41e2",
   status: "paused",
   script: SCRIPT,
@@ -21,8 +22,9 @@ const record = (): CodeRunRecord => ({
   calls: [
     { index: 1, tool: "orbyn_thread_list", status: "ok", preview: "3 threads", duration_ms: 100 },
     { index: 2, tool: "orbyn_thread_read", status: "ok", preview: '{"id":"t_41","status":"done"}', duration_ms: 200 },
-    { index: 5, tool: "orbyn_thread_send", status: "waiting", preview: null },
+    { index: 5, tool: "orbyn_thread_send", status: "running", preview: null },
   ],
+  pending: [{ tool: "orbyn_thread_send", call: 5 }],
 });
 
 const base: Approval = {
@@ -35,6 +37,7 @@ const base: Approval = {
   state: "pending",
   decided_by: null,
   decided_at: null,
+  via: null,
   created_at: "2026-11-21T10:00:42.000Z",
 };
 const withVia = (extra: Partial<Approval> = {}, call = 5): Approval => ({ ...base, ...extra, via: { code_run: "run_7c41e2", call, script_sha256: "3f9a1c0000000000000000000000000000000000000000000000000000000e07" } } as Approval);

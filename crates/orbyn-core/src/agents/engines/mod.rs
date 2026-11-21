@@ -2,12 +2,16 @@
 //! that provably owns the binary, and never while a run is active.
 
 pub mod catalog_cache;
+pub mod host_status;
 pub mod instances;
 pub mod known;
 pub mod maintenance;
 pub mod manifest;
+pub mod notice;
 pub mod outcomes;
 pub mod probe;
+#[cfg(any(test, feature = "test-support"))]
+pub mod stand_in;
 pub mod vendor_pages;
 pub mod warm;
 
@@ -74,6 +78,8 @@ pub struct EngineConfig {
     /// How long the service waits for a person to answer an approval. Claude's permission prompt is a long
     /// poll to the service, so its own MCP timeout has to outlast this.
     pub approval_timeout: Duration,
+    /// The engine host the desktop shell found, when the service was told to use one.
+    pub engine_host: Option<crate::agents::driver::host::HostConfig>,
 }
 
 impl Default for EngineConfig {
@@ -88,6 +94,7 @@ impl Default for EngineConfig {
             known_engine_ids: None,
             cache_dir: None,
             approval_timeout: crate::app::DEFAULT_APPROVAL_TIMEOUT,
+            engine_host: None,
         }
     }
 }
@@ -99,6 +106,8 @@ pub struct EngineManager {
     config: EngineConfig,
     manifest: TestedManifest,
     drivers: Mutex<Vec<Arc<dyn EngineDriver>>>,
+    /// The engine host's pools, when the service uses the host.
+    host: Option<Arc<crate::agents::driver::host::HostHub>>,
     /// Engines being updated. This lock also serializes the admission check
     /// against the update check, so neither can slip past the other.
     updating: Mutex<HashSet<String>>,
@@ -149,16 +158,43 @@ impl EngineManager {
         http: reqwest::Client,
         config: EngineConfig,
     ) -> Self {
-        let drivers: Vec<Arc<dyn EngineDriver>> = vec![
-            Arc::new(
-                ClaudeDriver::new(config.claude_program.clone(), config.approval_timeout)
-                    .with_task_tools(config.claude_task_tools),
-            ),
+        let host = config
+            .engine_host
+            .as_ref()
+            .map(|host| Arc::new(crate::agents::driver::host::HostHub::new(host)));
+        let claude: Arc<dyn EngineDriver> = Arc::new(
+            ClaudeDriver::new(config.claude_program.clone(), config.approval_timeout)
+                .with_task_tools(config.claude_task_tools),
+        );
+        let claude = match &host {
+            Some(hub) => hub.wrap("claude", claude, config.claude_program.clone()),
+            None => claude,
+        };
+        let mut drivers: Vec<Arc<dyn EngineDriver>> = vec![
+            claude,
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),
             )),
         ];
+        // Cursor runs through the host only behind its own flag; off, the known ACP engine is untouched.
+        if let Some(hub) = host.as_ref().filter(|hub| hub.knows("cursor"))
+            && let Some(known) = known_engine("cursor")
+        {
+            let rust: Arc<dyn EngineDriver> = Arc::new(AcpDriver::known(known.as_custom(), known));
+            drivers.push(
+                hub.wrap(
+                    "cursor",
+                    rust,
+                    known
+                        .programs
+                        .first()
+                        .copied()
+                        .unwrap_or("cursor-agent")
+                        .to_owned(),
+                ),
+            );
+        }
         Self {
             catalog: CatalogCache::new(config.cache_dir.clone()),
             store,
@@ -167,6 +203,7 @@ impl EngineManager {
             config,
             manifest: TestedManifest::embedded(),
             drivers: Mutex::new(drivers),
+            host,
             updating: Mutex::new(HashSet::new()),
             native_operations: Arc::default(),
             installer_locks: Mutex::new(HashMap::new()),
@@ -479,12 +516,25 @@ impl EngineManager {
             .collect())
     }
 
+    /// The `enable_provider_update_checks` setting: whether engine CLI versions and model
+    /// lists are looked up on their own. Asked-for refreshes ignore it.
+    pub fn provider_checks_on(&self) -> bool {
+        crate::settings::preferences::stored_preference(
+            &self.store,
+            "enable_provider_update_checks",
+            None,
+        )
+        .map_or(true, |value| value != false)
+    }
+
     pub async fn statuses(&self, refresh: bool) -> Result<Vec<EngineStatus>> {
         let mut cached = self.statuses.lock().await;
         if refresh || cached.is_none() {
+            // With provider checks off, only an asked-for refresh looks up the latest version.
+            let lookup = refresh || self.provider_checks_on();
             let mut statuses = Vec::new();
             for driver in self.all_drivers()? {
-                statuses.push(self.status_of(driver.as_ref()).await);
+                statuses.push(self.status_of(driver.as_ref(), lookup).await);
             }
             *cached = Some(statuses);
         }
@@ -593,6 +643,13 @@ impl EngineManager {
     async fn read_models(&self, id: &str, refresh: bool) -> Result<EngineModels> {
         let mut cache = self.models.lock().await;
         let driver = self.driver(id)?;
+        // With provider checks off, a kept list is not read again on its own.
+        if !refresh
+            && let Some(cached) = cache.get(id)
+            && !self.provider_checks_on()
+        {
+            return Ok(cached.models.clone());
+        }
         if !refresh
             && let Some(cached) = cache.get(id)
             && cached.key.is_some()
@@ -697,10 +754,18 @@ impl EngineManager {
 
     pub async fn status(&self, id: &str) -> Result<EngineStatus> {
         let driver = self.driver(id)?;
-        Ok(self.status_of(driver.as_ref()).await)
+        Ok(self
+            .status_of(driver.as_ref(), self.provider_checks_on())
+            .await)
     }
 
-    async fn status_of(&self, driver: &dyn EngineDriver) -> EngineStatus {
+    /// `lookup_latest_version` is whether the latest version may be asked for over the
+    /// network; the installed version is always read locally.
+    async fn status_of(
+        &self,
+        driver: &dyn EngineDriver,
+        lookup_latest_version: bool,
+    ) -> EngineStatus {
         let descriptor = driver.descriptor();
         let instance = self
             .instances()
@@ -723,12 +788,16 @@ impl EngineManager {
         let installer = plan
             .as_ref()
             .map_or(InstallerKind::Unknown, |plan| plan.installer);
-        let latest = match (driver.latest_version().await, driver.npm_package()) {
-            (Some(latest), _) => Some(latest),
-            (None, Some(package)) if self.config.lookup_latest && installed => {
-                self.latest_version(package).await
+        let latest = if lookup_latest_version {
+            match (driver.latest_version().await, driver.npm_package()) {
+                (Some(latest), _) => Some(latest),
+                (None, Some(package)) if self.config.lookup_latest && installed => {
+                    self.latest_version(package).await
+                }
+                _ => None,
             }
-            _ => None,
+        } else {
+            None
         };
         let has_manifest = descriptor.tier == EngineTier::Native || family == "opencode";
         let support = if has_manifest {
@@ -750,7 +819,11 @@ impl EngineManager {
         };
         let (inherited_credentials, endpoint_origin) =
             crate::host::child_env::inherited_login(&family);
+        let (crew_role, crew_role_reason) =
+            notice::crew_role(&descriptor.capabilities.permission_modes);
         EngineStatus {
+            crew_role,
+            crew_role_reason,
             instance_of: instance.as_ref().map(|one| one.driver.clone()),
             accent: instance.and_then(|one| one.accent),
             inherited_credentials,

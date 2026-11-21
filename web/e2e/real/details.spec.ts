@@ -57,16 +57,17 @@ test("details shows linked pull requests, and right-click turns rows off and bac
   await expect(page.getByRole("button", { name: "9 of 10 on" })).toBeVisible();
 });
 
-test("Related threads lists the parent and its forks", async ({ page }) => {
+test("Linked threads shows the family, and the fork says what it is a fork of", async ({ page }) => {
   const id = await fresh(page, "[scene:usage] root");
   await settled(service, id);
   const fork = await service.api<Listed>("POST", `/api/threads/${id}/fork`, { title: "The fork" });
   await page.reload();
-  await page.getByRole("button", { name: "Related threads" }).click();
-  await page.getByRole("menuitem", { name: /Fork: The fork/ }).click();
+  await page.getByRole("button", { name: "Linked threads" }).click();
+  await page.getByRole("link", { name: /The fork/ }).click();
   await expect(page).toHaveURL(new RegExp(fork.id));
-  await page.getByRole("button", { name: "Related threads" }).click();
-  await expect(page.getByRole("menuitem", { name: /Parent:/ })).toBeVisible();
+  await expect(page.locator(".fam-line")).toContainText("Fork of");
+  await page.getByRole("button", { name: "Linked threads" }).click();
+  await expect(page.getByRole("link", { name: /Root/ })).toBeVisible();
 });
 
 test("a thread you left shows where the new messages start", async ({ page }) => {

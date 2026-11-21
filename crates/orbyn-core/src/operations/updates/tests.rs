@@ -100,19 +100,26 @@ struct Fixture {
     core: Core,
     upstream: PathBuf,
     thread: String,
+    fake: Arc<Fake>,
 }
 
 async fn fixture(update: &'static str) -> Fixture {
+    fixture_with(update, false).await
+}
+
+/// `online` is not ORBYN_OFFLINE: the scheduled check runs.
+async fn fixture_with(update: &'static str, online: bool) -> Fixture {
     let dir = TempDir::new();
     let upstream = library(&dir.path().join("upstream"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
-    config.engines.lookup_latest = false;
+    config.engines.lookup_latest = online;
     let core = Core::open(config).unwrap();
-    core.engines.register(Arc::new(Fake {
+    let fake = Arc::new(Fake {
         update,
         version: "1.0.0",
         probes: Default::default(),
-    }));
+    });
+    core.engines.register(fake.clone());
     core.setup_workspace(WorkspaceSetup {
         url: Some(upstream.to_string_lossy().into_owned()),
         adopt_path: None,
@@ -141,6 +148,7 @@ async fn fixture(update: &'static str) -> Fixture {
         core,
         upstream,
         thread,
+        fake,
     }
 }
 
@@ -511,6 +519,79 @@ async fn the_setting_turns_background_checks_off() {
     stop.cancel();
     checks.await.unwrap();
     assert_eq!(f.core.updates.status().await.library.behind, 0);
+    assert!(f.core.updates.status().await.checked_at.is_none());
+}
+
+/// Turns one setting on or off the way the Settings screen does.
+fn set(f: &Fixture, key: &str, on: bool) {
+    let values = std::collections::BTreeMap::from([(key.to_owned(), serde_json::json!(on))]);
+    f.core.set_preferences(None, &values).unwrap();
+}
+
+/// Runs the scheduled check once and returns how many times the engine CLI was read.
+async fn scheduled_engine_reads(f: &Fixture) -> u64 {
+    // A first status fills the kept list; only a refresh reads the CLI after that.
+    f.core.engines.statuses(false).await.unwrap();
+    let before = f.fake.probes.load(std::sync::atomic::Ordering::Relaxed);
+    let stop = CancellationToken::new();
+    let checks = {
+        let (updates, stop) = (f.core.updates.clone(), stop.clone());
+        tokio::spawn(async move { updates.run_checks(stop).await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    stop.cancel();
+    checks.await.unwrap();
+    f.fake.probes.load(std::sync::atomic::Ordering::Relaxed) - before
+}
+
+#[tokio::test]
+async fn provider_checks_off_skips_engine_versions_but_still_checks_the_library_and_app() {
+    let f = fixture_with("exit 0", true).await;
+    set(&f, "enable_provider_update_checks", false);
+    upstream_commit(&f.upstream);
+    assert_eq!(scheduled_engine_reads(&f).await, 0);
+    assert_eq!(f.core.updates.status().await.library.behind, 1);
+}
+
+#[tokio::test]
+async fn background_checks_off_still_reads_engine_versions_when_provider_checks_are_on() {
+    let f = fixture_with("exit 0", true).await;
+    let settings = ServerSettings {
+        background_update_checks: Some(false),
+        ..f.core.store.settings().unwrap()
+    };
+    f.core.store.save_settings(&settings, "t").unwrap();
+    upstream_commit(&f.upstream);
+    assert!(scheduled_engine_reads(&f).await > 0);
+    assert_eq!(f.core.updates.status().await.library.behind, 0);
+}
+
+#[tokio::test]
+async fn a_manual_check_reads_engine_versions_with_provider_checks_off() {
+    let f = fixture("exit 0").await;
+    set(&f, "enable_provider_update_checks", false);
+    let before = f.fake.probes.load(std::sync::atomic::Ordering::Relaxed);
+    f.core.updates.check().await;
+    assert!(f.fake.probes.load(std::sync::atomic::Ordering::Relaxed) > before);
+}
+
+#[tokio::test]
+async fn offline_sends_the_desktop_shell_no_automatic_check() {
+    // The fixture is offline (`lookup_latest` is false), as with ORBYN_OFFLINE.
+    let f = fixture("exit 0").await;
+    let mut lines = f.core.updates.attach_shell();
+    let stop = CancellationToken::new();
+    let checks = {
+        let (updates, stop) = (f.core.updates.clone(), stop.clone());
+        tokio::spawn(async move { updates.run_checks(stop).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    stop.cancel();
+    checks.await.unwrap();
+    assert!(
+        lines.try_recv().is_err(),
+        "no app update check reaches the shell while offline"
+    );
     assert!(f.core.updates.status().await.checked_at.is_none());
 }
 

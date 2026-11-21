@@ -75,7 +75,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
   A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
 - A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
-  none). There is no Settings control yet: it can be set only through the settings API for now. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
+  none), set in Settings › General. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
   task is refused once the crew has spent it, and a task already running is never stopped by it.
 
 ## Known limits of Preview

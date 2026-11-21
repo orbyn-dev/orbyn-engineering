@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ApiFailure } from "../../../../api/client";
 import type { FlowFinding } from "../../../../generated/FlowFinding";
 import type { FlowLane } from "../../../../generated/FlowLane";
@@ -13,6 +13,7 @@ import { useFlowTask, useRefresh } from "./useFlow";
 import { ReviewConsent, consentKey } from "./ReviewConsent";
 import { RequiredLanes } from "./RemoveLane";
 import { flowApi } from "./api";
+import { RunPage } from "../../runpage/RunPage";
 
 /** The Review queue is not a tab of the Crew view yet, so Review has nowhere to open. */
 const NO_QUEUE = "The Review queue is not in this app yet";
@@ -58,6 +59,15 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
   const write = useTaskWrite({ id: row.id, name: row.name, allowCancel: !final, allowRerun: row.state === "passed", onDone: onChanged });
   const cancel = write.can("cancel");
   const rerun = write.can("rerun");
+  // The Run page is this task's records as a page of their own; Save as file and Copy PR comment are in it, and write nothing.
+  const [run, setRun] = useState(false);
+  if (run) {
+    return (
+      <div className="fv-body fv-zoom">
+        <RunPage detail={detail} onBack={() => setRun(false)} />
+      </div>
+    );
+  }
   return (
     <div className="fv-body fv-zoom">
       <div className="fv-crumb">
@@ -66,6 +76,9 @@ function Detail({ detail, back, onChanged }: { detail: FlowTaskDetail; back: Rea
         <span className="fv-badge">{round.text}</span>
         <span className="fv-badge">{plain(row.state)}</span>
         <span className="fv-spacer" />
+        <button type="button" className="fv-off" onClick={() => setRun(true)}>
+          Run page
+        </button>
         <button type="button" className="fv-off" disabled={!cancel.enabled} title={cancel.why ?? undefined} onClick={() => write.ask("cancel")}>
           Cancel
         </button>

@@ -33,10 +33,96 @@ impl RunManager {
         attachments: &[String],
         actor: &str,
     ) -> Result<Run> {
+        self.admit_asked(thread_id, prompt, attachments, actor, false)
+    }
+
+    /// The person's one turn without approvals on an engine that never asks: the thread's saved mode is not read and not
+    /// changed, so the next send is refused again. The notice still applies. One audit row, written before the run exists.
+    pub fn admit_without_approvals(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        actor: &str,
+    ) -> Result<Run> {
+        let thread = self.store.thread(thread_id)?;
+        let driver = self.engines.driver(&thread.engine)?;
+        let descriptor = driver.descriptor();
+        if !crate::agents::permission_modes::never_asks(&descriptor.capabilities.permission_modes) {
+            return Err(CoreError::Unsupported(format!(
+                "{} asks before it acts, so there is nothing to run without.",
+                descriptor.name
+            )));
+        }
+        self.check_never_asks(&thread, true)?;
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: actor.to_owned(),
+            action: "thread.send_without_approvals".into(),
+            target: thread.id.clone(),
+            decision: None,
+            source: "user".into(),
+            thread_id: Some(thread.id.clone()),
+            run_id: None,
+            detail: json!({ "engine": thread.engine, "project_id": thread.project_id }),
+        })?;
+        self.admit_asked(thread_id, prompt, attachments, actor, true)
+    }
+
+    /// The refusals of an engine that never asks (docs/cursor-thread-contract.md), at run start only. The notice comes
+    /// first. `once` is the person's one-turn override, which skips the mode and nothing else.
+    fn check_never_asks(&self, thread: &Thread, once: bool) -> Result<()> {
+        let Ok(driver) = self.engines.driver(&thread.engine) else {
+            return Ok(());
+        };
+        let descriptor = driver.descriptor();
+        let modes = descriptor.capabilities.permission_modes;
+        if !crate::agents::permission_modes::never_asks(&modes) {
+            return Ok(());
+        }
+        self.engines
+            .notice_required(&thread.project_id, &thread.engine)?;
+        let saved = thread
+            .lifecycle
+            .as_ref()
+            .map_or(PermissionMode::Supervised, |l| l.permission_mode);
+        // Only the two modes that promise an ask are refused. Auto and Full access promise none, and the engine runs as it
+        // is: with no approvals.
+        if once
+            || !matches!(
+                saved,
+                PermissionMode::Supervised | PermissionMode::AutoEdits
+            )
+        {
+            return Ok(());
+        }
+        Err(CoreError::EngineRefused {
+            code: "engine_mode_refused",
+            message: format!(
+                "{} never asks before it acts, so a thread on it runs with No approvals. Choose that mode, or run this message once without approvals.",
+                descriptor.name
+            ),
+            fields: json!({
+                "engine": thread.engine,
+                "thread_id": thread.id,
+                "mode": saved,
+                "allowed": modes,
+            }),
+        })
+    }
+
+    fn admit_asked(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        actor: &str,
+        once_without_approvals: bool,
+    ) -> Result<Run> {
         check_prompt(prompt)?;
         self.refuse_background_lead(thread_id)?;
         let thread = self.store.thread(thread_id)?;
         self.check_goal_action(&thread, prompt)?;
+        self.check_never_asks(&thread, once_without_approvals)?;
         self.attachment_files(thread_id, attachments)?;
         self.engines
             .check_selection(&thread.engine, &selection::of_thread(&thread))?;
@@ -84,6 +170,7 @@ impl RunManager {
         thread.effort.clone_from(&capture.selection.effort);
         thread.options.clone_from(&capture.selection.options);
         self.check_goal_action(&thread, &capture.prompt)?;
+        self.check_never_asks(&thread, false)?;
         self.engines
             .check_selection(&thread.engine, &selection::of_thread(&thread))?;
         let root = self.workspace.root()?;
@@ -209,6 +296,7 @@ impl RunManager {
                 task: None,
                 input: None,
                 control: None,
+                steers: HashMap::new(),
             },
         );
         if !preparation_retry {
@@ -350,6 +438,10 @@ impl RunManager {
 
     fn try_drain(self: &Arc<Self>, thread_id: &str) -> Result<()> {
         let thread = self.store.thread(thread_id)?;
+        // A refused message stays queued, as every other start failure leaves it.
+        if !self.store.list_queue(thread_id)?.is_empty() {
+            self.check_never_asks(&thread, false)?;
+        }
         let root = self.workspace.root()?;
         let next = self.workspace.admit_with(|| {
             self.check_console(thread_id)?;
@@ -383,6 +475,35 @@ impl RunManager {
         attachments: &[String],
         wanted: &ModelSelection,
     ) -> Result<QueuedMessage> {
+        self.enqueue_asked(thread_id, prompt, attachments, wanted, false)
+    }
+
+    /// Queues a message Crew itself asks the lead to read: a task's result, a review, or a start
+    /// it refused. The run that starts from it is judged by what the lead leaves behind, not by
+    /// what it says, because the person did not send it (docs/engine-run-contract.md).
+    pub fn enqueue_crew_note(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+    ) -> Result<QueuedMessage> {
+        self.enqueue_asked(
+            thread_id,
+            prompt,
+            attachments,
+            &ModelSelection::default(),
+            true,
+        )
+    }
+
+    fn enqueue_asked(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        wanted: &ModelSelection,
+        crew_note: bool,
+    ) -> Result<QueuedMessage> {
         check_prompt(prompt)?;
         self.refuse_background_lead(thread_id)?;
         let thread = self.store.thread(thread_id)?;
@@ -395,10 +516,16 @@ impl RunManager {
             return Err(CoreError::ThreadArchived);
         }
         self.check_goal_action(&thread, prompt)?;
+        self.check_never_asks(&thread, false)?;
         self.attachment_files(thread_id, attachments)?;
         let chosen = selection::merged(&selection::of_thread(&thread), wanted);
         self.engines.check_selection(&thread.engine, &chosen)?;
-        let message = self.store.enqueue(thread_id, prompt, attachments, wanted)?;
+        let message = if crew_note {
+            self.store
+                .enqueue_crew_note(thread_id, prompt, attachments, wanted)?
+        } else {
+            self.store.enqueue(thread_id, prompt, attachments, wanted)?
+        };
         self.drain(thread_id);
         Ok(message)
     }
@@ -512,6 +639,12 @@ impl RunManager {
         steer: &SteerMessage,
         role: &str,
     ) -> Result<()> {
+        // The engine gets the masked text; the timeline below and a requeue keep what was typed.
+        let project_id = self.store.thread(thread_id)?.project_id;
+        let sent = SteerMessage {
+            message_id: steer.message_id.clone(),
+            prompt: self.mask_for_engine(&project_id, &steer.prompt)?,
+        };
         for event in [
             AgUiEvent::TextMessageStart {
                 message_id: steer.message_id.clone(),
@@ -529,9 +662,12 @@ impl RunManager {
         }
         // Marked only once the engine took it, so a refusal or a closed run leaves it
         // plain. The mark belongs to the thread: a run that ends right here cannot reject it.
-        input
-            .send(steer.clone())
-            .map_err(|_| CoreError::RunClosed)?;
+        if let Some(active) = self.lock().get_mut(run_id) {
+            active
+                .steers
+                .insert(steer.message_id.clone(), steer.prompt.clone());
+        }
+        input.send(sent).map_err(|_| CoreError::RunClosed)?;
         // The engine has the message: a failed mark must not fail the request, or a
         // retry would send it twice.
         if let Err(error) = self.store.append_thread_event(

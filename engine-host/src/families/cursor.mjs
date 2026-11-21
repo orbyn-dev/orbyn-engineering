@@ -8,6 +8,8 @@
 // under the prefix instead. The Cursor SDK has no interactive approval request, so this family never
 // sends a `permission` or `question` frame. Nothing here has run against the real SDK.
 
+import { createCatalogReader, createLimitsReader } from "./cursorReaders.mjs";
+
 const CLOSE_GRACE_MS = 3000;
 const MAX_CAUSE_DEPTH = 8;
 const NO_PROGRESS = "Agent turn stopped after repeated resume attempts made no progress";
@@ -62,21 +64,35 @@ export function isBenignSdkRejection(reason) {
     args.some((a) => typeof a === "string" && /dump_zsh_state|dump_bash_state|__CURSOR_SANDBOX_ENV_RESTORE/.test(a));
 }
 
+const USAGE_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "reasoningTokens"];
+
+/** Adds one turn-ended usage to the run's total (T3 sums them); undefined when nothing was reported. */
+function addUsage(total, usage) {
+  if (typeof usage !== "object" || usage === null) return total;
+  const out = { ...(total ?? {}) };
+  for (const key of USAGE_KEYS) if (typeof usage[key] === "number") out[key] = (out[key] ?? 0) + usage[key];
+  out.totalTokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].reduce((n, k) => n + (out[k] ?? 0), 0);
+  return out;
+}
+
 function protocolError(name, message, kind) {
   return Object.assign(new Error(message), { name, kind });
 }
 
-export function cursorFamily({ loadSdk, env = process.env }) {
+export function cursorFamily({ loadSdk, env = process.env, fetch: fetchImpl = globalThis.fetch }) {
   return {
     name: "cursor",
     sdk: { name: "@cursor/sdk", version: env.ORBYN_CURSOR_SDK_VERSION ?? "unknown" },
-    capabilities: ["steer"],
+    capabilities: ["steer", "models", "usage"],
     create(ctx) {
       const sessions = new Map(); // sessionId -> {id, agent, cwd, run}
       const runs = new Map(); // sendId -> session
       const starting = new Set();
       const pendingCancel = new Set();
       const apiKey = typeof env.CURSOR_API_KEY === "string" && env.CURSOR_API_KEY !== "" ? env.CURSOR_API_KEY : undefined;
+      const readerOptions = { fetch: fetchImpl, env, apiKey };
+      const readCatalog = createCatalogReader(readerOptions);
+      const readLimits = createLimitsReader(readerOptions);
       let sdkPromise;
       const sdk = () => (sdkPromise ??= loadSdk());
 
@@ -103,6 +119,7 @@ export function cursorFamily({ loadSdk, env = process.env }) {
         run.done = true;
         if (session.run === run) session.run = null;
         runs.delete(run.sendId);
+        if (frame.result?.usage) session.lastUsage = frame.result.usage;
         ctx.send({ type: "runDone", sendId: run.sendId, ...frame });
       };
 
@@ -116,6 +133,8 @@ export function cursorFamily({ loadSdk, env = process.env }) {
 
       const settle = (session, run, result) => {
         const status = result?.status;
+        // The SDK's own result usage wins; without it (a cancel, the no-progress error) the turn-ended totals stand in.
+        result = { ...result, usage: result?.usage ?? run.usage };
         if (status === "finished") {
           return finish(session, run, { ok: true, result: { reason: "completed", threadDisposition: "reusable", usage: result.usage } });
         }
@@ -134,13 +153,13 @@ export function cursorFamily({ loadSdk, env = process.env }) {
         const clean = sanitize(cause);
         const kind = clean.kind;
         if (kind === "cancelled") {
-          return finish(session, run, { ok: true, result: { reason: "cancelled", threadDisposition: "reusable" } });
+          return finish(session, run, { ok: true, result: { reason: "cancelled", threadDisposition: "reusable", ...(run.usage ? { usage: run.usage } : {}) } });
         }
         const retry = kind === "rate_limit" || kind === "network" ? { retry: { why: kind } } : {};
         finish(session, run, {
           ok: false,
           error: { method: "send", cause: { name: clean.name, message: clean.message, kind, ...(clean.code ? { code: clean.code } : {}), ...(clean.status ? { status: clean.status } : {}) } },
-          result: { reason: "failed", threadDisposition: kind === "session_lost" ? "broken" : "reusable", ...retry },
+          result: { reason: "failed", threadDisposition: kind === "session_lost" ? "broken" : "reusable", ...(run.usage ? { usage: run.usage } : {}), ...retry },
         });
       };
 
@@ -205,7 +224,7 @@ export function cursorFamily({ loadSdk, env = process.env }) {
               if (typeof text !== "string" || text.trim() === "") throw protocolError("InvalidRequest", "send needs message text", "invalid_request");
               const { apiKey: _ignored, onDelta: _ignoredDelta, ...sendOptions } = request.options ?? {};
               const sendId = request.id;
-              const run = { sendId, done: false, ready: false, pending: [], handle: null, turnEnded: false };
+              const run = { sendId, done: false, ready: false, pending: [], handle: null, turnEnded: false, usage: undefined };
               const emit = (update) => ctx.send({ type: "delta", sendId, update });
               session.run = run;
               runs.set(sendId, session);
@@ -215,7 +234,10 @@ export function cursorFamily({ loadSdk, env = process.env }) {
                   ...sendOptions,
                   onDelta: async ({ update }) => {
                     if (run.done) return;
-                    if (update?.type === "turn-ended") run.turnEnded = true;
+                    if (update?.type === "turn-ended") {
+                      run.turnEnded = true;
+                      run.usage = addUsage(run.usage, update.usage);
+                    }
                     if (run.ready) emit(update);
                     else run.pending.push(update);
                   },
@@ -275,6 +297,18 @@ export function cursorFamily({ loadSdk, env = process.env }) {
               // The Cursor SDK raises no approval or question, so there is never a pending request to answer.
               ctx.log({ type: "lateRespond", requestId: request.requestId });
               return null;
+            }
+            case "models":
+              // Host-wide and read-only: the key was given at spawn, so no session is needed.
+              return await readCatalog().catch(fail);
+            case "usage": {
+              // Account limits, plus the last finished run's token totals when a session is named.
+              let session;
+              if (request.sessionId !== undefined) {
+                session = sessions.get(request.sessionId);
+                if (!session) throw protocolError("UnknownSession", "unknown session", "invalid_request");
+              }
+              return { usage: session?.lastUsage ?? null, limits: await readLimits() };
             }
             case "closeSession": {
               const session = sessions.get(request.sessionId);

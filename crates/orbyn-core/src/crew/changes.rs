@@ -54,6 +54,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
+    ("POST", "/api/crew/profile/apply"),
 ];
 
 /// Reads confer no action authority. The notice projection may record observed

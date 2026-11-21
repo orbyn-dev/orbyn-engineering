@@ -5,7 +5,7 @@ engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse, and lat
 The Rust `HostDriver{family}` implements `EngineDriver` against this document; the host implements
 the other side. Neither side reads the other's code.
 
-Status: **Planned**. Nothing here ships until the host skeleton (H1) merges. The shape follows the
+Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude family is behind a flag. The shape follows the
 worker protocol of T3 Code's Cursor provider (MIT, `CursorAgentSdkWorkerProtocol.ts`), with three
 changes: a version handshake, `permission`/`question` frames so policy stays in Rust, and
 per-run confinement inputs supplied by Rust.
@@ -67,7 +67,7 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `type` | Fields | Result |
 |---|---|---|
 | `open` | `operation` (`create` \| `resume` \| `fork`), `sessionId`, `engineSessionId?`, `cwd`, `options` (model, effort, mode, MCP, system prompt; family-shaped, see below), `confinement` | `{engineSessionId}` |
-| `send` | `sessionId`, `message` (text, or text plus attachments by path), `options?` | `{runId, engineSessionId?, turnId?}` (accepted). Some SDKs assign the session id only on the first message; the host also sends a `session` frame (below) when the id or turn id becomes known later |
+| `send` | `sessionId`, `message` (text, or text plus attachments by path), `messageId?` (a UUID the core chose for this prompt; the host sends it to the engine as the message's `uuid` so the engine's own frames name it, and ignores it if the engine cannot), `options?` | `{runId, engineSessionId?, turnId?, messageId?}` (accepted). Some SDKs assign the session id only on the first message; the host also sends a `session` frame (below) when the id or turn id becomes known later |
 | `steer` | `sendId`, `messageId`, `text` | `{outcome, messageId}` (`accepted` \| `queued` \| `rejected`); a refusal is recorded against that message |
 | `cancel` | `sendId` | `{cancelled: bool}` |
 | `respond` | `requestId`, `decision`: for a `permission`, `{"behavior":"allow"\|"deny","message"?}` and nothing else; for a `question`, `{"answers":{"<question text>":"<answer>"}}` (several selections joined by a comma) or `{"behavior":"deny"}` when the person skips it | `null` |
@@ -76,8 +76,8 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
 | `fork` | `sessionId`, `atTurn?` | `{engineSessionId}` |
 | `readHistory` | `sessionId` | list of messages (family-shaped, mapped by the core) |
-| `usage` | `sessionId` | context and cost counters |
-| `models` | none (host-wide) | model list with efforts and capabilities |
+| `usage` | `sessionId` (optional for the Cursor and Muse families, which also answer account-wide) | context and cost counters. Cursor and Muse: `{usage, limits}`, see below |
+| `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process) | model list with efforts and capabilities. Cursor and Muse: `{models, account?}`, see below |
 | `closeSession` | `sessionId` | `null` |
 | `probe` | `sessionId`, `kind` (`confinement`) | `{refused: [...], allowed: [...]}`: the host runs a scripted attempt to write outside the roots and read a forbidden path through the engine and reports which were refused; the Crew probe per family and the Codex confinement probe use it |
 | `ping` | none | `null` (liveness; see crash and recovery) |
@@ -113,6 +113,9 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
   ends first, the host resolves the pending SDK callback with a refusal and forgets the id; a late
   `respond` for an unknown id is ignored and counted in `log`, and the core drops its open approval for
   that `requestId`.
+  In the real Claude SDK, cancelling a run while a `permission` or `question` is open ends it as `runDone`
+  `ok:false` with kind `engine`; the core that sent the cancel does not record that as a failure.
+- The core answers a `permission` through `ApprovalGate` and a `question` through `QuestionDesk`; the person, a rule, plan mode, the write scope and Autopilot decide, never the host. Orbyn's own MCP tools (`mcp__orbyn_engineering__*`) govern themselves and are allowed without asking, as on the CLI path. A `question` with nothing to show is answered `deny` and never asked. Only one answer is ever sent for a request id: an answer that comes after the run ended, was cancelled or lost its host is dropped, and so is every ask still open when the host crashes.
 - `permission.tool` and `permission.input` are the engine's own, passed through untouched: the host
   adds no field to them and drops none (`requestId` and `sendId` live on the frame, outside `input`),
   because the core binds an approval to every request field but a short bookkeeping list. ACP option
@@ -130,11 +133,23 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
   `threadDisposition: "reusable" | "broken"`, and on a failure may add
   `retry: {"afterMs"?, "why": "rate_limit"|"network"|"overloaded", "resetsAt"?}`; `resetsAt` (unix seconds,
   inside `retry`, only for `rate_limit`) lets the core emit its `Limited { resets_at }` event.
+- `runDone` `result.usage` may also be present on a `cancelled` or `failed` result (the tokens spent before the end); the core treats it as optional on every `reason`.
 - `background` frames report shells, subagents and workflows the engine started, so rule 1 of the
   run-end contract can hold or report them. The host keeps the run open per the family's rule
   (see [engine-run-contract.md](engine-run-contract.md)) and sends `runDone` only when the hold ends.
 - `log` is for protocol-level events the core stores as run diagnostics (T3's `protocolLog`). Never
   put prompt text or tokens in `log`; the host redacts before sending.
+
+## Account, limits and catalog results (Cursor and Muse)
+
+Read-only, family-shaped results of `models` and `usage`, all optional and ignorable (no protocol bump; a core that ignores them loses only the display):
+
+- `models` result `{models: [...], account?}`. Cursor: `models[]` is the public catalog item (`id`, `displayName`, `description?`, `aliases?`, `parameters?`, `variants?`);
+  `account?` is `{apiKeyName?, createdAt?, userId?, email?, firstName?, lastName?}` and is absent when the team blocks it. Muse: `models[]` is
+  `{id, name, isDefault, efforts: [{id, label, isDefault?, description?}], defaultEffort?}`. Cursor needs `CURSOR_API_KEY` at host start, else `kind: "auth"`.
+- `usage` result `{usage, limits}`: `usage` is the named session's last finished run total (or `null`); `limits` is `{checkedAt, windows: [{id, kind, label, usedPercent (0 to 100), resetsAt?, windowDurationMins?}], authLabel?, unavailable?, message?}` or, for Muse before any report, `null`. `unavailable` is
+  `"unsupported"` or `"probeFailed"` with empty `windows`; a limits failure is never a request error.
+- No credential, token, key or response body appears in a result or `log`; the host redacts and failures carry fixed text.
 
 ## Errors
 
@@ -153,6 +168,55 @@ One shape everywhere an error crosses the wire:
 - A request-level failure is `response` with `ok:false` and `error = {method, cause}`. A run-level
   failure is `runDone` with `ok:false` and the same shape. Messages are shown to the person only after
   the core's redaction pass; the `stack` is stored in diagnostics only.
+
+## Host status (core to UI)
+
+Not a host frame: this is what the core's `GET /api/engine-host` route returns (Local read), one entry per family. The contract is
+`crates/orbyn-contracts/src/engine_host.rs` with the generated `EngineHost*.ts` in `web/src/generated` (HostDriver slices 1 and 2: #941, merged, and this change). The host sends none of these fields; the core builds them from the host's `hello`, its own restart
+bookkeeping and its own checks. No entry carries an environment, arguments, a key, a path, a token or a stack.
+
+**Slice 1 (the contract above).** `EngineHostStatus`:
+
+- `family`, `state`, `host_version?`, `restart_count` (restarts after a crash since the app started; a person's restart does not reset it), `last_crash?`, `protocol_app?` and `protocol_host?`
+  (for `version_mismatch`), `not_used?`, `detail?` (a plain sentence for a state that stops runs), `action?` (what the person can do, such as `Update Orbyn`).
+- `state` is `not_started`, `starting`, `running`, `stopped` (idle, or the person stopped it), `crashed` (crashed and the person asked again), `restarting`, `cant_start`,
+  `version_mismatch` or `not_used` (the family runs on its Rust driver).
+- `not_used` is `flag_off` or `unsupported_platform`.
+- `last_crash` is `{exit_code?, signal?, at (RFC 3339), error_kind, message, stderr_tail}`. `error_kind` is `exited`, `closed_output`, `stalled`, `malformed`, `oversize`,
+  `hello_timeout` or `start_failed`. `stderr_tail` is at most 1024 characters with credential-looking lines dropped.
+
+**Slice 2 (built).** Optional and ignorable, no protocol bump:
+
+- `last_error_kind?`: what the family's latest finished run failed with, from the closed set in Errors (`auth`, `rate_limit`, `network`, `invalid_request`,
+  `unsupported`, `cancelled`, `engine`, `host`, `session_lost`), so the UI can choose wording without parsing a message. It is separate from the crash `error_kind`,
+  which says how the host process failed. Absent after a run that completed, and when the host named no kind.
+- `threads?`: the threads with a run open on the host now, `{thread_id, family, state}` with `state` `running`. `starting`, `restarting` and `unavailable` are in the
+  contract for the Planned part below; slice 2 reports only threads that are running.
+- **Stop and restart** (Person routes, desktop key only, audited): `POST /api/engine-host/{family}/stop` and `POST /api/engine-host/{family}/restart`, body
+  `{stop_background?: boolean}`, answering the family's `EngineHostStatus`. Both end the runs open on that host as cancelled. Rule: a host with a `background` event still
+  open (a shell, a subagent or a workflow the engine started) is not stopped or restarted, and the route answers `409 background_open` with the count, unless the body says
+  `stop_background: true`, which is the person's choice to end that work too. A stop leaves the family `stopped`, and the next run starts it. A restart stops the host
+  (same rule), forgets every crash and backoff (so a `cant_start` family is tried again) and starts it at once; `restart_count` keeps its tally. `409 version_mismatch`
+  for a mismatch (only an update fixes it), `409 not_used` for a family on its Rust driver, `404` for an unknown family. Each call writes an `engine_host.stop` or
+  `engine_host.restart` audit row (actor, family, `stop_background`) before it acts. Answers carry fixed words and the status with every host-derived string passed through the
+  redactor, so a key the host printed never leaves.
+  The web client (`web/src/features/enginehost/hostControl.ts`) calls both: Stop and Restart in Maintenance › Processes, Try again (the restart) for a `cant_start` family and the
+  composer's Restart engine host. A `409 background_open` opens a question with the service's sentence, and only its confirm sends again with `stop_background: true`. Stubbed
+  fetch tests only: not run against a running service.
+- **Spawn secret.** A host's spawn environment gets an engine's key only from `Core::engine_spawn_secret(engine)`, which honours the person's per-engine opt-in. The key goes
+  in the child's environment and nowhere else: not argv, not a frame, not a log line or an error. No key and no core bound yet mean no key.
+
+**Planned (not built).** Names are proposals:
+
+- `threads[].state` of `starting`, `restarting` and `unavailable`, and `threads[].last_error` (`{kind?, message}`, only for `unavailable`), so the UI can show a thread
+  whose host is coming up or gone. A pooled host (Cursor) lists every thread it serves.
+- `signin?`: `"signed_in" | "signed_out" | "unknown" | "key_in_keychain"` per engine. A state word only: `key_in_keychain` means an API key is saved in the OS
+  keychain, and the key is never in the entry. Reading it needs the keychain, which can prompt, so a plain status read does not do it yet.
+- `running_without_host?`: `{reason: "flag_off" | "not_installed" | "unavailable"}`, present when the family runs on its CLI driver. Slice 1's `not_used` (`flag_off`,
+  `unsupported_platform`) covers `flag_off`; the host driver does not fall back to the CLI when a host is `cant_start` (the run is refused), so `unavailable` would be
+  untrue today, and a build with no host has no entry to attach `not_installed` to.
+
+The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). The `HostRow` fields for the Planned items above, and for stop, restart and retry, are filled only by the dev mock: the real client leaves them empty, and the screens draw nothing for them (no Stop, Restart or Try again button until the Person routes of slice 2 exist).
 
 ## Crash and recovery
 

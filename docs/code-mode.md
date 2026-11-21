@@ -196,8 +196,7 @@ name, argument digest, status and a result preview (4 KiB) plus the full result 
 The web UI's run log reads it. Records are kept 7 days, then deleted. The record is what makes resume work
 across a restart, and the only place a script is kept.
 
-Read access (shape settled with the UI in the PR that adds it): `code_run.get(runId)` and a per-thread list,
-both limited to the caller's own project.
+Read access is built: see "As built: run record, routes and the switch" below.
 
 ## Pause and resume
 
@@ -349,28 +348,85 @@ calls with their 4 KiB previews, and a call's full result is fetched on its own.
 Each step is its own pull request with its tests. The web UI (approval card with the script, run log) is built
 by the web side against the shapes here.
 
+## As built: run record, routes and the switch
+
+Tables `code_runs` and `code_run_calls` (migration 63). Behind `CoreConfig::code_mode` (`ORBYN_CODE_MODE=1`): with it off every
+route below answers `404`.
+
+- **Recording.** A run's row is written before its task starts (id, thread, script, SHA-256, the seed and start time a replay needs,
+  whether the thread is a Crew worker's). Each inner call writes a `running` row with its index, tool, argument digest (SHA-256 of
+  the arguments' JSON, never the arguments) and whether the tool has an effect, then ends as `ok`, `failed` or `denied` with the first
+  4 KiB of the result and its size; the whole result is kept when it is at most 256 KiB, as `{ "code", "message" }` for a failure. The
+  end of the run keeps the result (whole up to 256 KiB, else `{ truncated, bytes, preview }`), the newest 500 log lines and the error.
+  `paused` is stored when an outer call returns before the end, `running` again when a call resumes it. A start refused for a limit
+  leaves no record.
+- **Restart.** At start the core marks every run that was `running` or `paused` as `error` with kind `lost` and the lost message; its
+  calls stay as they were, so a call that was running shows as `running`. Records older than 7 days are deleted at start and on every
+  new run.
+- **Replay.** `orbyn_code_run({ code, run_id })` replays a run of this thread that ended as `lost` when the code's SHA-256 equals the
+  record's. The run keeps its id, seed and start time, `resumes` goes up by one, and the rules above under "Restart and replay" hold:
+  calls match by index, tool and argument digest; a finished call answers from the record and runs nothing; a mismatch, a missing
+  stored answer, or an effect call that was running ends the run as `lost` with the doc's texts, and once a replay has failed every
+  later call of the script is refused. A read that was running is run again; past the last recorded call the script runs live through
+  the gate. Replay of a run that did not end as lost, or of another thread's run, is refused as lost (the id of another thread's run is
+  never confirmed). A resume with `run_id` alone of a finished run that left memory answers from its record.
+- **Routes.** Reads are `Local`; a run id is a key and only ids of letters, digits, `_` and `-` up to 64 characters reach the store.
+
+| Route | Person | Answers |
+|---|---|---|
+| `GET /api/code-runs/{id}` | no | `CodeRunRecord` (`404` when there is none); `result` over 64 KiB is `{ truncated, bytes, preview }`; `pending` is the calls still running |
+| `GET /api/threads/{id}/code-runs` | no | `{ runs: CodeRunSummary[] }`, newest first, at most 100; `script_head` is the first 120 characters |
+| `GET /api/engines/{id}/code-mode` | no | `{ enabled }`; off until a person turns it on |
+| `PUT /api/engines/{id}/code-mode` | **yes** | `{ enabled }`, what is stored; in `ENFORCED` and `PERSON_ROUTES` |
+
+- **The switch.** `code_mode:<engine id>` in the settings table, `on` or `off`. The three tools are listed and callable only when the
+  service flag is on and the calling engine's switch is on. `waited_ms` is `null` for now (the time a run waited for a person is not
+  recorded). `resumes` counts both resumes after a pause and replays. Run statuses are `running`, `paused`, `completed` and `error`;
+  the error kinds are the five above. Types: `CodeRunRecord`, `CodeRunSummary`, `CodeRunList`, `CodeModeSetting` in `orbyn-contracts`.
+- **Approval `via`.** `Approval.via` is `{ code_run, call, script_sha256 }` or `null`, stored as JSON in `approvals.via` (migration 68).
+  The run host sets it from a task-local around each inner call (`governance::approvals::with_via`), and the gate copies it onto the
+  approval it creates; `call` is the call's index in the run, `script_sha256` the hash of the script that is running. The card reads the
+  script and the calls from the run record by `code_run`. No rule, decision or audit row reads it; a script's call asks exactly what a
+  direct call asks. The wire type is `ApprovalVia` in `orbyn-contracts`.
+- **Not built.** Cancelling a run, and the worker allow-list entries for the three tools (a worker's call is refused in v1).
+
 ## As built: web UI
 
-The web side is in `web/src/features/codemode/`, built from the Engineer frames `codemode-*`. Nothing in the service exists yet, so
-it reads through a small client (`api.ts`) served only by the dev and test mock (`web/mock/codemode.ts`, scenario `codemode`). In a
-production build the client sends nothing: the switch is shown off and cannot be pressed, and every screen draws from the engine's
-own reply. Swap the client for the generated types and routes when the backend merges, and delete the mock.
+The web side is in `web/src/features/codemode/`, built from the Engineer frames `codemode-*`. It reads the service's own routes (see
+above) through a small client (`api.ts`) with the generated `CodeRunRecord`, `CodeRunSummary`, `CodeRunList` and `CodeModeSetting`
+types; `model.ts` is the one place that reads them. With the service flag off every route answers `404`, and the client reads that as
+"Code Mode is not offered": the setting keeps its Planned pill and a switch that cannot be pressed, the runs list draws nothing, a run
+card draws from the engine's own reply, and nothing shows an error. The dev mock (`web/mock/codemode.ts`, scenario `codemode`, and
+`mock.codeMode.setOffered(false)` for the 404 case) serves the same shapes for `#/preview` and tests only; it is not in a production build.
 
 - **Setting.** Settings › Providers › an engine has a Code Mode group with one switch, off by default, read when the page opens and
-  written once per click. It carries the Planned pill until Code Mode ships.
+  written once per click. The Planned pill goes once the service has answered the read; on a `404` it stays.
 - **Run card.** An `orbyn_code_run` call in the thread is drawn from its run: running, paused, completed, and the five error kinds, with the
   script excerpt (5 lines, opened a 400-line page at a time), calls (3 and a "Show all" line past 8, at most 200), logs (newest 500),
   and the result (first 64 KiB). The run record is read every two seconds while the run is not over; without it only the engine's reply
   is drawn, and there is no call list. A resumed run is one record shown on each call that names it.
-- **Approval.** An approval with `via` shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
+- **Approval.** An approval with `via` (the service sends it for approvals a script's inner call asked) shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
   the answered and expired forms, and what Always allow covers. `via` is read only to draw: the buttons, the decision and the
   rules never read it.
+  The card has an "Open the run" button (drawn only for a run id of letters, digits, `_` and `-`, up to 64): it goes to the approval's thread (`#/threads/<id>`, no new route), scrolls to the run's block (`id="cm-run-<run id>"`) and focuses it, without smooth scroll under reduced motion; when the block is not in the transcript it says so and does nothing else.
+- **Reading the record.** A call's `status` on the wire is `running`, `ok`, `failed` or `denied`; there is no "waiting". The card reads a
+  `running` call of a `paused` run that `pending` names as waiting for a person, and a `running` call of a run that ended as `error` (a
+  restart) as interrupted. `result`, `logs_total` and `waited_ms` are read as the contract has them (`{ truncated, bytes, preview }`,
+  a count when the record kept fewer lines, `null` for now), and an error `kind` it does not know is drawn as a runtime error.
 - **Search and describe.** Drawn as rows in the thread, from the reply read leniently (the exact reply shapes are not in this document).
 - **Untrusted text.** The script, logs, results and call previews are React text, never markup or links, never logged, never opened.
+- **Lost runs.** The run card shows the core's `lost` message as it is, with no text of its own around it, and the calls the record
+  holds. The row note is "lost", and the footer says "Lost · 4 calls recorded", or "Lost · 4 calls done, 1 unknown" when a call was
+  running at the restart (that call reads "Running when Orbyn restarted" and is never counted as done). The three frames (restart,
+  a replay that could not match, a call in flight) differ only in the message and the calls.
+- **Runs list.** `CodeRunsList` draws the per-thread list (id, status, times, call count, the first 120 characters of the script,
+  "Runs are kept for 7 days") from `GET /api/threads/{id}/code-runs` (`CodeRunList`) and opens a run as the same
+  block the thread draws. It sits under the Tools tab, not in a tab of its own, because where it opens is not settled. There is no Stop.
+  An unknown status is shown as Unknown and cannot be opened.
 - **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
   the Orbyn group when an engine reports them.
-- **When the real route lands.** `PUT /api/engines/:id/code-mode` changes what an engine may call, so it is a Person-class write
-  (`web/src/api/personKey.ts` and the route class table in `crates/orbynd`); add it there with the route, not after.
+- **The switch write.** `PUT /api/engines/{id}/code-mode` changes what an engine may call, so it is a Person-class write
+  (`web/src/api/personKey.ts`, already listed with the route). One click is one write.
 - **Model-chosen text.** Run ids, tool names and statuses come from a model: records are kept in maps, an unknown status is shown as
   unknown, the tool in "Always allow covers X" comes from the approval's own tool field and never from its summary, and arguments
   are summarised (lists, objects, cut text with an ellipsis, "N more fields") so a card never looks complete when it is not.

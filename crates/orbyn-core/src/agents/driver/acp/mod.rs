@@ -55,9 +55,31 @@ pub struct AcpDriver {
     /// False for an agent that cannot ask before it edits.
     asks: bool,
     modes: Vec<orbyn_contracts::PermissionMode>,
+    /// The known engine this one was made from, which names the CLIs it must not start.
+    known: Option<&'static crate::agents::engines::known::KnownEngine>,
 }
 
 impl AcpDriver {
+    /// Why `command` must not be started for this engine, when it is another CLI.
+    fn refusal(&self, command: &crate::host::process::ResolvedCommand) -> Option<CoreError> {
+        let known = self.known.filter(|known| known.is_other(command))?;
+        Some(CoreError::EngineUnavailable(format!(
+            "Found a program at {} with the name of {}, but it is another program, so Orbyn did not start it. Get {} from its official page.",
+            command.path.display(),
+            known.name,
+            known.name
+        )))
+    }
+
+    /// The program to start, and never one that is another CLI under this engine's name.
+    /// Every start of this engine goes through here, so none can run the wrong program.
+    fn resolve(&self) -> Result<crate::host::process::ResolvedCommand> {
+        let found = resolve_engine(&self.engine.target)?;
+        match self.refusal(&found) {
+            Some(error) => Err(error),
+            None => Ok(found),
+        }
+    }
     fn sign_in_slot(&self) -> SignInSlot {
         SignInSlot {
             id: self.engine.id.clone(),
@@ -73,16 +95,21 @@ impl AcpDriver {
             env: &[],
             asks: true,
             modes: orbyn_contracts::PermissionMode::ALL.to_vec(),
+            known: None,
         }
     }
 
     /// `engine`, launched the way the table says that agent has to be.
-    pub fn known(engine: CustomEngine, known: &crate::agents::engines::known::KnownEngine) -> Self {
+    pub fn known(
+        engine: CustomEngine,
+        known: &'static crate::agents::engines::known::KnownEngine,
+    ) -> Self {
         Self {
             engine,
             env: known.env,
             asks: known.asks,
             modes: crate::agents::permission_modes::offered(known.id),
+            known: Some(known),
         }
     }
 }
@@ -110,13 +137,20 @@ impl EngineDriver for AcpDriver {
     }
 
     fn check_launch_available(&self) -> Result<()> {
-        resolve_engine(&self.engine.target).map(|_| ())
+        self.resolve().map(|_| ())
     }
 
     async fn native_session_capabilities(
         &self,
     ) -> Result<Option<orbyn_contracts::AcpSessionCapabilities>> {
-        match sessions::perform(&self.engine, self.env, sessions::Operation::Capabilities).await? {
+        match sessions::perform(
+            self.resolve()?,
+            &self.engine,
+            self.env,
+            sessions::Operation::Capabilities,
+        )
+        .await?
+        {
             sessions::Output::Capabilities(caps) => Ok(Some(caps)),
             _ => unreachable!("capability operation returns capabilities"),
         }
@@ -128,6 +162,7 @@ impl EngineDriver for AcpDriver {
         cursor: Option<&str>,
     ) -> Result<orbyn_contracts::AcpNativeSessionPage> {
         match sessions::perform(
+            self.resolve()?,
             &self.engine,
             self.env,
             sessions::Operation::List { cwd, cursor },
@@ -145,6 +180,7 @@ impl EngineDriver for AcpDriver {
         session_id: &str,
     ) -> Result<super::NativeSessionReplay> {
         match sessions::perform(
+            self.resolve()?,
             &self.engine,
             self.env,
             sessions::Operation::Load {
@@ -161,6 +197,7 @@ impl EngineDriver for AcpDriver {
 
     async fn delete_native_session(&self, _cwd: &std::path::Path, session_id: &str) -> Result<()> {
         match sessions::perform(
+            self.resolve()?,
             &self.engine,
             self.env,
             sessions::Operation::Delete { id: session_id },
@@ -188,7 +225,7 @@ impl EngineDriver for AcpDriver {
     /// ACP has no listing call, so this opens a session in a temp folder, reads
     /// what the agent reports for it, and ends the process. No prompt is sent.
     async fn models(&self) -> Result<Option<ModelCatalog>> {
-        let command = resolve_engine(&self.engine.target)?;
+        let command = self.resolve()?;
         let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
         let dir = ProbeDir::new()?;
         let process = spawn_engine_with(&command, &args, dir.path(), self.env)?;
@@ -213,7 +250,7 @@ impl EngineDriver for AcpDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
-        let command = resolve_engine(&self.engine.target)?;
+        let command = self.resolve()?;
         let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
         let identity = spec.crew_task.as_deref().map_or_else(Vec::new, |task| {
             worker_env(task, &self.engine.id, spec.model.as_deref())

@@ -88,7 +88,14 @@ export function usePullDetails(entries: readonly PullListEntry[]): PullDetailsSt
           if (id !== generation.current) return;
           setByKey((known) => {
             const merged = new Map(known);
-            for (const one of response.details) merged.set(detailsKey(one.project_id, one.number), one as PullDetails);
+            for (const one of response.details) {
+              const key = detailsKey(one.project_id, one.number);
+              // A paused field is one the service withheld, not one that is gone: what the row had stays until the pause ends.
+              const had = known.get(key) as Record<string, unknown> | undefined;
+              const next = { ...one } as Record<string, unknown>;
+              for (const field of response.paused) if (had && had[field] !== undefined && next[field] === undefined) next[field] = had[field];
+              merged.set(key, next as unknown as PullDetails);
+            }
             return merged;
           });
           for (const field of response.paused) pausedFields.add(field);

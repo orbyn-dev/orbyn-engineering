@@ -1,55 +1,40 @@
 /**
- * What the Code Mode screens read. docs/code-mode.md is the contract; the wire shapes below follow its "Run record" and
- * "orbyn_code_run" sections. They are NOT in crates/orbyn-contracts or web/src/generated yet (the backend lands in its own
- * pull requests), so these types are written by hand and every field the document does not name is optional. When the
- * generated types arrive, replace this file with imports and keep `model.ts` as the one place that reads them.
+ * What the Code Mode screens read. The wire types are the generated ones (`web/src/generated`, from `orbyn-contracts`), with
+ * every i64 as the number `JSON.parse` delivers (`Wired`). `model.ts` is the one place that reads them: it narrows the free
+ * strings (`status` of a call, `kind` of an error) and bounds every size. The view types below are what the blocks draw.
+ *
+ * Differences from the first hand-written guess, found when the routes landed:
+ * - `script`, `ended_at` and the three counters are optional or nullable as the contract says (`script?`, `ended_at?`).
+ * - `logs`, `pending`, `truncated`, `resumes` and `crew_worker` are always present.
+ * - A call's `status` is only `running`, `ok`, `failed` or `denied`. There is no "waiting": a call held for a person is a `running`
+ *   call of a `paused` run that `pending` names, and a call a restart cut off stays `running` in a run that ended as `error`.
+ * - `error.kind` is a plain string on the wire, and `result` over 64 KiB is `{ truncated, bytes, preview }`.
+ * - `waited_ms` is always null for now. The approval's `via` is on the wire (`Approval.via`) and stays display-only (see `ApprovalVia`).
  */
+import type { CodeModeSetting as CodeModeSettingWire } from "../../generated/CodeModeSetting";
+import type { CodeRunCall as CodeRunCallWire } from "../../generated/CodeRunCall";
+import type { CodeRunList as CodeRunListWire } from "../../generated/CodeRunList";
+import type { CodeRunRecord as CodeRunRecordWire } from "../../generated/CodeRunRecord";
+import type { CodeRunSummary as CodeRunSummaryWire } from "../../generated/CodeRunSummary";
+import type { Wired } from "../../api/types";
+
+import type { CodeRunStatus } from "../../generated/CodeRunStatus";
+
+export type { CodeRunStatus };
+
+export type CodeRunRecord = Wired<CodeRunRecordWire>;
+export type CodeRunCall = Wired<CodeRunCallWire>;
+export type CodeRunSummary = Wired<CodeRunSummaryWire>;
+export type CodeRunList = Wired<CodeRunListWire>;
+export type CodeModeSetting = Wired<CodeModeSettingWire>;
 
 export type CodeErrorKind = "syntax" | "runtime" | "limit" | "denied" | "lost";
-export type CodeRunStatus = "running" | "paused" | "completed" | "error";
 
-export interface CodeRunError {
+/** An error as the blocks draw it: the kind is one of the five, whatever the wire sent. */
+export interface RunError {
   kind: CodeErrorKind;
   message: string;
   line?: number | null;
-}
-
-/** One inner call as the run record stores it. `status` is a free word on the wire; `normalizeCall` reads it. */
-export interface CodeRunCallWire {
-  index: number;
-  tool: string;
-  status: string;
-  /** The first 4 KiB of the result, as text. */
-  preview?: string | null;
-  /** The size of the whole result, when the preview is a part of it. */
-  result_bytes?: number | null;
-  duration_ms?: number | null;
-}
-
-/** `code_run.get(runId)`: the run record. Records are kept 7 days. */
-export interface CodeRunRecord {
-  run_id: string;
-  status: CodeRunStatus;
-  /** The script text, at most 64 KiB. Untrusted: it is shown as text and never run or linked. */
-  script: string | null;
-  script_sha256?: string | null;
-  started_at: string;
-  ended_at: string | null;
-  calls: CodeRunCallWire[];
-  logs?: string[];
-  /** How many lines the script printed in all, when the record kept only the newest. */
-  logs_total?: number | null;
-  /** The script's return value, as JSON. */
-  result?: unknown;
-  error?: CodeRunError | null;
-  pending?: { tool: string; call: number }[];
-  truncated?: boolean;
-  /** How many times an engine call picked the run up again after it paused. */
-  resumes?: number;
-  /** Milliseconds the run waited for a person. */
-  waited_ms?: number | null;
-  /** The run belongs to a Crew worker's thread. */
-  crew_worker?: boolean;
 }
 
 /** The JSON the engine read back from `orbyn_code_run`. */
@@ -58,7 +43,7 @@ export interface CodeReply {
   result?: unknown;
   logs?: string[];
   runId?: string;
-  error?: CodeRunError;
+  error?: RunError;
   pending?: { tool: string; call: number }[];
   truncated?: boolean;
 }
@@ -87,7 +72,7 @@ export interface RunView {
   logsTotal: number | null;
   result: unknown;
   hasResult: boolean;
-  error: CodeRunError | null;
+  error: RunError | null;
   pending: { tool: string; call: number }[];
   truncated: boolean;
   resumes: number;

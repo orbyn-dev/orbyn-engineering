@@ -47,9 +47,9 @@ test("a narrow composer folds its controls into one menu", async ({ page }) => {
   await expect(page.getByRole("menu", { name: "Composer options" })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Composer controls" }).click();
-  await page.getByRole("menuitem", { name: "Plan" }).click();
-  await expect.poll(async () => (await service.api<{ lifecycle: { plan_mode: boolean } }>("GET", `/api/threads/${id}`)).lifecycle.plan_mode).toBe(true);
-  await service.api("PATCH", `/api/threads/${id}`, { plan_mode: false });
+  // Plan mode is removed (B66): the folded menu holds the model, effort and permissions only.
+  await expect(page.getByRole("menuitem", { name: "Plan" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 });
 
 test("a thread dragged onto the composer becomes a link", async ({ page }) => {

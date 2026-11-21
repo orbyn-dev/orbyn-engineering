@@ -117,3 +117,23 @@ export function draggedPage(
   const height = down ? trailingSize(start.height, delta.y, stage.height, drawn) : start.height * drawn;
   return pageSize(width / drawn, height / drawn);
 }
+
+export const SIZE_RANGE_SENTENCE = `Sizes run from ${PAGE_MIN} to ${PAGE_MAX} pixels.`;
+
+/** A typed width or height: whole pixels in the range the service takes, or null. */
+export function parseSize(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return value >= PAGE_MIN && value <= PAGE_MAX ? value : null;
+}
+
+/**
+ * The page with its aspect ratio kept. `ratio` is the size at the moment the lock went on. The width leads when it changed, as for
+ * a typed width, an edge or a corner; otherwise the height does.
+ */
+export function lockedPage(previous: PageSize, next: PageSize, ratio: PageSize): PageSize {
+  if (next.width !== previous.width) return pageSize(next.width, (next.width * ratio.height) / ratio.width);
+  if (next.height !== previous.height) return pageSize((next.height * ratio.width) / ratio.height, next.height);
+  return next;
+}

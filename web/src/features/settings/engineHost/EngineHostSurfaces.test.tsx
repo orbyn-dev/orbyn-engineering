@@ -5,20 +5,20 @@ import { createEngineHostMock, hostFixtures } from "../../../../mock/engineHost"
 import { CauseChain } from "./HostParts";
 import { EngineHostBanner, EngineHostCard } from "./HostCard";
 import { EngineHostGroup } from "./HostGroup";
-import { setEngineHostApi } from "./hostApi";
-import type { HostRow } from "./contract";
+import { setEngineHostApi, type HostRow } from "../../enginehost";
 
 afterEach(() => { setEngineHostApi(null); vi.unstubAllGlobals(); });
 const rowOf = (name: string) => screen.getByText(name, { selector: ".name" }).closest("[role=row]") as HTMLElement;
 
-it("draws nothing, and sends no request, while the service reports no engine host data", async () => {
-  const fetching = vi.fn();
+it("draws nothing, and no error, while the service answers 404 for the engine host", async () => {
+  const fetching = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404, headers: { "content-type": "application/json" } }));
   vi.stubGlobal("fetch", fetching);
   render(<><EngineHostGroup /><EngineHostCard engineId="codex" /><EngineHostBanner engineId="codex" /></>);
   await act(async () => { await Promise.resolve(); });
   expect(screen.queryByText("Engine host")).toBeNull();
   expect(screen.queryByRole("table", { name: "Engine host" })).toBeNull();
-  expect(fetching).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(fetching.mock.calls.every(([url, init]) => url === "/api/engine-host" && init!.method === "GET")).toBe(true);
 });
 
 it("lists one row per host with its chip and its line, as the frame does", async () => {
@@ -103,7 +103,7 @@ it("shows Not used with its own sentence", async () => {
   const rows: HostRow[] = [{ id: "claude", name: "Claude Code", state: "not_used", can_retry: false }];
   setEngineHostApi(createEngineHostMock({ hosts: rows }));
   render(<EngineHostCard engineId="claude" />);
-  expect(await screen.findByText("Claude Code runs through its own program here.")).toBeVisible();
+  expect(await screen.findByText("Not used. Claude Code keeps running through its own program.")).toBeVisible();
 });
 
 it("numbers every cause outermost first and ends on the loop marker in plain words", () => {
@@ -116,3 +116,23 @@ it("numbers every cause outermost first and ends on the loop marker in plain wor
 });
 
 beforeEach(() => vi.useRealTimers());
+
+it("opens nothing on the card for a crash that left neither how it ended nor words, and shows the text as written when it did", async () => {
+  const base = hostFixtures().find((row) => row.id === "codex")!;
+  const crash = { at: new Date().toISOString(), message: "x", stderr_tail: "", error_kind: undefined } as never;
+  const bare: HostRow = { ...base, state: "crashed", restart: null, restart_count: 0, last_error: { message: "The host process closed its output.", causes: [] }, last_crash: crash };
+  setEngineHostApi(createEngineHostMock({ hosts: [bare] }));
+  const { unmount } = render(<EngineHostCard engineId="codex" />);
+  expect(await screen.findByText("The host process closed its output.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Show details" })).toBeNull();
+  unmount();
+  const words: HostRow = { ...bare, last_crash: { at: new Date().toISOString(), message: "x", stderr_tail: "line one\n<b>two</b> https://example.com", error_kind: "closed_output", exit_code: 3 } as never };
+  setEngineHostApi(createEngineHostMock({ hosts: [words] }));
+  const user = userEvent.setup();
+  render(<EngineHostCard engineId="codex" />);
+  await user.click(await screen.findByRole("button", { name: "Show details" }));
+  const text = screen.getByText(/line one/);
+  expect(text.tagName).toBe("PRE");
+  expect(text.textContent).toBe("line one\n<b>two</b> https://example.com");
+  expect(text.querySelector("a, b")).toBeNull();
+});

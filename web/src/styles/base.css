@@ -131,6 +131,7 @@ select {
     .pr-link-field,
     .search-field,
     .term-search-field,
+    .term-input-scope,
     .ed-in,
     .model-search,
     .branch-find,
@@ -139,7 +140,8 @@ select {
     .palette-search,
     .flf,
     .x2find,
-    .fv-search
+    .fv-search,
+    .iss-search
   )
   input:not([type="checkbox"], [type="radio"]):not([type="hidden"]),
 .pulls-fld .pulls-inp input:not([type="checkbox"], [type="radio"]) {
@@ -745,6 +747,16 @@ input[type="checkbox"][role="switch"]:disabled {
   font-family: var(--font-mono);
   font-size: var(--text-label);
 }
+/* A row that carries a label of its own, such as Crew views and its Planned pill: the pill sits where a shortcut would. */
+.popup-menu .menu-planned-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+}
+.popup-menu .menu-planned-row .pill {
+  margin-left: auto;
+}
 .menu-separator {
   height: 1px;
   margin: 4px 0;
@@ -1025,6 +1037,22 @@ input[type="checkbox"][role="switch"]:disabled {
   margin-top: 4px;
   color: var(--color-muted);
   font-size: var(--text-label);
+}
+/* One quiet line under a group heading while that group is read or cannot be (palette-prs-*). */
+.palette-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  min-height: 30px;
+  padding: 0 9px;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.palette-list .palette-note button {
+  width: auto;
+  min-height: 0;
+  flex: none;
 }
 .palette-list button {
   display: flex;

@@ -1,13 +1,10 @@
 /**
- * MOCK of the engine host routes, which are not merged on the service yet. It is never called against the real
- * service: the app's own client reports "nothing" until the routes exist, and only a test or the dev-only preview
- * (`#/preview/engine-host`) installs this through `setEngineHostApi`. Fixtures follow the Engineer frames
- * `enginehost-*`; none holds a credential, because the contract has no field for one.
+ * MOCK of the engine host API. The real client reads `GET /api/engine-host` and has Stop and Restart (`features/enginehost/hostControl.ts`); this mock
+ * also fills the Planned fields and answers the writes. It is never the app's client: only a test or the dev-only preview
+ * (`#/preview/engine-host`) installs it through `setEngineHostApi`. Fixtures follow the Engineer frames
+ * `enginehost-*`; none holds a credential: a key sent to `saveKey` is dropped on arrival, and only the word `save:<id>` is recorded.
  */
-import {
-  KEYCHAIN_DENIED, KEYCHAIN_LOCKED,
-  type EngineHostApi, type HostCrash, type HostRow, type SignInStorage, type StorageChoice,
-} from "../src/features/settings/engineHost/contract.ts";
+import { KEYCHAIN_DENIED, KEYCHAIN_LOCKED, type EngineHostApi, type HostCrash, type HostRow, type KeyStorage, type StorageChoice } from "../src/features/enginehost/index.ts";
 import { ApiFailure } from "../src/api/client.ts";
 
 const at = (hours: number, minutes: number) => { const when = new Date(); when.setHours(hours, minutes, 0, 0); return when.toISOString(); };
@@ -31,34 +28,43 @@ export function hostFixtures(): HostRow[] {
 }
 
 export function crashFixtures(): HostCrash[] {
-  return [{ id: "crash-1", at: at(9, 41), message: "The Codex engine host stopped: the engine host closed its output.", kind: "host",
-    restart: { attempt: 3, limit: 5 }, failed_threads: 2, causes: [{ name: "Error", message: "write EPIPE", code: "EPIPE" }],
-    stack: "at HostProcess.onExit (host.mjs:212)\nat ChildProcess.emit (node:events:518)\nat Process.onexit (node:child_process:293)" }];
+  return [{ id: "codex:crash-1", family: "codex", at: at(9, 41), message: "The Codex engine host stopped: the engine host closed its output.", error_kind: "closed_output", exit_code: 3,
+    stderr_tail: "Error: write EPIPE\n    at HostProcess.onExit (host.mjs:212)" }];
 }
 
-export function storageFixtures(): SignInStorage[] {
+export function storageFixtures(): KeyStorage[] {
   return [
-    { engine_id: "cursor", name: "Cursor", choice: "allowed", allowed_at: new Date(2026, 10, 21, 9, 0).toISOString(), running_threads: 2 },
-    { engine_id: "codex", name: "Codex", choice: "declined", running_threads: 0 },
-    { engine_id: "antigravity", name: "Antigravity", choice: "not_asked", running_threads: 0 },
+    { engine_id: "cursor", name: "Cursor", choice: "saved", saved_at: new Date(2026, 10, 21, 9, 0).toISOString() },
+    { engine_id: "codex", name: "Codex", choice: "declined" },
+    { engine_id: "antigravity", name: "Antigravity", choice: "not_asked" },
   ];
 }
 
 export interface EngineHostMock extends EngineHostApi {
-  /** Every write the screens made, in order: `retry:<id>`, `allow:<id>`, `decline:<id>`, `revoke:<id>`. */
+  /** Every write the screens made, in order: `retry:<id>`, `stop:<id>`, `save:<id>`, `decline:<id>`, `remove:<id>`, `keychain-retry:<id>`. */
   writes: string[];
-  /** Make the next `choose` fail the way a locked or denied keychain does. */
+  /** Make the next `saveKey` fail the way a locked or denied keychain does. */
   failNext(code: typeof KEYCHAIN_LOCKED | typeof KEYCHAIN_DENIED | null): void;
+  /** Make the next `removeKey` fail. */
+  failRemoveNext(on: boolean): void;
 }
 
-export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?: HostCrash[]; storage?: SignInStorage[] | null; delayMs?: number } = {}): EngineHostMock {
+export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?: HostCrash[]; storage?: KeyStorage[] | null; delayMs?: number; stopped?: number; background?: Record<string, number> } = {}): EngineHostMock {
   let hosts = init.hosts === undefined ? hostFixtures() : init.hosts;
   let storage = init.storage === undefined ? storageFixtures() : init.storage;
   const writes: string[] = [];
   let fail: string | null = null;
+  let failRemove = false;
+  // A host with background tasks open refuses a stop or restart with the service's 409 until `stopBackground` is sent.
+  const refuseBackground = (id: string, stopBackground: boolean | undefined) => {
+    const open = init.background?.[id] ?? 0;
+    if (open > 0 && !stopBackground) {
+      throw new ApiFailure("background_open", `${open} background task${open === 1 ? " is" : "s are"} still running. Stopping the host ends ${open === 1 ? "it" : "them"}.`, 409);
+    }
+  };
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, init.delayMs ?? 0));
   const find = (id: string) => storage?.find((row) => row.engine_id === id);
-  const put = (id: string, choice: StorageChoice, extra: Partial<SignInStorage> = {}) => {
+  const put = (id: string, choice: StorageChoice, extra: Partial<KeyStorage> = {}) => {
     const row = find(id);
     if (!row) throw new ApiFailure("not_found", "No such engine.", 404);
     const next = { ...row, choice, ...extra };
@@ -68,16 +74,27 @@ export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?:
   return {
     writes,
     failNext: (code) => { fail = code; },
+    failRemoveNext: (on) => { failRemove = on; },
     hosts: async () => hosts,
     crashes: async () => init.crashes ?? crashFixtures(),
     storage: async () => storage,
-    retry: async (id) => { writes.push(`retry:${id}`); await wait(); hosts = (hosts ?? []).map((row) => (row.id === id ? { ...row, state: "starting", can_retry: false, last_error: null } : row)); },
-    choose: async (id, choice) => {
-      writes.push(`${choice}:${id}`);
+    retry: async (id, options) => { writes.push(options?.stopBackground ? `retry:${id}:background` : `retry:${id}`); await wait(); refuseBackground(id, options?.stopBackground); hosts = (hosts ?? []).map((row) => (row.id === id ? { ...row, state: "starting", can_retry: false, last_error: null } : row)); },
+    stop: async (id, options) => { writes.push(options?.stopBackground ? `stop:${id}:background` : `stop:${id}`); await wait(); refuseBackground(id, options?.stopBackground); hosts = (hosts ?? []).map((row) => (row.id === id ? { ...row, state: "stopped", stopped_at: new Date().toISOString(), restart: null } : row)); },
+    decline: async (id) => { writes.push(`decline:${id}`); await wait(); return put(id, "declined", { saved_at: null }); },
+    // The key is dropped here on purpose: a mock that kept it would be a second place a secret lives.
+    saveKey: async (id, _key) => {
+      writes.push(`save:${id}`);
       await wait();
       if (fail) { const code = fail; fail = null; throw new ApiFailure(code, code === KEYCHAIN_LOCKED ? "The keychain is locked." : "The keychain refused.", 409); }
-      return choice === "allow" ? put(id, "allowed", { allowed_at: new Date().toISOString() }) : put(id, "declined", { allowed_at: null });
+      return put(id, "saved", { saved_at: new Date().toISOString() });
     },
-    revoke: async (id) => { writes.push(`revoke:${id}`); await wait(); return put(id, "declined", { allowed_at: null, running_threads: 0 }); },
+    removeOptIn: async (id) => { writes.push(`optout:${id}`); await wait(); return put(id, "not_asked", { saved_at: null }); },
+    removeKey: async (id) => {
+      writes.push(`remove:${id}`);
+      await wait();
+      if (failRemove) { failRemove = false; throw new ApiFailure("keychain_remove_failed", "The keychain could not remove it.", 409); }
+      return put(id, "declined", { saved_at: null, stopped: init.stopped ?? 0 });
+    },
+    retryKeychain: async (id) => { writes.push(`keychain-retry:${id}`); await wait(); const row = find(id); if (!row) throw new ApiFailure("not_found", "No such engine.", 404); return row; },
   };
 }

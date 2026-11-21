@@ -7,7 +7,10 @@ describe("Settings › Crew rows (Crew Designs v23)", () => {
     const rows = [...container.querySelectorAll(".cx-setrow")].map((row) => row.textContent ?? "");
     const row = (title: string) => rows.find((text) => text.startsWith(title)) ?? "";
     expect(row("Review capacity").endsWith("Open Review capacity")).toBe(true);
-    expect(row("Escapes").endsWith("Open Escapes")).toBe(true);
+    // Only the Escapes row is a plain "Open"; its accessible name keeps the page it opens.
+    expect(row("Escapes").endsWith("Open Escapes")).toBe(false);
+    expect(row("Escapes").endsWith("Open")).toBe(true);
+    expect(container.querySelector('button[aria-label="Open Escapes"]')).not.toBeNull();
     expect(row("Escapes")).not.toContain("Defaults");
     expect(row("Independent oracle")).toContain("Planned");
     expect(row("Independent oracle")).not.toContain("Another engine · gate on");

@@ -7,12 +7,20 @@ queue that would open `escape-report`'s mark dialog and the scan from the merge 
 is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
 (`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
 the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
-previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row ("Open Escapes", no value
+previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row (button "Open", read out as "Open Escapes", no value
 chip) that opens the live log at `#/settings/crew/escapes`; a row of the log opens that escape's page at `#/settings/crew/escapes/detail?id=`;
-the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants).
-Not reached: the possible list (`escape-possible`) and the thresholds page (`escape-settings`) have no drawn entry, the Review-tab
-Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the "Back to" controls are the
-Designer's follow-up; browser Back works. See "Propose a check" below for the act wired inside the detail page.
+the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants) and a
+Settings link to the thresholds page (`escape-settings`, read only) at `#/settings/crew/escapes/settings`. Under the header a tab strip, "All escapes"
+and "Possible N", opens the possible list (`escape-possible`) at `#/settings/crew/escapes/possible` for the same project (`?repo=`); N is the log's own
+Possible count (`GET /escapes`), an ellipsis read out as "reading" while it loads and a dash read out as "can't read" when it fails, never a 0 that was
+not measured. With none waiting the list says "Nothing waits for you" (`entry-crew-possible-empty`) and draws no confirmed table. The coverage map
+shows "Back to escapes" or "Back to Review capacity" at its top left only when its address says where it was opened from (`?from=escapes` or
+`?from=capacity`, set by the two Coverage links); with no origin, or one it does not know, there is no control, and history is never read. The
+escape thresholds page shows "Back to escapes" above its title (the log, `#/settings/crew/escapes`), and the log and the possible list show
+"Back to Review" above the title in a 640 px window and in the 320 px panel (not at the full width, which keeps its crumb; Crew Designs v371).
+Review is Planned, so "Back to Review" returns to Settings › Crew (`#/settings/crew`) until a Review tab exists. The
+Review-tab Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the log keeps its existing
+"Dashboard › Escape log" crumb, which no beta page backs. Browser Back works. See "Propose a check" below for the act wired inside the detail page.
 
 ## What an escape is
 
@@ -220,8 +228,7 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
   (`ORBYN_CREW_WATCH_INTERVAL_SECS`; none when that is off). No route, tool or CLI command runs it. A later PR may also call `crew_escape_scan` from the merge and revert paths.
 - **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Each git call is cut at the scan's deadline and its output is capped (1 MiB for the log, name lists and blame, 256 KiB for a diff). A capped `diff-tree`, `diff` or `blame` skips only that fix or file; a capped `log`, name list or `rev-list`, or an unreadable repository, skips the merge: it is counted as skipped, never half read. stdout and stderr are read together, so a chatty stderr cannot stall a call. The log is NUL-separated and every parsed commit id is checked against `rev-list <merge>..refs/heads/<branch>`, so a commit message cannot forge an entry; paths are literal pathspecs; the branch is read as `refs/heads/<branch>` (a tag of the same name cannot stand in).
   **Rotation.** A merge with no signal never gets a row, so the scan keeps a cursor (the merge time and id of the last merge passed over) in `settings` under `crew_escape_scan_cursor`, device config like the thresholds; a damaged value reads as none and is overwritten. The next scan resumes after it and wraps to the newest at the end, so every merge in the window is reached over successive scans. The cursor is written after the escape rows. A batch the writer refuses (it would pass 5,000 escapes or 20,000 events) is treated like a project that was full before git ran: counted as `refused`, passed over, and retried when the scan wraps. A merge that alone cannot be read inside the scan's time (or whose log is always over its cap) is counted as skipped and passed over, so no one merge pins the scan. A merge skipped this way is not scanned for its signals until it can be read.
-  A project at 5,000 escapes or 20,000 events is refused whole before any git runs, and a batch that would pass either limit is refused whole by the writer: nothing is
-  partly written, the scan reports `refused` and logs a plain sentence. Pruning came later: see "Capacity pressure and writer migration (#686)".
+  The scan asks the store whether a project can record before any git runs (`crew_escape_can_record`); a project that cannot is skipped with nothing written and counted `refused`. A batch that would pass 5,000 escapes or 20,000 events goes to the writer, which first plans retention (oldest dismissed, then oldest possible; confirmed escapes and escapes with a check are kept, see "Capacity pressure and writer migration (#686)") and refuses the batch whole, writing nothing, only when protected history leaves too little room. The log page says the same in its limit banner (`escape-limit`, #857).
 - **Choices where the note is silent:** the order of signals when several fire, the bisect and re-land filters, blame (not a line-number overlap) as the meaning of "overlapping
   hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.

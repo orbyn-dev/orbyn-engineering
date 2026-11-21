@@ -3,3 +3,5 @@ export { CrewPreview, crewPreviewRoute } from "./previews";
 export * from "./autopilot/approvals";
 export { CrewNavRow } from "./flow/live/CrewNavRow";
 export { useCrewFlag } from "./flow/live/useCrewFlag";
+export { RunTab } from "./runpage/RunPage";
+export { runLinkClient, setRunLinkClient, type RunLink, type RunLinkClient } from "./runpage/link";

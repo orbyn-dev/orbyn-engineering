@@ -13,7 +13,7 @@ const built = framesBuilt as (body: string) => Built;
 const pick = selectFrames as (ids: string[], known: Record<string, unknown>, max?: number) => { use: string[]; unknown: string[]; over: string[] };
 const comment = buildComment as (p: Record<string, unknown>) => string;
 const ask = askForFrames as (reason: string) => string;
-const catalog = FRAMES as Record<string, { route: string; scenario?: string; pre?: unknown[]; steps?: { do: string }[] }>;
+const catalog = FRAMES as Record<string, { route: string; scenario?: string; width?: number; pre?: unknown[]; steps?: { do: string }[] }>;
 
 const web = process.cwd();
 const repo = join(web, "..");
@@ -69,7 +69,7 @@ describe("which frames are drawn", () => {
 
 describe("the catalog", () => {
   it("only names routes the app has, and steps the shooter can run", () => {
-    const verbs = ["click", "fill", "press", "route", "offline", "wait"];
+    const verbs = ["click", "hover", "fill", "press", "route", "offline", "wait"];
     for (const [id, frame] of Object.entries(catalog)) {
       expect(frame.route, id).toMatch(/^#\/(pulls|threads|settings|new)?/);
       for (const step of frame.steps ?? []) expect(verbs, id).toContain(step.do);
@@ -87,6 +87,19 @@ describe("the catalog", () => {
   it("is documented: every id is listed in docs/match-kit.md", () => {
     const doc = readFileSync(join(repo, "docs/match-kit.md"), "utf8");
     for (const id of Object.keys(catalog)) expect(doc, id).toContain(`\`${id}\``);
+  });
+
+  it("draws the narrow usage Limits tab at 640 px, as the frame asks", () => {
+    expect(catalog["usage-claude-windows-narrow"]?.width).toBe(640);
+    for (const [id, frame] of Object.entries(catalog)) {
+      if (frame.width === undefined) continue;
+      expect(Number.isInteger(frame.width) && frame.width > 0, id).toBe(true);
+    }
+  });
+
+  it("takes each frame's width from the catalog, and the wide window otherwise", () => {
+    const shoot = readFileSync(join(web, "tools/pr-preview/shoot.mjs"), "utf8");
+    expect(shoot).toMatch(/viewport:\s*\{\s*\.\.\.VIEWPORT,\s*width:\s*frame\.width\s*\?\?/);
   });
 });
 

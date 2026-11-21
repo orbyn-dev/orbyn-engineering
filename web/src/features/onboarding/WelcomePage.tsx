@@ -1,0 +1,138 @@
+import { Check, Download, Folder, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { useState } from "react";
+import type { EngineStatus } from "../../api/types";
+import { relativeTime } from "../../lib/format";
+import { toFailure } from "../../lib/useAsync";
+import { navigate, routeHref } from "../../product/state/route";
+import { useUi } from "../../product/state/ui";
+import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
+import { ProjectBadge } from "../../product/ui/badges";
+import { Button } from "../../ui/controls";
+import { useTrackers, WelcomeTrackers } from "../issues";
+import { SkillsNotice } from "./SkillsNotice";
+import { useDefaultEngine } from "./useDefaultEngine";
+import { agentRow, listedAgents, noEngineReady, recentProjects, type AgentRow } from "./welcomeModel";
+import "./onboarding.css";
+
+function AgentRowView({ row, chosen, canChoose, onUse }: { row: AgentRow; chosen: boolean; canChoose: boolean; onUse(engine: EngineStatus): Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const pushToast = useUi((state) => state.pushToast);
+  const { engine } = row;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(engine.sign_in_command ?? "");
+      pushToast(`Copied the ${engine.name} sign-in command. Run it in a terminal.`);
+    } catch {
+      pushToast("Couldn't copy the command.");
+    }
+  };
+  return (
+    <li className="welcome-agent-row">
+      <span className="welcome-avatar" aria-hidden>{engine.name.slice(0, 1).toUpperCase()}</span>
+      <span className="welcome-agent-name">
+        <b>{engine.name}</b>
+        <small>{row.detail}</small>
+      </span>
+      <span className="welcome-agent-state" data-state={row.state}>{row.status}</span>
+      <span className="welcome-agent-act">
+        {row.state === "ready" ? (
+          chosen ? (
+            <span className="welcome-ready"><Check size={14} aria-hidden />Used for new threads</span>
+          ) : (
+            <Button small disabled={!canChoose || busy} busy={busy} onClick={() => { setBusy(true); void onUse(engine).finally(() => setBusy(false)); }}>
+              Use for new threads
+            </Button>
+          )
+        ) : row.state === "signin" ? (
+          engine.sign_in_command ? <Button small onClick={() => void copy()}>Sign in</Button> : <a className="btn btn-small" href={routeHref({ name: "settings", section: "providers" })}>Sign in</a>
+        ) : (
+          <a className="btn btn-small" href={routeHref({ name: "settings", section: "providers" })}>How to install</a>
+        )}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * The Welcome page: what a person sees first. Open or clone a project, connect a tracker, pick the engine new threads
+ * start with, and go back to a recent project. Names, paths and engine text are drawn as text. Each button is one click, one action.
+ */
+export function WelcomePage() {
+  const setPalette = useUi((state) => state.setPalette);
+  const pushToast = useUi((state) => state.pushToast);
+  const engines = useWorkspace((state) => state.engines.data);
+  const refresh = useWorkspace((state) => state.refreshEngines);
+  const projects = useVisibleProjects();
+  const threads = useWorkspace((state) => state.threads);
+  const trackers = useTrackers();
+  const defaults = useDefaultEngine();
+  const rows = listedAgents(engines ?? []).map(agentRow);
+  const recent = recentProjects(projects ?? [], threads);
+  const use = async (engine: EngineStatus) => {
+    try {
+      await defaults.choose(engine.id);
+      pushToast(`New threads start on ${engine.name}.`);
+    } catch (failure) {
+      // The hook rethrows the service's words as a plain Error, so its message is the reason.
+      pushToast(`Couldn't change the engine. ${failure instanceof Error ? failure.message : toFailure(failure).message}`);
+    }
+  };
+  const open = (id: string, trusted: boolean) => navigate(trusted ? { name: "new", projectId: id } : { name: "trust", projectId: id, threadId: null });
+  return (
+    <div className="welcome-page" data-trackers={trackers.rows !== null || undefined}>
+      <header>
+        <h1 tabIndex={-1} data-page-title>Welcome to Orbyn Engineering</h1>
+        <p>Open a project{trackers.rows !== null ? ", connect a tracker" : ""} and pick the engine your threads start with.</p>
+      </header>
+      <SkillsNotice />
+      {noEngineReady(engines) ? (
+        <div className="welcome-banner" role="status">
+          <TriangleAlert size={15} aria-hidden />
+          <span>No engine is ready. Sign in to one below, or install Claude Code, Codex or OpenCode.</span>
+          <Button small icon={<RefreshCw size={13} aria-hidden />} onClick={() => void refresh()}>Check again</Button>
+        </div>
+      ) : null}
+      <section aria-labelledby="welcome-agents">
+        <h2 id="welcome-agents">Agents</h2>
+        {engines === null ? (
+          <p className="welcome-quiet" role="status">Looking for agents…</p>
+        ) : (
+          <ul className="welcome-agent-list" aria-label="Agents on this computer">
+            {rows.map((row) => (
+              <AgentRowView key={row.engine.id} row={row} chosen={defaults.engine === row.engine.id} canChoose={defaults.loaded} onUse={use} />
+            ))}
+          </ul>
+        )}
+      </section>
+      <WelcomeTrackers />
+      <section aria-labelledby="welcome-projects">
+        <h2 id="welcome-projects">Projects</h2>
+        <div className="welcome-project-actions">
+          <Button small icon={<Plus size={13} aria-hidden />} onClick={() => setPalette("add-project-new")}>New project</Button>
+          <Button small icon={<Download size={13} aria-hidden />} onClick={() => setPalette("add-project-url")}>Clone a repository</Button>
+          <Button tone="primary" small icon={<Folder size={13} aria-hidden />} onClick={() => setPalette("add-project")}>Add a folder</Button>
+        </div>
+        <h3 className="welcome-subhead">Recent projects</h3>
+        {recent.length === 0 ? (
+          <p className="welcome-quiet">Projects you open or clone show up here.</p>
+        ) : (
+          <ul className="welcome-project-list">
+            {recent.map(({ project, lastAt, threads: count }) => (
+              <li key={project.id}>
+                <div className="welcome-project-row" role="link" tabIndex={0} onClick={() => open(project.id, project.trusted)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(project.id, project.trusted); } }}>
+                  <ProjectBadge name={project.name} project={project} />
+                  <span className="welcome-project-name">
+                    <b>{project.name}</b>
+                    <span className="mono" title={project.path}>{project.path}</span>
+                  </span>
+                  <span className="welcome-quiet">{relativeTime(lastAt)}</span>
+                  <span className="welcome-quiet">{count} {count === 1 ? "thread" : "threads"}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}

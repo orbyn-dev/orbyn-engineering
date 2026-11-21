@@ -1,6 +1,8 @@
 /** What the drawer asks of a terminal that is open: clear it, interrupt it, read what it printed. */
 export interface TerminalControls {
   clear(): void;
+  /** Types text into the shell as if it were typed in the terminal itself. Nothing when the terminal only watches. */
+  write(data: string): void;
   /** Sends Ctrl-C. */
   interrupt(): void;
   /** Everything in the scrollback and on screen, as text. */
@@ -23,6 +25,18 @@ export function registerTerminal(key: string, controls: TerminalControls): () =>
   return () => {
     if (open.get(key) === controls) open.delete(key);
   };
+}
+
+/**
+ * Types `text` into a thread's main terminal over its own socket, without Enter, so nothing runs until the person presses Enter there.
+ * Refuses (returns false) when no such terminal is open, when it only watches, or when the text holds a line break or any other
+ * control character: a newline in a terminal is Enter, and an escape can move the cursor or answer a prompt.
+ */
+export function insertIntoTerminal(threadId: string, text: string): boolean {
+  const controls = open.get(terminalKey(threadId, undefined));
+  if (!controls || text === "" || Array.from(text).some((char) => { const code = char.charCodeAt(0); return code < 32 || code === 127; })) return false;
+  controls.write(text);
+  return true;
 }
 
 export const controlsOf = (key: string): TerminalControls | undefined => open.get(key);

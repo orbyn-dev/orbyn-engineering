@@ -177,7 +177,10 @@ fn the_service_name_separates_dev_and_release_items() {
 
 #[test]
 fn a_platform_with_no_backend_says_unavailable_and_stores_nothing() {
-    #[cfg(not(all(target_os = "macos", feature = "engine-client")))]
+    #[cfg(not(all(
+        target_os = "macos",
+        any(feature = "engine-client", feature = "engine-credentials")
+    )))]
     {
         let c = Credentials::system(DEV_SERVICE);
         assert_eq!(c.status("cursor", true), Ok(Status::Unavailable));
@@ -186,4 +189,55 @@ fn a_platform_with_no_backend_says_unavailable_and_stores_nothing() {
             Err(CredentialError::Unavailable)
         );
     }
+}
+
+#[test]
+fn the_default_service_is_dev_with_debug_assertions_and_never_the_other_name() {
+    assert_ne!(DEV_SERVICE, RELEASE_SERVICE);
+    assert_eq!(
+        default_service(),
+        if cfg!(debug_assertions) {
+            DEV_SERVICE
+        } else {
+            RELEASE_SERVICE
+        }
+    );
+}
+
+#[test]
+fn a_tracker_token_is_kept_under_its_own_account_and_only_for_known_trackers() {
+    let (c, m) = store();
+    assert_eq!(c.tracker_saved("gitlab"), Ok(false));
+    assert_eq!(c.tracker_save("gitlab", "glpat-abc123"), Ok(()));
+    assert_eq!(c.tracker_saved("gitlab"), Ok(true));
+    assert_eq!(
+        c.tracker_token("gitlab").unwrap().unwrap().as_str(),
+        "glpat-abc123"
+    );
+    assert!(
+        m.items
+            .lock()
+            .unwrap()
+            .contains_key(&(DEV_SERVICE.to_owned(), "tracker:gitlab".to_owned()))
+    );
+    assert_eq!(
+        c.tracker_save("github", "x"),
+        Err(CredentialError::UnknownEngine),
+        "GitHub keeps no token"
+    );
+    assert_eq!(
+        c.tracker_save("gitlab", "has space"),
+        Err(CredentialError::InvalidKey)
+    );
+    assert_eq!(
+        c.tracker_save("gitlab", &"x".repeat(MAX_KEY_LEN + 1)),
+        Err(CredentialError::InvalidKey)
+    );
+    assert_eq!(c.tracker_remove("gitlab"), Ok(()));
+    assert_eq!(c.tracker_saved("gitlab"), Ok(false));
+    assert_eq!(
+        c.tracker_remove("gitlab"),
+        Ok(()),
+        "removing nothing is fine"
+    );
 }

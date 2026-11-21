@@ -40,21 +40,15 @@ test("About lists its open source licences on request, and Worktrees shows branc
   await expect(settings(page).getByRole("radiogroup", { name: "Branch naming" })).toBeVisible();
 });
 
-test("Labs turns Plan off, and Shift+Tab flips it while it is on", async ({ page }) => {
+test("Labs has no Plan mode switch, and Shift+Tab does not switch the thread's mode", async ({ page }) => {
   const id = await fresh(page);
   await settled(service, id);
   await box(page).focus();
   await page.keyboard.press("Shift+Tab");
-  // The key flips what the composer shows, so the next press waits for it to show.
-  await expect(page.getByRole("button", { name: "Plan", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await page.keyboard.press("Shift+Tab");
-  await expect.poll(async () => (await service.api<{ lifecycle: { plan_mode: boolean } }>("GET", `/api/threads/${id}`)).lifecycle.plan_mode).toBe(false);
+  await expect(page.getByRole("button", { name: "Plan", exact: true })).toHaveCount(0);
+  expect((await service.api<{ lifecycle: { plan_mode: boolean } }>("GET", `/api/threads/${id}`)).lifecycle.plan_mode).toBe(false);
   await page.goto(`${service.page}#/settings/labs`);
-  await settings(page).getByRole("switch", { name: "Plan mode" }).click();
-  await page.goto(`${service.page}#/threads/${id}`);
-  await expect(page.getByRole("button", { name: "Plan", exact: true })).toBeHidden();
-  await page.goto(`${service.page}#/settings/labs`);
-  await settings(page).getByRole("switch", { name: "Plan mode" }).click();
+  await expect(settings(page).getByRole("switch", { name: "Plan mode" })).toHaveCount(0);
 });
 
 test("new worktrees use the fixed sibling location without a custom-location setting", async ({ page }) => {

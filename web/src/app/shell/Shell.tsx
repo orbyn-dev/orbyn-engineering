@@ -13,7 +13,7 @@ import { TitleBar } from "../TitleBar";
 import { useReadingNav } from "../readingNav";
 import { useSidebarDrawer } from "../../product/shell/sidebarDrawer";
 import { useEscapeClose } from "../../ui/useEscapeClose";
-import { PreviewFloat } from "../../features/panels";
+import { PreviewFloat, useTerminalAttention } from "../../features/panels";
 import { startAppDataRefresh } from "./dataRefresh";
 import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
 import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
@@ -43,6 +43,7 @@ export function Shell() {
   useGlobalKeys(route);
   useThreadNotifications(route.name === "thread" ? route.id : null);
   useTaskRunNotifications();
+  useTerminalAttention(route.name === "thread" ? route.id : null);
   usePanelMotionRoot(routeKey);
   useRouteFocus(routeKey, route.name, threadReady, main);
   useClearSelectionOnLeave(routeKey);
@@ -140,7 +141,7 @@ export function Shell() {
         <main id="main" ref={main} tabIndex={-1} hidden />
       ) : (
         <main id="main" ref={main} tabIndex={-1} className="main">
-          {route.name === "settings" ? <SettingsPage section={route.section} onClose={() => navigate(underneath)} /> : null}
+          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => navigate(underneath)} /> : null}
           {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. */}
           <div className="main-view" hidden={route.name === "settings"}>
             <RouteView route={underneath} needsProject={needsProject} />

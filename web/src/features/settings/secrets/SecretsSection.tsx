@@ -28,7 +28,7 @@ const plural = (label: string) => (label.includes("values") ? label : `${label}s
 const lookLike = (format: RedactionFormat) =>
   format.id === "named_value" ? "Environment values named like a secret" : `Values that look like ${plural(format.label)}`;
 
-/** The switch hides nothing today: terminal blocks and the agent context are not built. */
+/** The terminal switch hides nothing today: terminal blocks are not built. */
 const Pending = () => <span className="secrets-pending">Not applied yet</span>;
 
 const appliesTo = (pattern: RedactionPattern) => (pattern.applies_to === "anywhere" ? "Anywhere" : "Environment values");
@@ -76,11 +76,10 @@ export function SecretsSection() {
       {heading("Secrets")}
       <p className="secrets-intro">
         Orbyn hides values that look like secrets in the Crew ledger and in what Crew stores. Your own patterns also mask
-        ledger text when you read it, old rows included. Terminal blocks and what agents read follow later.
+        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers, review text and attached text files reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed and attached. Terminal blocks follow later.
       </p>
       <SettingsBanner>
-        Hiding in terminal blocks and in what agents read is not applied yet. These choices are saved and take effect when those
-        parts arrive. Crew already blocks every format, always.
+        Hiding in terminal blocks is not applied yet. These choices are saved and take effect when it arrives. Crew already blocks every format, always.
       </SettingsBanner>
       {error ? <SettingsBanner tone="err">{error}</SettingsBanner> : null}
       <SettingGroup title="Where values are hidden">
@@ -97,8 +96,8 @@ export function SecretsSection() {
             onChange={(event) => void quiet(changeSecretSurfaces({ terminal: event.target.checked }))}
           />
         </SettingRow>
-        <SettingRow title="What agents read" description="On by default. Switched off per project.">
-          <Pending />
+        <SettingRow title="What agents read" description="On by default. Switched off per project. Text you send and attached text files (up to 1 MiB) are masked; images, other attachments and what an engine reads on its own are not.">
+          <span />
         </SettingRow>
         <SettingRow
           title="Crew ledger and Crew objects"
@@ -118,7 +117,7 @@ export function SecretsSection() {
         </SettingRow>
       </SettingGroup>
 
-      <SettingGroup title="Recognised formats" description="Not applied yet to terminal blocks and what agents read. Crew uses every format whatever is set here.">
+      <SettingGroup title="Recognised formats" description="Not applied yet to terminal blocks; they apply to what agents read. Crew uses every format whatever is set here.">
         {settings.formats.map((format) => (
           <SettingRow key={format.id} title={format.label} description={format.example}>
             <input
@@ -132,7 +131,7 @@ export function SecretsSection() {
         ))}
       </SettingGroup>
 
-      <SettingGroup title="Your patterns" description="Today they apply to the Crew ledger when you read it, old rows included. They do not apply to terminal blocks or what agents read yet.">
+      <SettingGroup title="Your patterns" description="They apply to the Crew ledger when you read it, old rows included, and to what agents read. They do not apply to terminal blocks yet.">
         {settings.patterns.length ? (
           <div className="set-tbl" role="table" aria-label="Your patterns">
             <div role="row" className="set-tr h secrets-cols">

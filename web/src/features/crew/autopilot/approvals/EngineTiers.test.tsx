@@ -2,6 +2,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { exampleTierView } from "../../../../../mock/reviewControls";
+import type { EngineStatus } from "../../../../api/types";
+import { useWorkspace } from "../../../../product/state/workspace";
 import { useConnection } from "../../../../product/state/connection";
 import { goToHash, useRoute } from "../../../../product/state/route";
 import { reviewControlApi } from "../../shared/reviewControlApi";
@@ -147,4 +149,12 @@ it("retains pending save ownership when an earlier view refresh completes and th
   expect(await screen.findByText("Engine tiers saved.")).toBeVisible();
   expect(Object.values(useTierEditors.getState().editors)[0]?.base).toEqual(savedView.settings);
   expect(screen.getByText(/Mapped by you/)).toHaveTextContent("Lead"); expect(send).toHaveBeenCalledTimes(1);
+});
+it("draws the Reviewer only chip, with the service's reason as its tooltip, for an engine the service limits to review (frame crew-cursor-reviewer-only)", async () => {
+  useWorkspace.setState({ engines: { data: [{ id: "example-acp", name: "Example ACP", crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" } as unknown as EngineStatus], error: null, loading: false } });
+  render(<EngineTiers />);
+  expect(await screen.findByText("Reviewer only")).toBeVisible();
+  expect(screen.getByText("Reviewer only").closest("[title]")).toHaveAttribute("title", "Not yet confined for writing work");
+  expect(screen.getAllByText(/Reviewer only/)).toHaveLength(1);
+  useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
 });

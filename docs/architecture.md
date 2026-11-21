@@ -27,7 +27,15 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    takes one (today only Cursor). It lives in the OS keychain alone (`orbyn-core`
    `credentials`), only while that engine's setting is on, is never shown again, and
    leaves the keychain only as the engine host's spawn environment, never in a frame, a
-   log or an answer. The person can remove it at any time.
+   log or an answer. The person can remove it at any time. The routes are
+   `/api/settings/engine-credentials/{engine}` (status, `Local`, booleans only; opt-in `PUT`) and
+   `.../{engine}/key` (`PUT` save, `DELETE` remove): all writes are `Person` routes and the key travels
+   in the request body only. A second owner-approved keychain use is the **values of personal-library environment
+   sets** (`docs/execution-profiles-and-library.md`, Part 2): `orbyn-core` `credentials::env_sets`, its own service
+   name (`app.orbyn.engineering.env-sets`, `.dev` in an unsigned build), one item per key, written through
+   `PUT /api/library/env-sets/{id}/keys/{key}` (`Person`) and read back only as the environment of one workflow run the
+   person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
+   output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
    sessions because it ignores OAuth login.
@@ -165,6 +173,12 @@ archive clears it. With a reset in the future, `auto_resume_limited_threads` sch
 continuation and `snooze_limited_threads` snoozes until then; each can also be chosen on
 the thread. Due continuations start from the lifecycle pass, so an overdue one starts on
 the first pass after a restart, and a held queue stays held until that run ends.
+Automatic continuations are bounded at three per thread, the budget restart recovery
+shares: once they are spent, the schedule is dropped, the limit and its reset stay on
+the thread, and a `limit.retry_exhausted` note records that the automatic continuation
+stopped, so the thread waits for you until your own message or choosing the continuation
+on the thread gives the budget back. A continuation that fails on anything but a limit
+schedules nothing, so a failed run never retries itself.
 
 ## Composer
 
@@ -457,10 +471,14 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 ## Usage
 
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
-under `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `sessions/**/*.jsonl` under `~/.codex`
-(or `CODEX_HOME`). It keeps only timestamps, models and token counts, and never opens a
-credential file. Claude rewrites an entry as it streams, so each message counts once.
-Codex repeats its running total, so an unchanged total counts once. Costs come from
+under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
+(or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+and token counts, and never opens a credential file. Claude rewrites an entry as it
+streams, so each message counts once. Codex repeats its running total, so an
+unchanged total counts once. Muse writes one log per session, counts its cached
+input inside its input count and its reasoning inside its output count, and can copy
+an inference into another session's log, so each inference counts once. Costs come from
 configured `model_prices`, after `model_aliases`; a model with no price has an unknown
 cost and is never guessed. History is kept by day, model and service tier (Claude's
 `speed`/`service_tier`, Codex's turn `service_tier`; unknown names are `other`). A
@@ -2382,7 +2400,7 @@ that session uses the MCP route. The tree is never rewritten.
 
 `UpdateCenter` is one view of the skills library, the app and the engines. It checks
 at startup, every six hours and on demand, unless the `background_update_checks`
-setting is `false`. A check only reads: `git fetch` of the library, engine latest
+setting is `false`; the engine CLI versions and automatic model-list reads follow the `enable_provider_update_checks` preference instead, and a manual check or Refresh ignores both. A check only reads: `git fetch` of the library, engine latest
 versions and the app's release. A network failure never blocks startup; it keeps
 the earlier results and sets `error`, and `checked_at` stays at the last full
 success. Engines and the library never apply on their own. The app does only with the
@@ -2511,8 +2529,9 @@ characters, without words that look like a path, an address (`host:port`), an `@
 value or a 20-character token, and cut at 160 characters. It is not log text.
 It follows the system light or dark appearance; the app's own theme choice lives in the
 product origin and does not reach this page, and Dim is not offered here.
-There are no default core/plugin command permissions. Of the five app-owned commands,
-the product document may call only `crew_presence` and `person_key`; the main window
+There are no default core/plugin command permissions. Of the six app-owned commands,
+the product document may call only `crew_presence`, `person_key` and `pick_folder` (the native folder dialog for the add-repository field;
+it returns the chosen path or null and reads nothing); the main window
 capability and each command's runtime origin check enforce that split. The explicit
 macOS title-bar capability grants only dragging and toggle-maximize. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
@@ -2737,7 +2756,7 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
-a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; no Settings control yet, so it is set only through the settings API) refuses a new task once its crew
+a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
 has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
@@ -3125,7 +3144,9 @@ which agents and the address bar cannot reach. Picking an element reads it and c
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
-`crashed`. This only runs while someone watches. `enable_agent_browser_access`, off
+`crashed`. This only runs while someone watches. A browser that dies by a fault before the
+tab exists is started once more, and a second death fails that open with the browser's
+stderr and startup flags. `enable_agent_browser_access`, off
 globally or for a project, refuses every `orbyn_preview_*` tool.
 
 A previewed page is untrusted, so what crosses between it and the person waits for

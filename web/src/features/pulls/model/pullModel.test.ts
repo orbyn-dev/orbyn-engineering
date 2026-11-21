@@ -13,6 +13,7 @@ import {
   noFilters,
   ownPull,
   pageState,
+  requestedByMeHint,
   reviewersWord,
   reviewWords,
   statesToAsk,
@@ -240,6 +241,11 @@ describe("who a review waits on", () => {
     expect(conflictWords("mergeable")).toBe("None");
     expect(conflictWords("unknown")).toBe("\u2014");
     expect(conflictWords(null)).toBe("\u2014");
+  });
+  it("puts the person's own requested changes on the merge row, with the approval when that is what blocks it", () => {
+    expect(requestedByMeHint("Merge needs an approval.", true)).toBe("You requested changes. Merge needs an approval.");
+    expect(requestedByMeHint("Checks are still running.", true)).toBe("You requested changes.");
+    expect(requestedByMeHint("Merge needs an approval.", false)).toBeNull();
   });
   it("tells the person's own pull request by its author, whatever the case", () => {
     expect(ownPull(pull({ author: "Me" }), ["me"])).toBe(true);

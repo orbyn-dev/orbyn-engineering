@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use orbyn_contracts::{CheckOutcome, ResultState, StopReason};
+use orbyn_contracts::{CheckOutcome, ResultState, RunState, StopReason};
 use serde_json::json;
 
 use super::harness::{KEY_MARKER, Turn, World, brief, key, report, world};
@@ -267,6 +267,165 @@ async fn a_report_is_stamped_by_the_core() {
     assert_eq!(w.task(&id).state, "running");
     let (refusal, _) = w.call(&w.lead_token, "crew_report", report("done")).await;
     assert_eq!(refusal["code"], "not_authorized");
+}
+
+/// A crew task whose lead is `w.lead`: the lead thread is the person's own chat.
+fn lead_of_a_task(w: &World, label: &str) -> String {
+    use orbyn_contracts as wire;
+    let stamper = crate::crew::Stamper {
+        crew_id: wire::CrewId::new("crew-lead-reply").unwrap(),
+        engine: wire::CrewToken::new("alpha").unwrap(),
+        member: wire::CrewMember::new("lead-01").unwrap(),
+        now: wire::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let brief = stamper
+        .brief(&brief(
+            json!({ "outcome": format!("The lead's own chat, {label}.") }),
+        ))
+        .unwrap();
+    let key = stamper.answer_key(&key(), &brief.id).unwrap();
+    let task = w
+        .core
+        .store
+        .create_crew_task(&brief, &key, &format!("run-{label}"))
+        .unwrap();
+    w.core
+        .store
+        .add_crew_run(&task.id, &w.lead, "member-01")
+        .unwrap();
+    task.id
+}
+
+/// The lead's thread is also the person's own chat, so a turn the person started there that the
+/// engine ends with nothing fails as "No reply" like any other answer owed to the person.
+#[tokio::test]
+async fn a_persons_turn_on_a_crew_lead_thread_with_no_reply_fails() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let _task = lead_of_a_task(&w, "reply");
+    let run = w
+        .core
+        .runs
+        .admit(&w.lead, "what is the plan?", "user")
+        .unwrap();
+    w.until("the run ends", |w| {
+        w.core.store.run(&run.id).unwrap().state.is_terminal()
+    })
+    .await;
+    let ended = w.core.store.run(&run.id).unwrap();
+    assert_eq!(ended.state, RunState::Failed, "{ended:?}");
+    assert!(
+        ended
+            .error
+            .as_deref()
+            .is_some_and(|message| message.starts_with("No reply")),
+        "{ended:?}"
+    );
+}
+
+/// Crew's own note on the lead's thread is judged by what the lead leaves behind: the person did
+/// not write it, so a silent answer is not a failure.
+#[tokio::test]
+async fn a_crew_note_left_for_the_lead_is_judged_by_its_work() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let id = lead_of_a_task(&w, "note");
+    w.core
+        .crew_needs_person(&id, "A person should look at this.", true);
+    w.until("the note is sent", |w| {
+        w.sent_to(&w.lead)
+            .iter()
+            .any(|prompt| prompt.contains("<crew-result"))
+    })
+    .await;
+    w.until("the note's run ends", |w| {
+        let thread = w.core.store.thread(&w.lead).unwrap();
+        thread.active_run.is_none() && thread.last_run_state.is_some()
+    })
+    .await;
+    let thread = w.core.store.thread(&w.lead).unwrap();
+    assert_eq!(thread.last_run_state, Some(RunState::Completed));
+}
+
+/// A person's message waits in the same queue when the lead is busy; it still owes an answer.
+#[tokio::test]
+async fn a_persons_queued_message_on_a_crew_lead_thread_still_needs_a_reply() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let _task = lead_of_a_task(&w, "queued");
+    w.core.runs.enqueue(&w.lead, "hello again", &[]).unwrap();
+    w.until("the run ends", |w| {
+        let thread = w.core.store.thread(&w.lead).unwrap();
+        thread.active_run.is_none() && thread.last_run_state.is_some()
+    })
+    .await;
+    let thread = w.core.store.thread(&w.lead).unwrap();
+    assert_eq!(thread.last_run_state, Some(RunState::Failed));
+}
+
+/// The notices Crew queues for the lead on its own (a refused start, a review) are Crew's notes too.
+#[tokio::test]
+async fn a_notice_the_core_queues_for_the_lead_is_a_crew_note() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let _task = lead_of_a_task(&w, "notice");
+    w.core
+        .enqueue_for_lead(&w.lead, "Task t could not start: no engine.")
+        .unwrap();
+    w.until("the notice's run ends", |w| {
+        let thread = w.core.store.thread(&w.lead).unwrap();
+        thread.active_run.is_none() && thread.last_run_state.is_some()
+    })
+    .await;
+    let thread = w.core.store.thread(&w.lead).unwrap();
+    assert_eq!(thread.last_run_state, Some(RunState::Completed));
+}
+
+/// A delegated run is judged by the work it leaves behind, whatever Crew thread its parent is.
+#[tokio::test]
+async fn a_delegated_run_that_says_nothing_is_judged_by_its_work() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let lead = w.core.store.thread(&w.lead).unwrap();
+    let child = w
+        .core
+        .store
+        .create_thread(crate::store::NewThread {
+            project_id: lead.project_id.clone(),
+            title: "delegated".into(),
+            engine: lead.engine.clone(),
+            model: None,
+            cwd: lead.cwd.clone(),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: Some(lead.id.clone()),
+            relation: Some("subagent".into()),
+            scratch: false,
+        })
+        .unwrap();
+    let run = w.core.runs.admit(&child.id, "do the work", "crew").unwrap();
+    w.until("the run ends", |w| {
+        w.core.store.run(&run.id).unwrap().state.is_terminal()
+    })
+    .await;
+    assert_eq!(
+        w.core.store.run(&run.id).unwrap().state,
+        RunState::Completed
+    );
+}
+
+/// A slash command or a goal may have nothing to say, even on the lead's own thread.
+#[tokio::test]
+async fn a_slash_command_or_goal_on_a_crew_lead_thread_may_say_nothing() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let _task = lead_of_a_task(&w, "commands");
+    for prompt in ["/compact", "/goal ship the release"] {
+        let run = w.core.runs.admit(&w.lead, prompt, "user").unwrap();
+        w.until("the run ends", |w| {
+            w.core.store.run(&run.id).unwrap().state.is_terminal()
+        })
+        .await;
+        assert_eq!(
+            w.core.store.run(&run.id).unwrap().state,
+            RunState::Completed,
+            "{prompt}"
+        );
+    }
 }
 
 /// The brief's turns are a budget like its minutes: a failure with every turn spent stops the

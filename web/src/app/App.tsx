@@ -9,7 +9,7 @@ import { ErrorState, Splash } from "../product/ui/states";
 import { onShellEvent, Shell } from "./shell";
 import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
-import { PreviewWindow, previewWindowRoute } from "../features/panels";
+import { AttentionPreview, attentionPreviewRoute, CommandBlocksPreview, commandBlocksPreviewRoute, PreviewWindow, previewWindowRoute } from "../features/panels";
 import { CrewPreview, crewPreviewRoute } from "../features/crew";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
 
@@ -34,6 +34,20 @@ export function App() {
     return (
       <Suspense fallback={null}>
         <CrewPreview name={crewScreen} />
+      </Suspense>
+    );
+  }
+  if (commandBlocksPreviewRoute(hash) && CommandBlocksPreview) {
+    return (
+      <Suspense fallback={null}>
+        <CommandBlocksPreview />
+      </Suspense>
+    );
+  }
+  if (attentionPreviewRoute(hash) && AttentionPreview) {
+    return (
+      <Suspense fallback={null}>
+        <AttentionPreview />
       </Suspense>
     );
   }

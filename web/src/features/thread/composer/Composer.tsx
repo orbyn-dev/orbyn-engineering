@@ -1,7 +1,9 @@
 import { useCompacting } from "../ThreadStates";
+import { steerWithMark } from "../../../product/state/steerMarks";
 import { composerMarkup } from "./composerMarkup";
 import { MentionMenu, type Suggestion } from "./MentionMenu";
 import { AttachmentStrip } from "./AttachmentStrip";
+import { useComposerDrop } from "./useComposerDrop";
 import { CodeBar } from "./CodeBar";
 import { ComposerContext } from "./ComposerContext";
 import { controlsMenuItems } from "./controlsMenu";
@@ -24,6 +26,9 @@ import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
+import { ComposerHostLine, useHostLine } from "../../enginehost";
+import { cursorThreadApi, overrideRun } from "../../cursorthread";
+import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
 import { useThreadSettings } from "./useThreadSettings";
 import { useStash } from "./useStash";
@@ -35,7 +40,6 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
-  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import { api } from "../api";
@@ -52,13 +56,13 @@ import { Presence } from "../../../ui/Presence";
 import { useWorkspace } from "../../../product/state/workspace";
 import { CompactOffer, ComposerBanners, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import { localCommand, promptHistory, type RecallPosition } from "./composerInput";
-import { offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
+import { accessViewOf, neverAsks, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 import { QuestionCard } from "../QuestionCard";
 import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../product/state/modelStore";
 import { QueuedMessages } from "../QueuedMessages";
 import { openSideChat } from "../sideChat";
-import { FILE_MENTION_TYPE, triggerAt } from "../../../product/composer/skillMention";
+import { triggerAt } from "../../../product/composer/skillMention";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
@@ -97,8 +101,11 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
-  const { attachments, setAttachments, filePicker, uploading, startUpload, upload } = useAttachments(thread, setError);
-  const [dragging, setDragging] = useState(false);
+  const { attachments, setAttachments, filePicker, uploading, startUpload, upload, cancel } = useAttachments(thread, setError);
+  const { transcripts, boxProps, layer } = useComposerDrop(thread, upload, (mentioned) => {
+    setDraft(thread.id, `${draft.trimEnd()}${draft.trim() ? " " : ""}@${mentioned} `);
+    field.current?.focus();
+  });
   const [recall, setRecall] = useState<RecallPosition | null>(null);
   const [limitsOpen, setLimitsOpen] = useState(false);
   const shiftPaste = useRef(false);
@@ -124,7 +131,6 @@ export function Composer({
   const sendShortcut = useUi((state) => state.sendShortcut);
   const persistentContext = useUi((state) => state.persistentComposerContext);
   const skillsInSlash = useUi((state) => state.skillsInSlashMenu);
-  const planControls = useUi((state) => state.planControls);
   const contextMeter = useUi((state) => state.contextMeter);
   const stashes = useUi((state) => state.stashes[thread.id] ?? NO_STASHES);
   const chips = useComposerChips((state) => state.chips[thread.id] ?? NO_CHIPS);
@@ -147,6 +153,7 @@ export function Composer({
       (state.projects.data?.find((project) => project.id === thread.project_id)?.is_git ?? false),
   );
   const busy = thread.active_run !== null;
+  const gate = useEngineGate(thread, engine, setError);
   const outbound = useMemo(() => promptWithChips(draft, chips), [draft, chips]);
   const overBy = charactersOver(outbound);
   const styled = useMemo(() => (draft && draft.length <= STYLED_CHARS ? composerMarkup(draft) : null), [draft]);
@@ -154,7 +161,9 @@ export function Composer({
   // The draft is kept while the Orbyn service does not answer, and sending waits for it.
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
-  const canSend = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
+  const ready = outbound !== "" && !sending && !uploading && !transcripts.reading && overBy === 0 && !serviceDown && !compacting;
+  const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine);
+  const canSend = ready && !gate.noticeOpen && !gate.refused && !hostLine.sendBlocked;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -164,7 +173,7 @@ export function Composer({
   const trigger = menuDismissed ? null : triggerAt(draft, caret);
   const lookupKey = trigger ? `${thread.id}:${trigger.char}:${trigger.query}` : `${thread.id}:idle`;
   const lookup = useAsync<Suggestion[]>(lookupKey, (signal) =>
-    loadSuggestions(trigger, thread, planControls, skillsInSlash, signal),
+    loadSuggestions(trigger, thread, skillsInSlash, signal),
   );
   const matches = useMemo(() => (trigger ? (lookup.data ?? []).slice(0, MENU_ROWS) : []), [trigger, lookup.data]);
   const menuOpen = matches.length > 0;
@@ -195,7 +204,7 @@ export function Composer({
     caretAfterEdit.current = picked.caret;
   };
 
-  const { putThread, setPlanMode, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
+  const { putThread, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
 
   /** A terminal selection is evidence, not a command; it is never consumed by one. */
   const hasTerminalContext = chips.some((chip) => chip.kind === "terminal");
@@ -211,14 +220,12 @@ export function Composer({
       return true;
     }
     setDraft(thread.id, "");
-    if (command === "plan") void setPlanMode(true);
-    if (command === "default") void setPlanMode(false);
     if (command === "usage-limits") setLimitsOpen(true);
     return true;
   };
 
-  const send = async (followUp: "default" | "opposite" = "default") => {
-    if (!canSend) return false;
+  const send = async (followUp: "default" | "opposite" = "default", noticeAnswered = false, withoutApprovals = false) => {
+    if (hostLine.sendBlocked || !(noticeAnswered ? ready : canSend)) return false;
     const typed = draft;
     const prompt = promptWithChips(draft, chips);
     const serviceCommand = /^\/(compact|goal)(?:\s|$)/.exec(typed.trim());
@@ -245,6 +252,7 @@ export function Composer({
     const steering = busy && (followUp === "default" ? !queued : queued);
     setSending(true);
     setError(null);
+    if (!withoutApprovals) gate.clear();
     try {
       await beforeSend?.();
       // Claude hears a typed reply as the reason it was declined, so nothing is queued.
@@ -256,13 +264,15 @@ export function Composer({
         return true;
       }
       await Promise.all(pendingHere.map((approval) => api.decideApproval(approval.id, false, false)));
-      const ids = attachments.flatMap((file) => file.id ?? []);
-      const run = busy ? null : await api.startRun(thread.id, prompt.trim(), ids);
+      const ids = [...attachments.flatMap((file) => file.id ?? []), ...transcripts.ids];
+      const start = () => withoutApprovals ? cursorThreadApi().sendWithoutApprovals(thread.id, { prompt: prompt.trim(), attachment_ids: ids }).then(overrideRun) : api.startRun(thread.id, prompt.trim(), ids);
+      const run = busy ? null : await start();
       if (steering) {
-        const steered = await api.steer(thread.id, prompt.trim());
+        const steered = await steerWithMark(thread.id, prompt.trim());
         if (steered.state === "queued") useUi.getState().pushToast("This engine reads it on its next turn");
       } else if (busy) await api.enqueue(thread.id, prompt.trim(), ids);
       setAttachments([]);
+      transcripts.consume();
       consumeChips(thread.id, chips);
       setRecall(null);
       // Text typed after pressing Send stays; only what was sent is removed.
@@ -275,6 +285,7 @@ export function Composer({
       return true;
     } catch (failure) {
       onSendFailed?.();
+      if (gate.onSendFailure(failure)) return false;
       const known = toFailure(failure);
       if (known.code === "folder_untrusted") {
         navigate({ name: "trust", projectId: thread.project_id, threadId: thread.id });
@@ -303,8 +314,6 @@ export function Composer({
       active,
       history,
       recall,
-      planControls,
-      planMode,
       busy,
       sendShortcut,
       shiftPaste,
@@ -315,22 +324,12 @@ export function Composer({
       setRecall,
       setDraft,
       pick,
-      setPlanMode,
       send,
     });
 
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) =>
     handleComposerPaste(event, { thread, shiftPaste, addChips, upload });
 
-  const onDrop = (event: DragEvent) => {
-    event.preventDefault();
-    setDragging(false);
-    const mentioned = event.dataTransfer.getData(FILE_MENTION_TYPE);
-    if (mentioned) {
-      setDraft(thread.id, `${draft.trimEnd()}${draft.trim() ? " " : ""}@${mentioned} `);
-      field.current?.focus();
-    } else if (event.dataTransfer.files.length > 0) upload([...event.dataTransfer.files]);
-  };
 
   const droppedHere = useDraftStore((state) => state.dropped[thread.id]);
   useEffect(() => {
@@ -361,8 +360,7 @@ export function Composer({
   useOwnCommand(side, "thread.steerQueuedMessage", () => {
     const oldest = queue.data?.[0];
     if (!oldest || !busy) return false;
-    void api
-      .steer(thread.id, oldest.prompt)
+    void steerWithMark(thread.id, oldest.prompt)
       .then(() => api.removeQueued(oldest.id))
       .then(reloadQueue, (failure: unknown) => setError(`Couldn't steer. ${toFailure(failure).message}`));
   });
@@ -374,10 +372,9 @@ export function Composer({
   );
 
   const unmanaged = engine !== null && !engine.capabilities.managed;
-  const planMode = thread.lifecycle?.plan_mode ?? false;
-  // A saved mode this engine does not offer runs Supervised, so it shows that way.
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
+  const accessView = accessViewOf(!unmanaged && neverAsks(engine), engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
   const allEngines = useWorkspace((state) => state.engines.data);
   const installed = useMemo(() => (allEngines ?? []).filter((entry) => entry.installed), [allEngines]);
   const models = useEngineModels(thread.engine);
@@ -418,7 +415,7 @@ export function Composer({
     model,
     effort: thread.effort ?? null,
     extras: thread.options ?? {},
-    access: unmanaged ? null : access,
+    access: unmanaged || accessView.locked ? null : access,
     modes: offeredModes(engine),
     onEffort: (value) => void setEffort(value),
     onOption: (option, value) => {
@@ -453,6 +450,8 @@ export function Composer({
         onEdit={(prompt) => setDraft(thread.id, draft.trim() ? `${draft}\n\n${prompt}` : prompt)}
       />
       <QuestionCard threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
+      {gate.cards(() => void send("default", true), () => send("default", true, true))}
+      {hostLine.line ? <ComposerHostLine line={hostLine.line} /> : null}
       <ComposerBanners engine={engine} />
       <CompactOffer threadId={thread.id} engine={thread.engine} active={busy} items={log?.items ?? []} />
       {runId !== null && runId === stoppedRun ? <StopNotice threadId={thread.id} runId={runId} /> : null}
@@ -462,13 +461,7 @@ export function Composer({
       ) : null}
       <div
         className="composer-box"
-        data-dragging={dragging || undefined}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
+        {...boxProps}
       >
         <Presence>
           {menuOpen ? (
@@ -498,9 +491,10 @@ export function Composer({
             )
           }
         />
+        {layer}
         {fence ? <CodeBar thread={thread} draft={draft} fence={fence} setDraft={setDraft} /> : null}
         {attachments.length > 0 ? (
-          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} />
+          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} cancel={cancel} />
         ) : null}
         {overBy > 0 ? (
           <p className="composer-over" role="alert">
@@ -539,13 +533,12 @@ export function Composer({
           draft={draft}
           stashes={stashes}
           stashOpen={stashOpen}
-          planControls={planControls}
-          planMode={planMode}
           narrowBar={narrowBar}
           contextMeter={contextMeter}
           showContext={showContext}
           unmanaged={unmanaged}
           access={access}
+          accessView={accessView}
           busy={busy}
           stopping={stopping}
           sending={sending}
@@ -554,10 +547,10 @@ export function Composer({
           traits={traits}
           upload={upload}
           setStashOpen={setStashOpen}
-          setPlanMode={setPlanMode}
           openOverflow={openOverflow}
           pickModel={pickModel}
           stop={stop}
+          setError={setError}
         />
       </div>
       <ComposerContext
@@ -567,6 +560,7 @@ export function Composer({
         branchPending={branchPending}
         unmanaged={unmanaged}
         access={access}
+        accessView={accessView}
         busy={busy}
         traits={traits}
       />
@@ -586,10 +580,8 @@ export function Composer({
             busy,
             unmanaged,
             access,
-            planControls,
-            planMode,
+            accessView,
             traits,
-            setPlanMode,
           })}
         />
       ) : null}</Presence>

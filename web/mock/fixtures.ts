@@ -478,6 +478,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-320),
     },
     {
@@ -490,6 +491,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-300),
     },
     {
@@ -502,6 +504,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-620),
     },
   ];
@@ -1376,9 +1379,9 @@ export function limits(scenario: string, checkedAt: string): LimitsOverview {
 }
 
 /**
- * MOCK ONLY: the "codemode" scenario's thread log (docs/code-mode.md). It replaces the log of t-approval with a search, a
+ * DEV AND TEST ONLY: the "codemode" scenario's thread log (docs/code-mode.md). It replaces the log of t-approval with a search, a
  * describe, a finished run, a run that paused on an approval, and the approval itself with a `via`. The run records behind
- * them are in mock/codemode.ts. Not a contract: the real shapes arrive with the backend.
+ * them are in mock/codemode.ts. The approval's `via` is display-only and not on the wire yet.
  */
 export function codeModeLog(): WireThreadEvent[] {
   const server = "mcp__orbyn_engineering__";

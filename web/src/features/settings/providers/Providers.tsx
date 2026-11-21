@@ -19,7 +19,8 @@ import { followEngineUpdates } from "./engineUpdates";
 import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
 import { hasProviderDetail } from "./providerDetailFamily";
 import { EngineHostGroup } from "../engineHost/HostGroup";
-import { SignInStorageGroup } from "../engineHost/SignInStorage";
+import { KeyStorageGroup } from "../engineHost/KeyStorage";
+import { NeedsAttentionGroup } from "../engineHost/NeedsAttention";
 
 const POLL_WHILE_UPDATING_MS = 1500;
 
@@ -153,6 +154,7 @@ export function ProvidersSection() {
           </span>
         </div>
       ) : (<>
+        <NeedsAttentionGroup engines={base} onOpen={(id) => setView({ page: "detail", id })} />
         <ProviderTable engines={engines.data} catalog={catalog} store={store} onOpen={(id) => setView({ page: "detail", id })} onEdit={setEditing} />
         <ProviderListActions onAdd={() => setAdding(true)} onRecheck={() => void recheck()} checking={refreshing} />
         <SettingRow title="Agent history import" description="Bring in sessions you ran in Claude Code or Codex outside Orbyn">
@@ -163,7 +165,7 @@ export function ProvidersSection() {
           <Button small onClick={() => setView({ page: "registry" })}>Browse</Button>
         </SettingRow>
         <EngineHostGroup />
-        <SignInStorageGroup />
+        <KeyStorageGroup />
       </>)}
       {editInstance ? <InstanceEditor store={store} engines={base} instance={editInstance} onClose={() => setEditing(null)} /> : null}
       {adding ? (

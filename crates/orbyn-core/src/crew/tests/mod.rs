@@ -39,6 +39,7 @@ mod capacity_sampling;
 mod classes;
 mod classes_pin;
 mod classes_project;
+mod code_mode;
 mod confined;
 mod core;
 mod could_not_start;
@@ -57,12 +58,14 @@ mod forge_merge;
 mod forge_resolve;
 mod hardening;
 mod harness;
+mod issues;
 mod lifecycle;
 mod merging_recovery;
 mod model_ids;
 mod overrides;
 mod protect;
 mod provider_facts;
+mod reviewer_only;
 // The checks are shell commands (`touch`, `rm`, `sleep`, a loop), so these tests run where there is a POSIX shell.
 #[cfg(unix)]
 mod rerun;

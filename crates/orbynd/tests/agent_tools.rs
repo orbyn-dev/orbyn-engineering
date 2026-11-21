@@ -269,23 +269,6 @@ async fn project_add_remove_needs_approval_keeps_files_and_refuses_busy_projects
             .iter()
             .any(|row| row["action"] == "project.remove" && row["actor"] == "engine:codex")
     );
-    assert_eq!(
-        service.patch(&thread, json!({"plan_mode": true})).await.0,
-        200
-    );
-    let planned = project_tool_reply(
-        &service,
-        &thread,
-        &mut seen,
-        "orbyn_project_create",
-        json!({"path": candidate}),
-        None,
-    )
-    .await;
-    assert!(
-        planned.contains("Plan mode does not add or remove projects"),
-        "{planned}"
-    );
     service.stop().await;
 }
 

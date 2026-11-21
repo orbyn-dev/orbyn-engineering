@@ -16,12 +16,16 @@ impl RunManager {
         // A Crew lead or worker, or a delegated run is judged by what it leaves behind, not by what it says. The one exception is the
         // worker of a background crew's run: nobody reads its turn live, so a turn that produced nothing ends the run as an engine
         // error and is never taken for success (docs/engine-run-contract.md).
+        // The lead's thread is also the person's own chat. Only a note Crew queued there — a task's result, a review, a start it
+        // refused — is judged by the lead's work; a turn the person started still fails as "No reply", because the person is
+        // talking to it directly (docs/engine-run-contract.md rule 3).
         // A slash command expands into work of its own or answers locally.
         let judged_by_work = thread
             .lifecycle
             .as_ref()
             .is_some_and(|l| l.relation.as_deref() == Some("subagent"))
-            || self.store.is_crew_thread(&thread.id).unwrap_or(true);
+            || (self.store.is_crew_thread(&thread.id).unwrap_or(true)
+                && self.store.run_is_crew_note(&scope.run_id).unwrap_or(true));
         let expects_reply = RunKind::parse(&message.0) == RunKind::Turn
             && !message.0.trim_start().starts_with('/')
             && (!judged_by_work || self.store.is_background_worker(&thread.id).unwrap_or(true));
@@ -147,6 +151,9 @@ impl RunManager {
         } else {
             warm
         };
+        // The engine reads an attached text file itself, so it is given a masked copy in the run's
+        // own folder; the person's file stays as uploaded (docs/attachments-transcripts.md).
+        let files = self.masked_attachment_copies(&thread.project_id, &files, run_dir)?;
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -164,6 +171,14 @@ impl RunManager {
             handoff: handoff.as_deref(),
         });
         let kind = RunKind::parse(&prompt);
+        // What the engine reads is masked once, here, for every engine; the person's own
+        // message, the queue and the timeline keep the text as typed. A `/goal` is kept as typed.
+        let sent_prompt = self.mask_for_engine(&thread.project_id, &prompt)?;
+        let sent_kind = if sent_prompt == prompt {
+            kind.clone()
+        } else {
+            RunKind::parse(&sent_prompt)
+        };
         // An app's note rides with the next ordinary turn only, and the timeline
         // records exactly what was sent before the engine sees it.
         if kind == RunKind::Turn
@@ -217,12 +232,12 @@ impl RunManager {
             cwd: start,
             library: root,
             checkout,
-            prompt: format!("{context}\n\n{prompt}"),
+            prompt: format!("{context}\n\n{sent_prompt}"),
             context,
-            kind,
+            kind: sent_kind,
             mode: scope.mode,
             plan: scope.plan,
-            user_prompt: prompt,
+            user_prompt: sent_prompt,
             model: chosen.model.clone(),
             effort: chosen.effort.clone(),
             options: chosen.options.clone(),
@@ -443,13 +458,15 @@ impl RunManager {
                             EngineOutcome::Failed("The engine stopped without finishing.".into())
                         };
                     };
+                    // A leftover turn's events are shown like any other, but are not the engine answering.
+                    let (event, own_turn) = split_leftover(event);
                     // Anything else keeps its place after the text before it.
                     if !matches!(event, EngineEvent::Agui(_))
                         && let Some(outcome) = self.write_events(scope, shaper.flush())
                     {
                         break outcome;
                     }
-                    replied |= shows_work(&event, &mut user_messages);
+                    replied |= shows_work(&event, &mut user_messages) && own_turn;
                     match event {
                         EngineEvent::Agui(event) => {
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
@@ -518,6 +535,7 @@ impl RunManager {
                                 break outcome;
                             }
                         }
+                        EngineEvent::Leftover(_) => {}
                         EngineEvent::Finished(EngineOutcome::Completed)
                             if expects_reply && !replied =>
                         {
@@ -600,6 +618,14 @@ impl RunManager {
     }
 }
 
+/// A leftover turn's event as itself, and whether it is the prompt's own: only the prompt's own counts as the engine answering.
+fn split_leftover(event: EngineEvent) -> (EngineEvent, bool) {
+    match event {
+        EngineEvent::Leftover(inner) => (*inner, false),
+        event => (event, true),
+    }
+}
+
 /// How a run reads when the engine ended an ordinary turn without saying or doing anything.
 pub(super) const NO_REPLY: &str =
     "No reply: the engine finished without answering. Send your message again.";
@@ -645,6 +671,24 @@ mod reply_tests {
 
     fn agui(event: AgUiEvent) -> EngineEvent {
         EngineEvent::Agui(event)
+    }
+
+    #[test]
+    fn a_leftover_turns_words_are_shown_but_are_not_the_engine_answering() {
+        let said = || {
+            agui(AgUiEvent::TextMessageContent {
+                message_id: "a".into(),
+                delta: "the old agent finished".into(),
+            })
+        };
+        let (shown, own) = split_leftover(EngineEvent::Leftover(Box::new(said())));
+        assert!(!own, "a leftover turn is not the prompt's");
+        assert!(
+            matches!(shown, EngineEvent::Agui(_)),
+            "it is still shown as itself"
+        );
+        let (_, own) = split_leftover(said());
+        assert!(own, "an ordinary event is the prompt's");
     }
 
     #[test]

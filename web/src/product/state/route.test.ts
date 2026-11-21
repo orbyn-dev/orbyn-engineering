@@ -5,12 +5,15 @@ describe("routes", () => {
   it.each<Route>([
     { name: "home" },
     { name: "tasks" },
+    { name: "welcome" },
     { name: "crew", tab: "flow", task: `sha256:${"a".repeat(64)}` },
     { name: "crew", tab: "flow", task: "task_1-a.b" },
     { name: "skills" },
     { name: "skills", skill: "a/b x?#" },
     { name: "pulls" },
     { name: "pulls", project: "p/1 x", number: 42 },
+    { name: "issues" },
+    { name: "issues", tracker: "github", scope: "orbyn-dev/orbyn engineering", key: "ORB 87/#1" },
     { name: "thread", id: "t/1 x" },
     { name: "new", projectId: null },
     { name: "new", projectId: "p1" },
@@ -18,6 +21,8 @@ describe("routes", () => {
     { name: "trust", projectId: "p", threadId: "t" },
     { name: "settings", section: null },
     { name: "settings", section: "projects" },
+    { name: "settings", section: "appearance", sub: "theme-editor" },
+    { name: "settings", section: "chat", row: "search-engine" },
     { name: "settings", section: "threads", machine: "remote/missing" },
     { name: "settings", section: "worktrees", selection: { kind: "project_group", group_key: "group:/one?x" } },
     { name: "settings", section: "threads", selection: { kind: "checkout", group_key: "group:/one", project_id: "id/2" } },
@@ -28,7 +33,15 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "capacity" },
     { name: "settings", section: "crew", crewPage: "coverage" },
     { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app", from: "capacity" },
+    { name: "settings", section: "crew", crewPage: "coverage", from: "escapes" },
+    { name: "settings", section: "crew", crewPage: "capacity", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "dashboard" },
+    { name: "settings", section: "crew", crewPage: "dashboard", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "escapes" },
+    { name: "settings", section: "crew", crewPage: "escapes", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "possible", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "escape-settings" },
     { name: "settings", section: "crew", crewPage: "escape", id: "esc/1" },
     { name: "settings", section: "crew", crewPage: "backtest" },
     { name: "settings", section: "crew", crewPage: "estimate" },
@@ -42,6 +55,8 @@ describe("routes", () => {
     expect(routeHref({ name: "settings", section: "crew", crewPage: "coverage" })).toBe("#/settings/crew/capacity/coverage");
     expect(routeHref({ name: "settings", section: "crew", crewPage: "escape", id: "a b" })).toBe("#/settings/crew/escapes/detail?id=a+b");
     expect(routeHref({ name: "settings", section: "crew", crewPage: "backtest" })).toBe("#/settings/crew/backtest");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "dashboard", repo: "p/app" })).toBe("#/settings/crew/dashboard?repo=p%2Fapp");
+    expect(parseRoute("#/settings/crew/dashboard/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "dashboard" });
     expect(parseRoute("#/settings/crew/areas/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "areas" });
     expect(parseRoute("#/settings/crew/capacity/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "capacity" });
     expect(parseRoute("#/settings/crew/nope")).toEqual({ name: "settings", section: "crew" });
@@ -49,9 +64,39 @@ describe("routes", () => {
     expect(parseRoute("#/settings/crew/escapes?id=x")).toEqual({ name: "settings", section: "crew", crewPage: "escapes" });
   });
 
+  it("names the new escape pages and where the coverage map was opened from, and nothing else", () => {
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "possible" })).toBe("#/settings/crew/escapes/possible");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "escape-settings" })).toBe("#/settings/crew/escapes/settings");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "coverage", repo: "p-app", from: "escapes" })).toBe("#/settings/crew/capacity/coverage?repo=p-app&from=escapes");
+    // The origin belongs to the coverage page only, and only the two known origins are read: anything else is no origin.
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "escapes", from: "capacity" })).toBe("#/settings/crew/escapes");
+    expect(parseRoute("#/settings/crew/capacity/coverage?from=capacity")).toEqual({ name: "settings", section: "crew", crewPage: "coverage", from: "capacity" });
+    expect(parseRoute("#/settings/crew/capacity/coverage?from=elsewhere")).toEqual({ name: "settings", section: "crew", crewPage: "coverage" });
+    expect(parseRoute("#/settings/crew/capacity/coverage?from=")).toEqual({ name: "settings", section: "crew", crewPage: "coverage" });
+    expect(parseRoute("#/settings/crew/escapes?from=capacity")).toEqual({ name: "settings", section: "crew", crewPage: "escapes" });
+  });
+
+  it("reads a row key from a Settings address, only a plain one, and never on Crew or over a sub-page", () => {
+    expect(parseRoute("#/settings/chat/search-engine")).toEqual({ name: "settings", section: "chat", row: "search-engine" });
+    expect(parseRoute("#/settings/appearance/theme-editor")).toEqual({ name: "settings", section: "appearance", sub: "theme-editor" });
+    for (const bad of ["__proto__", "Search_Engine", "a%2Fb", "a b", "-a", "a--b", "a".repeat(5) + "-", ""]) {
+      expect(parseRoute(`#/settings/chat/${bad}`)).toEqual({ name: "settings", section: "chat" });
+    }
+    expect(parseRoute("#/settings/crew/search-engine")).toEqual({ name: "settings", section: "crew" });
+    expect(routeHref({ name: "settings", section: "chat", row: "__proto__" })).toBe("#/settings/chat");
+  });
+
   it("falls back to the list for a pull request link without a number", () => {
     expect(parseRoute("#/pulls/p1")).toEqual({ name: "pulls" });
     expect(parseRoute("#/pulls/p1/abc")).toEqual({ name: "pulls" });
+  });
+
+  it("falls back to the issue list for an issue link without a key", () => {
+    expect(parseRoute("#/issues/github")).toEqual({ name: "issues" });
+    // A key is unique only within a scope, so a link without one is the list.
+    expect(parseRoute("#/issues/github/412")).toEqual({ name: "issues" });
+    expect(parseRoute("#/issues/github/orbyn-dev%2Forbyn-engineering/412")).toEqual({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" });
+    expect(routeHref({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" })).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   });
 
   it("refuses malformed or action-bearing Crew task locators", () => {
@@ -85,8 +130,23 @@ describe("routes", () => {
     expect(window.location.hash).toBe("#/settings/threads?project=g");
   });
 
+  it("reads a page inside a page, and keeps an unknown page name as data, never as a lookup key", () => {
+    expect(parseRoute("#/settings/appearance/theme-editor")).toEqual({ name: "settings", section: "appearance", sub: "theme-editor" });
+    // A sub-page the section does not have is read as a row key, which Settings looks up and ignores when it has no such row.
+    expect(parseRoute("#/settings/appearance/nope")).toEqual({ name: "settings", section: "appearance", row: "nope" });
+    expect(parseRoute("#/settings/chat/theme-editor")).toEqual({ name: "settings", section: "chat", row: "theme-editor" });
+    expect(routeHref({ name: "settings", section: "chat", sub: "theme-editor" })).toBe("#/settings/chat");
+    for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(parseRoute(`#/settings/${name}`)).toEqual({ name: "settings", section: null, unknown: name });
+      // A row key is data: it is never a property name on anything (Settings keeps its rows in a Map).
+      expect(parseRoute(`#/settings/appearance/${name}`)).toEqual(name === "constructor" ? { name: "settings", section: "appearance", row: name } : { name: "settings", section: "appearance" });
+    }
+    // The note is shown once; an address never carries it.
+    expect(routeHref({ name: "settings", section: null, unknown: "voice" })).toBe("#/settings");
+  });
+
   it("treats unknown hashes as home and unknown sections as none", () => {
     expect(parseRoute("#/nowhere")).toEqual({ name: "home" });
-    expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null });
+    expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null, unknown: "nope" });
   });
 });

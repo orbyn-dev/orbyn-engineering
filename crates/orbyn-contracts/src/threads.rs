@@ -49,6 +49,14 @@ pub struct Thread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub removed_project_name: Option<String>,
+    /// Set on a thread made from a file: `orbyn-transcript`. Absent on a thread made here. The "Imported" pill reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    /// When the file was imported. Set together with `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub imported_at: Option<String>,
 }
 }
 
@@ -119,6 +127,9 @@ pub enum PermissionMode {
     Auto,
     /// Accepts everything policy does not refuse. Writes stay in the checkout.
     FullAccess,
+    /// The one mode of an engine that never asks before acting (Cursor). It is not in `ALL`: an
+    /// engine offers it only by naming it in its `permission_modes`.
+    NoApprovals,
 }
 }
 
@@ -131,9 +142,15 @@ impl PermissionMode {
         PermissionMode::FullAccess,
     ];
 
-    /// Whether `self` accepts more than `other` without asking.
+    /// Whether `self` accepts more than `other` without asking. No approvals accepts everything an
+    /// engine can do, so it is the loosest.
     pub fn looser_than(self, other: PermissionMode) -> bool {
-        let rank = |mode| Self::ALL.iter().position(|one| *one == mode);
+        let rank = |mode| {
+            Self::ALL
+                .iter()
+                .position(|one| *one == mode)
+                .unwrap_or(Self::ALL.len())
+        };
         rank(self) > rank(other)
     }
 }

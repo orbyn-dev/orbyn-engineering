@@ -1,9 +1,7 @@
 import { SettingRow } from "../rows/SettingRow";
 import { SettingsBanner } from "../rows/SettingsBanner";
-import type { HostRow } from "./contract";
-import { useEngineHosts } from "./hostApi";
-import { bannerLine, capabilityLine, stateLine } from "./hostText";
-import { CauseChain, DetailsToggle, HostChip, useToggle } from "./HostParts";
+import { type HostRow, useEngineHosts, bannerLine, capabilityLine, notUsedReason, plain, stateLine } from "../../enginehost";
+import { CauseChain, CrashDetails, DetailsToggle, HostChip, hasCrashDetails, useToggle } from "./HostParts";
 
 function useHostRow(engineId: string): HostRow | null {
   return useEngineHosts().hosts?.find((row) => row.id === engineId) ?? null;
@@ -40,11 +38,16 @@ export function EngineHostCard({ engineId }: { engineId: string }) {
         {row.state === "version_mismatch" && row.app_protocol != null ? <SettingRow title="This app" description={`Protocol ${row.app_protocol}`} /> : null}
         {hello && row.sdk ? <SettingRow title="Engine SDK" description={<>{mono(row.sdk.name)} {row.sdk.version}</>} /> : null}
         {hello && row.capabilities && row.capabilities.length > 0 ? <SettingRow title="It can" description={capabilityLine(row.capabilities)} /> : null}
-        {failed && error ? <SettingRow title="Last error" description={error.message}>
-          {error.causes.length > 0 || error.kind ? <DetailsToggle open={open} onToggle={toggle} /> : null}
+        {row.state === "not_used" && notUsedReason(row) ? <SettingRow title="Reason" description={notUsedReason(row)} /> : null}
+        {(row.state === "version_mismatch" || failed) && row.action ? <SettingRow title="Action" description={plain(row.action, 80)} /> : null}
+        {failed && error ? <SettingRow title="Last error" description={plain(error.message, 200)}>
+          {error.causes.length > 0 || error.kind || (row.last_crash && hasCrashDetails(row.last_crash)) ? <DetailsToggle open={open} onToggle={toggle} /> : null}
         </SettingRow> : null}
       </div>
-      {failed && error && open ? <CauseChain kind={error.kind} causes={error.causes} /> : null}
+      {failed && error && open ? <>
+        {row.last_crash ? <CrashDetails crash={row.last_crash} /> : null}
+        {error.causes.length > 0 || error.kind ? <CauseChain kind={error.kind} causes={error.causes} /> : null}
+      </> : null}
     </section>
   );
 }

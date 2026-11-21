@@ -178,6 +178,24 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
         }}));
     }
 
+    // Words of an earlier turn on this thread that reach us after this prompt was sent.
+    if has(prompt, "leftover-turn") {
+        let earlier = CodexState {
+            prompt: String::new(),
+            mcp_url: None,
+            thread: state.thread.clone(),
+            tools_ready: true,
+            turn: "turn-previous".to_owned(),
+            loaded: true,
+        };
+
+        codex_note(
+            &earlier,
+            "item/agentMessage/delta",
+            json!({ "itemId": "old-msg", "delta": "the old turn spoke" }),
+        );
+    }
+
     codex_note(
         state,
         "item/started",
@@ -208,15 +226,17 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
         }),
     );
 
-    codex_note(
-        state,
-        "turn/plan/updated",
-        json!({
+    if !has(prompt, "silent") {
+        codex_note(
+            state,
+            "turn/plan/updated",
+            json!({
 
-            "explanation": null, "plan": [{ "step": "do it", "status": "inProgress" }],
+                "explanation": null, "plan": [{ "step": "do it", "status": "inProgress" }],
 
-        }),
-    );
+            }),
+        );
+    }
 
     if has(prompt, "plan-item") {
         codex_note(
@@ -554,31 +574,33 @@ pub(super) fn codex_turn(state: &CodexState, lines: &mut impl Iterator<Item = Va
         }
     }
 
-    codex_note(
-        state,
-        "item/started",
-        json!({
+    if !has(prompt, "silent") {
+        codex_note(
+            state,
+            "item/started",
+            json!({
 
-            "startedAtMs": 5, "item": { "type": "agentMessage", "id": "msg1", "text": "" },
+                "startedAtMs": 5, "item": { "type": "agentMessage", "id": "msg1", "text": "" },
 
-        }),
-    );
+            }),
+        );
 
-    codex_note(
-        state,
-        "item/agentMessage/delta",
-        json!({ "itemId": "msg1", "delta": answer }),
-    );
+        codex_note(
+            state,
+            "item/agentMessage/delta",
+            json!({ "itemId": "msg1", "delta": answer }),
+        );
 
-    codex_note(
-        state,
-        "item/completed",
-        json!({
+        codex_note(
+            state,
+            "item/completed",
+            json!({
 
-            "completedAtMs": 6, "item": { "type": "agentMessage", "id": "msg1", "text": answer },
+                "completedAtMs": 6, "item": { "type": "agentMessage", "id": "msg1", "text": answer },
 
-        }),
-    );
+            }),
+        );
+    }
 
     codex_note(
         state,

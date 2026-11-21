@@ -16,19 +16,20 @@ import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { PageBar } from "../../../product/ui/PageBar";
+import { RunTab, runLinkClient } from "../../crew";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
 import { pullsApi } from "../api";
 import { checkConnectionNow, useConnectionKind } from "../../../product/state/connection";
-import { useThreadPulls } from "../model/pullStore";
 import { forgeName, numberLabel } from "../../../product/pulls/labels";
 import { useVisibleProjects } from "../../../product/state/workspace";
 import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
+import { ChangeBreakdownCard, LinkedThreadsCard } from "./PullLinkedCards";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
-import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
+import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, requestedByMeHint, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
 import { Stack } from "./PullStack";
@@ -66,10 +67,6 @@ export function PullDetail({
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
   const connection = useConnectionKind();
   const projects = useVisibleProjects();
-  const pullUrl = detail.data?.pull.url;
-  // The address says which project's pull request, which a number alone does not.
-  const linkedThread = useThreadPulls((store) => (pullUrl ? Object.entries(store.byThread).find(([, entry]) => entry.pulls?.some((one) => one.url === pullUrl))?.[0] : undefined));
-  const threadTitle = useWorkspace((state) => (linkedThread ? state.threads[linkedThread]?.title : undefined));
   /** The review card is open, and what was sent once it was. */
   const [reviewing, setReviewing] = useState(false);
   const [requested, setRequested] = useState<string | null>(null);
@@ -81,6 +78,12 @@ export function PullDetail({
   const [mergeMenu, setMergeMenu] = useState<{ x: number; y: number } | null>(null);
   const loadedAt = useMemo(() => (detail.data ? Date.now() : null), [detail.data]);
   const [tab, setTab] = useState<Tab>("summary");
+  // The Run tab is drawn only when the client says a Crew run made this pull request. The production client says none yet.
+  const runLink = useAsync(`pull-run:${projectId}:${number}:${page}`, (signal) => (page ? runLinkClient().forPull(projectId, number, signal) : Promise.resolve(null)));
+  const runTask = runLink.data?.task ?? null;
+  useEffect(() => {
+    if (tab === "run" && runTask === null) setTab("summary");
+  }, [tab, runTask]);
   const [merging, setMerging] = useState(false);
   // The dialog is built from this detail, so it opens on a read that has finished: a kept
   // copy drawn while the read runs could be of a pull request that has moved on.
@@ -390,6 +393,9 @@ export function PullDetail({
   const mergeHint = state === "approved" && approvals !== undefined && gate.hint === "No conflicts"
     ? `${approvalWords(approvals)} · No conflicts`
     : gate.hint;
+  // The person's own latest review asked for changes, now or in this session.
+  const mineAsked = requested !== null || mine?.viewer_review_state === "changes_requested";
+  const askedHint = requestedByMeHint(gate.hint, mineAsked) ?? mergeHint;
   const submitReview = (event: "approve" | "request_changes") =>
     run(pullsApi.review(projectId, number, event, ""), event === "approve" ? "Approved" : "Changes requested");
   const forgeLink = (
@@ -397,7 +403,7 @@ export function PullDetail({
       Open on {forge === "The host" ? "the forge" : forge}
     </a>
   );
-  const pageOrder = ["summary", "guide", "timeline", "code", "checks"] as const;
+  const pageOrder = (runTask === null ? ["summary", "guide", "timeline", "code", "checks"] : ["summary", "guide", "timeline", "code", "checks", "run"]) as readonly Tab[];
   const counts: Partial<Record<Tab, number | null | undefined>> = {
     // What the tab lists: comments, reviews and commits alike. Until it has loaded, the comments alone.
     timeline: activity.data ? activity.data.length : mine?.comment_count,
@@ -482,7 +488,7 @@ export function PullDetail({
         {pageTabs}
       </div>
       <div className="pull-page-body" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${tab}`}>
-        {tab === "guide" || tab === "code" || tab === "timeline" || tab === "checks" ? (
+        {tab === "guide" || tab === "code" || tab === "timeline" || tab === "checks" || (tab === "run" && runTask !== null) ? (
           <div className="pull-cols">
             <div className="pull-main">
               {tab === "guide" ? (
@@ -494,6 +500,8 @@ export function PullDetail({
                   <PullConversation projectId={projectId} number={number} />
                   <TimelineList events={activity as TimelineRead} />
                 </>
+              ) : tab === "run" && runTask !== null ? (
+                <RunTab task={runTask} pull={number} />
               ) : (
                 <Checks projectId={projectId} number={number} />
               )}
@@ -508,6 +516,7 @@ export function PullDetail({
                 {description}
               </div>
               {requested !== null ? <RequestedChangesEntry note={requested} /> : null}
+              <ChangeBreakdownCard projectId={projectId} number={number} />
               <FilesCard files={fileList.data ?? []} additions={additions === null ? null : Number(additions)} deletions={deletions === null ? null : Number(deletions)} />
             </div>
             <div className="pull-side">{sideColumn()}</div>
@@ -531,15 +540,11 @@ export function PullDetail({
           </Row>
           {/* Amber only where the person is waited on; a conflict and changes the person asked for stay ink. */}
           <Row name="Review" tone={requested === null && (state === "review" || (state === "changes" && changesNeedYou(pull, viewers))) ? "warn" : undefined}>
-            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested", approvals)}
+            {reviewWords(pull, current.reviewers, viewers, mineAsked, approvals)}
           </Row>
           <Row name="Conflicts">{conflictWords(mergeable)}</Row>
-          {threadTitle ? (
-            <Row name="Thread">
-              <a href={`#/threads/${linkedThread}`}>{threadTitle}</a>
-            </Row>
-          ) : null}
         </div>
+        <LinkedThreadsCard projectId={projectId} number={number} />
         <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing} />
         <MergeRow
           method={mergeMethod}
@@ -551,7 +556,7 @@ export function PullDetail({
             setDeleteAfter(on);
             rememberDeleteBranch(projectId, on);
           }}
-          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : requested !== null ? { ...gate, hint: "You requested changes." } : { ...gate, hint: mergeHint }}
+          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : { ...gate, hint: askedHint }}
           menu={mergeMenu}
           onMenu={setMergeMenu}
           onMerge={openMerge}

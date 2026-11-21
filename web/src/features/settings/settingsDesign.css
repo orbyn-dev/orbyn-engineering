@@ -910,3 +910,110 @@
   color: var(--color-muted);
   font-size: 11.5px;
 }
+
+/* The breadcrumb above the page title, and the way back that replaces it on a sub-page in a narrow window (pb-k55-*). */
+.settings-crumbs {
+  flex: none;
+  padding: 18px 28px 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.settings-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-crumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-crumbs a {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+.settings-crumbs a:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-crumbs a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.settings-crumbs b {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.settings-crumbs-back {
+  padding: 18px 16px 0;
+}
+.settings-crumbs-back a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-textSoft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.settings-crumbs + .settings-head {
+  padding-top: 6px;
+}
+
+/* The note for an address Settings does not have. */
+.settings-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 4px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  color: var(--color-text);
+  font-size: var(--text-small);
+}
+
+@media (max-width: 599px) {
+  .settings-note { flex-wrap: wrap; }
+  .settings-note > span { flex: 1 1 100%; }
+}
+
+/* The row an address names (pb-k55-row-anchor): a steady 2 px ring in the Browser panel pointer's blue on the selected background; the halo that fades
+   over about half a second is left out with reduced motion (pb-k55-row-anchor-still). The ring is inset, so the window's edge never cuts it. */
+.settings-page [data-anchored="true"] {
+  margin-inline: -12px;
+  padding-inline: 12px;
+  border-radius: 10px;
+  background: var(--color-selected);
+  box-shadow: inset 0 0 0 2px var(--color-blueSolid);
+  outline: none;
+  animation: set-anchor-halo 500ms ease-out;
+}
+@keyframes set-anchor-halo {
+  from { box-shadow: inset 0 0 0 2px var(--color-blueSolid), 0 0 0 5px color-mix(in srgb, var(--color-blueSolid) 30%, transparent); }
+  to { box-shadow: inset 0 0 0 2px var(--color-blueSolid), 0 0 0 5px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-page [data-anchored="true"] { animation: none; }
+}
+
+/* Theme editor: the element inspector (parity K15). Settings is hidden while picking so the app behind it can be pointed at. */
+html[data-inspecting] .settings-page { display: none; }
+html[data-inspecting] .main-view[hidden] { display: block; }
+.inspector-layer { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
+.inspector-dim { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-text) 18%, transparent); }
+.inspector-outline { position: fixed; outline: 2px solid var(--color-blue); outline-offset: -1px; background: color-mix(in srgb, var(--color-blue) 10%, transparent); }
+.inspector-tip { position: fixed; padding: 2px 8px; border-radius: var(--radius-5); background: var(--color-primary); color: var(--color-onAccent); font-size: 11.5px; font-family: var(--font-mono); white-space: nowrap; }
+.inspector-bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 14px; border-radius: 10px; background: var(--color-background); border: 1px solid var(--color-borderStrong); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); pointer-events: auto; max-width: calc(100vw - 32px); }
+.inspector-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-sunken); }
+.inspector-card p { margin: 0; }
+.inspector-card-head { display: flex; align-items: center; gap: 8px; }
+.inspector-card-head code { color: var(--color-muted); font-size: 11.5px; }
+.tkn[data-picked] { outline: 2px solid var(--color-blue); outline-offset: 4px; border-radius: var(--radius-5); }

@@ -13,6 +13,8 @@ import { registerTerminal, terminalKey } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
 import { linkProvider } from "./terminalLinks";
 import { ShellMarks, type Position, type ShellCommand } from "./shellMarks";
+import { hearShellFolder } from "./shellFolder";
+import { TerminalInput } from "./input/TerminalInput";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 type Connection = "connecting" | "open" | "closed";
@@ -155,6 +157,8 @@ export function TerminalPanel({
           return true;
         }),
       );
+      // The shell's own report of its folder (OSC 7) is untrusted text: parsed strictly, kept per terminal, never shown or logged.
+      const folder = hearShellFolder(terminal.parser, terminalKey(threadId, terminalId));
       const links = terminal.registerLinkProvider(
         linkProvider(terminal, (link) => {
           if (link.kind === "url") {
@@ -244,6 +248,9 @@ export function TerminalPanel({
           return () => hear.dispose();
         },
         clear: () => terminal.clear(),
+        write: (data) => {
+          if (!observe && socket.readyState === WebSocket.OPEN) socket.send(encoder.encode(data));
+        },
         interrupt: () => {
           if (!observe && socket.readyState === WebSocket.OPEN) socket.send(encoder.encode("\x03"));
         },
@@ -267,6 +274,7 @@ export function TerminalPanel({
         input.dispose();
         chosen.dispose();
         for (const osc of oscs) osc.dispose();
+        folder.dispose();
         links.dispose();
         socket.onclose = null;
         socket.close();
@@ -326,6 +334,7 @@ export function TerminalPanel({
         )}
       </div>
       <div ref={host} className="terminal-host" role="group" aria-label="Terminal" />
+      {observe || connection !== "open" ? null : <TerminalInput threadId={threadId} keyOf={terminalKey(threadId, terminalId)} />}
     </div>
   );
 }

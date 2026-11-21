@@ -187,7 +187,7 @@ describe("the narrow log (Crew Designs v79 escape-narrow-window and escape-narro
     await screen.findByText("What counts as an escape");
     const chip = document.querySelector(".cx-t10sel") as HTMLElement;
     const full = screen.getByRole("link", { name: "Coverage" });
-    expect(full).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app");
+    expect(full).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app&from=escapes");
     expect(full.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     unmount();
     stubWidth(600);

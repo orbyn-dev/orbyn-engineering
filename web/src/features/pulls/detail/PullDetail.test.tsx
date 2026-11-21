@@ -6,6 +6,7 @@ import { dataChanged } from "../../../api/shell";
 import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
 import { useConnection } from "../../../product/state/connection";
+import { setRunLinkClient } from "../../crew";
 import { PullDetail } from "./PullDetail";
 
 const pull = (over: Record<string, unknown> = {}): PullRequestDetail["pull"] =>
@@ -61,6 +62,8 @@ beforeEach(() => {
   useConnection.setState({ offline: false, serviceDown: false });
   vi.spyOn(pullsApi, "detail");
   vi.spyOn(pullsApi, "checks").mockResolvedValue(checks);
+  vi.spyOn(pullsApi, "breakdown").mockResolvedValue({ files: 1n, added: 1n, modified: 0n, deleted: 0n, renamed: 0n, additions: 3n, deletions: 0n });
+  vi.spyOn(pullsApi, "linkedThreads").mockResolvedValue([]);
   vi.spyOn(pullsApi, "files").mockResolvedValue([
     { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: null, viewed: false },
   ]);
@@ -101,6 +104,13 @@ describe("one pull request as a page", () => {
     expect(merge().hasAttribute("disabled")).toBe(!enabled);
     expect(document.querySelector(".pull-merge-hint")?.textContent ?? "").not.toContain("approvals · No conflicts");
     expect(document.querySelector(".pulls-banner")?.textContent ?? "").not.toContain("approvals. Checks passed");
+  });
+
+  it("names the person's own requested changes on the merge row, and keeps Merge disabled", async () => {
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, viewer_review_state: "changes_requested" }], paused: [] });
+    await show(detail({ review_state: "changes_requested" }));
+    expect(document.querySelector(".pull-merge-hint")).toHaveTextContent("You requested changes. Merge needs an approval.");
+    expect(merge()).toBeDisabled();
   });
 
   it("uses the current revision and forces a count read after approving", async () => {
@@ -326,6 +336,16 @@ describe("one pull request as a page", () => {
     expect(tabs).toEqual(["Summary", "Guide", "Conversation · 3", "Files changed · 2", "Checks · 4"]);
   });
 
+  it("shows the change breakdown and the linked threads on the Summary, and asks for both once", async () => {
+    vi.mocked(pullsApi.linkedThreads).mockResolvedValue([{ id: "t9", project_id: "p", title: "Fix login redirect", engine: "claude", worktree: null, active_run: null, last_run_state: "completed", updated_at: new Date().toISOString() } as never]);
+    await show(detail());
+    expect(screen.getByText("Change breakdown")).toBeInTheDocument();
+    expect(screen.getByText("Linked threads · 1")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Fix login redirect/ })).toBeInTheDocument();
+    expect(pullsApi.breakdown).toHaveBeenCalledWith("p", 142, expect.anything());
+    expect(pullsApi.linkedThreads).toHaveBeenCalledTimes(1);
+  });
+
   it("chooses the merge method and options from the Merge method menu", async () => {
     await show(detail({ review_state: "approved" }));
     fireEvent.click(screen.getByRole("button", { name: /Squash and merge/ }));
@@ -456,7 +476,7 @@ describe("Request changes", () => {
     expect(screen.getByRole("region", { name: "You requested changes" })).toBeInTheDocument();
     expect(screen.getByText("Fix this")).toBeInTheDocument();
     expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
-    expect(screen.getByText("You requested changes.")).toBeInTheDocument();
+    expect(screen.getByText("You requested changes. Merge needs an approval.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "What needs to change?" })).toBeNull();
   });
 
@@ -575,5 +595,22 @@ describe("Request changes", () => {
     await flushAll();
     expect(screen.getByText(/It may have been sent/)).toBeInTheDocument();
     expect(vi.mocked(pullsApi.detail).mock.calls.length).toBeGreaterThan(reads);
+  });
+});
+
+describe("the Run tab", () => {
+  afterEach(() => setRunLinkClient(null));
+
+  it("is absent with the production client, which reports no run for any pull request", async () => {
+    await show(detail());
+    expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
+  });
+
+  it("is drawn only when the client says a Crew task made the pull request", async () => {
+    const forPull = vi.fn().mockResolvedValue({ task: "task-redirect" });
+    setRunLinkClient({ forPull });
+    await show(detail());
+    expect(forPull).toHaveBeenCalledWith("p", 142, expect.anything());
+    expect(screen.getByRole("tab", { name: "Run" })).toBeInTheDocument();
   });
 });

@@ -84,6 +84,12 @@ pub struct CoreConfig {
     pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
+    /// Whether the Code Mode tools (`orbyn_code_search`, `orbyn_code_describe`, `orbyn_code_run`) exist. Ships `false`.
+    pub code_mode: bool,
+    /// Whether the issue routes exist (docs/issues.md). Ships `false`: every issue route answers 404.
+    pub issues: bool,
+    /// Whether the multi-repository routes exist (docs/multi-repo.md). Ships `false`: every one answers 404.
+    pub multi_repo: bool,
     /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
     /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
     pub crew_tiers: Option<crate::crew::RouterConfig>,
@@ -117,6 +123,9 @@ impl CoreConfig {
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
+            code_mode: false,
+            issues: false,
+            multi_repo: false,
             crew_tiers: None,
             crew_merge_required_checks: Vec::new(),
             crew_merge_watch_interval: None,
@@ -174,6 +183,12 @@ pub struct Core {
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
     /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
     pub(crate) crew_bus: crate::crew::Bus,
+    /// Code Mode: the live and finished script runs (`tools::mcp::code`).
+    pub(crate) code_runs: crate::tools::mcp::code::CodeRuns,
+    /// Issue trackers: the keychain tokens, the sources and a short read cache (`issues`).
+    pub(crate) issues: crate::issues::IssueDesk,
+    /// Project repositories: the clones in flight (`repos`).
+    pub(crate) repos: crate::repos::RepoDesk,
     /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
@@ -182,6 +197,10 @@ pub struct Core {
     pub(crate) crew_bisect: std::sync::Mutex<Option<orbyn_contracts::AutopilotBisect>>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
+    /// Engine API keys, kept in the OS keychain only (`credentials`).
+    pub(crate) credentials: crate::credentials::Credentials,
+    /// Personal-library environment-set values, kept in the OS keychain only, in their own service (`credentials::env_sets`).
+    pub(crate) env_sets: crate::credentials::EnvSets,
     _lock: OwnerLock,
 }
 
@@ -268,6 +287,7 @@ impl Core {
             engines.clone(),
             http.clone(),
             config.update_manifest.clone(),
+            !config.engines.lookup_latest,
         ));
         let keybinding_writer = Arc::new(Mutex::new(()));
         let account = Arc::new(crate::account::AccountCenter::new(
@@ -329,16 +349,23 @@ impl Core {
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
+            code_runs: crate::tools::mcp::code::CodeRuns::new(),
+            issues: crate::issues::IssueDesk::new(Self::system_credentials()),
+            repos: crate::repos::RepoDesk::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
             crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
+            credentials: Self::system_credentials(),
+            env_sets: crate::credentials::EnvSets::system(crate::credentials::default_env_service()),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
         core.crew_backtest_recover();
+        core.code_runs_recover();
+        core.repos_recover();
         // Settled here, with nothing left in this function that can fail before the held tasks get their results: a failed open after
         // this commit would leave them with no result and their leases granted, since the next open finds no run to recover.
         let background_starts = core.store.recover_background_starts()?;
@@ -392,9 +419,52 @@ impl Core {
         })
     }
 
+    /// Records a refused request to a person-only route. The row names the route pattern (and, for a handler-level refusal, the name of the field) and the caller class, and holds
+    /// no body, header or token. `thread_id` is empty: a refusal belongs to no thread.
+    pub fn record_person_route_refusal(
+        &self,
+        method: &str,
+        route: &str,
+        field: Option<&str>,
+        caller: &str,
+        code: &str,
+    ) -> Result<i64> {
+        let target = match field {
+            Some(field) => format!("{method} {route} [{field}]"),
+            None => format!("{method} {route}"),
+        };
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: caller.to_owned(),
+            action: "person_route.refused".to_owned(),
+            target,
+            decision: Some(orbyn_contracts::PolicyEffect::Deny),
+            source: "access".to_owned(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "route": route,
+                "method": method,
+                "field": field,
+                "caller": caller,
+                "code": code,
+                "note": "A person-only route was refused. Repeats inside a minute write no new row.",
+            }),
+        })
+    }
+
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo
     /// hooks, so it needs a trusted folder like an engine does.
     pub async fn create_thread(&self, request: orbyn_contracts::CreateThread) -> Result<Thread> {
+        self.create_thread_in(request, None).await
+    }
+
+    /// `create_thread`, optionally in a folder the caller made and under an id it chose: a multi-repository
+    /// thread's task folder, which is not a repository.
+    pub(crate) async fn create_thread_in(
+        &self,
+        request: orbyn_contracts::CreateThread,
+        task_folder: Option<(String, String)>,
+    ) -> Result<Thread> {
         self.workspace.root()?;
         let project = match self.scratch_request(&request)? {
             Some(scratch) => scratch,
@@ -425,9 +495,15 @@ impl Core {
             }
             None => None,
         };
-        let cwd = worktree
-            .as_ref()
-            .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone());
+        let (thread_id_chosen, cwd) = match task_folder {
+            Some((id, folder)) => (Some(id), folder),
+            None => (
+                None,
+                worktree
+                    .as_ref()
+                    .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone()),
+            ),
+        };
         let project_id = project.id.clone();
         let remembered = self.store.remembered_selection(&request.engine)?;
         let default = self.project_default_selection(&request.engine, &project_id)?;
@@ -468,7 +544,7 @@ impl Core {
             wait_for_exit: !script.asynchronous,
             script: Some(script.clone()),
         });
-        let thread_id = new_id();
+        let thread_id = thread_id_chosen.unwrap_or_else(new_id);
         let registration = setup.as_ref().map(|_| self.setups.registration(&thread_id));
         let thread = self.store.create_registered_thread(
             &thread_id,

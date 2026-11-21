@@ -309,6 +309,16 @@ p.settings-scope {
 .setting-line:last-child {
   border-bottom: 1px solid var(--color-border);
 }
+/* A segmented control cannot shrink: when the page next to the Settings list is narrow (even in a wide window), it drops under the text instead of sitting on it. */
+.setting-line:has(.segmented) {
+  flex-wrap: wrap;
+}
+.setting-line:has(.segmented) > .setting-line-text {
+  flex: 1 1 180px;
+}
+.setting-line:has(.segmented) > .setting-line-control {
+  max-width: 100%;
+}
 .setting-line-stacked {
   flex-direction: column;
   align-items: stretch;
@@ -1215,3 +1225,61 @@ button.folder-row:hover {
 .project-action-icons > div { position: absolute; z-index: 1; top: 100%; left: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 8px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; }
 .project-action-icons button { display: grid; justify-items: center; gap: 4px; padding: 8px; font-size: var(--text-small); }
 .project-action-icons button[aria-pressed="true"] { background: var(--color-hover); }
+
+/* Settings, Chat: the custom search address and its preview (parity H2). */
+.search-address {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: min(340px, 100%);
+}
+.search-address input {
+  width: 100%;
+}
+.search-address .field-error {
+  margin: 6px 0 0;
+}
+.search-address-preview {
+  max-width: 340px;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-size: var(--text-small);
+  color: var(--color-muted);
+}
+
+/* Limits checked: the age label, the failed-check line and the retry button (usage-checked-*) */
+.limits-age {
+  color: var(--color-muted);
+  font-size: var(--text-caption);
+  white-space: nowrap;
+}
+.icon-btn.limits-retry {
+  background: var(--color-selected);
+  color: var(--color-selectedText);
+}
+.limits-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-dangerSoft);
+  color: var(--color-text);
+}
+.limits-failure > svg {
+  flex: none;
+  color: var(--color-danger);
+}
+.limits-failure > span {
+  flex: 1;
+  min-width: 0;
+}
+.drow .dv .limits-bad {
+  color: var(--color-danger);
+}
+.composer-panel header .limits-age {
+  margin-left: auto;
+  margin-right: 8px;
+}

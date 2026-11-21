@@ -1,19 +1,30 @@
-import { Activity, FileDiff, File as FileIcon, GitBranch, Globe, MessagesSquare, Plug } from "lucide-react";
-import { defaultOrder, fileName, parseFileTab, type BuiltinTab, type RightTab } from "../../../product/state/ui";
+import { Activity, CircleDot, FileDiff, File as FileIcon, GitBranch, Globe, MessageSquareText, MessagesSquare, Library, Network, Plug, Smartphone } from "lucide-react";
+import { defaultOrder, fileName, issueTabLabel, parseFileTab, type BuiltinTab, type RightTab } from "../../../product/state/ui";
 
-/** The panel's five surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
+/** The panel's six surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
 export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff }[] = [
   { id: "diff", label: "Changes", icon: FileDiff },
   { id: "browser", label: "Browser", icon: Globe },
   { id: "activity", label: "Activity", icon: Activity },
   { id: "side", label: "Side chat", icon: MessagesSquare },
   { id: "tools", label: "Tools", icon: Plug },
+  { id: "linked", label: "Linked threads", icon: Network },
+  { id: "review", label: "Review and comments", icon: MessageSquareText },
+  // Drawn only when the service reports devices (docs/devices.md); the strip and the "+" leave it out otherwise.
+  { id: "devices", label: "Devices", icon: Smartphone },
+  // Drawn only when the service reports a library (docs/execution-profiles-and-library.md, Part 2); the strip and the "+" leave it out otherwise.
+  { id: "library", label: "Library", icon: Library },
 ];
 
-export function tabOf(id: RightTab): { id: RightTab; label: string; icon: typeof FileDiff } {
+/** `repoName` names the repository of a file tab that has one, so two files of the same name in two repositories are told apart; without a name the tab is its file's name alone. */
+export function tabOf(id: RightTab, repoName?: (repoId: string) => string | undefined): { id: RightTab; label: string; icon: typeof FileDiff } {
   const file = parseFileTab(id);
+  if (file?.kind === "issue") return { id, label: issueTabLabel(file.key), icon: CircleDot };
   if (file?.kind === "worktree") return { id, label: "Worktree", icon: GitBranch };
-  if (file) return { id, label: fileName(file.path), icon: FileIcon };
+  if (file) {
+    const where = file.kind === "thread" && file.repoId !== undefined ? repoName?.(file.repoId) : undefined;
+    return { id, label: where ? `${fileName(file.path)} (${where})` : fileName(file.path), icon: FileIcon };
+  }
   return RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
 }
 

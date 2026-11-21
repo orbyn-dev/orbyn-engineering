@@ -20,8 +20,14 @@ decide where each applies (Settings › Secrets, W4).
 | Terminal blocks | Formats left on, then the person's patterns | Yes, one switch |
 | What agents read | The same, unless the project is switched off | Yes, one switch, and one per project |
 
-Terminal blocks and the agent context are not built yet; `Core::redactor(surface, project)` is the
-one door they will use. Until then only Crew and the two failure-text paths apply redaction.
+Terminal blocks are not built yet. One terminal mask exists: a library workflow run's output hides the exact values of its environment sets (`literal`, docs/execution-profiles-and-library.md), by literal match across chunks, whatever these settings say. What agents read is masked once, where a run starts
+(`conversation/runs/turn.rs`, so every engine gets it) and where a steer is sent
+(`runs/admission.rs`): the message, queued follow-ups, steers, review text and Crew briefs that go through
+`launch` or `steer`. Each value becomes `[hidden: label]`. The person's own message, queue and timeline keep
+what was typed. An attached text file (valid UTF-8, no NUL byte, at most 1 MiB) is masked too: the engine is told the
+path of a masked copy in the run's own folder (`runs/masked_files.rs`), and the upload is never rewritten. A binary,
+an image, a larger file and a file with nothing to hide keep their own path. An engine's own tool output and Crew
+messages held for a worker turn are not masked here (Crew's own locked rule covers what Crew stores).
 
 ## Rules
 
