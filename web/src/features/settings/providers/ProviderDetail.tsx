@@ -10,6 +10,7 @@ import { navigate } from "../../../product/state/route";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button, CopyCommand, IconButton } from "../../../ui/controls";
 import { ConfirmDialog, Dialog } from "../../../ui/Dialog";
+import { CodeModeSetting } from "../../codemode";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { NativeSessions } from "../maintenance/NativeSessions";
 import { SettingsBanner } from "../rows/SettingsBanner";
@@ -145,6 +146,7 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
         <SettingRow title="Location"><code className="set-path">{engine.path ?? "Not found"}</code></SettingRow>
       </SettingGroup>
       {engine.installed && !engine.update_command && engine.manual_hint && !engine.compatibility ? <p className="setting-line-desc">{engine.manual_hint}</p> : null}
+      {engine.installed && !opencode ? <CodeModeSetting engine={engine} /> : null}
       {engine.installed ? (engine.auth === "logged_out"
         ? <><p className="set-grp">Models</p><div className="set-card"><span className="t3">Sign in to see the models this account can use.</span></div></>
         : <Models engine={engine} />) : null}

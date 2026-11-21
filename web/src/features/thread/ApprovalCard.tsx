@@ -9,6 +9,7 @@ import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { touchesOf } from "./approvalDetail";
 import { approvalFromContent } from "../../product/timeline/projection";
+import { ViaAlways, ViaClosed, ViaContext, ViaDone, ViaFacts, ViaNext, useViaQueue, viaOf } from "../codemode";
 
 const outcome = {
   allowed: { icon: CircleCheck, label: "Approved" },
@@ -37,6 +38,9 @@ export function ApprovalCard({ approval, minimapKey }: { approval: Approval; min
   const engine = useWorkspace((state) => state.threads[approval.thread_id]?.engine ?? "this engine");
   const foreverText = `Allow ${commandText} for ${engine} in every project from now on`;
   const Icon = kindIcon(approval.kind);
+  // Set when an inner call of a Code Mode script asked. Display only: no decision below reads it.
+  const via = viaOf(approval);
+  const queue = useViaQueue(approval, via);
 
   const decide = async (allow: boolean, remember: boolean) => {
     setBusy(true);
@@ -71,26 +75,37 @@ export function ApprovalCard({ approval, minimapKey }: { approval: Approval; min
   const decided = approval.state === "pending" ? null : outcome[approval.state];
   const reaches = touchesOf(approval.detail).filter((touch) => touch.label === "Address" || touch.label === "Folder");
   const why = approval.summary && !targets.includes(approval.summary) ? approval.summary : null;
+  if (via && approval.state !== "pending") {
+    if (approval.state === "expired") return <ViaClosed approval={approval} via={via} />;
+    return <ViaDone approval={approval} via={via} />;
+  }
+  if (via && queue.index > 0) return <ViaNext approval={approval} via={via} />;
   return (
-    <article className="approval" data-minimap={minimapKey} data-pending={decided ? undefined : ""} aria-label={approval.summary} tabIndex={decided ? undefined : -1}>
+    <article className={via ? "approval cm-apr" : "approval"} data-minimap={minimapKey} data-pending={decided ? undefined : ""} aria-label={approval.summary} tabIndex={decided ? undefined : -1}>
       {decided ? null : (
         <div className="approval-top">
           <p className="ask-label">
             <span className="status-dot" aria-hidden />
             Needs you · {kindLabel[approval.kind] ?? "tool"}
+            {via && queue.total > 1 ? ` · ${queue.index + 1} of ${queue.total}` : ""}
           </p>
           <span className="approval-wait">Waiting for approval</span>
         </div>
       )}
-      <div className="approval-targets">
-        {targets.map((value, at) => (
-          <p key={value} className={at === 0 ? "approval-target" : "approval-target approval-more-target"}>
-            {at === 0 ? <Icon size={14} aria-hidden /> : null}
-            <code>{value}</code>
-          </p>
-        ))}
-      </div>
-      {decided ? null : (
+      {via ? (
+        <ViaFacts approval={approval} via={via} />
+      ) : (
+        <div className="approval-targets">
+          {targets.map((value, at) => (
+            <p key={value} className={at === 0 ? "approval-target" : "approval-target approval-more-target"}>
+              {at === 0 ? <Icon size={14} aria-hidden /> : null}
+              <code>{value}</code>
+            </p>
+          ))}
+        </div>
+      )}
+      {via ? <ViaContext via={via} /> : null}
+      {decided || via ? null : (
         <>
           {why ? (
             <p className="approval-kv">
@@ -142,6 +157,7 @@ export function ApprovalCard({ approval, minimapKey }: { approval: Approval; min
           </button>
         </div>
       )}
+      {via ? <ViaAlways approval={approval} /> : null}
       {confirming ? (
         <ConfirmDialog
           title={`Always allow ${commandText}?`}
