@@ -1974,8 +1974,8 @@ server no longer advertises is a plain `404`; a server that cannot be asked, or 
 names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
 starts no model turn and reaches no other server. Codex 0.166.0 starts only the server it
 is asked about, so with two configured a read started that one alone; a build that ignored
-the name would list the others, and the read refuses such a reply rather than answer with
-another server's tool. It is evaluated read-only against the policy rules as a `tool`
+the name would list the others, and the read ignores the other servers' entries and
+never answers with another server's tool. It is evaluated read-only against the policy rules as a `tool`
 action on `mcp_app:<server>:tool_info` before any server starts: only an explicit deny
 refuses it (`403`, with an `action.deny` audit row); the default
 `ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
