@@ -203,6 +203,13 @@ impl Core {
             prompt,
             links,
         } = launch;
+        // Review callers may already have selected a correction checkout; policy uses the persisted lead.
+        let bus_lead = self.store.thread(&thread.id).map_err(internal)?;
+        if bus_lead.project_id != thread.project_id {
+            return Err(invalid(
+                "crew bus repository binding changed or is untrusted",
+            ));
+        }
         let selected_thread = if let Some(subject) = links.correction_subject.as_deref() {
             if links
                 .review
@@ -217,6 +224,27 @@ impl Core {
         } else {
             None
         };
+        if bus_lead.cwd != thread.cwd {
+            let recorded_correction = match (
+                links.correction_subject.as_deref(),
+                selected_thread.as_ref(),
+            ) {
+                (Some(subject), Some(selected)) => {
+                    selected.cwd == thread.cwd
+                        && self
+                            .store
+                            .crew_correction_for_task(subject)
+                            .map_err(internal)?
+                            .is_some()
+                }
+                _ => false,
+            };
+            if !recorded_correction {
+                return Err(invalid(
+                    "crew bus repository binding changed or is untrusted",
+                ));
+            }
+        }
         let thread = selected_thread.as_ref().unwrap_or(thread);
         // Only the core's recorded fix launch may install this internal byte check.
         for check in &key.checks {
@@ -266,6 +294,7 @@ impl Core {
         // Before anything is stored, routed or started: a crew that spent its turn budget starts
         // no new task. It never stops a task already running.
         self.refuse_spent_crew_budget(&brief)?;
+        self.crew_start_bus_limits(&bus_lead).await?;
         let now = crate::util::unix_now();
         // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
         // start is refused here with the reason, and no task, lease, run or ledger row exists.
@@ -290,6 +319,11 @@ impl Core {
             &thread.project_id,
         )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
+        // The commit the worker starts from is read once, before anything is stored, and the repository's data classes are
+        // read at it: the classes and the worker's base are one commit, and an edit made after this has no effect on the
+        // task. They are read before the task exists so a refusal that needs the router's answer (the daily budget) sees
+        // exactly the route the task would get.
+        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let trigger = links.crew_started.then(|| {
             links.trigger.clone().unwrap_or_else(|| {
                 tracing::warn!(
@@ -301,6 +335,32 @@ impl Core {
                 }
             })
         });
+        // Before anything is stored: a background crew's start is refused when the engine the router would give the run has
+        // spent the crew's daily budget (PR 2). It comes before the capacity pause, which would hold the event: a daily
+        // refusal is never queued.
+        if links
+            .trigger
+            .as_ref()
+            .is_some_and(|trigger| trigger.kind == PausedKind::Background)
+        {
+            self.refuse_background_daily(
+                &RouteInput {
+                    brief: &brief,
+                    run_id: run_id.clone(),
+                    created_at: created_at.clone(),
+                    role,
+                    lane: lane.clone(),
+                    lane_keeps_lead,
+                    author_engine: author_engine.clone(),
+                    lead_engine: CrewToken::new(thread.engine.clone()).ok(),
+                    default_engine: machine.default_engine.clone(),
+                    classes: Some(&classes),
+                },
+                &machine.views,
+                &thread.project_id,
+                &thread.id,
+            )?;
+        }
         self.capacity_start_check(
             &thread.project_id,
             links.crew_started.then_some((Priority::Low, true)),
@@ -351,9 +411,6 @@ impl Core {
             .set_crew_index_flags(&task.id, &text)
             .map_err(internal)?;
 
-        // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
-        // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
-        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let input = RouteInput {
             brief: &brief,
             run_id: run_id.clone(),
@@ -761,6 +818,16 @@ impl Core {
             .store
             .crew_worker_objects(brief.id.as_str(), member.as_str())
             .map_err(internal)?;
+        // Pending messages belong to the common turn-launch collector, not both the brief
+        // and that context. Previously delivered history remains part of the initial brief.
+        let pending: std::collections::HashSet<_> = self
+            .store
+            .held_crew_messages(brief.crew_id.as_str(), member.as_str())
+            .map_err(internal)?
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        objects.retain(|object| !matches!(object, WorkerObject::Message(message) if pending.contains(&message.id)));
         // The board and the messages of the whole crew can reach this worker, and a key added since
         // they were stored may cover them: such an object is left out, not the start refused.
         // The brief itself was checked against its own key at the start.

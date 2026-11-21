@@ -6,6 +6,7 @@
 
 mod guard;
 mod member;
+mod remove;
 mod status;
 mod tree;
 mod watch;
@@ -25,7 +26,7 @@ pub(crate) fn clean_relative(raw: &str) -> Result<String> {
 mod tests;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -169,6 +170,12 @@ impl ExplorerReads {
             .or_insert_with(|| Arc::new(Semaphore::new(STATUS_READS)))
             .clone()
     }
+}
+
+/// The dirty summary of the checkout at `root`, read now through the shared hardened
+/// runner. The VCS `refreshStatus` handler uses it so its answer is Git's current one.
+pub(crate) async fn dirty_summary(root: &Path) -> Result<orbyn_contracts::ExplorerDirty> {
+    Ok(status::read(root).await?.dirty)
 }
 
 /// A worktree of one project, as the routes resolve it.

@@ -40,6 +40,17 @@ try {
   const index = resolve(tauri, frontendDist, "index.html");
   const entry = statSync(index);
   if (!entry.isFile() || entry.size === 0) throw new Error(`Missing nonempty UI entry point: ${index}`);
+  // The engine host is staged by prepare-bundle (a real binary on macOS arm64, an empty placeholder elsewhere);
+  // Tauri fails the bundle step late when the file is missing, so say so here.
+  const triple = process.env.TAURI_ENV_TARGET_TRIPLE;
+  if (triple) {
+    const host = join(tauri, "binaries", `orbyn-engine-host-${triple}${triple.includes("windows") ? ".exe" : ""}`);
+    try {
+      statSync(host);
+    } catch {
+      throw new Error(`Missing engine host file: ${host}. Run prepare-bundle (it stages a placeholder where the host is not built).`);
+    }
+  }
   console.log("Desktop UI assets verified: relative frontendDist contains index.html.");
 } catch (error) {
   console.error(`Desktop UI asset preflight failed: ${error.message}`);

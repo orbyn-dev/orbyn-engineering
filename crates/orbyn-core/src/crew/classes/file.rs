@@ -30,7 +30,14 @@ pub const INVALID_RULE: &str = "crew.json invalid";
 pub const UNREADABLE_RULE: &str = "default branch unreadable";
 
 /// Keys other slices read. Anything else is reported and ignored.
-const KNOWN_KEYS: [&str; 5] = ["required", "lanes", "checks", "allowed_hosts", "classes"];
+const KNOWN_KEYS: [&str; 6] = [
+    "required",
+    "lanes",
+    "checks",
+    "allowed_hosts",
+    "classes",
+    "bus",
+];
 
 /// One rule: which paths, which engines may take them and why.
 #[derive(Clone, Debug)]
@@ -47,6 +54,8 @@ pub struct Rule {
 /// What the file says at one commit.
 #[derive(Clone, Debug, Default)]
 pub struct ClassFile {
+    /// The bus section from the same bounded blob. Its failure does not change path-class parsing.
+    pub(in crate::crew) bus: Option<Result<crate::crew::bus::config::RepoLimits, String>>,
     /// The commit read. `None` when no commit could be resolved.
     pub commit: Option<String>,
     /// The file's blob id. `None` when the file is missing, or could not be told apart from a missing one.
@@ -359,6 +368,7 @@ pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
     };
     match parse(&source) {
         Ok((rules, notes)) => ClassFile {
+            bus: Some(crate::crew::bus::config::parse(&source)),
             commit: Some(base.to_owned()),
             blob: Some(blob),
             rules,
@@ -366,7 +376,11 @@ pub async fn read_class_file(root: &Path, base: Option<&str>) -> ClassFile {
             notes,
             setup: false,
         },
-        Err(problem) => fail(Some(blob), problem),
+        Err(problem) => {
+            let mut file = fail(Some(blob), problem);
+            file.bus = Some(crate::crew::bus::config::parse(&source));
+            file
+        }
     }
 }
 
@@ -438,6 +452,9 @@ pub(in crate::crew) fn parse(source: &str) -> Result<(Vec<Rule>, Vec<String>), S
         })
         .collect();
     notes.sort();
+    notes.extend(crate::crew::autopilot::allowed_host_notes(
+        top.get("allowed_hosts"),
+    ));
     let Some(section) = top.get("classes") else {
         return Ok((Vec::new(), notes));
     };

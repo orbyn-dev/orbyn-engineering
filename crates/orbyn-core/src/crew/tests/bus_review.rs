@@ -85,6 +85,14 @@ async fn a_crew_message_starts_no_turn_and_is_never_the_persons_input() {
     assert_eq!(seen.len(), before + 1);
     // The worker's own first prompt is the lead's brief; what the bus added is the crew's.
     assert_eq!(seen[before].1, "crew", "{seen:?}");
+    // `live` means accepted by the input channel. Observe that earlier input before
+    // comparing counts: the fake records consumption in a separate receive task.
+    d.w.until("the accepted live message reaches the fake", |_| {
+        d.steered_to(&wa)
+            .iter()
+            .any(|text| text.contains("\nfor A\n"))
+    })
+    .await;
 
     // A's task moves on to verifying while its turn still takes input: the state is read when the
     // text is handed over, so nothing is handed over. It waits, and no turn starts.

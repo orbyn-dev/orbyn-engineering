@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use orbyn_contracts::{OpenInEditor, ResolveThreadPath, WriteFile};
+use orbyn_contracts::{ExplorerFileAction, OpenInEditor, ResolveThreadPath, WriteFile};
 use serde::Deserialize;
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
             "/api/threads/{id}/files/content",
             get(read_file).put(write_file),
         )
+        .route("/api/threads/{id}/files/mutate", post(mutate_file))
         .route("/api/threads/{id}/files/metadata", get(file_metadata))
         .route("/api/threads/{id}/files/outside", get(read_outside_file))
         .route("/api/threads/{id}/files/open", post(open_in_editor))
@@ -88,6 +89,21 @@ async fn write_file(
     ApiJson(body): ApiJson<WriteFile>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.write_file(&id, &body, LOCAL_USER).await?))
+}
+
+/// A person's create, rename or delete in the thread's checkout: the R1 `mutate`.
+/// The body is the same tagged action the explorer's worktree route takes, and Core
+/// uses the same guard and active-session fence for both.
+async fn mutate_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(action): ApiJson<ExplorerFileAction>,
+) -> ApiResult<StatusCode> {
+    state
+        .core
+        .mutate_thread_files(&id, &action, LOCAL_USER)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

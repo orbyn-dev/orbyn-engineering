@@ -91,6 +91,9 @@ pub struct CoreConfig {
     pub crew_merge_required_checks: Vec<String>,
     /// Explicit in-service watch schedule, never publication/merging. None is off; 60s..24h only.
     pub crew_merge_watch_interval: Option<Duration>,
+    /// The background listeners' periodic pass (schedule buckets due and CI heads watched), behind the Crew Preview
+    /// flag. None is off: no pass runs, not even at startup; 60s..24h only.
+    pub crew_background_watch_interval: Option<Duration>,
     /// Whether a crew worker's process starts under the restriction (and is refused where
     /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
     pub crew_confine_workers: bool,
@@ -117,6 +120,7 @@ impl CoreConfig {
             crew_tiers: None,
             crew_merge_required_checks: Vec::new(),
             crew_merge_watch_interval: None,
+            crew_background_watch_interval: None,
             crew_confine_workers: true,
         }
     }
@@ -174,6 +178,8 @@ pub struct Core {
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
     pub(crate) crew_merges: tokio::sync::Mutex<()>,
+    /// Crew Preview: the progress of the bisect a watch is running now. In memory only; the outcome is stored.
+    pub(crate) crew_bisect: std::sync::Mutex<Option<orbyn_contracts::AutopilotBisect>>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
     _lock: OwnerLock,
@@ -325,6 +331,7 @@ impl Core {
             crew_bus: crate::crew::Bus::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
+            crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
             _lock: lock,
         };

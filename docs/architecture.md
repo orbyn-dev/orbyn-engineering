@@ -22,7 +22,12 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
 ## Hard product rules
 
 1. Engines keep their own login. Orbyn runs the unmodified CLI, shows status and
-   opens the vendor's own sign-in flow. It never reads, stores or forwards tokens.
+   opens the vendor's own sign-in flow. It never reads, stores or forwards tokens, with
+   one owner-approved exception: an API key the person chooses to keep for an engine that
+   takes one (today only Cursor). It lives in the OS keychain alone (`orbyn-core`
+   `credentials`), only while that engine's setting is on, is never shown again, and
+   leaves the keychain only as the engine host's spawn environment, never in a frame, a
+   log or an answer. The person can remove it at any time.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
    sessions because it ignores OAuth login.
@@ -662,6 +667,21 @@ the service stops. Every forge write is audited before it happens. A stack is th
 bases are each other's heads; a stack action works from the bottom and stops at the
 first failure. Bulk close carries on past a refusal and reports each number.
 
+The explicit VCS methods beside the branch routes are `Local`: `POST
+.../vcs/refresh-status` reads the checkout's branch or detached HEAD, HEAD, tracking
+ref, ahead/behind and working-tree counts now, and drops the explorer's kept list and
+letters for the project so its next read is Git's too; `POST .../vcs/refs` creates a
+branch at an optional start without switching (the reference client's `createRef` is
+separate from `switchRef`); `POST .../vcs/refs/switch` moves the checkout to an
+existing ref; and `DELETE /api/projects/:id/worktrees/:worktree` removes one worktree
+it made (the reference client's `removeWorktree`). A folder outside Git is `400` for
+all four, and the removal needs the person key: it deletes files, so only a linked
+worktree under the project's sibling `<repo>-wt` root with no thread working in it is
+removed. The removal is refused, with no paths in the error, when `git status --porcelain
+--ignored` lists anything in the worktree (modified, untracked or ignored files such as
+`.env` and build output), because `git worktree remove` without force still deletes
+ignored files. Commits and branches are never touched.
+
 Linked pull requests are polled every two minutes, and a refresh links the open pull
 request of the checkout's branch. The link is kept per thread and number, so a pull
 request's own linked threads are the project's threads that linked it.
@@ -1053,6 +1073,9 @@ Missing or changed scopes and stale revisions return typed 409 errors, never a
 broader write. Group and checkout edits share the same selected-member metadata
 rule: incomplete repository metadata disables either selection unless its physical
 member is explicitly grouped Separately. These full-app routes do not add engine tool capabilities.
+A setting whose permission is not built fails closed: `enable_agent_device_access` resolves
+off and a write that turns it on is refused with a plain reason until agent device access
+exists (H27).
 
 Git and project-file observations precede SQLite. The immediate transaction fences
 registered IDs and paths, the observed catalog membership version, and each key's
@@ -1569,6 +1592,16 @@ different spelling of it on a case-insensitive disk is refused too. These saves 
 user's own edits, audited, and differ from rule 4, which covers what Orbyn adds on its
 own.
 
+`POST .../files/mutate` is the general write the reference client's project `mutate`
+needs: one tagged action creates a file or folder, moves (renames) an entry, or deletes
+a file or empty folder. It reuses the explorer's `ExplorerFileAction` contract, guard and
+active-session fence, scoped by thread instead of worktree id, so the same refusals hold:
+no overwrite, no recursive delete, no parent creation, no absolute or `..` path, no links
+or special files, and nothing in Git's folder, Orbyn's data folder or the library's
+`repo/`. It needs the person key like the other file writes, audits the attempt before
+any effect and its outcome after, and is refused while a run or an engine console is
+active in a folder that overlaps the checkout.
+
 `GET .../files/metadata?path=` answers what one entry is for the file browser without
 reading it: its kind, size, permission bits and modified time, and whether the entry
 stays inside the checkout. Every folder above it passes the same rules as a file read, so
@@ -1811,18 +1844,24 @@ any other worktree's file is read through the explorer, read-only, with a banner
 ## Renders
 
 An agent's page is stored in app data, never in the checkout:
-`<data_dir>/renders/<thread_id>/<render_id>/index.html`, with one `image-<n>.<ext>` beside
-it for each checkout picture the page named and `frame.sha256`, the digest of that
-render's frame token. One folder per render is the whole record — no database row — so the
+`<data_dir>/renders/<thread_id>/<render_id>/index.html`, with `frame.sha256`, the digest of that
+render's frame token. Checkout pictures the page names are inlined into `index.html` as
+`data:` URIs, not stored beside it (renders stored before that still hold `image-<n>.<ext>`). One folder per render is the whole record — no database row — so the
 folder is removed with its thread and the cap is counted from the folders that are there. A
 thread keeps 20 renders, and the oldest folder goes when a newer one is published.
 
 `POST /api/threads/:id/renders` takes `html` and answers with the render id, its route, its
-`frame_token`, the number of images copied and the stored size. A page over 512 KiB is
+`frame_token`, the number of images inlined, the stored size and `notes`. A page over 512 KiB is
 refused whole. Each `<img src>` is resolved with the same read rules every file route uses,
 so a path outside the checkout, a link out, `..`, `.git` or an untrusted folder is refused
-per image: that src is left exactly as written and the rest of the page still publishes. A
-picture over 8 MiB, or the 33rd one, is left as written too. A remote http(s) src is never
+per image: that src is left exactly as written and the rest of the page still publishes. An
+allowed picture becomes `data:<type>;base64,<bytes>`, typed from its extension. A relative URL
+cannot work in the frame: it resolves without the render id and frame token, and the opaque
+origin sends no cookie, so the page carries its pictures itself (the CSP already allows `data:`;
+an SVG in an `<img>` runs no script). The finished page, URIs included, must stay within 512
+KiB, so roughly 384 KiB of picture bytes fit. A picture over 8 MiB, the 33rd one, or one that
+would push the page past 512 KiB is left as written and named in `notes` with the reason; it is
+never dropped silently. A remote http(s) src is never
 fetched and is left as written; the policy below is what stops it loading. The scan matches
 the tag and the attribute name case-insensitively, in any attribute order, with single,
 double or unquoted values, and ignores `<script>`, `<style>` and comments. It is not an
@@ -1832,9 +1871,10 @@ seen.
 `GET /api/threads/:id/renders/:render_id` serves that page as `text/html; charset=utf-8`
 with `default-src 'none'; script-src 'unsafe-inline'; img-src 'self' data:; style-src
 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors
-'self'`, and every render response also carries `nosniff`,
+'self'; sandbox allow-scripts`, and every render response also carries `nosniff`,
 `Cross-Origin-Resource-Policy: same-origin`, `no-referrer` and `private, no-cache`.
-`.../:render_id/:file` serves only `image-<n>.<ext>`, typed from its extension; any other
+The CSP `sandbox allow-scripts` directive gives the page an opaque origin even when it is opened at top level (a new tab), where the frame's `sandbox` attribute does not apply.
+`.../:render_id/:file` serves only `image-<n>.<ext>` (stored by older publishes), typed from its extension; any other
 name, a separator in it, `frame.sha256` or another thread's render id is not found.
 
 A frame runs the page's own script, so the credential in its URL must not be the service
@@ -2654,7 +2694,36 @@ write lease for a reviewer and a lease that overlaps one another member holds no
 routes it (a decision stored with its task takes it to `routed`; a brief no engine can take goes to `needs_person` with
 the reasons), grants the brief's files and runs the worker through `delegate`, which takes it to `running`. The worker
 is sent the brief as data and nothing the `WorkerObject` type does not allow. One start runs at a time.
+Held worker messages are collected into guarded engine context at every actual ordinary turn launch
+(not a `/compact` or a goal command, which not every driver sends context with),
+including a resume after `needs_person`; they never alter the person's queue or `user_prompt`.
+Pending message IDs are left out of the initial brief to avoid sending them twice. Selection
+reads current pending rows and claims their IDs atomically; claims cover an early MCP inbox
+call and release on refusal or cancellation without a mutex held across engine startup.
+Only driver acceptance, a running run and current task/cancellation checks acknowledge them;
+enqueue acceptance does not. Guard-key read failure sends no held body. Final task notices
+list a bounded set of the ended worker's undelivered IDs and counts, without forwarding bodies
+or writing worker-delivery receipts. This metadata stays in the base notice if lead-held text
+must be omitted. Extra messages remain held under the existing bus caps.
+The context travels in the engine's own context channel (for Codex, its developer instructions),
+wrapped as data (`trust="data"`), so text from another crew member reaches the worker there and no
+longer in the user-role prompt.
 A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
+The protected `.orbyn/crew.json` may lower H4/H5 through `bus: { exchanges, posts }`.
+Start validates this section before admission. Existing whole-document, class and pin failures keep
+the router's `needs_person` refusal and audit without launching a worker. Each post (including an ask) and board write reads
+the lead checkout's committed HEAD and accepted default-branch rules through the bounded plain-blob
+reader and remembered ancestry check. The stricter repository values are combined with the current
+host ceilings, never written into the process-wide bus. Caller/lead/worker project bindings come from
+Store and are checked again after Git reads. No caller chooses a policy path or another project.
+Fields are optional nonnegative integers (zero refuses the first counted action). Missing file/section
+adds no limit; higher limits and unknown fields are ignored with bounded diagnostics quoting no values.
+Present null, invalid types, duplicate recognized fields, invalid JSON, links, oversized or unreadable
+policy fail closed. Read-only tools and cancellation remain available. A committed change affects a later
+operation, including active tasks; an uncommitted edit does not. Removing a lower limit can restore the host
+ceiling, and stored counts never reset. Restart rereads policy without a policy migration or epoch.
+Git reads occur before the bus writer lock, adding local Git work to each mutation; a concurrent rule
+change affects subsequent captures. Bus operations check but do not advance the existing default-branch pin.
 `crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
 the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the
 attempt, without naming the file, if a protected path changed, then runs every check of the key in the task's checkout, writes
@@ -2778,6 +2847,15 @@ entry still includes its apex. Loopback and explicitly listed local/private/inte
 remain supported. This checks syntax only, without DNS resolution or proof of destination ownership;
 the detector's heuristic and sandbox limits remain in the Autopilot group README.
 
+The committed repository validation view reports malformed `allowed_hosts` entries as indexed,
+nonblocking notes without echoing their values. Wrong JSON types still grant no configured hosts;
+invalid strings in an all-string list still leave valid entries usable. A one-label wildcard base
+gets a warning but remains admitted for the base and all descendants. This is not public-suffix
+checking: multi-label public suffixes are not distinguished. Host diagnostics are capped at 16
+plus an omission summary. The generic Rule notes UI independently displays at most 16 notes plus
+its own summary, separately from working-copy and default-branch warnings. Check again only
+re-fetches the selected project's validation view; no file write or permission change occurs.
+
 With Preview enabled the service registers request-scoped engine approvers. The lead's engine, family, model, effort and options
 are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
 data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
@@ -2842,7 +2920,9 @@ An unknown publication or merge only read-reconciles its existing intent. Target
 admitting a second one. The original merge remains standing until an exact corrective merge receipt projects its reverted state
 and area breaker once. Completion remains pending after parent projection until the idempotent area effect succeeds; the final receipt and revert ledger event commit together. Startup resumes this projector even when the corrective merge record already exists. HTTP Revert reports the actual persisted review state and no revert commit while the correction waits.
 The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and the periodic tick only read effects that already reached publishing and never run the lane. Queueing publishes nothing; the person's merge route does, pushing the verified candidate by its commit id (never forced) with fixed code-written pull request text. A completed correction's checkout and object reference are removed once no review reads them; the pushed branch on the forge is left for the person. No local main ref is moved.
-Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+Local compatibility watch retains its verified bisect/revert behavior. While it bisects, the watch read serves the progress it
+keeps in memory (the phase, the runs made and the bound, the window the cause is between and each answer), cleared when the
+watch ends; the outcome stays the stored rows and ledger. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
 without starting a provider turn. The digest is due at most once per local day, at or after the person's stored send time
 (`{time, utc_offset_minutes}`, a Person write), with that local day in the receipt; it sends nothing until a person has stored
@@ -2956,6 +3036,18 @@ text. A tab refreshes its title and declared icon about once a second on its own
 tab nobody watches still reads correctly; a read that a document swap drops skips that
 look and is retried on the next one. Watching gives no control: input needs a person to
 take the page first.
+Each browser session owns one CDP reader task, which routes replies to bounded
+waiters by command id and records document and bridge events in receive order.
+The preview pump releases the tab's session mutex while awaiting a frame; title,
+history and page actions can use the connection during that capture. The existing
+pump ticks continue metadata refresh while a frame waits. Frames keep
+their three-second deadline, ordinary commands thirty seconds and navigation
+readiness twenty seconds. A timed-out or cancelled command removes its waiter;
+late and unknown reply ids are discarded. Repeated frame timeouts produce
+rate-limited count-only diagnostics. Dropping the session cancels its reader and
+wakes pending callers. Browser-child ownership stays with the session, and
+dedicated-profile cleanup stays with the tab.
+Closing a tab cancels a pending pump capture before the pump releases its tab.
 The separate authenticated `/ws/preview/:thread/:tab/pointer` feed carries only
 server-created ephemeral cues after successful agent click or scroll input.
 Each tab owns a monotonic sequence; positions are frame pixels, with zoom applied
@@ -2981,7 +3073,15 @@ check does not restrict human input. Overlays are drawn into saved JPEG pixels,
 without injecting UI into the page or changing streamed JPEGs.
 
 Each recording owns its captured cues, writer, successful frame/byte counts and
-summary. Stop cancels new frames and waits for the actual blocking writer before
+summary. Before dispatching a screenshot, the session lock protects a snapshot of
+the recording owner, cues, local request time, document generation and explicit
+input-clear generation. That time describes the application's request boundary,
+not Chrome's pixel-capture instant. Input remains available while capture waits;
+later input belongs to subsequent requests. Completion checks focus again and
+may suppress frozen keys, while navigation or an explicit clear suppresses all
+frozen cues. It never substitutes the newer live overlay or clears its newer
+input. A stopped or replaced recording cannot receive the older request's frame
+or cues. Stop cancels new frames and waits for the actual blocking writer before
 returning the saved path and frame count; cancelling an awaiting caller cannot
 release the writer's compositor permit early. The frame loop never waits on
 encoding: it hands each frame to a one-slot per-recording queue where the newest
@@ -3187,6 +3287,21 @@ the newest nvm or `n` Node, and the npm prefix from `NPM_CONFIG_PREFIX` or `~/.n
 Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to the script
 it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
 wins, and a shim that points at a shell is refused.
+
+## Escape log capacity
+
+The escape log's person and scanner admissions use one store retention owner under
+an immediate transaction (details in [escapes](crew/escapes.md#capacity-pressure-and-writer-migration-686)).
+Capacity pressure may clear audited, oldest dismissed/possible history while retaining
+confirmed rows, check-bearing history, the current operation's target, and orphan events.
+Permanent merge tombstones preserve suppression after clearing. Possible tombstones
+allow an explicit person's mark; dismissed ones never return. Schema 57 gates event
+deletion with audited grants and fences older escape writers at the SQLite boundary.
+Gap changes reserve a below-cap possible escape's final visible event slot for its decision.
+Detail reads show the latest 100 events in ascending append order with truncation marked;
+the oldest-first provenance reader and stored history remain unchanged.
+Core check completion keeps its existing durable-event behavior, so admission limits
+are not a hard cap on all historical events. No new UI or manual clearing authority is added.
 
 ## Crew worker confinement
 
@@ -3472,6 +3587,7 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
 | `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
+| `DELETE /api/projects/:id/worktrees/:worktree` | Removes one linked worktree under the project's sibling `<repo>-wt` root when no thread works in it, through `git worktree remove` without force, after refusing when the worktree holds any modified, untracked or ignored file; `204`, `403` untrusted/locked/foreign/in use/holds local files, `404` unknown member, `400` for the primary checkout or a folder outside Git |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
@@ -3554,10 +3670,13 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
 | `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
+| `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
 | `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
+| `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
+| `POST /api/threads/:id/vcs/refs`, `POST .../vcs/refs/switch` | `CreateBranch` creates a branch at an optional start without switching (`201`); `SwitchBranch` switches (`204`); `400` invalid name or outside Git, `409 thread_busy`/`git_failed` |
 | `GET /api/forges?rescan=true` | `ForgeStatus[]`; the last answer for a minute, then read again in the background; `rescan` asks the CLIs now |
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |

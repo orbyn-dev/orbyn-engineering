@@ -81,6 +81,15 @@ fn options_probing(
             ("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()),
             // The most the service says, so the log check below reads a real log.
             ("ORBYN_LOG".into(), "debug".into()),
+            // A test may put a stand-in `gh` in `<dir>/bin` after the service has started.
+            (
+                "PATH".into(),
+                format!(
+                    "{}:{}",
+                    dir.path().join("bin").display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            ),
             (
                 "ORBYN_FAKE_PROBE_FILE".into(),
                 dir.path().join("probe.json").to_string_lossy().into_owned(),
@@ -442,6 +451,197 @@ async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
             "{path} refused the right key: {status} {reply}"
         );
     }
+}
+
+fn current_branch(folder: &Path) -> String {
+    let out = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(folder)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+fn has_branch(folder: &Path, name: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{name}")])
+        .current_dir(folder)
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+/// Ruling F3: the routes that move a checkout need the person key. A call with the service token alone is refused with
+/// `person_required` and changes nothing; the same call with the shell's key works.
+#[tokio::test]
+async fn the_routes_that_move_a_checkout_refuse_a_token_only_caller_and_take_the_key() {
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    let folder = f.dir.path().join("app");
+    let refused = |status: u16, body: &Value| {
+        assert_eq!(
+            (status, &body["code"]),
+            (403, &json!("person_required")),
+            "{body}"
+        );
+    };
+
+    // POST /api/threads/{id}/branches
+    let branches = format!("/api/threads/{}/branches", f.thread);
+    let (status, body) = f.call(&branches, json!({ "name": "feature" }), None).await;
+    refused(status, &body);
+    assert!(!has_branch(&folder, "feature"));
+    assert_eq!(current_branch(&folder), "main");
+    let (status, body) = f
+        .call(&branches, json!({ "name": "feature" }), Some(&key))
+        .await;
+    assert_eq!(status, 201, "{body}");
+    assert_eq!(current_branch(&folder), "feature");
+
+    // POST /api/threads/{id}/branches/switch
+    let switch = format!("{branches}/switch");
+    let (status, body) = f.call(&switch, json!({ "name": "main" }), None).await;
+    refused(status, &body);
+    assert_eq!(current_branch(&folder), "feature");
+    let (status, body) = f.call(&switch, json!({ "name": "main" }), Some(&key)).await;
+    assert_eq!(status, 204, "{body}");
+    assert_eq!(current_branch(&folder), "main");
+
+    // POST /api/threads/{id}/vcs/refs
+    let refs = format!("/api/threads/{}/vcs/refs", f.thread);
+    let (status, body) = f.call(&refs, json!({ "name": "topic" }), None).await;
+    refused(status, &body);
+    assert!(!has_branch(&folder, "topic"));
+    let (status, body) = f.call(&refs, json!({ "name": "topic" }), Some(&key)).await;
+    assert_eq!(status, 201, "{body}");
+    assert!(has_branch(&folder, "topic"));
+    assert_eq!(
+        current_branch(&folder),
+        "main",
+        "creating a ref does not switch"
+    );
+
+    // POST /api/threads/{id}/vcs/refs/switch
+    let switch = format!("{refs}/switch");
+    let (status, body) = f.call(&switch, json!({ "name": "topic" }), None).await;
+    refused(status, &body);
+    assert_eq!(current_branch(&folder), "main");
+    let (status, body) = f
+        .call(&switch, json!({ "name": "topic" }), Some(&key))
+        .await;
+    assert_eq!(status, 204, "{body}");
+    assert_eq!(current_branch(&folder), "topic");
+
+    // GET /api/threads/{id}/branches stays Local.
+    let listed = f.service.get(&branches).send().await.unwrap();
+    assert_eq!(listed.status(), 200);
+
+    // POST /api/projects/{id}/git/init, on a trusted folder that is not a repository.
+    let plain = f.dir.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    std::fs::write(plain.join("a.txt"), "one\n").unwrap();
+    let (status, project) = f
+        .service
+        .send("/api/projects/add", json!({ "path": plain }))
+        .await;
+    assert_eq!(status, 201, "{project}");
+    let id = project["id"].as_str().unwrap().to_owned();
+    let (status, body) = f
+        .service
+        .send(&format!("/api/projects/{id}/trust"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let init = format!("/api/projects/{id}/git/init");
+    let (status, body) = f.call(&init, json!({}), None).await;
+    refused(status, &body);
+    assert!(!plain.join(".git").exists());
+    let (status, body) = f.call(&init, json!({}), Some(&key)).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(plain.join(".git").exists());
+}
+
+/// Ruling F3: a pull checkout with `worktree: false` runs `git switch` in the project's own checkout, so it needs the
+/// person key and is refused before the fetch; `worktree: true` leaves that checkout alone and stays `Local`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_pull_checkout_that_moves_the_main_checkout_needs_the_key() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    let folder = f.dir.path().join("app");
+
+    // A stand-in `gh` that answers `pr view` with a pull whose branch is `feature`, and a bare remote that has it.
+    let bin = f.dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = f.dir.path().join("gh-log");
+    let gh = format!(
+        r#"#!/bin/sh
+echo "$@" >> "{}"
+case "$1 $2" in
+  "pr view") echo '{{"number":12,"title":"T","url":"https://github.com/o/r/pull/12","state":"OPEN","headRefName":"feature","baseRefName":"main","author":{{"login":"me"}},"isDraft":false,"labels":[],"statusCheckRollup":[]}}' ;;
+esac
+"#,
+        log.display()
+    );
+    std::fs::write(bin.join("gh"), gh).unwrap();
+    std::fs::set_permissions(bin.join("gh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let remote = f.dir.path().join("remote.git");
+    run_git(
+        f.dir.path(),
+        &["init", "-q", "--bare", remote.to_str().unwrap()],
+    );
+    run_git(&folder, &["branch", "feature"]);
+    run_git(
+        &folder,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&folder, &["push", "-q", "origin", "feature", "main"]);
+    run_git(&folder, &["branch", "-D", "feature"]);
+    // A GitHub-shaped origin, so the forge is `gh`; git still fetches from the bare remote.
+    run_git(
+        &folder,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", remote.display()),
+            "https://github.com/o/r.git",
+        ],
+    );
+    run_git(
+        &folder,
+        &["remote", "set-url", "origin", "https://github.com/o/r.git"],
+    );
+    let checkout = format!("/api/projects/{}/pulls/12/checkout", f.project);
+
+    // worktree false, token only: refused with nothing changed (no fetch, so no local branch, and the forge is not asked).
+    let (status, body) = f.call(&checkout, json!({ "worktree": false }), None).await;
+    assert_eq!(
+        (status, &body["code"]),
+        (403, &json!("person_required")),
+        "{body}"
+    );
+    assert!(!has_branch(&folder, "feature"), "a refused call fetched");
+    assert_eq!(current_branch(&folder), "main");
+    assert!(std::fs::read_to_string(&log).unwrap_or_default().is_empty());
+
+    // worktree false, with the key: switches the project's checkout.
+    let (status, body) = f
+        .call(&checkout, json!({ "worktree": false }), Some(&key))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(current_branch(&folder), "feature");
+    run_git(&folder, &["switch", "-q", "main"]);
+
+    // worktree true, token only: allowed, and the project's checkout stays where it was.
+    let (status, body) = f.call(&checkout, json!({ "worktree": true }), None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        Path::new(body["path"].as_str().unwrap())
+            .join("a.txt")
+            .exists()
+    );
+    assert_eq!(current_branch(&folder), "main");
 }
 
 /// A browser cannot set a header on a socket and the key must not be in the URL, so the page offers it as the subprotocol

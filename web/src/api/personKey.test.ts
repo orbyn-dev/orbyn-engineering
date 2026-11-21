@@ -24,6 +24,9 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("POST", "/api/threads/t1/console")).toBe(true);
     expect(sendsPersonKey("PATCH", "/api/threads/t1")).toBe(true);
     expect(sendsPersonKey("PUT", "/api/threads/t1/files/content")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/files/mutate")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/projects/p/worktrees/w")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refresh-status")).toBe(false);
     expect(sendsPersonKey("POST", "/api/account/sign-in/digits")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/tasks/t1/merge")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/autopilot/merge-queue/t1/resolve")).toBe(true);
@@ -41,6 +44,16 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("GET", "/api/crew/escapes/esc_1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/projects/p1/worker-provider")).toBe(false);
     expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
+    // The routes that move a checkout (ruling F3).
+    expect(sendsPersonKey("POST", "/api/projects/p1/git/init")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/branches")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/branches/switch")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs/switch")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/threads/t1/branches")).toBe(false);
+    // A pull checkout carries the key for both modes; the service reads it only for `worktree: false`.
+    expect(sendsPersonKey("POST", "/api/projects/p1/pulls/12/checkout")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/pulls/12/checkout")).toBe(false);
     for (const [method, path] of [
       ["GET", "/api/approvals/a1/decide"],
       ["GET", "/api/approvals?state=pending"],
@@ -68,9 +81,9 @@ describe("which requests carry the person key", () => {
     }
     const person = table.protected.filter(([, , kind]) => kind === "person").map(([m, p]) => `${m} ${p}`);
     for (const row of person) expect(listed.has(row), `${row} is a person route the page does not send the key to`).toBe(true);
-    // The two field-level routes are the only local rows in the list.
+    // The field-level routes are the only local rows in the list.
     const local = PERSON_ROUTES.filter(([method, pattern]) => table.protected.some(([m, p, kind]) => m === method && p === pattern && kind === "local"));
-    expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/threads/{id}/runs"]);
+    expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/projects/{id}/pulls/{number}/checkout", "POST /api/threads/{id}/runs"]);
   });
 });
 

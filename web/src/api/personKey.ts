@@ -112,6 +112,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["PUT", "/api/settings/secrets/surfaces"],
   // Projects, approvals and questions.
   ["POST", "/api/approvals/{id}/decide"],
+  ["POST", "/api/projects/{id}/git/init"],
   ["POST", "/api/projects/{id}/publish"],
   ["POST", "/api/projects/{id}/pulls/close"],
   ["PATCH", "/api/projects/{id}/pulls/{number}"],
@@ -125,6 +126,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/projects/{id}/pulls/{number}/threads/{thread}/resolve"],
   ["POST", "/api/projects/{id}/pulls/{number}/merge"],
   ["POST", "/api/projects/{id}/pulls/{number}/review"],
+  ["DELETE", "/api/projects/{id}/worktrees/{worktree}"],
   ["POST", "/api/projects/{id}/trust"],
   ["POST", "/api/projects/{id}/workflows/{run}/approve"],
   ["POST", "/api/questions/{id}/answer"],
@@ -138,16 +140,23 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["GET", "/ws/terminal/{thread_id}/{terminal}"],
   // Threads: console, terminals, scripts, files, computer use, pull requests, permission mode.
   ["PATCH", "/api/threads/{id}"],
+  ["POST", "/api/threads/{id}/branches"],
+  ["POST", "/api/threads/{id}/branches/switch"],
   ["POST", "/api/threads/{id}/computer"],
   ["POST", "/api/threads/{id}/console"],
+  ["POST", "/api/threads/{id}/files/mutate"],
   ["PUT", "/api/threads/{id}/files/content"],
   ["POST", "/api/threads/{id}/pulls/{number}/merge"],
   ["POST", "/api/threads/{id}/pulls/{number}/review"],
   ["POST", "/api/threads/{id}/scripts"],
   ["POST", "/api/threads/{id}/terminals"],
+  ["POST", "/api/threads/{id}/vcs/refs"],
+  ["POST", "/api/threads/{id}/vcs/refs/switch"],
   // Field-level routes (`FIELD_LEVEL` in classes.rs): `Local` as a whole, and the service reads the key for part of the body only.
   // File actions: the key is read for every action except a plain read.
   ["POST", "/api/projects/{id}/worktrees/{worktree}/file-actions"],
+  // Pull checkout: only when the body has `worktree: false`, which switches the project's own checkout. The web sends the key for both.
+  ["POST", "/api/projects/{id}/pulls/{number}/checkout"],
   // Runs and AG-UI resume: only when the body raises `permission_mode` (or has a non-empty `resume`).
   ["POST", "/api/threads/{id}/runs"],
   ["POST", "/agui/threads/{id}"],

@@ -173,10 +173,15 @@ workspace and account routes, is closed by step 3.
 - **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (96 routes):
   Account, Crew's person writes, engines, updates, workspace, shell actions, scheduled tasks, preferences, policy rules,
   redaction settings, questions, project trust and publish, workflow approve, pull merges and reviews, the explorer, the
-  console, terminals, scripts, file writes and computer use. A test (`routes/tests.rs`) fails for a `Person` route that is
+  console, terminals, scripts, file writes, computer use and the routes that move a checkout (`POST /api/projects/{id}/git/init`,
+  `POST /api/threads/{id}/branches` and `/branches/switch`, `POST /api/threads/{id}/vcs/refs` and `/vcs/refs/switch`; ruling F3:
+  a service-token agent cannot move the checkout under the person; `GET .../branches` stays `Local`). A test (`routes/tests.rs`) fails for a `Person` route that is
   not enforced, and for an `ENFORCED` line that is not a `Person` row. The web side is the same list in
   `PERSON_ROUTES` (`web/src/api/personKey.ts`); its test fails if the list differs from the service's person rows.
-- **Field-level.** `FIELD_LEVEL` lists the two routes that stay `Local` as a whole and check the key for part of the body:
+- **Field-level.** `FIELD_LEVEL` lists the three routes that stay `Local` as a whole and check the key for part of the body:
+  `POST /api/projects/{id}/pulls/{number}/checkout` when `worktree` is false (ruling F3: that runs `git switch` in the
+  project's own checkout; the check comes before the fetch, so a refused call changes nothing; `worktree: true` adds a
+  worktree and stays `Local`; the web sends the key on this route for both modes),
   `POST /api/threads/{id}/runs` when `permission_mode` is looser than the thread's current mode (`Supervised`, `AutoEdits`,
   `Auto`, `FullAccess`, loosest last; keeping or lowering it needs no key), and `POST /agui/threads/{id}` when `resume[]`
   is non-empty. `PATCH /api/threads/{id}` is `Person` as a whole, so any patch needs the key.
@@ -218,8 +223,9 @@ The `Person` routes are closed to a token-only worker. This is what #441 still h
 - [ ] **`POST /api/diagnostics/processes/{pid}/stop`** is `Local`. It can stop any process in the service's own tree, so a
   token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
 - [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
-  .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: none of it writes to the forge.
-  Be exact about what it does do: `checkout` runs local `git fetch`, `switch` and `worktree add`, and `work` and `guide`
+  .../pulls/{number}`, and a pull's `work`, `guide` and `viewed`, and `checkout` with `worktree: true`) stays `Local`: none
+  of it writes to the forge. Be exact about what it does do: `checkout` runs local `git fetch` and `worktree add` (with
+  `worktree: false` it also runs `switch`, which is why that mode needs the key, see "Field-level"), and `work` and `guide`
   create a worktree or start an engine thread at the default permission mode. That grants nothing beyond what the open
   `Local` runs route already does.
 - [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).

@@ -48,12 +48,15 @@ pub(super) fn answer_request(
     let cancel = cancel.clone();
     tokio::spawn(async move {
         let (kind, target, summary) = classify(&params);
-        let paths = if kind == ActionKind::FileChange {
-            vec![target.clone()]
+        let paths = gate_paths(&params, kind);
+        let verdict = if kind == ActionKind::FileChange && paths.is_empty() {
+            Verdict::Deny(
+                "Orbyn declined this change: the agent did not say which file it touches."
+                    .to_owned(),
+            )
         } else {
-            Vec::new()
+            ask_paths(&events, kind, target, summary, params.clone(), paths).await
         };
-        let verdict = ask_paths(&events, kind, target, summary, params.clone(), paths).await;
         let outcome = permission_outcome(&params, &verdict, cancel.is_cancelled());
         let _ = rpc.respond(id, json!({ "outcome": outcome })).await;
     });
@@ -87,6 +90,23 @@ pub(super) fn permission_outcome(params: &Value, verdict: &Verdict, cancelled: b
             || json!({ "outcome": "cancelled" }),
             |id| json!({ "outcome": "selected", "optionId": id }),
         )
+}
+
+/// Every file a file-changing request names, so the gate scope-checks all of them.
+/// Empty for any other kind, and for a file change that names none: that one is
+/// declined by the caller, never gated as a path derived from its title.
+pub(super) fn gate_paths(params: &Value, kind: ActionKind) -> Vec<String> {
+    if kind != ActionKind::FileChange {
+        return Vec::new();
+    }
+    params
+        .pointer("/toolCall/locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|location| location.get("path").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
 }
 
 pub(super) fn classify(params: &Value) -> (ActionKind, String, String) {

@@ -24,6 +24,11 @@ pub struct BackgroundRow {
     pub trigger_settings: Value,
     pub budget_turns: u32,
     pub budget_minutes: u32,
+    /// What each engine may spend on the crew in a day; 0 and 0 is a crew from before the daily budget.
+    pub daily_runs: u32,
+    pub daily_turns: u32,
+    /// The person's clock in minutes east of UTC, so the daily budget resets at their midnight.
+    pub utc_offset_minutes: i32,
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -38,6 +43,9 @@ pub struct NewBackground<'a> {
     pub trigger_settings: &'a Value,
     pub budget_turns: u32,
     pub budget_minutes: u32,
+    pub daily_runs: u32,
+    pub daily_turns: u32,
+    pub utc_offset_minutes: i32,
 }
 
 /// One run as stored.
@@ -84,6 +92,9 @@ fn row(row: &Row<'_>) -> rusqlite::Result<BackgroundRow> {
         })?,
         budget_turns: row.get("budget_turns")?,
         budget_minutes: row.get("budget_minutes")?,
+        daily_runs: row.get("daily_runs")?,
+        daily_turns: row.get("daily_turns")?,
+        utc_offset_minutes: row.get("utc_offset_minutes")?,
         enabled: row.get::<_, i64>("enabled")? == 1,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
@@ -135,6 +146,15 @@ fn crew_in(tx: &Transaction<'_>, id: &str) -> Result<BackgroundRow> {
     tx.query_row("SELECT * FROM crew_background WHERE id = ?1", [id], row)
         .optional()?
         .ok_or_else(|| CoreError::NotFound("background crew".into()))
+}
+
+fn daily_in(tx: &Transaction<'_>, crew: &str, day: &str, engine: &str) -> Result<(u32, u32)> {
+    Ok(tx.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(turns_spent), 0) FROM crew_background_daily
+         WHERE background_id = ?1 AND day = ?2 AND engine = ?3",
+        params![crew, day, engine],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)
 }
 
 fn running_in(tx: &Transaction<'_>, crew: &str) -> Result<Option<BackgroundRunRow>> {
@@ -321,13 +341,16 @@ impl Store {
                     "trigger": new.trigger_kind,
                     "budget_turns": new.budget_turns,
                     "budget_minutes": new.budget_minutes,
+                    "daily_runs": new.daily_runs,
+                    "daily_turns": new.daily_turns,
+                    "utc_offset_minutes": new.utc_offset_minutes,
                 }),
             )?;
             tx.execute(
                 "INSERT INTO crew_background
-                 (id, project_id, name, template, trigger_kind, trigger_settings, budget_turns, budget_minutes, enabled,
-                  created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)",
+                 (id, project_id, name, template, trigger_kind, trigger_settings, budget_turns, budget_minutes,
+                  daily_runs, daily_turns, utc_offset_minutes, enabled, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?12)",
                 params![
                     id,
                     new.project_id,
@@ -337,6 +360,9 @@ impl Store {
                     settings,
                     new.budget_turns,
                     new.budget_minutes,
+                    new.daily_runs,
+                    new.daily_turns,
+                    new.utc_offset_minutes,
                     stamp
                 ],
             )?;
@@ -646,6 +672,65 @@ impl Store {
         })
     }
 
+    /// The background crews of one trigger kind, by name. The listeners' observation set; a kind nothing can start
+    /// (issue labels, dependency updates) has no listener and is never listed by one.
+    pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
+        let conn = self.reader();
+        let mut statement =
+            conn.prepare("SELECT * FROM crew_background WHERE trigger_kind = ?1 ORDER BY name COLLATE NOCASE, id")?;
+        let rows = statement
+            .query_map([kind], row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// First-write-wins claim of one background event: true when this firing is new, false when the same event has
+    /// already fired. The row is never removed, so a repeat of the same event starts nothing new, and a firing that
+    /// was refused keeps its row: nothing is retried on a timer (docs/crew/background-engine-start.md, section 2).
+    pub fn claim_background_event(&self, identity: &str) -> Result<bool> {
+        self.commit(|tx, _| {
+            let n = tx.execute(
+                "INSERT OR IGNORE INTO crew_background_events (identity, claimed_unix) VALUES (?1, ?2)",
+                params![identity, now()],
+            )?;
+            Ok(n == 1)
+        })
+    }
+
+    /// The newest schedule bucket this crew has fired (claimed), or none. A bucket at or before it never fires again, so a clock
+    /// that moves back cannot re-fire a bucket the crew already had, and a bucket that was only claimed counts as fired.
+    pub fn latest_schedule_bucket(&self, crew: &str) -> Result<Option<i64>> {
+        let low = format!("schedule:{crew}:");
+        // ':' is followed by ';' in byte order, so this range is every identity that starts with `low`.
+        let high = format!("schedule:{crew};");
+        let conn = self.reader();
+        Ok(conn.query_row(
+            "SELECT MAX(CAST(substr(identity, ?3) AS INTEGER)) FROM crew_background_events WHERE identity >= ?1 AND identity < ?2",
+            params![low, high, low.chars().count() as i64 + 1],
+            |row| row.get::<_, Option<i64>>(0),
+        )?)
+    }
+
+    /// A listener firing the start refused, as one audit row beside the refusal: which listener fired and a fixed category of the
+    /// refusal, never the refusal's text and never any event text. `kind` is `schedule` or `ci`, and `reason` is one of the
+    /// listener's own words.
+    pub fn audit_background_listener_refusal(
+        &self,
+        crew: &str,
+        kind: &str,
+        reason: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            audit(
+                tx,
+                "crew",
+                "crew.background.listener.refused",
+                crew,
+                json!({ "listener": kind, "reason": reason }),
+            )
+        })
+    }
+
     /// One run by id.
     pub fn background_run(&self, id: &str) -> Result<Option<BackgroundRunRow>> {
         Ok(self
@@ -832,6 +917,160 @@ impl Store {
     /// Ends a running run: stopped for a reason, or finished with work for review. Audited in the same transaction.
     pub fn end_background_run(&self, run: &str, end: RunEnd<'_>) -> Result<BackgroundRunRow> {
         self.end_background_run_spent(run, end, None)
+    }
+
+    /// What one engine has spent on a crew in a day: `(runs, turns)`. The runs are the ledger's rows, one per run the engine
+    /// worked that day, so an engine's count never touches another's.
+    pub fn background_daily_spent(
+        &self,
+        crew: &str,
+        day: &str,
+        engine: &str,
+    ) -> Result<(u32, u32)> {
+        Ok(self.reader().query_row(
+            "SELECT COUNT(*), COALESCE(SUM(turns_spent), 0) FROM crew_background_daily
+             WHERE background_id = ?1 AND day = ?2 AND engine = ?3",
+            params![crew, day, engine],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
+    }
+
+    /// One engine turn of one run of the crew: the run's row for `(day, engine)` gains a turn, made when it does not exist yet.
+    /// Audited in the same transaction. Returns what the engine has spent on the crew that day: `(runs, turns)`.
+    pub fn add_background_daily_turn(
+        &self,
+        crew: &str,
+        run: &str,
+        day: &str,
+        engine: &str,
+    ) -> Result<(u32, u32)> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "INSERT INTO crew_background_daily (background_id, run_id, day, engine, turns_spent)
+                 VALUES (?1, ?2, ?3, ?4, 1)
+                 ON CONFLICT (run_id, day, engine) DO UPDATE SET turns_spent = turns_spent + 1",
+                params![crew, run, day, engine],
+            )?;
+            let spent = daily_in(tx, crew, day, engine)?;
+            audit(
+                tx,
+                "crew",
+                "crew.background.daily.spend",
+                crew,
+                json!({
+                    "run": run,
+                    "day": day,
+                    "engine": engine,
+                    "runs": spent.0,
+                    "turns": spent.1,
+                }),
+            )?;
+            Ok(spent)
+        })
+    }
+
+    /// A new event of a crew refused because an engine's daily budget is spent: the audit row that reads beside the refusal, with
+    /// the engine and when the person's day turns.
+    pub fn audit_background_daily_refusal(
+        &self,
+        crew: &str,
+        engine: &str,
+        day: &str,
+        resets_at: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            audit(
+                tx,
+                "crew",
+                "crew.background.daily.refused",
+                crew,
+                json!({
+                    "engine": engine,
+                    "day": day,
+                    "reason": format!("daily budget spent: {engine}"),
+                    "resets_at": resets_at,
+                }),
+            )
+        })
+    }
+
+    /// One engine turn of a running run, counted as it happens: the run's `turns_spent` gains one and its `minutes_spent` becomes
+    /// the wall minutes given. A run that is not running is left alone (a late turn after its end counts for the day, not the run).
+    /// Audited in the same transaction.
+    pub fn count_background_run_turn(&self, run: &str, minutes: u32) -> Result<()> {
+        self.commit(|tx, _| {
+            let Some(current) = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?
+            else {
+                return Ok(());
+            };
+            if current.state != "running" {
+                return Ok(());
+            }
+            audit(
+                tx,
+                "crew",
+                "crew.background.run.turn",
+                &current.background_id,
+                json!({
+                    "run": run,
+                    "turns_spent": current.turns_spent + 1,
+                    "minutes_spent": minutes,
+                }),
+            )?;
+            tx.execute(
+                "UPDATE crew_background_runs SET turns_spent = ?2, minutes_spent = ?3, updated_at = ?4
+                 WHERE id = ?1 AND state = 'running'",
+                params![run, current.turns_spent + 1, minutes, now()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Ends a running run at its crew's daily cap, stopped `budget` and waiting for the person with the sentence given, which carries
+    /// the engine, what it spent that day (an overshoot is shown, never clamped) and when the day turns. `spent` replaces the run's
+    /// totals in the same write. Audited in the same transaction.
+    pub fn end_background_run_daily(
+        &self,
+        run: &str,
+        review: &str,
+        spent: (u32, u32),
+    ) -> Result<BackgroundRunRow> {
+        self.commit(|tx, _| {
+            let current = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?
+                .ok_or_else(|| CoreError::NotFound("background run".into()))?;
+            if current.state != "running" {
+                return Err(CoreError::RunClosed);
+            }
+            let current = BackgroundRunRow {
+                turns_spent: spent.0,
+                minutes_spent: spent.1,
+                ..current
+            };
+            end_run(
+                tx,
+                &current,
+                RunEnd::Stopped("budget"),
+                Some(review),
+                "crew",
+            )?;
+            Ok(tx.query_row(
+                "SELECT * FROM crew_background_runs WHERE id = ?1",
+                [run],
+                run_row,
+            )?)
+        })
     }
 
     /// `end_background_run`, recording what the run spent in the same write: `(turns, minutes)` replace the totals. Unlike

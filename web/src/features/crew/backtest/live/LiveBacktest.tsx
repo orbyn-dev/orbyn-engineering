@@ -6,6 +6,7 @@ import { useCrewPreview } from "../../autopilot/approvals/useCrew";
 import { Frame } from "../../shared/Frame";
 import { LiveEstimate } from "./LiveEstimate";
 import { LiveReport } from "./LiveReport";
+import { LivePage } from "./LivePage";
 
 /** The page card these screens draw in, so a state before a project is known is not flush to the corner. */
 function Card({ children }: { children: ReactNode }) {
@@ -19,7 +20,7 @@ function Card({ children }: { children: ReactNode }) {
  * a person chooses another from the page's project chip. A report frame names its run in the hash ('?id='), so it needs no
  * project of its own: the run says which project it belongs to.
  */
-export function LiveBacktest({ view, id }: { view: "estimate" | "report"; id?: string }) {
+export function LiveBacktest({ view, id }: { view: "page" | "estimate" | "report"; id?: string }) {
   const on = useCrewPreview();
   const projects = useVisibleProjects();
   const failure = useWorkspace((state) => state.projects.error);
@@ -33,6 +34,7 @@ export function LiveBacktest({ view, id }: { view: "estimate" | "report"; id?: s
     return <Card>{failure ? <ErrorState title="Can’t read the projects" failure={failure} onRetry={() => void refresh()} /> : <Loading label="Reading projects" rows={2} />}</Card>;
   const project: Project | undefined = projects.find((entry) => entry.id === chosen) ?? projects[0];
   if (!project) return <Card><Empty title="No project to show" /></Card>;
+  if (view === "page") return <LivePage key={project.id} project={project} projects={projects} onPick={setChosen} />;
   if (view === "estimate") return <LiveEstimate key={project.id} project={project} projects={projects} onPick={setChosen} />;
   return <LiveReport id={id ?? ""} projects={projects} onPick={setChosen} />;
 }

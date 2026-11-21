@@ -37,7 +37,7 @@ use super::thresholds::escape_thresholds;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::source_control::git::git_hardened_capped;
-use crate::store::{ESCAPES_PER_PROJECT_MAX, EVENTS_PER_PROJECT_MAX, MergeRecord, PossibleEscape};
+use crate::store::{MergeRecord, PossibleEscape};
 
 /// The most merges one scan looks at.
 pub const MERGES_PER_SCAN: u32 = 50;
@@ -580,9 +580,7 @@ impl Core {
             let is_full = match full.get(project) {
                 Some(known) => *known,
                 None => {
-                    let (escapes, events) = self.store.crew_escape_room(project)?;
-                    let is_full =
-                        escapes >= ESCAPES_PER_PROJECT_MAX || events >= EVENTS_PER_PROJECT_MAX;
+                    let is_full = !self.store.crew_escape_can_record(project)?;
                     if is_full {
                         tracing::warn!(project = %project, "the escape log is full; the scan wrote nothing for it");
                     }

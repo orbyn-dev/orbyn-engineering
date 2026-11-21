@@ -186,7 +186,7 @@ pub fn screen<'a>(
     if view.turned_off {
         return Err(rejection(
             view,
-            RejectionWhy::NotInstalled,
+            RejectionWhy::Disabled,
             format!("{name} is turned off in Settings."),
         ));
     }

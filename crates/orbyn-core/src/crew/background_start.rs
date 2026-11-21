@@ -132,13 +132,27 @@ fn refusal(error: CrewError) -> CoreError {
 }
 
 impl Core {
-    /// Starts one run of an enabled background crew by hand: the `manual` event. The run is Low priority and Crew-started, so review
-    /// capacity may refuse it (nothing is stored then, and the refusal is a held `background` start); a crew that is off, a trigger
-    /// kind nothing can start yet, a crew that already has a run in progress and a project that is not trusted are refused with a plain
-    /// reason. Behind the Crew Preview flag.
+    /// Starts one run of an enabled background crew by hand: the `manual` event, the same start a listener firing takes with
+    /// its own event key. Behind the Crew Preview flag.
     pub async fn crew_background_run_now(
         self: &Arc<Self>,
         id: &str,
+        actor: &str,
+    ) -> Result<wire::BackgroundRun> {
+        self.crew_background_start(id, "manual", actor).await
+    }
+
+    /// Opens one run of an enabled background crew and starts it, whatever event asked for it. `event` names the firing in the
+    /// start's `PausedTrigger` key (`<crew>:<event>`) and nothing else: it is never part of the brief, the worker's prompt or any
+    /// text a model reads, which stays code-owned exactly as the manual start's is. `actor` is written on the run's audit rows and is
+    /// always a code-owned constant or the person's own actor, never event text. The run is Low priority and Crew-started, so
+    /// review capacity may refuse it (nothing is stored then, and the refusal is a held `background` start); a crew that is off, a
+    /// trigger kind nothing can start yet, a crew that already has a run in progress and a project that is not trusted are refused
+    /// with a plain reason. Behind the Crew Preview flag.
+    pub(crate) async fn crew_background_start(
+        self: &Arc<Self>,
+        id: &str,
+        event: &str,
         actor: &str,
     ) -> Result<wire::BackgroundRun> {
         self.crew_preview_only()?;
@@ -244,7 +258,7 @@ impl Core {
                     crew_started: true,
                     trigger: Some(PausedTrigger {
                         kind: PausedKind::Background,
-                        key: format!("{}:manual", crew.id),
+                        key: format!("{}:{event}", crew.id),
                     }),
                 },
             })
@@ -425,6 +439,15 @@ impl Core {
         }
     }
 
+    /// What a task's run spent: the worker's turns (the runs of its worker thread) and the wall minutes since the task began.
+    pub(super) fn crew_background_run_spent(&self, task: &CrewTask) -> (u32, u32) {
+        let turns = self.store.crew_worker_turns(&task.id).unwrap_or(0);
+        let minutes = crate::util::parse_time(&task.created_at).map_or(0, |at| {
+            u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
+        });
+        (turns, minutes)
+    }
+
     /// Whether `thread_id` is the lead thread of a background run.
     pub(super) fn crew_background_lead(&self, thread_id: &str) -> bool {
         matches!(self.store.background_run(thread_id), Ok(Some(_)))
@@ -488,10 +511,7 @@ impl Core {
         if run.state != "running" {
             return;
         }
-        let turns = self.store.crew_worker_turns(&task.id).unwrap_or(0);
-        let minutes = crate::util::parse_time(&task.created_at).map_or(0, |at| {
-            u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
-        });
+        let (turns, minutes) = self.crew_background_run_spent(task);
         if let Err(error) =
             self.store
                 .end_background_run_spent(&run.id, end, Some((turns, minutes)))

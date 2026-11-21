@@ -11,6 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::json;
 
+use super::background_daily::DailyCheck;
 use super::guard::{key_needles, refuse_leak, refuse_secret};
 use super::leases::{core_author, internal, timestamp};
 use super::lifecycle::Next;
@@ -163,7 +164,12 @@ impl Core {
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
         // prompt is accepted; if it is refused with them, the result goes alone.
         let held = self.held_for_lead(run, result.crew_id.as_str());
-        let notice = lead_message(result);
+        let mut notice = lead_message(result);
+        if result.r#final
+            && let Ok(Some(task)) = self.store.crew_task(result.brief.as_str())
+        {
+            notice.push_str(&self.ended_worker_held_summary(&task, run));
+        }
         let full = format!("{notice}{}", held.text());
         match self.runs.enqueue(&run.lead_thread_id, &full, &[]) {
             Ok(_) => self.commit_held(&held),
@@ -310,6 +316,21 @@ impl Core {
             }
             return;
         }
+        // No engine takes a hard limit, so a run whose engine reached the crew's daily cap is cancelled here, at the
+        // cap, instead of being retried: the run ends 'budget' waiting for the person, with what the engine spent
+        // today shown and when the day turns (docs/crew/background-engine-start.md, PR 2).
+        let daily = self.crew_background_daily_check(task);
+        if !matches!(daily, DailyCheck::Clear) {
+            let why = match &daily {
+                DailyCheck::Cap(cap) => format!(
+                    "Engine {} reached this crew's daily budget: {} of its {} turns today. The budget resets at {}.",
+                    cap.engine, cap.turns, cap.cap, cap.reset
+                ),
+                _ => "The crew's daily budget could not be read, so the run stopped instead of going on.".to_owned(),
+            };
+            self.stop_background_daily(task, &why, judged);
+            return;
+        }
         let (moved, next) = match self.store.fail_crew_verification(&task.id, fingerprint) {
             Ok(done) => done,
             Err(error) => {
@@ -356,6 +377,35 @@ impl Core {
                     );
                 }
             }
+        }
+    }
+
+    /// Ends a background run and its task at the daily budget (or because it could not be read): stopped `budget`, waiting for
+    /// the person, with `why` shown.
+    pub(super) fn stop_background_daily(
+        self: &Arc<Self>,
+        task: &CrewTask,
+        why: &str,
+        judged: Option<&Judgement>,
+    ) {
+        if let Some(run) = self.store.background_run(&task.crew_id).ok().flatten()
+            && run.state == "running"
+            && let Err(error) = self.store.end_background_run_daily(
+                &run.id,
+                why,
+                self.crew_background_run_spent(task),
+            )
+        {
+            tracing::warn!(%error, run = %run.id, "could not stop a background run at its daily cap");
+        }
+        if let Some(task) = self.step_crew_task(&task.id, "stopped", Some("budget")) {
+            self.end_crew_task(
+                &task,
+                ResultState::Stopped,
+                Some(StopReason::Budget),
+                why,
+                judged,
+            );
         }
     }
 
@@ -427,14 +477,10 @@ impl Core {
         } else {
             text
         };
-        // Messages from other members that arrived while the worker was not in a turn go with
-        // this prompt, each already checked the way a live one is.
-        // They are recorded as sent only once the prompt is accepted; if it is refused with them,
-        // the prompt goes alone (a worker must not lose its retry) and they stay held.
+        // Held messages are added by the common turn launcher, not the person's queue.
+        // Enqueue acceptance alone cannot say an engine has received them.
         between();
-        let held = self.held_for_worker(task, &run);
-        let full = format!("{text}{}", held.text());
-        match self.runs.enqueue(&thread, &full, &[]) {
+        match self.runs.enqueue(&thread, text, &[]) {
             Ok(queued) => {
                 // A cancel that landed between the check and the queue: take the message back and stop what it started.
                 if ended() {
@@ -448,14 +494,8 @@ impl Core {
                     }
                     return Err(CrewError::new(ErrorCode::RunEnded, "the task has ended"));
                 }
-                self.commit_held(&held);
                 Ok(())
             }
-            Err(_) if !held.is_empty() => self
-                .runs
-                .enqueue(&thread, text, &[])
-                .map(|_| ())
-                .map_err(internal),
             Err(error) => Err(internal(error)),
         }
     }
@@ -470,6 +510,12 @@ impl Core {
         let Ok(ended) = self.store.run(&run_id) else {
             return;
         };
+        // One engine turn of a background run counts as it happens: on the run, and on the engine's day when the crew has a
+        // daily budget (docs/crew/background-engine-start.md, PR 2).
+        if let Err(why) = self.crew_background_turn_ended(&task, &thread_id) {
+            self.stop_background_daily(&task, why, None);
+            return;
+        }
         let reported = run.last_report_run.as_deref() == Some(run_id.as_str());
         if task.state == "verifying" && reported {
             match ended.state {

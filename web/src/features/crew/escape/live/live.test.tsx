@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../../../../product/state/workspace";
+import { PreviewNav } from "../../shared/preview-nav";
 import { LiveEscapes } from "./LiveEscapes";
 import { log, posts, project, row, stubFetch, type Answer, type Call } from "./support";
 
@@ -173,10 +174,30 @@ describe("the narrow log (Crew Designs v79 escape-narrow-window and escape-narro
   });
 
   it("draws Open in Crew on the panel only, and it only navigates", async () => {
-    render(<LiveEscapes view="log" panel />);
+    // The panel is a Preview surface: the Preview route's links open the Preview frames.
+    render(<PreviewNav><LiveEscapes view="log" panel /></PreviewNav>);
     await screen.findByText("3 confirmed");
     await userEvent.click(screen.getByRole("button", { name: "Open in Crew" }));
     expect(window.location.hash).toBe("#/preview/crew/escape-log");
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("carries the Coverage link at every width, before the project chip: in the header, with the chip in a window, on its own line in the panel", async () => {
+    const { unmount } = render(<LiveEscapes view="log" />);
+    await screen.findByText("What counts as an escape");
+    const chip = document.querySelector(".cx-t10sel") as HTMLElement;
+    const full = screen.getByRole("link", { name: "Coverage" });
+    expect(full).toHaveAttribute("href", "#/settings/crew/capacity/coverage?repo=p-app");
+    expect(full.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+    stubWidth(600);
+    const window600 = render(<LiveEscapes view="log" />);
+    await screen.findByText(/newest found first/);
+    expect(screen.getByRole("link", { name: "Coverage" }).parentElement).toContainElement(document.querySelector(".cx-t10sel") as HTMLElement);
+    window600.unmount();
+    render(<PreviewNav><LiveEscapes view="log" panel /></PreviewNav>);
+    await screen.findByText("3 confirmed");
+    expect(screen.getByRole("link", { name: "Coverage" })).toHaveAttribute("href", "#/preview/crew/capacity-live-coverage");
     expect(posts(calls)).toHaveLength(0);
   });
 

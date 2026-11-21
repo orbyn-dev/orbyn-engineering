@@ -34,6 +34,9 @@ mod crew_escape_checks_tests;
 mod crew_escape_person;
 #[cfg(test)]
 mod crew_escape_person_tests;
+mod crew_escape_retention;
+#[cfg(test)]
+mod crew_escape_retention_tests;
 mod crew_escape_scan;
 #[cfg(test)]
 mod crew_escape_scan_tests;
@@ -792,6 +795,14 @@ struct Appended(Vec<(String, i64)>);
 
 fn connect(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
+    conn.create_scalar_function(
+        "orbyn_escape_writer_version",
+        0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+            | rusqlite::functions::FunctionFlags::SQLITE_INNOCUOUS,
+        |_| Ok(crew_escape_retention::WRITER_VERSION),
+    )?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     Ok(conn)
