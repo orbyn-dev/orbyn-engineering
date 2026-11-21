@@ -6,7 +6,7 @@ import { useNow } from "../../lib/useNow";
 import { parsed } from "../../product/timeline/toolTrace";
 import type { ToolItem } from "../../product/timeline/types";
 import { CallList } from "./CallList";
-import { boundedLines, callWord, capText, codeToolOf, MAX_SCRIPT_CHARS, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
+import { boundedLines, callWord, capText, codeToolOf, runAnchorId, MAX_SCRIPT_CHARS, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
 import { ScriptBox } from "./ScriptBox";
 import { useCodeRun } from "./useCodeRun";
 import type { RunView } from "./types";
@@ -159,7 +159,7 @@ export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: bo
     : "";
   const error = view.error;
   return (
-    <div className="cb" data-run-status={view.status}>
+    <div className="cb" data-run-status={view.status} id={runAnchorId(view.runId) ?? undefined} tabIndex={view.runId && runAnchorId(view.runId) ? -1 : undefined}>
       {view.runId ? (
         <div className="cm">
           <span className="pr" aria-hidden />

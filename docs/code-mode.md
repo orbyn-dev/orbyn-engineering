@@ -408,6 +408,7 @@ card draws from the engine's own reply, and nothing shows an error. The dev mock
 - **Approval.** An approval with `via` (the service sends it for approvals a script's inner call asked) shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
   the answered and expired forms, and what Always allow covers. `via` is read only to draw: the buttons, the decision and the
   rules never read it.
+  The card has an "Open the run" button (drawn only for a run id of letters, digits, `_` and `-`, up to 64): it goes to the approval's thread (`#/threads/<id>`, no new route), scrolls to the run's block (`id="cm-run-<run id>"`) and focuses it, without smooth scroll under reduced motion; when the block is not in the transcript it says so and does nothing else.
 - **Reading the record.** A call's `status` on the wire is `running`, `ok`, `failed` or `denied`; there is no "waiting". The card reads a
   `running` call of a `paused` run that `pending` names as waiting for a person, and a `running` call of a run that ended as `error` (a
   restart) as interrupted. `result`, `logs_total` and `waited_ms` are read as the contract has them (`{ truncated, bytes, preview }`,
