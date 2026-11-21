@@ -1,5 +1,5 @@
-//! The reviewer backtest at rest (slice 4n): a run and its per-engine token budgets, each lane's progress and each
-//! finding's outcome. Ids, counts and fingerprints only: no prompt, no diff text, no secret and no money.
+//! The reviewer backtest at rest (slice 4n): a run and its per-engine token budgets, each lane's progress and kind,
+//! and each finding's outcome. Ids, counts and fingerprints only: no prompt, no diff text, no secret and no money.
 //! Nothing here starts a backtest; only a person's choice does (see `crew::backtest::replay`).
 
 use std::collections::BTreeMap;
@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::Store;
+use crate::crew::backtest::LaneKind;
 use crate::error::{CoreError, Result};
 
 /// Where a run stands. `Estimated` is a run the person has seen the size of and not yet started.
@@ -124,6 +125,15 @@ pub struct BacktestRunRow {
     pub finished_unix: Option<i64>,
 }
 
+/// A lane to record when a run is created: what it is, what it runs on, and the kind it was started as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewLane {
+    pub lane: String,
+    pub engine: String,
+    pub model: String,
+    pub kind: LaneKind,
+}
+
 /// A lane of a run. `escapes_n` and `caught_n` are set once the lane is scored against a measured escape log; both
 /// stay `None` when the log could not say (Not measured) or the lane failed, and `None` is never read as zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +141,9 @@ pub struct BacktestLaneRow {
     pub lane: String,
     pub engine: String,
     pub model: String,
+    /// The kind the lane was started as, written once with the run. `None` only for a lane recorded before the store
+    /// kept kinds (migration 70): an old row's kind is unknown, never guessed as a review.
+    pub kind: Option<LaneKind>,
     pub tokens_used: u64,
     pub state: LaneState,
     pub escapes_n: Option<u32>,
@@ -152,6 +165,25 @@ pub struct BacktestResultRow {
 
 /// The most tokens one engine's budget may hold: far above any real run, far below what a database integer holds.
 pub const MOST_BUDGET_TOKENS: u64 = 1_000_000_000_000;
+
+fn kind_name(kind: LaneKind) -> &'static str {
+    match kind {
+        LaneKind::Review => "review",
+        LaneKind::Check => "check",
+    }
+}
+
+/// The kind a stored lane was started as. The column is checked against these two words, so anything else is a store
+/// that was written by something other than this code.
+fn kind_of(name: &str) -> Result<LaneKind> {
+    match name {
+        "review" => Ok(LaneKind::Review),
+        "check" => Ok(LaneKind::Check),
+        other => Err(CoreError::Internal(format!(
+            "a stored backtest lane kind is unknown: {other}"
+        ))),
+    }
+}
 
 fn db_int(value: u64, what: &str) -> Result<i64> {
     i64::try_from(value).map_err(|_| CoreError::Invalid(format!("{what} is too large")))
@@ -196,6 +228,7 @@ const RUN_COLUMNS: &str =
     "id, project_id, state, budgets, stop_reason, created_unix, finished_unix";
 
 fn update_lane(tx: &Transaction<'_>, run_id: &str, lane: &BacktestLaneRow) -> Result<()> {
+    // The kind is not updated: it is written once, when the run is recorded, and a later save never rewrites it.
     let changed = tx.execute(
         "UPDATE crew_backtest_lanes
             SET model = ?4, tokens_used = ?5, state = ?6, escapes_n = ?7, caught_n = ?8, unresolved_n = ?9
@@ -236,16 +269,16 @@ fn fail_run(tx: &Transaction<'_>, id: &str, reason: &str, finished_unix: i64) ->
 }
 
 impl Store {
-    /// Records a new run of `project_id` with its lanes (as `(lane, engine, model)`), each pending with nothing
-    /// used. The budgets are tokens per engine; an empty set, or a zero budget, is refused. An id already used, or a
-    /// project that does not exist, is refused.
+    /// Records a new run of `project_id` with its lanes (`NewLane`, each pending with nothing used and the kind it was
+    /// started as). The budgets are tokens per engine; an empty set, or a zero budget, is refused. An id already used,
+    /// or a project that does not exist, is refused.
     pub fn crew_backtest_create(
         &self,
         id: &str,
         project_id: &str,
         state: BacktestState,
         budgets: &BTreeMap<String, u64>,
-        lanes: &[(String, String, String)],
+        lanes: &[NewLane],
         created_unix: i64,
     ) -> Result<()> {
         self.create_run(id, project_id, state, budgets, lanes, created_unix, false)
@@ -258,7 +291,7 @@ impl Store {
         id: &str,
         project_id: &str,
         budgets: &BTreeMap<String, u64>,
-        lanes: &[(String, String, String)],
+        lanes: &[NewLane],
         created_unix: i64,
     ) -> Result<()> {
         self.create_run(
@@ -279,7 +312,7 @@ impl Store {
         project_id: &str,
         state: BacktestState,
         budgets: &BTreeMap<String, u64>,
-        lanes: &[(String, String, String)],
+        lanes: &[NewLane],
         created_unix: i64,
         alone: bool,
     ) -> Result<()> {
@@ -320,11 +353,11 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![id, project_id, state.name(), budgets, created_unix],
             )?;
-            for (lane, engine, model) in lanes {
+            for lane in lanes {
                 tx.execute(
-                    "INSERT INTO crew_backtest_lanes (run_id, lane, engine, model, state)
-                     VALUES (?1, ?2, ?3, ?4, 'pending')",
-                    params![id, lane, engine, model],
+                    "INSERT INTO crew_backtest_lanes (run_id, lane, engine, model, kind, state)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
+                    params![id, lane.lane, lane.engine, lane.model, kind_name(lane.kind)],
                 )?;
             }
             Ok(())
@@ -471,11 +504,28 @@ impl Store {
         rows.into_iter().map(finish_run_row).collect()
     }
 
+    /// A project's most recent run, if it ever had one. The same order as `crew_backtest_runs_of`, so both agree on
+    /// which run is the latest.
+    pub fn crew_backtest_latest_run(&self, project_id: &str) -> Result<Option<BacktestRunRow>> {
+        let parts = self
+            .reader()
+            .query_row(
+                &format!(
+                    "SELECT {RUN_COLUMNS} FROM crew_backtest_runs WHERE project_id = ?1
+                     ORDER BY created_unix DESC, id DESC LIMIT 1"
+                ),
+                [project_id],
+                run_row,
+            )
+            .optional()?;
+        parts.map(finish_run_row).transpose()
+    }
+
     /// A run's lanes, in lane then engine order.
     pub fn crew_backtest_lanes(&self, run_id: &str) -> Result<Vec<BacktestLaneRow>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
-            "SELECT lane, engine, model, tokens_used, state, escapes_n, caught_n, unresolved_n
+            "SELECT lane, engine, model, tokens_used, state, escapes_n, caught_n, unresolved_n, kind
                FROM crew_backtest_lanes WHERE run_id = ?1 ORDER BY lane, engine",
         )?;
         let rows = statement
@@ -489,16 +539,19 @@ impl Store {
                     row.get::<_, Option<i64>>(5)?,
                     row.get::<_, Option<i64>>(6)?,
                     row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
             .map(
-                |(lane, engine, model, tokens, state, escapes, caught, unresolved)| {
+                |(lane, engine, model, tokens, state, escapes, caught, unresolved, kind)| {
                     Ok(BacktestLaneRow {
                         lane,
                         engine,
                         model,
+                        // A row written before migration 70 has no kind: unknown, never read as a review.
+                        kind: kind.map(|name| kind_of(&name)).transpose()?,
                         tokens_used: u64::try_from(tokens).map_err(|_| {
                             CoreError::Internal("stored backtest tokens are invalid".into())
                         })?,
