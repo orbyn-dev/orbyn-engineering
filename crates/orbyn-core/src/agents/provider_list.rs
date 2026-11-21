@@ -15,8 +15,8 @@ use super::provider_facts::ProviderFacts;
 /// OpenCode 2.2.5 ran real turns through `orbynd` (docs/architecture.md, engines).
 const SEEN_ON_REAL_INSTALL: &[&str] = &["opencode"];
 
-/// Engines whose detail page is not built yet: their rows carry no Open.
-const NO_DETAIL: &[&str] = &["cursor", "fx"];
+/// Only these families have provider detail pages in the beta.
+const BETA_DETAIL: &[&str] = &["claude", "codex", "opencode"];
 
 /// Known ACP engines with a frame of their own. The other unverified ones are listed together.
 const OWN_ROW: &[&str] = &["cursor", "fx"];
@@ -176,7 +176,7 @@ fn entry_of(status: &EngineStatus) -> ProviderEntry {
         labels,
         note,
         registered: true,
-        openable: !NO_DETAIL.contains(&family(status)),
+        openable: BETA_DETAIL.contains(&family(status)),
     }
 }
 
@@ -210,7 +210,7 @@ pub fn list(statuses: &[EngineStatus], apps: &[&str], refused: &[Refused]) -> Pr
             providers.push(ProviderEntry {
                 id: one.id.to_owned(),
                 name: known.name.to_owned(),
-                group: ProviderGroup::CantStart,
+                group: ProviderGroup::NotFound,
                 labels: vec![ProviderLabel::NotFound],
                 note: Some(format!(
                     "Found a program named {} at {}, but it is not xAI’s Grok CLI. Orbyn does not use it. Get xAI’s own Grok Build from xAI’s official page.",

@@ -275,6 +275,144 @@ async fn a_new_project_can_start_with_a_readme_and_first_commit() {
 }
 
 #[tokio::test]
+async fn init_git_makes_the_folder_a_repository_without_a_commit() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("plain");
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    std::fs::write(folder.join("a.txt"), "one\n").unwrap();
+    std::fs::write(folder.join("src/b.txt"), "two\n").unwrap();
+    let project = core.add_project(folder.to_str().unwrap()).await.unwrap();
+    assert!(!project.is_git);
+    core.store.trust_project(&project.id, "user").unwrap();
+    let before = snapshot(&folder);
+    let project = core.init_project_git(&project.id).await.unwrap();
+    assert!(project.is_git);
+    assert!(project.trusted);
+    assert!(core.store.project(&project.id).unwrap().is_git);
+    let after = snapshot(&folder);
+    for (path, bytes) in &before {
+        assert_eq!(after.get(path), Some(bytes), "{} changed", path.display());
+    }
+    let added: Vec<&PathBuf> = after
+        .keys()
+        .filter(|path| !before.contains_key(*path))
+        .collect();
+    assert!(!added.is_empty(), "the repository has metadata");
+    assert!(
+        added
+            .iter()
+            .all(|path| path.strip_prefix(&folder).unwrap().starts_with(".git")),
+        "only .git is new: {added:?}"
+    );
+    assert_eq!(
+        text(&git(&folder, &["branch", "--show-current"]).await.unwrap()),
+        "main",
+        "the same default branch as a created project"
+    );
+    assert!(
+        git(&folder, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .is_err(),
+        "no commit is invented"
+    );
+}
+
+#[tokio::test]
+async fn init_git_refuses_an_untrusted_folder() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("plain");
+    std::fs::create_dir_all(&folder).unwrap();
+    let project = core.add_project(folder.to_str().unwrap()).await.unwrap();
+    let before = snapshot(&folder);
+    match core.init_project_git(&project.id).await {
+        Err(CoreError::FolderUntrustedInit) => {}
+        other => panic!("{other:?}"),
+    }
+    assert!(!folder.join(".git").exists());
+    assert_eq!(snapshot(&folder), before);
+    assert!(!core.store.project(&project.id).unwrap().is_git);
+}
+
+#[tokio::test]
+async fn init_git_refuses_a_folder_that_is_already_a_repository() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let source = source_repo(&dir.path().join("mine"));
+    let project = core.add_project(source.to_str().unwrap()).await.unwrap();
+    assert!(project.is_git);
+    core.store.trust_project(&project.id, "user").unwrap();
+    let before = snapshot(&source);
+    match core.init_project_git(&project.id).await {
+        Err(CoreError::Invalid(message)) => {
+            assert_eq!(message, "This project is already a Git repository.");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(snapshot(&source), before);
+}
+
+#[tokio::test]
+async fn init_git_refuses_a_folder_that_is_gone() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("plain");
+    std::fs::create_dir_all(&folder).unwrap();
+    let project = core.add_project(folder.to_str().unwrap()).await.unwrap();
+    core.store.trust_project(&project.id, "user").unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+    match core.init_project_git(&project.id).await {
+        Err(CoreError::Invalid(message)) => assert_eq!(message, "The project's folder is gone."),
+        other => panic!("{other:?}"),
+    }
+    assert!(!core.store.project(&project.id).unwrap().is_git);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn init_git_refuses_a_folder_swapped_for_a_symlink() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("plain");
+    std::fs::create_dir_all(&folder).unwrap();
+    let project = core.add_project(folder.to_str().unwrap()).await.unwrap();
+    core.store.trust_project(&project.id, "user").unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &folder).unwrap();
+    match core.init_project_git(&project.id).await {
+        Err(CoreError::Invalid(message)) => {
+            assert_eq!(message, "The project's folder has moved.");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!elsewhere.join(".git").exists());
+    assert!(!core.store.project(&project.id).unwrap().is_git);
+}
+
+#[tokio::test]
+async fn init_git_refuses_a_folder_inside_a_repository_made_later() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let outer = dir.path().join("outer");
+    let folder = outer.join("plain");
+    std::fs::create_dir_all(&folder).unwrap();
+    let project = core.add_project(folder.to_str().unwrap()).await.unwrap();
+    assert!(!project.is_git);
+    core.store.trust_project(&project.id, "user").unwrap();
+    run_git(&outer, &["init", "-q", "-b", "main"]);
+    match core.init_project_git(&project.id).await {
+        Err(CoreError::Invalid(message)) => {
+            assert_eq!(message, "This project is already a Git repository.");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!folder.join(".git").exists(), "no nested repository");
+}
+
+#[tokio::test]
 async fn a_background_clone_finishes_and_a_failed_one_can_retry() {
     let dir = TempDir::new();
     let core = Arc::new(core(&dir).await);

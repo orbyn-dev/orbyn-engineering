@@ -11,3 +11,6 @@ export const usePossible = (project: string) => useAsync(`crew-escapes-possible:
 
 /** One escape and its trail. */
 export const useEscapeDetail = (id: string) => useAsync(`crew-escape:${id}`, (signal) => escapeApi.detail(id, signal));
+
+/** The constants the log reads, as stored on this device. No project: one document for the whole device. */
+export const useEscapeThresholds = () => useAsync(`crew-escapes-thresholds`, (signal) => escapeApi.thresholds(signal));
