@@ -166,6 +166,40 @@ One shape everywhere an error crosses the wire:
   failure is `runDone` with `ok:false` and the same shape. Messages are shown to the person only after
   the core's redaction pass; the `stack` is stored in diagnostics only.
 
+## Host status (core to UI)
+
+Not a host frame: this is what the core's `GET /api/engine-host` route returns (Local read), one entry per family. The contract is
+`crates/orbyn-contracts/src/engine_host.rs` with the generated `EngineHost*.ts` in `web/src/generated` (Eng 2's HostDriver slice 1, PR #941; check
+that it is merged before relying on it). The host sends none of these fields; the core builds them from the host's `hello`, its own restart
+bookkeeping and its own checks. No entry carries an environment, arguments, a key, a path, a token or a stack.
+
+**Slice 1 (the contract above; open in #941 when this was written).** `EngineHostStatus`:
+
+- `family`, `state`, `host_version?`, `restart_count` (restarts after a crash since the app started), `last_crash?`, `protocol_app?` and `protocol_host?`
+  (for `version_mismatch`), `not_used?`, `detail?` (a plain sentence for a state that stops runs), `action?` (what the person can do, such as `Update Orbyn`).
+- `state` is `not_started`, `starting`, `running`, `stopped` (idle), `crashed` (crashed and the person asked again), `restarting`, `cant_start`,
+  `version_mismatch` or `not_used` (the family runs on its Rust driver).
+- `not_used` is `flag_off` or `unsupported_platform`.
+- `last_crash` is `{exit_code?, signal?, at (RFC 3339), error_kind, message, stderr_tail}`. `error_kind` is `exited`, `closed_output`, `stalled`, `malformed`, `oversize`,
+  `hello_timeout` or `start_failed`. `stderr_tail` is at most 1024 characters with credential-looking lines dropped.
+
+**Planned (not in slice 1).** Optional and ignorable, no protocol bump; a client that ignores them loses only that display. Nothing below is built, and the
+names are proposals for Eng 2 to confirm:
+
+- Error `kind`: the closed set from Errors (`auth`, `rate_limit`, `network`, `invalid_request`, `unsupported`, `cancelled`, `engine`, `host`, `session_lost`), so the UI
+  can choose wording without parsing `message`. It is separate from the slice 1 crash `error_kind`, which says how the host process failed. Absent means unknown.
+- `threads?`: the host state per thread (and family), so the UI can show a starting, running, restarting or unavailable thread:
+  `{thread_id, family, state: "starting" | "running" | "restarting" | "unavailable", last_error?: {kind?, message}}`. `last_error` is set only for `unavailable`.
+  A pooled host (Cursor) lists every thread it serves.
+- `signin?`: `"signed_in" | "signed_out" | "unknown" | "key_in_keychain"` per engine. A state word only: `key_in_keychain` means an API key is saved in the OS
+  keychain, and the key is never in the entry. `unknown` whenever the core has not checked or cannot tell.
+- `running_without_host?`: `{reason: "flag_off" | "not_installed" | "unavailable"}`, present when the family runs on its CLI driver because the host or SDK is not in
+  use: the SDK flag is off, the host or SDK is not installed in this build, or the host is marked unavailable (`cant_start`). Slice 1's `not_used` (`flag_off`,
+  `unsupported_platform`) covers part of this; `not_installed` and `unavailable` are not in it.
+- Stop and restart Person routes and the engine spawn secret wiring are slice 2 (Planned).
+
+`web/src/features/enginehost/contract.ts` (`HostRow`) is an older hand-written, mocked shape and does not match the slice 1 names above.
+
 ## Crash and recovery
 
 - **Host exits or closes stdout.** The core fails every open run on that host with
