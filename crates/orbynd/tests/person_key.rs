@@ -173,19 +173,94 @@ impl Fixture {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
-    /// Waits for the fake engine's report of what it did with the token alone.
+    /// Waits for the fake engine's report of what it did with the token alone. Gives up after a minute and says why:
+    /// whether the file never appeared or could not be read as JSON, and what the data dir holds.
     async fn probe(&self) -> Value {
         let path = self.dir.path().join("probe.json");
+        let mut last = "the file never appeared".to_owned();
         for _ in 0..6000 {
-            if let Ok(text) = std::fs::read_to_string(&path)
-                && let Ok(report) = serde_json::from_str(&text)
-            {
-                return report;
+            match std::fs::read_to_string(&path) {
+                Ok(text) => match serde_json::from_str::<Value>(&text) {
+                    Ok(report) => {
+                        if let Some(fatal) = report["fatal"].as_str() {
+                            panic!(
+                                "the fake engine's probe failed before any call finished: {fatal}"
+                            );
+                        }
+                        return report;
+                    }
+                    Err(error) => last = format!("the file is not JSON yet: {error}"),
+                },
+                Err(error) => last = format!("read {}: {error}", path.display()),
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!("the fake engine wrote no probe report");
+        let listing: Vec<String> = std::fs::read_dir(self.dir.path())
+            .map(|dir| {
+                dir.flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        panic!(
+            "the fake engine wrote no probe report in 60s ({last}); the test dir holds {listing:?}. The engine was \
+             admitted with a thread, so it started or it did not: a service that is down or a run that never spawned \
+             the engine looks the same from here"
+        );
     }
+}
+
+/// Replaces the secrets and any long token-looking run in text a failure message shows, and cuts it to 500 chars.
+fn redacted(text: &str, secrets: &[&str]) -> String {
+    let mut text = text.to_owned();
+    for secret in secrets.iter().filter(|s| !s.is_empty()) {
+        text = text.replace(secret, "[redacted]");
+    }
+    let mut out = String::new();
+    let mut run = String::new();
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            run.push(c);
+            continue;
+        }
+        out.push_str(if run.len() >= 32 { "[redacted]" } else { &run });
+        run.clear();
+        out.push(c);
+    }
+    out.pop();
+    out.chars().take(500).collect()
+}
+
+/// Every call of a probe report that is not a refusal with `person_required`, described in full, or the report's own
+/// count problem. Empty when the report is as expected.
+fn probe_failures(report: &Value, expected: usize) -> Vec<String> {
+    let calls = report["calls"].as_array().cloned().unwrap_or_default();
+    let mut failures = Vec::new();
+    if calls.len() != expected {
+        failures.push(format!(
+            "the engine reported {} calls, not {expected}; the report holds fatal={}, error calls={}",
+            calls.len(),
+            report["fatal"],
+            calls.iter().filter(|c| c.get("error").is_some()).count()
+        ));
+    }
+    for call in &calls {
+        if call["status"] == 403 && call["code"] == "person_required" {
+            continue;
+        }
+        failures.push(format!(
+            "token-only probe: route {} {}; sent {}; attempt {}; status {}; code {}; transport error {}; body {}",
+            call["method"],
+            call["path"],
+            call["request"],
+            call["attempt"],
+            call["status"],
+            call["code"],
+            call["error"],
+            call["body"],
+        ));
+    }
+    failures
 }
 
 #[tokio::test]
@@ -578,12 +653,14 @@ async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
     let key = f.service.person_key.clone().expect("a shell gets a key");
     f.service.admit(&f.thread, "hello").await;
     let report = f.probe().await;
-    let calls = report["calls"].as_array().unwrap();
-    assert_eq!(calls.len(), routes.len(), "the engine called every route");
-    for call in calls {
-        assert_eq!(call["status"], 403, "{call}");
-        assert_eq!(call["code"], "person_required", "{call}");
-    }
+    let failures = probe_failures(&report, routes.len());
+    assert!(
+        failures.is_empty(),
+        "{} of {} token-only probes failed:\n{}",
+        failures.len(),
+        routes.len(),
+        failures.join("\n")
+    );
 
     // The sockets are GET routes: without an upgrade they are refused the same way, and the key as a subprotocol opens one.
     let sockets: Vec<&(String, String, String)> = routes
@@ -591,9 +668,16 @@ async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
         .filter(|(m, p, _)| m == "GET" && p.contains("/terminal"))
         .collect();
     assert_eq!(sockets.len(), 2, "the two terminal sockets");
+    let mut failures = Vec::new();
     for (_, path, _) in &sockets {
-        let refused = f.service.get(path).send().await.unwrap();
-        assert_eq!(refused.status(), 403, "{path}");
+        match f.service.get(path).send().await {
+            Ok(refused) if refused.status() == 403 => {}
+            Ok(refused) => failures.push(format!(
+                "socket GET {path} without an upgrade: status {}, not 403",
+                refused.status()
+            )),
+            Err(error) => failures.push(format!("socket GET {path}: transport error {error}")),
+        }
     }
 
     // With the key, the person layer lets each one through. The route's own answer follows (not found, invalid and so on).
@@ -613,28 +697,52 @@ async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
         .iter()
         .filter(|(m, p, _)| m != "GET" && !SKIPPED.contains(&p.as_str()))
     {
-        let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
-        let response = f
+        let verb = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
+        let url = format!("{}{path}", f.service.url);
+        let sent = format!(
+            "{method} {url} (headers: authorization, {KEY_HEADER}, content-type; body {} bytes)",
+            body.len()
+        );
+        let secrets = [f.service.token.as_str(), key.as_str()];
+        let response = match f
             .service
             .client
-            .request(method, format!("{}{path}", f.service.url))
+            .request(verb, &url)
             .bearer_auth(&f.service.token)
             .header(KEY_HEADER, &key)
             .header("content-type", "application/json")
             .body(body.clone())
             .send()
             .await
-            .unwrap();
+        {
+            Ok(response) => response,
+            Err(error) => {
+                failures.push(format!(
+                    "keyed call: route {method} {path}; sent {sent}; attempt 1; transport error {}",
+                    redacted(&error.to_string(), &secrets)
+                ));
+                continue;
+            }
+        };
         let status = response.status().as_u16();
-        let reply: Value = response.json().await.unwrap_or(Value::Null);
-        assert!(
-            !matches!(
-                reply["code"].as_str(),
-                Some("person_required" | "desktop_required")
-            ),
-            "{path} refused the right key: {status} {reply}"
-        );
+        let text = response.text().await.unwrap_or_default();
+        let reply: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if matches!(
+            reply["code"].as_str(),
+            Some("person_required" | "desktop_required")
+        ) {
+            failures.push(format!(
+                "keyed call refused the right key: route {method} {path}; sent {sent}; attempt 1; status {status}; body {}",
+                redacted(&text, &secrets)
+            ));
+        }
     }
+    assert!(
+        failures.is_empty(),
+        "{} failed probes:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 fn current_branch(folder: &Path) -> String {
