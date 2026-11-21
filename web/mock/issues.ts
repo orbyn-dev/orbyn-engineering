@@ -8,7 +8,7 @@ import { ApiFailure } from "../src/api/client.ts";
 import type { Thread } from "../src/api/types.ts";
 import {
   TRACKER_KINDS,
-  type IssueDetail, type IssueList, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type IssueTarget, type StartThreadInput, type TrackerKind, type TrackerRow,
+  type IssueDetail, type IssueList, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type LinkedPullRequest, type IssueTarget, type StartThreadInput, type TrackerKind, type TrackerRow,
 } from "../src/features/issues/contract.ts";
 import { applyQuery } from "../src/features/issues/model.ts";
 
@@ -73,7 +73,7 @@ export interface IssuesMock extends IssuesApi {
   /** Make the next call of that kind fail: `reject` is a token the tracker does not accept, `unreachable` a host that does not answer, `token` a locked keychain. */
   /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
   listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
-  failNext(what: "list" | "get" | "start" | "find" | "state" | "draft" | "token" | "reject" | "unreachable" | null): void;
+  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "token" | "reject" | "unreachable" | null): void;
 }
 
 export function createIssuesMock(init: {
@@ -82,6 +82,8 @@ export function createIssuesMock(init: {
   fixedState?: TrackerKind[];
   /** Answer this many issues a page; the first scope's cursor (`"<tracker> <scope>"`, the offset as text) says where the next page starts. Absent: one page. */
   pageSize?: number;
+  /** The pull requests the tracker reports against an issue, by the issue's key. Absent: none. */
+  pullRequests?: Record<string, LinkedPullRequest[]>;
 } = {}): IssuesMock {
   let trackers = init.trackers === undefined ? trackerFixtures() : init.trackers;
   const issues = init.issues ?? issueFixtures();
@@ -91,7 +93,7 @@ export function createIssuesMock(init: {
   const listed: IssuesMock["listed"] = [];
   let fail: Parameters<IssuesMock["failNext"]>[0] = null;
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, init.delayMs ?? 0));
-  const take = (what: "list" | "get" | "start" | "find" | "state" | "draft") => {
+  const take = (what: "list" | "get" | "links" | "start" | "find" | "state" | "draft") => {
     if (fail !== what) return;
     fail = null;
     throw new ApiFailure("tracker_unavailable", "GitHub did not answer.", 502);
@@ -125,11 +127,11 @@ export function createIssuesMock(init: {
       const one = find(ref);
       if (!one) throw new ApiFailure("not_found", "No such issue.", 404);
       return {
-        ...one, linked_pull_requests: [], linked_threads: Object.keys(links).filter((id) => links[id]!.some((held) => same(held, one))), transitions: init.fixedState?.includes(one.tracker) ? undefined : transitionFixtures(one.tracker), body: DETAIL_BODY,
+        ...one, linked_pull_requests: init.pullRequests?.[one.key] ?? [], linked_threads: Object.keys(links).filter((id) => links[id]!.some((held) => same(held, one))), transitions: init.fixedState?.includes(one.tracker) ? undefined : transitionFixtures(one.tracker), body: DETAIL_BODY,
         comments: [{ id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) }, { id: "c2", author: { login: "mika" }, body: "The picker has the same problem when it is opened from a link.", created_at: ago(240) }],
       };
     },
-    links: async () => { await wait(); return links; },
+    links: async () => { await wait(); take("links"); return links; },
     find: async (input) => {
       await wait();
       take("find");

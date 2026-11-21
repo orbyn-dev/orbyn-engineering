@@ -60,6 +60,8 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
   // The pages after the first, kept with the answer they follow: a new first answer (a filter, a refresh) drops them.
   const [later, setLater] = useState<{ of: IssueList; issues: IssueSummary[]; next: Record<string, string> } | null>(null);
   const [paging, setPaging] = useState(false);
+  // What the last page said when it failed, kept next to Load more; a new first answer, a retry or a page that lands drops it.
+  const [pageFailure, setPageFailure] = useState<string | null>(null);
   const pagingNow = useRef(false);
   const pageRequest = useRef<AbortController | null>(null);
   const more = later && later.of === read.data ? later : null;
@@ -74,6 +76,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
     pageRequest.current = null;
     pagingNow.current = false;
     setPaging(false);
+    setPageFailure(null);
   }, [read.data]);
   useEffect(() => () => pageRequest.current?.abort(), []);
   const counts = read.data?.counts ?? null;
@@ -110,6 +113,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
     if (pagingNow.current || !first || Object.keys(nextCursors).length === 0) return;
     pagingNow.current = true;
     setPaging(true);
+    setPageFailure(null);
     pageRequest.current?.abort();
     const request = new AbortController();
     pageRequest.current = request;
@@ -121,7 +125,10 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
       const fresh = page.issues.filter((issue) => !have.has(`${issue.tracker}:${issue.scope}:${issue.key}`));
       setLater({ of: first, issues: [...(more?.issues ?? []), ...fresh], next: page.next_cursors });
     } catch (failure) {
-      if (!request.signal.aborted) pushToast(`Couldn't load more. ${reasonOf(failure)}`);
+      if (!request.signal.aborted) {
+        pushToast(`Couldn't load more. ${reasonOf(failure)}`);
+        setPageFailure(`Couldn’t load more. ${reasonOf(failure)}`);
+      }
     } finally {
       if (pageRequest.current === request) {
         pageRequest.current = null;
@@ -177,7 +184,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
           <>
             <IssuesHead />
             <IssueRows issues={issues} onOpen={(issue: IssueSummary) => navigate({ name: "issues", tracker: issue.tracker, scope: issue.scope, key: issue.key })} />
-            {Object.keys(nextCursors).length > 0 ? <LoadMoreRow busy={paging} onLoad={() => void loadMore()} /> : null}
+            {Object.keys(nextCursors).length > 0 ? <LoadMoreRow busy={paging} failure={pageFailure} onLoad={() => void loadMore()} /> : null}
           </>
         )}
       </div>

@@ -50,8 +50,10 @@ function RenderToggle({ rendered }: { rendered: boolean }) {
 }
 
 /** One file of the change: its header, then its lines, or the one line that says why there are none. */
-export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow }: {
+export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow, repoName }: {
   file: FileDiff;
+  /** The repository the file is in, named before its path in a multi-repository thread. */
+  repoName?: string;
   lines: readonly DiffLine[];
   threadId: string;
   origin: string;
@@ -82,6 +84,7 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
     <div className="x2file" data-diff-file={file.path}>
       <div className="fh2">
         <ChangeLetter change={changeOf(file)} />
+        {repoName ? <span className="repo-pill" title={repoName}>{repoName}</span> : null}
         <span className="nm" title={fileName(file)}>{file.path}</span>
         {markdown ? <RenderToggle rendered={rendered} /> : null}
         {conflict ? (

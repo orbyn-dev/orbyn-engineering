@@ -258,8 +258,90 @@ it("in a production build the State control is Planned text, and no choice is of
   window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
   render(<IssuesPage />);
   const facts = await screen.findByRole("group", { name: "Facts" });
-  expect(within(facts).getByText("Planned")).toBeVisible();
+  expect(within(facts).getByText("State", { selector: "dt" }).nextElementSibling).toHaveTextContent("Planned");
   expect(within(facts).getByText("Open")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^State:/ })).toBeNull();
   expect(mock.writes).toEqual([]);
+});
+
+// ---- paging: the failure line, the retry and the closed date ----
+
+it("keeps a line in place that says what failed, the rows and the one Load more row, and pressing it again is the retry", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  mock.failNext("list");
+  await user.click(loadMore()!);
+  const line = await screen.findByRole("alert");
+  expect(line).toHaveTextContent("Couldn’t load more. GitHub did not answer.");
+  expect(document.querySelectorAll(".iss-more")).toHaveLength(1);
+  expect(rows()).toHaveLength(4);
+  await user.click(loadMore()!);
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(screen.queryByRole("alert")).toBeNull();
+  // The retry asks for the same page: the same cursors, the same filters.
+  expect(mock.listed[1]!.cursors).toEqual(mock.listed[2]!.cursors);
+  expect(mock.listed[1]!.query).toEqual(mock.listed[2]!.query);
+});
+
+it("drops the failure line when the filters change", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  mock.failNext("list");
+  await user.click(loadMore()!);
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", { name: /^Closed/ }));
+  await waitFor(() => expect(screen.getByText("Closed as not planned")).toBeVisible());
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("draws no Previous page, no page number and no second Load more", async () => {
+  setIssuesApi(createIssuesMock({ pageSize: 4 }));
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(screen.queryByRole("button", { name: /previous|page \d/i })).toBeNull();
+  await user.click(loadMore()!);
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(screen.queryByRole("button", { name: /previous|load more/i })).toBeNull();
+});
+
+it("adds when a closed issue was closed to the line under its title, from closed_at, and only then", async () => {
+  setIssuesApi(createIssuesMock());
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await user.click(await screen.findByRole("button", { name: "Closed · 2" }));
+  const dated = (await screen.findByRole("button", { name: "Settings rows jump when a scope changes" })).closest("li")!;
+  expect(within(dated).getByText(/opened by riley · closed 2 days ago/)).toBeVisible();
+  const undated = screen.getByRole("button", { name: "Offer a dark favicon" }).closest("li")!;
+  expect(undated.querySelector(".iss-sub")!.textContent).not.toMatch(/closed \d|closed in|ago/);
+  expect(undated.querySelector(".iss-sub")!.textContent).toMatch(/opened by riley$/);
+});
+
+it("never says an open issue was closed, even when a tracker sends a closed_at for it", async () => {
+  const mock = createIssuesMock();
+  const real = mock.list;
+  mock.list = async (...args) => { const answer = await real(...args); return { ...answer, issues: answer.issues.map((issue) => ({ ...issue, closed_at: new Date(Date.now() - 86_400_000).toISOString() })) }; };
+  setIssuesApi(mock);
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(document.querySelector(".iss-sub")!.textContent).not.toMatch(/closed/);
+});
+
+it("shows Sort: Updated as a Planned control that opens nothing", async () => {
+  setIssuesApi(createIssuesMock());
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  const sort = screen.getByRole("button", { name: "Sort: Updated" });
+  expect(sort).toBeDisabled();
+  expect(sort.parentElement).toHaveTextContent("Planned");
+  await user.click(sort);
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
