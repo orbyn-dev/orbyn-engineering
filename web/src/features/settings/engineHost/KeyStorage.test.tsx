@@ -12,13 +12,31 @@ const rowOf = (name: string) => screen.getByText(name, { selector: ".name" }).cl
 const table = () => screen.findByRole("table", { name: "API key storage" });
 const KEY = "sk-test-KEY-0123456789";
 
-it("draws nothing, and sends no request, while the service offers no key storage", async () => {
-  const fetching = vi.fn();
+it("draws nothing while the service does not keep a key for the engine (404), and the one request it makes is a plain read", async () => {
+  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "This engine does not keep a key." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   render(<><KeyStorageGroup /><KeyStorageRow engineId="cursor" /></>);
+  await waitFor(() => expect(fetching).toHaveBeenCalled());
   await act(async () => { await Promise.resolve(); });
   expect(screen.queryByText("API key storage")).toBeNull();
-  expect(fetching).not.toHaveBeenCalled();
+  expect(screen.queryByText("API key")).toBeNull();
+  for (const call of fetching.mock.calls as unknown as [string, RequestInit][]) expect(call[1].method).toBe("GET");
+});
+
+it("through the real client: shows the service's state, and Remove… shows how many threads it stopped", async () => {
+  const status = { engine: "cursor", opted_in: true, present: true, state: "saved" };
+  const sent: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    sent.push(`${init.method} ${url}`);
+    if (init.method === "DELETE") return new Response(JSON.stringify({ ...status, present: false, state: "not_saved", stopped: 2 }), { status: 200 });
+    return new Response(JSON.stringify(status), { status: 200 });
+  }));
+  const user = userEvent.setup();
+  render(<KeyStorageRow engineId="cursor" />);
+  await user.click(await screen.findByRole("button", { name: "Remove…" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Remove key" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Removed. Stopped: 2 running threads.");
+  expect(sent.filter((entry) => entry.startsWith("DELETE"))).toHaveLength(1);
 });
 
 it("lists each engine with its state and the one action that fits it", async () => {
@@ -183,7 +201,7 @@ it("Remove… asks first with a red button, deletes only what Orbyn saved and ke
   const user = userEvent.setup();
   render(<KeyStorageRow engineId="cursor" />);
   expect(await screen.findByText("Saved in your keychain")).toBeVisible();
-  expect(screen.getByText(/Built behind a setting, off until you turn it on\. Today Orbyn never stores a key\./)).toBeVisible();
+  expect(screen.getByText(/Built behind a setting, off until you turn it on\./)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Remove…" }));
   const dialog = await screen.findByRole("dialog", { name: "Remove Cursor’s API key from the keychain?" });
   expect(within(dialog).getByText("Orbyn deletes the key it saved. Cursor uses its own sign-in again, or asks you to sign in. Threads already running keep going.")).toBeVisible();

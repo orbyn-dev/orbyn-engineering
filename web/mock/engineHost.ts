@@ -42,7 +42,7 @@ export function storageFixtures(): KeyStorage[] {
 }
 
 export interface EngineHostMock extends EngineHostApi {
-  /** Every write the screens made, in order: `retry:<id>`, `stop:<id>`, `save:<id>`, `decline:<id>`, `remove:<id>`. */
+  /** Every write the screens made, in order: `retry:<id>`, `stop:<id>`, `save:<id>`, `decline:<id>`, `remove:<id>`, `keychain-retry:<id>`. */
   writes: string[];
   /** Make the next `saveKey` fail the way a locked or denied keychain does. */
   failNext(code: typeof KEYCHAIN_LOCKED | typeof KEYCHAIN_DENIED | null): void;
@@ -50,7 +50,7 @@ export interface EngineHostMock extends EngineHostApi {
   failRemoveNext(on: boolean): void;
 }
 
-export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?: HostCrash[]; storage?: KeyStorage[] | null; delayMs?: number } = {}): EngineHostMock {
+export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?: HostCrash[]; storage?: KeyStorage[] | null; delayMs?: number; stopped?: number } = {}): EngineHostMock {
   let hosts = init.hosts === undefined ? hostFixtures() : init.hosts;
   let storage = init.storage === undefined ? storageFixtures() : init.storage;
   const writes: string[] = [];
@@ -86,7 +86,8 @@ export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?:
       writes.push(`remove:${id}`);
       await wait();
       if (failRemove) { failRemove = false; throw new ApiFailure("keychain_remove_failed", "The keychain could not remove it.", 409); }
-      return put(id, "declined", { saved_at: null });
+      return put(id, "declined", { saved_at: null, stopped: init.stopped ?? 0 });
     },
+    retryKeychain: async (id) => { writes.push(`keychain-retry:${id}`); await wait(); const row = find(id); if (!row) throw new ApiFailure("not_found", "No such engine.", 404); return row; },
   };
 }

@@ -113,6 +113,8 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
   const [busy, setBusy] = useState<"saving" | "removing" | "declining" | null>(null);
   const [failed, setFailed] = useState<{ kind: "locked" | "denied"; intent: "save" | "decline"; replacing: boolean } | "remove_failed" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the service said a removal stopped; it stays until the next click on this row.
+  const [stopped, setStopped] = useState<number | null>(null);
   // A second click while the first request is in flight is not a second write.
   const pending = useRef(false);
 
@@ -121,8 +123,11 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     pending.current = true;
     setBusy(phase);
     setError(null);
+    setStopped(null);
     try {
-      replace(await write());
+      const next = await write();
+      setStopped(phase === "removing" && typeof next.stopped === "number" ? next.stopped : null);
+      replace(next);
       setFailed(null);
       setStep(null);
     } catch (failure) {
@@ -154,6 +159,8 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     : failed && !failed.replacing ? failed.kind : row.choice;
   const close = () => { if (!pending.current) { setStep(null); setError(null); } };
   const retry = () => {
+    // A lock the service itself reported (no click here caused it): ask the keychain again, which writes nothing and needs no key.
+    if (!failed && (row.choice === "locked" || row.choice === "denied")) { void guarded("declining", () => engineHostApi().retryKeychain(row.engine_id), keychainFailure("save")); return; }
     if (failed === "remove_failed") { void remove(); return; }
     if (failed && failed.intent === "decline") { void decline(); return; }
     // The key was emptied when it was read, so a refused save asks for it again; no copy is kept to resend.
@@ -201,7 +208,8 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
   const banner = failed && failed !== "remove_failed" && failed.replacing
     ? { text: "The new key wasn’t saved; the old key is still in your keychain.", retry: true }
     : bannerOf(name, choice);
-  return { name, choice, actions, dialogs, banner, retry, busy: busy !== null };
+  const notice = stopped === null ? null : stopped === 0 ? "Removed. No running threads were stopped." : `Removed. Stopped: ${stopped} running ${stopped === 1 ? "thread" : "threads"}.`;
+  return { name, choice, actions, dialogs, banner, notice, retry, busy: busy !== null };
 }
 
 function Banner({ text, onRetry, busy }: { text: string; onRetry: (() => void) | null; busy: boolean }) {
@@ -219,6 +227,7 @@ function GroupRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage)
         <span role="cell">{entry.actions("list")}</span>
       </div>
       {entry.banner ? <div role="row" className="eh-row-error"><span role="cell"><Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} /></span></div> : null}
+      {entry.notice ? <div role="row" className="eh-row-error"><span role="cell"><p className="setting-line-desc" role="status">{entry.notice}</p></span></div> : null}
       {entry.dialogs}
     </>
   );
@@ -247,7 +256,8 @@ function DetailRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage
       <SettingRow title="API key" description={line(entry.name, entry.choice, "detail")}>
         <StateChip chip={chipOf(entry.choice)} />{entry.actions("detail")}
       </SettingRow>
-      <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on. Today Orbyn never stores a key.</p>
+      {entry.notice ? <p className="setting-line-desc" role="status">{entry.notice}</p> : null}
+      <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on.</p>
       {entry.dialogs}
     </>
   );

@@ -27,7 +27,10 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    takes one (today only Cursor). It lives in the OS keychain alone (`orbyn-core`
    `credentials`), only while that engine's setting is on, is never shown again, and
    leaves the keychain only as the engine host's spawn environment, never in a frame, a
-   log or an answer. The person can remove it at any time.
+   log or an answer. The person can remove it at any time. The routes are
+   `/api/settings/engine-credentials/{engine}` (status, `Local`, booleans only; opt-in `PUT`) and
+   `.../{engine}/key` (`PUT` save, `DELETE` remove): all writes are `Person` routes and the key travels
+   in the request body only.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
    sessions because it ignores OAuth login.

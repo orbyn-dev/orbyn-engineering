@@ -15,6 +15,7 @@
 //! No value is ever formatted: [`SpawnSecret`] prints nothing in `Debug`, zeroizes on drop, and the
 //! errors carry no key text. The web page and the routes get [`Status`] only.
 
+mod app;
 mod backend;
 
 #[cfg(test)]
@@ -24,13 +25,30 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
-#[cfg(all(target_os = "macos", feature = "engine-client"))]
+#[cfg(all(
+    target_os = "macos",
+    any(feature = "engine-client", feature = "engine-credentials")
+))]
 pub use backend::SystemKeychain;
 pub use backend::{Failure, SecretBackend};
 
 /// The keychain service name of a development or unsigned build; a signed release uses its own, so
 /// neither reads the other's items (the same rule as the account device, docs/account.md).
 pub const DEV_SERVICE: &str = "app.orbyn.engineering.engine-keys.dev";
+
+/// The keychain service name of a release build (`debug_assertions` off).
+pub const RELEASE_SERVICE: &str = "app.orbyn.engineering.engine-keys";
+
+/// The service this build uses: [`DEV_SERVICE`] with debug assertions, [`RELEASE_SERVICE`] without.
+/// The build has no signed-or-not flag, so this follows the account device's dev/release split
+/// (`debug_assertions`); an unsigned optimized build therefore uses the release name.
+pub const fn default_service() -> &'static str {
+    if cfg!(debug_assertions) {
+        DEV_SERVICE
+    } else {
+        RELEASE_SERVICE
+    }
+}
 
 /// The longest key we accept. Real keys are far shorter; the bound keeps a paste of a file out.
 pub const MAX_KEY_LEN: usize = 512;
