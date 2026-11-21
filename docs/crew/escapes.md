@@ -1,10 +1,13 @@
 # Crew escape flywheel: backend design
 
-Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built and the screen part of PR 5 (5a-5c), as the
-as-built sections below record. Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts
-frames stay drawn), the Review queue that would open `escape-report`'s mark dialog, the create-check form, pruning, and the scan
-from the merge and revert paths. The screens are Crew Designs v79 on the real reads (`escape-*`, [crew.md](../crew.md) "slice 4f, UI
-part C"), six still drawn: four redrawn at v79 and the two `escape-create-check*` at v20.
+Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built, the web screens of PR 5 (5a-5c) are built, and
+capacity-pressure retention (issue #686, built in #757, migration 58) is built, as the as-built sections below record.
+Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts frames stay drawn), the Review
+queue that would open `escape-report`'s mark dialog, the create-check form, and the scan from the merge and revert paths. Retention
+is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
+(`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
+the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
+previews flag.
 
 ## What an escape is
 
@@ -54,10 +57,15 @@ counts, checks added, being written and failed, and a per-week series, grouped b
 (`risk::area_of`) and **lane**. A group under 10 merges returns `rate: null`, `low_sample: true`; a rate uses confirmed escapes only. An escape counts
 against the engine, model and area copied from the merge **when logged**. A hard-deleted lead thread drops out, as for 4j.
 
-## Screens to wire
+## Screens and the reads they need
 
-All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, on literal sample data with every button disabled;
-`web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs` (path in `docs/match-kit.md`).
+All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, reachable only in a build with the dev-only previews flag
+(`__ORBYN_PREVIEWS__`). Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
+service. The table keeps the read each frame needs; `web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs`
+(path in `docs/match-kit.md`).
+
+Still drawn on sample data, every button disabled: `escape-report`, `escape-dashboard`, `escape-route-counts`, `-route-shifted`,
+`escape-create-check` and `-tooling`.
 
 | Frame | Needs |
 | --- | --- |
@@ -208,13 +216,13 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 - **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Each git call is cut at the scan's deadline and its output is capped (1 MiB for the log, name lists and blame, 256 KiB for a diff). A capped `diff-tree`, `diff` or `blame` skips only that fix or file; a capped `log`, name list or `rev-list`, or an unreadable repository, skips the merge: it is counted as skipped, never half read. stdout and stderr are read together, so a chatty stderr cannot stall a call. The log is NUL-separated and every parsed commit id is checked against `rev-list <merge>..refs/heads/<branch>`, so a commit message cannot forge an entry; paths are literal pathspecs; the branch is read as `refs/heads/<branch>` (a tag of the same name cannot stand in).
   **Rotation.** A merge with no signal never gets a row, so the scan keeps a cursor (the merge time and id of the last merge passed over) in `settings` under `crew_escape_scan_cursor`, device config like the thresholds; a damaged value reads as none and is overwritten. The next scan resumes after it and wraps to the newest at the end, so every merge in the window is reached over successive scans. The cursor is written after the escape rows. A batch the writer refuses (it would pass 5,000 escapes or 20,000 events) is treated like a project that was full before git ran: counted as `refused`, passed over, and retried when the scan wraps. A merge that alone cannot be read inside the scan's time (or whose log is always over its cap) is counted as skipped and passed over, so no one merge pins the scan. A merge skipped this way is not scanned for its signals until it can be read.
   A project at 5,000 escapes or 20,000 events is refused whole before any git runs, and a batch that would pass either limit is refused whole by the writer: nothing is
-  partly written, the scan reports `refused` and logs a plain sentence. Pruning is still not built.
+  partly written, the scan reports `refused` and logs a plain sentence. Pruning came later: see "Capacity pressure and writer migration (#686)".
 - **Choices where the note is silent:** the order of signals when several fire, the bisect and re-land filters, blame (not a line-number overlap) as the meaning of "overlapping
   hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
 
-## Capacity pressure and writer migration (#686)
+## Capacity pressure and writer migration (#686, #757)
 
 Migration **58** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
 escape stops gap changes at 99 events, reserving event 100 for confirm or dismiss. An identical gap on a non-dismissed escape remains an idempotent
@@ -249,7 +257,7 @@ admission limit; they are not silently dropped to manufacture a hard cap.
 Current `Store` connections register escape writer protocol 57 before migrating. New triggers reject affected escape/event/check writes from an
 already-open older connection that lacks that protocol function; older services also reject schema 58 on reopen through the existing schema-version
 check. No deployed old process is assumed stopped by these source tests: normal Core startup still owns the data-directory lock. Migration is
-forward-only and tested on a populated schema-57 database. After an error, reopen with a compatible current service and retry; do not remove the
+forward-only and tested on a populated schema-56 database (the test applies migrations up to 56, then opens it with the current store, which applies 57 and 58). After an error, reopen with a compatible current service and retry; do not remove the
 fence or restart an older writer against migrated data. Direct database tools must use the current writer protocol rather than bypass triggers.
 
 ## As built: PR 4, create a check
