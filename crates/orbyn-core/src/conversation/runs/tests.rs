@@ -1500,3 +1500,111 @@ async fn a_person_pattern_is_masked_for_the_engine_before_any_cut() {
     assert_eq!(sent, "the code is [hidden: Project code] ok");
     assert!(timeline(&f).contains("corp_abcdef"));
 }
+
+/// What each attached file held at the path the engine was told, read while the run's folder
+/// still exists (it is removed when the run ends).
+type Read = Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+fn reading(read: &Read) -> Script {
+    let read = read.clone();
+    Arc::new(move |spec: RunSpec, events, _| {
+        for line in spec.context.lines().filter_map(|l| l.strip_prefix("- ")) {
+            if let Ok(bytes) = std::fs::read(line) {
+                read.lock().unwrap().push((line.to_owned(), bytes));
+            }
+        }
+        tokio::spawn(async move {
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    })
+}
+
+/// Attaches `bytes` as `name`, runs one turn and returns what the engine read, the stored file's
+/// path and the timeline.
+async fn attach_and_run(
+    name: &str,
+    bytes: &[u8],
+    switch_off: bool,
+) -> (Vec<(String, Vec<u8>)>, String) {
+    let read: Read = Arc::default();
+    let f = fixture(reading(&read)).await;
+    if switch_off {
+        f.core
+            .change_redaction_surfaces(
+                "t",
+                &orbyn_contracts::RedactionSurfaceChange {
+                    terminal: None,
+                    agents: Some(false),
+                },
+            )
+            .unwrap();
+    }
+    let attachment = f
+        .core
+        .add_attachment(&f.thread, name, "application/octet-stream", bytes)
+        .unwrap();
+    let stored = f.core.store.list_attachments(&f.thread).unwrap()[0]
+        .1
+        .clone();
+    let run = f
+        .core
+        .runs
+        .admit_with(&f.thread, "look", std::slice::from_ref(&attachment.id), "t")
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    // The person's stored attachment and the thread keep the original.
+    assert_eq!(std::fs::read(&stored).unwrap(), bytes);
+    assert!(timeline(&f).contains(&attachment.id));
+    let got = read.lock().unwrap().clone();
+    (got, stored)
+}
+
+#[tokio::test]
+async fn an_attached_text_file_reaches_the_engine_masked_and_the_original_stays() {
+    let secret = a_secret();
+    let body = format!("REMOTE={secret}\nMODE=dev\n");
+    let (got, stored) = attach_and_run(".env", body.as_bytes(), false).await;
+    assert_eq!(got.len(), 1);
+    let (path, bytes) = &got[0];
+    assert_ne!(
+        path, &stored,
+        "the engine gets a copy, not the person's file"
+    );
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(!text.contains(&secret), "{text}");
+    assert_eq!(text, "REMOTE=[hidden: GitHub token]\nMODE=dev\n");
+}
+
+#[tokio::test]
+async fn an_attached_text_file_with_nothing_to_hide_is_passed_by_its_own_path() {
+    let (got, stored) = attach_and_run("notes.txt", b"hello\n", false).await;
+    assert_eq!(got, vec![(stored, b"hello\n".to_vec())]);
+}
+
+#[tokio::test]
+async fn a_binary_attachment_is_passed_unchanged() {
+    let mut bytes = a_secret().into_bytes();
+    bytes.extend_from_slice(&[0, 159, 146, 150]);
+    let (got, stored) = attach_and_run("blob.bin", &bytes, false).await;
+    assert_eq!(got, vec![(stored, bytes)]);
+}
+
+#[tokio::test]
+async fn an_attached_file_over_the_cap_is_passed_unchanged() {
+    let mut body = format!("TOKEN={}\n", a_secret()).into_bytes();
+    body.resize(super::masked_files::CAP + 1, b'x');
+    let (got, stored) = attach_and_run("big.txt", &body, false).await;
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].0, stored);
+    assert_eq!(got[0].1, body);
+}
+
+#[tokio::test]
+async fn with_the_agents_switch_off_an_attached_file_is_passed_unchanged() {
+    let body = format!("TOKEN={}\n", a_secret());
+    let (got, stored) = attach_and_run(".env", body.as_bytes(), true).await;
+    assert_eq!(got, vec![(stored, body.into_bytes())]);
+}

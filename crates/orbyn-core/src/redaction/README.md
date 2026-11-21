@@ -24,8 +24,10 @@ Terminal blocks are not built yet. What agents read is masked once, where a run 
 (`conversation/runs/turn.rs`, so every engine gets it) and where a steer is sent
 (`runs/admission.rs`): the message, queued follow-ups, steers, review text and Crew briefs that go through
 `launch` or `steer`. Each value becomes `[hidden: label]`. The person's own message, queue and timeline keep
-what was typed. Attached files, an engine's own tool output and Crew messages held for a worker turn are not
-masked here (Crew's own locked rule covers what Crew stores).
+what was typed. An attached text file (valid UTF-8, no NUL byte, at most 1 MiB) is masked too: the engine is told the
+path of a masked copy in the run's own folder (`runs/masked_files.rs`), and the upload is never rewritten. A binary,
+an image, a larger file and a file with nothing to hide keep their own path. An engine's own tool output and Crew
+messages held for a worker turn are not masked here (Crew's own locked rule covers what Crew stores).
 
 ## Rules
 
