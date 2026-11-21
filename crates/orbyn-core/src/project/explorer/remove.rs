@@ -110,31 +110,13 @@ impl Core {
                         "A thread still uses this worktree. Delete the thread first.".into(),
                     ));
                 }
-                runtime.block_on(async {
-                    // Git's own removal deletes ignored files without asking.
-                    let status = git_hardened(
-                        &target.path,
-                        &[
-                            "status",
-                            "--porcelain",
-                            "--ignored",
-                            "--untracked-files=all",
-                            "-z",
-                        ],
-                    )
-                    .await
-                    .map_err(|_| {
-                        CoreError::Git("The worktree could not be checked for local files.".into())
-                    })?;
-                    if !status.is_empty() {
-                        return Err(CoreError::PolicyDenied(
-                            "This worktree has local files that would be lost. Remove or commit them first."
-                                .into(),
-                        ));
-                    }
-                    let path = target.path.to_string_lossy().into_owned();
-                    git(&primary, &["worktree", "remove", &path]).await.map(|_| ())
-                })
+                runtime.block_on(effect(
+                    &store,
+                    &project_id,
+                    &primary,
+                    &target.path,
+                    super::status::DEADLINE,
+                ))
             });
             if result.is_ok() {
                 explorer.changed(&project_id);
@@ -144,6 +126,51 @@ impl Core {
         .await
         .map_err(|_| CoreError::Internal("The removal ended unexpectedly.".into()))?
     }
+}
+
+/// The checks and the removal that run inside the admission fence. The trust recheck
+/// matches the file writes, and each Git call is bounded so a hung Git cannot hold the
+/// fence (and with it every run admission). A refusal never carries a path.
+pub(super) async fn effect(
+    store: &crate::store::Store,
+    project_id: &str,
+    primary: &Path,
+    worktree: &Path,
+    limit: std::time::Duration,
+) -> Result<()> {
+    if !store.project(project_id)?.trusted {
+        return Err(CoreError::FolderUntrusted);
+    }
+    // Git's own removal deletes ignored files without asking.
+    let status = super::status::bounded(
+        limit,
+        git_hardened(
+            worktree,
+            &[
+                "status",
+                "--porcelain",
+                "--ignored",
+                "--untracked-files=all",
+                "-z",
+            ],
+        ),
+    )
+    .await
+    .map_err(|_| CoreError::Git("The worktree could not be checked for local files.".into()))?;
+    if !status.is_empty() {
+        return Err(CoreError::PolicyDenied(
+            "This worktree has local files that would be lost. Remove or commit them first.".into(),
+        ));
+    }
+    let path = worktree.to_string_lossy().into_owned();
+    super::status::bounded(limit, git(primary, &["worktree", "remove", &path]))
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            // Git's message names absolute paths; keep it out of the answer.
+            tracing::debug!(%error, "worktree removal failed");
+            CoreError::Git("The worktree could not be removed.".into())
+        })
 }
 
 /// The first thread whose folder is inside `path`, if any. Archived threads count

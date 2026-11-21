@@ -3429,7 +3429,6 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
 | `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
 | `DELETE /api/projects/:id/worktrees/:worktree` | Removes one linked worktree under the project's sibling `<repo>-wt` root when no thread works in it, through `git worktree remove` without force, after refusing when the worktree holds any modified, untracked or ignored file; `204`, `403` untrusted/locked/foreign/in use/holds local files, `404` unknown member, `400` for the primary checkout or a folder outside Git |
-
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
@@ -3513,14 +3512,12 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
-
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
 | `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
 | `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
 | `POST /api/threads/:id/vcs/refs`, `POST .../vcs/refs/switch` | `CreateBranch` creates a branch at an optional start without switching (`201`); `SwitchBranch` switches (`204`); `400` invalid name or outside Git, `409 thread_busy`/`git_failed` |
-
 | `GET /api/forges?rescan=true` | `ForgeStatus[]`; the last answer for a minute, then read again in the background; `rescan` asks the CLIs now |
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
