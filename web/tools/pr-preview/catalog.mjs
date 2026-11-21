@@ -92,6 +92,8 @@ export const FRAMES = {
   "pr-row-variants": { route: "#/pulls", scenario: "pulls" },
   "pr-row-pending": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls/details", delay: 20000 }] },
   "pr-row-pending-failed": { route: "#/pulls", scenario: "pulls-details-failed" },
+  // From a list row the method is a select in the dialog.
+  "pr-list-merge-dialog": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Merge #", { prefix: true })] },
   "pr-list-none": { route: "#/pulls", scenario: "pulls-none" },
   "pr-list-loading": { route: "#/pulls", scenario: "pulls", pre: [{ route: "**/api/pulls?*", delay: 20000 }] },
   "pr-list-error": { route: "#/pulls", scenario: "pulls-unreachable" },
@@ -175,6 +177,30 @@ export const FRAMES = {
   "pr-detail-error-uncached": { route: pull(142), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/142", status: 502 }] },
   "pr-detail-menu": { route: pull(205), scenario: "pulls", steps: [click("button", "More actions")] },
   "pr-detail-merge-dialog": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
+  // The dialog's states. The account setting is off in the mock, so the switch reads off (the credits-readonly-on frame needs a mock with the setting on).
+  "pr-detail-merge-dialog-credits-readonly": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
+  "pr-detail-merge-dialog-auto": {
+    route: pull(205),
+    scenario: "pulls",
+    steps: [click("button", "Squash and merge", { prefix: true }), click("menuitemcheckbox", "Merge when checks pass"), click("button", "Merge", { exact: true })],
+  },
+  "pr-detail-merge-dialog-rebase": {
+    route: pull(205),
+    scenario: "pulls",
+    steps: [click("button", "Squash and merge", { prefix: true }), click("menuitem", "Rebase and merge"), click("button", "Merge", { exact: true })],
+  },
+  "pr-detail-merge-dialog-busy": {
+    route: pull(205),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/205/merge", delay: 20000 }],
+    steps: [click("button", "Merge", { exact: true }), click("button", "Merge", { exact: true, within: "Merge pull request" }), { do: "wait", ms: 300 }],
+  },
+  "pr-detail-merge-dialog-error": {
+    route: pull(205),
+    scenario: "pulls",
+    pre: [{ route: "**/api/projects/*/pulls/205/merge", status: 502 }],
+    steps: [click("button", "Merge", { exact: true }), click("button", "Merge", { exact: true, within: "Merge pull request" })],
+  },
   "pr-detail-offline": { route: pull(201), scenario: "pulls", steps: [{ do: "offline" }] },
   "pr-detail-filtered": {
     route: pull(202),

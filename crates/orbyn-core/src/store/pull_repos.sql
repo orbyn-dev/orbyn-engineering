@@ -1,4 +1,4 @@
--- Migration 69: a pull request link belongs to one repository of the thread (docs/multi-repo.md, "Pull requests").
+-- Migration 71: a pull request link belongs to one repository of the thread (docs/multi-repo.md, "Pull requests").
 -- Two repositories can both have a #12. Every existing link moves to the thread's own project, which is its
 -- primary repository, so a thread with one repository is unchanged.
 CREATE TABLE thread_pull_requests_by_repo (

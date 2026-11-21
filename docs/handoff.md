@@ -13,8 +13,10 @@ repository and task instructions, and reconcile newer main before acting.
 ## Usage limits reconciliation (#474)
 
 - The Limits view uses registry names, including OpenCode and Cursor; provider names in the narrow design are examples, not aliases. See [Limits](../web/src/features/usage/UsageLimits.tsx) and its [tests](../web/src/features/usage/UsagePage.test.tsx).
+- The Limits copy follows the frames: `usage-claude-windows-narrow` and the other `usage-claude-windows*` frames read "Claude Code doesn’t report one. Usage is on the Usage tab.", and `usage-providers`, `usage-providers-error` and `usage-providers-unsupported` carry the group intro and "Couldn’t read the limit." with Try again as drawn (design revision `43fa8367`).
 - A missing or invalid reset omits reset text; percentage and near/reached status remain independent. The service exposes `checked_at` and unavailable reads in the [usage contract](../crates/orbyn-contracts/src/usage.rs).
-- The [preview catalog](../web/tools/pr-preview/catalog.mjs) already includes the 640px `usage-claude-windows-narrow` frame. The published failed-read frame shows no figure and offers Try again; it is not a dimmed stale bar.
+- The [preview catalog](../web/tools/pr-preview/catalog.mjs) includes the 640px `usage-claude-windows-narrow` frame, and the [preview tests](../web/tools/pr-preview/preview.test.ts) pin that width. The failed-read frame (`usage-providers-error`) shows no figure and offers Try again; it is not a dimmed stale bar.
+- Still with the Designer: how a window with a percentage and no reset time should read. No frame draws one (`usage-claude-windows-near`, `-narrow`, `-reached`, `-loading` and `usage-providers*` checked at revision `43fa8367`), so the app omits the reset text rather than inventing a line.
 - This is a source and design comparison, not fresh real-engine, Windows, macOS or packaged-app qualification. The separate #475 fresh-account safety work is not assumed here.
 
 ## Goal

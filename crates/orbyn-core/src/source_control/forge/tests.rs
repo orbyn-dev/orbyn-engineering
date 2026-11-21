@@ -561,12 +561,13 @@ fn details_response() -> Value {
         "repository": {
             "p3": {
                 "createdAt": "2026-01-02T03:04:05Z",
-                "reviewRequests": { "nodes": [
+                "mergeable": "CONFLICTING",
+                "reviewRequests": { "pageInfo": {"hasNextPage": false}, "nodes": [
                     { "requestedReviewer": { "__typename": "User", "login": "sam" } },
                     { "requestedReviewer": { "__typename": "Team", "slug": "core" } },
                     { "requestedReviewer": { "__typename": "Bot" } },
                 ] },
-                "latestReviews": { "nodes": [
+                "latestReviews": { "pageInfo": {"hasNextPage": false}, "nodes": [
                     { "author": null, "state": "APPROVED" },
                     { "author": { "login": "me" }, "state": "CHANGES_REQUESTED" },
                 ] },
@@ -578,8 +579,9 @@ fn details_response() -> Value {
             },
             "p4": {
                 "createdAt": "2026-02-02T00:00:00Z",
-                "reviewRequests": { "nodes": [] },
-                "latestReviews": { "nodes": [] },
+                "mergeable": "MERGEABLE",
+                "reviewRequests": { "pageInfo": {"hasNextPage": false}, "nodes": [] },
+                "latestReviews": { "pageInfo": {"hasNextPage": false}, "nodes": [] },
                 "comments": { "totalCount": 0 },
                 "reviews": { "totalCount": 0, "pageInfo": {"hasNextPage": false}, "nodes": [] },
             },
@@ -618,10 +620,13 @@ fn the_details_response_merges_per_pull_request() {
         three.viewer_review_state.as_deref(),
         Some("changes_requested")
     );
+    // The forge's MERGEABLE/CONFLICTING/UNKNOWN words, in the contract's own spelling.
+    assert_eq!(three.mergeable.as_deref(), Some("conflicting"));
     let four = &details[&4];
     assert_eq!(four.requested_reviewers.as_deref(), Some(&[][..]));
     assert_eq!(four.viewer_review_state.as_deref(), Some("none"));
     assert_eq!(four.comment_count, Some(0));
+    assert_eq!(four.mergeable.as_deref(), Some("mergeable"));
 }
 
 #[test]
@@ -696,11 +701,71 @@ fn the_details_query_names_one_alias_per_pull_request() {
         2
     );
     assert!(query.contains("reviews(first:100){totalCount pageInfo{hasNextPage} nodes"));
-    assert!(query.contains("latestReviews(first:50)"));
-    assert!(query.contains("reviewRequests(first:50)"));
+    // A reviewer list that may continue past its first page says so, so it can be withheld.
+    assert!(query.contains("latestReviews(first:50){pageInfo{hasNextPage} nodes"));
+    assert!(query.contains("reviewRequests(first:50){pageInfo{hasNextPage} nodes"));
+    assert_eq!(query.matches("mergeable").count(), 2);
     assert_eq!(super::details::DETAILS_BATCH, 25);
     assert_eq!(super::details::DETAILS_ROW_LIMIT, 100);
     assert_eq!(super::details::DETAILS_TIMEOUT, Duration::from_secs(20));
+}
+
+#[test]
+fn details_carry_whether_the_forge_can_merge() {
+    let details = parse_details(&details_response(), "proj", &[3, 4]);
+    assert_eq!(details[&3].mergeable.as_deref(), Some("conflicting"));
+    assert_eq!(details[&4].mergeable.as_deref(), Some("mergeable"));
+    // A forge that does not say leaves it absent, never a guessed word.
+    let mut quiet = details_response();
+    for number in [3, 4] {
+        quiet["data"]["repository"][format!("p{number}")]
+            .as_object_mut()
+            .unwrap()
+            .remove("mergeable");
+    }
+    let details = parse_details(&quiet, "proj", &[3, 4]);
+    assert_eq!(details[&3].mergeable, None);
+    assert_eq!(details[&4].mergeable, None);
+    // The list reads it beside the other facts, so a row that only carries it still shows.
+    let mut only = details_response();
+    only["data"]["repository"]["p3"] = json!({ "mergeable": "UNKNOWN" });
+    assert_eq!(
+        parse_details(&only, "proj", &[3])[&3].mergeable.as_deref(),
+        Some("unknown")
+    );
+}
+
+#[test]
+fn a_truncated_reviewer_connection_withholds_what_it_could_not_name() {
+    let mut response = details_response();
+    // Both connections report a page after this one, so neither can name everyone.
+    response["data"]["repository"]["p3"]["reviewRequests"]["pageInfo"]["hasNextPage"] = true.into();
+    response["data"]["repository"]["p3"]["latestReviews"]["pageInfo"]["hasNextPage"] = true.into();
+    let details = parse_details(&response, "p", &[3]);
+    assert_eq!(details[&3].requested_reviewers, None);
+    assert_eq!(details[&3].viewer_review_state, None);
+    // The facts that came back whole are still served.
+    assert_eq!(details[&3].comment_count, Some(5));
+    assert_eq!(
+        details[&3].created_at.as_deref(),
+        Some("2026-01-02T03:04:05Z")
+    );
+    assert_eq!(details[&3].mergeable.as_deref(), Some("conflicting"));
+    // A connection that does not say whether it continues cannot be read as whole either.
+    for bad in [
+        Value::Null,
+        json!({}),
+        json!({"hasNextPage": null}),
+        json!({"hasNextPage": "false"}),
+    ] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["reviewRequests"]["pageInfo"] = bad.clone();
+        response["data"]["repository"]["p3"]["latestReviews"]["pageInfo"] = bad;
+        let details = parse_details(&response, "p", &[3]);
+        assert_eq!(details[&3].requested_reviewers, None);
+        assert_eq!(details[&3].viewer_review_state, None);
+        assert_eq!(details[&3].comment_count, Some(5));
+    }
 }
 
 #[test]
@@ -712,7 +777,8 @@ fn a_paused_details_request_withholds_the_approval_count_too() {
             "requested_reviewers",
             "viewer_review_state",
             "comment_count",
-            "approval_count"
+            "approval_count",
+            "mergeable"
         ]
     );
 }

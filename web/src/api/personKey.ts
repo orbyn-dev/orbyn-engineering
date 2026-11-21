@@ -209,17 +209,19 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["DELETE", "/api/library/env-sets/{id}/keys/{key}"],
   ["POST", "/api/library/import"],
   ["POST", "/api/projects/{id}/library/suggestions/copy"],
+  // Cursor thread contract (docs/cursor-thread-contract.md): the one-turn override and the engine notice's acknowledgement.
+  ["POST", "/api/threads/{id}/send-without-approvals"],
+  ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+  // Transcript import (docs/attachments-transcripts.md): a thread made from an untrusted file. The export (`GET /api/threads/{id}/export`) is Local.
+  ["POST", "/api/threads/import"],
 ];
 
 /**
- * Person routes of service slices that are not merged: the Cursor thread contract (HostDriver slice 3: the one-turn override and the
- * engine notice's acknowledgement), the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * Person routes of service slices that are not merged: the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
-  ["POST", "/api/threads/{id}/send-without-approvals"],
-  ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
   // Issues (docs/issues.md, "Issue writes and list controls"): the two writes of the tracker's own data. The five Issues writes of the
   // first slice (connect, disconnect, link, unlink, start-thread) are in `routes.json` and so in `PERSON_ROUTES`. These two are not
   // built in the service yet: when they land in `routes.json` the test below fails and each line moves into `PERSON_ROUTES`.

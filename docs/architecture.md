@@ -173,6 +173,12 @@ archive clears it. With a reset in the future, `auto_resume_limited_threads` sch
 continuation and `snooze_limited_threads` snoozes until then; each can also be chosen on
 the thread. Due continuations start from the lifecycle pass, so an overdue one starts on
 the first pass after a restart, and a held queue stays held until that run ends.
+Automatic continuations are bounded at three per thread, the budget restart recovery
+shares: once they are spent, the schedule is dropped, the limit and its reset stay on
+the thread, and a `limit.retry_exhausted` note records that the automatic continuation
+stopped, so the thread waits for you until your own message or choosing the continuation
+on the thread gives the budget back. A continuation that fails on anything but a limit
+schedules nothing, so a failed run never retries itself.
 
 ## Composer
 
@@ -465,10 +471,14 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 ## Usage
 
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
-under `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `sessions/**/*.jsonl` under `~/.codex`
-(or `CODEX_HOME`). It keeps only timestamps, models and token counts, and never opens a
-credential file. Claude rewrites an entry as it streams, so each message counts once.
-Codex repeats its running total, so an unchanged total counts once. Costs come from
+under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
+(or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+and token counts, and never opens a credential file. Claude rewrites an entry as it
+streams, so each message counts once. Codex repeats its running total, so an
+unchanged total counts once. Muse writes one log per session, counts its cached
+input inside its input count and its reasoning inside its output count, and can copy
+an inference into another session's log, so each inference counts once. Costs come from
 configured `model_prices`, after `model_aliases`; a model with no price has an unknown
 cost and is never guessed. History is kept by day, model and service tier (Claude's
 `speed`/`service_tier`, Codex's turn `service_tier`; unknown names are `other`). A
@@ -1977,9 +1987,12 @@ in a later `host-context-changed`; a read the service refuses leaves the context
 it rather than guessing. An unknown render, a render that is not an app, or a tool its
 server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
 names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
-starts no model turn and reaches no other server. It is evaluated read-only against the
-policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
-only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+starts no model turn and reaches no other server. Codex 0.166.0 starts only the server it
+is asked about, so with two configured a read started that one alone; a build that ignored
+the name would list the others, and the read ignores the other servers' entries and
+never answers with another server's tool. It is evaluated read-only against the policy rules as a `tool`
+action on `mcp_app:<server>:tool_info` before any server starts: only an explicit deny
+refuses it (`403`, with an `action.deny` audit row); the default
 `ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
 starts a short engine session, so the service holds at most two at once and identical
 concurrent reads of one render share one (single-flight: the answer goes to the callers
@@ -3134,7 +3147,9 @@ which agents and the address bar cannot reach. Picking an element reads it and c
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
-`crashed`. This only runs while someone watches. `enable_agent_browser_access`, off
+`crashed`. This only runs while someone watches. A browser that dies by a fault before the
+tab exists is started once more, and a second death fails that open with the browser's
+stderr and startup flags. `enable_agent_browser_access`, off
 globally or for a project, refuses every `orbyn_preview_*` tool.
 
 A previewed page is untrusted, so what crosses between it and the person waits for

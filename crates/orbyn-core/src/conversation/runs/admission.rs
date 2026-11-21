@@ -33,10 +33,96 @@ impl RunManager {
         attachments: &[String],
         actor: &str,
     ) -> Result<Run> {
+        self.admit_asked(thread_id, prompt, attachments, actor, false)
+    }
+
+    /// The person's one turn without approvals on an engine that never asks: the thread's saved mode is not read and not
+    /// changed, so the next send is refused again. The notice still applies. One audit row, written before the run exists.
+    pub fn admit_without_approvals(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        actor: &str,
+    ) -> Result<Run> {
+        let thread = self.store.thread(thread_id)?;
+        let driver = self.engines.driver(&thread.engine)?;
+        let descriptor = driver.descriptor();
+        if !crate::agents::permission_modes::never_asks(&descriptor.capabilities.permission_modes) {
+            return Err(CoreError::Unsupported(format!(
+                "{} asks before it acts, so there is nothing to run without.",
+                descriptor.name
+            )));
+        }
+        self.check_never_asks(&thread, true)?;
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: actor.to_owned(),
+            action: "thread.send_without_approvals".into(),
+            target: thread.id.clone(),
+            decision: None,
+            source: "user".into(),
+            thread_id: Some(thread.id.clone()),
+            run_id: None,
+            detail: json!({ "engine": thread.engine, "project_id": thread.project_id }),
+        })?;
+        self.admit_asked(thread_id, prompt, attachments, actor, true)
+    }
+
+    /// The refusals of an engine that never asks (docs/cursor-thread-contract.md), at run start only. The notice comes
+    /// first. `once` is the person's one-turn override, which skips the mode and nothing else.
+    fn check_never_asks(&self, thread: &Thread, once: bool) -> Result<()> {
+        let Ok(driver) = self.engines.driver(&thread.engine) else {
+            return Ok(());
+        };
+        let descriptor = driver.descriptor();
+        let modes = descriptor.capabilities.permission_modes;
+        if !crate::agents::permission_modes::never_asks(&modes) {
+            return Ok(());
+        }
+        self.engines
+            .notice_required(&thread.project_id, &thread.engine)?;
+        let saved = thread
+            .lifecycle
+            .as_ref()
+            .map_or(PermissionMode::Supervised, |l| l.permission_mode);
+        // Only the two modes that promise an ask are refused. Auto and Full access promise none, and the engine runs as it
+        // is: with no approvals.
+        if once
+            || !matches!(
+                saved,
+                PermissionMode::Supervised | PermissionMode::AutoEdits
+            )
+        {
+            return Ok(());
+        }
+        Err(CoreError::EngineRefused {
+            code: "engine_mode_refused",
+            message: format!(
+                "{} never asks before it acts, so a thread on it runs with No approvals. Choose that mode, or run this message once without approvals.",
+                descriptor.name
+            ),
+            fields: json!({
+                "engine": thread.engine,
+                "thread_id": thread.id,
+                "mode": saved,
+                "allowed": modes,
+            }),
+        })
+    }
+
+    fn admit_asked(
+        self: &Arc<Self>,
+        thread_id: &str,
+        prompt: &str,
+        attachments: &[String],
+        actor: &str,
+        once_without_approvals: bool,
+    ) -> Result<Run> {
         check_prompt(prompt)?;
         self.refuse_background_lead(thread_id)?;
         let thread = self.store.thread(thread_id)?;
         self.check_goal_action(&thread, prompt)?;
+        self.check_never_asks(&thread, once_without_approvals)?;
         self.attachment_files(thread_id, attachments)?;
         self.engines
             .check_selection(&thread.engine, &selection::of_thread(&thread))?;
@@ -84,6 +170,7 @@ impl RunManager {
         thread.effort.clone_from(&capture.selection.effort);
         thread.options.clone_from(&capture.selection.options);
         self.check_goal_action(&thread, &capture.prompt)?;
+        self.check_never_asks(&thread, false)?;
         self.engines
             .check_selection(&thread.engine, &selection::of_thread(&thread))?;
         let root = self.workspace.root()?;
@@ -351,6 +438,10 @@ impl RunManager {
 
     fn try_drain(self: &Arc<Self>, thread_id: &str) -> Result<()> {
         let thread = self.store.thread(thread_id)?;
+        // A refused message stays queued, as every other start failure leaves it.
+        if !self.store.list_queue(thread_id)?.is_empty() {
+            self.check_never_asks(&thread, false)?;
+        }
         let root = self.workspace.root()?;
         let next = self.workspace.admit_with(|| {
             self.check_console(thread_id)?;
@@ -425,6 +516,7 @@ impl RunManager {
             return Err(CoreError::ThreadArchived);
         }
         self.check_goal_action(&thread, prompt)?;
+        self.check_never_asks(&thread, false)?;
         self.attachment_files(thread_id, attachments)?;
         let chosen = selection::merged(&selection::of_thread(&thread), wanted);
         self.engines.check_selection(&thread.engine, &chosen)?;

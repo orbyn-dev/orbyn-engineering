@@ -119,6 +119,11 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/engines/update-all"),
     ("POST", "/api/engines/{id}/install-recommended"),
     ("POST", "/api/engines/{id}/update"),
+    (
+        "POST",
+        "/api/projects/{project_id}/engines/{engine}/notice/acknowledge",
+    ),
+    ("POST", "/api/threads/{id}/send-without-approvals"),
     ("POST", "/api/shell/actions"),
     ("POST", "/api/updates/app/apply"),
     ("POST", "/api/updates/app/download"),
@@ -198,6 +203,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/terminals"),
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
+    ("POST", "/api/threads/import"),
     ("POST", "/api/issues/trackers/{tracker}/connect"),
     ("POST", "/api/issues/trackers/{tracker}/disconnect"),
     ("POST", "/api/issues/start-thread"),
@@ -658,6 +664,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/projects/{project_id}/engines/{engine}/notice/acknowledge",
+        "the person's acknowledgement of an engine's one-time notice, which lets runs without approvals start in the project",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/send-without-approvals",
+        "runs one turn on an engine that never asks, without the mode the thread saved",
+    ),
+    (
+        "POST",
         "/api/engines/custom",
         "registers a program to run as an engine",
     ),
@@ -885,6 +901,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "PATCH",
         "/api/threads/{id}",
         "can set the thread's permission_mode",
+    ),
+    (
+        "POST",
+        "/api/threads/import",
+        "creates a thread from a file the person picked: untrusted content that becomes history in their project",
     ),
     (
         "POST",

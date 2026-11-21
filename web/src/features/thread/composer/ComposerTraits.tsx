@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelInfo, ModelOption, PermissionMode } from "../../../api/types";
-import { ACCESS, oneModeLabel, oneModeReason, refusalModeName } from "../../../product/composer/access";
+import { ACCESS, MODES, oneModeLabel, oneModeReason, refusalModeName } from "../../../product/composer/access";
 import { effortOption, effortValue } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";
 import { Presence } from "../../../ui/Presence";
@@ -9,8 +9,6 @@ import { EffortGlyph } from "./EffortGlyph";
 import { FloatingPicker } from "./ModelPicker";
 
 export { ACCESS, neverAsks, offeredModes, refusalSentence, refusedModes, shownAccess } from "../../../product/composer/access";
-
-const MODES = Object.keys(ACCESS) as PermissionMode[];
 
 /** What the composer's access control shows: its label, and for an engine with one mode the reason it cannot be opened (dimmed while a refusal is open). */
 export interface AccessView {

@@ -373,7 +373,7 @@ Behind the same flag; no new migration (`thread_repos` is from the slice above).
 
 ## As built: pull requests and removal
 
-- **Links are per repository.** A pull request link is stored by (thread, repository, number) (migration 69). Every link made before it moved
+- **Links are per repository.** A pull request link is stored by (thread, repository, number) (migration 71). Every link made before it moved
   to the thread's own project, which is its primary repository (a test keeps old links alive). A repository id is the project id for the
   primary and the repository row id for the others, as everywhere else. `GET /api/projects/{id}/pulls/{number}/linked-threads` matches
   the project's own repository only, so another repository's #12 never lists a thread.

@@ -13,9 +13,9 @@ changes only if the service pull request says so. Rows: B8, B43, K36 in [parity]
 
 Photo conversion and the earlier-messages read are not Person-class: each is a write or read on the thread's own files and history, like
 the attachment upload that exists today (`POST /api/threads/{id}/attachments` is not in `PERSON_ROUTES`). **Transcript import is
-Person-class** (Products Research ruling): it creates thread context from an untrusted file, so the page sends the person key with it,
-and it is listed in `PENDING_PERSON_ROUTES` in `web/src/api/personKey.ts` until `routes.json` lists it (then move it into `PERSON_ROUTES`).
-Transcript export stays Local.
+Person-class** (Products Research ruling): it creates a thread from an untrusted file, so the page sends the person key with it.
+`POST /api/threads/import` is in `PERSON_ROUTES`; the older per-thread attach route stays in `PENDING_PERSON_ROUTES` (not built, see
+below). Transcript export stays Local.
 
 Owners (Products Research): transcript export and import: Eng 3, after W8/W9, including `source` and `imported_at` on the thread;
 photo conversion: Luan, as an issue, reviewed by Eng 2; the earlier-messages read: Eng 2's R list, after HostDriver. The "Reading
@@ -56,30 +56,81 @@ transcript…" chip reuses the converting chip (no new frame).
   first two and the service's message for the rest.
 - The request can be cancelled by the client closing it; the service then keeps nothing.
 
-## Transcript import (B43)
+## Transcript export and import (B43)
 
-`POST /api/threads/{id}/transcripts?name=<label>` with the transcript file as the body.
+Two routes and one file, built by Eng 3. The web replaces the two placeholder constants below; it must also call the import route
+below (it creates a thread) instead of the per-thread attach route this file described before.
 
-- The file is the one Core's export writes. **Not built**: the ending (`.transcript`) and type (`application/x-orbyn-transcript`) in the
-  web are placeholders until the export exists; the owner fixes the real ones and the two constants in
-  `web/src/features/thread/composer/transcriptDrop.ts` follow. The web recognises a transcript by that ending only to choose this route;
-  the service decides from the bytes.
-- Person-class. Transcript files are untrusted: the size cap, the parse limits and "nothing executes" below are security-queue checks.
-- Cap: 50 MiB (`413 file_too_large`), the same as a file.
-- The service validates the format version, parses with limits (message count, depth, text length), keeps the transcript for this
-  thread and answers `200`:
+### The file
+
+Plain JSON, one object. T3 Code has no transcript file (its drag of a thread is a link, B43 above), so this format is ours.
+
+- **Ending** `.orbyn.json`, **media type** `application/vnd.orbyn.transcript+json`. These are THE constants (in the service:
+  `TRANSCRIPT_FILE_ENDING`, `TRANSCRIPT_MEDIA_TYPE` in `orbyn-contracts`; the web's two in
+  `web/src/features/thread/composer/transcriptDrop.ts` replace the placeholders `.transcript` and `application/x-orbyn-transcript`).
+  The service decides from the bytes, never from the ending or the type.
+- Shape (`TranscriptDocument`, generated as `web/src/generated/TranscriptDocument.ts`):
 
   ```json
-  { "id": "…", "title": "Redirect loop on logout", "message_count": 214 }
+  { "format": "orbyn-transcript", "version": 1, "exported_at": "2026-11-22T10:00:00Z",
+    "thread": { "title": "Redirect loop on logout", "engine": "claude", "model": "opus", "created_at": "2026-11-20T09:00:00Z" },
+    "messages": [{ "role": "user", "ts": "2026-11-20T09:00:05Z", "text": "…" }, { "role": "assistant", "ts": "…", "text": "…" }],
+    "omitted_earlier": 0 }
   ```
 
-  `id` goes in the run's `attachment_ids`; on send the service starts the message with the transcript as context, marked as another
-  thread's history, and the transcript leaves the composer. Deleting the thread deletes the transcript with it.
-- Errors: `transcript_too_new` (`422`, made by a newer Orbyn), `transcript_unreadable` (`422`, damaged or not a transcript; the web then
-  offers "Add as a file", which uploads the bytes as an ordinary attachment), `file_too_large` (`413`).
-- A thread **link** dropped from the left bar needs no route: it already becomes a thread chip.
-- The export that makes the file (a thread's "Export transcript") is a separate route, not specified here: it is Eng 3's, and
-  its file must stay readable by this import. Opening a file from outside the app is out of scope.
+  `messages` are oldest first, `role` is `user` or `assistant`, `text` is plain text (at most 32 KiB, never markup).
+  `omitted_earlier` counts older messages left out so the file stays within the import's cap (at most 2000 messages and about
+  1.9 MiB are written). Timeline items (tool calls and their output), reasoning, attachments and approvals are **not** in
+  version 1: tool output is where file contents and environment values would travel. A later version may add a label-only
+  `activity` list; a version 1 reader drops it.
+- What the file never holds: a secret, an environment value, an attachment's bytes or a path to it, an engine session id, a
+  token, the person key, the thread id, or an absolute path of this computer (see Export).
+
+### Export (Local read)
+
+`GET /api/threads/{id}/export` answers the document (`200`, `application/json`). Nothing is written on the computer and no path is
+read from the request: the client saves the answer under the title plus the ending.
+
+- **Redaction.** Every message and the title go through the redactor with **every recognised format and every one of the person's
+  own patterns, whatever the Terminal and Agents switches say**. A switch decides what reaches an agent or a terminal; a file can go
+  anywhere, so a pattern that Orbyn hides anywhere is hidden here and a switch can only make the export stricter than that, never
+  looser. Each hidden value becomes `[hidden: <label>]`, as for an agent.
+- **Paths.** The project's folder, the thread's folder and worktree become `<project>`, the home folder and any `/Users/<name>`,
+  `/home/<name>` or `C:\Users\<name>` prefix become `~`. Other absolute paths a person typed into free text are not recognised and
+  stay as written: the person reads the file before sharing it.
+- No audit row: it is a read (the Local class), like the thread's own messages.
+
+### Import (Person class)
+
+`POST /api/threads/import?project_id=<id>[&engine=<id>][&dry_run=true]` with the file as the raw body (`?name=` is a label the
+service does not read). It **creates a thread** in that project and answers `201` (`200` for a dry run):
+
+```json
+{ "dry_run": false, "thread": { "…": "the Thread, with source and imported_at" }, "title": "Redirect loop on logout",
+  "message_count": 214, "dropped": 2, "problems": [{ "kind": "message", "index": 7, "code": "unknown_role" }] }
+```
+
+- Person-class: the file is untrusted, so the page sends the person key and a service token alone gets `403 person_required`.
+- Limits, all security-queue checks: at most 2 MiB (`413 file_too_large`), a fixed shape and at most 6 levels, at most 2000
+  messages, 32 KiB a message, a 200-character title. Control characters and bidirectional overrides are removed from every string.
+  Newer version: `422 transcript_too_new`. Not JSON, not this format or a malformed shape: `422 transcript_unreadable`.
+- **Drop and report.** A bad message (not an object, a role other than `user` or `assistant`, no text, only blanks, over the count)
+  is dropped; a long text is cut; a time that does not parse is replaced by the import time; unknown members are dropped. Each is one
+  `problems` entry with a `code` (`not_an_object`, `unknown_role`, `text_missing`, `text_empty`, `text_cut`, `time_replaced`,
+  `message_limit`, `title_missing`, `unknown_fields_dropped`) and never the text. The rest imports.
+- **Nothing runs and nothing is read.** The service fetches no URL, reads no path from the file, writes no file, starts no run and
+  runs no script. The thread uses the project's own folder; `model`, `engine_session` and every other member of the file are never
+  applied. The engine is `?engine=` or the file's `thread.engine`, and must be one this install has and the project allows
+  (`404` otherwise); no engine session id is honoured, so the first run of the thread starts a fresh session.
+- **Marked.** The thread has `source: "orbyn-transcript"` and `imported_at` (columns on the thread, migration 69). The messages are
+  ordinary log events, so the thread opens with them as read-only history; they are searchable. A thread made here has neither member.
+- **Audit.** One `thread.imported` row: `{source, messages, dropped}`, no title and no text.
+- `dry_run` validates and answers the counts and `problems` and writes nothing, not even the audit row.
+
+The earlier design in this file, `POST /api/threads/{id}/transcripts` (attach a transcript to the composer as context for one
+message, `id` in `attachment_ids`), is **not built**: it needs a per-thread store for the file and a way to start a message with it,
+and would reuse this parser. Until it exists, the web's `PENDING_PERSON_ROUTES` line for it stays and a dropped transcript file is an
+ordinary attachment, or the person imports it as a thread with the route above.
 
 ## Earlier messages of an imported thread (K36)
 
