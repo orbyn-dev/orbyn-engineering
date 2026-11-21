@@ -78,6 +78,18 @@ without asking. Autopilot Full: merges when checks pass"). Rules:
   `409 confirm_required` with the grants, and applies nothing. This is one request with a checked field, not a two-step
   token flow: it is the simplest option, and the client shows the confirm on the first `409` or before the request when it
   already knows the profile.
+- The `409 confirm_required` answer carries the grants in its `detail`, and nothing else is needed to read it:
+
+  ```jsonc
+  { "grants": [ "full_access", "autopilot_full" ] }   // only the grants the profile carries and `ack_grants` did not cover
+  ```
+
+  | Grant code | Raised by | Text the confirm shows |
+  | --- | --- | --- |
+  | `full_access` | `permission_mode: "full_access"` | Full access: runs any command without asking. |
+  | `autopilot_full` | `autopilot_mode: "full"` | Autopilot Full: merges when checks pass. |
+
+  These are the only two codes. A client ignores a code it does not know and never treats it as covered.
 - The confirm is per apply. Nothing is remembered, so the next apply of the same profile asks again.
 - Ask only when the profile being applied grants full access or Autopilot full. Careful, Fast, Cheap and any other profile that
   grants neither apply directly: no `ack_grants`, no confirm, and the route never answers `409 confirm_required`.
@@ -166,7 +178,7 @@ Every route is under the existing bearer or session credential. Crew routes answ
 
 | Method and path | Class | Purpose |
 | --- | --- | --- |
-| `GET /api/profiles` | Local read | `{ profiles: Profile[], limit: 50 }`, built-ins first, each with `availability` (below) |
+| `GET /api/profiles` | Local read | A bare JSON array `Profile[]`, built-ins first, each with `availability` (below). The limit of 50 is not in the answer: it is the fixed number in Shape, and a create past it is `409 profile_limit` |
 | `GET /api/profiles/{id}` | Local read | One `Profile` with `availability` and `warnings[]` |
 | `POST /api/profiles/check` | Local read | Takes a draft profile, answers `warnings[]` and `availability`. Saves nothing; used by the editor while typing |
 | `POST /api/profiles` | **Person** | Create. Body is the shape minus `id`, `builtin`, `revision`, timestamps. Answers `201 Profile` |
@@ -213,13 +225,38 @@ Three kinds of item: workflows, prompts and environment sets. One list each, all
 ### Shared rules
 
 - Ids are lowercase ULIDs from core. Names are 1 to 60 characters, unique per kind ignoring case.
-- Limits: 200 workflows, 200 prompts, 50 environment sets, 64 keys per set. A write past a limit is `409 library_limit`.
+- Limits: 200 workflows, 200 prompts, 50 environment sets, 64 keys per set (the full list, with the keys `GET /api/library`
+  answers them under, is in "Limits"). A write past a count limit is `409 library_limit`.
+- **Every list answer is a bare JSON array**, with no wrapper object: `GET /api/profiles`, `GET /api/library/workflows`,
+  `GET /api/library/prompts` and `GET /api/library/env-sets`. An empty list is `[]`.
 - Every item has `revision`, `created_at`, `updated_at`. Writes carry `seen_revision` and answer
   `409 revision_conflict` when stale.
 - A **parameter** is `{ name, label, kind, default?, required, choices? }`. `name` is `[a-z][a-z0-9_]{0,31}`, unique in
   the item, at most 16 per item. `kind` is `text`, `choice` (with 2 to 20 `choices`, each at most 60 characters) or
   `path` (relative to the project, never absolute, no `..`). `default` is at most 500 characters. Placeholders in the body
   are `{{name}}`; one that names no parameter is `400 invalid_input` at save.
+
+### Limits
+
+`GET /api/library` answers the limits under `limits`, a flat object of integers with exactly these keys. A byte limit is
+in bytes (`32 KiB` is `32768`).
+
+| Key | Value | Limit |
+| --- | --- | --- |
+| `workflows` | 200 | Workflows |
+| `prompts` | 200 | Prompts |
+| `env_sets` | 50 | Environment sets |
+| `env_keys_per_set` | 64 | Key names in one set |
+| `env_sets_per_workflow` | 4 | Sets one workflow lists |
+| `params_per_item` | 16 | Parameters in one workflow or prompt |
+| `workflow_command_bytes` | 4000 | A workflow's `command` |
+| `prompt_body_bytes` | 32768 | A prompt's `body` |
+| `env_value_bytes` | 8192 | One environment value |
+| `suggestions_file_bytes` | 65536 | One committed `.orbyn/` file |
+| `import_bytes` | 2097152 | An import document |
+
+The first four are count limits that `409 library_limit` enforces; the rest are field or size limits that answer
+`400 invalid_input`. Name (60) and description (200) lengths are in characters and stay in the sections that state them.
 
 ### Workflows
 
@@ -241,8 +278,7 @@ A workflow is text and a list of parameters. Saving one runs nothing. It does **
   answer never contains an environment value.
 - `POST /api/library/workflows/{id}/run` renders and starts the command in a terminal in the named project or thread
   checkout, through the same terminal machinery, folder-trust rule (hard rule 5), gate and audit as typing it there. It is
-  **Person**: it acts on the person's shell. A Crew worker or any service-token caller is refused. It answers the terminal
-  id. A folder that is not trusted is `403 folder_untrusted`.
+  **Person**: it acts on the person's shell. A Crew worker or any service-token caller is refused. It answers `{ "terminal_id": "<id>" }`, the id of the terminal it started, and nothing else. A folder that is not trusted is `403 folder_untrusted`.
 - B63 workflow recipes (step lists with a dry run) are a different row and stay out of this one.
 
 ### Prompts
@@ -341,17 +377,17 @@ hold a brief).
 
 | Method and path | Class | Purpose |
 | --- | --- | --- |
-| `GET /api/library` | Local read | Counts and the keychain state: `{ workflows, prompts, env_sets, keychain, limits }` |
-| `GET /api/library/workflows`, `/{id}` | Local read | `Workflow[]`, one `Workflow` |
+| `GET /api/library` | Local read | Counts and the keychain state: `{ workflows, prompts, env_sets, keychain, limits }`. The three counts are integers, `keychain` is `ok`, `unavailable` or `blocked`, and `limits` has the keys in "Limits" |
+| `GET /api/library/workflows`, `/{id}` | Local read | A bare array `Workflow[]`, one `Workflow` |
 | `POST /api/library/workflows/{id}/render` | Local read | `{ values }` in, `{ command }` out. Saves and runs nothing |
 | `POST /api/library/workflows` | **Person** | Create. `201` |
 | `PATCH /api/library/workflows/{id}` | **Person** | Change, with `seen_revision` |
 | `DELETE /api/library/workflows/{id}` | **Person** | `204` |
-| `POST /api/library/workflows/{id}/run` | **Person** | `{ values, thread_id? , project_id? }` (one of the two) → `{ terminal_id }` |
-| `GET /api/library/prompts`, `/{id}` | Local read | As workflows |
+| `POST /api/library/workflows/{id}/run` | **Person** | `{ values, thread_id? , project_id? }` (one of the two) → `{ "terminal_id": "<id>" }` |
+| `GET /api/library/prompts`, `/{id}` | Local read | As workflows: a bare array `Prompt[]`, one `Prompt` |
 | `POST /api/library/prompts/{id}/render` | Local read | As workflows, answers `{ text }` |
 | `POST /api/library/prompts`, `PATCH`, `DELETE /{id}` | **Person** | As workflows |
-| `GET /api/library/env-sets`, `/{id}` | Local read | `EnvSet[]`, one `EnvSet`. Names and `present` only |
+| `GET /api/library/env-sets`, `/{id}` | Local read | A bare array `EnvSet[]`, one `EnvSet`. Names and `present` only |
 | `POST /api/library/env-sets` | **Person** | `{ name, description?, keys?: string[] }`. Creates the set with key names and no values. `201` |
 | `PATCH /api/library/env-sets/{id}` | **Person** | Rename, describe, add or remove key names (removing a name deletes its keychain item), with `seen_revision` |
 | `PUT /api/library/env-sets/{id}/keys/{key}` | **Person** | Body `{ value }`. Write-only. Answers `{ name, present: true }`, never the value |
@@ -359,8 +395,8 @@ hold a brief).
 | `DELETE /api/library/env-sets/{id}` | **Person** | Removes every keychain item, then the rows. `204` |
 | `GET /api/library/export?kinds=` | Local read | The export document (below). Names only for sets |
 | `POST /api/library/import` | **Person** | The export document in the body; `dry_run` allowed |
-| `GET /api/projects/{id}/library/suggestions` | Local read | Committed `.orbyn/` entries, read only (below) |
-| `POST /api/projects/{id}/library/suggestions/copy` | **Person** | Copy one suggestion into the device library |
+| `GET /api/projects/{id}/library/suggestions` | Local read | Committed `.orbyn/` entries, read only: `{ workflows, prompts, env_sets, problems }` (below) |
+| `POST /api/projects/{id}/library/suggestions/copy` | **Person** | `{ file, index }`: copy one suggestion into the device library; answers the created entry and its kind (below) |
 
 A **Local read** that returns env-set data answers names and `present` only. A service-token agent can therefore see that
 a key exists, never what it is.
@@ -405,15 +441,37 @@ Allowed, read only, never written (hard rule 4). Orbyn offers a repository's own
   `API_TOKEN`"); a value in it is dropped and reported as a problem, and never shown.
 - Read from the project's HEAD commit through Git objects (at most 64 KiB per file), never from the working tree. So an
   edit an agent just made and not committed is not offered, and a symlink cannot point outside the repository.
+- `GET /api/projects/{id}/library/suggestions` answers one object with four arrays, each `[]` when empty:
+
+  ```jsonc
+  {
+    "workflows": [ /* Workflow shape without id, revision, timestamps, plus file and index */ ],
+    "prompts":   [ /* Prompt shape, same */ ],
+    "env_sets":  [ { "file": "env-sets.json", "index": 0, "name": "Staging", "description": "", "keys": ["API_BASE", "API_TOKEN"] } ],
+    "problems":  [ { "file": "workflows.json", "index": 2, "code": "invalid_input" } ]
+  }
+  ```
+
+  Every suggestion carries `file`, its path under `.orbyn/` (`workflows.json`, `prompts.json` or `env-sets.json`), and
+  `index`, its zero-based position in that file's array. `(file, index)` names one entry and is what `copy` takes. Indexes
+  count dropped entries too, so an entry keeps its index when a neighbour is invalid. In `env_sets`, `keys` is a list of
+  names. A `problems` line has the same `file` and `index` (a whole-file problem has no entry to point at and uses `index: 0`).
 - Admission is per entry: an invalid entry is dropped with a `problems[]` line (`{ file, index, code }`), the rest is
   served. A file that is too large, not JSON or unknown in version is one problem and no entries.
 - Reading follows the folder-trust rule used for the project's other committed reads: untrusted is `403 folder_untrusted`.
 - A suggestion is data. It is never run, rendered or inserted until the person picks it. Its command is shown in full
   before a run. Running it goes through `POST .../run` with the person's confirmation like any workflow, since a committed
   file can come from a branch the person did not write.
-- `POST .../suggestions/copy` `{ file, index }` copies one entry into the **device** library (a Person write to the
+- `POST .../suggestions/copy` `{ "file": "<path under .orbyn/>", "index": <n> }` copies one entry into the **device** library (a Person write to the
   device's SQLite, subject to the library limits). It writes nothing to the repository. Copying an `env-sets.json` entry
-  creates the set with its key names and every key `present: false`.
+  creates the set with its key names and every key `present: false`. It answers `201` with the created device-library entry,
+  in the same shape as that kind's list entry, beside its kind:
+
+  ```jsonc
+  { "kind": "workflow",            // "workflow" | "prompt" | "env_set", from the file
+    "entry": { /* Workflow, Prompt or EnvSet, as the list returns it, with the new id */ } }
+  ```
+
 - There is no "save to repository" action anywhere. A person who wants the team to share an entry edits `.orbyn/` by hand
   and commits it as their own change.
 
