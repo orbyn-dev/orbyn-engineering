@@ -389,6 +389,8 @@
 .thread-row {
   /* No iOS callout or link preview: a long press is ours (the context menu). */
   -webkit-touch-callout: none;
+  /* A sideways touch reaches the row (a swipe left reveals Snooze and Settle); the page still scrolls up and down. */
+  touch-action: pan-y;
   /* The state's own fill, which the floating row actions fade into. */
   --row-state: transparent;
   container: thread-row / inline-size;
@@ -564,6 +566,7 @@ input.dialog-field-mono {
    the row into its buttons keeps it (:has). Touch has neither: a long press opens the context menu with the same actions. */
 li:hover > .thread-row .row-actions,
 li[data-selected] .thread-row .row-actions,
+.thread-row[data-revealed] .row-actions,
 .thread-row:focus-visible .row-actions,
 .thread-row:has(:focus-visible) .row-actions {
   visibility: visible;

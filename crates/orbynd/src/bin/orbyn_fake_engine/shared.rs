@@ -162,12 +162,77 @@ pub(crate) fn http_post(url: &str, body: &Value) -> (u16, Value) {
 /// Writes each status and error code, and this process's own argv and env, to `ORBYN_FAKE_PROBE_FILE`. Does nothing
 /// unless a test sets `ORBYN_FAKE_PROBE_FILE` and `ORBYN_FAKE_PROBE_DATA`.
 pub(crate) fn probe_service(args: &[String]) {
-    let (Ok(out), Ok(data)) = (
+    let (Ok(out), Ok(_)) = (
         std::env::var("ORBYN_FAKE_PROBE_FILE"),
         std::env::var("ORBYN_FAKE_PROBE_DATA"),
     ) else {
         return;
     };
+    // A failure in here must reach the test as a reason, not as a missing file: a panic is caught and written as `fatal`.
+    let report = match std::panic::catch_unwind(|| probe_report(args)) {
+        Ok(report) => report,
+        Err(panic) => {
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "a panic with no message".to_owned());
+            json!({ "calls": [], "fatal": format!("the probe panicked: {message}"), "argv": args })
+        }
+    };
+    std::fs::write(&out, serde_json::to_vec(&report).expect("probe JSON")).expect("probe file");
+}
+
+/// Hides the token and any long token-looking run in text the probe reports.
+fn redact(text: &str, token: &str) -> String {
+    let text = text.replace(token, "[redacted]");
+    let mut out = String::new();
+    let mut run = String::new();
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            run.push(c);
+            continue;
+        }
+        out.push_str(if run.len() >= 32 { "[redacted]" } else { &run });
+        run.clear();
+        out.push(c);
+    }
+    out.pop();
+    out.chars().take(500).collect()
+}
+
+/// One request over a fresh connection: the status and the response text, or why it failed.
+fn probe_once(
+    host: &str,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: &str,
+) -> Result<(u16, String), String> {
+    let mut stream = TcpStream::connect(host).map_err(|e| format!("connect: {e}"))?;
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .map_err(|e| format!("write: {e}"))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| format!("read: {e}"))?;
+    let (head, text) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| format!("no header end in {} bytes", response.len()))?;
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("no status in {head:?}"))?;
+    Ok((status, text.to_owned()))
+}
+
+fn probe_report(args: &[String]) -> Value {
+    let data = std::env::var("ORBYN_FAKE_PROBE_DATA").expect("ORBYN_FAKE_PROBE_DATA");
     let found: Value = serde_json::from_str(
         &std::fs::read_to_string(std::path::Path::new(&data).join("service.json"))
             .expect("service.json"),
@@ -195,35 +260,43 @@ pub(crate) fn probe_service(args: &[String]) {
             ]
         }
     };
+    let host = url.strip_prefix("http://").expect("http url");
     let calls: Vec<Value> = routes
         .iter()
         .map(|(method, path, body)| {
-            let host = url.strip_prefix("http://").expect("http url");
-            let mut stream = TcpStream::connect(host).expect("connect");
-            write!(
-                stream,
-                "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .expect("write");
-            let mut response = String::new();
-            stream.read_to_string(&mut response).expect("read");
-            let (head, text) = response.split_once("\r\n\r\n").expect("response");
-            let status: u16 = head
-                .split_whitespace()
-                .nth(1)
-                .expect("status")
-                .parse()
-                .expect("status");
-            let body: Value = serde_json::from_str(text).unwrap_or(Value::Null);
-            json!({ "method": method, "path": path, "status": status, "code": body["code"] })
+            // A transport error (connect, write, read) is tried again, so a service busy under load is not a failure by
+            // itself; an answer of any status is never tried again. The headers are named, never valued.
+            let mut attempt = 0;
+            let outcome = loop {
+                attempt += 1;
+                match probe_once(host, token, method, path, body) {
+                    Ok(answer) => break Ok(answer),
+                    Err(error) if attempt >= 3 => break Err(error),
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(200)),
+                }
+            };
+            let request = format!(
+                "{method} {url}{path} (headers: authorization, content-type, content-length)"
+            );
+            match outcome {
+                Ok((status, text)) => {
+                    let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                    json!({
+                        "method": method, "path": path, "status": status, "code": parsed["code"],
+                        "request": request, "attempt": attempt, "body": redact(&text, token),
+                    })
+                }
+                Err(error) => json!({
+                    "method": method, "path": path, "request": request, "attempt": attempt,
+                    "error": error,
+                }),
+            }
         })
         .collect();
     let env: Vec<String> = std::env::vars_os()
         .map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy()))
         .collect();
-    let report = json!({ "calls": calls, "argv": args, "env": env });
-    std::fs::write(&out, serde_json::to_vec(&report).expect("probe JSON")).expect("probe file");
+    json!({ "calls": calls, "argv": args, "env": env })
 }
 
 pub(crate) fn mcp_call(url: &str, id: u64, method: &str, params: Value) -> (u16, Value) {
