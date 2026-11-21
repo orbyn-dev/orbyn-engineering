@@ -10,7 +10,7 @@ const SET = "01je0000000000000000000001";
 const SECRET = "hunter2-Zq9!";
 
 const field = () => screen.getByLabelText(/Value for API_TOKEN/) as HTMLInputElement;
-const mount = (done = vi.fn(), cancel = vi.fn()) => { render(<ValueForm setId={SET} keyName="API_TOKEN" replacing={false} onDone={done} onCancel={cancel} />); return { done, cancel }; };
+const mount = (done = vi.fn(), cancel = vi.fn(), planned = vi.fn()) => { render(<ValueForm setId={SET} keyName="API_TOKEN" replacing={false} onDone={done} onPlanned={planned} onCancel={cancel} />); return { done, cancel, planned }; };
 
 it("is a password field that opts out of password managers, autofill and spellcheck, and has no name", () => {
   mount();
@@ -134,4 +134,20 @@ it("Cancel closes without a write", async () => {
   await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
   expect(cancel).toHaveBeenCalled();
   expect(mock.writes).toEqual([]);
+});
+
+it("answers keychain_unavailable as the Planned state with the service's message, not as an error, and shows no value", async () => {
+  const mock = createLibraryMock();
+  setLibraryApi(mock);
+  mock.failNext("keychain_unavailable", `There is no usable keychain on this computer yet, so values cannot be saved. ${SECRET}`);
+  const { done, planned } = mount();
+  const user = userEvent.setup();
+  await user.type(field(), SECRET);
+  await user.click(screen.getByRole("button", { name: "Save value" }));
+  await waitFor(() => expect(planned).toHaveBeenCalledTimes(1));
+  expect(planned.mock.calls[0]![0]).toContain("There is no usable keychain on this computer yet");
+  expect(planned.mock.calls[0]![0]).not.toContain(SECRET);
+  expect(done).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(field().value).toBe("");
 });

@@ -85,3 +85,51 @@ it("treats every library write as Person-class and the reads and renders as not"
   for (const [method, path] of [["POST", "/api/library/workflows"], ["PATCH", "/api/library/workflows/w"], ["DELETE", "/api/library/prompts/p"], ["POST", "/api/library/workflows/w/run"], ["PUT", "/api/library/env-sets/e/keys/K"], ["DELETE", "/api/library/env-sets/e/keys/K"], ["POST", "/api/library/import"], ["POST", "/api/projects/p/library/suggestions/copy"]] as const) expect(sendsPersonKey(method, path), `${method} ${path}`).toBe(true);
   for (const [method, path] of [["GET", "/api/library"], ["GET", "/api/library/workflows"], ["POST", "/api/library/workflows/w/render"], ["POST", "/api/library/prompts/p/render"], ["GET", "/api/library/env-sets/e"], ["GET", "/api/projects/p/library/suggestions"], ["GET", "/api/library/export"]] as const) expect(sendsPersonKey(method, path), `${method} ${path}`).toBe(false);
 });
+
+it("sends ack_grants with every run: none for a first try, and exactly the list given for a resend", async () => {
+  let fetching = answer(200, { terminal_id: "t1" });
+  vi.stubGlobal("fetch", fetching);
+  await expect(libraryApi().runWorkflow("w1", { a: "b" }, { project_id: "p 1" })).resolves.toEqual({ terminal_id: "t1" });
+  expect(sent(fetching)).toMatchObject({ method: "POST", body: { values: { a: "b" }, project_id: "p 1", ack_grants: [] } });
+  expect(sent(fetching).body).not.toHaveProperty("thread_id");
+  fetching = answer(200, { terminal_id: "t2" });
+  vi.stubGlobal("fetch", fetching);
+  await libraryApi().runWorkflow("w1", {}, { thread_id: "th" }, ["env_values", "untrusted_source"]);
+  expect(sent(fetching).body.ack_grants).toEqual(["env_values", "untrusted_source"]);
+  expect(sent(fetching).url).toContain("/api/library/workflows/w1/run");
+});
+
+it("refuses a run answer that is not a terminal id, and keeps the 409 confirm_required detail as the service sent it", async () => {
+  vi.stubGlobal("fetch", answer(200, { ok: true }));
+  await expect(libraryApi().runWorkflow("w1", {}, { thread_id: "t" })).rejects.toMatchObject({ code: "bad_answer" });
+  const detail = { grants: ["env_values"], env_sets: [{ name: "Staging", keys: ["API_TOKEN"] }] };
+  vi.stubGlobal("fetch", answer(409, { code: "confirm_required", message: "Confirm.", detail }));
+  await expect(libraryApi().runWorkflow("w1", {}, { thread_id: "t" })).rejects.toMatchObject({ code: "confirm_required", status: 409, detail });
+});
+
+it("imports a document with dry_run beside it, and reads the report", async () => {
+  const report = { dry_run: true, problems: [], created: 1, renamed: 0, refused: 0, lines: [{ kind: "workflow", index: 0, outcome: "created", name: "W" }] };
+  const fetching = answer(200, report);
+  vi.stubGlobal("fetch", fetching);
+  await expect(libraryApi().importLibrary({ format: "orbyn-library", version: 1, workflows: [{ name: "W" }] }, true)).resolves.toEqual(report);
+  expect(sent(fetching)).toMatchObject({ method: "POST", body: { format: "orbyn-library", dry_run: true } });
+  expect(sent(fetching).url).toContain("/api/library/import");
+});
+
+it("answers the 503 keychain_unavailable of a key write with its code and the service's message", async () => {
+  vi.stubGlobal("fetch", answer(503, { code: "keychain_unavailable", message: "There is no usable keychain on this computer yet, so values cannot be saved." }));
+  await expect(libraryApi().setKey("e1", "K", "v")).rejects.toMatchObject({ code: "keychain_unavailable", status: 503, message: expect.stringContaining("no usable keychain") });
+});
+
+it("reads an env set status of stored or planned as the service says it, with key names only", async () => {
+  const planned = { id: "e", name: "S", description: "", keys: [{ name: "K", present: false }], keychain: "unavailable", status: "planned", revision: 1, created_at: "t", updated_at: "t" };
+  vi.stubGlobal("fetch", answer(200, [planned]));
+  const sets = await libraryApi().envSets();
+  expect(sets[0]).toMatchObject({ status: "planned", keychain: "unavailable", keys: [{ name: "K", present: false }] });
+});
+
+it("reads suggestions whose workflows name their sets", async () => {
+  vi.stubGlobal("fetch", answer(200, { workflows: [{ file: "workflows.json", index: 2, name: "W", description: "", command: "x", params: [], env_set_names: ["Staging"] }], prompts: [], env_sets: [], problems: [] }));
+  const found = await libraryApi().suggestions("p1");
+  expect(found.workflows[0]!.env_set_names).toEqual(["Staging"]);
+});

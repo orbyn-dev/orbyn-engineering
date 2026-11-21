@@ -7,7 +7,7 @@ import { Button } from "../../ui/controls";
 import { libraryApi, useLibrary, useSuggestions, type LibraryData } from "./api";
 import type { EnvSet, Kind, Prompt, RepoEnvSet, RepoPrompt, RepoWorkflow, Suggestions, SuggestionFile, Workflow } from "./contract";
 import { ItemForm } from "./ItemForm";
-import { plain } from "./model";
+import { plain, sourceLabel } from "./model";
 import { DeleteItem, EnvSetPage, PromptPage, WorkflowPage } from "./Pages";
 import { UseDialog, type UseMode } from "./UseDialog";
 import "./library.css";
@@ -127,9 +127,10 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
     <div className="lib-group" key={kind}><h3 className="lib-group-title">{KIND_TITLE[kind]} · {rows.length}</h3><ul className="lib-list">{rows}</ul></div>
   ));
 
+  const from = (source: unknown) => { const label = sourceLabel(source); return label ? `${label} · ` : ""; };
   const personal = tab === "personal" ? [
-    section("workflow", workflows.map((one) => row("personal", "workflow", one.id, one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
-    section("prompt", prompts.map((one) => row("personal", "prompt", one.id, one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
+    section("workflow", workflows.map((one) => row("personal", "workflow", one.id, one.name, `${from(one.source)}${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
+    section("prompt", prompts.map((one) => row("personal", "prompt", one.id, one.name, `${from(one.source)}${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
     section("env_set", sets.map((one) => row("personal", "env_set", one.id, one.name, `${count(one.keys.length, "variable")}${one.status === "planned" ? " · Planned" : ""}`))),
   ] : [];
   const repo = tab === "repo" ? [

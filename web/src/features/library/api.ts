@@ -10,8 +10,8 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 const items = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value.filter(isObject) as unknown as T[]) : []);
 
 /**
- * The real client for the routes of docs/execution-profiles-and-library.md, Part 2 (the routes are not built yet, so this is
- * not run against a real service). `GET /api/library` answering `404` is "this service has no library" and is answered as `null` with no error, so
+ * The real client for the routes of docs/execution-profiles-and-library.md, Part 2 (crates/orbynd/src/routes/library.rs, checked
+ * path by path; not run against a live service). `GET /api/library` answering `404` is "an older service has no library" and is answered as `null` with no error, so
  * nothing draws. Every write is Person-class (`personKey.ts`): `request` adds the key. Ids in a path are encoded and only ever ones
  * a list gave. An environment value goes only in the body of `PUT .../keys/{key}`: never in a path, a query or a log.
  */
@@ -34,7 +34,13 @@ const http: LibraryApi = {
   createWorkflow: (draft) => request("POST", "/api/library/workflows", draft),
   updateWorkflow: (id, draft, seen) => request("PATCH", `/api/library/workflows/${q(id)}`, { ...draft, seen_revision: seen }),
   deleteWorkflow: async (id) => { await request<unknown>("DELETE", `/api/library/workflows/${q(id)}`); },
-  runWorkflow: (id, values, where) => request("POST", `/api/library/workflows/${q(id)}/run`, { values, ...where }),
+  // `ack_grants` is exactly what a `409 confirm_required` named (core compares the sets, an extra code is refused too). The generated
+  // type lists it as required, so it is always sent; `[]` for a run that needs none.
+  runWorkflow: async (id, values, where, ackGrants = []) => {
+    const answer = await request<unknown>("POST", `/api/library/workflows/${q(id)}/run`, { values, ...where, ack_grants: [...ackGrants] });
+    if (!isObject(answer) || typeof answer.terminal_id !== "string") throw new ApiFailure("bad_answer", "The service answered a run in a shape this app does not know.", 502);
+    return { terminal_id: answer.terminal_id };
+  },
   createPrompt: (draft) => request("POST", "/api/library/prompts", draft),
   updatePrompt: (id, draft, seen) => request("PATCH", `/api/library/prompts/${q(id)}`, { ...draft, seen_revision: seen }),
   deletePrompt: async (id) => { await request<unknown>("DELETE", `/api/library/prompts/${q(id)}`); },
@@ -49,6 +55,8 @@ const http: LibraryApi = {
     return { workflows: items(body.workflows), prompts: items(body.prompts), env_sets: items(body.env_sets), problems: items(body.problems) } as Suggestions;
   },
   copySuggestion: (projectId, file, index) => request<Copied>("POST", `/api/projects/${q(projectId)}/library/suggestions/copy`, { file, index }),
+  // The document is the body (the service reads bytes and refuses over `import_bytes`); `dry_run` is a top-level field beside `format`.
+  importLibrary: (document, dryRun) => request("POST", "/api/library/import", { ...(isObject(document) ? document : {}), dry_run: dryRun }),
 };
 
 let current: LibraryApi = http;
