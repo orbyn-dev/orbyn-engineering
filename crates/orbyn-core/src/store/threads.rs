@@ -437,6 +437,46 @@ impl Store {
         })
     }
 
+    /// Gives back a try that never started a run, so a refused start (an engine update, a
+    /// workspace that is busy) does not use up the thread's automatic continuations.
+    pub fn refund_resume_try(&self, id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE threads SET resume_tries = resume_tries - 1
+                 WHERE id = ?1 AND resume_tries > 0",
+                [id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Ends automatic continuation for a limit that used up its tries: nothing stays
+    /// scheduled, the limit and its reset stay on the thread, and the timeline says the
+    /// continuation stopped, so the thread waits for you.
+    pub fn stop_limit_retry(&self, id: &str, tries: i64) -> Result<()> {
+        self.commit(|tx, appended| {
+            let changed = tx.execute(
+                "UPDATE threads SET limit_resume_at = NULL
+                 WHERE id = ?1 AND limit_resume_at IS NOT NULL",
+                [id],
+            )?;
+            if changed == 0 {
+                return Ok(());
+            }
+            insert_event(
+                tx,
+                appended,
+                id,
+                None,
+                &AgUiEvent::Custom {
+                    name: "limit.retry_exhausted".into(),
+                    value: json!({ "tries": tries }),
+                },
+            )?;
+            notify(tx, appended, id, "limit")
+        })
+    }
+
     /// Threads whose scheduled continuation is due, snoozed ones included: a reset
     /// that hid the thread is the same reset that wakes it.
     pub fn due_resumes(&self, now_at: i64) -> Result<Vec<String>> {
@@ -724,6 +764,7 @@ pub(super) fn clear_limit(tx: &Transaction<'_>, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Schedules the continuation a person asked for, which gives back the automatic tries.
 fn schedule_resume(tx: &Transaction<'_>, id: &str, resume: bool) -> Result<()> {
     if !resume {
         tx.execute(
@@ -743,7 +784,7 @@ fn schedule_resume(tx: &Transaction<'_>, id: &str, resume: bool) -> Result<()> {
         ));
     }
     tx.execute(
-        "UPDATE threads SET limit_resume_at = limit_resets_at WHERE id = ?1",
+        "UPDATE threads SET limit_resume_at = limit_resets_at, resume_tries = 0 WHERE id = ?1",
         [id],
     )?;
     Ok(())
