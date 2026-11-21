@@ -1081,6 +1081,9 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/repos/{repo_id}/clone/cancel",
         "the person stops a running clone",
+    ),
+    (
+        "POST",
         "/api/library/workflows",
         "the person saves a library workflow, a command that can later run in their shell",
     ),
