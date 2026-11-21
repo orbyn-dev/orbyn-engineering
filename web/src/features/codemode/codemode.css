@@ -39,8 +39,11 @@
   font-variant-ligatures: none;
   white-space: pre;
 }
+.cm-line {
+  white-space: pre;
+}
 .cm-sb .p {
-  color: var(--color-faint);
+  color: var(--color-muted);
   user-select: none;
 }
 .cm-sb.cm-cap {
@@ -132,10 +135,10 @@
 .cm-c .ci {
   display: grid;
   place-items: center;
-  color: var(--color-faint);
+  color: var(--color-muted);
 }
 .cm-c .cn {
-  color: var(--color-faint);
+  color: var(--color-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   text-align: right;
@@ -163,11 +166,11 @@
 }
 .cm-c .cr-n {
   flex: none;
-  color: var(--color-faint);
+  color: var(--color-muted);
   white-space: pre;
 }
 .cm-c .cd {
-  color: var(--color-faint);
+  color: var(--color-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   white-space: nowrap;
@@ -307,7 +310,7 @@
   white-space: nowrap;
 }
 .cm-next .t3 {
-  color: var(--color-faint);
+  color: var(--color-muted);
 }
 
 /* Settings: the Code Mode group. */
