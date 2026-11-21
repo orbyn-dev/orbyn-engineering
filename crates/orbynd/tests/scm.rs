@@ -42,7 +42,7 @@ case "$1 $2" in
   "api graphql") case "$*" in
       *reviewRequests*) [ -f "$GH_FAIL" ] && { echo "Something went wrong" >&2; exit 1; }
         [ -f "$GH_RATE" ] && { echo "GraphQL: API rate limit already exceeded" >&2; exit 1; }
-        echo '{"data":{"viewer":{"login":"me"},"repository":{"p3":{"createdAt":"2026-01-02T03:04:05Z","reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"User","login":"sam"}},{"requestedReviewer":{"__typename":"Team","slug":"core"}}]},"latestReviews":{"nodes":[{"author":null,"state":"APPROVED"},{"author":{"login":"me"},"state":"CHANGES_REQUESTED"}]},"comments":{"totalCount":2},"reviews":{"nodes":[{"comments":{"totalCount":3}},{"comments":{"totalCount":0}}]}},"p4":{"createdAt":"2026-02-02T00:00:00Z","reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},"comments":{"totalCount":1},"reviews":{"nodes":[]}}}}}' ;;
+        echo '{"data":{"viewer":{"login":"me"},"repository":{"p3":{"createdAt":"2026-01-02T03:04:05Z","reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"User","login":"sam"}},{"requestedReviewer":{"__typename":"Team","slug":"core"}}]},"latestReviews":{"nodes":[{"author":null,"state":"APPROVED"},{"author":{"login":"me"},"state":"CHANGES_REQUESTED"}]},"comments":{"totalCount":2},"reviews":{"totalCount":2,"pageInfo":{"hasNextPage":false},"nodes":[{"comments":{"totalCount":3}},{"comments":{"totalCount":0}}]}},"p4":{"createdAt":"2026-02-02T00:00:00Z","reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},"comments":{"totalCount":1},"reviews":{"totalCount":0,"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}' ;;
       *) echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T1","isResolved":false,"path":"a.rs","line":2,"comments":{"nodes":[{"databaseId":11,"body":"line","author":{"login":"them"}}]}}]}}}}}' ;;
     esac ;;
   "auth status") echo "  Logged in to github.com account octo (keyring)" >&2 ;;
@@ -761,6 +761,75 @@ async fn refresh_links_the_branch_pull_request_on_its_own() {
         .await;
     assert_eq!(code, 200, "{linked}");
     assert_eq!(linked[0]["number"], 12);
+}
+
+#[tokio::test]
+async fn linked_threads_list_the_projects_threads_that_link_the_pull_request() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let (code, _) = f
+        .service
+        .send(
+            &format!("/api/threads/{}/branches", f.thread),
+            json!({ "name": "feature" }),
+        )
+        .await;
+    assert_eq!(code, 201);
+    let (code, linked) = f
+        .service
+        .send(
+            &format!("/api/threads/{}/pulls/refresh", f.thread),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{linked}");
+    assert_eq!(linked[0]["number"], 12);
+    // Same project, but this thread links no pull request.
+    let unlinked = f.service.thread(&project, "codex").await;
+    let threads = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/12/linked-threads"))
+        .await;
+    let ids: Vec<&str> = threads
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|thread| thread["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [f.thread.as_str()], "only the linking thread");
+    assert_ne!(unlinked, f.thread);
+    assert_eq!(threads[0]["project_id"], project.as_str());
+    // A number nothing links in this project answers with no threads, not an error.
+    let none = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/3/linked-threads"))
+        .await;
+    assert_eq!(none, json!([]));
+}
+
+#[tokio::test]
+async fn change_breakdown_counts_the_files_by_change_kind() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let breakdown = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/12/breakdown"))
+        .await;
+    assert_eq!(breakdown["files"], 2);
+    assert_eq!(breakdown["added"], 0);
+    assert_eq!(breakdown["modified"], 1);
+    assert_eq!(breakdown["deleted"], 1);
+    assert_eq!(breakdown["renamed"], 0);
+    assert_eq!(breakdown["additions"], 1);
+    assert_eq!(breakdown["deletions"], 3);
+    // The counts are the same file rows the files read serves.
+    let files = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/12/files"))
+        .await;
+    assert_eq!(files.as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]

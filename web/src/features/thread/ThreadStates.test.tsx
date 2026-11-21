@@ -97,3 +97,15 @@ it("says in the header when a thread is archived, compacting or waiting out a li
   waiting.unmount();
   expect(render(<Chip value={thread} />).container).toBeEmptyDOMElement();
 });
+
+it("labels a stopped Claude or Codex subagent Subagent, a shell Shell and anything else Background task", () => {
+  const item: ThreadItem = { kind: "stopped", key: "stopped:r1", seq: 3, runId: "r1", ts: "", tasks: [
+    { taskId: "a", taskType: "local_agent", description: "Review callers" },
+    { taskId: "c", taskType: "codex_subagent", description: "Reviewer" },
+    { taskId: "s", taskType: "local_bash", description: "pnpm dev" },
+    { taskId: "m", taskType: "monitor", description: null },
+  ] };
+  const { container } = render(<TimelineRow entry={item} live={false} tools={[]} />);
+  const kinds = [...container.querySelectorAll(".stopped-kind")].map((el) => el.textContent);
+  expect(kinds).toEqual(["Subagent", "Subagent", "Shell", "Background task"]);
+});

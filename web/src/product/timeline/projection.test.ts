@@ -241,7 +241,8 @@ describe("background.stopped", () => {
     const log = applyEvents("t", emptyLog, [
       stopped(1, { taskId: "s1", taskType: "local_bash", description: "pnpm dev --port 5173" }),
       stopped(2, { taskId: "a1", taskType: "local_agent", description: "Review callers of after()" }),
-      stopped(3, { taskId: "w1", taskType: "local_workflow", description: "" }),
+      stopped(3, { taskId: "c1", taskType: "codex_subagent", description: "Reviewer" }),
+      stopped(4, { taskId: "w1", taskType: "local_workflow", description: "probe" }),
     ]);
     expect(log.items).toHaveLength(1);
     expect(log.items[0]).toMatchObject({
@@ -251,9 +252,14 @@ describe("background.stopped", () => {
       tasks: [
         { taskId: "s1", taskType: "local_bash", description: "pnpm dev --port 5173" },
         { taskId: "a1", taskType: "local_agent", description: "Review callers of after()" },
-        { taskId: "w1", taskType: "local_workflow", description: null },
+        { taskId: "c1", taskType: "codex_subagent", description: "Reviewer" },
       ],
     });
+  });
+
+  it("gives a workflow no stopped row", () => {
+    const log = applyEvents("t", emptyLog, [stopped(1, { taskId: "w1", taskType: "local_workflow", description: "probe" })]);
+    expect(log.items).toHaveLength(0);
   });
 
   it("keeps each run's stopped tasks under that run", () => {
