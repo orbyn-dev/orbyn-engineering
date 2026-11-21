@@ -383,8 +383,12 @@ route below answers `404`.
   service flag is on and the calling engine's switch is on. `waited_ms` is `null` for now (the time a run waited for a person is not
   recorded). `resumes` counts both resumes after a pause and replays. Run statuses are `running`, `paused`, `completed` and `error`;
   the error kinds are the five above. Types: `CodeRunRecord`, `CodeRunSummary`, `CodeRunList`, `CodeModeSetting` in `orbyn-contracts`.
-- **Not built.** The approval `via` field (the approval card cannot show its script yet), cancelling a run, and the worker allow-list
-  entries for the three tools (a worker's call is refused in v1).
+- **Approval `via`.** `Approval.via` is `{ code_run, call, script_sha256 }` or `null`, stored as JSON in `approvals.via` (migration 68).
+  The run host sets it from a task-local around each inner call (`governance::approvals::with_via`), and the gate copies it onto the
+  approval it creates; `call` is the call's index in the run, `script_sha256` the hash of the script that is running. The card reads the
+  script and the calls from the run record by `code_run`. No rule, decision or audit row reads it; a script's call asks exactly what a
+  direct call asks. The wire type is `ApprovalVia` in `orbyn-contracts`.
+- **Not built.** Cancelling a run, and the worker allow-list entries for the three tools (a worker's call is refused in v1).
 
 ## As built: web UI
 
@@ -401,9 +405,10 @@ card draws from the engine's own reply, and nothing shows an error. The dev mock
   script excerpt (5 lines, opened a 400-line page at a time), calls (3 and a "Show all" line past 8, at most 200), logs (newest 500),
   and the result (first 64 KiB). The run record is read every two seconds while the run is not over; without it only the engine's reply
   is drawn, and there is no call list. A resumed run is one record shown on each call that names it.
-- **Approval.** An approval with `via` (the service has no such field yet, so only the dev mock sends one) shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
+- **Approval.** An approval with `via` (the service sends it for approvals a script's inner call asked) shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
   the answered and expired forms, and what Always allow covers. `via` is read only to draw: the buttons, the decision and the
   rules never read it.
+  The card has an "Open the run" button (drawn only for a run id of letters, digits, `_` and `-`, up to 64): it goes to the approval's thread (`#/threads/<id>`, no new route), scrolls to the run's block (`id="cm-run-<run id>"`) and focuses it, without smooth scroll under reduced motion; when the block is not in the transcript it says so and does nothing else.
 - **Reading the record.** A call's `status` on the wire is `running`, `ok`, `failed` or `denied`; there is no "waiting". The card reads a
   `running` call of a `paused` run that `pending` names as waiting for a person, and a `running` call of a run that ended as `error` (a
   restart) as interrupted. `result`, `logs_total` and `waited_ms` are read as the contract has them (`{ truncated, bytes, preview }`,

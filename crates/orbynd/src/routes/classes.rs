@@ -203,6 +203,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/terminals"),
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
+    ("POST", "/api/threads/import"),
     ("POST", "/api/issues/trackers/{tracker}/connect"),
     ("POST", "/api/issues/trackers/{tracker}/disconnect"),
     ("POST", "/api/issues/start-thread"),
@@ -899,6 +900,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "PATCH",
         "/api/threads/{id}",
         "can set the thread's permission_mode",
+    ),
+    (
+        "POST",
+        "/api/threads/import",
+        "creates a thread from a file the person picked: untrusted content that becomes history in their project",
     ),
     (
         "POST",

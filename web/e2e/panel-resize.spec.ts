@@ -67,10 +67,12 @@ test("dragging the surface divider does not select page text", async ({ page }) 
   await page.evaluate(() => getSelection()?.removeAllRanges());
   await page.mouse.move(box!.x + box!.width / 2, box!.y + 120);
   await page.mouse.down();
+  expect(await page.evaluate(() => document.documentElement.dataset.resizing)).toBe("panel");
   await page.mouse.move(box!.x - 180, box!.y + 300, { steps: 8 });
   expect(await page.evaluate(() => getSelection()?.toString())).toBe("");
   await page.mouse.up();
   expect(await page.evaluate(() => getSelection()?.toString())).toBe("");
+  expect(await page.evaluate(() => document.documentElement.dataset.resizing)).toBeUndefined();
   const text = page.getByText("Explain how the event log resumes after a reconnect. Include the edge cases.");
   await text.dblclick();
   expect(await page.evaluate(() => getSelection()?.toString().length)).toBeGreaterThan(0);

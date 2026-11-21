@@ -101,10 +101,16 @@ pub struct PullDetails {
     #[ts(optional)]
     pub approval_count: Option<u32>,
     /// The signed-in viewer's latest review: `approved`, `changes_requested`,
-    /// `commented`, `dismissed`, `pending` or `none`.
+    /// `commented`, `dismissed`, `pending` or `none`. Absent when the read could not
+    /// see every review, so the viewer's may be past it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub viewer_review_state: Option<String>,
+    /// Whether the forge can merge the pull request: `mergeable`, `conflicting` or
+    /// `unknown`. Absent when the forge does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mergeable: Option<String>,
 }
 }
 

@@ -189,6 +189,7 @@ describe("Composer", () => {
           state: "pending",
           decided_by: null,
           decided_at: null,
+          via: null,
           created_at: "",
         }],
       },

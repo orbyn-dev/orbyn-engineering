@@ -18,6 +18,7 @@ import { useAsync } from "../../lib/useAsync";
 import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
+import { crewViewsItem } from "./strip/launcher";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
 import { repoLabel, useThreadRepos } from "../repos";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
@@ -27,6 +28,7 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { useDevicesOffered } from "../devices";
 import { useLibraryOffered } from "../library";
+import { setPageResizing, type PanelDrag } from "./strip/panelDrag";
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
 const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
@@ -46,18 +48,6 @@ const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
 const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
 
-interface PanelDrag {
-  panel: HTMLElement;
-  handle: HTMLElement;
-  pointerId: number;
-  right: number;
-  layoutKey: string;
-  startWidth: string;
-  /** The width this drag last wrote to the panel, or null before the first move. */
-  writtenWidth: string | null;
-  current: number;
-}
-
 /**
  * The panel's left edge. Dragging it resizes the panel, snapping to 380, 520 or 720 px within 12 px
  * and staying between 320 px and 60% of the window; a pill shows the width and faint ticks mark the
@@ -76,10 +66,11 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
   const widthOfRef = useRef(widthOf);
   widthOfRef.current = widthOf;
 
-  /** Lets go of the pointer and clears the drag's marks on the panel. */
+  /** Lets go of the pointer and clears the drag's marks on the page and the panel. */
   const release = (active: PanelDrag) => {
     drag.current = null;
     delete active.panel.dataset.resizing;
+    setPageResizing(false);
     if (active.handle.hasPointerCapture?.(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
   };
 
@@ -124,6 +115,7 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
           // Without this the drag selects the text it passes over.
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
+          setPageResizing(true);
           const current = clampPanelWidth(panel.getBoundingClientRect().width, window.innerWidth);
           panel.dataset.resizing = "";
           drag.current = {
@@ -308,6 +300,8 @@ export function PanelHost({
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
     }),
+    // Crew views is drawn in the launcher as Planned: its submenu lists the open thread's crew views, and nothing reads a thread's crew yet.
+    crewViewsItem(),
     { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];

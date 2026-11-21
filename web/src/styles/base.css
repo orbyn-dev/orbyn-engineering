@@ -747,6 +747,16 @@ input[type="checkbox"][role="switch"]:disabled {
   font-family: var(--font-mono);
   font-size: var(--text-label);
 }
+/* A row that carries a label of its own, such as Crew views and its Planned pill: the pill sits where a shortcut would. */
+.popup-menu .menu-planned-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+}
+.popup-menu .menu-planned-row .pill {
+  margin-left: auto;
+}
 .menu-separator {
   height: 1px;
   margin: 4px 0;

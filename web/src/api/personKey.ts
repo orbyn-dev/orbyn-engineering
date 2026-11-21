@@ -211,6 +211,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Cursor thread contract (docs/cursor-thread-contract.md): the one-turn override and the engine notice's acknowledgement.
   ["POST", "/api/threads/{id}/send-without-approvals"],
   ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+  // Transcript import (docs/attachments-transcripts.md): a thread made from an untrusted file. The export (`GET /api/threads/{id}/export`) is Local.
+  ["POST", "/api/threads/import"],
 ];
 
 /**

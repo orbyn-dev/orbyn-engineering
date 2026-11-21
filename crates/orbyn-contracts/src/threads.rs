@@ -49,6 +49,14 @@ pub struct Thread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub removed_project_name: Option<String>,
+    /// Set on a thread made from a file: `orbyn-transcript`. Absent on a thread made here. The "Imported" pill reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
+    /// When the file was imported. Set together with `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub imported_at: Option<String>,
 }
 }
 

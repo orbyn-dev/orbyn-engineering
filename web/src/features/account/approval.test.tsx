@@ -61,7 +61,9 @@ describe("a new device waiting for a trusted one", () => {
     expect(screen.getAllByRole("textbox")).toHaveLength(6);
     for (const box of screen.getAllByRole("textbox")) expect(box).toHaveValue("");
     expect(screen.getByLabelText("Digit 1 of 6")).toHaveAttribute("inputmode", "numeric");
-    expect(screen.getByLabelText("Digit 1 of 6")).toHaveFocus();
+    // The boxes appear before the effect that moves the focus to the first one, and the heading is found in that gap:
+    // wait for the hand-off instead of checking between the two, which a busy CI machine does.
+    await waitFor(() => expect(screen.getByLabelText("Digit 1 of 6")).toHaveFocus());
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     expect(screen.getByText(/This request expires after ten minutes\./)).toBeVisible();
     expect(screen.queryByText("Signed in on this device · This computer")).toBeNull();

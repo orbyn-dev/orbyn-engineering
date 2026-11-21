@@ -14,6 +14,7 @@ afterEach(() => {
   Reflect.deleteProperty(Element.prototype, "setPointerCapture");
   Reflect.deleteProperty(Element.prototype, "releasePointerCapture");
   Reflect.deleteProperty(Element.prototype, "hasPointerCapture");
+  delete document.documentElement.dataset.resizing;
   vi.restoreAllMocks();
 });
 
@@ -111,4 +112,50 @@ it("restores the destination width if the pointer ends before layout cleanup", (
   });
   expect(useUi.getState().panelWidth).toBe(640);
   expect(panel.style.width).toBe("640px");
+});
+
+it("makes the whole page unselectable for the length of the drag", () => {
+  const { handle } = setup();
+  expect(document.documentElement.dataset.resizing).toBeUndefined();
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
+  expect(document.documentElement.dataset.resizing).toBe("panel");
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
+  expect(document.documentElement.dataset.resizing).toBe("panel");
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(document.documentElement.dataset.resizing).toBeUndefined();
+});
+
+it("takes the unselectable mark off when the drag is cut short", () => {
+  const { unmount, handle } = setup();
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
+  fireEvent.pointerCancel(handle, { pointerId: 1 });
+  expect(document.documentElement.dataset.resizing).toBeUndefined();
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
+  unmount();
+  expect(document.documentElement.dataset.resizing).toBeUndefined();
+});
+
+it("writes the width on the panel only, leaving the composer lane to the column", () => {
+  const view = render(
+    <div className="thread-stage">
+      <div className="composer-lane" data-testid="composer-lane">
+        <textarea aria-label="Message" />
+      </div>
+      <aside data-testid="panel" style={{ width: 520 }}>
+        <PanelResizer />
+      </aside>
+    </div>,
+  );
+  const panel = screen.getByTestId("panel");
+  vi.spyOn(panel, "getBoundingClientRect").mockImplementation(() => ({ right: 1200, width: Number.parseFloat(panel.style.width) || 520 }) as DOMRect);
+  const lane = screen.getByTestId("composer-lane");
+  const handle = screen.getByRole("separator", { name: "Resize panel" });
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 600 });
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(panel.style.width).toBe("600px");
+  // The composer keeps the width its column gives it: a drag never writes a width, a reserve or padding on it.
+  expect(lane.getAttribute("style")).toBeNull();
+  expect(lane.querySelector("textarea")?.getAttribute("style")).toBeNull();
+  expect(view.container.querySelector(".thread-stage")?.getAttribute("style")).toBeNull();
 });

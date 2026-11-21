@@ -59,9 +59,15 @@ const MAX_MESSAGE_CHARS = 4_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** A run id as the service makes it: letters, digits, `_` and `-`, at most 64. The id is untrusted text; anything else gets no anchor and no link. */
+export const isRunId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+
+/** The `id` of a run's block in the transcript, or null for an id that is not a run id. */
+export const runAnchorId = (runId: unknown): string | null => (isRunId(runId) ? `cm-run-${runId}` : null);
+
 /** The approval's `via`, or null. Display only: nothing that decides an approval reads it. */
 export function viaOf(approval: Approval): ApprovalVia | null {
-  const via = (approval as Approval & { via?: unknown }).via;
+  const via = approval.via;
   if (!isRecord(via)) return null;
   const { code_run: run, call, script_sha256: sha } = via;
   if (typeof run !== "string" || run === "" || typeof call !== "number" || !Number.isInteger(call)) return null;
