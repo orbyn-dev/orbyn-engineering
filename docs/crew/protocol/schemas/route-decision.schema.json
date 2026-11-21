@@ -177,6 +177,7 @@
           },
           "why": {
             "enum": [
+              "disabled",
               "not_installed",
               "not_signed_in",
               "compatibility_broken",

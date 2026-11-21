@@ -27,6 +27,20 @@ fn type_of(schema: &str) -> String {
 }
 
 #[test]
+fn old_not_installed_decisions_remain_hash_valid_and_unchanged() {
+    let mut legacy =
+        read_json(&protocol_dir().join("schemas/examples/route-decision.valid.disabled.json"));
+    legacy["rejected"].as_array_mut().unwrap().remove(0);
+    legacy["id"] = json!(object_id(&legacy).unwrap().as_str());
+    let parsed = CrewObject::parse(&legacy).unwrap();
+    assert_eq!(parsed.to_value(), legacy);
+    assert_eq!(
+        parsed.computed_id().unwrap().as_str(),
+        legacy["id"].as_str().unwrap()
+    );
+}
+
+#[test]
 fn every_valid_example_round_trips_through_its_type() {
     let v = validator();
     let mut types = BTreeSet::new();
