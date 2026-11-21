@@ -16,6 +16,7 @@ const approval: Approval = {
   state: "pending",
   decided_by: null,
   decided_at: null,
+  via: null,
   created_at: "2026-10-31T10:00:00Z",
 };
 

@@ -140,7 +140,7 @@ export function LimitsView({ data, nameOf, engines, onCheck, onRetry }: LimitsVi
   // The short line only where Codex has no window to show (signed out or unreadable); the full line everywhere else.
   const claudeNote = signedOut || codexFailed
     ? `${nameOf("claude")} doesn\u2019t report one.`
-    : `${nameOf("claude")} doesn\u2019t report one. Usage and cost are on the Usage tab.`;
+    : `${nameOf("claude")} doesn\u2019t report one. Usage is on the Usage tab.`;
   const others = [
     ...new Set([
       ...(engines ?? []).filter((engine) => engine.installed).map((engine) => engine.id),
@@ -195,8 +195,8 @@ export function LimitsView({ data, nameOf, engines, onCheck, onRetry }: LimitsVi
         <section className="limit-group" aria-label="Reported by each engine">
           <h2>Reported by each engine</h2>
           <p className="limit-intro">
-            Orbyn reads a limit only through the engine{"’"}s own CLI or a supported session protocol. It never reads token files or calls a
-            provider{"’"}s quota endpoint itself, so a provider with no such route says so.
+            Orbyn reads a limit through the engine{"’"}s own CLI or a supported session protocol, not from token files or a provider{"’"}s quota
+            endpoint, so a provider with no such route says so.
           </p>
           {codexFailed ? (
             <ProviderRow id={WINDOW_ENGINE} name={nameOf(WINDOW_ENGINE)} tone="failed" note={"Couldn\u2019t read the limit."}>
@@ -226,7 +226,7 @@ export function LimitsAsking({ nameOf, engines }: { nameOf(engine: string): stri
       {installed("claude") ? (
         <section className="limit-group" aria-label={nameOf("claude")}>
           <h2>{nameOf("claude")}</h2>
-          <NotReportedRow label="Subscription window" note={`${nameOf("claude")} doesn’t report one. Usage and cost are on the Usage tab.`} />
+          <NotReportedRow label="Subscription window" note={`${nameOf("claude")} doesn’t report one. Usage is on the Usage tab.`} />
         </section>
       ) : null}
       {installed(WINDOW_ENGINE) ? (

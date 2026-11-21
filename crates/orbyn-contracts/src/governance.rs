@@ -36,6 +36,18 @@ pub struct Approval {
     pub decided_by: Option<String>,
     pub decided_at: Option<String>,
     pub created_at: String,
+    /// Set when a Code Mode script's inner call asked. Display only: no rule or decision reads it.
+    pub via: Option<ApprovalVia>,
+}
+}
+
+wire! {
+/// The Code Mode run and call an approval came from (docs/code-mode.md). The card reads the script and
+/// the calls from the run record by `code_run`; `script_sha256` shows the script is the one that asked.
+pub struct ApprovalVia {
+    pub code_run: String,
+    pub call: u32,
+    pub script_sha256: String,
 }
 }
 

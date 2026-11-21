@@ -343,6 +343,7 @@ impl Core {
         let host_core = self.clone();
         let host_binding = binding.clone();
         let host_run = run_id.to_owned();
+        let host_script = crate::util::sha256_hex(code.as_bytes());
         let host_failure = failure.clone();
         let weak: Weak<Core> = Arc::downgrade(self);
         let finish_run = run_id.to_owned();
@@ -359,6 +360,7 @@ impl Core {
                         &host_binding,
                         pending,
                         &host_run,
+                        &host_script,
                         replay,
                         host_failure,
                     ))
