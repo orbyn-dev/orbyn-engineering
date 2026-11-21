@@ -9,9 +9,9 @@ import { useNow } from "../../../lib/useNow";
 import { useConnectionKind } from "../../../product/state/connection";
 import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
-import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
+import { EndDialog } from "./EndDialog";
 import { TerminalPanel } from "./TerminalPanel";
 import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
@@ -184,7 +184,8 @@ export function TerminalDrawerBody({
   const [watching, setWatching] = useState(false);
   const [searching, setSearching] = useState(false);
   const [searchFocus, setSearchFocus] = useState(0);
-  const [ending, setEnding] = useState<TerminalInfo | null>(null);
+  /** The panes a confirmation is about to end: one for a pane or a one-pane tab, every pane for a split tab. */
+  const [ending, setEnding] = useState<TerminalInfo[] | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const pushToast = useUi((state) => state.pushToast);
   const { reload } = terminals;
@@ -260,13 +261,12 @@ export function TerminalDrawerBody({
       fail(failure);
     }
   };
-  const close = async (terminal: TerminalInfo) => {
-    try {
-      await closeTerminal(threadId, terminal.id);
-      reload();
-    } catch (failure) {
-      fail(failure);
-    }
+  /** Ends these panes, each with one write; the list is read again whatever happened, and a failure is said once. */
+  const close = async (panes: TerminalInfo[]) => {
+    const results = await Promise.allSettled(panes.map((pane) => closeTerminal(threadId, pane.id)));
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) fail(failed.reason);
+    reload();
   };
   /**
    * Where focus goes when a tab leaves: the neighbouring tab, else the "+". Remembered before the tab
@@ -284,14 +284,20 @@ export function TerminalDrawerBody({
     focusBack.current.restore();
     focusBack.current = null;
   }, [terminals.data, mainHidden]);
-  /** A tab's X ends that shell; one that is alive asks first. The main shell's X only hides its tab here, so it asks nothing. */
-  const end = (terminal: TerminalInfo) => {
-    if (terminal.alive) setEnding(terminal);
+  /** Ends these panes; if any shell is still going the app asks once for all of them. The main shell's X only hides its tab here. */
+  const endPanes = (panes: TerminalInfo[]) => {
+    const first = panes[0];
+    if (!first) return;
+    if (panes.some((pane) => pane.alive)) setEnding(panes);
     else {
-      rememberFocus(terminal.group);
-      void close(terminal);
+      rememberFocus(first.group);
+      void close(panes);
     }
   };
+  /** A pane's own X ends that pane only. */
+  const end = (terminal: TerminalInfo) => endPanes([terminal]);
+  /** A tab's X, End process and the close key end every pane of the tab, with one confirmation. */
+  const endTab = (group: TerminalInfo[]) => endPanes(group.filter((pane) => pane.id !== MAIN));
   const hideMain = () => {
     rememberFocus(MAIN);
     setMainHidden(true);
@@ -315,7 +321,7 @@ export function TerminalDrawerBody({
   useCommand("terminal.splitVertical", () => splitFromKey("vertical"), () => canSplit("vertical"));
   useCommand("terminal.close", () => {
     const first = shown?.[0];
-    if (first && first.id !== MAIN) end(first);
+    if (shown && first && first.id !== MAIN) endTab(shown);
     else onClose();
   });
   const scriptList = scripts.data?.scripts ?? [];
@@ -362,8 +368,8 @@ export function TerminalDrawerBody({
       { label: "Clear output", disabled: !there, separatorBefore: true, onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
       { label: "Copy all output", disabled: !there, onSelect: () => copyAll(group) },
       { label: "Watch only", selected: watching, onSelect: () => setWatching(!watching) },
-      ...(first && first.id !== MAIN && first.alive
-        ? [{ label: "End process", icon: <Square size={14} aria-hidden />, destructive: true, separatorBefore: true, onSelect: () => end(first) }]
+      ...(first && first.id !== MAIN && group.some((pane) => pane.alive)
+        ? [{ label: "End process", icon: <Square size={14} aria-hidden />, destructive: true, separatorBefore: true, onSelect: () => endTab(group) }]
         : []),
     ];
   };
@@ -435,7 +441,7 @@ export function TerminalDrawerBody({
                   {title}
                 </span>
               </button>
-              <button type="button" className="ptx" aria-label={`Close ${first.title}`} onClick={() => end(first)}>
+              <button type="button" className="ptx" aria-label={`Close ${first.title}`} onClick={() => endTab(group)}>
                 <X size={11} aria-hidden />
               </button>
             </div>
@@ -554,7 +560,7 @@ export function TerminalDrawerBody({
         <div className="term-dock" role="status">
           <span>Ended</span>
           <span className="term-dock-acts">
-            <Button small onClick={() => void close(currentTerminal)}>
+            <Button small onClick={() => endTab(shown ?? [currentTerminal])}>
               Close tab
             </Button>
           </span>
@@ -569,14 +575,10 @@ export function TerminalDrawerBody({
         />
       ) : null}</Presence>
       <Presence>{tabMenu ? <Menu x={tabMenu.x} y={tabMenu.y} label="Terminal tab" items={menuFor(tabMenu.group)} onClose={() => setTabMenu(null)} /> : null}</Presence>
-      {ending ? (
-        <ConfirmDialog title="End this terminal?" confirmLabel="End" tone="danger" cancelFocus onConfirm={async () => {
-            rememberFocus(ending.group);
-            await close(ending);
-          }} onClose={() => setEnding(null)}>
-          <p>{ending.title} is still running. Ending the terminal stops it.</p>
-        </ConfirmDialog>
-      ) : null}
+      {ending ? <EndDialog panes={ending} onConfirm={async () => {
+          rememberFocus(ending[0]!.group);
+          await close(ending);
+        }} onClose={() => setEnding(null)} /> : null}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCursorThreadMock } from "../../../mock/cursorThread";
-import { CrewRoleNote, crewRoleLabel } from "./CrewRole";
+import { CREW_ROLE_TOOLTIP, CrewRoleNote, crewRoleLabel } from "./CrewRole";
 import { cursorThreadApi, setCursorThreadApi } from "./api";
 import { EngineNote } from "./EngineNote";
 
@@ -17,21 +17,34 @@ describe("the Engine row of Details", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("is not drawn before the notice is answered, for an engine with no notice, or on a service without the route", async () => {
+  it("is drawn for every engine: another engine shows its name and the model under it, never the notice", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true }));
+    render(<EngineNote engine="claude" engineName="Claude Code" modelName="Opus 5.5" />);
+    expect(screen.getByText("Engine")).toBeVisible();
+    expect(screen.getByText("Claude Code")).toBeVisible();
+    expect(screen.getByText("Opus 5.5")).toBeVisible();
+    await new Promise((done) => setTimeout(done, 10));
+    expect(screen.queryByText(/does not ask/)).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("adds the notice only for an engine that has one and only once it has been answered", async () => {
     setCursorThreadApi(createCursorThreadMock({ acknowledged: false }));
     const before = render(<EngineNote engine="cursor" engineName="Cursor" />);
     await new Promise((done) => setTimeout(done, 10));
-    expect(screen.queryByText("Engine")).toBeNull();
+    expect(screen.getByText("Cursor")).toBeVisible();
+    expect(screen.queryByText(/does not ask/)).toBeNull();
     before.unmount();
-    setCursorThreadApi(createCursorThreadMock({ acknowledged: true }));
-    const other = render(<EngineNote engine="claude" engineName="Claude Code" />);
-    await new Promise((done) => setTimeout(done, 10));
-    expect(screen.queryByText("Engine")).toBeNull();
-    other.unmount();
     setCursorThreadApi(null);
     render(<EngineNote engine="cursor" engineName="Cursor" />);
     await new Promise((done) => setTimeout(done, 10));
-    expect(screen.queryByText("Engine")).toBeNull();
+    expect(screen.getByText("Engine")).toBeVisible();
+    expect(screen.queryByText(/does not ask/)).toBeNull();
+  });
+
+  it("draws an engine's name as plain text", () => {
+    render(<EngineNote engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
+    expect(document.querySelector("b, i")).toBeNull();
   });
 });
 
@@ -45,13 +58,17 @@ describe("the default client", () => {
 });
 
 describe("Reviewer only", () => {
-  it("labels an engine that may only review, with the service's reason, and no other", () => {
+  it("labels an engine that may only review, with and no other", () => {
     expect(crewRoleLabel({ crew_role: "reviewer_only" })).toBe("Reviewer only");
     expect(crewRoleLabel({ crew_role: "any" })).toBeNull();
     expect(crewRoleLabel({})).toBeNull();
     expect(crewRoleLabel(null)).toBeNull();
     render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" }} />);
-    expect(screen.getByText("Reviewer only · Not yet confined for writing work")).toHaveAttribute("title", "Not yet confined for writing work");
+    // The chip and its tooltip are Crew's own words (the frame), not the service's reason.
+    const chip = screen.getByText("Reviewer only");
+    expect(chip.closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
+    expect(chip.closest(".ct-role")).toHaveAttribute("tabindex", "0");
+    expect(screen.queryByText(/Not yet confined/)).toBeNull();
   });
 
   it("draws nothing for any, and the reason is plain text", () => {

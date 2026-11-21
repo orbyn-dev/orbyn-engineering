@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
+import { resolveModel, useEngineModels } from "../../../product/state/modelStore";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { detailsMenuItems } from "../../../product/ui/details";
@@ -52,6 +53,7 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
   const projectBranch = useWorkspace((state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null);
   const branch = thread.worktree?.branch ?? projectBranch;
   const engineName = useWorkspace((state) => state.engines.data?.find((entry) => entry.id === thread.engine)?.name ?? thread.engine);
+  const modelName = resolveModel(useEngineModels(thread.engine), thread.model)?.label ?? thread.model;
 
   // Anchored to the button's right edge, whatever the window's width.
   useLayoutEffect(() => {
@@ -122,8 +124,8 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
           {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
           {read("scripts", <ScriptsRow threadId={thread.id} scripts={loads.scripts} />)}
-          {/* Only where the service has a notice for the engine and it has been answered; a note, not a row to turn off. */}
-          <EngineNote engine={thread.engine} engineName={engineName} />
+          {/* Every engine has this row; one the service has a notice for adds it once answered. A note, not a row to turn off. */}
+          <EngineNote engine={thread.engine} engineName={engineName} modelName={modelName} />
           {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
         </div>
       </DetailsDismiss.Provider>

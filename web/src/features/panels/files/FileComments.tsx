@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useUi } from "../../../product/state/ui";
@@ -58,10 +59,16 @@ export function CommentList({ threadId, cwd, path, revision }: Where) {
   const comments = (all ?? []).filter((chip) => chip.kind === "review" && chip.path === path
     && chip.sourceRevision === revision && chip.sourceCwd === cwd);
   return comments.length ? <ul className="file-comment-list" aria-label="File comments">
-    {comments.map((chip) => <li key={chip.id}>
-      <strong>{chipLabel(chip)}</strong>{chip.kind === "review" && chip.stale ? <em> Out of date: the file was edited</em> : null}<p>{chip.kind === "review" ? chip.comment : ""}</p>
-      <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>Remove comment</Button>
-    </li>)}
+    {comments.map((chip) => {
+      const stale = chip.kind === "review" && chip.stale === true;
+      const was = chip.kind === "review" ? (chip.excerpt?.split("\n")[0] ?? "") : "";
+      return <li key={chip.id} data-stale={stale || undefined}>
+        <strong>{chipLabel(chip)}</strong><p>{chip.kind === "review" ? chip.comment : ""}</p>
+        {stale ? <span className="file-comment-stale"><Info size={12} aria-hidden />Out of date: the file was edited</span> : null}
+        {stale && was ? <span className="file-comment-was">Was: {was}</span> : null}
+        <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>Remove comment</Button>
+      </li>;
+    })}
   </ul> : null;
 }
 
