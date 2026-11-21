@@ -23,8 +23,7 @@ let offered: boolean | null = null;
  * The real client for the routes of docs/multi-repo.md. The page asks for the project's list first; a `404` is "this service has
  * no multi-repository projects" (flag off or routes missing), answered as `null` with no error, so nothing draws and no write is
  * ever offered. Every write is Person-class (`personKey.ts`): `request` adds the key for each. Ids are encoded into the path.
- * The thread Git actions send the existing thread routes with an optional `repo_id` (absent is the primary repository). Removing a
- * repository from a thread is not in the beta and has no call.
+ * The thread Git actions send the existing thread routes with an optional `repo_id` (absent is the primary repository).
  */
 const http: ReposApi = {
   async list(projectId, signal) {
@@ -83,6 +82,7 @@ const http: ReposApi = {
     const body: AddThreadRepo = { repo_id: repoId };
     return request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, body);
   },
+  async removeThreadRepo(threadId, repoId) { await request<void>("DELETE", `/api/threads/${q(threadId)}/repos/${q(repoId)}`); },
   async threadGit(threadId, repoId, action) {
     // `repo_id` is a body field of `GitAction`; absent is the primary repository.
     const repo = repoId === null ? {} : { repo_id: repoId };

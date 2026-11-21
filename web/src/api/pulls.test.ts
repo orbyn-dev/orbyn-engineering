@@ -56,3 +56,47 @@ describe("pullsApi.creditsSetting", () => {
     expect((await read([{ key: "remove_agent_credits_on_merge", value: "yes" }])).value).toBeNull();
   });
 });
+
+describe("the thread pull request calls and repo_id", () => {
+  const calls = () => {
+    const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    return () => (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([url, init]) => [init.method, url.replace(/^.*?\/api/, "/api")]);
+  };
+
+  it("sends no repo_id when none is given, byte for byte as before", async () => {
+    const seen = calls();
+    await pullsApi.linked("t 1");
+    await pullsApi.refreshLinked("t 1");
+    await pullsApi.link("t 1", 4);
+    await pullsApi.unlink("t 1", 4);
+    await pullsApi.threadReview("t 1", 4, "approve", "ok");
+    await pullsApi.threadMerge("t 1", 4, { method: "squash", auto: false, delete_branch: false, strip_credits: false });
+    expect(seen()).toEqual([
+      ["GET", "/api/threads/t%201/pulls"],
+      ["POST", "/api/threads/t%201/pulls/refresh"],
+      ["POST", "/api/threads/t%201/pulls"],
+      ["DELETE", "/api/threads/t%201/pulls/4"],
+      ["POST", "/api/threads/t%201/pulls/4/review"],
+      ["POST", "/api/threads/t%201/pulls/4/merge"],
+    ]);
+  });
+
+  it("sends the repository as ?repo_id= on each of them", async () => {
+    const seen = calls();
+    await pullsApi.linked("t", undefined, "r/1");
+    await pullsApi.refreshLinked("t", "r/1");
+    await pullsApi.link("t", 4, "r/1");
+    await pullsApi.unlink("t", 4, "r/1");
+    await pullsApi.threadReview("t", 4, "approve", "", "r/1");
+    await pullsApi.threadMerge("t", 4, { method: "merge", auto: false, delete_branch: false, strip_credits: false, remove_agent_credits: true }, "r/1");
+    expect(seen().map(([, url]) => url)).toEqual([
+      "/api/threads/t/pulls?repo_id=r%2F1",
+      "/api/threads/t/pulls/refresh?repo_id=r%2F1",
+      "/api/threads/t/pulls?repo_id=r%2F1",
+      "/api/threads/t/pulls/4?repo_id=r%2F1",
+      "/api/threads/t/pulls/4/review?repo_id=r%2F1",
+      "/api/threads/t/pulls/4/merge?repo_id=r%2F1",
+    ]);
+  });
+});
