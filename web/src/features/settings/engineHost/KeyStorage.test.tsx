@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { PERSON_HEADER } from "../../../api/personKey";
 import { createEngineHostMock, storageFixtures } from "../../../../mock/engineHost";
 import { KEYCHAIN_DENIED, KEYCHAIN_LOCKED, type KeyStorage, setEngineHostApi } from "../../enginehost";
 import { KeyStorageGroup, KeyStorageRow } from "./KeyStorage";
@@ -350,4 +351,74 @@ it("documents that the real routes are Person-class, carry the key in the body a
   }
   expect(source).toMatch(/JSON body and never in the path or query/);
   expect(source).toMatch(/must not\s+\* echo the key/);
+});
+
+/** Through the real client: a service that answers like the one after a failed key write, and records every request. */
+function stubService(start: Record<string, unknown>, keyAnswer: () => Response) {
+  let current = start;
+  const sent: { method: string; url: string; body?: string; person: boolean }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    const headers = new Headers(init.headers);
+    sent.push({ method: init.method ?? "GET", url, body: init.body as string | undefined, person: headers.has(PERSON_HEADER) });
+    if (init.method === "PUT" && url.endsWith("/key")) return keyAnswer();
+    if (init.method === "PUT") { current = { engine: "cursor", opted_in: JSON.parse(init.body as string).opted_in, present: false, state: JSON.parse(init.body as string).opted_in ? "not_saved" : "off" }; }
+    return new Response(JSON.stringify(current), { status: 200 });
+  }));
+  return sent;
+}
+const NO_KEY = { engine: "cursor", opted_in: true, present: false, state: "not_saved" };
+const writes = <T extends { method: string }>(sent: T[]) => sent.filter((entry) => entry.method !== "GET");
+
+it("opted in with no key: the state comes from the service, so a reload shows it, with Retry and Remove opt-in", async () => {
+  stubService(NO_KEY, () => new Response("{}", { status: 200 }));
+  render(<KeyStorageRow engineId="cursor" />);
+  expect(await screen.findByText("Opted in, no key saved. Orbyn stores nothing yet.")).toBeVisible();
+  expect(screen.getByText("Opted in, no key")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove opt-in" })).toBeVisible();
+});
+
+it("a key write that fails after the opt-in succeeded leaves the opted-in state; Retry asks for the key again and sends only the key PUT", async () => {
+  let answer = () => new Response(JSON.stringify({ code: "keychain_failed", message: "The keychain failed." }), { status: 500 });
+  const sent = stubService({ engine: "cursor", opted_in: false, present: false, state: "off" }, () => answer());
+  const user = userEvent.setup();
+  render(<KeyStorageGroup />);
+  await user.click(await screen.findByRole("button", { name: "Choose…" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Continue" }));
+  const dialog = await screen.findByRole("dialog");
+  const field = within(dialog).getByLabelText("API key") as HTMLInputElement;
+  await user.type(field, KEY);
+  await user.click(within(dialog).getByRole("button", { name: "Save key" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The keychain failed.");
+  expect(field.value).toBe("");
+  expect(writes(sent).map((entry) => `${entry.method} ${entry.url}`)).toEqual([
+    "PUT /api/settings/engine-credentials/cursor", "PUT /api/settings/engine-credentials/cursor/key",
+  ]);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(await screen.findByText("Opted in, no key saved. Orbyn stores nothing yet.")).toBeVisible();
+  // Retry: the key is typed again, and only the key PUT is sent.
+  answer = () => new Response(JSON.stringify({ ...NO_KEY, present: true, state: "saved" }), { status: 200 });
+  const before = writes(sent).length;
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  const again = await screen.findByRole("dialog");
+  await user.type(within(again).getByLabelText("API key"), KEY);
+  await user.click(within(again).getByRole("button", { name: "Save key" }));
+  expect(await screen.findByText("Saved")).toBeVisible();
+  const after = writes(sent).slice(before);
+  expect(after.map((entry) => `${entry.method} ${entry.url}`)).toEqual(["PUT /api/settings/engine-credentials/cursor/key"]);
+  expect(after[0]?.body).toBe(JSON.stringify({ key: KEY }));
+  expect(writes(sent).every((entry) => entry.person)).toBe(true);
+});
+
+it("Remove opt-in sends one PUT with opted_in false and returns the row to not asked, even on a double click", async () => {
+  const sent = stubService(NO_KEY, () => new Response("{}", { status: 200 }));
+  const user = userEvent.setup();
+  render(<KeyStorageRow engineId="cursor" />);
+  const button = await screen.findByRole("button", { name: "Remove opt-in" });
+  await user.dblClick(button);
+  expect(await screen.findByText("Orbyn stores nothing until you choose.")).toBeVisible();
+  const out = writes(sent);
+  expect(out).toHaveLength(1);
+  expect(out[0]?.person).toBe(true);
+  expect(out[0]).toMatchObject({ method: "PUT", url: "/api/settings/engine-credentials/cursor", body: JSON.stringify({ opted_in: false }) });
 });

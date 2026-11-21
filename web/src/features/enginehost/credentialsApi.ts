@@ -24,12 +24,14 @@ const path = (engine: string, tail = "") => `/api/settings/engine-credentials/${
 const STATES = new Set<string>(["off", "unavailable", "blocked", "not_saved", "saved"]);
 
 /** What the service says about each state, in the words the row already has. The service does not tell "not asked" from "declined". */
-function choiceOf(state: EngineCredentialsState, declined: boolean): StorageChoice {
+function choiceOf(state: EngineCredentialsState, declined: boolean, optedIn: boolean): StorageChoice {
   switch (state) {
     case "saved": return "saved";
     case "blocked": return "locked";
     case "unavailable": return "denied";
     case "off": return declined ? "declined" : "not_asked";
+    // Opted in with no key: the state a failed key write leaves behind, read from the service so a reload shows it too.
+    case "not_saved": return optedIn ? "opted_in_no_key" : "not_asked";
     default: return "not_asked";
   }
 }
@@ -52,6 +54,7 @@ export interface CredentialsApi {
   storage(signal?: AbortSignal): Promise<KeyStorage[] | null>;
   decline(engineId: string): Promise<KeyStorage>;
   saveKey(engineId: string, key: string): Promise<KeyStorage>;
+  removeOptIn(engineId: string): Promise<KeyStorage>;
   removeKey(engineId: string): Promise<KeyStorage>;
   retryKeychain(engineId: string): Promise<KeyStorage>;
 }
@@ -69,7 +72,7 @@ export function createCredentialsApi(): CredentialsApi {
     }
     optedIn.set(engine, status.opted_in);
     if (status.opted_in) declined.delete(engine);
-    const next: KeyStorage = { engine_id: engine, name: nameOf(engine), choice: choiceOf(status.state, declined.has(engine)) };
+    const next: KeyStorage = { engine_id: engine, name: nameOf(engine), choice: choiceOf(status.state, declined.has(engine), status.opted_in) };
     return "stopped" in status ? { ...next, stopped: status.stopped } : next;
   };
 
@@ -109,6 +112,14 @@ export function createCredentialsApi(): CredentialsApi {
         return row(engine, await optIn(engine, false));
       } catch (failure) {
         declined.delete(engine);
+        return refused(failure);
+      }
+    },
+    async removeOptIn(engine) {
+      try {
+        // The same body as a decline (`{ opted_in: false }`), without remembering a decision: the row goes back to not asked.
+        return row(engine, await optIn(engine, false));
+      } catch (failure) {
         return refused(failure);
       }
     },
