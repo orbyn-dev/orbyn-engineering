@@ -2451,8 +2451,12 @@ Approving a held Crew command needs the person's click in the desktop app's own 
 (docs/crew.md, "Approving once: local presence"). Over this channel the shell sends
 `presence_describe {request_id, hold_id}` and `presence_grant {request_id, nonce, hold_id,
 thread_id, task_id, command_sha256}`; the service answers on stdout `presence_hold`
-(the redacted command, worker name, task title, ids and the hold's binding hash, all from
-the service), `presence_ready` or `presence_refused {code}`. `host::presence::PresenceBook`
+(the redacted command, worker name, task title, ids and the hold's binding, all from the service),
+`presence_ready` or `presence_refused {code}`. The binding is an HMAC-SHA256, keyed with a value the
+service process draws at start, over the task, the thread, the kind and every field of the request except the engine's own
+bookkeeping (item and call ids, titles, reasons; the list is in `docs/crew.md`), plus the option kinds an ACP request offers, so a
+retry matches.
+`host::presence::PresenceBook`
 keeps one in-memory grant per hold for 60 seconds, bound to the hold, thread, task and hash,
 replaced by a later grant, used once and dropped by a restart; `autopilot_approve_once` checks it
 first without using it, runs its other checks, then takes it. A service without `--parent-stdin`
