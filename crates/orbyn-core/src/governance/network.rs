@@ -7,6 +7,9 @@ use crate::app::Core;
 use crate::error::Result;
 
 const UPDATE_CHECKS: &str = "The background_update_checks setting, or ORBYN_OFFLINE for versions";
+const PROVIDER_CHECKS: &str =
+    "The enable_provider_update_checks setting, or ORBYN_OFFLINE for versions";
+const PROVIDER_SETTING: &str = "enable_provider_update_checks";
 const UPDATE_SETTING: &str = "background_update_checks";
 const PULLS_SETTING: &str = "poll_pull_requests";
 const AUTO_PULL_SETTING: &str = "auto_pull";
@@ -29,7 +32,7 @@ fn listed() -> Vec<NetworkRequest> {
             "Latest engine versions",
             "registry.npmjs.org",
             "At startup, every six hours and on Refresh",
-            UPDATE_CHECKS,
+            PROVIDER_CHECKS,
         ),
         row(
             "Skills library updates (git fetch)",
@@ -93,6 +96,7 @@ impl Core {
     pub fn network_requests(&self) -> Result<Vec<NetworkRequest>> {
         let settings = self.store.settings()?;
         let updates = settings.background_update_checks != Some(false);
+        let providers = self.engines.provider_checks_on();
         let on = |key: &str| -> Result<bool> { Ok(self.preference(key, None)? == true) };
         let (pulls, auto_pull) = (on(PULLS_SETTING)?, on(AUTO_PULL_SETTING)?);
         let titles = on(TITLES_SETTING)?;
@@ -100,7 +104,9 @@ impl Core {
         Ok(listed()
             .into_iter()
             .map(|mut row| {
-                let (setting, enabled) = if row.control == UPDATE_CHECKS {
+                let (setting, enabled) = if row.control == PROVIDER_CHECKS {
+                    (Some(PROVIDER_SETTING), providers)
+                } else if row.control == UPDATE_CHECKS {
                     (Some(UPDATE_SETTING), updates)
                 } else if row.control.contains(PULLS_SETTING) {
                     (Some(PULLS_SETTING), pulls)
