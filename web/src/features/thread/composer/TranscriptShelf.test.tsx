@@ -5,7 +5,7 @@ import { TranscriptShelf } from "./TranscriptShelf";
 import type { TranscriptEntry } from "./useTranscripts";
 
 const file = (name: string) => new File(["x"], name);
-const ready = (title: string, messageCount: number): TranscriptEntry => ({ key: title, file: file("a.transcript"), state: "ready", id: "i", title, messageCount });
+const ready = (title: string, messageCount: number): TranscriptEntry => ({ key: title, file: file("a.orbyn.json"), state: "ready", id: "i", title, messageCount });
 
 it("draws nothing for an empty shelf", () => {
   const { container } = render(<TranscriptShelf entries={[]} remove={vi.fn()} addAsFile={vi.fn()} />);
@@ -33,19 +33,19 @@ it("says one message in the singular", () => {
 it("shows a refused transcript's reason in a red chip and offers the plain file only when it can", async () => {
   const addAsFile = vi.fn();
   const refused = (name: string, reason: string, canAddAsFile: boolean): TranscriptEntry => ({ key: name, file: file(name), state: "refused", reason, canAddAsFile });
-  render(<TranscriptShelf entries={[refused("a.transcript", "Made by a newer Orbyn. Update Orbyn to read it.", false), refused("b.transcript", "This isn’t a transcript Orbyn can read.", true)]}
+  render(<TranscriptShelf entries={[refused("a.orbyn.json", "Made by a newer Orbyn. Update Orbyn to read it.", false), refused("b.orbyn.json", "This isn’t a transcript Orbyn can read.", true)]}
     remove={vi.fn()} addAsFile={addAsFile} />);
   expect(screen.getAllByRole("listitem").every((item) => item.hasAttribute("data-failed"))).toBe(true);
   expect(screen.getByText("Made by a newer Orbyn. Update Orbyn to read it.")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "Add as a file" })).toHaveLength(1);
   await userEvent.click(screen.getByRole("button", { name: "Add as a file" }));
-  expect(addAsFile).toHaveBeenCalledWith(expect.objectContaining({ key: "b.transcript" }));
+  expect(addAsFile).toHaveBeenCalledWith(expect.objectContaining({ key: "b.orbyn.json" }));
 });
 
 it("shows a transcript being read with a spinner and a cancel", () => {
   const remove = vi.fn();
-  render(<TranscriptShelf entries={[{ key: "k", file: file("a.transcript"), state: "reading" }]} remove={remove} addAsFile={vi.fn()} />);
+  render(<TranscriptShelf entries={[{ key: "k", file: file("a.orbyn.json"), state: "reading" }]} remove={remove} addAsFile={vi.fn()} />);
   expect(screen.getByText("Reading transcript…")).toBeInTheDocument();
-  screen.getByRole("button", { name: "Cancel reading a.transcript" }).click();
+  screen.getByRole("button", { name: "Cancel reading a.orbyn.json" }).click();
   expect(remove).toHaveBeenCalledWith("k");
 });

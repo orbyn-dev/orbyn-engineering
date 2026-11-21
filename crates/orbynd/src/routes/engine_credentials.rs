@@ -79,7 +79,7 @@ pub(super) async fn redact_errors(
     (parts.status, parts.headers, Json(value)).into_response()
 }
 
-async fn local_only(
+pub(super) async fn local_only(
     State(state): State<AppState>,
     request: Request,
     next: Next,

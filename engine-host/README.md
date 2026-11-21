@@ -212,8 +212,8 @@ unverified here.
 
 T3 has more that is not added: Cursor `accountUsage.ts`, `CursorUsageAccounts.ts`, `accountCache.ts` and `CursorAccountReader.ts` (billed-event
 history, team lookups and an on-disk cache for T3's cost screens; this host keeps no files, and the core owns cost history); `credentialStore.ts`
-and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (scan `session.jsonl` transcripts under Muse's home for token history,
-a file reader the host does not need); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
+and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (they scan `session.jsonl` transcripts under Muse's home for token
+history, a file reader the host does not need; the core reads them, parity J27); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
 retry, and Muse's quota reset already rides `retry.resetsAt`).
 
 ## In the app bundle (macOS arm64)

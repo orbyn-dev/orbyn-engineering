@@ -16,15 +16,15 @@ describe("transcript drop", () => {
     expect(transcriptsApi()).toBeNull();
   });
 
-  it("knows a transcript by its placeholder ending, in any case", () => {
-    expect(looksLikeTranscript(file("a.transcript"))).toBe(true);
-    expect(looksLikeTranscript(file("A.TRANSCRIPT"))).toBe(true);
-    expect(looksLikeTranscript(file("a.transcript.txt"))).toBe(false);
+  it("knows a transcript by its ending, in any case", () => {
+    expect(looksLikeTranscript(file("a.orbyn.json"))).toBe(true);
+    expect(looksLikeTranscript(file("A.ORBYN.JSON"))).toBe(true);
+    expect(looksLikeTranscript(file("a.orbyn.json.txt"))).toBe(false);
     expect(looksLikeTranscript(file("a.log"))).toBe(false);
   });
 
   it("splits a drop in the order it was made, leaving every plain file for the attachment strip", () => {
-    const [one, log, two] = [file("one.transcript"), file("x.log"), file("two.transcript")];
+    const [one, log, two] = [file("one.orbyn.json"), file("x.log"), file("two.orbyn.json")];
     expect(splitDrop([one, log, two])).toEqual({ transcripts: [one, two], files: [log] });
   });
 
@@ -34,9 +34,9 @@ describe("transcript drop", () => {
 
   it("tells what is held from the types a browser shows during a drag, never from a name", () => {
     const item = (type: string) => ({ kind: "file", type }) as DataTransferItem;
-    expect(willBeTranscript([item("application/x-orbyn-transcript")])).toBe(true);
+    expect(willBeTranscript([item("application/vnd.orbyn.transcript+json")])).toBe(true);
     expect(willBeTranscript([item("")])).toBe(false);
-    expect(willBeTranscript([item("application/x-orbyn-transcript"), item("text/plain")])).toBe(false);
+    expect(willBeTranscript([item("application/vnd.orbyn.transcript+json"), item("text/plain")])).toBe(false);
     expect(willBeTranscript([])).toBe(false);
   });
 });

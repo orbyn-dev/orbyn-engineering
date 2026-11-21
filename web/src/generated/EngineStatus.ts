@@ -2,6 +2,7 @@
 import type { AuthState } from "./AuthState";
 import type { EngineCapabilities } from "./EngineCapabilities";
 import type { EngineCompatibility } from "./EngineCompatibility";
+import type { EngineCrewRole } from "./EngineCrewRole";
 import type { EngineTier } from "./EngineTier";
 import type { InstallerKind } from "./InstallerKind";
 import type { VersionSupport } from "./VersionSupport";
@@ -34,4 +35,12 @@ accent?: string,
 /**
  * The signed-in account, such as an email, when the CLI's own status reports one.
  */
-account?: string, };
+account?: string, 
+/**
+ * Which Crew roles this engine may take. `reviewer_only` engines never write.
+ */
+crew_role?: EngineCrewRole, 
+/**
+ * Why, in plain words, when `crew_role` is `reviewer_only`.
+ */
+crew_role_reason?: string, };

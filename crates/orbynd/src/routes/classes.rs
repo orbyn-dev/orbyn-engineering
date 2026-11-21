@@ -119,6 +119,11 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/engines/update-all"),
     ("POST", "/api/engines/{id}/install-recommended"),
     ("POST", "/api/engines/{id}/update"),
+    (
+        "POST",
+        "/api/projects/{project_id}/engines/{engine}/notice/acknowledge",
+    ),
+    ("POST", "/api/threads/{id}/send-without-approvals"),
     ("POST", "/api/shell/actions"),
     ("POST", "/api/updates/app/apply"),
     ("POST", "/api/updates/app/download"),
@@ -655,6 +660,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/engine-host/{family}/stop",
         "stops an engine host, which ends the runs on it",
+    ),
+    (
+        "POST",
+        "/api/projects/{project_id}/engines/{engine}/notice/acknowledge",
+        "the person's acknowledgement of an engine's one-time notice, which lets runs without approvals start in the project",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/send-without-approvals",
+        "runs one turn on an engine that never asks, without the mode the thread saved",
     ),
     (
         "POST",

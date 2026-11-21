@@ -173,6 +173,12 @@ archive clears it. With a reset in the future, `auto_resume_limited_threads` sch
 continuation and `snooze_limited_threads` snoozes until then; each can also be chosen on
 the thread. Due continuations start from the lifecycle pass, so an overdue one starts on
 the first pass after a restart, and a held queue stays held until that run ends.
+Automatic continuations are bounded at three per thread, the budget restart recovery
+shares: once they are spent, the schedule is dropped, the limit and its reset stay on
+the thread, and a `limit.retry_exhausted` note records that the automatic continuation
+stopped, so the thread waits for you until your own message or choosing the continuation
+on the thread gives the budget back. A continuation that fails on anything but a limit
+schedules nothing, so a failed run never retries itself.
 
 ## Composer
 
@@ -465,10 +471,14 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 ## Usage
 
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
-under `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `sessions/**/*.jsonl` under `~/.codex`
-(or `CODEX_HOME`). It keeps only timestamps, models and token counts, and never opens a
-credential file. Claude rewrites an entry as it streams, so each message counts once.
-Codex repeats its running total, so an unchanged total counts once. Costs come from
+under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
+(or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+and token counts, and never opens a credential file. Claude rewrites an entry as it
+streams, so each message counts once. Codex repeats its running total, so an
+unchanged total counts once. Muse writes one log per session, counts its cached
+input inside its input count and its reasoning inside its output count, and can copy
+an inference into another session's log, so each inference counts once. Costs come from
 configured `model_prices`, after `model_aliases`; a model with no price has an unknown
 cost and is never guessed. History is kept by day, model and service tier (Claude's
 `speed`/`service_tier`, Codex's turn `service_tier`; unknown names are `other`). A
