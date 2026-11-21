@@ -154,6 +154,12 @@ impl Store {
         })
     }
 
+    /// Appends an event that belongs to the thread rather than to one run, such as a
+    /// steer's mark after its message moved to the queue.
+    pub fn append_thread_event(&self, thread_id: &str, event: &AgUiEvent) -> Result<ThreadEvent> {
+        self.commit(|tx, appended| insert_event(tx, appended, thread_id, None, event))
+    }
+
     pub fn set_engine_session(&self, run_id: &str, session: &str) -> Result<()> {
         self.commit(|tx, _| {
             let guard = guard_active(tx, &self.epoch, run_id)?;

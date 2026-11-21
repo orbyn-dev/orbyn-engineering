@@ -4,6 +4,7 @@
 use orbyn_contracts::{CrewRole, ResultState};
 use serde_json::json;
 
+use super::bus_resume::pause_worker;
 use super::bus_support::{Duo, duo};
 
 /// A body of about 4000 characters, different for each `n`.
@@ -65,19 +66,16 @@ async fn a_flood_of_held_messages_costs_no_prompt() {
     let left = held("lead");
     assert!((1..14).contains(&left), "the rest stay held: {left}");
 
-    // B's retry prompt carries ten and leaves four.
+    // Queuing a retry preserves the person's prompt and acknowledges no held messages.
     let (task, _) = (d.w.task(&d.b), ());
     d.w.core.send_to_worker(&task, "retry now").unwrap();
     let queued = d.queued(&wb);
     assert_eq!(queued.len(), 1);
-    assert!(
-        queued[0].starts_with("retry now") && queued[0].contains("more crew messages are held")
-    );
-    assert!(queued[0].len() < 30_000);
+    assert_eq!(queued[0], "retry now");
     let left_b = held(&d.mb);
-    assert!((1..14).contains(&left_b), "{left_b}");
+    assert_eq!(left_b, 14);
 
-    // A prompt the thread refuses with the held text goes alone, and they stay held.
+    // Even a large accepted base prompt cannot eagerly acknowledge held messages.
     let base = "y".repeat(119_990);
     d.w.core.send_to_worker(&task, &base).unwrap();
     let queued = d.queued(&wb);
@@ -86,7 +84,7 @@ async fn a_flood_of_held_messages_costs_no_prompt() {
     assert_eq!(
         held(&d.mb),
         left_b,
-        "a refused prompt marks nothing as sent"
+        "queue acceptance marks nothing as sent"
     );
 
     // The tool-result inbox is capped the same way.
@@ -94,6 +92,35 @@ async fn a_flood_of_held_messages_costs_no_prompt() {
         .call(&d.tb, "crew_board_read", json!({ "key": "none" }))
         .await;
     assert!(read["inbox"].as_array().unwrap().len() <= 11);
+    let before_launch = held(&d.mb);
+    assert!((1..14).contains(&before_launch));
+
+    // Remove this test's queued controls, then exercise the actual next-turn boundary.
+    for queued in d.w.core.store.list_queue(&wb).unwrap() {
+        d.w.core.store.remove_queued(&queued.id).unwrap();
+    }
+    let worker = pause_worker(&d).await;
+    d.w.core
+        .store
+        .move_crew_task(&d.b, "running", None)
+        .unwrap();
+    d.w.core
+        .send_to_worker(&d.w.task(&d.b), "retry now")
+        .unwrap();
+    d.w.until("the retry reaches the engine", |w| {
+        w.sent_to(&worker).len() == 2
+    })
+    .await;
+    d.w.until("the bounded launch batch is acknowledged", |_| {
+        held(&d.mb) < before_launch
+    })
+    .await;
+    let prompt = d.w.sent_to(&worker).pop().unwrap();
+    assert!(prompt.len() < 30_000 && prompt.contains("more crew messages are held"));
+    assert!(
+        (1..before_launch).contains(&held(&d.mb)),
+        "the rest stay pending"
+    );
     let _ = wa;
 }
 

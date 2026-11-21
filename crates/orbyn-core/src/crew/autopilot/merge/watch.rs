@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use orbyn_contracts::CheckOutcome;
+use orbyn_contracts::{AutopilotBisect, AutopilotBisectCheck, CheckOutcome};
 use serde_json::json;
 
 use super::gitops::{self, Refused, Scratch};
@@ -17,6 +17,139 @@ use crate::crew::autopilot::Mode;
 use crate::crew::checks::run_line;
 use crate::error::{CoreError, Result};
 use crate::store::MergeRecord;
+
+/// The most finished runs a bisect in progress lists. A normal history needs about `log2` of its window plus five runs, so
+/// this bound is never reached by one and keeps a very long history from growing the read.
+const CHECKED_MAX: usize = 64;
+
+/// The most check runs one bisect can make from the count of first-parent commits it searches: the tip and the last known
+/// good commit, one halving per step, the culprit twice and its parent.
+fn bisect_steps(commits: usize) -> u32 {
+    let mut steps = 0u32;
+    let mut size = commits.max(1);
+    while size > 1 {
+        size = size.div_ceil(2);
+        steps = steps.saturating_add(1);
+    }
+    steps.saturating_add(5)
+}
+
+/// The progress a watch publishes to the watch read while it bisects. It is in memory only: a restart keeps the stored
+/// outcome (the merge rows and the ledger) and loses the progress.
+struct Bisect<'a> {
+    core: &'a Core,
+    progress: AutopilotBisect,
+}
+
+impl<'a> Bisect<'a> {
+    fn new(core: &'a Core) -> Self {
+        Self {
+            core,
+            progress: AutopilotBisect {
+                phase: "checking_tip".to_owned(),
+                tested: 0,
+                steps: 0,
+                after: None,
+                before: None,
+                testing: None,
+                checked: Vec::new(),
+            },
+        }
+    }
+
+    /// Publishes where the bisect stands now. A test build also keeps every state, so a test can walk them after the watch
+    /// returns.
+    fn publish(&self) {
+        #[cfg(test)]
+        bisect_spy::record(&self.progress);
+        if let Ok(mut slot) = self.core.crew_bisect.lock() {
+            *slot = Some(self.progress.clone());
+        }
+    }
+
+    fn begin(&mut self, phase: &'static str) {
+        self.progress.phase = phase.to_owned();
+        self.progress.testing = None;
+        self.publish();
+    }
+
+    /// The bound is known once the window of first-parent commits is: nothing before it can say how many runs there will be.
+    fn steps_from(&mut self, commits: usize) {
+        self.progress.steps = bisect_steps(commits);
+    }
+
+    /// The commits the cause is known to lie between: the last one that passes and the first one that fails.
+    fn window(&mut self, after: Option<&str>, before: Option<&str>) {
+        self.progress.after = after.map(str::to_owned);
+        self.progress.before = before.map(str::to_owned);
+        self.publish();
+    }
+
+    fn testing(&mut self, rev: &str) {
+        self.progress.testing = Some(rev.to_owned());
+        self.publish();
+    }
+
+    fn checked(&mut self, rev: &str, passes: bool) {
+        self.progress.tested = self.progress.tested.saturating_add(1);
+        if self.progress.checked.len() < CHECKED_MAX {
+            self.progress.checked.push(AutopilotBisectCheck {
+                commit: rev.to_owned(),
+                passes,
+            });
+        }
+        self.progress.testing = None;
+        self.publish();
+    }
+}
+
+/// Clears the published progress on every way out of the watch, including an error.
+struct BisectGuard<'a>(&'a Core);
+
+impl Drop for BisectGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.0.crew_bisect.lock() {
+            *slot = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod bisect_spy {
+    use std::cell::RefCell;
+
+    use orbyn_contracts::AutopilotBisect;
+
+    thread_local! {
+        /// Every progress this thread's watch published, oldest first. A watch runs to its end inside one call, so a test
+        /// cannot ask the read between its checks without a spy.
+        static PUBLISHED: RefCell<Vec<AutopilotBisect>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(progress: &AutopilotBisect) {
+        PUBLISHED.with(|published| published.borrow_mut().push(progress.clone()));
+    }
+
+    pub(super) fn clear() {
+        PUBLISHED.with(|published| published.borrow_mut().clear());
+    }
+
+    pub(super) fn take() -> Vec<AutopilotBisect> {
+        PUBLISHED.with(|published| std::mem::take(&mut *published.borrow_mut()))
+    }
+}
+
+/// The progress a test's watch published, for a test that walks the states a bisect goes through.
+#[cfg(test)]
+impl Core {
+    pub(crate) fn clear_bisect_spy(&self) {
+        bisect_spy::clear();
+    }
+
+    pub(crate) fn take_bisect_spy(&self) -> Vec<AutopilotBisect> {
+        bisect_spy::take()
+    }
+}
 
 /// What a watch found.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -284,7 +417,8 @@ impl Core {
         }
     }
 
-    /// Runs the checks at the tip and, if they fail, bisects to the first failing first-parent commit.
+    /// Runs the checks at the tip and, if they fail, bisects to the first failing first-parent commit. Every run is
+    /// published to the watch read as it happens; the progress is cleared on every way out.
     pub(super) async fn find_break(
         &self,
         scratch: &Scratch,
@@ -294,7 +428,10 @@ impl Core {
         commands: &[String],
         merges: &[MergeRecord],
     ) -> Result<Found> {
-        if passes_at(scratch, tip, commands).await? {
+        let _cleared = BisectGuard(self);
+        let mut bisect = Bisect::new(self);
+        bisect.begin("checking_tip");
+        if self.bisect_at(scratch, tip, commands, &mut bisect).await? {
             return Ok(Found::Healthy);
         }
         let unsure = |why: &str, culprit: Option<String>, dependents: Vec<String>| Found::Unsure {
@@ -302,7 +439,11 @@ impl Core {
             culprit,
             dependents,
         };
-        if !passes_at(scratch, boundary, commands).await? {
+        bisect.begin("checking_boundary");
+        if !self
+            .bisect_at(scratch, boundary, commands, &mut bisect)
+            .await?
+        {
             return Ok(unsure(
                 "The checks already failed before the first merge the crew watches.",
                 None,
@@ -317,15 +458,25 @@ impl Core {
                 Vec::new(),
             ));
         }
+        bisect.steps_from(commits.len());
+        bisect.begin("bisecting");
         // The first commit that fails, taking the checks to stay broken once broken.
         let (mut low, mut high) = (0usize, commits.len() - 1);
+        bisect.window(Some(boundary), Some(tip));
         while low < high {
             let mid = (low + high) / 2;
-            if passes_at(scratch, &commits[mid], commands).await? {
+            if self
+                .bisect_at(scratch, &commits[mid], commands, &mut bisect)
+                .await?
+            {
                 low = mid + 1;
             } else {
                 high = mid;
             }
+            let after = low
+                .checked_sub(1)
+                .map_or(boundary, |before| commits[before].as_str());
+            bisect.window(Some(after), Some(commits[high].as_str()));
         }
         let culprit = &commits[low];
         let Some(record) = merges.iter().find(|m| &m.merge_commit == culprit) else {
@@ -341,10 +492,18 @@ impl Core {
             .map(|m| m.task_id.clone())
             .collect();
         // Fails with the merge, twice; passes without it.
-        let again = !passes_at(scratch, culprit, commands).await?
-            && !passes_at(scratch, culprit, commands).await?;
+        bisect.begin("confirming");
+        let again = !self
+            .bisect_at(scratch, culprit, commands, &mut bisect)
+            .await?
+            && !self
+                .bisect_at(scratch, culprit, commands, &mut bisect)
+                .await?;
+        bisect.begin("checking_parent");
         let parent = gitops::parent(repo, culprit).await?;
-        let clean = passes_at(scratch, &parent, commands).await?;
+        let clean = self
+            .bisect_at(scratch, &parent, commands, &mut bisect)
+            .await?;
         if !again || !clean {
             return Ok(unsure(
                 "The failure does not reproduce the same way with and without that merge, so it may be flaky.",
@@ -353,6 +512,20 @@ impl Core {
             ));
         }
         Ok(Found::Certain(Box::new(record.clone())))
+    }
+
+    /// Runs the checks at `rev` through the tracker: it publishes the commit while the run is in flight and records the answer.
+    async fn bisect_at(
+        &self,
+        scratch: &Scratch,
+        rev: &str,
+        commands: &[String],
+        bisect: &mut Bisect<'_>,
+    ) -> Result<bool> {
+        bisect.testing(rev);
+        let passes = passes_at(scratch, rev, commands).await?;
+        bisect.checked(rev, passes);
+        Ok(passes)
     }
 }
 

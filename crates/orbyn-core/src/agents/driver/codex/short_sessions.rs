@@ -1,12 +1,12 @@
 use std::ffi::OsString;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::tools::{codex_tools, listed_pages};
 use super::{CALL_TIMEOUT, CodexDriver, TOOLS_DEADLINE};
 use crate::agents::driver::pipes::{resolve_engine, spawn_engine};
 use crate::agents::driver::rpc::RpcClient;
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 
 /// An app-server kept alive only for a read. Dropping it ends the process.
 pub(super) struct ShortSession {
@@ -49,6 +49,37 @@ impl CodexDriver {
         Some(tools)
     }
 
+    /// One tool's descriptor from the app's own server: `mcpServerStatus/list` limited
+    /// to that server. A server the engine no longer has, one that failed or needs a
+    /// sign-in, or a list that answered with an error is an error rather than an
+    /// unknown tool, so a caller never reports empty metadata as fact.
+    pub(super) async fn app_tool_info(
+        &self,
+        cwd: &std::path::Path,
+        server: &str,
+        tool: &str,
+    ) -> Result<Option<Value>> {
+        let unreachable = || {
+            CoreError::EngineUnavailable(
+                "The app's server could not be asked for its tool list.".into(),
+            )
+        };
+        let session = self
+            .short_session_experimental(cwd)
+            .await
+            .map_err(|_| unreachable())?;
+        let reply = session
+            .rpc
+            .call(
+                "mcpServerStatus/list",
+                json!({ "serverName": server, "detail": "toolsAndAuthOnly" }),
+                CALL_TIMEOUT,
+            )
+            .await
+            .map_err(|_| unreachable())?;
+        tool_in_reply(&reply, server, tool)
+    }
+
     /// A short app-server that takes the experimental calls the status lists need.
     async fn short_session_experimental(&self, cwd: &std::path::Path) -> Result<ShortSession> {
         let command = resolve_engine(&self.program)?;
@@ -87,5 +118,147 @@ impl CodexDriver {
             rpc,
             _process: process.child,
         })
+    }
+}
+
+/// One tool's descriptor from a `mcpServerStatus/list` reply that was asked for one server.
+/// The entry is picked by exact name, so an engine that ignores `serverName` and lists
+/// other servers (or only another one) can never give this server another's tool: that is
+/// "not available", an error. An entry with no `tools` object says nothing about its
+/// tools, so that state is unknown (an error), not "not advertised" (`None`).
+fn tool_in_reply(reply: &Value, server: &str, tool: &str) -> Result<Option<Value>> {
+    let entry = reply
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|servers| {
+            servers
+                .iter()
+                .find(|entry| entry.get("name").and_then(Value::as_str) == Some(server))
+        })
+        .ok_or_else(|| CoreError::EngineUnavailable("The app's server is not available.".into()))?;
+    let broken = entry
+        .get("toolsError")
+        .and_then(Value::as_str)
+        .is_some_and(|why| !why.trim().is_empty())
+        || entry.get("authStatus").and_then(Value::as_str) == Some("notLoggedIn")
+        || matches!(
+            entry.get("runtimeStatus").and_then(Value::as_str),
+            Some("failed" | "authenticationRequired" | "disabled" | "cancelled")
+        );
+    if broken {
+        return Err(CoreError::EngineUnavailable(
+            "The app's server cannot list its tools.".into(),
+        ));
+    }
+    let Some(tools) = entry.get("tools").and_then(Value::as_object) else {
+        return Err(CoreError::EngineUnavailable(
+            "The app's server did not say which tools it has.".into(),
+        ));
+    };
+    if let Some(found) = tools.get(tool) {
+        return Ok(Some(found.clone()));
+    }
+    if matches!(
+        entry.get("runtimeStatus").and_then(Value::as_str),
+        Some("notStarted" | "starting")
+    ) {
+        return Err(CoreError::EngineUnavailable(
+            "The app's server is still starting, so it listed no tools.".into(),
+        ));
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, description: &str) -> Value {
+        json!({
+            "name": name, "authStatus": "unsupported", "runtimeStatus": "connected",
+            "tools": { "show_widget": { "name": "show_widget", "description": description } },
+        })
+    }
+
+    fn unavailable(result: Result<Option<Value>>) -> bool {
+        matches!(result, Err(CoreError::EngineUnavailable(_)))
+    }
+
+    #[test]
+    fn mcp_app_a_reply_without_a_tools_object_is_unknown_not_unadvertised() {
+        let base = |extra: Value| {
+            let mut entry = json!({ "name": "demo", "authStatus": "unsupported", "runtimeStatus": "connected" });
+            entry
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            json!({ "data": [entry] })
+        };
+        for reply in [
+            base(json!({})),
+            base(json!({ "tools": null })),
+            base(json!({ "tools": [{ "name": "show_widget" }] })),
+            base(json!({ "tools": "show_widget" })),
+        ] {
+            assert!(
+                unavailable(tool_in_reply(&reply, "demo", "show_widget")),
+                "{reply}"
+            );
+        }
+        // An object that does not list the tool is still the honest "not advertised".
+        let empty = base(json!({ "tools": {} }));
+        assert!(matches!(
+            tool_in_reply(&empty, "demo", "show_widget"),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn mcp_app_the_exact_server_name_picks_the_entry_in_a_multi_entry_reply() {
+        let reply = json!({ "data": [
+            entry("other", "OTHER"), entry("demo", "DEMO"), entry("demo-two", "TWO"),
+            entry("Demo", "CASE"), entry(" demo", "SPACE"),
+        ] });
+        let found = tool_in_reply(&reply, "demo", "show_widget")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found["description"], "DEMO");
+        let found = tool_in_reply(&reply, "demo-two", "show_widget")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found["description"], "TWO");
+    }
+
+    #[test]
+    fn mcp_app_a_reply_that_ignores_the_server_name_cannot_yield_another_servers_tool() {
+        // An engine that ignored `serverName` and answered with other servers only.
+        let reply = json!({ "data": [entry("other", "OTHER"), entry("third", "THIRD")] });
+        assert!(unavailable(tool_in_reply(&reply, "demo", "show_widget")));
+        // Nor does a near name, or a tool whose own name matches but whose server does not.
+        let reply = json!({ "data": [entry("demo2", "NEAR"), entry("DEMO", "UPPER")] });
+        assert!(unavailable(tool_in_reply(&reply, "demo", "show_widget")));
+        let empty = json!({ "data": [] });
+        assert!(unavailable(tool_in_reply(&empty, "demo", "show_widget")));
+        assert!(unavailable(tool_in_reply(
+            &json!({}),
+            "demo",
+            "show_widget"
+        )));
+    }
+
+    #[test]
+    fn mcp_app_a_broken_or_starting_entry_is_never_none() {
+        for entry in [
+            json!({ "name": "demo", "tools": {}, "toolsError": "x" }),
+            json!({ "name": "demo", "tools": {}, "authStatus": "notLoggedIn" }),
+            json!({ "name": "demo", "tools": {}, "runtimeStatus": "failed" }),
+            json!({ "name": "demo", "tools": {}, "runtimeStatus": "starting" }),
+        ] {
+            let reply = json!({ "data": [entry] });
+            assert!(
+                unavailable(tool_in_reply(&reply, "demo", "show_widget")),
+                "{reply}"
+            );
+        }
     }
 }

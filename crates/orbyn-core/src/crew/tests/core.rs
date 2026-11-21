@@ -339,8 +339,12 @@ async fn usage_the_default_engine_and_turned_off_engines_come_from_the_machine()
         full.used_percent = Some(100.0);
         vec![full, scripted("bravo", starts), scripted("delta", starts)]
     });
-    // The usage screen has read alpha's limits; the router only looks at what it kept.
+    // This test compares the machine's eligible providers. SameAsLead is
+    // qualified separately and would intentionally pin this worker to Alpha.
+    set(&f, &f.project, orbyn_contracts::CrewWorkerProvider::Any);
+    // An explicit account-unbound read must not become routing quota state.
     f.core.engine_limits("alpha", false).await.unwrap();
+    assert!(f.core.cached_limits("alpha").is_none());
     let (answer, _) = f.route(json!({ "brief": draft(json!({})) })).await;
     let why = |engine: &str| {
         answer["decision"]["rejected"]
@@ -350,9 +354,9 @@ async fn usage_the_default_engine_and_turned_off_engines_come_from_the_machine()
             .find(|r| r["engine"] == engine)
             .map(|r| r["why"].clone())
     };
-    assert_eq!(why("alpha"), Some(json!("quota_exhausted")));
-    // Two equal engines: the id decides, until the person's default engine is set.
-    assert_eq!(answer["decision"]["engine"], "bravo");
+    assert_eq!(why("alpha"), None);
+    // Three equal engines: the id decides, until the person's default is set.
+    assert_eq!(answer["decision"]["engine"], "alpha");
     f.core
         .set_preferences(
             None,
@@ -361,7 +365,7 @@ async fn usage_the_default_engine_and_turned_off_engines_come_from_the_machine()
         .unwrap();
     let (answer, _) = f.route(json!({ "brief": draft(json!({})) })).await;
     assert_eq!(answer["decision"]["engine"], "delta");
-    assert_eq!(answer["alternatives"].as_array().unwrap().len(), 1);
+    assert_eq!(answer["alternatives"].as_array().unwrap().len(), 2);
 
     // Turned off for this project: rejected with that reason.
     f.core
@@ -371,7 +375,7 @@ async fn usage_the_default_engine_and_turned_off_engines_come_from_the_machine()
         )
         .unwrap();
     let (answer, _) = f.route(json!({ "brief": draft(json!({})) })).await;
-    assert_eq!(answer["decision"]["engine"], "bravo");
+    assert_eq!(answer["decision"]["engine"], "alpha");
     let off = answer["decision"]["rejected"]
         .as_array()
         .unwrap()
@@ -379,6 +383,7 @@ async fn usage_the_default_engine_and_turned_off_engines_come_from_the_machine()
         .find(|r| r["engine"] == "delta")
         .unwrap();
     assert!(off["text"].as_str().unwrap().contains("turned off"));
+    assert_eq!(f.starts.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -526,21 +531,17 @@ fn a_decision_is_stored_with_its_task_and_shown_later() {
     assert!(core.store_route_decision(&task.id, &stray).is_err());
 }
 
-/// Alpha leads and is busy; bravo is idle. Their limits are read once so the router sees the headroom.
-fn headroom_fixture() -> Fixture {
-    fixture(true, |starts| {
-        let mut alpha = scripted("alpha", starts);
-        alpha.used_percent = Some(80.0);
-        let mut bravo = scripted("bravo", starts);
-        bravo.used_percent = Some(0.0);
-        vec![alpha, bravo]
-    })
-}
-
-async fn warmed(f: Fixture) -> Fixture {
-    for id in ["alpha", "bravo"] {
-        f.core.engine_limits(id, true).await.unwrap();
-    }
+/// Alpha leads; the person's machine preference favors Bravo if policy permits it.
+fn preferred_provider_fixture() -> Fixture {
+    let f = fixture(true, |starts| {
+        vec![scripted("alpha", starts), scripted("bravo", starts)]
+    });
+    f.core
+        .set_preferences(
+            None,
+            &[("default_engine".to_owned(), json!("bravo"))].into(),
+        )
+        .unwrap();
     f
 }
 
@@ -551,6 +552,7 @@ async fn routed_engine(f: &Fixture, extra: Value) -> String {
     }
     let (answer, error) = f.route(args).await;
     assert!(!error, "{answer}");
+    assert_eq!(f.starts.load(Ordering::SeqCst), 0);
     answer["decision"]["engine"].as_str().unwrap().to_owned()
 }
 
@@ -573,8 +575,8 @@ fn put_raw(f: &Fixture, project: &str, text: &str) {
 }
 
 #[tokio::test]
-async fn the_default_keeps_a_worker_on_the_leads_provider_despite_more_headroom_elsewhere() {
-    let f = warmed(headroom_fixture()).await;
+async fn the_default_keeps_a_worker_on_the_leads_provider_despite_another_machine_preference() {
+    let f = preferred_provider_fixture();
     assert_eq!(routed_engine(&f, json!({})).await, "alpha");
     let view = f.core.crew_worker_provider_view(&f.project).unwrap();
     assert_eq!(
@@ -584,9 +586,9 @@ async fn the_default_keeps_a_worker_on_the_leads_provider_despite_more_headroom_
 }
 
 #[tokio::test]
-async fn a_stored_any_lets_the_idle_provider_win_and_saving_the_default_clears_it() {
+async fn a_stored_any_lets_the_preferred_provider_win_and_saving_the_default_clears_it() {
     use orbyn_contracts::CrewWorkerProvider::{Any, SameAsLead};
-    let f = warmed(headroom_fixture()).await;
+    let f = preferred_provider_fixture();
     set(&f, &f.project, Any);
     assert_eq!(routed_engine(&f, json!({})).await, "bravo");
     assert_eq!(
@@ -613,7 +615,7 @@ async fn a_stored_any_lets_the_idle_provider_win_and_saving_the_default_clears_i
 
 #[tokio::test]
 async fn an_unknown_or_damaged_stored_value_reads_as_same_as_lead() {
-    let f = warmed(headroom_fixture()).await;
+    let f = preferred_provider_fixture();
     for text in ["everyone", "", "ANY", "\"any\"", "{\"any\":true}", "null"] {
         put_raw(&f, &f.project, text);
         assert_eq!(routed_engine(&f, json!({})).await, "alpha", "{text:?}");
@@ -631,7 +633,7 @@ async fn an_unknown_or_damaged_stored_value_reads_as_same_as_lead() {
 #[tokio::test]
 async fn the_setting_is_per_project() {
     use orbyn_contracts::CrewWorkerProvider::Any;
-    let f = warmed(headroom_fixture()).await;
+    let f = preferred_provider_fixture();
     let other = f
         .core
         .store
@@ -660,7 +662,7 @@ async fn the_setting_is_per_project() {
 
 #[tokio::test]
 async fn setting_and_reading_check_the_preview_flag_and_the_project() {
-    let f = headroom_fixture();
+    let f = preferred_provider_fixture();
     let change = orbyn_contracts::CrewWorkerProviderSet {
         worker_provider: orbyn_contracts::CrewWorkerProvider::Any,
     };

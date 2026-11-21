@@ -57,6 +57,11 @@ impl Core {
         let Some(run) = facts.run.clone() else {
             return Err(CoreError::NotFound(format!("crew run {task_id}")));
         };
+        if self.crew_background_lead(&run.lead_thread_id) {
+            return Err(CoreError::CrewTaskBusy(
+                "A background run is not retried here. Start a new run with Run now.".into(),
+            ));
+        }
         let refused = facts.route.as_ref().map(|r| r.engine.as_str().to_owned());
         let project = self.store.thread(&run.lead_thread_id)?.project_id;
         let machine = self.crew_machine(Some(&project)).await?;
@@ -113,8 +118,8 @@ impl Core {
             "Task {task_id} could not start{on}: {why} The person cancelled it and asks you to start it again with crew_start; \
              the router now picks an engine that can run a crew worker."
         );
-        let lead_told = match self.runs.enqueue_crew_note(lead_thread_id, &note, &[]) {
-            Ok(_) => true,
+        let lead_told = match self.enqueue_for_lead(lead_thread_id, &note) {
+            Ok(()) => true,
             Err(error) => {
                 tracing::warn!(%error, "could not ask the lead to start a task again");
                 false

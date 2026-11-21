@@ -6,6 +6,31 @@ remains open. All 26 batch issues below are closed; their closeouts explain the
 work delivered, refused or left unqualified. The umbrella's 5 November assignment
 comment is historical and must not be used to claim a batch.
 
+## Current pickup check
+
+Checked 21 November 2026 UTC against product revision
+[`c4f264c40`](https://github.com/orbyn-dev/orbyn-engineering/commit/c4f264c40) plus the parity truth pass that unticks I14, J19 and K52.
+All 26 batch issues are still closed. #187 remains the reconciliation index,
+not a claim that the unfinished rows are complete.
+
+At that revision, `python scripts/count-parity.py` reports 713 rows and 463
+source checkboxes ticked. Of 533 included rows, 384 are declared checked, 109
+partial, 36 open and 4 not doable; 180 are excluded and none have unresolved
+scope. These are checklist declarations, not fresh runtime qualification.
+
+The four successor issues named in the historical pickup paragraph now stand as follows:
+
+| Issue | Current issue state | Merged work |
+| --- | --- | --- |
+| [#272](https://github.com/orbyn-dev/orbyn-engineering/issues/272) | Open | #286 and #366; the issue remains open |
+| [#276](https://github.com/orbyn-dev/orbyn-engineering/issues/276) | Closed | #283 |
+| [#277](https://github.com/orbyn-dev/orbyn-engineering/issues/277) | Closed | #589; #285 closed without merging |
+| [#280](https://github.com/orbyn-dev/orbyn-engineering/issues/280) | Closed | #287 |
+
+Use current row notes and live successor issues before claiming work. Preserve
+their scope, refusal and platform-evidence limits. The counts and active-owner
+claims below remain the 7 November snapshot, not the current pickup queue.
+
 ## Closed batch index
 
 | Batch | Closed issues | Surface |
@@ -31,9 +56,9 @@ comment is historical and must not be used to claim a batch.
 ## Remaining work and evidence
 
 [Parity rows](parity.md) retain the exact `remaining:`, scope and refusal notes.
-`python scripts/count-parity.py` reports 713 rows, 467 source checkboxes ticked,
-and 534 included rows: 396 declared checked, 101 partial, 33 open and 4 not doable.
-There are 179 excluded and zero unresolved-scope rows. Issue closure changes none
+`python scripts/count-parity.py` reports 713 rows, 463 source checkboxes ticked,
+and 533 included rows: 384 declared checked, 109 partial, 36 open and 4 not doable.
+There are 180 excluded and zero unresolved-scope rows. Issue closure changes none
 of those declarations and supplies no new runtime evidence.
 
 - **Native/manual qualification:** #186 records packaged macOS and Windows

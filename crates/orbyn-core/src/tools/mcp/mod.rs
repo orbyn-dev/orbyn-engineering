@@ -2,6 +2,7 @@
 //! A token is random per run, reaches only that run's engine and dies with the run.
 
 pub mod apps;
+mod flight;
 pub mod tools;
 
 use std::collections::HashMap;
@@ -28,8 +29,21 @@ const QUESTION_TOOL: &str = "AskUserQuestion";
 /// Tools this server provides. Each governs itself, so `approve` does not ask again.
 const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
 
-/// Engines give up on a tool call at about a minute, so a reply has to be sent first.
-const TOOL_BUDGET: Duration = Duration::from_secs(45);
+/// Engines give up on a tool call at about a minute, so a reply has to be sent first. `crew_review` keeps
+/// inside this itself: it reads the call's own deadline (`call_deadline`), stops starting lanes in time and
+/// names the lanes it started.
+pub(crate) const TOOL_BUDGET: Duration = Duration::from_secs(45);
+
+tokio::task_local! {
+    /// When the `within` timer of the running tool call fires: the same instant, so a tool that paces itself
+    /// (`crew_review`) stops before the timer drops the call.
+    static CALL_DEADLINE: std::time::Instant;
+}
+
+/// The deadline of the tool call running on this task, or `None` outside a budgeted call.
+pub(crate) fn call_deadline() -> Option<std::time::Instant> {
+    CALL_DEADLINE.try_with(|deadline| *deadline).ok()
+}
 /// A tool that can wait on a person gets longer, and a late answer does nothing: the
 /// wait is dropped, which expires the approval. Claude's `approve` is a run's own
 /// permission prompt, on the approval timeout rather than this.
@@ -176,7 +190,9 @@ impl McpService {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 match budget_for(name) {
-                    Some(budget) => within(budget, self.call_tool(&binding, &params)).await,
+                    Some(budget) => {
+                        within_deadline(budget, Box::pin(self.call_tool(&binding, &params))).await
+                    }
                     None => self.call_tool(&binding, &params).await,
                 }
             }
@@ -360,6 +376,17 @@ fn budget_for(name: &str) -> Option<Duration> {
     } else {
         Some(TOOL_BUDGET)
     }
+}
+
+/// `within`, with the call's deadline readable by the tool through `call_deadline`. The deadline is taken
+/// at the instant the timer starts, so the two cannot differ.
+pub(crate) async fn within_deadline(
+    budget: Duration,
+    call: impl Future<Output = Result<Value, (i64, String)>>,
+) -> Result<Value, (i64, String)> {
+    CALL_DEADLINE
+        .scope(std::time::Instant::now() + budget, within(budget, call))
+        .await
 }
 
 /// Runs a tool call inside its budget. Going over drops the call, and a call waiting on

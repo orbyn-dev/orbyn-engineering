@@ -6,11 +6,13 @@
 //! in the same transaction and holds the rules that must stand whatever the caller does. **No trigger fires and no engine starts
 //! here:** the run functions are the seam slice 4h will call, and today only tests do. A run that reaches its budget stops with the
 //! reason `budget` and waits for the person's review; it has no merge authority (there is nothing to merge until a later slice
-//! brings a result through the Autopilot merge queue). With the Crew Preview flag off every function answers "not found".
+//! brings a result through the Autopilot merge queue). The crew also carries what each engine may spend on it in a day, fixed here
+//! and enforced by `background_daily`. With the Crew Preview flag off every function answers "not found".
 
 use orbyn_contracts as wire;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 use super::{Page, redact, valid_id, wire_name};
 use crate::app::Core;
@@ -26,6 +28,11 @@ pub const EVERY_HOURS_MAX: u32 = 720;
 /// The largest budget of turns and of minutes a run may be given.
 pub const TURNS_MAX: u32 = 1000;
 pub const MINUTES_MAX: u32 = 1440;
+/// The largest daily budget of runs and of turns one engine may be given for a crew.
+pub const DAILY_RUNS_MAX: u32 = 1000;
+pub const DAILY_TURNS_MAX: u32 = 10_000;
+/// The widest distance from UTC the person's clock may be, in minutes: real offsets are at most ±14 hours.
+pub const OFFSET_MINUTES_MAX: i32 = 840;
 
 /// How a run that is running ends, other than by its budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +161,10 @@ fn budget_wire(turns: u32, minutes: u32) -> wire::BackgroundBudget {
     wire::BackgroundBudget { turns, minutes }
 }
 
+fn daily_wire(runs: u32, turns: u32) -> wire::BackgroundDailyBudget {
+    wire::BackgroundDailyBudget { runs, turns }
+}
+
 pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     Ok(wire::BackgroundRun {
         state: parse_wire(&run.state)?,
@@ -201,6 +212,7 @@ impl Core {
         Ok(wire::BackgroundCrew {
             trigger: trigger_wire(&crew.trigger_kind, &crew.trigger_settings)?,
             budget: budget_wire(crew.budget_turns, crew.budget_minutes),
+            daily: daily_wire(crew.daily_runs, crew.daily_turns),
             template: parse_wire(&crew.template)?,
             id: crew.id,
             project_id: crew.project_id,
@@ -267,6 +279,22 @@ impl Core {
                 "the budget is 1 to {MINUTES_MAX} minutes"
             )));
         }
+        // The daily budget is per engine, fixed like the run budget, and the day is the person's.
+        if !(1..=DAILY_RUNS_MAX).contains(&create.daily.runs) {
+            return Err(CoreError::Invalid(format!(
+                "the daily budget is 1 to {DAILY_RUNS_MAX} runs"
+            )));
+        }
+        if !(1..=DAILY_TURNS_MAX).contains(&create.daily.turns) {
+            return Err(CoreError::Invalid(format!(
+                "the daily budget is 1 to {DAILY_TURNS_MAX} turns"
+            )));
+        }
+        if !(-OFFSET_MINUTES_MAX..=OFFSET_MINUTES_MAX).contains(&create.utc_offset_minutes) {
+            return Err(CoreError::Invalid(format!(
+                "utc_offset_minutes is -{OFFSET_MINUTES_MAX} to {OFFSET_MINUTES_MAX}"
+            )));
+        }
         self.store.project(&create.project_id)?;
         let row = self.store.create_background_crew(
             &NewBackground {
@@ -277,6 +305,9 @@ impl Core {
                 trigger_settings: &settings,
                 budget_turns: create.budget.turns,
                 budget_minutes: create.budget.minutes,
+                daily_runs: create.daily.runs,
+                daily_turns: create.daily.turns,
+                utc_offset_minutes: create.utc_offset_minutes,
             },
             "user",
         )?;
@@ -313,11 +344,27 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`, logged as the person.
+    /// Turns a crew on or off, as the record only: turning it off ends a run in progress with the reason `disabled`, logged as the
+    /// person, and touches nothing else. A person's turn-off goes through `background_turn_off`, which also stops the run's worker.
     pub fn background_set_enabled(&self, id: &str, enabled: bool) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
         let row = self.store.set_background_enabled(id, enabled, "user")?;
+        self.background_wire(row)
+    }
+
+    /// A person turns a crew off: the run in progress ends `disabled`, and every task of it that has not ended is cancelled, so the
+    /// worker stops spending with the record. Cancelling after the record is safe: a task's end finds its run no longer running.
+    pub async fn background_turn_off(self: &Arc<Self>, id: &str) -> Result<wire::BackgroundCrew> {
+        self.crew_preview_only()?;
+        self.background_row(id)?;
+        // The newest run whatever its state: a turn-off whose cancel failed leaves a `disabled` run with a live task, and pressing Off
+        // again must try that cancel again.
+        let running = self.store.background_standing(id)?.0.map(|run| run.id);
+        let row = self.store.set_background_enabled(id, false, "user")?;
+        if let Some(run) = running {
+            self.cancel_background_tasks(&run).await;
+        }
         self.background_wire(row)
     }
 

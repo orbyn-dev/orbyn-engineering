@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 
 use orbyn_contracts::{
-    AgUiEvent, Attachment, ModelSelection, PullGuide, PullRequest, PullWatch, QueuedMessage, Run,
-    RunState,
+    Attachment, ModelSelection, PullGuide, PullRequest, PullWatch, QueuedMessage, Run, RunState,
+    SteerDelivery, SteerFailed, SteerStateEvent,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
@@ -193,6 +193,7 @@ impl Store {
         &self,
         run: &str,
         thread_id: &str,
+        message_id: &str,
         prompt: &str,
     ) -> Result<QueuedMessage> {
         let id = self.commit(|tx, appended| {
@@ -222,10 +223,23 @@ impl Store {
                 appended,
                 thread_id,
                 None,
-                &AgUiEvent::Custom {
-                    name: "steer.failed".into(),
-                    value: serde_json::json!({ "prompt": prompt }),
-                },
+                &SteerFailed {
+                    message_id: message_id.to_owned(),
+                    prompt: prompt.to_owned(),
+                }
+                .into_event(),
+            )?;
+            // The refusal and the message's failed mark commit with the queue row.
+            insert_event(
+                tx,
+                appended,
+                thread_id,
+                None,
+                &SteerStateEvent {
+                    message_id: message_id.to_owned(),
+                    state: SteerDelivery::Failed,
+                }
+                .into_event(),
             )?;
             Ok(id)
         })?;

@@ -88,6 +88,7 @@ mod tests {
             created_at: None,
             requested_reviewers: None,
             comment_count: Some(9),
+            approval_count: Some(0),
             viewer_review_state: None,
         }
     }

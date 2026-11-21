@@ -20,6 +20,7 @@
 //! | `approve@example.com` | asks a trusted device, which allows it 3 s later and shows the digits `418 207`; this device types them |
 //! | `deny@example.com` | the same, and the trusted device refuses |
 //! | `late@example.com` | the same, and nobody ever answers |
+//! | `blip@example.com` | the same as `late@example.com`, and this device's first cancel of it is a network blip (`Offline`); the next one goes through |
 //!
 //! Signed in, one request from an iPad waits for this device to answer (`approval_requests`).
 //! Allowing it answers with six random digits that the stand-in keeps under the rule in
@@ -48,6 +49,8 @@ pub const DEV_DIGITS: &str = "418207";
 /// Wrong emailed codes in a row after which every code is refused until a new one is sent.
 const EMAIL_CODE_TRIES: u8 = 5;
 pub const PASSWORD: &str = "correct horse battery";
+/// A sign-in that waits like `late@example.com`, whose first cancel is a network blip.
+const BLIP_EMAIL: &str = "blip@example.com";
 const SECOND_FACTOR: [&str; 2] = ["123456", "ABCDEFGH23"];
 const WRONG_PASSWORDS_BEFORE_LIMIT: u8 = 5;
 
@@ -84,6 +87,8 @@ struct State {
     /// The digits this device showed for requests it allowed, by request id.
     shown: Vec<(String, Issued)>,
     cancelled: Vec<String>,
+    /// Requests whose first cancel was the canned network blip, so the next one goes through.
+    cancel_blips: Vec<String>,
     accounts: Vec<Account>,
     signup: Option<SignUp>,
     pending_second_factor: Option<String>,
@@ -129,6 +134,7 @@ pub fn handle() -> (Backend, Arc<DevAccount>) {
         "approve@example.com",
         "deny@example.com",
         "late@example.com",
+        BLIP_EMAIL,
     ]
     .map(|email| Account {
         email: email.to_owned(),
@@ -491,6 +497,7 @@ impl AccountApi for DevAccount {
             "approve@example.com" => Some(Some(Answer::Allow)),
             "deny@example.com" => Some(Some(Answer::Deny)),
             "late@example.com" => Some(None),
+            BLIP_EMAIL => Some(None),
             _ => None,
         };
         if let Some(canned) = canned {
@@ -549,11 +556,20 @@ impl AccountApi for DevAccount {
     }
 
     async fn cancel_approval(&self, request_id: &str) -> Result<(), DeviceError> {
+        // The request is still there while the Engine is asked, as it is over the network.
+        tokio::task::yield_now().await;
         let mut state = self.lock();
-        if state.mine.as_ref().is_some_and(|m| m.id == request_id) {
-            state.mine = None;
-            state.cancelled.push(request_id.to_owned());
+        let Some(mine) = state.mine.as_ref().filter(|m| m.id == request_id) else {
+            return Ok(());
+        };
+        // The Engine is unreachable, once: a cancel that did not reach it can be answered
+        // and retried, and the retry goes through.
+        if mine.email == BLIP_EMAIL && !state.cancel_blips.contains(&mine.id) {
+            state.cancel_blips.push(request_id.to_owned());
+            return Err(DeviceError::Offline);
         }
+        state.mine = None;
+        state.cancelled.push(request_id.to_owned());
         Ok(())
     }
 

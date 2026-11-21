@@ -10,7 +10,10 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::{DEFINITIONS, Kind, check, definition, normalized, setting_key, writable};
+use super::{
+    DEFINITIONS, Kind, check, definition, normalized, refuse_agent_device_access, setting_key,
+    writable,
+};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::store::scoped_settings::{ServerSettingField, SettingWrite, SettingsSnapshot};
@@ -491,6 +494,7 @@ impl Core {
                 } else {
                     check(definition, value)?;
                 }
+                refuse_agent_device_access(key, value)?;
                 if key == crate::agents::engines::instances::PREFERENCE {
                     self.engines
                         .check_instances(&crate::agents::engines::instances::parse(value)?)?;

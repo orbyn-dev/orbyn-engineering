@@ -1,3 +1,4 @@
+import type { AppUpdateRequest } from "../generated/AppUpdateRequest";
 import { serviceUrl } from "./origin";
 import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
@@ -250,6 +251,14 @@ export const api = {
       arguments: args,
       confirmed: true,
     }),
+  /** The app's own tool as its server advertises it: name, description and input schema. */
+  mcpAppToolInfo: (threadId: string, renderId: string, signal?: AbortSignal) =>
+    request<import("../generated/McpAppToolInfo").McpAppToolInfo>(
+      "GET",
+      `/api/threads/${q(threadId)}/mcp-apps/${q(renderId)}/tool-info`,
+      undefined,
+      signal,
+    ),
   /** An MCP App's message, queued as the person's own after they confirmed it. */
   mcpAppMessage: (threadId: string, renderId: string, text: string) =>
     request<QueuedMessage>("POST", `/api/threads/${q(threadId)}/mcp-apps/${q(renderId)}/message`, {
@@ -338,7 +347,8 @@ export const api = {
   shell: (signal?: AbortSignal) => request<ShellStatus>("GET", "/api/shell", undefined, signal),
   shellAction: (action: ShellAction) => request<void>("POST", "/api/shell/actions", { action }),
   checkUpdates: () => request<UpdateStatus>("POST", "/api/updates/check"),
-  applyAppUpdate: () => request<void>("POST", "/api/updates/app/apply"),
+  applyAppUpdate: (update: AppUpdateRequest) => request<void>("POST", "/api/updates/app/apply", update),
+  downloadAppUpdate: (update: AppUpdateRequest) => request<void>("POST", "/api/updates/app/download", update),
   applyAllUpdates: () => request<ApplyAllResult>("POST", "/api/updates/apply-all"),
   settings: (signal?: AbortSignal) =>
     request<ServerSettings>("GET", "/api/settings", undefined, signal),

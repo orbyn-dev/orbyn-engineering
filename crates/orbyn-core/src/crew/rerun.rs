@@ -11,7 +11,7 @@
 //!    commands never run in a checkout a worker is writing, or beside the live verification. One re-run at a time on the device, and
 //!    a gap of [`MIN_GAP_SECS`] between two re-runs of one task.
 //! 2. one transaction takes the claim and writes the intent row `crew.task.rerun_checks`, before any command runs.
-//! 3. every command of the key is screened with the always-denied list (N1 to N10) and the blast-radius guard, the same reading a
+//! 3. every command of the key (a `repo_required` check's commands, which come from the repository's own `crew.json`, excepted) is screened with the always-denied list (N1 to N10) and the blast-radius guard, the same reading a
 //!    worker's command gets. A command that fails the screen, or cannot be read, is not run; its check is recorded as an error, so
 //!    the Gate cannot pass on the others.
 //! 4. the verifier runs the rest inside the shorter of the task's time budget and [`RERUN_MAX`].

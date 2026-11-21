@@ -1,0 +1,100 @@
+#!/bin/sh
+# Opt-in pre-push hook: the same cheap checks as the "Cheap checks" job of
+# .github/workflows/ci.yml, only for the paths a push changes, in a few seconds.
+# Install with scripts/install-hooks.sh. Skip once with: git push --no-verify
+#
+# Mirrors the lint job, nothing more:
+#   Rust scope  (crates/, Cargo.toml/lock, desktop/src-tauri/, scripts/, web/src/generated/,
+#                .github/workflows/, docs/crew/protocol/):
+#       cargo fmt --all --check
+#       python3 scripts/test_check_rust_arch.py && python3 scripts/check_rust_arch.py
+#       python3 scripts/test_check_ci_required_names.py && python3 scripts/check_ci_required_names.py
+#   Web scope   (web/): npm run check, in web, only when web/node_modules exists
+# Never runs cargo build, test or clippy. It checks your working tree, not the pushed
+# commits: commit or stash first. A check it cannot run prints a SKIPPED line.
+
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
+
+# Files changed by the push: each pushed range from stdin, else upstream or origin/main.
+files=""
+base_missing=""
+add_range() { # $1 = base, $2 = head
+  out=$(git diff --no-renames --name-only "$1...$2" 2>/dev/null) || { base_missing=1; return; }
+  files="$files
+$out"
+}
+fallback_base() { # a new branch, or an unknown remote commit: compare with origin/main
+  if git rev-parse --verify --quiet origin/main >/dev/null; then
+    add_range origin/main "$1"
+  else
+    base_missing=1
+  fi
+}
+seen=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "$local_sha" ] || continue
+  zero "$local_sha" && continue # deleting a branch: nothing to check
+  seen=1
+  if zero "$remote_sha"; then
+    up=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) || up=""
+    if [ -n "$up" ]; then add_range "$up" "$local_sha"; else fallback_base "$local_sha"; fi
+  elif git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    add_range "$remote_sha" "$local_sha"
+  else
+    fallback_base "$local_sha"
+  fi
+done
+if [ -z "$seen" ]; then # run by hand, not by git push
+  if git rev-parse --verify --quiet '@{upstream}' >/dev/null; then add_range '@{upstream}' HEAD; else fallback_base HEAD; fi
+fi
+
+rust='^(crates/|Cargo\.(toml|lock)$|desktop/src-tauri/|scripts/|web/src/generated/|\.github/workflows/|docs/crew/protocol/)'
+web='^web/'
+if [ -n "$base_missing" ]; then
+  echo "pre-push: could not compare with the upstream or origin/main; running every check."
+  do_rust=1; do_web=1
+else
+  do_rust=""; do_web=""
+  printf '%s\n' "$files" | grep -Eq "$rust" && do_rust=1
+  printf '%s\n' "$files" | grep -Eq "$web" && do_web=1
+fi
+
+if [ -z "$do_rust" ] && [ -z "$do_web" ]; then
+  echo "pre-push: no changed path needs a cheap check; nothing to run."
+  exit 0
+fi
+
+status=0
+check() { # $1 = the command line, shown and run through sh
+  echo "pre-push: $1"
+  if ! sh -c "$1"; then
+    echo "pre-push: FAILED: $1" >&2
+    status=1
+  fi
+}
+
+if [ -n "$do_rust" ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    check "cargo fmt --all --check"
+  else
+    echo "pre-push: SKIPPED cargo fmt --all --check: cargo is not installed."
+  fi
+  check "python3 scripts/test_check_rust_arch.py && python3 scripts/check_rust_arch.py"
+  check "python3 scripts/test_check_ci_required_names.py && python3 scripts/check_ci_required_names.py"
+fi
+
+if [ -n "$do_web" ]; then
+  if [ -d web/node_modules ]; then
+    check "cd web && npm run check"
+  else
+    echo "pre-push: SKIPPED web check (npm run check): web/ changed but web/node_modules is missing; run npm ci in web to enable it."
+  fi
+fi
+
+if [ "$status" -ne 0 ]; then
+  echo "pre-push: push blocked. Fix the failing command above, or skip once with: git push --no-verify" >&2
+fi
+exit "$status"

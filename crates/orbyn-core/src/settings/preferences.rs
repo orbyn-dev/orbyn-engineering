@@ -59,6 +59,10 @@ fn normalized(key: &str, value: Value) -> Value {
     {
         return json!(submodule_mode(text));
     }
+    // Device access is not built (H27), so a grant stored before this guard stays off.
+    if key == "enable_agent_device_access" && value.as_bool() == Some(true) {
+        return json!(false);
+    }
     value
 }
 /// Machine kinds the local environment can be shown as; empty is the plain monitor.
@@ -132,7 +136,11 @@ const DEFINITIONS: &[Definition] = defs![
     "custom_models" Kind::List, [], false;
     "disabled_engines" Kind::List, [], true;
     "provider_instances" Kind::List, [], false;
+    "crew_turn_budget" Kind::Number, 0, false;
 ];
+
+/// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
+pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
@@ -143,6 +151,17 @@ fn writable(key: &str) -> Result<&'static Definition> {
         return Err(CoreError::Invalid(format!("{key} is set by the service.")));
     }
     definition(key)
+}
+
+/// Agent device access (H27) is not built: a stored grant would promise a permission
+/// nothing enforces, so a write that would turn it on is refused instead of kept.
+fn refuse_agent_device_access(key: &str, value: &Value) -> Result<()> {
+    if key == "enable_agent_device_access" && value.as_bool() == Some(true) {
+        return Err(CoreError::Invalid(
+            "Agent device access is not built yet, so it can't be turned on.".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// A theme name is a scheme or a preset id: short lowercase words joined by hyphens.
@@ -196,6 +215,12 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
         return Err(CoreError::Invalid(
             "Model options are option ids with one value each, and effort is set on its own."
                 .into(),
+        ));
+    }
+    if fits && definition.key == CREW_TURN_BUDGET && value.as_u64().is_none() {
+        // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
+        return Err(CoreError::Invalid(
+            "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
     }
     if fits {
@@ -356,6 +381,7 @@ impl Core {
             }
             if !value.is_null() {
                 check(definition, value)?;
+                refuse_agent_device_access(key, value)?;
             }
             if key == crate::agents::engines::instances::PREFERENCE && !value.is_null() {
                 let list = crate::agents::engines::instances::parse(value)?;
@@ -515,6 +541,16 @@ mod tests {
         assert!(serde_json::from_value::<ScopedPreferencesQuery>(json!({"scope":null})).is_err());
         assert!(check(definition("auto_settle_after_days").unwrap(), &Value::Null).is_ok());
         assert!(check(definition("auto_pull").unwrap(), &Value::Null).is_err());
+    }
+
+    #[test]
+    fn a_crew_turn_budget_is_whole_turns_or_none() {
+        let budget = definition(CREW_TURN_BUDGET).unwrap();
+        assert!(check(budget, &json!(0)).is_ok(), "0 is no crew budget");
+        assert!(check(budget, &json!(30)).is_ok());
+        assert!(check(budget, &json!(1.5)).is_err());
+        assert!(check(budget, &json!("30")).is_err());
+        assert!(check(budget, &json!(-1)).is_err());
     }
 
     #[test]
@@ -706,6 +742,124 @@ mod scoped_consumer_tests {
                 .unwrap()
                 .settled_at
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn agent_device_access_cannot_be_turned_on_until_device_support_exists() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        // The safe default is off, and turning it on is refused with a plain reason.
+        assert_eq!(
+            core.preference("enable_agent_device_access", None).unwrap(),
+            json!(false)
+        );
+        let error = core
+            .set_preferences(
+                None,
+                &BTreeMap::from([("enable_agent_device_access".into(), json!(true))]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            CoreError::Invalid(message) if message.contains("not built")
+        ));
+        assert_eq!(
+            core.preference("enable_agent_device_access", None).unwrap(),
+            json!(false)
+        );
+        // A project-scoped write is refused the same way and leaves no override behind.
+        let path = dir.path().join("one");
+        std::fs::create_dir_all(&path).unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: path.to_str().unwrap(),
+                name: "one",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        let error = core
+            .set_preferences(
+                Some(&project.id),
+                &BTreeMap::from([("enable_agent_device_access".into(), json!(true))]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            &error,
+            CoreError::Invalid(message) if message.contains("not built")
+        ));
+        let view = core
+            .preferences(Some(&project.id))
+            .unwrap()
+            .into_iter()
+            .find(|view| view.key == "enable_agent_device_access")
+            .unwrap();
+        assert_eq!(
+            (view.value, view.source.as_str(), view.project_scoped),
+            (json!(false), "default", true)
+        );
+        // A write that leaves it off still works, and other settings are unaffected.
+        core.set_preferences(
+            None,
+            &BTreeMap::from([
+                ("enable_agent_device_access".into(), json!(false)),
+                ("auto_pull".into(), json!(true)),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(core.preference("auto_pull", None).unwrap(), json!(true));
+    }
+
+    #[test]
+    fn a_stored_agent_device_access_grant_resolves_off() {
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        let path = dir.path().join("one");
+        std::fs::create_dir_all(&path).unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: path.to_str().unwrap(),
+                name: "one",
+                is_git: false,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        // A grant written before this guard, at either scope, never resolves as granted.
+        core.store
+            .change_settings(|_| {
+                Ok((
+                    (),
+                    vec![
+                        crate::store::scoped_settings::SettingWrite::Global {
+                            key: "pref:enable_agent_device_access".into(),
+                            value: Some("true".into()),
+                        },
+                        crate::store::scoped_settings::SettingWrite::Project {
+                            project_id: project.id.clone(),
+                            key: "enable_agent_device_access".into(),
+                            value: Some("true".into()),
+                        },
+                    ],
+                ))
+            })
+            .unwrap();
+        assert_eq!(
+            core.preference("enable_agent_device_access", None).unwrap(),
+            json!(false)
+        );
+        assert_eq!(
+            core.preference("enable_agent_device_access", Some(&project.id))
+                .unwrap(),
+            json!(false)
         );
     }
 }

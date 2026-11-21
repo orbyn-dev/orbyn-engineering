@@ -453,14 +453,29 @@ fn rejected_steer_holds_stopped_source_but_preserves_normal_enqueue_policy() {
     let run = running(&f.store, &f.thread);
     let ordinary = f
         .store
-        .requeue_failed_steer(&run, &f.thread, "active rejected steer")
+        .requeue_failed_steer(&run, &f.thread, "steer-1", "active rejected steer")
         .unwrap();
     assert!(!ordinary.held);
+    // The refusal names the message it moved, so a timeline can mark that one.
+    let failed = f
+        .store
+        .events_after(&f.thread, 0, 100)
+        .unwrap()
+        .into_iter()
+        .find_map(|event| match event.event {
+            AgUiEvent::Custom { name, value } if name == "steer.failed" => Some(value),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        failed,
+        json!({ "message_id": "steer-1", "prompt": "active rejected steer" })
+    );
     f.store.remove_queued(&ordinary.id).unwrap();
     f.store.request_stop(&run).unwrap();
     let stopped = f
         .store
-        .requeue_failed_steer(&run, &f.thread, "stopped rejected steer")
+        .requeue_failed_steer(&run, &f.thread, "steer-2", "stopped rejected steer")
         .unwrap();
     assert!(stopped.held);
     let owner: Option<String> = f
@@ -476,7 +491,7 @@ fn rejected_steer_holds_stopped_source_but_preserves_normal_enqueue_policy() {
     f.store.finish_run(&run, RunState::Completed, None).unwrap();
     let late = f
         .store
-        .requeue_failed_steer(&run, &f.thread, "late rejected steer")
+        .requeue_failed_steer(&run, &f.thread, "steer-3", "late rejected steer")
         .unwrap();
     assert!(late.held);
     f.store.remove_queued(&stopped.id).unwrap();
@@ -503,12 +518,12 @@ fn rejected_steer_rejects_foreign_epoch_or_thread_without_a_note() {
     let before = f.store.latest_seq(&f.thread).unwrap();
     let stale = Store::open(&f.path, "epoch-b").unwrap();
     assert!(matches!(
-        stale.requeue_failed_steer(&run, &f.thread, "stale"),
+        stale.requeue_failed_steer(&run, &f.thread, "steer-4", "stale"),
         Err(CoreError::StaleOwner)
     ));
     assert!(matches!(
         f.store
-            .requeue_failed_steer(&run, "other-thread", "wrong target"),
+            .requeue_failed_steer(&run, "other-thread", "steer-5", "wrong target"),
         Err(CoreError::StaleOwner)
     ));
     assert_eq!(f.store.latest_seq(&f.thread).unwrap(), before);
@@ -523,7 +538,7 @@ fn rejected_steer_note_failure_rolls_back_its_queue_insertion() {
     f.store.writer().execute_batch("CREATE TRIGGER fixture_reject_event BEFORE INSERT ON thread_events BEGIN SELECT RAISE(ABORT, 'fixture note failure'); END;").unwrap();
     assert!(
         f.store
-            .requeue_failed_steer(&run, &f.thread, "all or nothing")
+            .requeue_failed_steer(&run, &f.thread, "steer-6", "all or nothing")
             .is_err()
     );
     assert!(f.store.list_queue(&f.thread).unwrap().is_empty());
@@ -1230,6 +1245,41 @@ fn a_mode_change_during_a_live_run_says_it_applies_next_run() {
         permission_updates(&f.store, &f.thread),
         vec![json!({ "mode": "full_access", "applies": "next_run" })]
     );
+}
+
+/// A run keeps whether Crew queued its prompt; a plain message, and a row from before the
+/// flag existed, are the person's.
+#[test]
+fn a_run_keeps_whether_crew_queued_its_prompt() {
+    let f = fixture();
+    let person = f
+        .store
+        .enqueue(
+            &f.thread,
+            "hello",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (first, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap(), "{person:?}");
+    f.store.mark_starting(&first.id).unwrap();
+    f.store.mark_running(&first.id).unwrap();
+    f.store
+        .finish_run(&first.id, RunState::Completed, None)
+        .unwrap();
+    f.store
+        .enqueue_crew_note(
+            &f.thread,
+            "result",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (second, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(f.store.run_is_crew_note(&second.id).unwrap());
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap());
+    assert!(!f.store.run_is_crew_note("no-such-run").unwrap());
 }
 
 #[test]

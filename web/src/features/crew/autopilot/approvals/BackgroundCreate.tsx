@@ -5,7 +5,7 @@ import { Dialog } from "../../../../ui/Dialog";
 import { Segmented } from "../../../../ui/Segmented";
 import type { BackgroundTrigger } from "../../../../generated/BackgroundTrigger";
 import { crewApi } from "./api";
-import { DEFAULT_BUDGET, LIMITS, WIRE_TEMPLATE, WIRE_TRIGGER } from "./backgroundModel";
+import { DEFAULT_BUDGET, DEFAULT_DAILY, LIMITS, WIRE_TEMPLATE, WIRE_TRIGGER } from "./backgroundModel";
 import { TEMPLATES } from "./copy";
 import type { TemplateId, TriggerId } from "./model";
 import { Chip } from "./parts";
@@ -18,11 +18,14 @@ const STARTS: { id: TriggerId; label: string }[] = [
   { id: "dependency_update", label: "A dependency update opens" },
 ];
 
-export type Field = "name" | "workflow" | "branch" | "label" | "hours" | "turns" | "minutes";
+export type Field = "name" | "workflow" | "branch" | "label" | "hours" | "turns" | "minutes" | "dailyRuns" | "dailyTurns";
 
 /** The field a route refusal is about, from its message, or null when it is about none of them. */
 export function fieldOf(message: string): Field | null {
   const text = message.toLowerCase();
+  // The daily budget's refusals are checked first: they also match the per-run budget's words.
+  if (/daily budget.*runs/.test(text)) return "dailyRuns";
+  if (/daily budget.*turns/.test(text)) return "dailyTurns";
   if (/budget.*turns/.test(text)) return "turns";
   if (/budget.*minutes/.test(text)) return "minutes";
   if (/^name\b|that name/.test(text)) return "name";
@@ -64,6 +67,8 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
   const [hours, setHours] = useState("24");
   const [turns, setTurns] = useState(String(DEFAULT_BUDGET.turns));
   const [minutes, setMinutes] = useState(String(DEFAULT_BUDGET.minutes));
+  const [dailyRuns, setDailyRuns] = useState(String(DEFAULT_DAILY.runs));
+  const [dailyTurns, setDailyTurns] = useState(String(DEFAULT_DAILY.turns));
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [general, setGeneral] = useState<string | null>(null);
@@ -77,6 +82,8 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
   };
   const turnsN = whole(turns, LIMITS.turns);
   const minutesN = whole(minutes, LIMITS.minutes);
+  const dailyRunsN = whole(dailyRuns, LIMITS.dailyRuns);
+  const dailyTurnsN = whole(dailyTurns, LIMITS.dailyTurns);
   const hoursN = whole(hours, LIMITS.hours);
   const trigger = (): BackgroundTrigger => {
     if (starts === "ci_fails") return { kind: "ci_failure", workflow: workflow.trim() || null, branch: branch.trim() || null };
@@ -84,15 +91,16 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
     if (starts === "schedule") return { kind: "schedule", every_hours: hoursN };
     return { kind: WIRE_TRIGGER[starts] };
   };
-  const ready = name.trim() !== "" && turnsN !== null && minutesN !== null && (starts !== "issue_label" || label.trim() !== "") && (starts !== "schedule" || hoursN !== null);
+  const ready = name.trim() !== "" && turnsN !== null && minutesN !== null && dailyRunsN !== null && dailyTurnsN !== null && (starts !== "issue_label" || label.trim() !== "") && (starts !== "schedule" || hoursN !== null);
 
   const create = async () => {
-    if (!ready || turnsN === null || minutesN === null) return;
+    if (!ready || turnsN === null || minutesN === null || dailyRunsN === null || dailyTurnsN === null) return;
     setBusy(true);
     setErrors({});
     setGeneral(null);
     try {
-      await crewApi.backgroundCreate({ project_id: project, name, template: WIRE_TEMPLATE[template], trigger: trigger(), budget: { turns: turnsN, minutes: minutesN } });
+      // The person's clock goes with the daily budget, the way a scheduled task sends it, so the budget resets at their midnight.
+      await crewApi.backgroundCreate({ project_id: project, name, template: WIRE_TEMPLATE[template], trigger: trigger(), budget: { turns: turnsN, minutes: minutesN }, daily: { runs: dailyRunsN, turns: dailyTurnsN }, utc_offset_minutes: -new Date().getTimezoneOffset() });
       onCreated();
       onClose();
     } catch (failure) {
@@ -159,6 +167,15 @@ export function BackgroundCreate({ project, template: first, onClose, onCreated 
           </Entry>
         </div>
         <span className="field-hint" id="bg-budget-hint">Budget for each run. Turns 1 to {LIMITS.turns}, minutes 1 to {LIMITS.minutes}. It is set now and does not change after.</span>
+        <div className="ap-pair">
+          <Entry id="bg-daily-runs" label="Runs a day" hintId="bg-daily-hint" error={errors.dailyRuns}>
+            <input id="bg-daily-runs" type="number" min={1} max={LIMITS.dailyRuns} value={dailyRuns} onChange={(event) => { setDailyRuns(event.target.value); clear("dailyRuns"); }} />
+          </Entry>
+          <Entry id="bg-daily-turns" label="Turns a day" hintId="bg-daily-hint" error={errors.dailyTurns}>
+            <input id="bg-daily-turns" type="number" min={1} max={LIMITS.dailyTurns} value={dailyTurns} onChange={(event) => { setDailyTurns(event.target.value); clear("dailyTurns"); }} />
+          </Entry>
+        </div>
+        <span className="field-hint" id="bg-daily-hint">Daily budget for each engine. Runs 1 to {LIMITS.dailyRuns}, turns 1 to {LIMITS.dailyTurns}. It is set now and does not change after, and it resets at your midnight.</span>
         {general ? <p className="field-error" role="alert">{general}</p> : null}
       </div>
     </Dialog>
