@@ -1,0 +1,93 @@
+import type { IssueQuery, IssueRef, IssueState, IssueSummary, TrackerKind } from "./contract";
+import { TRACKER_KINDS, TRACKER_NAMES } from "./contract";
+
+/** The word the state shows: Open, Closed, or Closed as not planned when the tracker says so. Never colour alone. */
+export function stateWord(state: IssueState): string {
+  if (state.category === "open") return "Open";
+  return state.close_reason === "not_planned" ? "Closed as not planned" : "Closed";
+}
+
+export const trackerName = (tracker: TrackerKind): string => TRACKER_NAMES[tracker];
+
+export const isTracker = (value: string): value is TrackerKind => (TRACKER_KINDS as readonly string[]).includes(value);
+
+export const noQuery: IssueQuery = { tracker: null, state: "open", labels: [], assignee: "any", text: "" };
+
+/**
+ * The search box holds words and `label:` words. `label:bug reload` is the label bug and the words "reload";
+ * `label:"good first"` is not understood, a label with a space is chosen in the panel.
+ */
+export function parseSearch(input: string): { text: string; labels: string[] } {
+  const labels: string[] = [];
+  const words: string[] = [];
+  for (const word of input.trim().split(/\s+/).filter(Boolean)) {
+    const label = /^label:(.+)$/i.exec(word)?.[1];
+    if (label) labels.push(label);
+    else words.push(word);
+  }
+  return { text: words.join(" "), labels };
+}
+
+export function sameLabels(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((label, at) => label.toLowerCase() === b[at]?.toLowerCase());
+}
+
+/** One removable chip per active filter, in the order the toolbar shows them. */
+export function activeChips(query: IssueQuery): { id: string; label: string }[] {
+  return [
+    ...(query.text ? [{ id: "text", label: `“${query.text}”` }] : []),
+    ...query.labels.map((label) => ({ id: `label:${label}`, label: `label:${label}` })),
+    ...(query.assignee === "me" ? [{ id: "assignee", label: "Assigned to me" }] : query.assignee === "none" ? [{ id: "assignee", label: "Unassigned" }] : []),
+  ];
+}
+
+/** Applies a query to a list: what a service does, kept here so the mock and the tests agree on it. */
+export function applyQuery(issues: readonly IssueSummary[], query: IssueQuery, viewer: string | null): IssueSummary[] {
+  const words = query.text.toLowerCase().split(/\s+/).filter(Boolean);
+  return issues
+    .filter((issue) => query.tracker === null || issue.tracker === query.tracker)
+    .filter((issue) => query.state === "all" || issue.state.category === query.state)
+    .filter((issue) => query.labels.every((wanted) => issue.labels.some((label) => label.name.toLowerCase() === wanted.toLowerCase())))
+    .filter((issue) =>
+      query.assignee === "any" ? true : query.assignee === "none" ? issue.assignees.length === 0 : viewer !== null && issue.assignees.some((who) => who.login === viewer),
+    )
+    .filter((issue) => {
+      const hay = `${issue.display_key} ${issue.title}`.toLowerCase();
+      return words.every((word) => hay.includes(word));
+    })
+    .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+}
+
+/** The labels in a list with how many issues carry each, most used first. */
+export function labelCounts(issues: readonly IssueSummary[]): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const issue of issues) for (const label of issue.labels) counts.set(label.name, (counts.get(label.name) ?? 0) + 1);
+  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** "No issue #9999 in orbyn-dev/orbyn-engineering on GitHub." The reason is what the service did not find. */
+export const notFoundWords = (display: string, ref: { scope: string; tracker: TrackerKind }) => `No issue ${display} in ${ref.scope} on ${trackerName(ref.tracker)}.`;
+
+export const refKey = (ref: Pick<IssueRef, "tracker" | "scope" | "key">) => `${ref.tracker}:${ref.scope}:${ref.key}`;
+
+/**
+ * Where a person's input points: a bare number or `#412` is a number in the project's tracker, anything else is words.
+ * A pasted issue URL stays words for the service to resolve; the UI never fetches it.
+ */
+export function numberOf(input: string): string | null {
+  return /^#?(\d{1,16})$/.exec(input.trim())?.[1] ?? null;
+}
+
+/** How many of the shown issues are open, closed, for the "1 of 14 open issues" line. */
+export function shownLine(shown: number, counts: { open: number; closed: number } | null, state: IssueQuery["state"]): string | null {
+  if (!counts) return null;
+  const total = state === "open" ? counts.open : state === "closed" ? counts.closed : counts.open + counts.closed;
+  return `${shown} of ${total} ${state === "all" ? "" : `${state} `}issues`;
+}
+
+export function threadMarker(issues: readonly IssueRef[]): { count: number; closed: boolean; label: string } | null {
+  if (issues.length === 0) return null;
+  const closed = issues.every((issue) => issue.state.category === "closed");
+  const names = issues.map((issue) => issue.display_key).join(", ");
+  return { count: issues.length, closed, label: issues.length === 1 ? `Issue ${names}, ${closed ? "closed" : "open"}` : `${issues.length} issues: ${names}` };
+}
