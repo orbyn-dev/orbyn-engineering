@@ -31,6 +31,10 @@ describe("assert-no-previews", () => {
     expect(run({ "lib.js": `.lib-row{display:flex}"Search the Library";"/api/library"` }).status).toBe(0);
   });
 
+  it("passes the real attention item, which ships hidden behind a client that is null in production", () => {
+    expect(run({ "thread.js": `.ta-item{display:flex}"Terminal agents waiting for you"` }).status).toBe(0);
+  });
+
   it("passes the real Crew screens, which ship behind the service's own flag", () => {
     const real = `"Crew is not connected to this app yet";"/api/crew/preview";.ap-chip{display:inline-flex};"/api/crew/trust";.cx-dash{display:flex}`;
     expect(run({ "crew.js": real }).status).toBe(0);
@@ -65,6 +69,10 @@ describe("assert-no-previews", () => {
     ["the profiles mock", `module.createProfilesMock({delayMs:300})`],
     ["the library preview route", `location.hash.startsWith("#/preview/library")`],
     ["the library mock", `module.createLibraryMock({delayMs:300})`],
+    ["the attention preview route", `location.hash.startsWith("#/preview/attention")`],
+    ["the attention preview route as a regex source", `const r=/^#\\/preview\\/attention$/;`],
+    ["the attention mock", `module.createAttentionMock({scenario:"many"})`],
+    ["the attention preview page", `.atp-thread{max-width:340px}`],
   ])("fails a production bundle holding %s", (_name, text) => {
     const result = run({ "chunk.js": text });
     expect(result.status).toBe(1);
