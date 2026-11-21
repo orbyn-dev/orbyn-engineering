@@ -179,6 +179,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["DELETE", "/api/profiles/{id}"],
   ["PUT", "/api/threads/{id}/profile"],
   ["POST", "/api/crew/profile/apply"],
+  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
+  ["PUT", "/api/engines/{id}/code-mode"],
 ];
 
 /**

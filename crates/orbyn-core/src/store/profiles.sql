@@ -1,4 +1,4 @@
--- Execution profiles (docs/execution-profiles-and-library.md, Part 1). Built-in profiles live in code, not here. An
+-- Migration 64: execution profiles (docs/execution-profiles-and-library.md, Part 1). Built-in profiles live in code, not here. An
 -- application row records what a thread or crew last got, copied at apply time. It has no foreign key to `profiles` on
 -- purpose: deleting or editing a profile never changes what was applied. A thread's row is removed with the thread.
 CREATE TABLE profiles (

@@ -209,6 +209,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("DELETE", "/api/profiles/{id}"),
     ("PUT", "/api/threads/{id}/profile"),
     ("POST", "/api/crew/profile/apply"),
+    ("PUT", "/api/engines/{id}/code-mode"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -1006,6 +1007,9 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/profile/apply",
         "applies a profile to a crew, which can raise its permission mode and Autopilot mode",
+        "PUT",
+        "/api/engines/{id}/code-mode",
+        "the person turns Code Mode on or off for an engine, which changes what the engine may call",
     ),
 ];
 

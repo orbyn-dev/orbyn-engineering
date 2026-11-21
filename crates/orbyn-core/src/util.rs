@@ -30,6 +30,17 @@ pub(crate) fn now() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
 }
 
+/// An RFC 3339 time for unix seconds.
+pub(crate) fn format_unix(seconds: i64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(seconds)
+        .ok()
+        .and_then(|t| {
+            t.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned())
+}
+
 /// Unix seconds for an RFC 3339 time.
 pub(crate) fn parse_time(text: &str) -> Option<i64> {
     time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)

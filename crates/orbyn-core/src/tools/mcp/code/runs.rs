@@ -129,8 +129,20 @@ impl CodeRuns {
             .is_none()
     }
 
+    /// Forgets every live run, as a restart would (tests).
+    #[cfg(test)]
+    pub(crate) fn forget_all(&self) {
+        self.runs().clear();
+    }
+
+    /// Whether `run_id` is a live run of any thread.
+    pub(super) fn is_running(&self, run_id: &str) -> bool {
+        self.runs().get(run_id).is_some_and(|l| Self::is_live(l))
+    }
+
     /// Prepares `code` and starts it as its own task. `host` is given the list the run reports
-    /// its calls in flight on.
+    /// its calls in flight on; `finish` sees the end first and may change it (a replay that could not
+    /// go on ends as lost) before it is announced.
     pub(super) async fn start(
         &self,
         run_id: &str,
@@ -138,6 +150,7 @@ impl CodeRuns {
         code: &str,
         seed: RunSeed,
         host: impl FnOnce(PendingList) -> Arc<dyn ToolHost>,
+        finish: impl FnOnce(Step) -> Step + Send + 'static,
     ) -> Result<Arc<Live>, Refused> {
         self.sweep();
         {
@@ -179,6 +192,7 @@ impl CodeRuns {
             let step = run
                 .drive(Instant::now() + wall + Duration::from_secs(5))
                 .await;
+            let step = finish(step);
             *marker.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
             let _ = sender.send(Some(step));
         });
