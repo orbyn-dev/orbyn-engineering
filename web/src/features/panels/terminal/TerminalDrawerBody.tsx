@@ -11,6 +11,7 @@ import { useUi } from "../../../product/state/ui";
 import { Button, IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
+import { CommandBlocks } from "./blocks/CommandBlocks";
 import { EndDialog } from "./EndDialog";
 import { TerminalPanel } from "./TerminalPanel";
 import { controlsOf, terminalKey, watchTerminal } from "./terminalControls";
@@ -507,6 +508,13 @@ export function TerminalDrawerBody({
                     )}
                   </div>
                 ) : null}
+                {/* Hidden: draws nothing until a blocks client is installed (docs/command-blocks.md). A click writes a line into the shell, never a newline. */}
+                <CommandBlocks
+                  threadId={threadId}
+                  terminalId={terminal.id}
+                  write={watching ? undefined : (text) => controlsOf(keyOf(terminal))?.write(text)}
+                  interrupt={watching ? undefined : () => controlsOf(keyOf(terminal))?.interrupt()}
+                />
                 <TerminalPanel
                   threadId={threadId}
                   observe={watching}

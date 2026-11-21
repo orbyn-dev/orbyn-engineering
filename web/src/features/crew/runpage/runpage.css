@@ -1,0 +1,18 @@
+.rp { display: flex; flex-direction: column; gap: 16px; min-width: 0; overflow-wrap: anywhere; padding: 16px; }
+.rp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rp-head h2 { margin: 0; font-size: 16px; font-weight: 500; color: var(--color-text); min-width: 0; }
+.rp-chip { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; color: var(--color-text); background: var(--color-selected); white-space: nowrap; }
+.rp-planned { color: var(--color-muted); }
+.rp-fail { color: var(--color-danger); }
+.rp-spacer { flex: 1; }
+.rp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rp-status { font-size: 12px; color: var(--color-muted); }
+.rp-banner { border: 1px solid var(--color-dangerBorder); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.rp-sec { display: flex; flex-direction: column; gap: 6px; }
+.rp-sec h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--color-text); }
+.rp-sec p, .rp-sec li, .rp-sec dd { margin: 0; font-size: 13px; }
+.rp-sec ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.rp-sec dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+.rp-sec dt { color: var(--color-muted); font-size: 13px; }
+.rp-muted { color: var(--color-muted); font-size: 12px; }
+@media (max-width: 480px) { .rp { padding: 12px; } .rp-sec dl { grid-template-columns: 1fr; } }
