@@ -15,6 +15,15 @@ const realApi = process.env.ORBYN_API;
 const dropOrigin = (proxy: { on(event: "proxyReq", listener: (request: ClientRequest) => void): unknown }) =>
   proxy.on("proxyReq", (request) => request.removeHeader("origin"));
 
+/**
+ * The service serves this build with `font-src 'self'` (crates/orbynd/src/routes/ui.rs), so a font
+ * inlined as a `data:` URI is blocked and the text falls back to a system font. Vite's default
+ * inlines assets under 4 KiB, which caught the small KaTeX and JetBrains Mono subsets, so every
+ * font stays a file under /assets/ and every other asset keeps the default rule.
+ * scripts/assert-no-inlined-fonts.mjs checks the output of every production build.
+ */
+const fontAsset = /\.(?:woff2?|ttf|otf|eot)$/i;
+
 export default defineConfig(({ mode }) => ({
   // The platform design screens (src/features/platform) exist only outside production builds.
   define: { __ORBYN_PREVIEWS__: JSON.stringify(mode !== "production") },
@@ -34,6 +43,7 @@ export default defineConfig(({ mode }) => ({
     target: "es2022",
     sourcemap: false,
     chunkSizeWarningLimit: 700,
+    assetsInlineLimit: (filePath) => (fontAsset.test(filePath) ? false : undefined),
   },
   test: {
     environment: "jsdom",
