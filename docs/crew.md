@@ -1317,8 +1317,8 @@ A background crew's Run now (`crew_background_run_now`, the `manual` event) and 
 
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and
-note in a detached task (the merge path is synchronous, git is async), against the project's `crew_person_commits` (empty until
-an app path records a person's commit: see the person signal below). A failure never fails or delays a merge: it is
+note in a detached task (the merge path is synchronous, git is async), against the project's `crew_person_commits` (the list an app path
+records a person's commit into: see the person signal below). A failure never fails or delays a merge: it is
 logged and written to the approval ledger on the merge's task as `provenance_failed` (a new kind in `EVENT_KINDS`). Sampling runs in the same
 detached task, off by default: see `crew/README.md`, `capacity`.
 
@@ -1361,9 +1361,10 @@ not a boundary: a worker can override it in its own command, and a shell profile
 engine's shell runs (probe results are in the design note). Such a commit reads `unknown`, which counts as agent.
 
 `crew_person_commits` (project, full commit id, time, action) is written only by `Store::record_person_commit`, in the same transaction as
-its `crew.person_commit` audit row. No app path commits on a person's action today (the README "Initial commit" at project creation is not
-recorded), so nothing calls it and the list is empty: no line is `person`. A future path must refuse a commit that contains a worker-written
-change; workers write into the person's own checkout, and only the path knows what it staged. No route was added.
+its `crew.person_commit` audit row. Its one caller is project creation: `Core::new_project` records the README "Initial commit" it just made
+as `project.readme`, after the project row exists, and a record that does not land never fails creation (the commit then reads `unknown`).
+Nothing else commits on a person's action, so a person's manual commit is never listed; a future path must refuse a commit that contains a
+worker-written change, which workers write into the person's own checkout, and only the path knows what it staged. No route was added.
 
 **As built (slice 4n, scoring and history, no store):** `crew/backtest/` holds the pure part of the reviewer backtest. A pull request is eligible when it merged 30 to 180 days ago, both ends included. Outcomes come through an `EscapeSource` trait; until the escape log (slice 4k) is merged the only real source reports Not measured, which is not the same as no escapes. A lane catches an escape when it raised a finding on that pull request about a file the later revert or fix changed; matching is by file only because how a finding about behaviour matches a fix is not defined yet. Anything else is unmatched, never wrong. Recall shows from 5 escapes and precision from 10 findings, as a numerator, a denominator and a permille rounded down; below that only counts show. Nothing here starts a run; the store and replay follow below.
 
