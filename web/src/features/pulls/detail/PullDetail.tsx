@@ -29,7 +29,7 @@ import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
 import { ChangeBreakdownCard, LinkedThreadsCard } from "./PullLinkedCards";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
-import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
+import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, requestedByMeHint, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
 import { Timeline, TimelineList, type TimelineRead, useTimelineEvents } from "./PullTimeline";
 import { Stack } from "./PullStack";
@@ -393,6 +393,9 @@ export function PullDetail({
   const mergeHint = state === "approved" && approvals !== undefined && gate.hint === "No conflicts"
     ? `${approvalWords(approvals)} · No conflicts`
     : gate.hint;
+  // The person's own latest review asked for changes, now or in this session.
+  const mineAsked = requested !== null || mine?.viewer_review_state === "changes_requested";
+  const askedHint = requestedByMeHint(gate.hint, mineAsked) ?? mergeHint;
   const submitReview = (event: "approve" | "request_changes") =>
     run(pullsApi.review(projectId, number, event, ""), event === "approve" ? "Approved" : "Changes requested");
   const forgeLink = (
@@ -537,7 +540,7 @@ export function PullDetail({
           </Row>
           {/* Amber only where the person is waited on; a conflict and changes the person asked for stay ink. */}
           <Row name="Review" tone={requested === null && (state === "review" || (state === "changes" && changesNeedYou(pull, viewers))) ? "warn" : undefined}>
-            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested", approvals)}
+            {reviewWords(pull, current.reviewers, viewers, mineAsked, approvals)}
           </Row>
           <Row name="Conflicts">{conflictWords(mergeable)}</Row>
         </div>
@@ -553,7 +556,7 @@ export function PullDetail({
             setDeleteAfter(on);
             rememberDeleteBranch(projectId, on);
           }}
-          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : requested !== null ? { ...gate, hint: "You requested changes." } : { ...gate, hint: mergeHint }}
+          gate={current.auto_merge ? { ...gate, hint: "Merges when checks pass" } : { ...gate, hint: askedHint }}
           menu={mergeMenu}
           onMenu={setMergeMenu}
           onMerge={openMerge}

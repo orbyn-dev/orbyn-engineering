@@ -106,6 +106,13 @@ describe("one pull request as a page", () => {
     expect(document.querySelector(".pulls-banner")?.textContent ?? "").not.toContain("approvals. Checks passed");
   });
 
+  it("names the person's own requested changes on the merge row, and keeps Merge disabled", async () => {
+    vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, viewer_review_state: "changes_requested" }], paused: [] });
+    await show(detail({ review_state: "changes_requested" }));
+    expect(document.querySelector(".pull-merge-hint")).toHaveTextContent("You requested changes. Merge needs an approval.");
+    expect(merge()).toBeDisabled();
+  });
+
   it("uses the current revision and forces a count read after approving", async () => {
     vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
     vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [{ name: "me", kind: "user" }], approval_count: 0 }], paused: [] });
@@ -469,7 +476,7 @@ describe("Request changes", () => {
     expect(screen.getByRole("region", { name: "You requested changes" })).toBeInTheDocument();
     expect(screen.getByText("Fix this")).toBeInTheDocument();
     expect(screen.getByText("Changes requested", { selector: ".pull-changes-label" })).toBeInTheDocument();
-    expect(screen.getByText("You requested changes.")).toBeInTheDocument();
+    expect(screen.getByText("You requested changes. Merge needs an approval.")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "What needs to change?" })).toBeNull();
   });
 
