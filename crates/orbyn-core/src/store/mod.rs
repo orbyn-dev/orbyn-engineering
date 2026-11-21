@@ -80,6 +80,10 @@ mod migrations;
 mod native_sessions;
 #[cfg(test)]
 mod plan_mode_reset_tests;
+mod profiles;
+pub use profiles::{
+    CrewApply, EngineSwitch, PROFILE_LIMIT, ProfileRow, ProfileSettings, ThreadApply,
+};
 mod project_changes;
 mod project_names;
 mod questions;
@@ -871,6 +875,7 @@ pub(crate) fn delete_thread_in(tx: &Transaction<'_>, id: &str, actor: &str) -> R
     if deleted == 0 {
         return Err(CoreError::NotFound("thread".into()));
     }
+    profiles::forget_applications(tx, &family)?;
     prune_scratch(tx)?;
     Ok(family)
 }

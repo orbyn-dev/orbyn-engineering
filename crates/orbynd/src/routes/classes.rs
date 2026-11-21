@@ -203,6 +203,12 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/issues/start-thread"),
     ("POST", "/api/threads/{id}/issue-links"),
     ("POST", "/api/threads/{id}/issue-links/remove"),
+    // Execution profiles (docs/execution-profiles-and-library.md, Part 1).
+    ("POST", "/api/profiles"),
+    ("PATCH", "/api/profiles/{id}"),
+    ("DELETE", "/api/profiles/{id}"),
+    ("PUT", "/api/threads/{id}/profile"),
+    ("POST", "/api/crew/profile/apply"),
     ("PUT", "/api/engines/{id}/code-mode"),
 ];
 
@@ -976,6 +982,31 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/issue-links/remove",
         "the person removes a thread's link to an issue",
+    ),
+    (
+        "POST",
+        "/api/profiles",
+        "the person saves an execution profile, which can name full access or Autopilot Full",
+    ),
+    (
+        "PATCH",
+        "/api/profiles/{id}",
+        "the person changes an execution profile, which can name full access or Autopilot Full",
+    ),
+    (
+        "DELETE",
+        "/api/profiles/{id}",
+        "the person deletes an execution profile",
+    ),
+    (
+        "PUT",
+        "/api/threads/{id}/profile",
+        "applies a profile to a thread, which can raise its permission mode, or forgets the applied profile",
+    ),
+    (
+        "POST",
+        "/api/crew/profile/apply",
+        "applies a profile to a crew, which can raise its permission mode and Autopilot mode",
     ),
     (
         "PUT",
