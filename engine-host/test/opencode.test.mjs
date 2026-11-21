@@ -11,7 +11,7 @@ import { replayOpenCode } from "./replayOpenCode.mjs";
 
 const fixture = (n) => fileURLToPath(new URL(`./fixtures/opencode/${n}.ndjson`, import.meta.url));
 
-function boot({ client, launch, sdkClient }) {
+function boot({ client, launch, grace = 25 }) {
   const launches = [];
   const input = new PassThrough();
   const output = new PassThrough();
@@ -27,6 +27,7 @@ function boot({ client, launch, sdkClient }) {
   const stops = { count: 0 };
   runHost({
     family: opencodeFamily({
+      wakeGraceMs: grace,
       loadSdk: async () => ({ OpenCode: { make: (opts) => { launches.at(-1).make = opts; return client; } } }),
       launch: launch ?? (async (spec) => {
         launches.push({ spec });
@@ -78,7 +79,7 @@ test("hello names the family and the pinned SDK version", async () => {
   const hello = await h.next((f) => f.type === "hello");
   assert.equal(hello.family, "opencode");
   assert.equal(hello.sdk.name, "@opencode/client");
-  assert.deepEqual(hello.capabilities, ["steer", "fork"]);
+  assert.deepEqual(hello.capabilities, ["steer", "fork", "models", "usage", "readHistory", "stopTask", "background"]);
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(pkg.dependencies["@opencode/client"], SDK_VERSION);
   assert.equal(hello.sdk.version, SDK_VERSION);
@@ -379,4 +380,429 @@ test("closeSession and close stop the servers they started", async () => {
   await h.next((f) => f.id === 4);
   await settle();
   assert.equal(h.stops.count, 1);
+});
+
+// ---- models, usage, history, stopTask, background, background frames, question frames ----
+
+function fake(over = {}) {
+  const events = new AsyncQueue();
+  events.push({ type: "server.connected", data: {} });
+  const calls = { forms: [], cancels: [], replies: [], interrupts: [], removes: [], backgrounds: [], messageLists: [], modelLists: [], gets: [] };
+  const client = {
+    server: { info: async () => ({ version: "2.0.18" }) },
+    session: {
+      create: async () => ({ id: "ses_x" }),
+      get: async (i) => (calls.gets.push(i), { id: i.sessionID }),
+      prompt: async () => ({ id: "msg_1" }),
+      interrupt: async (i) => (calls.interrupts.push(i), { interrupted: true }),
+      background: async (i) => void calls.backgrounds.push(i),
+      form: { reply: async (i) => void calls.forms.push(i), cancel: async (i) => void calls.cancels.push(i) },
+    },
+    permission: { reply: async (i) => void calls.replies.push(i) },
+    shell: { remove: async (i) => void calls.removes.push(i) },
+    model: { list: async (i) => (calls.modelLists.push(i), { location: { directory: "/work" }, data: [] }), default: async () => ({ location: { directory: "/work" }, data: null }) },
+    message: { list: async (i) => (calls.messageLists.push(i), { data: [], cursor: {} }) },
+    event: { subscribe: () => events },
+  };
+  for (const key of ["session", "model", "message"]) client[key] = { ...client[key], ...(over[key] ?? {}) };
+  return { client, events, calls };
+}
+
+const ev = (type, data) => ({ type, data });
+const answeredRun = async (h, sendId = 3) => {
+  h.send({ id: sendId, type: "send", sessionId: "s", message: "go" });
+  await h.next((f) => f.id === sendId);
+};
+
+test("models: lists the server's models with efforts, no settings, headers or keys, and stops a server it started alone", async () => {
+  const replay = replayOpenCode(fixture("question"));
+  const h = boot({ client: replay.client });
+  await handshake(h);
+  h.send({ id: 2, type: "models", cwd: "/work" });
+  const res = await h.next((f) => f.id === 2);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.result.map((m) => [m.providerID, m.id]), [["opencode", "space-bunny-free"], ["opencode", "big-pickle"]]);
+  assert.deepEqual(res.result[0].efforts, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(res.result[1].efforts, []);
+  assert.equal(res.result[0].name, "Space Bunny Free");
+  assert.deepEqual(res.result[0].capabilities, { tools: true, input: ["text", "image", "video"], output: ["text"] });
+  assert.deepEqual(res.result[0].limit, { context: 1048576, input: 524288, output: 524288 });
+  for (const model of res.result) for (const key of ["settings", "headers", "body", "package"]) assert.equal(key in model, false, `${key} is not forwarded`);
+  assert.equal(JSON.stringify(res).includes("apiKey"), false);
+  assert.deepEqual(replay.calls.modelLists, [{ location: { directory: "/work" } }]);
+  await settle();
+  assert.equal(h.stops.count, 1, "a server started only for the list is stopped");
+});
+
+test("models: marks the server's default and reuses a running server without stopping it", async () => {
+  const { client, calls } = fake({
+    model: {
+      list: async () => ({ data: [{ id: "a", providerID: "p", name: "A", capabilities: {}, variants: [{ id: "high", settings: { reasoningEffort: "high" } }], limit: { context: 10, output: 5 }, enabled: true, status: "active" }, { id: "b", providerID: "p", name: "B", capabilities: {}, variants: [], limit: { context: 10, output: 5 }, enabled: false, status: "deprecated" }] }),
+      default: async () => ({ data: { id: "b", providerID: "p" } }),
+    },
+  });
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "models" });
+  const res = await h.next((f) => f.id === 3);
+  assert.equal(h.launches.length, 1, "the open session's server answered");
+  assert.deepEqual(res.result.map((m) => [m.id, m.default === true, m.enabled, m.status]), [["a", false, true, "active"], ["b", true, false, "deprecated"]]);
+  assert.deepEqual(res.result[0].efforts, ["high"]);
+  await settle();
+  assert.equal(h.stops.count, 0);
+  assert.ok(calls);
+});
+
+test("usage: cumulative tokens and cost from the session, context from the last step against the model's window", async () => {
+  const { client, events } = fake({
+    session: { get: async () => ({ id: "ses_x", cost: 0.5, tokens: { input: 100, output: 20, reasoning: 3, cache: { read: 10, write: 4 } }, model: { id: "m", providerID: "p" } }) },
+    model: { list: async () => ({ data: [{ id: "m", providerID: "p", name: "M", capabilities: {}, variants: [], limit: { context: 200000, input: 150000, output: 8000 } }] }) },
+  });
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  events.push(ev("session.step.ended", { sessionID: "ses_x", finish: "stop", cost: 0, tokens: { input: 50, output: 5, reasoning: 1, cache: { read: 30, write: 2 } } }));
+  await h.next((f) => f.type === "delta" && f.update.type === "session.step.ended");
+  h.send({ id: 4, type: "usage", sessionId: "s" });
+  const res = await h.next((f) => f.id === 4);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.result, { input: 100, output: 20, reasoning: 3, cache: { read: 10, write: 4 }, costUsd: 0.5, model: { id: "m", providerID: "p" }, context: { usedTokens: 87, maxTokens: 150000 } });
+});
+
+test("usage: without a step seen (a resumed session) the context comes from the last assistant message; unknown window is null", async () => {
+  const { client, calls } = fake({
+    session: { get: async () => ({ id: "ses_old", cost: 0, tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } }, model: { id: "m", providerID: "p" } }) },
+    message: { list: async (i) => (calls.messageLists.push(i), { data: [{ id: "msg_a", type: "assistant", tokens: { input: 7, output: 3, reasoning: 0, cache: { read: 20, write: 0 } } }], cursor: {} }) },
+  });
+  const h = boot({ client });
+  await handshake(h);
+  await open(h, { operation: "resume", engineSessionId: "ses_old" });
+  h.send({ id: 3, type: "usage", sessionId: "s" });
+  const res = await h.next((f) => f.id === 3);
+  assert.deepEqual(res.result.context, { usedTokens: 30, maxTokens: null });
+  assert.deepEqual(calls.messageLists, [{ sessionID: "ses_old", order: "desc", limit: 1, type: "assistant" }]);
+});
+
+test("usage of an unknown session is an invalid request", async () => {
+  const { client } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  h.send({ id: 2, type: "usage", sessionId: "nope" });
+  const res = await h.next((f) => f.id === 2);
+  assert.equal(res.ok, false);
+  assert.equal(res.error.cause.kind, "invalid_request");
+});
+
+test("readHistory: pages through the full message log in order and returns the engine's messages untouched", async () => {
+  const replay = replayOpenCode(fixture("resume_after_restart"));
+  const recorded = replay.recorded("message.list").data;
+  const second = { id: "msg_later", type: "user", time: { created: 1 }, text: "more" };
+  const pages = [{ data: recorded, cursor: { next: "c1" } }, { data: [second], cursor: {} }];
+  const seen = [];
+  const { client } = fake({ message: { list: async (i) => (seen.push(i), pages.shift()) } });
+  const h = boot({ client });
+  await handshake(h);
+  await open(h, { operation: "resume", engineSessionId: "ses_old" });
+  h.send({ id: 3, type: "readHistory", sessionId: "s" });
+  const res = await h.next((f) => f.id === 3);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.result, [...recorded, second]);
+  assert.deepEqual(seen, [{ sessionID: "ses_old", order: "asc", limit: 100 }, { sessionID: "ses_old", limit: 100, cursor: "c1" }], "cursor pages omit order");
+});
+
+test("readHistory: a history too large for one frame fails plainly instead of being cut", async () => {
+  const big = { id: "msg_big", type: "assistant", content: [{ type: "text", text: "x".repeat(1024 * 1024) }] };
+  const { client } = fake({ message: { list: async () => ({ data: Array.from({ length: 7 }, () => big), cursor: {} }) } });
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "readHistory", sessionId: "s" });
+  const res = await h.next((f) => f.id === 3);
+  assert.equal(res.ok, false);
+  assert.equal(res.error.cause.kind, "host");
+  assert.match(res.error.cause.message, /too large/i);
+});
+
+test("stopTask: a shell is removed in the session's directory, a subagent is interrupted; unknown tasks are not stopped", async () => {
+  const { client, events, calls } = fake({ session: { interrupt: async (i) => (calls.interrupts.push(i), { interrupted: i.sessionID === "ses_c" }) } });
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  events.push(ev("session.tool.input.started", { sessionID: "ses_x", id: "call_a", name: "subagent" }));
+  events.push(ev("session.tool.called", { sessionID: "ses_x", id: "call_a", input: { agent: "general", description: "Child", background: true } }));
+  events.push(ev("session.created", { sessionID: "ses_c", parentID: "ses_x", title: "Child", agent: "general" }));
+  events.push(ev("session.tool.progress", { sessionID: "ses_x", id: "call_a", metadata: { sessionID: "ses_c", status: "running" } }));
+  events.push(ev("shell.created", { info: { id: "sh_1", status: "running", command: "sleep 60", cwd: "/work", metadata: { sessionID: "ses_x" } } }));
+  events.push(ev("session.tool.progress", { sessionID: "ses_x", id: "call_b", metadata: { shellID: "sh_1" } }));
+  await h.next((f) => f.type === "background" && f.event.id === "sh_1");
+
+  h.send({ id: 4, type: "stopTask", sessionId: "s", taskId: "sh_1" });
+  assert.deepEqual((await h.next((f) => f.id === 4)).result, { stopped: true });
+  assert.deepEqual(calls.removes, [{ id: "sh_1", location: { directory: "/work" } }]);
+  h.send({ id: 5, type: "stopTask", sessionId: "s", taskId: "ses_c" });
+  assert.deepEqual((await h.next((f) => f.id === 5)).result, { stopped: true });
+  assert.deepEqual(calls.interrupts, [{ sessionID: "ses_c" }]);
+  h.send({ id: 6, type: "stopTask", sessionId: "s", taskId: "sh_unknown" });
+  assert.deepEqual((await h.next((f) => f.id === 6)).result, { stopped: false });
+  assert.equal(calls.removes.length, 1);
+});
+
+test("background: asks the server to background the run's session; no open run is not backgrounded", async () => {
+  const { client, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "background", sendId: 3 });
+  assert.deepEqual((await h.next((f) => f.id === 3)).result, { backgrounded: false });
+  assert.deepEqual(calls.backgrounds, []);
+  h.send({ id: 4, type: "send", sessionId: "s", message: "go" });
+  await h.next((f) => f.id === 4);
+  h.send({ id: 5, type: "background", sendId: 4 });
+  assert.deepEqual((await h.next((f) => f.id === 5)).result, { backgrounded: true });
+  assert.deepEqual(calls.backgrounds, [{ sessionID: "ses_x" }]);
+});
+
+const backgroundFrames = (h) => h.all.filter((f) => f.type === "background");
+const indexOfFrame = (h, pred) => h.all.findIndex(pred);
+
+test("background transcript: shell and subagent frames with tool call ids; the run is held past the first result until the wake turn ends it", async () => {
+  const { replay, h } = replayHost("background");
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: replay.promptTexts()[0] });
+  const done = await h.next((f) => f.type === "runDone");
+  assert.equal(done.sendId, 3);
+  assert.equal(done.ok, true);
+  assert.equal(done.result.reason, "completed");
+  await settle();
+  assert.equal(runs(h, 3).length, 1, "runDone exactly once");
+
+  const frames = backgroundFrames(h);
+  assert.equal(frames.every((f) => f.sessionId === "s"), true);
+  const child = "ses_f1485c529ffea4URrYruwEg0Ja";
+  const shell = "sh_0eb7a4324001OUYfV2HeA220HO";
+  assert.deepEqual(frames.map((f) => [f.event.type, f.event.kind, f.event.id]), [["started", "agent", child], ["started", "shell", shell], ["ended", "shell", shell], ["ended", "agent", child]]);
+  assert.deepEqual(frames[0].event, { type: "started", id: child, kind: "agent", toolCallId: "call-cccf2157-e8a3-456c-a74f-fccd26fb83eb", description: "Sleep and reply", background: true });
+  assert.deepEqual(frames[1].event, { type: "started", id: shell, kind: "shell", toolCallId: "call_function_s6bjpbvhrlpl_1", command: "sleep 20" });
+  assert.deepEqual(frames[2].event, { type: "ended", id: shell, kind: "shell", status: "exited", exit: 0 });
+  assert.deepEqual(frames[3].event, { type: "ended", id: child, kind: "agent", status: "completed" });
+
+  const firstResult = indexOfFrame(h, (f) => f.type === "delta" && f.update.type === "session.execution.succeeded" && f.update.data.sessionID === "ses_f1485cda4ffeXuc6GjAU9vDiRb");
+  const childEnded = indexOfFrame(h, (f) => f.type === "background" && f.event.type === "ended" && f.event.kind === "agent");
+  const runDone = indexOfFrame(h, (f) => f.type === "runDone");
+  assert.ok(firstResult >= 0 && firstResult < childEnded, "the parent's first result arrives while the subagent still runs");
+  assert.ok(runDone > childEnded, "the run stayed open until the subagent ended");
+  const wake = h.all.filter((f) => f.type === "delta" && f.update.type === "session.execution.succeeded" && f.update.data.sessionID === "ses_f1485cda4ffeXuc6GjAU9vDiRb");
+  assert.equal(wake.length, 2);
+  assert.ok(runDone > h.all.indexOf(wake[1]), "the wake turn's result ends the run");
+  assert.ok(h.all.some((f) => f.type === "log" && f.event.type === "runHeld"));
+  assert.deepEqual(replay.calls.failures, []);
+});
+
+test("nested background transcript: the root run is held for a grandchild, then ends once when no wake turn follows it", async () => {
+  const { replay, h } = replayHost("nested_background");
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: replay.promptTexts()[0] });
+  const done = await h.next((f) => f.type === "runDone");
+  assert.equal(done.result.reason, "completed");
+  await settle();
+  assert.equal(runs(h, 3).length, 1);
+  const frames = backgroundFrames(h).map((f) => [f.event.type, f.event.kind, f.event.background]);
+  assert.deepEqual(frames.filter((f) => f[1] === "agent"), [["started", "agent", false], ["started", "agent", true], ["ended", "agent", undefined], ["ended", "agent", undefined]]);
+  const grandchild = "ses_f08c0655dffeXJa3hcJz6wum9I";
+  const ended = indexOfFrame(h, (f) => f.type === "background" && f.event.type === "ended" && f.event.id === grandchild);
+  const shellEnded = indexOfFrame(h, (f) => f.type === "background" && f.event.type === "ended" && f.event.kind === "shell");
+  assert.ok(shellEnded >= 0, "the grandchild's shell is reported too");
+  assert.ok(indexOfFrame(h, (f) => f.type === "runDone") > ended, "held until the grandchild ended");
+  const rootResults = h.all.filter((f) => f.type === "delta" && f.update.type === "session.execution.succeeded" && f.update.data.sessionID === "ses_f08c08821ffefFAD3sMjkyP0Fd");
+  assert.equal(rootResults.length, 1, "the root never got a wake turn; the grace ended the run");
+  assert.deepEqual(replay.calls.failures, []);
+});
+
+test("subagent transcript: a foreground subagent is reported and ended before the run ends, with no hold", async () => {
+  const { replay, h } = replayHost("subagent");
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: replay.promptTexts()[0] });
+  const done = await h.next((f) => f.type === "runDone");
+  assert.equal(done.result.reason, "completed");
+  const frames = backgroundFrames(h);
+  assert.deepEqual(frames.map((f) => [f.event.type, f.event.kind]), [["started", "agent"], ["ended", "agent"]]);
+  assert.equal(frames[0].event.toolCallId, "call_function_okrf3eahp2li_1");
+  assert.equal(frames[0].event.background, false);
+  assert.equal(frames[0].event.description, "List files in current directory");
+  assert.equal(h.all.some((f) => f.type === "log" && f.event.type === "runHeld"), false);
+  assert.ok(indexOfFrame(h, (f) => f.type === "runDone") > indexOfFrame(h, (f) => f.type === "background" && f.event.type === "ended"));
+});
+
+function childScript(events, { background = true } = {}) {
+  events.push(ev("session.tool.input.started", { sessionID: "ses_x", id: "call_a", name: "subagent" }));
+  events.push(ev("session.tool.called", { sessionID: "ses_x", id: "call_a", input: { agent: "general", description: "Child", prompt: "p", background } }));
+  events.push(ev("session.created", { sessionID: "ses_c", parentID: "ses_x", title: "Child", agent: "general" }));
+  events.push(ev("session.tool.progress", { sessionID: "ses_x", id: "call_a", metadata: { sessionID: "ses_c", status: "running" } }));
+  events.push(ev("session.execution.started", { sessionID: "ses_c" }));
+}
+
+test("a failed or interrupted first result is never held, even with a subagent running", async () => {
+  for (const [type, extra, reason] of [["session.execution.failed", { error: { type: "unknown", message: "boom" } }, "failed"], ["session.execution.interrupted", { reason: "user" }, "cancelled"]]) {
+    const { client, events } = fake();
+    const h = boot({ client });
+    await handshake(h);
+    await open(h);
+    await answeredRun(h);
+    childScript(events);
+    events.push(ev(type, { sessionID: "ses_x", ...extra }));
+    const done = await h.next((f) => f.type === "runDone");
+    assert.equal(done.result.reason, reason);
+  }
+});
+
+test("a held run still ends once the subagent ends and no wake turn comes (grace), with the first result", async () => {
+  const { client, events } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  childScript(events);
+  events.push(ev("session.execution.succeeded", { sessionID: "ses_x" }));
+  await h.next((f) => f.type === "log" && f.event.type === "runHeld");
+  await settle();
+  assert.equal(runs(h, 3).length, 0, "still open while the subagent runs");
+  events.push(ev("session.execution.succeeded", { sessionID: "ses_c" }));
+  const done = await h.next((f) => f.type === "runDone");
+  assert.equal(done.result.reason, "completed");
+  await settle();
+  assert.equal(runs(h, 3).length, 1);
+});
+
+test("cancel during a hold interrupts the session and its running subagents and ends the run once as cancelled", async () => {
+  const { client, events, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  childScript(events);
+  events.push(ev("session.execution.succeeded", { sessionID: "ses_x" }));
+  await h.next((f) => f.type === "log" && f.event.type === "runHeld");
+  h.send({ id: 4, type: "cancel", sendId: 3 });
+  assert.deepEqual((await h.next((f) => f.id === 4)).result, { cancelled: true });
+  const done = await h.next((f) => f.type === "runDone");
+  assert.equal(done.result.reason, "cancelled");
+  assert.deepEqual(calls.interrupts.map((i) => i.sessionID).sort(), ["ses_c", "ses_x"]);
+  await settle();
+  assert.equal(runs(h, 3).length, 1);
+});
+
+test("a subagent's permission ask is a frame on the run and is answered on the subagent's own session", async () => {
+  const { client, events, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  childScript(events);
+  events.push(ev("permission.asked", { id: "per_9", sessionID: "ses_c", action: "shell", resources: ["ls"] }));
+  const ask = await h.next((f) => f.type === "permission");
+  assert.equal(ask.sendId, 3);
+  assert.deepEqual(ask.input, { action: "shell", resources: ["ls"] });
+  h.send({ id: 4, type: "respond", requestId: ask.requestId, decision: { behavior: "allow" } });
+  await h.next((f) => f.id === 4);
+  assert.deepEqual(calls.replies, [{ sessionID: "ses_c", requestID: "per_9", decision: "once" }]);
+});
+
+const formEvent = (fields, extra = {}, sessionID = "ses_x") => ev("form.created", { form: { id: "frm_1", sessionID, title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_a", id: "call_q" } }, fields, ...extra } });
+
+test("question transcript: the form becomes a question frame with the tool's own input; the answer reaches session.form.reply by field key", async () => {
+  const { replay, h } = replayHost("question");
+  await handshake(h);
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: replay.promptTexts()[0] });
+  const ask = await h.next((f) => f.type === "question");
+  assert.equal(ask.sendId, 3);
+  assert.match(ask.requestId, /^q-/);
+  assert.equal(ask.tool, "question");
+  assert.deepEqual(ask.input, { questions: [{ question: "Which color do you prefer?", header: "Color preference", options: [{ label: "Red", description: "Choose the color red" }, { label: "Blue", description: "Choose the color blue" }] }] });
+  h.send({ id: 4, type: "respond", requestId: ask.requestId, decision: { answers: { "Which color do you prefer?": "blue" } } });
+  assert.equal((await h.next((f) => f.id === 4)).ok, true);
+  const done = await h.next((f) => f.type === "runDone");
+  assert.equal(done.result.reason, "completed");
+  await settle();
+  assert.equal(runs(h, 3).length, 1);
+  assert.deepEqual(replay.calls.forms, [{ sessionID: "ses_f14865e15ffewHnFwxdBlN6Eqc", formID: "frm_0eb79ab35001fkvFECSh3wYNVD", answer: { q0: "blue" } }]);
+  assert.deepEqual(replay.calls.failures, []);
+  assert.deepEqual(replay.remaining(), []);
+  h.send({ id: 5, type: "respond", requestId: ask.requestId, decision: { answers: {} } });
+  assert.equal((await h.next((f) => f.id === 5)).ok, true, "a second respond is a late one");
+  await h.next((f) => f.type === "log" && f.event.type === "lateRespond");
+});
+
+test("question: skipping cancels the form; the run goes on", async () => {
+  const { client, events, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  events.push(ev("session.tool.called", { sessionID: "ses_x", id: "call_q", input: { questions: [{ question: "Pick?", header: "H", options: [{ label: "a", description: "" }] }] } }));
+  events.push(formEvent([{ key: "q0", title: "H", description: "Pick?", type: "string", options: [{ value: "a", label: "a" }] }]));
+  const ask = await h.next((f) => f.type === "question");
+  h.send({ id: 4, type: "respond", requestId: ask.requestId, decision: { behavior: "deny" } });
+  assert.equal((await h.next((f) => f.id === 4)).ok, true);
+  assert.deepEqual(calls.cancels, [{ sessionID: "ses_x", formID: "frm_1" }]);
+  assert.deepEqual(calls.forms, []);
+});
+
+test("question: several selections are joined by commas and become the field's list; a missing answer is refused and can be retried", async () => {
+  const { client, events, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  events.push(ev("session.tool.called", { sessionID: "ses_x", id: "call_q", input: { questions: [{ question: "Which?", header: "A", multiple: true, options: [{ label: "x", description: "" }, { label: "y", description: "" }] }, { question: "Why?", header: "B", options: [] }] } }));
+  events.push(formEvent([
+    { key: "q0", title: "A", description: "Which?", type: "multiselect", options: [{ value: "x", label: "x" }, { value: "y", label: "y" }], custom: true },
+    { key: "q1", title: "B", description: "Why?", type: "string", required: true },
+  ]));
+  const ask = await h.next((f) => f.type === "question");
+  h.send({ id: 4, type: "respond", requestId: ask.requestId, decision: { answers: { "Which?": "x, y" } } });
+  const refused = await h.next((f) => f.id === 4);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.cause.kind, "invalid_request");
+  assert.deepEqual(calls.forms, []);
+  h.send({ id: 5, type: "respond", requestId: ask.requestId, decision: { answers: { "Which?": "x, y", "Why?": "because" } } });
+  assert.equal((await h.next((f) => f.id === 5)).ok, true);
+  assert.deepEqual(calls.forms, [{ sessionID: "ses_x", formID: "frm_1", answer: { q0: ["x", "y"], q1: "because" } }]);
+});
+
+test("question: a form of a kind the host does not understand is refused, never left open, and logged", async () => {
+  const { client, events, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  events.push(formEvent([{ key: "k", type: "string" }], { metadata: { kind: "integration" } }));
+  const log = await h.next((f) => f.type === "log" && f.event.type === "unsupportedForm");
+  assert.equal(log.event.kind, "integration");
+  await settle();
+  assert.equal(h.all.some((f) => f.type === "question"), false);
+  assert.equal(calls.cancels.length, 1);
+  assert.equal(calls.cancels[0].formID, "frm_1");
+});
+
+test("question: a form asked from a subagent reaches the run and is answered on the subagent's session", async () => {
+  const { client, events, calls } = fake();
+  const h = boot({ client });
+  await handshake(h);
+  await open(h);
+  await answeredRun(h);
+  childScript(events);
+  events.push(ev("session.tool.called", { sessionID: "ses_c", id: "call_q", input: { questions: [{ question: "Pick?", header: "H", options: [{ label: "a", description: "" }] }] } }));
+  events.push(formEvent([{ key: "q0", title: "H", description: "Pick?", type: "string", options: [{ value: "a", label: "a" }] }], {}, "ses_c"));
+  const ask = await h.next((f) => f.type === "question");
+  assert.equal(ask.sendId, 3);
+  h.send({ id: 4, type: "respond", requestId: ask.requestId, decision: { answers: { "Pick?": "a" } } });
+  await h.next((f) => f.id === 4);
+  assert.deepEqual(calls.forms, [{ sessionID: "ses_c", formID: "frm_1", answer: { q0: "a" } }]);
 });

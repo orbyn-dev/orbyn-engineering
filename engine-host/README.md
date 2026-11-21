@@ -130,13 +130,40 @@ with `--hostname=127.0.0.1 --port=0` and a generated `OPENCODE_PASSWORD` (logged
 Done and tested against replayed T3 Code transcripts of OpenCode 2.0.18 (MIT, `test/fixtures/NOTICE`): open (create, resume,
 fork), multi-turn, every ask as a `permission` frame answered by `respond` (allow is `once` only, deny is `reject` with the
 message, never `always`), cancel through `session.interrupt`, steer through `delivery: "steer"`, `fork` at a turn, `runDone`
-exactly once from `session.execution.*`, error kinds. Sessions are created asking for everything; the core decides.
+exactly once from `session.execution.*`, error kinds. Sessions are created asking for everything; the core decides. Also replayed:
+- **Question frames** (`question` transcript): an OpenCode form raised by the question tool becomes a `question` frame
+  (`tool: "question"`, `input` is the tool call's own input); `respond` `{answers: {"<question text>": "<answer>"}}` becomes
+  `session.form.reply` keyed by the form's field keys (a multi-select is split on commas); `{behavior: "deny"}` is `session.form.cancel`.
+  A missing required answer is refused (`invalid_request`) and the question stays open. A form that is not a question is cancelled and logged.
+- **Background frames** (`background`, `nested_background`, `subagent` transcripts): each subagent session (`session.created` with a
+  parent) and each shell the sessions start is a `background` `started`/`ended` event with its `toolCallId` (`kind: "agent"` also has
+  `description` and `background`; `kind: "shell"` has `command`). A task is announced when OpenCode names its tool call, so a shell
+  with no tool call is announced when it ends. A successful result while a subagent (any depth) still runs **holds the run**
+  (rule 1 of the run-end contract); the hold ends on the parent's wake turn, or after 3 s with no wake turn, on cancel (which also
+  interrupts the subagents), after 30 minutes, or when the server stops. A failed or cancelled result is never held. Shells are
+  reported, never held. The subagent events themselves also arrive as `delta` frames (their `sessionID` tells them apart), and a
+  subagent's permission or question reaches the run and is answered on the subagent's own session.
+- **`models`** (host-wide; optional `cwd`, `confinement`, `opencodePath`): `model.list` plus `model.default` as a list of
+  `{id, providerID, name, efforts, capabilities, limit, status, enabled, family?, default}`; `efforts` are the model's variant ids.
+  Settings, headers, body and package are never forwarded (they can hold provider keys). A server started only for the list is stopped after it.
+- **`usage`**: the session's cumulative `{input, output, reasoning, cache, costUsd, model}` from `session.get` and
+  `context: {usedTokens, maxTokens}` (the last step's tokens against the model's `limit.input ?? limit.context`; `null` if unknown).
+- **`readHistory`**: `message.list`, oldest first, all pages, the engine's messages untouched; over about 6 MiB it fails with
+  `kind: "host"` instead of cutting.
+- **`stopTask`**: a shell through `shell.remove`, a subagent through `session.interrupt` on its session (`stopped` is the server's `interrupted`).
+- **`background`**: `session.background` on the run's session; its effect is not documented (see below).
 
 Real runs (macOS arm64, `opencode` 2.2.5, free model `opencode/beam-free`, empty temp folder, cost 0): a one-word reply completed with usage;
-a file write raised one `permission` frame (tool `edit`), allowed once, the file was written and the run completed.
-Not done, so Planned: cancel, steer or fork against a live `opencode`; the v1 SDK (`@opencode-ai/sdk`,
-not added: no transcript covers it); background shells and subagent sessions as `background` frames; `models`, `usage`,
-`readHistory`, `rollback`, `stopTask`; question frames; attachments; per-send model; a silent-stream watchdog; Windows.
+a file write raised one `permission` frame (tool `edit`), allowed once, the file was written and the run completed. `models`
+through the bundled binary against a real `opencode serve` returned 245 models in the shape above, with a default and efforts, and
+stopped the server it had started.
+
+Not done, so Planned: cancel, steer, fork, question, background frames, hold, `usage`, `readHistory`, `stopTask` and `background`
+against a live `opencode` (replays and fake clients only; no `-free` model was asked to run a subagent, a question or a shell);
+what `session.background` does and whether `backgrounded` should be true (the SDK documents only `sessionID` and returns nothing,
+no transcript calls it, so the host sends it and reports `true` on success); `rollback` (`session.revert.*` has a transcript
+but no mapping to a turn id yet), `session.compact`; the v1 SDK (`@opencode-ai/sdk`, not added: no transcript covers it);
+workflows; a user-started shell shown before it ends; attachments; per-send model; a silent-stream watchdog; Windows.
 
 ## Muse family
 
