@@ -61,6 +61,7 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "diffs-guide-instructions", "title": "Guide instructions", "section": "diffs"},
   {"id": "diffs-guide-model", "title": "Guide model", "section": "diffs"},
   {"id": "general-new-threads-start-in", "title": "New threads start in", "section": "general"},
+  {"id": "browser-profiles", "title": "Browser profiles", "section": "browser"},
   {"id": "worktrees-start-from-origin", "title": "Start from origin", "section": "worktrees"},
   {"id": "worktrees-submodules", "title": "Submodules", "section": "worktrees"},
   {"id": "worktrees-naming", "title": "Branch naming", "section": "worktrees"},

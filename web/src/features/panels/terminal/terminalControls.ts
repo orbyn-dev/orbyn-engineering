@@ -1,6 +1,8 @@
 /** What the drawer asks of a terminal that is open: clear it, interrupt it, read what it printed. */
 export interface TerminalControls {
   clear(): void;
+  /** Types text into the shell as if it were typed in the terminal itself. Nothing when the terminal only watches. */
+  write(data: string): void;
   /** Sends Ctrl-C. */
   interrupt(): void;
   /** Everything in the scrollback and on screen, as text. */

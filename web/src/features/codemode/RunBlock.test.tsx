@@ -208,17 +208,43 @@ describe("the run card, failed", () => {
     expect(await screen.findByText("Declined")).toBeInTheDocument();
   });
 
-  it("says a lost run was lost and what a replay does, with nothing to press", async () => {
-    mock.codeMode.putRun(fail("lost", "The core restarted and this run could not be resumed.", undefined, { calls: [call(1), call(2), call(3), call(4), call(5, { tool: "orbyn_thread_send", status: "in_flight", preview: null })] }));
+  const LOST = "This run was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.";
+  const recorded = [call(1), call(2), call(3), call(4)];
+  const footer = () => document.querySelector(".cf .tfm");
+
+  it("says a lost run was lost, shows the core’s message as it is and the calls the record holds, with nothing to press", async () => {
+    mock.codeMode.putRun(fail("lost", LOST, undefined, { calls: recorded }));
     render(<Trail items={[item(reply("error", { error: { kind: "lost", message: "x" } }))]} />);
     const row = await open();
-    await waitFor(() => expect(row).toHaveTextContent("· core restarted"));
+    await waitFor(() => expect(row).toHaveTextContent("· lost"));
     expect(row).toHaveTextContent("Lost");
-    expect(await screen.findByText(/Resume replays the script/)).toBeInTheDocument();
-    expect(screen.getByText("In flight when the core restarted")).toBeInTheDocument();
-    expect(screen.getByText(/Lost/, { selector: ".tfm *" })).toHaveTextContent("Lost");
-    expect(await screen.findByText(/4 calls recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(LOST)).toBeInTheDocument();
+    expect(screen.getByText(/Error ·/)).toHaveTextContent("Error · lost");
+    expect(screen.getByRole("group", { name: "Calls" })).toHaveTextContent("Calls · 4");
+    await waitFor(() => expect(footer()).toHaveTextContent("Lost · 4 calls recorded"));
+    expect(screen.queryByText(/Resume replays/)).toBeNull();
     expect(screen.queryByRole("button", { name: /resume|replay|retry/i })).toBeNull();
+  });
+
+  it("shows a replay that could not match with the core’s own message, nothing repeated", async () => {
+    const changed = "The script changed or is not repeatable, so the recorded calls can't be replayed.";
+    mock.codeMode.putRun(fail("lost", changed, undefined, { calls: recorded }));
+    render(<Trail items={[item(reply("error", { error: { kind: "lost", message: "x" } }))]} />);
+    await open();
+    expect(await screen.findByText(changed)).toBeInTheDocument();
+    await waitFor(() => expect(footer()).toHaveTextContent("Lost · 4 calls recorded"));
+  });
+
+  it("marks a call that was running at the restart, counts it as unknown and never as done", async () => {
+    const inflight = "A call that may have changed something was running when Orbyn restarted, so the run can't continue.";
+    mock.codeMode.putRun(fail("lost", inflight, undefined, { calls: [...recorded, call(5, { tool: "orbyn_thread_send", status: "in_flight", preview: null })] }));
+    render(<Trail items={[item(reply("error", { error: { kind: "lost", message: "x" } }))]} />);
+    await open();
+    expect(await screen.findByText(inflight)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Calls" })).toHaveTextContent("Calls · 5");
+    expect(screen.getByText("Running when Orbyn restarted")).toBeInTheDocument();
+    await waitFor(() => expect(footer()).toHaveTextContent("Lost · 4 calls done, 1 unknown"));
+    expect(screen.queryByText(/Resume replays/)).toBeNull();
   });
 });
 

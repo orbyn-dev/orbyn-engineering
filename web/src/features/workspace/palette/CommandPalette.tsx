@@ -1,4 +1,4 @@
-import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, SquarePen, SunMoon, TextSearch } from "lucide-react";
+import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, Sparkles, SquarePen, SunMoon, TextSearch } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api, pullsApi } from "../api";
 import { compactAge } from "../../../lib/format";
@@ -119,6 +119,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       { key: "theme", group: "Actions", label: "Toggle theme", icon: <SunMoon size={16} aria-hidden />, route: "toggle-theme" },
       { key: "new", group: "Actions", label: "New thread", icon: <SquarePen size={16} aria-hidden />, route: { name: "new", projectId: null } },
       { key: "new-in", group: "Actions", label: "New thread in...", icon: <SquarePen size={16} aria-hidden />, route: "new-in" },
+      { key: "welcome", group: "Actions", label: "Welcome", icon: <Sparkles size={16} aria-hidden />, route: { name: "welcome" } as Route },
       { key: "add", group: "Actions", label: "Add project", icon: <FolderPlus size={16} aria-hidden />, route: "add-project" },
       ...(parseRoute(window.location.hash).name === "thread"
         ? [

@@ -8,7 +8,7 @@ import { navigate, useRoute, type SettingsSection } from "../../../product/state
 
 // Device pages deliberately edit this client's/environment's defaults.
 export const DEVICE_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set([
-  "general", "appearance", "chat", "about",
+  "general", "appearance", "chat", "about", "browser",
 ]);
 
 /** Pages that show the scope line under the title (Applying settings for a project on a device). */

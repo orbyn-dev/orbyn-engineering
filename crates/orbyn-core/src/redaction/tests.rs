@@ -296,7 +296,7 @@ fn text_over_the_window_is_read_whole_and_a_value_on_the_edge_is_still_hidden() 
     let filler = "x ".repeat(custom::MAX_APPLY_BYTES / 2);
     // The value straddles the first window's end.
     let cut = custom::MAX_APPLY_BYTES - token.len() / 2;
-    let mut text = filler.clone() + &filler;
+    let mut text = filler.clone() + filler.as_str();
     text.replace_range(cut..cut + token.len(), &token);
     assert!(text.len() > custom::MAX_APPLY_BYTES);
     let hidden = Redactor::locked().labelled(&text);

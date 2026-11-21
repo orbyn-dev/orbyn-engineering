@@ -5,6 +5,7 @@ describe("routes", () => {
   it.each<Route>([
     { name: "home" },
     { name: "tasks" },
+    { name: "welcome" },
     { name: "crew", tab: "flow", task: `sha256:${"a".repeat(64)}` },
     { name: "crew", tab: "flow", task: "task_1-a.b" },
     { name: "skills" },
@@ -12,7 +13,7 @@ describe("routes", () => {
     { name: "pulls" },
     { name: "pulls", project: "p/1 x", number: 42 },
     { name: "issues" },
-    { name: "issues", tracker: "github", key: "ORB 87/#1" },
+    { name: "issues", tracker: "github", scope: "orbyn-dev/orbyn engineering", key: "ORB 87/#1" },
     { name: "thread", id: "t/1 x" },
     { name: "new", projectId: null },
     { name: "new", projectId: "p1" },
@@ -76,7 +77,10 @@ describe("routes", () => {
 
   it("falls back to the issue list for an issue link without a key", () => {
     expect(parseRoute("#/issues/github")).toEqual({ name: "issues" });
-    expect(parseRoute("#/issues/github/412")).toEqual({ name: "issues", tracker: "github", key: "412" });
+    // A key is unique only within a scope, so a link without one is the list.
+    expect(parseRoute("#/issues/github/412")).toEqual({ name: "issues" });
+    expect(parseRoute("#/issues/github/orbyn-dev%2Forbyn-engineering/412")).toEqual({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" });
+    expect(routeHref({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" })).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   });
 
   it("refuses malformed or action-bearing Crew task locators", () => {

@@ -7,6 +7,7 @@ import { useAsync } from "../../../lib/useAsync";
 import { Button } from "../../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { PreferenceGroups } from "../rows/PreferenceRows";
+import { IssueTrackersSettings } from "../../issues";
 import { SourceControlWriting } from "./SourceControlWriting";
 import { heading } from "./parts";
 
@@ -23,6 +24,7 @@ export function SourceControlSection() {
         key: "auto_pull", title: settingsLabel("source-control-automatic-pull"),
         description: "Keep tracked branches up to date in the background",
       }] }]} />
+      <IssueTrackersSettings />
       <div className="set-hosts-head">
         <b>Hosts</b>
         <Button small disabled={offline} icon={<RefreshCw size={13} aria-hidden />} onClick={forges.reload}>Rescan</Button>

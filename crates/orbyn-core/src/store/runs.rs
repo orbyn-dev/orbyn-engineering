@@ -108,6 +108,21 @@ impl Store {
             .ok_or_else(|| CoreError::NotFound("run".into()))
     }
 
+    /// Whether the run was admitted from a message Crew queued for a lead: a task's result, a
+    /// review, or a start it refused. Such a run is judged by what the lead leaves behind, not by
+    /// what it says; the person did not send the prompt.
+    pub fn run_is_crew_note(&self, run_id: &str) -> Result<bool> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT crew_note != 0 FROM runs WHERE id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
     pub fn mark_starting(&self, run_id: &str) -> Result<()> {
         self.commit(|tx, _| {
             guard_active(tx, &self.epoch, run_id)?;
@@ -495,6 +510,17 @@ impl Store {
             super::ACTIVE_STATES
         ))?;
         let rows = statement.query_map([], run_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The id and engine of every run that has not ended.
+    pub fn active_run_engines(&self) -> Result<Vec<(String, String)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, engine FROM runs WHERE state IN {}",
+            super::ACTIVE_STATES
+        ))?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

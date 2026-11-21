@@ -513,7 +513,7 @@ async fn a_frame_token_serves_its_own_page_and_images_and_nothing_else() {
     for credential in [
         "render=wrong".to_owned(),
         "render=".to_owned(),
-        "render=".to_owned() + &service.token,
+        format!("render={}", service.token),
         "other=1".to_owned(),
     ] {
         let refused = service

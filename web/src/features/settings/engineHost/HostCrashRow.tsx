@@ -1,5 +1,5 @@
 import type { Diagnostics } from "../../../api/types";
-import type { HostCrash } from "./contract";
+import { type HostCrash } from "../../enginehost";
 import { CauseChain, DetailsToggle } from "./HostParts";
 import "./engineHost.css";
 

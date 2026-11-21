@@ -6,17 +6,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Thread } from "../../api/types";
 import { isFileTab, parseFileTab, useUi, type BuiltinTab, type RightTab } from "../../product/state/ui";
 import { Button, IconButton } from "../../ui/controls";
-import { ActivityPanel } from "./activity/ActivityPanel";
-import { BrowserPanel } from "./browser/BrowserPanel";
-import { DiffPanel } from "./diff/DiffPanel";
-import { FileTab } from "./files/FileTab";
+import { PanelBody } from "./PanelBody";
 import { EditorTitleExtras } from "./editor/EditorTitleExtras";
 import { SaveChangesDialog } from "./editor/SaveChangesDialog";
 import { isDirty, saveSession, sessionOfTab, useEditorSessions } from "./editor/editorSessions";
 import { useFileTabMenu, withFileItems } from "./editor/useFileTabMenu";
 import { useFileTabNames } from "../workspace";
 import { useWorkspace } from "../../product/state/workspace";
-import { ToolsTab } from "../tools";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
@@ -38,7 +34,9 @@ const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
   diff: "The diff comes back when the service does.",
   activity: "Activity shows again as soon as it is back.",
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
+  linked: "Linked threads show again as soon as it is back.",
   tools: "The tools list comes back when the service does.",
+  review: "Your comments are kept here and show again when it is back.",
 };
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
 const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
@@ -182,7 +180,7 @@ export function PanelHost({
   closing,
   moves,
   maximized,
-  sideChat = null,
+  content = {},
   onToggleMaximize,
   onReturn,
 }: {
@@ -192,8 +190,7 @@ export function PanelHost({
   /** False while the panel is part of the page as it first appeared. */
   moves: boolean;
   maximized: boolean;
-  /** The Side chat tab's content; the thread owns it, so it is handed in. */
-  sideChat?: ReactNode;
+  content?: { side?: ReactNode; linked?: ReactNode }; // The Side chat and Linked threads tabs: the thread owns both
   onToggleMaximize(): void;
   onReturn(): void;
 }) {
@@ -229,7 +226,9 @@ export function PanelHost({
   const count = rowIds.length;
   // The line beside the open file's name: the worktree it is in, and for another project's, which project.
   const target = tab ? parseFileTab(tab) : null;
-  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
+  // An issue tab has no folder: only a file of another worktree has names to look up.
+  const placed = target && target.kind !== "thread" && target.kind !== "issue" ? target : null;
+  const names = useFileTabNames(placed ? placed.projectId : "", placed ? placed.worktreeId : "", thread.id);
   // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
   // A Jujutsu checkout is no Git repository either, but has changes to show: only a folder with neither is gitless.
   const notGit = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
@@ -238,8 +237,8 @@ export function PanelHost({
   const subtitle =
     target === null ? null
     : target.kind === "thread" ? (thread.worktree?.branch ?? null)
-    : !names.worktree ? null
-    : target.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
+    : placed === null || !names.worktree ? null
+    : placed.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
   latest.current = { count };
   const refit = useCallback(() => {
@@ -560,19 +559,7 @@ export function PanelHost({
           </div>
         ) : (
           <div id={`context-${domId(tab)}`} role="tabpanel" aria-labelledby={`${TAB_ID}${domId(tab)}`} className="tabpanel">
-            {tab === "browser" ? (
-              <BrowserPanel threadId={thread.id} />
-            ) : tab === "diff" ? (
-              <DiffPanel threadId={thread.id} />
-            ) : isFileTab(tab) ? (
-              <FileTab key={tab} id={tab} threadId={thread.id} />
-            ) : tab === "activity" ? (
-              <ActivityPanel key={thread.id} threadId={thread.id} />
-            ) : tab === "tools" ? (
-              <ToolsTab key={thread.id} threadId={thread.id} engine={thread.engine} />
-            ) : (
-              sideChat
-            )}
+            <PanelBody tab={tab} thread={thread} content={content} />
           </div>
         )}
       </div>

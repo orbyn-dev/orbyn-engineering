@@ -32,6 +32,8 @@ beforeEach(() => {
     if (method === "GET" && path === "/api/providers") {
       return { providers: mock.engines.map((one) => ({ id: one.id, name: one.name, group: "in_use", labels: [], registered: true, openable: true })) } as never;
     }
+    // API key storage reads its own status; this service keeps no key, so the group draws nothing.
+    if (method === "GET" && path.startsWith("/api/settings/engine-credentials/")) throw new ApiFailure("not_found", "This engine does not keep a key.", 404);
     const wanted = (body as { keys?: string[]; edits?: Record<string, { value: JsonValue[] }> });
     if (method === "POST" && wanted.keys?.[0] === "disabled_engines") return { catalog: { version: "members-1", selection: { kind: "all_projects" } }, rows: [{ key: "disabled_engines", revision: "r", value: [], mixed: false, default: [], project_scoped: true, environment: { source: "default", value: [], default: [] }, members: [], overrides: [] }] } as never;
     if (method === "PUT" && wanted.edits?.disabled_engines) { inUseWrites.push(wanted.edits.disabled_engines.value); return {} as never; }

@@ -376,7 +376,7 @@ describe("App against the mock API", () => {
     await user.type(field, "/Users/dev/code/payments-service{Enter}");
 
     expect(await screen.findByRole("heading", { name: /^Trust .+\?$/ })).toBeInTheDocument();
-    expect(screen.getByText(/Only trust folders you know/)).toBeInTheDocument();
+    expect(screen.getByText(/Trust folders you know/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Trust folder" }));
 
     expect(await screen.findByRole("heading", { name: /What should we build in/ })).toBeInTheDocument();

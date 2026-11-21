@@ -272,7 +272,7 @@ describe("Composer", () => {
     const remove = vi.spyOn(api, "removeQueued").mockResolvedValue();
     setup({ active_run: { ...run, state: "running" } as Run });
     await userEvent.click(await screen.findByRole("button", { name: /^Add to the running turn/ }));
-    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests"));
+    await waitFor(() => expect(steer).toHaveBeenCalledWith("t1", "also check tests", expect.any(String)));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("q1"));
     queue.mockRestore();
     steer.mockRestore();

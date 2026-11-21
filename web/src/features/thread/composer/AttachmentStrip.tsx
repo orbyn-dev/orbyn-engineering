@@ -24,7 +24,7 @@ export function AttachmentStrip({
   return (
     <ul className="attachment-strip" aria-label="Attachments">
       {attachments.map((file) => (
-        <li key={file.key} data-failed={file.failure !== null || undefined}>
+        <li key={file.key} data-failed={file.failure !== null || undefined} data-photo={file.preview ? "" : undefined}>
           {file.preview ? <img src={file.preview} alt="" className="attachment-thumb" /> : null}
           <span title={file.failure ?? undefined}>{file.name}</span>
           {file.failure ? (

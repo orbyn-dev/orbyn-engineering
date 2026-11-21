@@ -17,6 +17,7 @@ mod crew_capacity;
 mod crew_escapes;
 mod crew_map;
 mod crew_tasks;
+mod engine_credentials;
 mod engines;
 mod explorer;
 mod files;
@@ -86,6 +87,8 @@ mod crew_tests;
 #[cfg(test)]
 mod crew_worker_provider_tests;
 #[cfg(test)]
+mod engine_credentials_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
 mod tests;
@@ -107,6 +110,7 @@ pub fn router(state: AppState) -> Router {
         .merge(media::routes())
         .merge(settings::routes())
         .merge(secrets::routes(state.clone()))
+        .merge(engine_credentials::routes(state.clone()))
         .merge(projects::routes())
         .merge(threads::routes())
         .merge(workspace::routes())

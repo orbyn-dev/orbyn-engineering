@@ -1,8 +1,6 @@
 import { useRef, useState } from "react";
 import { Button } from "../../../ui/controls";
-import type { HostRow } from "./contract";
-import { engineHostApi, useEngineHosts } from "./hostApi";
-import { listLine } from "./hostText";
+import { type HostRow, engineHostApi, useEngineHosts, listLine } from "../../enginehost";
 import { HostChip, reasonOf } from "./HostParts";
 import "./engineHost.css";
 

@@ -4,6 +4,7 @@ import type { ExplorerWorktree } from "../../../generated/ExplorerWorktree";
 import { formatBytes } from "../../../lib/format";
 import { useAsync } from "../../../lib/useAsync";
 import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
+import { IssuePanel } from "../../issues";
 import { parseFileTab, useUi, type FileTabId, type FileTarget } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
@@ -160,6 +161,7 @@ function MissingWorktree({ target, threadId }: { target: Extract<FileTarget, { k
 export function FileTab({ id, threadId }: { id: FileTabId; threadId: string | null }) {
   const target = parseFileTab(id);
   if (!target) return null;
+  if (target.kind === "issue") return <IssuePanel tracker={target.tracker} scope={target.scope} issueKey={target.key} />;
   if (target.kind === "worktree") return <MissingWorktree target={target} threadId={threadId} />;
   if (target.kind === "thread") return threadId === null ? null : <ThreadFile threadId={threadId} tabId={id} path={target.path} />;
   return <ExplorerFile threadId={threadId} tabId={id} target={target} />;

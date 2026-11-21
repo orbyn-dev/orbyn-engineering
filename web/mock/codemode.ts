@@ -9,6 +9,7 @@ import type { MockResponse } from "./api.ts";
  *   GET /api/code-runs/<id>             one run record, 404 when there is none
  *   GET /api/engines/<id>/code-mode     { enabled }, off until a person turns it on
  *   PUT /api/engines/<id>/code-mode     { enabled } writes it and answers with what is stored
+ *   GET /api/threads/<id>/code-runs     { runs } one summary per stored run, newest first (a guessed path and shape)
  */
 export function createCodeModeMock() {
   let runs = new Map<string, CodeRunRecord>();
@@ -42,6 +43,14 @@ export function createCodeModeMock() {
       if (run && method === "GET") {
         const record = runs.get(decodeURIComponent(run[1] ?? ""));
         return record ? { status: 200, body: record } : err(404, "not_found", "That run is gone.");
+      }
+      const list = /^\/api\/threads\/([^/]+)\/code-runs$/.exec(path);
+      if (list && method === "GET") {
+        const summaries = [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at)).map((record) => ({
+          run_id: record.run_id, status: record.status, started_at: record.started_at, ended_at: record.ended_at, calls: record.calls.length,
+          script_head: record.script ? record.script.slice(0, 120) : null,
+        }));
+        return { status: 200, body: { runs: summaries } };
       }
       const mode = /^\/api\/engines\/([^/]+)\/code-mode$/.exec(path);
       if (!mode) return null;

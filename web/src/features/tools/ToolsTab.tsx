@@ -8,6 +8,7 @@ import { navigate } from "../../product/state/route";
 import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { Empty } from "../../product/ui/states";
+import { CodeRunsList } from "../codemode";
 import { ToolsList } from "./ToolsList";
 import { NOT_REPORTED_CODE } from "./notReported";
 import { GROUP_SHORT, groupOf, summarize } from "./toolsModel";
@@ -162,6 +163,7 @@ export function ToolsTab({ threadId, engine }: { threadId: string; engine: strin
     <div className="tg-tools">
       <Header engineName={engineName} source={data.source} checkedAt={data.checked_at} busy={checking || tools.refreshing} onRefresh={data.source === "run" ? undefined : () => void checkAgain()} />
       <ToolsList tools={data} engineName={engineName} mode="thread" />
+      <CodeRunsList threadId={threadId} />
       <button type="button" className="tg-footlink" onClick={() => navigate({ name: "settings", section: "tools" })}>
         Tools and connectors settings
       </button>

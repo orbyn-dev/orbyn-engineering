@@ -38,6 +38,7 @@ mod capacity_sampling;
 mod classes;
 mod classes_pin;
 mod classes_project;
+mod code_mode;
 mod confined;
 mod core;
 mod could_not_start;

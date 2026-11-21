@@ -24,6 +24,15 @@ Diff and Files panels were redesigned as Changes and the left-bar explorer):
 `x-files-error`, `x-files-search`, `x-files-large` and `x-files-menu`; their status is
 read from the replacement code. The motion table was not re-reviewed in this recount.
 
+**Frames applied after the recount (not rows, not eye-reviewed).** From Engineer v186
+(orbyn-designs #374 and #376): `x-term-split`, `x-term-split-down`, `x-term-split-menu`,
+`x-term-split-max`, `x-term-pane-close`, `x-term-tab-close`, `x-term-end-confirm`
+(tab X ends every pane), `editor-comment-out-of-date` (card content only, not inline),
+`cursor-thread-mode-refused`, `-auto-edits`, `cursor-thread-refused-engine` and
+`cursor-thread-details-other-engine` (all Planned), and Crew's `crew-cursor-reviewer-only`.
+Not checked: `x-term-split-narrow`, the narrow Cursor and Crew frames (no narrow-specific code was
+added) and the Rename and Move to window items (Planned in the frame, not built).
+
 `built` means a component renders the screen in the app (on a live route or in the
 thread's own view); it does not mean the screen matches the design. `preview-only` means
 the only implementation is the dev-only `__ORBYN_PREVIEWS__` sample screen. `missing`
@@ -143,7 +152,7 @@ exists: 98, partial: 68, missing: 60, preview-only: 5.)
 | 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/detail/PullCode.tsx` | built | P2 | |
 | 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
 | 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
-| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/pulls/detail/PullDetail.tsx:526; features/thread/PullChip.tsx` | built | P2 | |
+| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/pulls/detail/PullLinkedCards.tsx; features/thread/PullChip.tsx` | built | P2 | |
 | 106 | `pr-phone-list` | Pull requests, every state | Phone: Pull requests list | `missing` | missing | P2 | |
 | 107 | `pr-phone-detail` | Pull requests, every state | Phone: pull request detail | `missing` | missing | P2 | |
 | 108 | `s-general` | Settings | Settings · General | `features/settings/sections/GeneralSection.tsx:72` | built | P1 | |
@@ -266,7 +275,7 @@ exists: 98, partial: 68, missing: 60, preview-only: 5.)
 | 225 | `conn-service-restart` | Connection states | Restarting the Orbyn service | `features/thread/ConnectionStatus.tsx:30` | built | P1 | |
 | 226 | `conn-remote` | Connection states | Paired machine offline | `features/platform/PhoneOffline.tsx (preview only)` | preview-only | P2c | |
 | 227 | `panel-empty` | Side panel and terminal | Side panel: no tabs | `features/panels/strip/PanelEmpty.tsx; features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
-| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | built | P3 | Engineer Designs v98, shell PR 1a: Review and comments, Crew views and Open file are hidden until they exist |
+| 228 | `panel-launcher-menu` | Side panel and terminal | Side panel: the + launcher | `features/panels/PanelHost.tsx; features/panels/strip/tabs.ts` | built | P3 | Engineer Designs v98, shell PR 1a: Review and comments is now in the launcher (W7); Crew views and Open file are hidden until they exist |
 | 229 | `panel-tab-menu` | Side panel and terminal | Side panel: tab menu | `features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
 | 230 | `panel-tabs-single` | Side panel and terminal | Side panel tabs: one tab | `features/panels/PanelHost.tsx` | built | P3 | Engineer Designs v98, shell PR 1a |
 | 231 | `panel-tabs-drag` | Side panel and terminal | Side panel tabs: drag to reorder | `features/panels/strip/tabDrag.ts` | built | P3 | Engineer Designs v98, shell PR 1a |

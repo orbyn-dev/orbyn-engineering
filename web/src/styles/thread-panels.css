@@ -358,6 +358,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.files-viewer .panel-bar > :not(code) {
+  flex: none;
+}
 
 .timeline {
   display: flex;

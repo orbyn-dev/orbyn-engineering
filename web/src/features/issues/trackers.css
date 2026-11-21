@@ -1,0 +1,22 @@
+/* Issue trackers: the token dialog, and the rows in Settings and on the Welcome page. */
+.trk-table .trk-row { grid-template-columns: 28px minmax(0, 1fr) 110px auto; }
+.trk-chip { display: inline-flex; align-items: center; }
+.trk-acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.trk-banner-row { padding: 6px 0; }
+.trk-banner-cell { display: block; }
+.trk-field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: var(--text-label); color: var(--color-textSoft); }
+.trk-field input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--color-divider); border-radius: 8px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-body); }
+.trk-field input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.trk-note { margin: 10px 0 0; color: var(--color-textSoft); font-size: var(--text-meta); }
+.trk-welcome { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.trk-welcome > li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--color-divider); }
+.trk-welcome > li:first-child { border-top: 0; }
+.trk-welcome b { display: block; font-weight: 500; }
+.trk-welcome small { display: block; color: var(--color-textSoft); font-size: var(--text-meta); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .trk-welcome > li { grid-template-columns: 28px minmax(0, 1fr); }
+  .trk-welcome > li > :nth-child(n + 3) { grid-column: 2; justify-self: start; }
+}
+.trk-beta { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--radius-pill); background: var(--color-sunken); color: var(--color-textSoft); font-size: var(--text-label); font-weight: 400; vertical-align: middle; }
+.trk-welcome-note { margin: 8px 0 0; color: var(--color-textSoft); font-size: var(--text-meta); }
+.trk-welcome-warn { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--color-warnSoft); color: var(--color-warnText); font-size: var(--text-meta); }
