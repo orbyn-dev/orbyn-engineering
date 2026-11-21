@@ -3,6 +3,7 @@ import { connectionKind, useConnection, useConnectionKind } from "../../../../pr
 import { useWorkspace } from "../../../../product/state/workspace";
 import { levelKey, useExplorer } from "../../../workspace";
 import type { EngineStatus } from "../../../../api/types";
+import { folderInRoot, useShellFolder } from "../shellFolder";
 import type { PathEntry } from "./completions";
 import type { EngineTarget } from "./route";
 
@@ -38,12 +39,27 @@ export function useEngineTarget(threadId: string): EngineView {
   return viewOf(thread, engines ?? undefined, connection !== null);
 }
 
+/**
+ * The folder the shell is in, relative to the thread's worktree root: "" for the root itself or "a/b/". It follows the
+ * shell's own report (OSC 7). With no report yet, or a reported folder outside the worktree (which is never listed), it is
+ * the start folder, the worktree root.
+ */
+export function useShellDir(threadId: string, keyOf: string): string {
+  const reported = useShellFolder(keyOf);
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? null);
+  const root = useExplorer((state) => {
+    const trees = projectId ? state.worktrees[projectId]?.data?.worktrees : undefined;
+    return trees?.find((tree) => tree.threads.some((thread) => thread.id === threadId))?.path ?? null;
+  });
+  return reported !== null && root !== null ? (folderInRoot(root, reported) ?? "") : "";
+}
+
 /** What reading the folder the next completion needs is doing. `idle` is nothing to wait for, or it is there. */
 export type PathState = "idle" | "loading" | "failed";
 
 /**
  * Folder listings for path completion, read from the explorer's own cache (the same reads the Files tree makes). The
- * paths are relative to the thread's worktree root; the shell's current folder is not tracked.
+ * paths are relative to the thread's worktree root; the folder to read (`want`) is chosen by the caller.
  * `want` is the folder the next completion needs, so it is read when it is not yet there; `state` says how that read is going.
  */
 export function usePathListing(threadId: string, want: string | null): { listDir: (dir: string) => readonly PathEntry[] | null; state: PathState } {

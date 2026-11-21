@@ -1,12 +1,12 @@
 /**
  * The repositories of a project and the writes the screens make. The project repository routes (list, add-folder, create, clone,
- * cancel, scan, trust, setup-git, remove) use the generated types below. The thread side (`StartThreadInput`, `ThreadRepo`,
- * `TaskFolder`, the Git actions) is still hand-written from docs/multi-repo.md until its routes ship; replace those in the same
- * commit that generates them. Field names follow the T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
+ * cancel, scan, trust, setup-git, remove) and the thread side (`ThreadRepo`, `StartThreadInput`, `StartRepoChoice`, `AddThreadRepo`,
+ * `TaskFolder`: `repo-threads`, `task-folder`, `GET`/`POST /api/threads/{id}/repos`) use the generated types below, read against
+ * `crates/orbynd/src/routes/repos.rs` and `crates/orbyn-core/src/repos/threads.rs`. Field names follow the T3 Code workspace folder
+ * schema (MIT, 9168ca73d, names only) in snake_case.
  *
- * One thing the screens use is NOT in that document and is marked below: `ThreadRepo.pull_request`. The thread Git actions send
- * the existing thread routes with an optional `repo_id` ("Per-repository Git routes"). Removing a repository from a thread is not in
- * the beta, so there is no call for it.
+ * The thread Git actions send the existing thread routes with an optional `repo_id` (`GitAction.repo_id`). Removing a repository from
+ * a thread is not in the beta, so there is no call for it. Pull request routes take no `repo_id` yet, so no merge or review is offered here.
  *
  * Nothing here can carry a secret. Names, paths, URLs and branch names are text from the disk or a remote: untrusted. Render
  * them as text only, never as a link, a command or markup.
@@ -26,9 +26,17 @@ export type { RepoRow } from "../../generated/RepoRow";
 export type { ReposView } from "../../generated/ReposView";
 export type { RepoScan } from "../../generated/RepoScan";
 export type { ScannedFolder } from "../../generated/ScannedFolder";
+export type { ThreadRepo } from "../../generated/ThreadRepo";
+export type { AddThreadRepo } from "../../generated/AddThreadRepo";
+export type { StartRepoChoice } from "../../generated/StartRepoChoice";
+export type { StartThreadInput } from "../../generated/StartThreadInput";
+export type { TaskFolder } from "../../generated/TaskFolder";
 import type { RepoRow } from "../../generated/RepoRow";
 import type { ReposView } from "../../generated/ReposView";
 import type { RepoScan } from "../../generated/RepoScan";
+import type { StartThreadInput } from "../../generated/StartThreadInput";
+import type { TaskFolder } from "../../generated/TaskFolder";
+import type { ThreadRepo } from "../../generated/ThreadRepo";
 
 /** What a publish sends. The service answers the updated `RepoRow`. The host (GitHub) is not a field: the page's provider step only chooses where to publish. */
 export interface PublishInput {
@@ -37,62 +45,16 @@ export interface PublishInput {
   visibility: "private" | "public";
 }
 
-export interface StartRepoChoice {
-  repo_id: string;
-  /** The branch the thread's own branch starts from. */
-  base_branch: string;
-}
-
 /**
- * What the new-thread dialog sends. The permission mode is checked against the engine's `permission_modes`: a mode the engine does
- * not offer is refused with `permission_mode_unsupported` (400) before anything is created. A `model` of `null` is the engine's default.
- */
-export interface StartThreadInput {
-  repos: StartRepoChoice[];
-  engine: string;
-  model: string | null;
-  permission_mode: import("../../api/types").PermissionMode;
-  /** The optional first message. */
-  message?: string;
-  /** docs/multi-repo.md "Task folder": one new branch name cut in every chosen repository. Sent only for two or more repositories; absent, the service makes one name. */
-  branch_name?: string;
-}
-
-/** One repository a thread works in. */
-export interface ThreadRepo {
-  repo_id: string;
-  name: string;
-  /** The thread's own branch in this repository. */
-  branch: string;
-  added: number;
-  deleted: number;
-  trusted: boolean;
-  /** The paths of this repository's changed files, relative to the repository root, so two repositories can each have a `README.md`. Absent when the service has not read the changes yet. */
-  files?: string[];
-  /** NOT IN docs/multi-repo.md: the pull request of this repository's branch. The service sends none today, so the menu says "Create pull request". */
-  pull_request?: { number: number; url: string } | null;
-}
-
-/**
- * One Git action on ONE repository of a thread; no action spans repositories. Each is an existing thread route that takes an
- * optional `repo_id` (docs/multi-repo.md, "Per-repository Git routes"): commit, push and pull request are `POST .../git/action`,
- * merge and review are `POST .../pulls/{number}/merge` and `.../review`. There is no pull (fetch) action: the document defines none.
+ * One Git action on ONE repository of a thread; no action spans repositories. Each is `POST .../git/action`, whose body (`GitAction`)
+ * takes an optional `repo_id` (docs/multi-repo.md, "As built: repo_id on Git and file calls"). Merge and review are NOT here: the
+ * pull request routes take no `repo_id` yet and act on the primary repository, so a menu for another repository must not offer them.
+ * There is no pull (fetch) action: the document defines none.
  */
 export type ThreadGitAction =
   | { kind: "commit"; message: string }
   | { kind: "push" }
-  | { kind: "pull_request"; title: string }
-  | { kind: "merge"; number: number; method: "merge" | "squash" | "rebase" }
-  | { kind: "review"; number: number; event: "comment" | "approve" | "request_changes"; body: string };
-
-/** The thread folder of a thread in 2 to `max_per_thread` repositories. `root` is shown as text only; a repository's worktree is `<root>/<name>`. */
-export interface TaskFolder {
-  root: string;
-  /** The one branch name the thread uses in every repository. */
-  branch: string;
-  repos: ThreadRepo[];
-  max_per_thread: number;
-}
+  | { kind: "pull_request"; title: string };
 
 export type StartedThread = import("../../api/types").Thread;
 

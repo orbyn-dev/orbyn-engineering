@@ -49,6 +49,7 @@
 /* New thread: the Engine and Permission rows. */
 .repos-start-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--color-border); }
 .repos-start-label { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-start-trust { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 8px; }
 .repos-start-control { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 
 /* Publish: three steps in one dialog. */
@@ -73,3 +74,5 @@
 @media (min-width: 721px) {
   .repos-scan .repos-scan-row { grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr) auto; }
 }
+.branch-repo, .repos-scope { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.repos-scope { margin: 6px 12px 0; }

@@ -108,7 +108,13 @@ fn name_taken() -> CoreError {
 }
 
 /// A name or description as it is stored, or the rule it broke. The value is never put in the answer.
-fn clean(field: &str, text: &str, max: usize, min: usize, newline_ok: bool) -> Result<String> {
+pub(crate) fn clean(
+    field: &str,
+    text: &str,
+    max: usize,
+    min: usize,
+    newline_ok: bool,
+) -> Result<String> {
     let text = text.trim();
     let count = text.chars().count();
     if count < min || count > max {

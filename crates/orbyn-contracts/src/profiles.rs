@@ -17,12 +17,16 @@ pub enum ProfileTier {
 }
 
 wire_enum! {
-/// A grant a profile raises. The confirm of "Applying a grant-raising profile" lists these and nothing else.
+/// A grant a profile apply or a library workflow run raises. The confirm of "Applying a grant-raising profile" lists these and nothing else.
 pub enum ProfileGrant {
     /// `permission_mode: "full_access"`: runs any command without asking.
     FullAccess,
     /// `autopilot_mode: "full"`: merges when checks pass.
     AutopilotFull,
+    /// A library workflow run that has environment sets attached: their saved values go into the command's environment.
+    EnvValues,
+    /// A library workflow run whose entry came from a file, a repository or a shared link, and whose command the person has not yet acknowledged.
+    UntrustedSource,
 }
 }
 

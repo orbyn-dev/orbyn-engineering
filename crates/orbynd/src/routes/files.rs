@@ -42,7 +42,13 @@ async fn file_tree(
     Path(id): Path<String>,
     Query(query): Query<PathQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.list_files(&id, &query.path).await?))
+    Ok(Json(
+        orbyn_core::in_repo(
+            query.repo_id.clone(),
+            state.core.list_files(&id, &query.path),
+        )
+        .await?,
+    ))
 }
 
 async fn resolve_thread_path(
@@ -80,7 +86,12 @@ async fn file_metadata(
     Path(id): Path<String>,
     Query(query): Query<PathQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.file_metadata(&id, &query.path)?))
+    Ok(Json(
+        orbyn_core::in_repo(query.repo_id.clone(), async {
+            state.core.file_metadata(&id, &query.path)
+        })
+        .await?,
+    ))
 }
 
 /// A file outside the checkout, read-only; Core decides what may be shown.

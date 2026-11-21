@@ -34,9 +34,11 @@ describe("what sits under the floating title bar", () => {
 describe("the pull request list's optional columns", () => {
   it("empties a hidden column's track so the grid keeps no gap for it", () => {
     const table = rules.filter(({ selector }) => selector === ".pulls-table[data-no-reviewers]" || selector === ".pulls-table[data-no-review]");
-    expect(table.map(({ body }) => body.trim())).toEqual(["--c-rev: ;", "--c-yours: ;"]);
+    expect(table.map(({ body }) => body.trim().replace(/\s+/g, " "))).toEqual(["--c-rev: ; --c-rev-n: ;", "--c-yours: ; --c-yours-n: ;"]);
     const templates = rules.flatMap(({ body }) => [...body.matchAll(/--pulls-cols:\s*([^;]+);/g)].map((match) => match[1] ?? ""));
     // Every table template that has the two tracks takes them from the variables, wherever the breakpoint.
     for (const template of templates.filter((one) => /190px|28px/.test(one))) expect(template, template).toMatch(/var\(--c-yours\)/);
+    // The icon steps take the narrow tracks, emptied the same way.
+    for (const template of templates.filter((one) => /36px/.test(one))) expect(template, template).toMatch(/var\(--c-yours-n\)/);
   });
 });

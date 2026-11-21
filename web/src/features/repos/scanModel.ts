@@ -86,7 +86,7 @@ export const canAddScanned = (folder: ScannedFolder): boolean => folder.refused 
 /**
  * A branch name for a new task, by the checks of `git check-ref-format --branch`: no empty parts, no `..`, no control character, space,
  * `~ ^ : ? * [ \`, no `@{`, no leading dash or dot part, no part ending `.lock`, no trailing slash or dot, and not `@`. The service checks it
- * again, and a name already used in any chosen repository is refused there (`409 invalid`).
+ * again, and a name already used in any chosen repository is refused there (`400 invalid`, "<repo> already has a branch named <name>.").
  */
 export function checkBranchName(input: string): { ok: true; name: string } | { ok: false; reason: string } {
   const name = input.trim();

@@ -86,6 +86,11 @@ mod profiles;
 pub use profiles::{
     CrewApply, EngineSwitch, PROFILE_LIMIT, ProfileRow, ProfileSettings, ThreadApply,
 };
+mod library;
+pub use library::{
+    EnvSetFields, EnvSetRow, MAX_ENV_SETS, MAX_PROMPTS, MAX_WORKFLOWS, PromptFields, PromptRow,
+    WorkflowFields, WorkflowRow, name_key as library_name_key,
+};
 mod project_changes;
 mod project_names;
 mod questions;

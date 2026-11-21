@@ -5,7 +5,7 @@ import { Button, Pill } from "../../ui/controls";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { libraryApi, type LibraryData } from "./api";
 import type { EnvSet, Param, Prompt, RepoEnvSet, RepoPrompt, RepoWorkflow, SuggestionFile, Workflow } from "./contract";
-import { capped, keychainNote, kindLabel, plain } from "./model";
+import { capped, keychainNote, kindLabel, plain, sourceLabel } from "./model";
 import { ValueForm } from "./ValueForm";
 
 export const MASK = "••••••••";
@@ -46,15 +46,18 @@ export function WorkflowPage({ workflow, repo, sets, hasThread, onUse, onEdit, o
   busyCopy: boolean;
 }) {
   const shown = capped(workflow.command, 4200);
-  const attached = "env_set_ids" in workflow ? workflow.env_set_ids.map((id) => sets.find((set) => set.id === id)?.name ?? "a set that is gone") : [];
+  // A saved workflow lists sets by id; a repository entry names them (`env_set_names`).
+  const attached = "env_set_ids" in workflow ? workflow.env_set_ids.map((id) => sets.find((set) => set.id === id)?.name ?? "a set that is gone") : workflow.env_set_names;
+  const from = "source" in workflow ? sourceLabel(workflow.source) : null;
   return (
     <div className="lib-page">
-      <h3 className="lib-h">{plain(workflow.name, 60)}</h3>
+      <h3 className="lib-h">{plain(workflow.name, 60)}{from ? <Pill>{from}</Pill> : null}</h3>
       {workflow.description ? <p className="field-hint">{plain(workflow.description, 200)}</p> : null}
       <div className="field"><span className="lib-label">Command</span><pre className="lib-pre" data-testid="command">{shown.text}{shown.cut ? "…" : ""}</pre></div>
       <div className="field"><span className="lib-label">Parameters</span><ParamTable params={workflow.params} /></div>
       {attached.length > 0 ? <p className="field-hint">Environment: {attached.map((name) => plain(name, 40)).join(", ")}. Applied by the run; values stay hidden.</p> : null}
       <Source repo={repo} />
+      {"needs_ack" in workflow && workflow.needs_ack ? <p className="field-hint" role="note">This command came from outside this device. Its next run asks you to confirm first.</p> : null}
       <div className="lib-actions">
         {repo ? <Button tone="primary" busy={busyCopy} onClick={onCopy}>Copy to Personal</Button> : (
           <>
@@ -83,9 +86,10 @@ export function PromptPage({ prompt, repo, onUse, onEdit, onDelete, onCopy, busy
   busyCopy: boolean;
 }) {
   const shown = capped(prompt.body, 33_000);
+  const from = "source" in prompt ? sourceLabel(prompt.source) : null;
   return (
     <div className="lib-page">
-      <h3 className="lib-h">{plain(prompt.name, 60)}</h3>
+      <h3 className="lib-h">{plain(prompt.name, 60)}{from ? <Pill>{from}</Pill> : null}</h3>
       {prompt.description ? <p className="field-hint">{plain(prompt.description, 200)}</p> : null}
       <div className="field"><span className="lib-label">Prompt</span><pre className="lib-pre lib-prose" data-testid="body">{shown.text}{shown.cut ? "…" : ""}</pre></div>
       <div className="field"><span className="lib-label">Parameters</span><ParamTable params={prompt.params} /></div>
@@ -122,6 +126,8 @@ export function EnvSetPage({ set, repo, onChanged, onEdit, onDelete, onCopy, bus
   const [adding, setAdding] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // The service’s own words when a value save answered `keychain_unavailable`: a Planned state, not an error.
+  const [plannedNote, setPlannedNote] = useState<string | null>(null);
   const pending = useRef(false);
   const stored = "status" in set;
   const names = stored ? set.keys.map((key) => ({ name: key.name, present: key.present })) : set.keys.map((name) => ({ name, present: false }));
@@ -163,10 +169,10 @@ export function EnvSetPage({ set, repo, onChanged, onEdit, onDelete, onCopy, bus
             </li>
           ))}
         </ul>
-        {adding !== null && stored ? <ValueForm key={adding} setId={set.id} keyName={adding} replacing={names.find((key) => key.name === adding)?.present ?? false} onDone={() => { setAdding(null); onChanged(); }} onCancel={() => setAdding(null)} /> : null}
+        {adding !== null && stored ? <ValueForm key={adding} setId={set.id} keyName={adding} replacing={names.find((key) => key.name === adding)?.present ?? false} onDone={() => { setAdding(null); onChanged(); }} onPlanned={(message) => { setAdding(null); setPlannedNote(message); onChanged(); }} onCancel={() => setAdding(null)} /> : null}
         {problem ? <p className="field-error" role="alert">{problem}</p> : null}
       </div>
-      {note ? <p className="field-hint" role="note">{note}</p> : null}
+      {note ? <p className="field-hint" role="note">{note}</p> : plannedNote ? <p className="field-hint" role="note">{plannedNote}</p> : null}
       <p className="field-hint">Secrets are never in the repository or shown again. A workflow that lists this set gets them when it runs, and they are hidden in its output.</p>
       <Source repo={repo} />
       <div className="lib-actions">

@@ -29,7 +29,9 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;
-  const root = target.kind === "thread" ? cwd : (worktree?.path ?? "");
+  // Another repository's file is not under the thread's folder, and the outside editor route and the composer's file chip know only the primary checkout.
+  const foreign = target.kind === "thread" && target.repoId !== undefined;
+  const root = target.kind === "thread" ? (foreign ? "" : cwd) : (worktree?.path ?? "");
   const absolute = root ? `${root.replace(/\/$/, "")}/${relative}` : null;
   const copy = (text: string, done: string) =>
     navigator.clipboard?.writeText(text).then(
@@ -37,7 +39,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
       () => pushToast("Couldn't copy the path"),
     );
   // The thread's own file is named relative to its folder, a thread file by its tab and an explorer file by the worktree it is in; only a file of the thread's folder can be handed to an editor.
-  const own = target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
+  const own = foreign ? null : target.kind === "thread" ? target.path : worktree ? threadPathOf(worktree.path, cwd, target.path) : null;
   const list = editors.data ?? [];
   const primary = primaryEditor(list, preferred);
   const open = async (id: string, remember: boolean) => {
@@ -76,6 +78,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
                   )
                 : pushToast("Couldn't copy. The clipboard is unavailable.")),
           },
+          ...(foreign ? [] : [
           {
             label: "Add file to message",
             icon: <Paperclip size={14} aria-hidden />,
@@ -84,6 +87,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
               pushToast("File added to your message");
             },
           },
+          ]),
         ]
       : []),
     ...(own !== null && primary

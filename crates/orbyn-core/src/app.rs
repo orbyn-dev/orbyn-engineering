@@ -199,6 +199,8 @@ pub struct Core {
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
     /// Engine API keys, kept in the OS keychain only (`credentials`).
     pub(crate) credentials: crate::credentials::Credentials,
+    /// Personal-library environment-set values, kept in the OS keychain only, in their own service (`credentials::env_sets`).
+    pub(crate) env_sets: crate::credentials::EnvSets,
     _lock: OwnerLock,
 }
 
@@ -355,6 +357,7 @@ impl Core {
             crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
             credentials: Self::system_credentials(),
+            env_sets: crate::credentials::EnvSets::system(crate::credentials::default_env_service()),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
@@ -416,19 +419,24 @@ impl Core {
         })
     }
 
-    /// Records a refused request to a person-only route. The row names the route pattern and the caller class, and holds
+    /// Records a refused request to a person-only route. The row names the route pattern (and, for a handler-level refusal, the name of the field) and the caller class, and holds
     /// no body, header or token. `thread_id` is empty: a refusal belongs to no thread.
     pub fn record_person_route_refusal(
         &self,
         method: &str,
         route: &str,
+        field: Option<&str>,
         caller: &str,
         code: &str,
     ) -> Result<i64> {
+        let target = match field {
+            Some(field) => format!("{method} {route} [{field}]"),
+            None => format!("{method} {route}"),
+        };
         self.store.append_audit(&crate::store::AuditRecord {
             actor: caller.to_owned(),
             action: "person_route.refused".to_owned(),
-            target: format!("{method} {route}"),
+            target,
             decision: Some(orbyn_contracts::PolicyEffect::Deny),
             source: "access".to_owned(),
             thread_id: None,
@@ -436,6 +444,7 @@ impl Core {
             detail: serde_json::json!({
                 "route": route,
                 "method": method,
+                "field": field,
                 "caller": caller,
                 "code": code,
                 "note": "A person-only route was refused. Repeats inside a minute write no new row.",
@@ -446,6 +455,16 @@ impl Core {
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo
     /// hooks, so it needs a trusted folder like an engine does.
     pub async fn create_thread(&self, request: orbyn_contracts::CreateThread) -> Result<Thread> {
+        self.create_thread_in(request, None).await
+    }
+
+    /// `create_thread`, optionally in a folder the caller made and under an id it chose: a multi-repository
+    /// thread's task folder, which is not a repository.
+    pub(crate) async fn create_thread_in(
+        &self,
+        request: orbyn_contracts::CreateThread,
+        task_folder: Option<(String, String)>,
+    ) -> Result<Thread> {
         self.workspace.root()?;
         let project = match self.scratch_request(&request)? {
             Some(scratch) => scratch,
@@ -476,9 +495,15 @@ impl Core {
             }
             None => None,
         };
-        let cwd = worktree
-            .as_ref()
-            .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone());
+        let (thread_id_chosen, cwd) = match task_folder {
+            Some((id, folder)) => (Some(id), folder),
+            None => (
+                None,
+                worktree
+                    .as_ref()
+                    .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone()),
+            ),
+        };
         let project_id = project.id.clone();
         let remembered = self.store.remembered_selection(&request.engine)?;
         let default = self.project_default_selection(&request.engine, &project_id)?;
@@ -519,7 +544,7 @@ impl Core {
             wait_for_exit: !script.asynchronous,
             script: Some(script.clone()),
         });
-        let thread_id = new_id();
+        let thread_id = thread_id_chosen.unwrap_or_else(new_id);
         let registration = setup.as_ref().map(|_| self.setups.registration(&thread_id));
         let thread = self.store.create_registered_thread(
             &thread_id,

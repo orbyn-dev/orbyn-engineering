@@ -219,6 +219,23 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/projects/{id}/repos/{repo_id}/setup-git"),
     ("POST", "/api/projects/{id}/repos/{repo_id}/remove"),
     ("POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"),
+    // The personal library (docs/execution-profiles-and-library.md, Part 2).
+    ("POST", "/api/library/workflows"),
+    ("PATCH", "/api/library/workflows/{id}"),
+    ("DELETE", "/api/library/workflows/{id}"),
+    ("POST", "/api/library/workflows/{id}/run"),
+    ("POST", "/api/library/prompts"),
+    ("PATCH", "/api/library/prompts/{id}"),
+    ("DELETE", "/api/library/prompts/{id}"),
+    ("POST", "/api/library/env-sets"),
+    ("PATCH", "/api/library/env-sets/{id}"),
+    ("DELETE", "/api/library/env-sets/{id}"),
+    ("PUT", "/api/library/env-sets/{id}/keys/{key}"),
+    ("DELETE", "/api/library/env-sets/{id}/keys/{key}"),
+    ("POST", "/api/library/import"),
+    ("POST", "/api/projects/{id}/library/suggestions/copy"),
+    ("POST", "/api/projects/{id}/repo-threads"),
+    ("POST", "/api/threads/{id}/repos"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -268,7 +285,8 @@ pub async fn require_person(
         access.audit_person_refusal(
             request.method().as_str(),
             &route,
-            access.caller_class(&request),
+            None,
+            access.caller_class(request.headers()),
         );
         return Err(refusal);
     }
@@ -1067,6 +1085,86 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "/api/projects/{id}/repos/{repo_id}/clone/cancel",
         "the person stops a running clone",
     ),
+    (
+        "POST",
+        "/api/library/workflows",
+        "the person saves a library workflow, a command that can later run in their shell",
+    ),
+    (
+        "PATCH",
+        "/api/library/workflows/{id}",
+        "the person changes a library workflow, a command that can later run in their shell",
+    ),
+    (
+        "DELETE",
+        "/api/library/workflows/{id}",
+        "the person deletes a library workflow",
+    ),
+    (
+        "POST",
+        "/api/library/workflows/{id}/run",
+        "starts a library workflow in the person's shell, with the values of its environment sets",
+    ),
+    (
+        "POST",
+        "/api/library/prompts",
+        "the person saves a library prompt",
+    ),
+    (
+        "PATCH",
+        "/api/library/prompts/{id}",
+        "the person changes a library prompt",
+    ),
+    (
+        "DELETE",
+        "/api/library/prompts/{id}",
+        "the person deletes a library prompt",
+    ),
+    (
+        "POST",
+        "/api/library/env-sets",
+        "the person creates an environment set",
+    ),
+    (
+        "PATCH",
+        "/api/library/env-sets/{id}",
+        "the person renames an environment set or changes its key names, which deletes the keychain item of a removed key",
+    ),
+    (
+        "DELETE",
+        "/api/library/env-sets/{id}",
+        "the person deletes an environment set and every keychain value in it",
+    ),
+    (
+        "PUT",
+        "/api/library/env-sets/{id}/keys/{key}",
+        "the person stores a secret value in the OS keychain",
+    ),
+    (
+        "DELETE",
+        "/api/library/env-sets/{id}/keys/{key}",
+        "the person removes a secret value from the OS keychain",
+    ),
+    (
+        "POST",
+        "/api/library/import",
+        "imports an untrusted document into the personal library",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/library/suggestions/copy",
+        "the person copies an entry from a repository's committed .orbyn/ file into the device library",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repo-threads",
+        "the person starts a thread in several repositories, which creates a worktree and a branch in each",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/repos",
+        "the person adds a repository to a thread, which creates a worktree and a branch in it",
+    ),
 ];
 
 #[cfg(test)]
@@ -1244,9 +1342,39 @@ mod tests {
     async fn the_memory_of_refusals_stays_bounded() {
         let (_, rows, _, access) = audited(Some("the-key"), false).await;
         for n in 0..5000 {
-            access.audit_person_refusal("POST", &format!("/r/{n}"), CallerClass::ServiceToken);
+            access.audit_person_refusal(
+                "POST",
+                &format!("/r/{n}"),
+                None,
+                CallerClass::ServiceToken,
+            );
         }
         assert!(rows.lock().unwrap().len() <= 1024);
+    }
+
+    #[tokio::test]
+    async fn a_handler_level_refusal_is_audited_by_field_and_a_failed_write_still_refuses() {
+        let headers = axum::http::HeaderMap::new();
+        let (_, rows, offset, access) = audited(Some("the-key"), false).await;
+        for _ in 0..3 {
+            let refused = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
+            assert!(refused.is_err());
+        }
+        let _ = access.person_check_field(&headers, "POST", "/r/{id}", "worktree");
+        access.audit_person_refusal("POST", "/r/{id}", None, CallerClass::ServiceToken);
+        {
+            let rows = rows.lock().unwrap();
+            let fields: Vec<_> = rows.iter().map(|row| row.field).collect();
+            assert_eq!(fields, [Some("resume"), Some("worktree"), None]);
+        }
+        offset.store(REFUSAL_WINDOW.as_secs() + 1, Ordering::SeqCst);
+        let _ = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
+        assert_eq!(rows.lock().unwrap().len(), 4);
+
+        let (_, rows, _, failing) = audited(Some("the-key"), true).await;
+        let refused = failing.person_check_field(&headers, "POST", "/r/{id}", "resume");
+        assert!(refused.is_err(), "a failed audit write still refuses");
+        assert!(rows.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
