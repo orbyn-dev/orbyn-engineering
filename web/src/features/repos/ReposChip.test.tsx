@@ -33,7 +33,7 @@ it("counts the repositories and opens one row per repository with its branch, co
   await user.click(await screen.findByRole("button", { name: "Repos 2" }));
   const popover = await screen.findByRole("dialog", { name: "Repositories" });
   expect(within(popover).getByText("Working in 2 repositories")).toBeVisible();
-  expect(within(popover).getAllByText("fix/login")).toHaveLength(2);
+  expect(within(popover).getAllByText("fix/login")).toHaveLength(3); // two rows and the task folder line
   expect(within(popover).getByLabelText("4 added")).toBeVisible();
   expect(within(popover).getAllByText("Trusted")).toHaveLength(2);
   expect(within(popover).getByText("Each repository has its own branch for this thread")).toBeVisible();
@@ -63,4 +63,27 @@ it("opens as a sheet on a phone", async () => {
   const sheet = await screen.findByRole("dialog", { name: "Repositories" });
   expect(within(sheet).getByRole("button", { name: "Close" })).toBeVisible();
   expect(within(sheet).getByText("Working in 2 repositories")).toBeVisible();
+});
+
+it("shows the task folder as text with its one branch, and copies the path on request", async () => {
+  setReposApi(createReposMock());
+  render(<ReposChip thread={thread("thread-1")} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Repos 2" }));
+  const popover = await screen.findByRole("dialog", { name: "Repositories" });
+  const line = await within(popover).findByLabelText("Task folder");
+  expect(within(line).getByText("~/Library/Application Support/Orbyn/threads/thread-1")).toBeVisible();
+  expect(line.querySelector("a")).toBeNull();
+  await user.click(within(line).getByRole("button", { name: "Copy task folder path" }));
+  await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("~/Library/Application Support/Orbyn/threads/thread-1"));
+});
+
+it("draws no task folder line when the service has no task folder route", async () => {
+  const mock = createReposMock();
+  mock.taskFolder = async () => null;
+  setReposApi(mock);
+  render(<ReposChip thread={thread("thread-1")} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Repos 2" }));
+  const popover = await screen.findByRole("dialog", { name: "Repositories" });
+  expect(within(popover).queryByLabelText("Task folder")).toBeNull();
 });

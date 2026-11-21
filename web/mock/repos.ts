@@ -7,7 +7,7 @@
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { PermissionMode, Thread } from "../src/api/types.ts";
-import type { PublishInput, ReposApi, RepoRow, StartThreadInput, ThreadRepo } from "../src/features/repos/contract.ts";
+import type { PublishInput, RepoScan, ReposApi, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "../src/features/repos/contract.ts";
 
 const row = (id: string, branch: string | null, extra: Partial<RepoRow> = {}): RepoRow => ({
   id, name: id, path: `~/Documents/Github/${id}`, is_git: branch !== null, trusted: true, branch,
@@ -30,12 +30,16 @@ export interface ReposMock extends ReposApi {
   writes: string[];
   /** The engine, model, permission and first message each `start` write carried, in order. */
   starts: Pick<StartThreadInput, "engine" | "model" | "permission_mode" | "message">[];
+  /** Every scan the screens asked for, in order: `scan:<path>`. A scan writes nothing. */
+  scans: string[];
+  /** The `branch_name` each `start` write carried (`undefined` when none), in order. */
+  branchNames: (string | undefined)[];
   /** Make the next write of that kind fail. */
   failNext(what: "add" | "create" | "cancel-clone" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | "thread-git" | null): void;
 }
 
 export function createReposMock(init: {
-  repositories?: RepoRow[] | null; threads?: Record<string, ThreadRepo[]>; permissionModes?: Record<string, PermissionMode[]>; delayMs?: number; maxPerThread?: number; cloneDirectory?: string | null;
+  repositories?: RepoRow[] | null; threads?: Record<string, ThreadRepo[]>; permissionModes?: Record<string, PermissionMode[]>; delayMs?: number; maxPerThread?: number; cloneDirectory?: string | null; scan?: (path: string) => RepoScan | null;
 } = {}): ReposMock {
   let repositories = init.repositories === undefined ? repoFixtures() : init.repositories;
   const threads: Record<string, ThreadRepo[]> = init.threads ?? {
@@ -45,6 +49,8 @@ export function createReposMock(init: {
     ],
   };
   const writes: string[] = [];
+  const scans: string[] = [];
+  const branchNames: (string | undefined)[] = [];
   const starts: Pick<StartThreadInput, "engine" | "model" | "permission_mode" | "message">[] = [];
   let fail: string | null = null;
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, init.delayMs ?? 0));
@@ -62,6 +68,8 @@ export function createReposMock(init: {
   const replace = (next: RepoRow) => { repositories = held().map((entry) => (entry.id === next.id ? next : entry)); return next; };
   return {
     writes,
+    scans,
+    branchNames,
     starts,
     failNext: (what) => { fail = what; },
     list: async () => {
@@ -130,7 +138,8 @@ export function createReposMock(init: {
       find(repoId);
       repositories = held().filter((entry) => entry.id !== repoId);
     },
-    startThread: async (projectId, { repos: choices, engine, model, permission_mode, message }) => {
+    startThread: async (projectId, { repos: choices, engine, model, permission_mode, message, branch_name }) => {
+      branchNames.push(branch_name);
       starts.push({ engine, model, permission_mode, ...(message === undefined ? {} : { message }) });
       writes.push(`start:${choices.map((choice) => `${choice.repo_id}@${choice.base_branch}`).join(",")}`);
       await wait();
@@ -145,6 +154,25 @@ export function createReposMock(init: {
       const id = `thread-${writes.length + 100}`;
       threads[id] = choices.map((choice) => ({ repo_id: choice.repo_id, name: find(choice.repo_id).name, branch: "feat/new", added: 0, deleted: 0, trusted: true }));
       return { id, project_id: projectId, title: "New thread", engine, model, cwd: "/", worktree: null, skill_profile: null, active_run: null, last_run_state: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } as Thread;
+    },
+    scan: async (_project, path, signal) => {
+      scans.push(`scan:${path}`);
+      await wait();
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      if (init.scan !== undefined) return init.scan(path);
+      const workspace = path.endsWith(".code-workspace");
+      const folders: RepoScan["folders"] = [
+        { name: "orbyn-docs", path: `${path}/orbyn-docs`, is_git: true, source: workspace ? "code-workspace" : "child", in_project: false, refused: null },
+        { name: "orbyn-planner", path: `${path}/orbyn-planner`, is_git: true, source: workspace ? "code-workspace" : "child", in_project: true, refused: null },
+        { name: "notes", path: `${path}/notes`, is_git: false, source: workspace ? "code-workspace" : "child", in_project: false, refused: null },
+        ...(workspace ? [{ name: "shared", path: "/elsewhere/shared", is_git: true, source: "code-workspace" as const, in_project: false, refused: "outside" as const }] : []),
+      ];
+      return { path, is_git: false, code_workspace_file: workspace ? path : null, folders, truncated: false };
+    },
+    taskFolder: async (threadId) => {
+      await wait();
+      const held = threads[threadId] ?? [];
+      return held.length >= 2 ? ({ root: `~/Library/Application Support/Orbyn/threads/${threadId}`, branch: held[0]!.branch, repos: held, max_per_thread: init.maxPerThread ?? 8 } satisfies TaskFolder) : null;
     },
     threadRepos: async (threadId) => { await wait(); return threads[threadId] ?? null; },
     addThreadRepo: async (threadId, repoId) => {

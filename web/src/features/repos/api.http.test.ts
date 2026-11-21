@@ -116,3 +116,31 @@ it("reads a failed phase of an action as a failure, and passes 404 and 409 throu
 it("has no call that removes a repository from a thread", () => {
   expect("removeThreadRepo" in reposApi()).toBe(false);
 });
+
+it("scans through the Person-class route with the path in the body, and shapes the answer", async () => {
+  const fetching = stub(json({ path: "/w", is_git: false, code_workspace_file: null, truncated: false, folders: [{ name: "a", path: "/w/a", is_git: true, source: "child", in_project: false, refused: null }] }));
+  const scan = await reposApi().scan("p/1", "/w");
+  expect(scan?.folders).toHaveLength(1);
+  expect(call(fetching)).toMatchObject({ method: "POST", path: "/api/projects/p%2F1/repos/scan", body: { path: "/w" }, key: "mock-person-key" });
+});
+
+it("answers null for a scan or a task folder the service does not have (404), with no error", async () => {
+  stub(json({ code: "not_found", message: "x" }, 404), json({ code: "not_found", message: "x" }, 404));
+  expect(await reposApi().scan("p1", "/w")).toBeNull();
+  expect(await reposApi().taskFolder("t1")).toBeNull();
+});
+
+it("reads a thread's task folder without the person key", async () => {
+  const fetching = stub(json({ root: "/t/t1", branch: "feat/x", repos: [], max_per_thread: 8 }));
+  expect(await reposApi().taskFolder("t1")).toMatchObject({ root: "/t/t1", branch: "feat/x" });
+  expect(call(fetching)).toMatchObject({ method: "GET", path: "/api/threads/t1/task-folder", key: null });
+});
+
+it("sends branch_name on a thread start only when it is given", async () => {
+  const fetching = stub(json({ id: "t9" }), json({ id: "t9" }));
+  const base = { repos: [{ repo_id: "a", base_branch: "main" }, { repo_id: "b", base_branch: "main" }], engine: "claude", model: null, permission_mode: "supervised" as const };
+  await reposApi().startThread("p1", { ...base, branch_name: "feat/x" });
+  await reposApi().startThread("p1", base);
+  expect(call(fetching, 0).body.branch_name).toBe("feat/x");
+  expect("branch_name" in call(fetching, 1).body).toBe(false);
+});
