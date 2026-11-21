@@ -26,17 +26,17 @@ mod support;
 mod tests;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 pub use driver::HostDriver;
-pub use frames::PROTOCOL;
+pub use frames::{ErrorKind, PROTOCOL};
 pub use outcome::HOST_STOPPED;
-pub use pool::{HostStatus, Pool, SecretSource};
+pub use pool::{HostStatus, Pool, Refusal, SecretSource};
 pub use process::HostSpec;
 pub use state::{CrashInfo, CrashKind, ExitRecord, HostState, NotUsed, Timings};
 
 use crate::agents::driver::EngineDriver;
-use crate::credentials::{Credentials, DEV_SERVICE};
+use crate::app::Core;
 
 /// How the service was told to use the host.
 #[derive(Clone, Debug)]
@@ -66,20 +66,28 @@ fn platform_supported() -> bool {
     !cfg!(all(target_os = "macos", target_arch = "x86_64"))
 }
 
-/// Whether the person opted in to keeping a key for `family`. The setting is not built yet,
-/// so it is off: the call below returns no key until a later slice wires it.
-fn key_enabled(_family: &str) -> bool {
-    false
-}
+/// Where the hub finds the core that owns the person's keys. The core is shared after the engines
+/// are built, so it is bound once, later; until then no key is handed out.
+pub type CoreCell = Arc<OnceLock<Weak<Core>>>;
 
-fn secrets_for(family: &str) -> SecretSource {
+/// The secret source of a family: every spawn asks the core, which honours the person's per-engine
+/// opt-in (`Core::engine_spawn_secret`). It is the only place a spawn's key comes from. A core that is
+/// not bound, an engine the allowlist does not name, an opt-in that is off and a keychain that refuses
+/// all mean no key, never a fallback.
+pub fn secrets_from(core: CoreCell, family: &str) -> SecretSource {
     let family = family.to_owned();
     Arc::new(move || {
-        Credentials::system(DEV_SERVICE)
-            .take_for_spawn(&family, key_enabled(&family))
-            .ok()
-            .flatten()
+        let core = core.get()?.upgrade()?;
+        core.engine_spawn_secret(&family).ok().flatten()
     })
+}
+
+/// Why the person's stop or restart reached no host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlError {
+    /// No family of this name.
+    UnknownFamily,
+    Refused(Refusal),
 }
 
 enum Slot {
@@ -90,10 +98,12 @@ enum Slot {
 /// Every family's host state, one pool per family.
 pub struct HostHub {
     slots: Vec<Slot>,
+    core: CoreCell,
 }
 
 impl HostHub {
     pub fn new(config: &HostConfig) -> Self {
+        let core = CoreCell::default();
         let claude = if !platform_supported() {
             Slot::NotUsed("claude", NotUsed::UnsupportedPlatform)
         } else if !config.claude {
@@ -108,12 +118,18 @@ impl HostHub {
                     instance: "claude-default".into(),
                 },
                 config.timings.clone(),
-                Some(secrets_for("claude")),
+                Some(secrets_from(core.clone(), "claude")),
             ))
         };
         Self {
             slots: vec![claude],
+            core,
         }
+    }
+
+    /// Hands the hub the core that owns the person's keys. Called once, when the core is shared.
+    pub fn bind(&self, core: &Arc<Core>) {
+        let _ = self.core.set(Arc::downgrade(core));
     }
 
     /// `inner` run through the host, when its family uses it; otherwise `inner` unchanged.
@@ -144,6 +160,8 @@ impl HostHub {
                     host_version: None,
                     restart_count: 0,
                     last_crash: None,
+                    threads: Vec::new(),
+                    last_error: None,
                 },
             });
         }
@@ -159,6 +177,51 @@ impl HostHub {
                 pool.retry().await;
             }
         }
+    }
+
+    /// The pool of `family`, or why the person's stop or restart cannot reach one.
+    fn pool_of(&self, family: &str) -> Result<&Arc<Pool>, ControlError> {
+        for slot in &self.slots {
+            match slot {
+                Slot::Pool(pool) if pool.family == family => return Ok(pool),
+                Slot::NotUsed(name, _) if *name == family => {
+                    return Err(ControlError::Refused(Refusal::NotUsed));
+                }
+                _ => {}
+            }
+        }
+        Err(ControlError::UnknownFamily)
+    }
+
+    /// Whether `family` is one of the hub's (running on the host or not).
+    pub fn knows(&self, family: &str) -> bool {
+        !matches!(self.pool_of(family), Err(ControlError::UnknownFamily))
+    }
+
+    /// The person stopped a family's host (see [`Pool::stop`]).
+    pub async fn stop(
+        &self,
+        family: &str,
+        stop_background: bool,
+    ) -> Result<HostStatus, ControlError> {
+        let pool = self.pool_of(family)?;
+        pool.stop(stop_background)
+            .await
+            .map_err(ControlError::Refused)?;
+        Ok(pool.status().await)
+    }
+
+    /// The person restarted a family's host (see [`Pool::restart_now`]).
+    pub async fn restart(
+        &self,
+        family: &str,
+        stop_background: bool,
+    ) -> Result<HostStatus, ControlError> {
+        let pool = self.pool_of(family)?;
+        pool.restart_now(stop_background)
+            .await
+            .map_err(ControlError::Refused)?;
+        Ok(pool.status().await)
     }
 
     /// The app is exiting: every host's stdin closes and it is killed after the grace.

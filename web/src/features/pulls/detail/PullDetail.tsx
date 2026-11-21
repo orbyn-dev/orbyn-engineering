@@ -16,6 +16,7 @@ import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { PageBar } from "../../../product/ui/PageBar";
+import { RunTab, runLinkClient } from "../../crew";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
@@ -77,6 +78,12 @@ export function PullDetail({
   const [mergeMenu, setMergeMenu] = useState<{ x: number; y: number } | null>(null);
   const loadedAt = useMemo(() => (detail.data ? Date.now() : null), [detail.data]);
   const [tab, setTab] = useState<Tab>("summary");
+  // The Run tab is drawn only when the client says a Crew run made this pull request. The production client says none yet.
+  const runLink = useAsync(`pull-run:${projectId}:${number}:${page}`, (signal) => (page ? runLinkClient().forPull(projectId, number, signal) : Promise.resolve(null)));
+  const runTask = runLink.data?.task ?? null;
+  useEffect(() => {
+    if (tab === "run" && runTask === null) setTab("summary");
+  }, [tab, runTask]);
   const [merging, setMerging] = useState(false);
   // The dialog is built from this detail, so it opens on a read that has finished: a kept
   // copy drawn while the read runs could be of a pull request that has moved on.
@@ -393,7 +400,7 @@ export function PullDetail({
       Open on {forge === "The host" ? "the forge" : forge}
     </a>
   );
-  const pageOrder = ["summary", "guide", "timeline", "code", "checks"] as const;
+  const pageOrder = (runTask === null ? ["summary", "guide", "timeline", "code", "checks"] : ["summary", "guide", "timeline", "code", "checks", "run"]) as readonly Tab[];
   const counts: Partial<Record<Tab, number | null | undefined>> = {
     // What the tab lists: comments, reviews and commits alike. Until it has loaded, the comments alone.
     timeline: activity.data ? activity.data.length : mine?.comment_count,
@@ -478,7 +485,7 @@ export function PullDetail({
         {pageTabs}
       </div>
       <div className="pull-page-body" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${tab}`}>
-        {tab === "guide" || tab === "code" || tab === "timeline" || tab === "checks" ? (
+        {tab === "guide" || tab === "code" || tab === "timeline" || tab === "checks" || (tab === "run" && runTask !== null) ? (
           <div className="pull-cols">
             <div className="pull-main">
               {tab === "guide" ? (
@@ -490,6 +497,8 @@ export function PullDetail({
                   <PullConversation projectId={projectId} number={number} />
                   <TimelineList events={activity as TimelineRead} />
                 </>
+              ) : tab === "run" && runTask !== null ? (
+                <RunTab task={runTask} pull={number} />
               ) : (
                 <Checks projectId={projectId} number={number} />
               )}

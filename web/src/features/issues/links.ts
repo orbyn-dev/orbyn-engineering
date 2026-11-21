@@ -50,10 +50,11 @@ export function useThreadIssues(threadId: string): { issues: IssueRef[]; reload(
 }
 
 /** The thread ids that link this issue, for its Linked threads card. */
-export function useIssueThreads(ref: Pick<IssueRef, "tracker" | "scope" | "key">): { threadIds: string[]; loaded: boolean } {
-  useEnsureLinks();
+export function useIssueThreads(ref: Pick<IssueRef, "tracker" | "scope" | "key">): { threadIds: string[]; loaded: boolean; failed: boolean; retry(): Promise<void> } {
+  const version = useEnsureLinks();
+  const failed = useLinks((state) => state.failed);
   const byThread = useLinks((state) => state.byThread);
   const loaded = useLinks((state) => state.readFrom !== null);
   const wanted = refKey(ref);
-  return { threadIds: Object.keys(byThread).filter((id) => byThread[id]!.some((issue) => refKey(issue) === wanted)), loaded };
+  return { threadIds: Object.keys(byThread).filter((id) => byThread[id]!.some((issue) => refKey(issue) === wanted)), loaded, failed, retry: () => reloadIssueLinks(version) };
 }

@@ -36,8 +36,10 @@ pub enum ClosedReason {
     Crash(CrashInfo),
     /// No run and no background work for the idle timeout.
     Idle,
-    /// The core closed it.
+    /// The core closed it: the app is exiting.
     Shutdown,
+    /// The person stopped it.
+    Stopped,
 }
 
 /// Why a request got no answer.
@@ -57,6 +59,7 @@ pub struct Closing;
 
 struct Route {
     session: String,
+    thread: String,
     tx: mpsc::UnboundedSender<RunFrame>,
 }
 
@@ -123,6 +126,7 @@ impl Connection {
         id: u64,
         timings: Timings,
         shutdown: CancellationToken,
+        stop: CancellationToken,
     ) -> Arc<Self> {
         let shared = Arc::new(Shared {
             // 1 was `init`.
@@ -141,7 +145,9 @@ impl Connection {
             outbox: transport.outbox.clone(),
             closed,
         });
-        tokio::spawn(watch_host(transport, shared, timings, shutdown, closed_tx));
+        tokio::spawn(watch_host(
+            transport, shared, timings, shutdown, stop, closed_tx,
+        ));
         connection
     }
 
@@ -195,7 +201,7 @@ impl Connection {
     }
 
     /// Where the frames of `send_id` (and the background frames of `session`) go.
-    pub fn register(&self, send_id: u64, session: &str) -> Result<RunRoute, Closing> {
+    pub fn register(&self, send_id: u64, session: &str, thread: &str) -> Result<RunRoute, Closing> {
         let mut book = lock(&self.shared.book);
         if book.closing {
             return Err(Closing);
@@ -205,6 +211,7 @@ impl Connection {
             send_id,
             Route {
                 session: session.to_owned(),
+                thread: thread.to_owned(),
                 tx,
             },
         );
@@ -238,6 +245,18 @@ impl Connection {
     /// Background tasks reported started and not yet ended.
     pub fn open_background(&self) -> usize {
         lock(&self.shared.book).background.len()
+    }
+
+    /// The threads that have a run open, each once, in order.
+    pub fn open_threads(&self) -> Vec<String> {
+        let mut threads: Vec<String> = lock(&self.shared.book)
+            .routes
+            .values()
+            .map(|route| route.thread.clone())
+            .collect();
+        threads.sort();
+        threads.dedup();
+        threads
     }
 
     /// Runs with an open route.
@@ -353,6 +372,7 @@ async fn watch_host(
     shared: Arc<Shared>,
     timings: Timings,
     shutdown: CancellationToken,
+    stop: CancellationToken,
     closed: watch::Sender<Option<ClosedReason>>,
 ) {
     let mut malformed = MalformedWindow::default();
@@ -373,6 +393,10 @@ async fn watch_host(
             () = shutdown.cancelled() => {
                 lock(&shared.book).closing = true;
                 break ClosedReason::Shutdown;
+            }
+            () = stop.cancelled() => {
+                lock(&shared.book).closing = true;
+                break ClosedReason::Stopped;
             }
             item = transport.lines.recv() => match item {
                 None | Some(Read::Eof) => {

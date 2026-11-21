@@ -32,6 +32,8 @@ beforeEach(() => {
     if (method === "GET" && path === "/api/providers") {
       return { providers: mock.engines.map((one) => ({ id: one.id, name: one.name, group: "in_use", labels: [], registered: true, openable: true })) } as never;
     }
+    // The engine host status is a read of its own; this service does not report it, so the group draws nothing.
+    if (method === "GET" && path === "/api/engine-host") throw new ApiFailure("not_found", "No engine host.", 404);
     // API key storage reads its own status; this service keeps no key, so the group draws nothing.
     if (method === "GET" && path.startsWith("/api/settings/engine-credentials/")) throw new ApiFailure("not_found", "This engine does not keep a key.", 404);
     const wanted = (body as { keys?: string[]; edits?: Record<string, { value: JsonValue[] }> });

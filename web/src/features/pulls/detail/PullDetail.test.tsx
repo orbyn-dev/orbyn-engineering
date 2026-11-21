@@ -6,6 +6,7 @@ import { dataChanged } from "../../../api/shell";
 import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
 import { useConnection } from "../../../product/state/connection";
+import { setRunLinkClient } from "../../crew";
 import { PullDetail } from "./PullDetail";
 
 const pull = (over: Record<string, unknown> = {}): PullRequestDetail["pull"] =>
@@ -587,5 +588,22 @@ describe("Request changes", () => {
     await flushAll();
     expect(screen.getByText(/It may have been sent/)).toBeInTheDocument();
     expect(vi.mocked(pullsApi.detail).mock.calls.length).toBeGreaterThan(reads);
+  });
+});
+
+describe("the Run tab", () => {
+  afterEach(() => setRunLinkClient(null));
+
+  it("is absent with the production client, which reports no run for any pull request", async () => {
+    await show(detail());
+    expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
+  });
+
+  it("is drawn only when the client says a Crew task made the pull request", async () => {
+    const forPull = vi.fn().mockResolvedValue({ task: "task-redirect" });
+    setRunLinkClient({ forPull });
+    await show(detail());
+    expect(forPull).toHaveBeenCalledWith("p", 142, expect.anything());
+    expect(screen.getByRole("tab", { name: "Run" })).toBeInTheDocument();
   });
 });

@@ -28,7 +28,7 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const QUESTION_TOOL: &str = "AskUserQuestion";
 /// Tools this server provides. Each governs itself, so `approve` does not ask again.
-const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
+pub(crate) const OWN_TOOL_PREFIX: &str = "mcp__orbyn_engineering__";
 
 /// Engines give up on a tool call at about a minute, so a reply has to be sent first. `crew_review` keeps
 /// inside this itself: it reads the call's own deadline (`call_deadline`), stops starting lanes in time and
@@ -337,7 +337,8 @@ impl McpService {
     }
 }
 
-fn parse_questions(input: &Value) -> Vec<Question> {
+/// The questions of an `AskUserQuestion` input, by question text.
+pub(crate) fn parse_questions(input: &Value) -> Vec<Question> {
     let text = |value: &Value, key: &str| {
         value
             .get(key)

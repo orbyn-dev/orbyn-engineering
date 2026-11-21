@@ -2,8 +2,12 @@
 //! misbehaves on purpose) and the engine host's own `fake` family. They need `node`; without
 //! it a test says so loudly and returns, it never passes silently.
 
+mod asks;
+mod control;
 mod pool;
+mod real;
 mod runs;
+mod secrets;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,6 +62,11 @@ impl Rig {
             .collect()
     }
 
+    /// Every line the host received, exactly as it arrived.
+    pub fn raw(&self) -> String {
+        std::fs::read_to_string(self.dir.path().join("requests.log.raw")).unwrap_or_default()
+    }
+
     pub fn driver(&self) -> HostDriver {
         driver(&self.pool)
     }
@@ -72,6 +81,14 @@ pub(super) fn driver(pool: &Arc<Pool>) -> HostDriver {
 }
 
 pub(super) fn standin(env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
+    standin_with(env, timings, None)
+}
+
+pub(super) fn standin_with(
+    env: &[(&str, &str)],
+    timings: Timings,
+    secrets: Option<SecretSource>,
+) -> Option<Rig> {
     let program = node()?;
     let dir = TempDir::new();
     let script =
@@ -94,7 +111,7 @@ pub(super) fn standin(env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
         instance: "test".into(),
     };
     Some(Rig {
-        pool: Pool::new("fake", spec, timings, None),
+        pool: Pool::new("fake", spec, timings, secrets),
         dir,
     })
 }

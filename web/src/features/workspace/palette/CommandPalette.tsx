@@ -8,6 +8,7 @@ import { useUi, type PaletteStart } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { ProjectBadge } from "../../../product/ui/badges";
 import { useAccountAvailable } from "../../account";
+import { Button } from "../../../ui/controls";
 import { AddProjectPalette } from "./AddProjectPalette";
 import { loadFrecency, rankEntries, recordUse, saveFrecency } from "./paletteRanking";
 
@@ -67,14 +68,29 @@ function useMessageSearch(query: string, enabled: boolean) {
   return hits.data ?? [];
 }
 
+type PullEntry = Awaited<ReturnType<typeof pullsApi.list>>["pulls"][number];
+
 /** Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed. */
-function usePullSearch(query: string, enabled: boolean) {
+function usePullSearch(query: string, enabled: boolean): { pulls: PullEntry[]; status: "idle" | "loading" | "error"; retry(): void } {
   const on = enabled && query.trim().length >= MESSAGE_SEARCH_MIN;
   const list = useAsync(`palette:pulls:${on ? "on" : "off"}`, async (signal) => {
     if (!on) return [];
     return (await pullsApi.list("open", "", signal)).pulls;
   });
-  return list.data ?? [];
+  return { pulls: list.data ?? [], status: !on ? "idle" : list.status === "loading" ? "loading" : list.status === "error" ? "error" : "idle", retry: list.reload };
+}
+
+/** What the palette says in the Pull requests group while the list is read or cannot be (palette-prs-loading, palette-prs-unreadable). */
+function PullsNote({ status, onRetry }: { status: "loading" | "error"; onRetry(): void }) {
+  return (
+    <div>
+      <div className="palette-group">Pull requests</div>
+      <div className="palette-note" role="status">
+        <span>{status === "loading" ? "Looking for pull requests…" : "Couldn’t read pull requests. Threads and commands still work."}</span>
+        {status === "error" ? <Button small onClick={onRetry}>Retry</Button> : null}
+      </div>
+    </div>
+  );
 }
 
 export function CommandPalette({ start, onClose }: { start: PaletteStart; onClose(): void }) {
@@ -102,7 +118,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
   const hits = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
   const accountOn = useAccountAvailable();
-  const pulls = usePullSearch(query, !searchTitle[start] && !newIn);
+  const { pulls, status: pullStatus, retry: retryPulls } = usePullSearch(query, !searchTitle[start] && !newIn);
   const [book, setBook] = useState(() => loadFrecency());
   const entries = useMemo<Entry[]>(() => {
     if (searchTitle[start]) {
@@ -249,6 +265,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
   };
 
   let group = "";
+  const noteAt = entries.some((entry) => entry.group === "Messages") ? entries.findIndex((entry) => entry.group === "Messages") : entries.length;
   return (
     <dialog
       ref={ref}
@@ -292,12 +309,15 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         />
       </div>
       <div id="palette-list" className="palette-list">
-        {entries.length === 0 ? <p className="sidebar-empty">No results</p> : null}
+        {entries.length === 0 && pullStatus === "idle" ? <p className="sidebar-empty">No results</p> : null}
         {entries.map((entry, at) => {
+          // The pull request line sits after the ranked groups, ahead of the messages.
+          const note = pullStatus !== "idle" && at === noteAt ? <PullsNote key="pulls-note" status={pullStatus} onRetry={retryPulls} /> : null;
           const heading = entry.group !== group ? entry.group : null;
           group = entry.group;
           return (
             <div key={entry.key}>
+              {note}
               {heading ? <div className="palette-group">{heading}</div> : null}
               <button
                 type="button"
@@ -312,6 +332,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
             </div>
           );
         })}
+        {pullStatus !== "idle" && noteAt >= entries.length ? <PullsNote status={pullStatus} onRetry={retryPulls} /> : null}
       </div>
       <footer className="palette-foot">
         <span>

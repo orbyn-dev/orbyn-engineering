@@ -26,11 +26,17 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
+/** The pages inside a Settings page, by the section that holds them: `#/settings/appearance/theme-editor`. */
+const SETTINGS_SUBPAGES = new Map<SettingsSection, readonly string[]>([["appearance", ["theme-editor"]]]);
+export type SettingsSubPage = "theme-editor";
+/** What a row key in an address may be: lower-case words joined by hyphens, short. Anything else names no row. */
+const ROW_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 /** The Crew screens built so far; the rest join as they land. */
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 /** Where the coverage map was opened from. It comes from the address the link carried, never from history: no origin, no way back drawn. */
@@ -47,6 +53,12 @@ export type Route =
   | {
       name: "settings";
       section: SettingsSection | null;
+      /** A page inside the section (the Theme editor in Appearance). */
+      sub?: SettingsSubPage;
+      /** A row on the page the address names (`#/settings/chat/search-engine`): the page's own row key, never a row id. Settings looks it up in its row list and ignores one it does not have. */
+      row?: string;
+      /** The page name an address carried that Settings does not have: General opens with a note. Never written back to an address. */
+      unknown?: string;
       selection?: ProjectSettingsSelection;
       machine?: string;
       task?: string;
@@ -54,8 +66,7 @@ export type Route =
       edit?: boolean;
       /**
        * Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent), or a
-       * page that picks its own project: Review capacity and its coverage map (`repo` names the project the coverage map
-       * opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`).
+       * page that picks its own project: Review capacity and its coverage map, the Crew dashboard (`repo` names the project each opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`).
        */
       crewPage?: CrewSettingsPage;
       repo?: string;
@@ -84,6 +95,7 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   thresholds: "areas/thresholds",
   capacity: "capacity",
   coverage: "capacity/coverage",
+  dashboard: "dashboard",
   escapes: "escapes",
   possible: "escapes/possible",
   "escape-settings": "escapes/settings",
@@ -92,7 +104,7 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   estimate: "backtest/estimate",
   report: "backtest/report",
 };
-const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "escapes", "possible"];
+const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible"];
 const CREW_PAGES_WITH_ORIGIN: readonly CrewSettingsPage[] = ["coverage"];
 const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report"];
 
@@ -128,7 +140,9 @@ export function routeHref(route: Route): string {
       return route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? `#/issues/${enc(route.tracker)}/${enc(route.scope)}/${enc(route.key)}` : "#/issues";
     case "settings": {
       const base = route.section ? `#/settings/${route.section}` : "#/settings";
-      const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}` : base;
+      const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}`
+        : route.section && route.sub && SETTINGS_SUBPAGES.get(route.section)?.includes(route.sub) ? `${base}/${route.sub}`
+        : route.section && route.section !== "crew" && route.row && ROW_KEY.test(route.row) ? `${base}/${route.row}` : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
@@ -213,9 +227,15 @@ export function parseRoute(hash: string): Route {
       const selection: ProjectSettingsSelection | undefined = params.has("checkout")
         ? { kind: "checkout", group_key: params.get("project") ?? "", project_id: params.get("checkout") ?? "" }
         : params.has("project") ? { kind: "project_group", group_key: params.get("project") ?? "" } : undefined;
+      const section = SETTINGS_SECTIONS.find((entry) => entry === first) ?? null;
+      const sub = section && second ? SETTINGS_SUBPAGES.get(section)?.find((entry) => entry === second) : undefined;
+      const row = section && section !== "crew" && !sub && second && ROW_KEY.test(second) ? second : undefined;
       return {
         name: "settings",
-        section: SETTINGS_SECTIONS.find((section) => section === first) ?? null,
+        section,
+        ...(sub ? { sub: sub as SettingsSubPage } : {}),
+        ...(row ? { row } : {}),
+        ...(first && !section ? { unknown: first } : {}),
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),
         ...(first === "crew" ? crewPageOf(second, third, params) : {}),

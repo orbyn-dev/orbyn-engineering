@@ -1,23 +1,28 @@
+import type { EngineHostCrash } from "../../generated/EngineHostCrash";
+import type { EngineHostErrorKind } from "../../generated/EngineHostErrorKind";
+import type { EngineHostNotUsed } from "../../generated/EngineHostNotUsed";
+import type { EngineHostState } from "../../generated/EngineHostState";
+
 /**
  * The engine host's status and the API key storage choice, as the settings screens read them.
  *
- * PLANNED CONTRACT. The Rust side of these routes is not merged: no type here is generated, and the only
- * implementation of `EngineHostApi` that exists is the mock in `web/mock/engineHost.ts`. When the routes land,
- * replace these hand-written types with the generated ones in the same commit that adds the real client.
+ * The host status is REAL: `GET /api/engine-host` (Local read, Eng 2's HostDriver slice 1) answers one `EngineHostStatus` per family, and
+ * `hostStatus.ts` turns each into the `HostRow` below. Stop and restart are Person routes
+ * (`POST /api/engine-host/{family}/stop` and `/restart`); Try again is the restart. A host with a background task open answers 409
+ * `background_open`, and only a second request with `stopBackground: true`, sent after the person confirmed, goes through. Fields marked PLANNED are in docs/engine-host-protocol.md
+ * (Host status, Planned) or guessed; the real client never fills them, and a screen draws one only when it is there. The mock fills them.
  *
  * Nothing a screen reads can carry a secret: the API key storage choice is a word and a date. The key goes outward once, as the argument of `saveKey`.
  */
 
-/** The nine labels a host row can carry (the protocol's Handshake and Crash and recovery sections). */
-export type HostState =
-  | "not_started" | "starting" | "running" | "stopped" | "crashed"
-  | "restarting" | "cant_start" | "version_mismatch" | "not_used";
+/** The nine labels a host row can carry: the generated `EngineHostState`. A word the service adds later is shown as Unknown. */
+export type HostState = EngineHostState;
 
-/** The closed set of error kinds the host sends (protocol, Errors). Absent means unknown. */
+/** PLANNED (not in slice 1): the closed set of run error kinds the host sends (protocol, Errors). Absent means unknown. */
 export type HostErrorKind =
   | "auth" | "rate_limit" | "network" | "invalid_request" | "unsupported" | "cancelled" | "engine" | "host" | "session_lost";
 
-/** One link of an error's cause chain, outermost first. The stack is deliberately not here. */
+/** PLANNED: one link of an error's cause chain, outermost first. The stack is deliberately not here. */
 export interface HostCause {
   name: string;
   message: string;
@@ -25,39 +30,57 @@ export interface HostCause {
 }
 
 export interface HostError {
+  /** PLANNED: the run error kind, not the crash's `error_kind`. */
   kind?: HostErrorKind | null;
   /** The short, already redacted sentence. */
   message: string;
-  /** Up to 8 causes; a loop ends with the message `[Circular error cause]`. */
+  /** PLANNED: up to 8 causes; a loop ends with the message `[Circular error cause]`. */
   causes: HostCause[];
 }
 
-/** One engine host: one per family, or per instance where the engine reads process-wide settings. */
+/**
+ * One engine host: one per family. The first group of fields is what slice 1 returns; the rest is PLANNED or mock-only.
+ * Text the service chose (`name`, `detail`, `action`, the crash message and stderr tail) is cut and drawn as text, never markup.
+ */
 export interface HostRow {
-  /** Matches `EngineStatus.id`, so a provider's detail page finds its host. */
+  /** The family (`EngineHostStatus.family`), which matches `EngineStatus.id`, so a provider's detail page finds its host. */
   id: string;
+  /** The family's display name; the service sends only the family, so this is the family's own name or the family itself. */
   name: string;
   state: HostState;
-  /** One host serves every thread of the family (Cursor). */
-  pooled?: boolean;
-  /** ISO time the host started running. */
-  since?: string | null;
-  /** ISO time it stopped or crashed. */
-  stopped_at?: string | null;
   host_version?: string | null;
+  /** Restarts after a crash since the app started. */
+  restart_count?: number;
+  /** The last time the host failed. */
+  last_crash?: EngineHostCrash | null;
+  /** The host's protocol number, for a mismatch (`protocol_host`). */
   protocol?: number | null;
-  /** The protocol number this app speaks, for a mismatch. */
+  /** The protocol number this app speaks, for a mismatch (`protocol_app`). */
   app_protocol?: number | null;
+  /** For `not_used`: why the family does not use the host. */
+  not_used?: EngineHostNotUsed | null;
+  /** A plain sentence the service gives for a state that stops runs. */
+  detail?: string | null;
+  /** What the person can do, when there is one thing (`Update Orbyn`). */
+  action?: string | null;
+  /** The crash's time, for a row that says when it stopped (`last_crash.at`, or the mock's `stopped_at`). */
+  stopped_at?: string | null;
+  /** The crash as a sentence plus (PLANNED) a cause chain; derived from `last_crash` for a real row. */
+  last_error?: HostError | null;
+  /** Only a family marked unavailable (`cant_start`) waits for the person: the real client sets it for that state. */
+  can_retry: boolean;
+  /** PLANNED: one host serves every thread of the family (Cursor). */
+  pooled?: boolean;
+  /** PLANNED: ISO time the host started running. */
+  since?: string | null;
+  /** PLANNED: the host's own `hello` details. */
   sdk?: { name: string; version: string } | null;
-  /** The host's own `hello` list. */
   capabilities?: string[];
+  /** PLANNED: the try and the next try. Slice 1 gives only `restart_count`. */
   restart?: { attempt: number; limit: number; next_try_seconds: number | null } | null;
   failed_threads?: number | null;
-  /** For can't start: how many times it stopped inside the window. */
+  /** PLANNED: for can't start, how many times it stopped inside the window. The protocol fixes it at five in five minutes. */
   stops_in_window?: number | null;
-  last_error?: HostError | null;
-  /** Only a family marked unavailable waits for the person. */
-  can_retry: boolean;
   /** GUESSED SHAPE: threads running on this host now, for the Stop question in Maintenance. */
   running_threads?: number;
   /** GUESSED SHAPE (not in docs/engine-host-protocol.md): the app has a Rust driver the run can fall back to when the host is unavailable. */
@@ -66,16 +89,18 @@ export interface HostRow {
   sdk_missing?: boolean;
 }
 
-/** A host crash for Maintenance diagnostics, the only place a stack is ever shown. */
+/** A host crash for Maintenance diagnostics: the generated `EngineHostCrash` with the family it belongs to. No stack exists. */
 export interface HostCrash {
+  /** Family and time, so a second crash of the family is another row. */
   id: string;
+  family: string;
   at: string;
   message: string;
-  kind?: HostErrorKind | null;
-  restart?: { attempt: number; limit: number } | null;
-  failed_threads: number;
-  causes: HostCause[];
-  stack?: string | null;
+  error_kind: EngineHostErrorKind;
+  exit_code?: number;
+  signal?: number;
+  /** Redacted and capped at 1024 characters by the core; drawn as plain text. */
+  stderr_tail: string;
 }
 
 /**
@@ -98,6 +123,12 @@ export interface KeyStorage {
   stopped?: number | null;
 }
 
+/** The service's code for a stop or restart refused because the host has a background task open. */
+export const BACKGROUND_OPEN = "background_open";
+
+/** What a stop or restart asks beyond the host: `stopBackground` is sent only after the person was told background work would end. */
+export interface HostControlOptions { stopBackground?: boolean }
+
 /** A refused keychain write: the service answers with one of these codes and nothing else about why. */
 export const KEYCHAIN_LOCKED = "keychain_locked";
 export const KEYCHAIN_DENIED = "keychain_denied";
@@ -107,6 +138,8 @@ export const KEYCHAIN_DENIED = "keychain_denied";
  * screens then draw nothing. Every write is one request for one click.
  */
 export interface EngineHostApi {
+  /** False when the service has no stop or restart route: the screens then draw no button for them. Absent means true (the real client and the mock). */
+  writable?: boolean;
   hosts(signal?: AbortSignal): Promise<HostRow[] | null>;
   crashes(signal?: AbortSignal): Promise<HostCrash[]>;
   /** The engines that may keep an API key in the keychain, or `null` when the service has none to offer. */
@@ -115,9 +148,9 @@ export interface EngineHostApi {
    * Start a family that is marked unavailable, or restart a running one (which ends its threads like `stop`).
    * The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`): it changes what runs.
    */
-  retry(hostId: string): Promise<void>;
+  retry(hostId: string, options?: HostControlOptions): Promise<void>;
   /** Stop a running or restarting host; the threads on it end with the host's own sentence. The real route must be Person-class (ENFORCED). */
-  stop(hostId: string): Promise<void>;
+  stop(hostId: string, options?: HostControlOptions): Promise<void>;
   /** Never keep this engine's API key (a decision, kept). The real route must be Person-class (ENFORCED). */
   decline(engineId: string): Promise<KeyStorage>;
   /**

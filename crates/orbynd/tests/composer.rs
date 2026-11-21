@@ -457,7 +457,7 @@ async fn permission_modes_answer_in_the_gate_and_stop_at_the_write_scope() {
 }
 
 #[tokio::test]
-async fn plan_mode_reaches_both_engines() {
+async fn a_saved_plan_mode_never_restricts_a_run() {
     let dir = TempDir::new();
     let file = dir.path().join("launches");
     let options = || Options {
@@ -469,8 +469,8 @@ async fn plan_mode_reaches_both_engines() {
     };
     let (service, thread) = setup(&dir, options(), "claude").await;
     service.patch(&thread, json!({ "plan_mode": true })).await;
-    service.admit(&thread, "plan it").await;
-    service.finished(&thread).await;
+    service.admit(&thread, "do it").await;
+    assert_eq!(service.finished(&thread).await, "completed");
     let project = service.json("/api/projects").await;
     let id = project
         .as_array()
@@ -483,12 +483,13 @@ async fn plan_mode_reaches_both_engines() {
         .to_owned();
     let codex = service.thread(&id, "codex").await;
     service.patch(&codex, json!({ "plan_mode": true })).await;
-    service.admit(&codex, "plan it").await;
-    service.finished(&codex).await;
+    service.admit(&codex, "do it").await;
+    assert_eq!(service.finished(&codex).await, "completed");
     let log = std::fs::read_to_string(&file).unwrap();
-    assert!(log.contains(r#""--permission-mode","plan""#));
+    assert!(log.contains(r#""--permission-mode","default""#), "{log}");
+    assert!(!log.contains(r#""--permission-mode","plan""#), "{log}");
     assert!(
-        log.contains(r#"\"sandboxPolicy\":{\"type\":\"readOnly\"}"#),
+        !log.contains(r#"\"sandboxPolicy\":{\"type\":\"readOnly\"}"#),
         "{log}"
     );
 }

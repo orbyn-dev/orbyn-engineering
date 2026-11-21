@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { issueFixtures } from "../../../mock/issues";
 import type { IssueRef } from "./contract";
-import { activeChips, applyQuery, choiceLabel, hostFor, knownTrackers, trackerDetail, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, stateWord, threadMarker } from "./model";
+import { activeChips, applyQuery, choiceLabel, hostFor, knownTrackers, trackerDetail, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, sortWord, stateWord, threadMarker } from "./model";
 
 const ref = (state: IssueRef["state"], key = "1"): IssueRef => ({ tracker: "github", scope: "o/r", key, display_key: `#${key}`, title: "t", state, labels: [] });
 
@@ -83,5 +83,18 @@ describe("state choices and tracker lines", () => {
   it("keeps the five known trackers in the design's order and drops one the service invents", () => {
     const rows = knownTrackers([{ tracker: "linear", connected: false }, { tracker: "__proto__" as never, connected: true }, { tracker: "github", connected: true }]);
     expect(rows.map((row) => row.tracker)).toEqual(["github", "linear"]);
+  });
+});
+
+describe("sort", () => {
+  const pool = issueFixtures();
+  it("orders by update by default, and by creation when asked, newest first", () => {
+    const byUpdate = applyQuery(pool, { ...noQuery, state: "all" }, null).map((one) => one.updated_at);
+    expect(byUpdate).toEqual([...byUpdate].sort().reverse());
+    const mixed = pool.map((one, at) => (at === 0 ? { ...one, created_at: "2020-01-01T00:00:00Z" } : one));
+    const byCreated = applyQuery(mixed, { ...noQuery, state: "all", sort: "created" }, null);
+    expect(byCreated.at(-1)!.key).toBe(mixed[0]!.key);
+    expect(sortWord(undefined)).toBe("Updated");
+    expect(sortWord("created")).toBe("Created");
   });
 });

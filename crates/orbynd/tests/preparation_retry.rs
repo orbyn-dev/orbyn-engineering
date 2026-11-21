@@ -421,7 +421,7 @@ async fn retry_keeps_saved_selection_and_current_permissions_without_changing_pr
     let (service, _, thread, cwd) = fixture(&dir).await;
     assert_eq!(service.patch(&thread, json!({"model":"fake-big","effort":"xhigh","options":{"service_tier":"priority"},"permission_mode":"full_access"})).await.0, 200);
     let run = failed(&service, &thread, &cwd).await;
-    assert_eq!(service.patch(&thread, json!({"model":"fake-small","effort":"low","options":{"service_tier":""},"permission_mode":"supervised","plan_mode":true})).await.0, 200);
+    assert_eq!(service.patch(&thread, json!({"model":"fake-small","effort":"low","options":{"service_tier":""},"permission_mode":"supervised"})).await.0, 200);
     service.admit(&thread, "later-current-selection").await;
     assert_eq!(service.finished(&thread).await, "completed");
     let remembered: String = db(&dir)
@@ -441,7 +441,7 @@ async fn retry_keeps_saved_selection_and_current_permissions_without_changing_pr
     assert_eq!(sent[1]["effort"], "xhigh");
     assert_eq!(sent[1]["serviceTier"], "priority");
     assert_eq!(sent[1]["approvalPolicy"], "on-request");
-    assert_eq!(sent[1]["sandboxPolicy"]["type"], "readOnly");
+    assert_ne!(sent[1]["sandboxPolicy"]["type"], "readOnly");
     let current = service.json(&format!("/api/threads/{thread}")).await;
     assert_eq!(current["model"], "fake-small");
     assert_eq!(current["effort"], "low");

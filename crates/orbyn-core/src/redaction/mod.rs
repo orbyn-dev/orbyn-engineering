@@ -2,6 +2,7 @@
 //! settings that decide where each applies. See [README](README.md).
 
 mod api;
+pub(crate) use api::redactor_from;
 mod builtin;
 pub mod changes;
 mod custom;

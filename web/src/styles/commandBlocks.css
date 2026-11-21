@@ -1,0 +1,160 @@
+/* Command blocks in the terminal drawer (docs/command-blocks.md). One card per command; the output is plain text in a pre. */
+.cb-list {
+  container: cb / inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 45%;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px 10px;
+  overflow: auto;
+}
+.cb-list > .btn {
+  align-self: flex-start;
+}
+.cb-block {
+  position: relative;
+  flex: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-10);
+  background: var(--color-background);
+  /* clip, not hidden: the header sticks to the list that scrolls, not to this card. */
+  overflow: clip;
+}
+.cb-block[data-failed] {
+  border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+}
+.cb-block[data-selected] {
+  box-shadow: 0 0 0 1.5px var(--color-focus);
+}
+.cb-block:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+/* The header stays at the top of the list while its block's output scrolls under it. */
+.cb-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  background: var(--color-raised);
+}
+.cb-mark {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  color: var(--color-muted);
+}
+.cb-mark[data-tone="failed"],
+.cb-meta[data-tone="failed"] {
+  color: var(--color-danger);
+}
+.cb-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-cmd[data-quiet] {
+  color: var(--color-muted);
+  font-family: inherit;
+}
+.cb-meta {
+  flex: none;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  white-space: nowrap;
+}
+/* Actions show on hover or when something inside the block has focus; they stay in the layout so the header does not jump. */
+.cb-acts {
+  display: flex;
+  flex: none;
+  opacity: 0;
+}
+.cb-block:hover .cb-acts,
+.cb-block:focus-within .cb-acts,
+.cb-block[data-selected] .cb-acts {
+  opacity: 1;
+}
+.cb-acts .icon-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-7);
+}
+.cb-out {
+  margin: 0;
+  padding: 6px 12px;
+  overflow-x: auto;
+  color: var(--color-textSoft);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 1.65;
+  white-space: pre;
+}
+.cb-out[data-faded] {
+  padding-bottom: 12px;
+}
+.cb-more,
+.cb-note,
+.cb-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.cb-more {
+  background: var(--color-raised);
+}
+.cb-more .btn,
+.cb-note .btn {
+  margin-left: auto;
+}
+.cb-foot {
+  padding: 6px 8px;
+}
+.cb-note {
+  border-top: 0;
+}
+.cb-head + .cb-note {
+  border-top: 1px solid var(--color-border);
+}
+.cb-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+.cb-empty b {
+  color: var(--color-text);
+  font-weight: 600;
+}
+/* A narrow drawer keeps Copy output, Run again and More; Collapse moves into More. The command is cut, never wrapped. */
+@container cb (width < 480px) {
+  .cb-fold {
+    display: none;
+  }
+  .cb-acts {
+    opacity: 1;
+  }
+}

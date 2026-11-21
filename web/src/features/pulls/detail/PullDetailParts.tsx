@@ -10,11 +10,11 @@ import { baseChangeAllowed } from "../model/pullModel";
 import { PullDetailBlocksSkeleton, SignedOutBlock, UnreachableBlock } from "./PullDetailBlocks";
 import { navigate } from "../../../product/state/route";
 
-export type Tab = "summary" | "guide" | "timeline" | "code" | "checks";
+export type Tab = "summary" | "guide" | "timeline" | "code" | "checks" | "run";
 
-export const TAB_LABELS: Record<Tab, string> = { summary: "Summary", guide: "Guide", timeline: "Timeline", code: "Code", checks: "Checks" };
+export const TAB_LABELS: Record<Tab, string> = { summary: "Summary", guide: "Guide", timeline: "Timeline", code: "Code", checks: "Checks", run: "Run" };
 
-export const PAGE_LABELS: Record<Tab, string> = { summary: "Summary", guide: "Guide", timeline: "Conversation", code: "Files changed", checks: "Checks" };
+export const PAGE_LABELS: Record<Tab, string> = { summary: "Summary", guide: "Guide", timeline: "Conversation", code: "Files changed", checks: "Checks", run: "Run" };
 
 /** The rows of the pull request's More actions menu. */
 export function pullMenuItems({

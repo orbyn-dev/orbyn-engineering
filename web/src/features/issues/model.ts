@@ -1,5 +1,6 @@
-import type { IssueQuery, IssueRef, IssueState, IssueSummary, TrackerKind, TrackerRow, TrackerStatus } from "./contract";
+import type { IssueQuery, IssueRef, IssueState, IssueSummary, LinkedPullRequest, TrackerKind, TrackerRow, TrackerStatus } from "./contract";
 import { TRACKER_KINDS, TRACKER_NAMES } from "./contract";
+import { relativeTime } from "../../lib/format";
 
 /** The word the state shows: Open, Closed, or Closed as not planned when the tracker says so. Never colour alone. */
 export function stateWord(state: IssueState): string {
@@ -55,8 +56,11 @@ export function applyQuery(issues: readonly IssueSummary[], query: IssueQuery, v
       const hay = `${issue.display_key} ${issue.title}`.toLowerCase();
       return words.every((word) => hay.includes(word));
     })
-    .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    .sort((a, b) => (query.sort === "created" ? Date.parse(b.created_at) - Date.parse(a.created_at) : Date.parse(b.updated_at) - Date.parse(a.updated_at)));
 }
+
+/** What the sort control says: `Sort: Updated` or `Sort: Created`. */
+export const sortWord = (sort: IssueQuery["sort"]): string => (sort === "created" ? "Created" : "Updated");
 
 /** The labels in a list with how many issues carry each, most used first. */
 export function labelCounts(issues: readonly IssueSummary[]): { name: string; count: number }[] {
@@ -190,3 +194,22 @@ export function knownTrackers(rows: readonly TrackerRow[]): TrackerRow[] {
   const byKind = new Map(rows.filter((row) => isTracker(row.tracker)).map((row) => [row.tracker, row] as const));
   return TRACKER_KINDS.flatMap((kind) => { const row = byKind.get(kind); return row ? [row] : []; });
 }
+
+/**
+ * When a closed issue was closed, in words: "closed 5 days ago". Only for a closed issue that the tracker gave a date for; an open
+ * issue never has one, whatever a tracker sends, and a tracker with no date gives none.
+ */
+export function closedWords(issue: Pick<IssueSummary, "state" | "closed_at">): string | null {
+  if (issue.state.category !== "closed" || !issue.closed_at) return null;
+  const when = relativeTime(issue.closed_at).toLowerCase();
+  return when ? `closed ${when}` : null;
+}
+
+/** The state of a linked pull request as a word: an open one has none (it is the plain case), a draft is Draft. */
+export function pullWord(pull: Pick<LinkedPullRequest, "state" | "is_draft">): string | null {
+  if (pull.state === "merged") return "Merged";
+  if (pull.state === "closed") return "Closed";
+  return pull.is_draft ? "Draft" : null;
+}
+
+export const capText = capped;

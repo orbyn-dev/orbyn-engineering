@@ -205,6 +205,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     // Crew is Preview and has no screen yet: a developer turns its tools on here.
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
     config.code_mode = env_flag("ORBYN_CODE_MODE");
+    config.issues = env_flag("ORBYN_ISSUES");
     (
         config.crew_merge_required_checks,
         config.crew_merge_watch_interval,
@@ -340,6 +341,7 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
     );
     core.mcp.bind_host(&core);
+    core.engines.bind_host_core(&core);
     core.set_crew_engine_approvers();
     orbyn_core::operations::diagnostics::start_sampling();
     core.start_telemetry_export(telemetry_interval()?)

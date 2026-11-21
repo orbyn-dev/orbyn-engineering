@@ -91,6 +91,7 @@ async fn begin(
     claude_path: Option<&Path>,
     confinement: Option<Value>,
     send_id: u64,
+    message_id: &str,
 ) -> Result<Value> {
     let operation = if spec.resume.is_some() {
         "resume"
@@ -118,7 +119,7 @@ async fn begin(
         .request_as(
             send_id,
             "send",
-            json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec) }),
+            json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec), "messageId": message_id }),
         )
         .await
         .map_err(refused)
@@ -243,11 +244,14 @@ impl EngineDriver for HostDriver {
             .await
             .map_err(|unavailable| CoreError::EngineUnavailable(unavailable.0))?;
         let send_id = connection.next_id();
-        let route = connection.register(send_id, &spec.run_id).map_err(|_| {
-            CoreError::EngineUnavailable(
-                "The engine host is stopping. Send your message again.".into(),
-            )
-        })?;
+        let route = connection
+            .register(send_id, &spec.run_id, &spec.thread_id)
+            .map_err(|_| {
+                CoreError::EngineUnavailable(
+                    "The engine host is stopping. Send your message again.".into(),
+                )
+            })?;
+        let message_id = crate::agents::driver::claude::prompt_uuid();
         let accepted = match begin(
             &connection,
             &spec,
@@ -255,6 +259,7 @@ impl EngineDriver for HostDriver {
             claude_path.as_deref(),
             confinement,
             send_id,
+            &message_id,
         )
         .await
         {
@@ -268,6 +273,7 @@ impl EngineDriver for HostDriver {
         let (input, steering) = mpsc::unbounded_channel();
         let (control, controls) = mpsc::unbounded_channel();
         let run = Run {
+            pool: self.pool.clone(),
             connection,
             route,
             send_id,
@@ -279,6 +285,7 @@ impl EngineDriver for HostDriver {
             controls,
             cancel_grace: self.pool.timings().cancel_grace,
             accepted,
+            message_id,
         };
         Ok(RunHandle {
             cancel,

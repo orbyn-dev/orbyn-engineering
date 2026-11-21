@@ -31,6 +31,8 @@ struct ScriptDriver {
     update_script: String,
     probes: std::sync::atomic::AtomicU64,
     start_failure: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    /// What a running turn's steer input received, when a test asks for one.
+    steer_log: Option<Arc<std::sync::Mutex<Vec<SteerMessage>>>>,
 }
 
 fn capabilities() -> EngineCapabilities {
@@ -116,10 +118,19 @@ impl EngineDriver for ScriptDriver {
         }
         let cancel = CancellationToken::new();
         let task = (self.script)(spec, events, cancel.clone());
+        let input = self.steer_log.clone().map(|log| {
+            let (sender, mut receiver) = mpsc::unbounded_channel::<SteerMessage>();
+            tokio::spawn(async move {
+                while let Some(steer) = receiver.recv().await {
+                    log.lock().unwrap().push(steer);
+                }
+            });
+            sender
+        });
         Ok(RunHandle {
             cancel,
             task,
-            input: None,
+            input,
             control: None,
         })
     }
@@ -164,6 +175,27 @@ async fn fixture_full(
     capabilities: EngineCapabilities,
     warms: bool,
 ) -> Fixture {
+    fixture_steering(
+        script,
+        update,
+        update_timeout,
+        start_failure,
+        capabilities,
+        warms,
+        None,
+    )
+    .await
+}
+
+async fn fixture_steering(
+    script: Script,
+    update: &str,
+    update_timeout: Duration,
+    start_failure: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    capabilities: EngineCapabilities,
+    warms: bool,
+    steer_log: Option<Arc<std::sync::Mutex<Vec<SteerMessage>>>>,
+) -> Fixture {
     let dir = TempDir::new();
     let root = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -177,6 +209,7 @@ async fn fixture_full(
         update_script: update.to_owned(),
         probes: Default::default(),
         start_failure,
+        steer_log,
     }));
     core.workspace
         .setup(orbyn_contracts::WorkspaceSetup {
@@ -1247,4 +1280,223 @@ async fn no_run_starts_while_its_thread_is_rewound() {
     drop(hold);
     let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
     until_terminal(&f.core, &run.id).await;
+}
+
+fn a_secret() -> String {
+    format!("ghp_{}", "a1B2c3D4e5".repeat(4))
+}
+
+fn recording(seen: &Arc<std::sync::Mutex<Vec<RunSpec>>>) -> Script {
+    let seen = seen.clone();
+    Arc::new(move |spec: RunSpec, events, _| {
+        seen.lock().unwrap().push(spec);
+        tokio::spawn(async move {
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    })
+}
+
+fn timeline(f: &Fixture) -> String {
+    serde_json::to_string(&f.core.store.events_after(&f.thread, 0, 200).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn a_secret_in_a_message_reaches_the_engine_masked_and_stays_in_the_thread() {
+    let secret = a_secret();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, &format!("deploy with {secret} now"), "t")
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    let spec = seen.lock().unwrap().remove(0);
+    for sent in [&spec.prompt, &spec.user_prompt] {
+        assert!(
+            !sent.contains(&secret),
+            "the engine read the secret: {sent}"
+        );
+        assert!(
+            sent.contains("deploy with [hidden: GitHub token] now"),
+            "{sent}"
+        );
+    }
+    assert!(!spec.context.contains(&secret));
+    assert!(
+        timeline(&f).contains(&secret),
+        "the person's thread keeps what they typed"
+    );
+}
+
+#[tokio::test]
+async fn a_queued_follow_up_reaches_the_engine_masked_and_stays_queued_as_typed() {
+    let secret = a_secret();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let record = seen.clone();
+    let script: Script = Arc::new(move |spec: RunSpec, events, _| {
+        record.lock().unwrap().push(spec);
+        let gate = gate.clone();
+        tokio::spawn(async move {
+            gate.notified().await;
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let first = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    until_state(&f.core, &first.id, RunState::Running).await;
+    let queued = f
+        .core
+        .runs
+        .enqueue(&f.thread, &format!("then use {secret}"), &[])
+        .unwrap();
+    assert_eq!(
+        f.core.store.list_queue(&f.thread).unwrap()[0].prompt,
+        format!("then use {secret}"),
+        "the queue keeps the typed text ({})",
+        queued.id
+    );
+    release.notify_one();
+    assert_eq!(
+        until_terminal(&f.core, &first.id).await,
+        RunState::Completed
+    );
+    for _ in 0..2000 {
+        if seen.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    release.notify_one();
+    let specs = seen.lock().unwrap();
+    assert_eq!(specs.len(), 2);
+    assert!(!specs[1].prompt.contains(&secret));
+    assert!(
+        specs[1]
+            .user_prompt
+            .contains("then use [hidden: GitHub token]")
+    );
+}
+
+#[tokio::test]
+async fn a_steer_reaches_the_engine_masked_and_the_timeline_keeps_it_as_typed() {
+    let secret = a_secret();
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let gate = release.clone();
+    let script: Script = Arc::new(move |_, events, _| {
+        let gate = gate.clone();
+        tokio::spawn(async move {
+            gate.notified().await;
+            let _ = events.send(text("done")).await;
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Completed))
+                .await;
+        })
+    });
+    let f = fixture_steering(
+        script,
+        "echo updated",
+        Duration::from_secs(30),
+        None,
+        capabilities(),
+        false,
+        Some(log.clone()),
+    )
+    .await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    until_state(&f.core, &run.id, RunState::Running).await;
+    f.core
+        .runs
+        .steer(&f.thread, Some("s1"), &format!("also {secret}"))
+        .unwrap();
+    for _ in 0..2000 {
+        if !log.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let got = log.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].prompt, "also [hidden: GitHub token]");
+    assert!(
+        timeline(&f).contains(&secret),
+        "the timeline keeps the typed steer"
+    );
+    // A refused steer goes back to the queue as the person typed it.
+    let scope = RunScope {
+        run_id: run.id.clone(),
+        thread_id: f.thread.clone(),
+        engine: "script".into(),
+        family: "script".into(),
+        write_scope: None,
+        mode: PermissionMode::Supervised,
+        plan: false,
+    };
+    f.core.runs.requeue_steer(&scope, &got[0]);
+    let queued = f.core.store.list_queue(&f.thread).unwrap();
+    assert_eq!(queued[0].prompt, format!("also {secret}"));
+    release.notify_one();
+}
+
+#[tokio::test]
+async fn the_agents_switch_and_a_person_pattern_decide_what_the_engine_reads() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    f.core
+        .change_redaction_surfaces(
+            "t",
+            &orbyn_contracts::RedactionSurfaceChange {
+                terminal: None,
+                agents: Some(false),
+            },
+        )
+        .unwrap();
+    let secret = a_secret();
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, &format!("use {secret}"), "t")
+        .unwrap();
+    until_terminal(&f.core, &run.id).await;
+    assert!(
+        seen.lock().unwrap()[0].user_prompt.contains(&secret),
+        "with the switch off nothing is hidden"
+    );
+}
+
+#[tokio::test]
+async fn a_person_pattern_is_masked_for_the_engine_before_any_cut() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let f = fixture(recording(&seen)).await;
+    f.core
+        .save_redaction_pattern(
+            "t",
+            None,
+            &orbyn_contracts::RedactionPatternInput {
+                name: "Project code".into(),
+                pattern: "corp_[a-z]{6}".into(),
+                kind: orbyn_contracts::PatternKind::Regex,
+                applies_to: orbyn_contracts::PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let run = f
+        .core
+        .runs
+        .admit(&f.thread, "the code is corp_abcdef ok", "t")
+        .unwrap();
+    until_terminal(&f.core, &run.id).await;
+    let sent = seen.lock().unwrap()[0].user_prompt.clone();
+    assert_eq!(sent, "the code is [hidden: Project code] ok");
+    assert!(timeline(&f).contains("corp_abcdef"));
 }

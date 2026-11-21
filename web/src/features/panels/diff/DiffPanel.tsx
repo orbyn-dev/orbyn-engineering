@@ -16,13 +16,13 @@ import { GitActionDialog } from "./GitActionDialog";
 import { createPullRequestPlan } from "../../../product/git/plans";
 import { useResolvedThreadPath } from "../../../product/composer/useResolvedThreadPath";
 import { openInEditor } from "../files/openInEditor";
-import { ChangedFiles } from "./ChangedFiles";
+import { ChangedFiles, fileKey, type RepoFile } from "./ChangedFiles";
 import { useHunkActions } from "./useHunkActions";
 import { ChangesHeader, DIFF_SOURCES, NARROW, WIDE, type ComparePair, type DiffSource } from "./ChangesHeader";
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
 import { commitItems, turnItems, type TurnTotals } from "./pickers";
-import { useThreadRepos } from "../../repos";
+import { plain, useThreadRepos } from "../../repos";
 import { findHits, shownLimit, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 
 const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
@@ -147,6 +147,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const reveal = useUi((state) => state.diffReveal);
   const resolved = useResolvedThreadPath(threadId, reveal ? { ...reveal, basis: "repository" } : null);
   const consume = useUi((state) => state.consumeDiffReveal);
+  // The file on show is named by `fileKey` (repository and path), so two README.md files in different repositories are two files.
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [shownFully, setShownFully] = useState<ReadonlySet<string>>(new Set());
@@ -182,10 +183,12 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   }, []);
   const wide = width >= WIDE;
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
+  // The project's own folder is the primary repository and its id is the project's: an edit there leaves `repo_id` out.
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
   const hunkActions = useHunkActions(threadId, cwd);
 
   const files = useMemo(() => {
-    const every = diff.data ?? [];
+    const every: RepoFile[] = diff.data ?? [];
     const kept = hideTests ? every.filter((file) => !TEST_FILE.test(file.path)) : every;
     // A conflict is listed first: it is the one thing that needs the person.
     return [...kept].sort((a, b) => Number(b.status === "conflicted") - Number(a.status === "conflicted"));
@@ -196,16 +199,22 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     return wanted ? files.filter((file) => file.path.toLowerCase().includes(wanted)) : files;
   }, [files, filter]);
   // With Collapse all files, nothing is open until a file is picked from the list.
-  const selectedPath = pickedPath && files.some((file) => file.path === pickedPath) ? pickedPath : collapsed ? null : files[0]?.path ?? null;
-  const selected = files.find((file) => file.path === selectedPath) ?? null;
+  const selectedPath = pickedPath && files.some((file) => fileKey(file) === pickedPath) ? pickedPath : collapsed ? null : files[0] ? fileKey(files[0]) : null;
+  const selected = files.find((file) => fileKey(file) === selectedPath) ?? null;
   const selectedLines = useMemo(() => (selected ? linesOf(selected, ignoreSpace) : []), [selected, ignoreSpace]);
+
+  // In a multi-repository thread the file header names the repository, so the diff always says whose README.md it shows.
+  const repoNameOf = (file: RepoFile): string | undefined => {
+    const repo = file.repo_id === undefined ? undefined : threadRepos.repos?.find((one) => one.repo_id === file.repo_id);
+    return repo ? plain(repo.name) : undefined;
+  };
 
   const wanted = needle.trim().toLowerCase();
   const hits = useMemo(
     () => (findOpen && wanted ? findHits(files.map((file) => {
       // Lines cut off or collapsed are not drawn, so find does not count them until Show anyway draws them.
       const lines = linesOf(file, ignoreSpace);
-      return { path: file.path, lines: lines.slice(0, shownLimit(lines.length, file.path, shownFully.has(file.path))) };
+      return { path: fileKey(file), lines: lines.slice(0, shownLimit(lines.length, file.path, shownFully.has(fileKey(file)))) };
     }), wanted) : []),
     [findOpen, wanted, files, ignoreSpace, shownFully],
   );
@@ -236,8 +245,9 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     if (!path || !reveal || useUi.getState().diffReveal?.nonce !== reveal.nonce
       || useWorkspace.getState().threads[threadId]?.cwd !== reveal.cwd) return;
     // A revealed file opens in the list's view of it.
-    if (files.some((file) => file.path === path)) {
-      setPickedPath(path);
+    const found = files.find((file) => file.path === path);
+    if (found) {
+      setPickedPath(fileKey(found));
       consume(reveal.nonce);
     }
   }, [reveal, resolved.value, files, consume, threadId]);
@@ -284,16 +294,18 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   ) : undefined;
   const view = selected ? (
     <FileView
-      key={selected.path}
+      key={fileKey(selected)}
       file={selected}
       lines={selectedLines}
       threadId={threadId}
       origin={origin}
       needle={findOpen ? wanted : ""}
-      current={hit && hit.path === selected.path ? { row: hit.row, start: hit.start } : null}
-      full={shownFully.has(selected.path)}
+      current={hit && hit.path === fileKey(selected) ? { row: hit.row, start: hit.start } : null}
+      full={shownFully.has(fileKey(selected))}
+      repoName={repoNameOf(selected)}
+      repoId={selected.repo_id !== undefined && selected.repo_id !== projectId ? selected.repo_id : undefined}
       split={wide}
-      onShowAll={() => setShownFully(new Set(shownFully).add(selected.path))}
+      onShowAll={() => setShownFully(new Set(shownFully).add(fileKey(selected)))}
       canRender={source === "worktree" || source === "thread"}
       bar={bar}
       edits={source === "worktree" && !ignoreSpace ? { revert: hunkActions.revert, saveLine: hunkActions.saveLine } : undefined}
@@ -301,7 +313,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     />
   ) : null;
   // The list draws its first 50 rows, and always the one on show (a picked file or a find match opens past the cap).
-  const upTo = allFiles ? listed.length : Math.max(FILE_CAP, listed.findIndex((file) => file.path === selectedPath) + 1);
+  const upTo = allFiles ? listed.length : Math.max(FILE_CAP, listed.findIndex((file) => fileKey(file) === selectedPath) + 1);
   const list = (
     <ChangedFiles
       files={listed.slice(0, upTo)}

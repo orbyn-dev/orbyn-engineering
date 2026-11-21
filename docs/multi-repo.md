@@ -59,6 +59,16 @@ in the query for a `GET`; absent means the primary repository, so a one-reposito
 - `POST /api/threads/{id}/pulls` (link or open a pull request), `.../pulls/{number}/merge` and `.../review`:
   `repo_id` says which repository's pull request; a thread may link one pull request per repository.
 
+- **File reads and writes name their repository.** The web app's hunk revert, its undo and its inline line
+  edit are all one read and one write of a file: `GET /api/threads/{id}/files/content?path=` and
+  `PUT /api/threads/{id}/files/content` with `{ path, content, base_revision }`. There is no separate hunk-revert
+  route. Both take `repo_id` (query on the read, body on the write); absent means the primary repository. The
+  service resolves `path` against that repository's worktree only and refuses a path that does not belong to it
+  (`400 invalid`: absolute, `..`, a symlink out of the worktree), so a same-named file in another repository is
+  never read or written. The `revision` a read returns belongs to that repository's file, so a write with
+  another repository's revision is a conflict. A `repo_id` that is not one of the thread's repositories is
+  `404 not_found`; an untrusted one is `409 repo_untrusted`. The write stays Person-class.
+
 A `repo_id` that is not one of the thread's repositories is `404 not_found`; one whose repository is no longer
 trusted is `409 repo_untrusted`. These routes keep the class they have today (the Person-class ones stay
 Person-class; push stays as the existing route classifies it). Removing a repository from a thread is not in
@@ -92,11 +102,74 @@ type ThreadRepo = { repo_id; name; branch; added: number; deleted: number; trust
 - A repository being cloned has `clone` set and `branches: []`; a failed clone stays in the list with
   `clone.state: "failed"` and a message until it is removed or the clone is retried by a new `clone`.
 
+## Task folders, folder scan and workspace import
+
+All three are in T3 Code at `9168ca73d` (`workspaceFolders.ts`: `TaskFolder`, `WorkspaceScanFoldersInput`,
+`TASK_FOLDER_DEFAULT_REPOSITORIES_MAX`); none is "not in the beta". Same flag as the rest of this document.
+
+### Task folder
+
+The thread folder in "Model" is the task folder. `StartThreadInput` adds an optional `branch_name`: when given,
+every repository's worktree is cut on that new branch name (each from its own `base_branch`); absent, the
+service makes one name and uses it in every repository, so one thread is one branch name across repositories.
+Names follow the usual branch-name checks; a name already used in any chosen repository is `409 invalid`
+and nothing is created. Between 2 and `max_per_thread` (8) repositories make a task folder; one repository is
+the unchanged single-repository thread.
+
+| Route | Person | Answers |
+|---|---|---|
+| `GET /api/threads/{id}/task-folder` | no | `TaskFolder`; `404` when the thread has no task folder |
+
+```ts
+type TaskFolder = { root: string; branch: string; repos: ThreadRepo[]; max_per_thread: number };
+```
+
+`root` is shown as text only. Each `ThreadRepo` is also the worktree's name inside `root` (`name`, a safe
+folder name), so a repository's worktree is `<root>/<name>`. The web app reads the task folder, never a
+field of `Thread`. Adding a repository later is the existing `POST /api/threads/{id}/repos`: it cuts the
+thread's `branch` there from that repository's default branch and answers `repo_limit` (409) past 8.
+
+### Folder scan
+
+`POST /api/projects/{id}/repos/scan`, **Person-class** (it reads a folder the person picked; it writes
+nothing). Body `{ path }`. The path is untrusted and is checked as `add-folder` checks it (rule 4 in "Clone and
+path input"): it must exist, be a directory (or a `.code-workspace` file, see below), be canonicalized, not
+be inside Orbyn's data directory. Answer:
+
+```ts
+type RepoScan = { path: string; is_git: boolean; code_workspace_file: string | null;
+                  folders: ScannedFolder[]; truncated: boolean };
+type ScannedFolder = { name: string; path: string; is_git: boolean; source: "child" | "code-workspace";
+                       in_project: boolean; refused: "outside" | "missing" | "not_directory" | null };
+```
+
+- `child`: the directories one level under `path`. A symbolic link is not followed; a name that starts with a
+  dot is skipped; at most 200 entries are looked at and 64 returned, then `truncated: true`. `is_git` is a
+  `.git` directory or file in it. Nothing deeper than one level is read.
+- `name` is the folder's own name; `path` is canonical. Both are untrusted text.
+- `in_project` is true when the folder is already a repository of any project.
+- Nothing is added and nothing is trusted. The person adds a result through `add-folder`, one call each
+  (Person-class), and trusts it through `trust`.
+
+### Workspace import (`.code-workspace`)
+
+The same route. When `path` is a `.code-workspace` file, or a folder with exactly one at its top, the service
+reads that file (at most 256 KiB, JSON with comments and trailing commas; anything else is `400 invalid`)
+and returns its `folders` as `source: "code-workspace"` entries, `code_workspace_file` naming the file. An
+entry is `{ path, name? }`, at most 64; each is resolved against the file's folder and canonicalized.
+A folder that resolves outside the file's own folder, or whose path has a drive prefix, is listed with
+`refused: "outside"` and cannot be added by import, so a workspace file cannot point the app at an arbitrary
+place (the person can still pick that folder with `add-folder`). A folder that does not exist is `refused:
+"missing"`; a file, `"not_directory"`. No setting in the file other than `folders` is read; tasks, launch
+settings and extensions are ignored, and nothing in it is run. Listed folders are untrusted like every added
+folder: they go to `add-folder` and then wait for `trust`.
+
 ## Errors
 
 The usual `{ code, message }`. `repo_untrusted` (409), `repo_exists` (409), `repo_limit` (409: more than
 `max_per_thread`), `clone_refused` (400), `not_git` (409: an action that needs Git on a folder that has
-none), `permission_mode_unsupported` (400), `not_found` (404), `invalid` (400).
+none), `permission_mode_unsupported` (400), `not_found` (404), `invalid` (400). A scan that finds nothing is
+an answer with an empty `folders`, not an error.
 
 ## Clone and path input
 
@@ -140,4 +213,7 @@ process; a source is passed after `--`; a destination never leaves `clone_direct
 `..`, a separator or a symlink; an untrusted repository cannot be added to a thread or started in; a thread
 over the limit is refused; each write route needs the person key; a failed clone is listed and removed on
 `remove`; per-repository commit touches only that repository's worktree; a permission mode the engine
-does not offer is refused before anything is created.
+does not offer is refused before anything is created; a scan never follows a symlink, caps its results
+and adds nothing; a workspace folder outside the file's folder is listed `refused` and not added; a
+`repo_id` on a file write never resolves a path in another repository; a task folder uses one branch name in
+every repository and a taken name creates nothing.

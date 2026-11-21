@@ -11,6 +11,7 @@ pub mod crew;
 pub mod error;
 pub mod governance;
 pub mod host;
+pub mod issues;
 pub mod operations;
 pub mod project;
 pub mod redaction;

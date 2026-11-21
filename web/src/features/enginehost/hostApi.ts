@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
 import { createCredentialsApi } from "./credentialsApi";
+import { createHostControl } from "./hostControl";
+import { hostCrashes, hostRows } from "./hostStatus";
 import type { EngineHostApi, HostCrash, HostRow, KeyStorage } from "./contract";
 
 /**
- * The real client for the engine host and API key storage. The host routes are not merged, so `hosts`, `crashes`, `retry` and `stop`
- * make no request at all: every read says the service reports nothing, and those screens draw nothing. Swap them for `request(...)`
- * calls when the routes and generated types land. API key storage is real: `credentialsApi.ts` calls
+ * The real client for the engine host and API key storage. `hosts` and `crashes` read `GET /api/engine-host` (Local read) with the generated
+ * types; a 404 is nothing reported. Stop and restart are Person routes (`hostControl.ts`); Try again is the restart. API key storage is real: `credentialsApi.ts` calls
  * `/api/settings/engine-credentials/{engine}` (not yet run against a real service).
  */
 const credentials = createCredentialsApi();
+const control = createHostControl();
 const real: EngineHostApi = {
-  hosts: async () => null,
-  crashes: async () => [],
-  retry: async () => { throw new Error("The engine host is not reported by this service."); },
-  stop: async () => { throw new Error("The engine host is not reported by this service."); },
+  writable: true,
+  hosts: (signal) => hostRows(signal),
+  crashes: (signal) => hostCrashes(signal),
+  retry: (id, options) => control.restart(id, options),
+  stop: (id, options) => control.stop(id, options),
   storage: (signal) => credentials.storage(signal),
   decline: (id) => credentials.decline(id),
   saveKey: (id, key) => credentials.saveKey(id, key),
@@ -70,6 +73,9 @@ export function useEngineHosts(): { hosts: HostRow[] | null; reload(): void } {
   }, [moving, refreshQuietly]);
   return { hosts, reload };
 }
+
+/** True unless the service has no stop or restart route. */
+export const hostWritable = (): boolean => engineHostApi().writable !== false;
 
 export function useEngineHostCrashes(): HostCrash[] {
   const seen = useApiVersion();

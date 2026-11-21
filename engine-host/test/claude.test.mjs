@@ -66,6 +66,22 @@ test("multi_turn: two prompts, two runDone, session id reported", async () => {
   assert.equal(typeof h.replay.calls.opens[0].spawnClaudeCodeProcess, "function");
 });
 
+test("the prompt goes in under the id the core chose and the accepted answer names it", async () => {
+  const h = boot("multi_turn");
+  await open(h);
+  const chosen = "11111111-1111-4111-8111-111111111111";
+  h.send({ id: 3, type: "send", sessionId: "s", message: "Respond with exactly: first fixture turn complete", messageId: chosen });
+  const accepted = await h.next((f) => f.id === 3);
+  assert.equal(accepted.result.messageId, chosen);
+  await h.next((f) => f.type === "runDone" && f.sendId === 3);
+  // No id, or one that is not a UUID, and the host names the prompt itself.
+  h.send({ id: 4, type: "send", sessionId: "s", message: "Respond with exactly: second fixture turn complete", messageId: "not a uuid" });
+  const second = await h.next((f) => f.id === 4);
+  assert.match(second.result.messageId, /^[0-9a-f-]{36}$/);
+  assert.notEqual(second.result.messageId, "not a uuid");
+  await h.next((f) => f.type === "runDone" && f.sendId === 4);
+});
+
 test("an allow reaches the SDK once-only: no updatedPermissions", async () => {
   const h = boot("tool_call_read_only_on_request");
   await open(h);

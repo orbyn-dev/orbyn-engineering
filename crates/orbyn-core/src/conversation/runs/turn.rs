@@ -168,6 +168,14 @@ impl RunManager {
             handoff: handoff.as_deref(),
         });
         let kind = RunKind::parse(&prompt);
+        // What the engine reads is masked once, here, for every engine; the person's own
+        // message, the queue and the timeline keep the text as typed. A `/goal` is kept as typed.
+        let sent_prompt = self.mask_for_engine(&thread.project_id, &prompt)?;
+        let sent_kind = if sent_prompt == prompt {
+            kind.clone()
+        } else {
+            RunKind::parse(&sent_prompt)
+        };
         // An app's note rides with the next ordinary turn only, and the timeline
         // records exactly what was sent before the engine sees it.
         if kind == RunKind::Turn
@@ -221,12 +229,12 @@ impl RunManager {
             cwd: start,
             library: root,
             checkout,
-            prompt: format!("{context}\n\n{prompt}"),
+            prompt: format!("{context}\n\n{sent_prompt}"),
             context,
-            kind,
+            kind: sent_kind,
             mode: scope.mode,
             plan: scope.plan,
-            user_prompt: prompt,
+            user_prompt: sent_prompt,
             model: chosen.model.clone(),
             effort: chosen.effort.clone(),
             options: chosen.options.clone(),
@@ -447,13 +455,15 @@ impl RunManager {
                             EngineOutcome::Failed("The engine stopped without finishing.".into())
                         };
                     };
+                    // A leftover turn's events are shown like any other, but are not the engine answering.
+                    let (event, own_turn) = split_leftover(event);
                     // Anything else keeps its place after the text before it.
                     if !matches!(event, EngineEvent::Agui(_))
                         && let Some(outcome) = self.write_events(scope, shaper.flush())
                     {
                         break outcome;
                     }
-                    replied |= shows_work(&event, &mut user_messages);
+                    replied |= shows_work(&event, &mut user_messages) && own_turn;
                     match event {
                         EngineEvent::Agui(event) => {
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
@@ -522,6 +532,7 @@ impl RunManager {
                                 break outcome;
                             }
                         }
+                        EngineEvent::Leftover(_) => {}
                         EngineEvent::Finished(EngineOutcome::Completed)
                             if expects_reply && !replied =>
                         {
@@ -604,6 +615,14 @@ impl RunManager {
     }
 }
 
+/// A leftover turn's event as itself, and whether it is the prompt's own: only the prompt's own counts as the engine answering.
+fn split_leftover(event: EngineEvent) -> (EngineEvent, bool) {
+    match event {
+        EngineEvent::Leftover(inner) => (*inner, false),
+        event => (event, true),
+    }
+}
+
 /// How a run reads when the engine ended an ordinary turn without saying or doing anything.
 pub(super) const NO_REPLY: &str =
     "No reply: the engine finished without answering. Send your message again.";
@@ -649,6 +668,24 @@ mod reply_tests {
 
     fn agui(event: AgUiEvent) -> EngineEvent {
         EngineEvent::Agui(event)
+    }
+
+    #[test]
+    fn a_leftover_turns_words_are_shown_but_are_not_the_engine_answering() {
+        let said = || {
+            agui(AgUiEvent::TextMessageContent {
+                message_id: "a".into(),
+                delta: "the old agent finished".into(),
+            })
+        };
+        let (shown, own) = split_leftover(EngineEvent::Leftover(Box::new(said())));
+        assert!(!own, "a leftover turn is not the prompt's");
+        assert!(
+            matches!(shown, EngineEvent::Agui(_)),
+            "it is still shown as itself"
+        );
+        let (_, own) = split_leftover(said());
+        assert!(own, "an ordinary event is the prompt's");
     }
 
     #[test]

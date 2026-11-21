@@ -2385,7 +2385,7 @@ that session uses the MCP route. The tree is never rewritten.
 
 `UpdateCenter` is one view of the skills library, the app and the engines. It checks
 at startup, every six hours and on demand, unless the `background_update_checks`
-setting is `false`. A check only reads: `git fetch` of the library, engine latest
+setting is `false`; the engine CLI versions and automatic model-list reads follow the `enable_provider_update_checks` preference instead, and a manual check or Refresh ignores both. A check only reads: `git fetch` of the library, engine latest
 versions and the app's release. A network failure never blocks startup; it keeps
 the earlier results and sets `error`, and `checked_at` stays at the last full
 success. Engines and the library never apply on their own. The app does only with the

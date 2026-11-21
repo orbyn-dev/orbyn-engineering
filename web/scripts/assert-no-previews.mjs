@@ -23,6 +23,9 @@ const markers = [
   "oracle-narrow-window",
   "backtest-narrow-window",
   "settings-crew",
+  // Crew dashboard (features/crew/dashboard): a frame id and the sample client the Preview frames use. The page itself ships behind Crew Preview.
+  "dash-narrow-window",
+  "createCrewDashboardMock",
   // Crew Designs Flow (features/crew/flow): a frame id.
   "flow-narrow-panel",
   "needsyou-narrow-panel",
@@ -41,6 +44,17 @@ const markers = [
   // Devices design preview (features/devices): the dev-only hash route and its mock.
   "preview/devices",
   "createDevicesMock",
+  // Photo conversion, transcript drop and earlier-messages design previews (features/thread/composer, features/thread/earlier): the dev-only hash routes and their mocks.
+  "preview/attachments",
+  "createPhotoConversionMock",
+  "createTranscriptsMock",
+  "preview/earlier",
+  "createEarlierMock",
+  // Command blocks design preview (features/panels/terminal/blocks): the dev-only hash route (plain and as a regex source), its mock and its page class.
+  "preview/command-blocks",
+  "preview\\/command-blocks",
+  "createCommandBlocksMock",
+  "cbp-drawer",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

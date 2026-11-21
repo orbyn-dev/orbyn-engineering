@@ -205,6 +205,19 @@ describe("Flow on the real routes", () => {
     expect(writes()).toHaveLength(0);
   });
 
+  it("opens the Run page from the zoomed task, built from the same read, and Save as file sends nothing", async () => {
+    mock.reset("crew");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-redirect" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Run page" }));
+    expect(await screen.findByRole("region", { name: "Run page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save as file" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy PR comment" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Task" }));
+    expect(await screen.findByRole("list", { name: "Stages" })).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
   it("says there are no crews, and a crew with no tasks", async () => {
     await open("crew-empty");
     expect(await screen.findByText("No crews running")).toBeVisible();

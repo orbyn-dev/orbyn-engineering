@@ -86,6 +86,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/tasks/{id}/retry-elsewhere"],
   // Engines, updates, workspace and the shell.
   ["POST", "/api/acp/registry/{id}"],
+  ["POST", "/api/engine-host/{family}/restart"],
+  ["POST", "/api/engine-host/{family}/stop"],
   ["POST", "/api/engines/custom"],
   ["POST", "/api/engines/probe-binary"],
   ["POST", "/api/engines/update-all"],
@@ -165,29 +167,34 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Runs and AG-UI resume: only when the body raises `permission_mode` (or has a non-empty `resume`).
   ["POST", "/api/threads/{id}/runs"],
   ["POST", "/agui/threads/{id}"],
+  // Issue trackers (beta; behind the issues flag).
+  ["POST", "/api/issues/trackers/{tracker}/connect"],
+  ["POST", "/api/issues/trackers/{tracker}/disconnect"],
+  ["POST", "/api/issues/start-thread"],
+  ["POST", "/api/threads/{id}/issue-links"],
+  ["POST", "/api/threads/{id}/issue-links/remove"],
 ];
 
 /**
  * Person routes of service slices that are not merged: the Cursor thread contract (HostDriver slice 3: the one-turn override and the
- * engine notice's acknowledgement), the Issues routes (docs/issues.md), the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * engine notice's acknowledgement), the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
   ["POST", "/api/threads/{id}/send-without-approvals"],
   ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
-  // Issues (docs/issues.md, "Routes"): the four writes of Orbyn's own. Connect and disconnect are the tracker's credential, link and
-  // unlink are the thread's, start-thread creates a thread and its link in one write. The routes are not merged: when they land in
-  // `routes.json` the test below fails, and each line moves into `PERSON_ROUTES`. Reads are not Person-class and are not listed.
-  ["POST", "/api/issues/trackers/{tracker}/connect"],
-  ["POST", "/api/issues/trackers/{tracker}/disconnect"],
-  ["POST", "/api/threads/{id}/issue-links"],
-  ["POST", "/api/threads/{id}/issue-links/remove"],
-  ["POST", "/api/issues/start-thread"],
+  // Issues (docs/issues.md, "Issue writes and list controls"): the two writes of the tracker's own data. The five Issues writes of the
+  // first slice (connect, disconnect, link, unlink, start-thread) are in `routes.json` and so in `PERSON_ROUTES`. These two are not
+  // built in the service yet: when they land in `routes.json` the test below fails and each line moves into `PERSON_ROUTES`.
+  ["POST", "/api/issues/item/update"],
+  ["POST", "/api/issues/item/state"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
   ["POST", "/api/projects/{id}/repos/add-folder"],
   ["POST", "/api/projects/{id}/repos/create"],
   ["POST", "/api/projects/{id}/repos/clone"],
+  // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
+  ["POST", "/api/projects/{id}/repos/scan"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/publish"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/trust"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/setup-git"],
@@ -197,6 +204,8 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/threads/{id}/repos"],
   // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
   ["POST", "/api/devices/{id}/actions"],
+  // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.
+  ["POST", "/api/threads/{id}/transcripts"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */

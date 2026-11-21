@@ -218,7 +218,11 @@ pub(crate) fn claude(args: &[String]) {
 
     if has(&prompt, "leftover") {
         // A background agent finished while the process was down: the CLI runs a turn for its
-        // notification before it reaches the prompt.
+        // notification before it reaches the prompt, and says so first.
+        send(&json!({
+            "type": "system", "subtype": "task_notification", "task_id": "task-old",
+            "status": "completed",
+        }));
         send(&json!({
 
             "type": "assistant", "parent_tool_use_id": null,

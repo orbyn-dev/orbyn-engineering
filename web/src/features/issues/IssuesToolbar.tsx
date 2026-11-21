@@ -4,7 +4,11 @@ import { navigate } from "../../product/state/route";
 import { Button, IconButton } from "../../ui/controls";
 import { ToolbarPopover } from "../pulls";
 import { TRACKER_NAMES, type IssueQuery, type TrackerKind, type TrackerRow } from "./contract";
-import { activeChips, noQuery, parseSearch, shownLine } from "./model";
+import { Menu } from "../../ui/Menu";
+import { Presence } from "../../ui/Presence";
+import { useSortOffered } from "./api";
+import { PlannedControl } from "./Planned";
+import { activeChips, noQuery, parseSearch, shownLine, sortWord } from "./model";
 
 const STATES = [["open", "Open"], ["closed", "Closed"], ["all", "All"]] as const;
 const ASSIGNEES = [["any", "Anyone"], ["me", "Assigned to me"], ["none", "Unassigned"]] as const;
@@ -80,7 +84,7 @@ function FilterPanel({ query, trackers, labels, phone, onApply, dismiss }: { que
         ))}
       </div>
       <div className="iss-panel-foot">
-        <Button small tone="quiet" onClick={() => setDraft({ ...noQuery, tracker: draft.tracker, text: draft.text })}>Clear</Button>
+        <Button small tone="quiet" onClick={() => setDraft({ ...noQuery, tracker: draft.tracker, text: draft.text, sort: draft.sort })}>Clear</Button>
         <Button small tone="primary" type="submit">Apply</Button>
       </div>
     </form>
@@ -91,6 +95,8 @@ export function IssuesToolbar(props: ToolbarProps) {
   const { query, onQuery, trackers, counts, phone } = props;
   const [menu, setMenu] = useState<{ kind: "tracker" | "filters"; anchor: HTMLElement } | null>(null);
   const [text, setText] = useState(query.text);
+  const sortLive = useSortOffered();
+  const [sortMenu, setSortMenu] = useState<{ x: number; y: number } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const chips = activeChips(query);
   const filterCount = query.labels.length + (query.assignee === "any" ? 0 : 1);
@@ -106,7 +112,7 @@ export function IssuesToolbar(props: ToolbarProps) {
     else if (id === "assignee") onQuery({ ...query, assignee: "any" });
     else onQuery({ ...query, labels: query.labels.filter((label) => `label:${label}` !== id) });
   };
-  const clear = () => { setText(""); onQuery({ ...noQuery, tracker: query.tracker, state: query.state }); };
+  const clear = () => { setText(""); onQuery({ ...noQuery, tracker: query.tracker, state: query.state, sort: query.sort }); };
   const trackerLabel = query.tracker === null ? "All trackers" : TRACKER_NAMES[query.tracker];
   const sheet = phone && menu?.kind === "filters";
   return (
@@ -131,6 +137,44 @@ export function IssuesToolbar(props: ToolbarProps) {
       <button type="button" className="iss-ctl" aria-haspopup="dialog" aria-expanded={menu?.kind === "filters"} onClick={(event) => toggle("filters", event.currentTarget)}>
         <ListFilter size={14} aria-hidden />{filterCount > 0 ? `Filters · ${filterCount}` : "Filters"}
       </button>
+      {phone ? null : sortLive ? (
+        // Live only once the service has said it offers the writes and the sort (`useSortOffered`); the choice is the query's `sort`.
+        <>
+          <button
+            type="button"
+            className="iss-ctl"
+            aria-haspopup="menu"
+            aria-expanded={sortMenu !== null}
+            aria-label={`Sort: ${sortWord(query.sort)}`}
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              setSortMenu(sortMenu ? null : { x: rect.left, y: rect.bottom + 4 });
+            }}
+          >
+            Sort: {sortWord(query.sort)}<ChevronDown size={12} aria-hidden />
+          </button>
+          <Presence>
+            {sortMenu ? (
+              <Menu
+                x={sortMenu.x}
+                y={sortMenu.y}
+                label="Sort issues"
+                minWidth={160}
+                onClose={() => setSortMenu(null)}
+                items={(["updated", "created"] as const).map((id) => ({
+                  label: sortWord(id),
+                  selected: (query.sort ?? "updated") === id,
+                  leadCheck: true,
+                  onSelect: () => { if ((query.sort ?? "updated") !== id) onQuery({ ...query, sort: id }); },
+                }))}
+              />
+            ) : null}
+          </Presence>
+        </>
+      ) : (
+        // Planned until the service offers it: the list is newest update first and nothing else is on offer yet.
+        <PlannedControl label="Sort: Updated" what="Sorting" className="iss-ctl">Sort: Updated<ChevronDown size={12} aria-hidden /></PlannedControl>
+      )}
       {chips.length > 0 ? (
         <div className="iss-chips">
           {chips.map((chip) => (

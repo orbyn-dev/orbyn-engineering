@@ -50,8 +50,10 @@ function RenderToggle({ rendered }: { rendered: boolean }) {
 }
 
 /** One file of the change: its header, then its lines, or the one line that says why there are none. */
-export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow }: {
+export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow, repoName, repoId }: {
   file: FileDiff;
+  /** The repository the file is in, named before its path in a multi-repository thread. */
+  repoName?: string;
   lines: readonly DiffLine[];
   threadId: string;
   origin: string;
@@ -65,7 +67,9 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   /** The find bar, when it is open: it sits between the file's header and its lines. */
   bar?: ReactNode;
   /** The working tree can be changed from here: set for the Working tree scope, with whitespace shown. */
-  edits?: { revert(path: string, hunk: Hunk): Promise<void>; saveLine(path: string, number: number, was: string, next: string): Promise<boolean> };
+  edits?: { revert(path: string, hunk: Hunk, repoId?: string): Promise<void>; saveLine(path: string, number: number, was: string, next: string, repoId?: string): Promise<boolean> };
+  /** The file's repository when it is not the thread's primary one: sent as `repo_id` on the read and the write of an edit. Absent for the primary. */
+  repoId?: string;
   narrow?: boolean;
 }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
@@ -76,12 +80,13 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   const conflict = file.status === "conflicted";
   // A deleted or conflicted file has no lines to write back to.
   const actions: PatchActions | undefined = edits && file.status !== "deleted" && !conflict
-    ? { revertible: file.status !== "added" && file.status !== "copied", revert: (hunk) => edits.revert(file.path, hunk), saveLine: (number, was, next) => edits.saveLine(file.path, number, was, next) }
+    ? { revertible: file.status !== "added" && file.status !== "copied", revert: (hunk) => edits.revert(file.path, hunk, repoId), saveLine: (number, was, next) => edits.saveLine(file.path, number, was, next, repoId) }
     : undefined;
   return (
     <div className="x2file" data-diff-file={file.path}>
       <div className="fh2">
         <ChangeLetter change={changeOf(file)} />
+        {repoName ? <span className="repo-pill" title={repoName}>{repoName}</span> : null}
         <span className="nm" title={fileName(file)}>{file.path}</span>
         {markdown ? <RenderToggle rendered={rendered} /> : null}
         {conflict ? (
