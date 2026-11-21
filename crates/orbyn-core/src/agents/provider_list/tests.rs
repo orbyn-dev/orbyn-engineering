@@ -130,7 +130,7 @@ fn an_engine_that_is_not_found_stays_listed_so_it_can_be_edited_or_removed() {
     let mine = row(&found, "mine");
     assert_eq!(mine.group, ProviderGroup::NotFound);
     assert_eq!(mine.labels, [ProviderLabel::NotFound]);
-    assert!(mine.registered && mine.openable);
+    assert!(mine.registered && !mine.openable);
 }
 
 #[test]
@@ -153,18 +153,30 @@ fn the_other_unverified_engines_read_as_their_program() {
 }
 
 #[test]
-fn cursor_and_fx_have_no_detail_page_yet_and_the_others_do() {
+fn only_beta_families_have_a_detail_page_including_named_instances() {
+    let mut instance = status("my-open", "My OpenCode", "acp", true, None);
+    instance.instance_of = Some("opencode".into());
+    let mut other_instance = status("my-kimi", "My Kimi", "acp", true, None);
+    other_instance.instance_of = Some("kimi".into());
     let found = list(
         &[
             status("cursor", "Cursor", "acp", true, None),
             status("kimi", "Kimi Code", "acp", true, None),
             status("opencode", "OpenCode", "acp", true, None),
+            status("claude", "Claude", "native", true, None),
+            status("codex", "Codex", "native", true, None),
+            instance,
+            other_instance,
         ],
         &[],
     );
     assert!(!row(&found, "cursor").openable);
-    assert!(row(&found, "kimi").openable);
-    assert!(row(&found, "opencode").openable);
+    for id in ["kimi", "my-kimi"] {
+        assert!(!row(&found, id).openable, "{id}");
+    }
+    for id in ["opencode", "claude", "codex", "my-open"] {
+        assert!(row(&found, id).openable, "{id}");
+    }
     assert!(!row(&found, "pi").openable);
 }
 
