@@ -14,13 +14,13 @@ const engines = [
 ];
 const hosts = [host("claude", { sdk_missing: true, has_driver: true }), host("cursor", { sdk_missing: true }), host("codex", { last_error: { kind: "auth", message: "401", causes: [] } })];
 
-it("draws nothing, and sends no request, while the service reports no engine host", async () => {
-  const fetching = vi.fn();
+it("draws nothing while the service answers 404 for the engine host", async () => {
+  const fetching = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404, headers: { "content-type": "application/json" } }));
   vi.stubGlobal("fetch", fetching);
   render(<><NeedsAttentionGroup engines={engines} onOpen={vi.fn()} /><EngineGapCard engine={engines[0]!} /></>);
   await act(async () => { await Promise.resolve(); });
   expect(screen.queryByText("Needs attention")).toBeNull();
-  expect(fetching).not.toHaveBeenCalled();
+  expect(fetching).toHaveBeenCalled();
 });
 
 it("lists SDK missing, Unavailable and Expired with the one action each offers, and leaves Not found to the engine row", async () => {

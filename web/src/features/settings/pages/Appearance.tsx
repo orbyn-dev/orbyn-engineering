@@ -1,6 +1,8 @@
 import { settingsLabel } from "../settingsSearch";
-import { AlertTriangle, ChevronLeft, Info } from "lucide-react";
-import { useRef, useState } from "react";
+import { AlertTriangle, Info } from "lucide-react";
+import { useContext, useRef, useState } from "react";
+import { navigate } from "../../../product/state/route";
+import { SettingsSubPageContext } from "../subPage";
 import { MAX_PANEL_ANIMATION_MS } from "../../../product/panels/panelAnimations";
 import { applyTheme, useUi, type LayoutChoice, type ThemeChoice, type Typography } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
@@ -219,7 +221,7 @@ function TokenRow({ label, value, save }: { label: string; value: string; save(n
   );
 }
 
-function ThemeEditorPage({ onBack }: { onBack(): void }) {
+function ThemeEditorPage() {
   const custom = useUi((state) => state.customColors);
   const theme = useUi((state) => state.theme);
   const lightPreset = useUi((state) => state.lightPreset);
@@ -253,10 +255,7 @@ function ThemeEditorPage({ onBack }: { onBack(): void }) {
   };
   return (
     <>
-      <div className="set-back">
-        <Button small tone="quiet" icon={<ChevronLeft size={13} aria-hidden />} onClick={onBack}>Appearance</Button>
-        <h2 className="set-back-title">Theme editor</h2>
-      </div>
+      <h1 className="sr-only" tabIndex={-1} data-page-title>Theme editor</h1>
       <div className="set-licence-bar">
         <select aria-label={`${scheme_name} theme`} value={presetValue ?? ""} onChange={(event) => { setPrefs({ [presetKey]: event.target.value || null }); applyTheme(theme); }}>
           <option value="">{scheme_name} theme · Orbyn {scheme_name}</option>
@@ -371,7 +370,8 @@ function TypographyGroup() {
 }
 
 export function AppearanceSection() {
-  const [editor, setEditor] = useState(false);
+  // The Theme editor is the page `#/settings/appearance/theme-editor`; its way back is the breadcrumb (or Back to Appearance when narrow).
+  const editor = useContext(SettingsSubPageContext) === "theme-editor";
   const theme = useUi((state) => state.theme);
   const panelMs = useUi((state) => state.panelAnimationMs);
   const setPanelMs = useUi((state) => state.setPanelAnimationMs);
@@ -380,7 +380,7 @@ export function AppearanceSection() {
   const contrast = useUi((state) => state.contrast);
   const smoothing = useUi((state) => state.fontSmoothing);
   const environmentIdentification = useUi((state) => state.environmentIdentification);
-  if (editor) return <ThemeEditorPage onBack={() => setEditor(false)} />;
+  if (editor) return <ThemeEditorPage />;
   return (
     <>
       <h1 className="sr-only" tabIndex={-1} data-page-title>
@@ -471,7 +471,7 @@ export function AppearanceSection() {
           />
         </SettingRow>
       </SettingGroup>
-      <ThemeEditorRow open={() => setEditor(true)} />
+      <ThemeEditorRow open={() => navigate({ name: "settings", section: "appearance", sub: "theme-editor" })} />
     </>
   );
 }
