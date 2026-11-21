@@ -224,6 +224,43 @@ async fn a_new_device_waits_for_a_trusted_one_and_can_give_up() {
 }
 
 #[tokio::test]
+async fn a_sign_in_cancel_the_service_did_not_take_is_answered_and_tried_again() {
+    let served = serve("blip", AccountGate::LocalOnly, false).await;
+    let (status, body) = served
+        .call(
+            "POST",
+            "/api/account/sign-in",
+            json!({ "email": "blip@example.com", "password": SECRET }),
+        )
+        .await;
+    assert_eq!(
+        (status, body["outcome"].as_str()),
+        (200, Some("awaiting_approval"))
+    );
+    // The Engine is unreachable: the cancel is refused, not answered as if the service had
+    // taken it, and the request stays open for a retry.
+    let (status, body) = served
+        .call("POST", "/api/account/sign-in/cancel", json!({}))
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (503, Some("account_offline"))
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(view["approval"]["state"], "waiting");
+    // The service answers again: the retry is taken and the sign-in ends.
+    assert_eq!(
+        served
+            .call("POST", "/api/account/sign-in/cancel", json!({}))
+            .await
+            .0,
+        204
+    );
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert!(view.get("approval").is_none());
+}
+
+#[tokio::test]
 async fn the_first_sync_asks_how_to_join_the_settings_once() {
     let served = serve("connect", AccountGate::LocalOnly, false).await;
     served.sign_in().await;
@@ -365,4 +402,46 @@ async fn sign_up_goes_invite_password_then_the_code_which_signs_in_and_there_is_
             .0,
         404
     );
+}
+
+/// The right code still does its job, and the refusal stays a fixed answer: the emailed code
+/// signs the new account in (the view then carries the session the client needs), and a wrong
+/// code is the same 422 `invalid_code` with a message that carries no value.
+#[tokio::test]
+async fn the_right_emailed_code_still_signs_in_and_a_wrong_one_answers_invalid_code() {
+    let served = serve("code-success", AccountGate::LocalOnly, false).await;
+    let ok = served
+        .call(
+            "POST",
+            "/api/account/sign-up/start",
+            json!({
+                "invite": "K7QM-2XWH-9QXA-3C2D",
+                "email": "right@example.com",
+                "password": "a fresh throwaway phrase",
+            }),
+        )
+        .await;
+    assert_eq!(ok.0, 204);
+    let (status, refused) = served
+        .call(
+            "POST",
+            "/api/account/sign-up/code",
+            json!({ "code": "ZZZZ-ZZZZ" }),
+        )
+        .await;
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (422, Some("invalid_code"))
+    );
+    assert_eq!(refused["message"], "That code isn't right.");
+    let (status, _) = served
+        .call(
+            "POST",
+            "/api/account/sign-up/code",
+            json!({ "code": "ABCD-EFGH" }),
+        )
+        .await;
+    assert_eq!(status, 204);
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(view["session"]["email"], "right@example.com");
 }

@@ -212,8 +212,8 @@ npx tauri build --features devtools --bundles app
 npx.cmd tauri build --features devtools --bundles nsis
 ```
 
-The Cargo feature forwards to `tauri/devtools`; it is off by default. There is no
-runtime setting or environment switch. Leave `--features devtools` out of normal
+The Cargo feature forwards to `tauri/devtools`; it is off by default. The app has no
+runtime setting or switch of its own. Leave `--features devtools` out of normal
 release builds and label tester packages accordingly. In an opted-in build, use
 View > Toggle Developer Tools (`Alt+Cmd+I` on macOS, `Ctrl+Shift+I` on Windows).
 

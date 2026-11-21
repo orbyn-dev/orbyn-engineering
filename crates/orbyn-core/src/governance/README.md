@@ -14,3 +14,6 @@ The crate's [group table](../../README.md#groups) lists every group.
 `computer/browser_stderr` retains a bounded, cleaned stderr tail while a browser
 starts. Startup failures carry it in their existing error; a successful startup
 clears it and keeps draining the pipe until the browser session closes.
+`computer/cdp/start` waits for that start: a browser still running when its first
+bounded wait ends gets one more bounded wait, while an exited browser fails at once
+with the retained stderr and the startup flags.
