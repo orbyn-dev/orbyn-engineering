@@ -19,10 +19,11 @@ import { changeOf, isBinaryPatch, renameOf, type DiffLine } from "./diffModel";
 const count = (value: number) => value.toLocaleString("en-US");
 
 /** A Markdown file as the reader will see it, read from the checkout. */
-function Rendered({ threadId, cwd, path }: { threadId: string; cwd: string; path: string }) {
-  const read = useAsync(`diff-rendered:${JSON.stringify([threadId, cwd, path])}`, async (signal) => {
-    const inside = await checkoutPath(threadId, cwd, path, signal);
-    return inside === null ? null : readThreadFile(threadId, inside, signal);
+function Rendered({ threadId, cwd, path, repoId }: { threadId: string; cwd: string; path: string; repoId?: string }) {
+  const read = useAsync(`diff-rendered:${JSON.stringify([threadId, cwd, path, repoId ?? null])}`, async (signal) => {
+    // A file of another repository goes as its repo-relative path with that repository's `repo_id`; the service resolves it in that worktree.
+    const inside = repoId === undefined ? await checkoutPath(threadId, cwd, path, signal) : path;
+    return inside === null ? null : readThreadFile(threadId, inside, signal, repoId);
   });
   if (read.status === "error") return <ErrorState compact title="Couldn't read this file" failure={read.error} onRetry={read.reload} />;
   if (read.status === "loading") return <div className="md2" role="status"><span className="sr-only">Loading file</span></div>;
@@ -78,6 +79,11 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   const markdown = previewKind(file.path) === "markdown" && canRender && file.status !== "deleted" && !binary;
   const rendered = markdown && renderedPref;
   const conflict = file.status === "conflicted";
+  // The editor and file tabs open a path of the thread's primary checkout and have no repository; opening another repository's file there would show the wrong file.
+  const open = async (as: "editor" | "tab") => {
+    if (repoId !== undefined) { useUi.getState().pushToast("Opening a file of another repository isn't available yet."); return; }
+    await openChanged(threadId, cwd, file.path, as);
+  };
   // A deleted or conflicted file has no lines to write back to.
   const actions: PatchActions | undefined = edits && file.status !== "deleted" && !conflict
     ? { revertible: file.status !== "added" && file.status !== "copied", revert: (hunk) => edits.revert(file.path, hunk, repoId), saveLine: (number, was, next) => edits.saveLine(file.path, number, was, next, repoId) }
@@ -96,14 +102,14 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
             +{count(file.additions)} <span className="r">−{count(file.deletions)}</span>
           </span>
         )}
-        <IconButton label={binary ? "Open" : "Open in editor"} onClick={() => void openChanged(threadId, cwd, file.path, binary ? "tab" : "editor")}>
+        <IconButton label={binary ? "Open" : "Open in editor"} onClick={() => void open(binary ? "tab" : "editor")}>
           <SquarePen size={14} aria-hidden />
         </IconButton>
         <MenuButton
           menuLabel={`Actions for ${file.path}`}
           align="end"
           items={[
-            { label: "Open in editor", onSelect: () => void openChanged(threadId, cwd, file.path, "editor") },
+            { label: "Open in editor", onSelect: () => void open("editor") },
             { label: "Copy path", onSelect: () => void navigator.clipboard?.writeText(file.path).then(() => useUi.getState().pushToast("Path copied")) },
           ]}
         >
@@ -116,12 +122,12 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
       </div>
       {bar}
       {rendered ? (
-        <Rendered threadId={threadId} cwd={cwd} path={file.path} />
+        <Rendered threadId={threadId} cwd={cwd} path={file.path} repoId={repoId} />
       ) : binary ? (
         <div className="x2banner">
           <span>Binary file changed.</span>
           <span className="sp" />
-          <Button small tone="quiet" onClick={() => void openChanged(threadId, cwd, file.path, "tab")}>Open</Button>
+          <Button small tone="quiet" onClick={() => void open("tab")}>Open</Button>
         </div>
       ) : lines.length === 0 ? (
         <p className="x2note t3">

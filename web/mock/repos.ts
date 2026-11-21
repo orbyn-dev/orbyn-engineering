@@ -201,10 +201,6 @@ export function createReposMock(init: {
       const entry = repoId === null ? held[0] : held.find((one) => one.repo_id === repoId);
       if (!entry) throw new ApiFailure("not_found", "This thread does not work in that repository.", 404);
       if (!entry.trusted) throw new ApiFailure("repo_untrusted", `${entry.name} is not trusted.`, 409);
-      if (action.kind === "pull_request") {
-        const next = { ...entry, pull_request: { number: 143, url: `https://github.com/orbyn-dev/${entry.name}/pull/143` } };
-        threads[threadId] = held.map((one) => (one.repo_id === entry.repo_id ? next : one));
-      }
     },
   };
 }
