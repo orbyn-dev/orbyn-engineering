@@ -484,11 +484,29 @@ impl EngineManager {
     /// facts the crew router reads.
     pub async fn provider_list(&self) -> Result<orbyn_contracts::ProviderList> {
         let statuses = self.statuses(false).await?;
-        Ok(crate::agents::provider_list::list(
-            &statuses,
-            &crate::agents::provider_list::installed_apps(),
-            &crate::agents::provider_list::refused_programs(),
-        ))
+        Self::provider_list_with_discovery(statuses, || {
+            (
+                crate::agents::provider_list::installed_apps(),
+                crate::agents::provider_list::refused_programs(),
+            )
+        })
+        .await
+    }
+
+    async fn provider_list_with_discovery(
+        statuses: Vec<EngineStatus>,
+        discover: impl FnOnce() -> (
+            Vec<&'static str>,
+            Vec<crate::agents::provider_list::Refused>,
+        ) + Send
+        + 'static,
+    ) -> Result<orbyn_contracts::ProviderList> {
+        tokio::task::spawn_blocking(move || {
+            let (apps, refused) = discover();
+            crate::agents::provider_list::list(&statuses, &apps, &refused)
+        })
+        .await
+        .map_err(|error| CoreError::Internal(error.to_string()))
     }
 
     /// Drops the cached list so the next read sees a changed engine set.
