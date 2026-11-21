@@ -528,6 +528,125 @@ async fn screenshot_error_releases_the_session_for_health_check_and_next_frame()
     assert_eq!(checks.load(Ordering::SeqCst), 1);
 }
 
+/// A read sent as a page swaps documents can go unanswered; the pump must skip that
+/// look instead of holding the tab's session for the full command timeout.
+#[tokio::test]
+async fn a_dropped_title_read_skips_a_look_instead_of_holding_the_pump() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let drop_title = Arc::new(AtomicBool::new(false));
+    let dropping = drop_title.clone();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        while let Some(Ok(frame)) = socket.next().await {
+            let Ok(text) = frame.to_text() else { continue };
+            let request: Value = serde_json::from_str(text).unwrap();
+            let result = match request["method"].as_str().unwrap() {
+                "Target.getTargets" => {
+                    json!({ "targetInfos": [{ "type": "page", "targetId": "target" }] })
+                }
+                "Target.attachToTarget" => json!({ "sessionId": "session" }),
+                "Page.getFrameTree" => json!({ "frameTree": { "frame": { "id": "main" } } }),
+                "Page.captureScreenshot" => json!({ "data": "frame" }),
+                // A title read sent as the document swaps: the browser drops it.
+                "Runtime.evaluate" if dropping.swap(false, Ordering::SeqCst) => continue,
+                "Runtime.evaluate" => json!({ "result": { "value": "load 2" } }),
+                _ => json!({}),
+            };
+            if socket
+                .send(Message::text(
+                    json!({ "id": request["id"], "result": result }).to_string(),
+                ))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let session = BrowserSession::connect(&format!("ws://{address}"), None)
+        .await
+        .unwrap();
+    let tab = fixture_tab(session, "none");
+    let mut viewer = tab.frames.subscribe();
+    let pumping = tokio::spawn(pump(tab.clone()));
+    // The first frame proves the pump loop is running before the read is dropped.
+    tokio::time::timeout(Duration::from_secs(5), viewer.recv())
+        .await
+        .expect("the pump must deliver its first frame")
+        .unwrap();
+    drop_title.store(true, Ordering::SeqCst);
+    let refreshed = tokio::time::timeout(Duration::from_secs(8), async {
+        while lock(&tab.info).title != "load 2" {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    pumping.abort();
+    let _ = pumping.await;
+    drop(tab);
+    server.await.unwrap();
+    refreshed.expect("one dropped read must not stop the next look from refreshing the title");
+}
+
+/// The tab list shows a page's title even after its panel closed, so a title is not
+/// only refreshed while someone watches frames.
+#[tokio::test]
+async fn a_tab_nobody_watches_still_refreshes_its_title() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+        while let Some(Ok(frame)) = socket.next().await {
+            let Ok(text) = frame.to_text() else { continue };
+            let request: Value = serde_json::from_str(text).unwrap();
+            let result = match request["method"].as_str().unwrap() {
+                "Target.getTargets" => {
+                    json!({ "targetInfos": [{ "type": "page", "targetId": "target" }] })
+                }
+                "Target.attachToTarget" => json!({ "sessionId": "session" }),
+                "Page.getFrameTree" => json!({ "frameTree": { "frame": { "id": "main" } } }),
+                "Runtime.evaluate" => json!({ "result": { "value": "load 2" } }),
+                _ => json!({}),
+            };
+            if socket
+                .send(Message::text(
+                    json!({ "id": request["id"], "result": result }).to_string(),
+                ))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let session = BrowserSession::connect(&format!("ws://{address}"), None)
+        .await
+        .unwrap();
+    let tab = fixture_tab(session, "none");
+    let pumping = tokio::spawn(pump(tab.clone()));
+    let refreshed = tokio::time::timeout(Duration::from_secs(5), async {
+        while lock(&tab.info).title != "load 2" {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    pumping.abort();
+    let _ = pumping.await;
+    drop(tab);
+    server.await.unwrap();
+    refreshed.expect("an unwatched tab must still refresh its title");
+}
+
 #[test]
 fn favicon_discovery_never_widens_the_image_proxy_url_envelope() {
     let icon = |raw: &str| {
