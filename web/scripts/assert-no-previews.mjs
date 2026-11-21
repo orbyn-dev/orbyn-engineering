@@ -55,6 +55,11 @@ const markers = [
   "preview\\/command-blocks",
   "createCommandBlocksMock",
   "cbp-drawer",
+  // Terminal-agent attention design preview (features/panels/terminal/attention): the dev-only hash route (plain and as a regex source), its mock and its page class.
+  "preview/attention",
+  "preview\\/attention",
+  "createAttentionMock",
+  "atp-thread",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

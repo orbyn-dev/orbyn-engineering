@@ -31,7 +31,7 @@ import { useUi } from "../../product/state/ui";
 import { engineById, useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../product/ui/states";
-import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
+import { openAttentionTerminal, PanelHost, TerminalAttention, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
 import { Composer } from "./composer/Composer";
 import { DetailsPopover } from "./details/DetailsPopover";
@@ -478,6 +478,7 @@ export function ThreadView({ id }: { id: string }) {
             <div ref={mover} className="composer-group">
               <div className="composer-stack">
                 {hero ? <DraftHero project={project} /> : null}
+                <TerminalAttention threadId={id} onOpen={(target) => void openAttentionTerminal(target)} />
                 <div ref={anchor}>
                   {thread.lifecycle?.relation === "subagent" ? (
                     <SubagentBar thread={thread} />
