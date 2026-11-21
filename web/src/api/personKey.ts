@@ -208,6 +208,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["DELETE", "/api/library/env-sets/{id}/keys/{key}"],
   ["POST", "/api/library/import"],
   ["POST", "/api/projects/{id}/library/suggestions/copy"],
+  // Transcript import (docs/attachments-transcripts.md): a thread made from an untrusted file. The export (`GET /api/threads/{id}/export`) is Local.
+  ["POST", "/api/threads/import"],
 ];
 
 /**

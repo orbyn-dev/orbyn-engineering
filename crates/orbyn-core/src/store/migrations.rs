@@ -75,6 +75,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (65, include_str!("project_repos.sql")),
     (66, include_str!("thread_repos.sql")),
     (67, include_str!("library.sql")),
+    (68, include_str!("thread_import.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the

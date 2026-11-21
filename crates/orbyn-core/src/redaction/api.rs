@@ -197,6 +197,16 @@ impl Core {
         }))
     }
 
+    /// The detectors for a transcript file: see [`Stored::export_redactor`]. Settings that do not read give the default patterns
+    /// (every format, no custom ones), never an empty set.
+    pub fn export_redactor(&self) -> Result<Arc<Redactor>> {
+        let text = self.store.redaction_json()?;
+        let key = format!("export||{}", text.as_deref().unwrap_or(""));
+        Ok(cached(key, || {
+            Stored::parse(text.as_deref()).export_redactor()
+        }))
+    }
+
     pub fn redaction_settings(&self) -> Result<RedactionSettings> {
         Ok(self.view(&self.stored_redaction()?))
     }
