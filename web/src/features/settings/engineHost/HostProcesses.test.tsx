@@ -97,3 +97,31 @@ it("words the running time as whole hours and minutes", () => {
   expect(runningFor("not a time", now)).toBe("");
   expect(processLine({ id: "a", name: "A", state: "running", since: "2026-11-21T11:00:00Z", can_retry: false }, now)).toBe("Running 1 h 0 min · orbyn-engine-host");
 });
+
+it("restarting a running host with threads asks first; one with none restarts at once", async () => {
+  const mock = createEngineHostMock({ hosts: hosts() });
+  setEngineHostApi(mock);
+  const user = userEvent.setup();
+  render(<Rows />);
+  await user.click(await screen.findByRole("button", { name: "Restart Cursor engine host" }));
+  await waitFor(() => expect(mock.writes).toEqual(["retry:cursor"]));
+  await user.click(await screen.findByRole("button", { name: "Restart Claude Code engine host" }));
+  const dialog = await screen.findByRole("dialog", { name: "Restart the Claude Code engine host?" });
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+  expect(mock.writes).toEqual(["retry:cursor"]);
+  await user.click(within(dialog).getByRole("button", { name: "Restart" }));
+  await waitFor(() => expect(mock.writes).toEqual(["retry:cursor", "retry:claude"]));
+});
+
+it("cuts a failure message the service chose before the Stop question shows it", async () => {
+  const mock = createEngineHostMock({ hosts: hosts() });
+  mock.stop = async () => { throw new Error(`<b>x</b>${"w".repeat(900)}`); };
+  setEngineHostApi(mock);
+  const user = userEvent.setup();
+  const { baseElement } = render(<Rows />);
+  await user.click(await screen.findByRole("button", { name: "Stop Cursor engine host" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Stop" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent!.length).toBeLessThan(330);
+  expect(baseElement.querySelector("dialog b")).toBeNull();
+});

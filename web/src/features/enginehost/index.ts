@@ -5,7 +5,7 @@ export { engineHostApi, setEngineHostApi, useEngineHostCrashes, useEngineHosts, 
 export { cannotSend, engineGap, pickerGap, programOf, sendsWithoutHost } from "./gaps";
 export type { Gap, GapAction, GapKind } from "./gaps";
 export {
-  bannerLine, capabilityLine, CHIPS, clock, isProcess, listLine, mismatchLine, plain, processLine, restartLine, runningFor, shortDate, stateLine, STOPPED_SENTENCE,
+  bannerLine, capabilityLine, CHIPS, chipFor, clock, isProcess, listLine, mismatchLine, plain, processLine, restartLine, runningFor, shortDate, stateLine, STOPPED_SENTENCE,
 } from "./hostText";
 export type { Chip } from "./hostText";
 export { KEYCHAIN_DENIED, KEYCHAIN_LOCKED } from "./contract";

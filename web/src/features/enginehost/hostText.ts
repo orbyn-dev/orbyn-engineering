@@ -62,14 +62,15 @@ export function listLine(row: HostRow, now = Date.now()): string {
     case "not_started": return "Starts with the first thread that uses it.";
     case "starting": return "Waiting for the host to say hello";
     case "running": return row.pooled
-      ? `One host for every ${row.name} thread · since ${clock(row.since)}`
-      : `Host ${row.host_version ?? ""} · protocol ${row.protocol ?? ""} · since ${clock(row.since)}`;
+      ? `One host for every ${plain(row.name, 60)} thread · since ${clock(row.since)}`
+      : `Host ${plain(row.host_version ?? "", 20)} · protocol ${row.protocol ?? ""} · since ${clock(row.since)}`;
     case "stopped": return `Stopped ${ago(row.stopped_at, now)} because nothing was using it. Starts with the next thread.`;
     case "crashed": return `Stopped at ${clock(row.stopped_at)}.${crashedThreads(row)} Restarting next.`;
     case "restarting": return restartLine(row);
-    case "cant_start": return `Stopped ${row.stops_in_window ?? 5} times in 5 minutes.${row.last_error ? ` Last error: ${sentence(row.last_error.message)}` : ""}`;
+    case "cant_start": return `Stopped ${row.stops_in_window ?? 5} times in 5 minutes.${row.last_error ? ` Last error: ${sentence(plain(row.last_error.message, 200))}` : ""}`;
     case "version_mismatch": return mismatchLine(row);
-    case "not_used": return `${row.name} runs through its own program here.`;
+    case "not_used": return `${plain(row.name, 60)} runs through its own program here.`;
+    default: return "";
   }
 }
 
@@ -92,14 +93,14 @@ export function stateLine(row: HostRow, today = new Date()): string {
   }
 }
 
-const CAPABILITY_WORDS: Record<string, string> = {
+const CAPABILITY_WORDS = new Map<string, string>(Object.entries({
   steer: "Steer a run", fork: "fork", background: "background work", rollback: "roll back", models: "list models", usage: "report usage",
-};
+}));
 
 /** What the host said it can do, in its own order. A word this app does not know is shown as it came. */
 export const capabilityLine = (capabilities: string[]) =>
   capabilities.map((name, at) => {
-    const word = CAPABILITY_WORDS[name] ?? name;
+    const word = CAPABILITY_WORDS.get(name) ?? plain(String(name), 40);
     return at === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word;
   }).join(", ");
 
@@ -110,13 +111,21 @@ export function bannerLine(row: HostRow): string | null {
   }
   if (row.state === "crashed" || row.state === "restarting") {
     const threads = row.failed_threads ? ` ${plural(row.failed_threads, "thread", "threads")} that ${row.failed_threads === 1 ? "was" : "were"} running on it failed.` : "";
-    return `The ${row.name} engine host stopped${row.stopped_at ? ` at ${clock(row.stopped_at)}` : ""}.${threads} Your work in the project is kept.`;
+    return `The ${plain(row.name, 60)} engine host stopped${row.stopped_at ? ` at ${clock(row.stopped_at)}` : ""}.${threads} Your work in the project is kept.`;
   }
   return null;
 }
 
 /** Text the service or a model chose (an engine's name, an error): cut so no line can grow the page. React escapes it; it is never markup. */
-export const plain = (text: string, max = 80): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+export const plain = (text: string, max = 80): string => {
+  const whole = String(text);
+  return whole.length > max ? `${whole.slice(0, max)}…` : whole;
+};
+
+const CHIP_MAP = new Map<string, Chip>(Object.entries(CHIPS));
+
+/** The chip for a state word. A word this app does not know (the service chose it) is Unknown, never a crash or a borrowed look. */
+export const chipFor = (state: string): Chip => (typeof state === "string" ? CHIP_MAP.get(state) : undefined) ?? { label: "Unknown", tone: "plain" };
 
 /** `3 h 4 min`, `38 min`, `45 s`: how long a host has run, as the Processes list writes it. */
 export function runningFor(since: string | null | undefined, now: number): string {

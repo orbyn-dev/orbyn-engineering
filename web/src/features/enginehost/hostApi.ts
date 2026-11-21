@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
 import type { EngineHostApi, HostCrash, HostRow, KeyStorage } from "./contract";
 
@@ -72,8 +72,19 @@ export function useEngineHostCrashes(): HostCrash[] {
   return read.status === "ready" ? read.data : [];
 }
 
-export function useKeyStorage(): { rows: KeyStorage[] | null; reload(): void; set(rows: KeyStorage[] | null): void } {
+export function useKeyStorage(): { rows: KeyStorage[] | null; reload(): void; replace(next: KeyStorage): void } {
   const seen = useApiVersion();
   const read = useAsync(`key-storage:${seen}`, (signal) => engineHostApi().storage(signal));
-  return { rows: read.status === "ready" ? read.data : null, reload: read.reload, set: read.setData };
+  const rows = read.status === "ready" ? read.data : null;
+  // Every answer is applied to the rows as they are when it lands, not as they were at the click: two writes that settle before a
+  // render each keep their own row, and a slower answer for one engine cannot put an older copy of another back.
+  const latest = useRef<KeyStorage[] | null>(rows);
+  latest.current = rows;
+  const { setData } = read;
+  const replace = (next: KeyStorage) => {
+    const updated = (latest.current ?? []).map((row) => (row.engine_id === next.engine_id ? next : row));
+    latest.current = updated;
+    setData(updated);
+  };
+  return { rows, reload: read.reload, replace };
 }

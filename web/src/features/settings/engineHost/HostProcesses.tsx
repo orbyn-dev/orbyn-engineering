@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { ApiFailure } from "../../../api/client";
 import { Button } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { useNow } from "../../../lib/useNow";
@@ -15,6 +16,7 @@ export function useHostProcesses(): { rows: HostRow[]; reload(): void } {
 function Row({ row, reload }: { row: HostRow; reload(): void }) {
   const now = useNow(row.state === "running");
   const [stopping, setStopping] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // One click, one write: a second click while the first is in flight is not another request.
@@ -23,6 +25,7 @@ function Row({ row, reload }: { row: HostRow; reload(): void }) {
   const restart = async () => {
     if (pending.current) return;
     pending.current = true;
+    setRestarting(false);
     setBusy(true);
     setError(null);
     try { await engineHostApi().retry(row.id); reload(); }
@@ -33,18 +36,29 @@ function Row({ row, reload }: { row: HostRow; reload(): void }) {
     if (pending.current) return;
     pending.current = true;
     try { await engineHostApi().stop(row.id); reload(); }
+    // The dialog shows the failure's message as it is; text the service chose is cut first.
+    catch (failure) { throw new ApiFailure("host_write_failed", reasonOf(failure), 0); }
     finally { pending.current = false; }
   };
+
   const canStop = row.state !== "cant_start";
   const canRestart = row.state === "running" || row.state === "cant_start";
   const threads = row.running_threads ?? 0;
+  // Restarting a running host ends its threads the way Stop does. The frames draw no question for Restart; one is asked anyway
+  // when threads would end, and a host with none restarts at once.
+  const askRestart = row.state === "running" && threads > 0;
   return (
     <li>
       <SettingRow title={name} description={processLine(row, now)}>
-        {canRestart ? <Button small tone="quiet" busy={busy} aria-label={`Restart ${name}`} onClick={() => void restart()}>Restart</Button> : null}
+        {canRestart ? <Button small tone="quiet" busy={busy} aria-label={`Restart ${name}`} onClick={() => (askRestart ? setRestarting(true) : void restart())}>Restart</Button> : null}
         {canStop ? <button type="button" className="set-red-link" aria-label={`Stop ${name}`} onClick={() => setStopping(true)}>Stop</button> : null}
       </SettingRow>
       {error ? <p className="field-error eh-row-error" role="alert">{error}</p> : null}
+      {restarting ? (
+        <ConfirmDialog title={`Restart the ${plain(row.name, 60)} engine host?`} confirmLabel="Restart" tone="danger" cancelFocus onClose={() => setRestarting(false)} onConfirm={restart}>
+          <p>It stops now and starts again. The {threads === 1 ? "thread" : `${threads} threads`} running on it end{threads === 1 ? "s" : ""} with “{STOPPED_SENTENCE}”</p>
+        </ConfirmDialog>
+      ) : null}
       {stopping ? (
         <ConfirmDialog title={`Stop the ${plain(row.name, 60)} engine host?`} confirmLabel="Stop" tone="danger" cancelFocus onClose={() => setStopping(false)} onConfirm={stop}>
           <p>It stops now. {threads > 0 ? `The ${threads === 1 ? "thread" : `${threads} threads`} running on it end${threads === 1 ? "s" : ""} with “${STOPPED_SENTENCE}” ` : "Threads running on it end with the host’s own sentence. "}It starts again with the next message.</p>

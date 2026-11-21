@@ -20,7 +20,7 @@ type Variant = "list" | "detail";
 type Step = "ask" | "enter" | "replace" | "remove";
 type Chip = { label: string; tone: "ok" | "info" | "err" | "plain"; spin?: boolean };
 
-const CHIPS: Record<StorageChoice, Chip> = {
+const CHIPS = new Map<string, Chip>(Object.entries({
   not_asked: { label: "Not asked", tone: "plain" },
   saved: { label: "Saved", tone: "ok" },
   declined: { label: "Declined", tone: "plain" },
@@ -30,7 +30,10 @@ const CHIPS: Record<StorageChoice, Chip> = {
   locked: { label: "Locked", tone: "err" },
   denied: { label: "Denied", tone: "err" },
   remove_failed: { label: "Saved", tone: "ok" },
-};
+}));
+
+/** A choice the service sent that this screen does not know is Unknown; it never looks like Saved. */
+const chipOf = (choice: string): Chip => (typeof choice === "string" ? CHIPS.get(choice) : undefined) ?? { label: "Unknown", tone: "plain" };
 
 function line(name: string, choice: StorageChoice, variant: Variant): string {
   switch (choice) {
@@ -42,7 +45,8 @@ function line(name: string, choice: StorageChoice, variant: Variant): string {
     case "denied": return "Not saved. Orbyn stores nothing.";
     case "rejected": return `Saved in your keychain. ${name} rejected it.`;
     case "remove_failed": return "Still saved in your keychain";
-    default: return variant === "list" ? "Not asked yet. Orbyn stores nothing until you choose." : "Orbyn stores nothing until you choose.";
+    case "not_asked": return variant === "list" ? "Not asked yet. Orbyn stores nothing until you choose." : "Orbyn stores nothing until you choose.";
+    default: return "";
   }
 }
 
@@ -87,12 +91,12 @@ function KeyDialog({ title, lead, label, busy, error, onCancel, onSave }: {
         <Button disabled={busy} onClick={onCancel}>Cancel</Button>
         <Button tone="primary" busy={busy} disabled={!filled} onClick={save}>Save key</Button>
       </>}>
-      <form onSubmit={submit} autoComplete="off">
+      <form onSubmit={submit} autoComplete="off" data-form-type="other">
         <p>{lead}</p>
         <label className="eh-key">
           <span>{label}</span>
-          <input ref={field} type="password" name="orbyn-api-key" data-dialog-focus autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-            data-lpignore="true" data-1p-ignore="true" aria-describedby="eh-key-hint" disabled={busy}
+          <input ref={field} type="password" name="orbyn-api-key" data-dialog-focus autoComplete="new-password" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+            data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" aria-describedby="eh-key-hint" disabled={busy}
             onChange={(event) => setFilled(event.target.value !== "")} />
         </label>
         <p id="eh-key-hint" className="setting-line-desc">Hidden while you type. Never written to a file or a log.</p>
@@ -107,7 +111,7 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
   const name = plain(row.name);
   const [step, setStep] = useState<Step | null>(null);
   const [busy, setBusy] = useState<"saving" | "removing" | "declining" | null>(null);
-  const [failed, setFailed] = useState<{ kind: "locked" | "denied"; intent: "save" | "decline" } | "remove_failed" | null>(null);
+  const [failed, setFailed] = useState<{ kind: "locked" | "denied"; intent: "save" | "decline"; replacing: boolean } | "remove_failed" | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A second click while the first request is in flight is not a second write.
   const pending = useRef(false);
@@ -129,11 +133,13 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     }
   };
 
+  const holdsKey = row.choice === "saved" || row.choice === "rejected" || row.choice === "remove_failed";
+  const replacing = holdsKey;
   const keychainFailure = (intent: "save" | "decline") => (failure: unknown) => {
     const code = failure && typeof failure === "object" && "code" in failure ? (failure as { code: unknown }).code : null;
     if (code === KEYCHAIN_LOCKED || code === KEYCHAIN_DENIED) {
       // Nothing falls back to a file: the key is not saved, and the row says what is needed.
-      setFailed({ kind: code === KEYCHAIN_LOCKED ? "locked" : "denied", intent });
+      setFailed({ kind: code === KEYCHAIN_LOCKED ? "locked" : "denied", intent, replacing: intent === "save" && holdsKey });
       setStep(null);
     } else setError(reasonOf(failure));
   };
@@ -142,11 +148,10 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
   const decline = () => guarded("declining", () => engineHostApi().decline(row.engine_id), keychainFailure("decline"));
   const remove = () => guarded("removing", () => engineHostApi().removeKey(row.engine_id), () => { setFailed("remove_failed"); setStep(null); });
 
-  const replacing = row.choice === "saved" || row.choice === "rejected" || row.choice === "remove_failed";
   const choice: StorageChoice = busy === "removing" ? "removing"
     : busy === "saving" ? "saving"
     : failed === "remove_failed" ? "remove_failed"
-    : failed ? failed.kind : row.choice;
+    : failed && !failed.replacing ? failed.kind : row.choice;
   const close = () => { if (!pending.current) { setStep(null); setError(null); } };
   const retry = () => {
     if (failed === "remove_failed") { void remove(); return; }
@@ -192,7 +197,10 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     if (choice === "not_asked") return <Button small onClick={() => setStep("ask")}>Choose…</Button>;
     return null;
   };
-  const banner = bannerOf(name, choice);
+  // A refused replace leaves the saved key where it was: the row stays Saved, the banner says so, and Remove… stays.
+  const banner = failed && failed !== "remove_failed" && failed.replacing
+    ? { text: "The new key wasn’t saved; the old key is still in your keychain.", retry: true }
+    : bannerOf(name, choice);
   return { name, choice, actions, dialogs, banner, retry, busy: busy !== null };
 }
 
@@ -207,7 +215,7 @@ function GroupRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage)
       <div role="row" className="set-tr">
         <span role="cell"><span className="set-mark">{entry.name.charAt(0).toUpperCase()}</span></span>
         <span role="cell"><span className="name">{entry.name}</span><br /><span className="sub eh-sub">{line(entry.name, entry.choice, "list")}</span></span>
-        <span role="cell" className="eh-chips"><StateChip chip={CHIPS[entry.choice]} /></span>
+        <span role="cell" className="eh-chips"><StateChip chip={chipOf(entry.choice)} /></span>
         <span role="cell">{entry.actions("list")}</span>
       </div>
       {entry.banner ? <div role="row" className="eh-row-error"><span role="cell"><Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} /></span></div> : null}
@@ -218,13 +226,8 @@ function GroupRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage)
 
 /** The API key storage group of the Providers page. Nothing is drawn until the service offers at least one engine. */
 export function KeyStorageGroup() {
-  const { rows, set } = useKeyStorage();
-  const latest = useRef<KeyStorage[] | null>(null);
-  latest.current = rows;
+  const { rows, replace } = useKeyStorage();
   if (!rows || rows.length === 0) return null;
-  // `replace` runs after an await: it reads the rows as they are then, not as they were at the click, so a slower
-  // answer for one engine cannot put an older copy of another engine's row back.
-  const replace = (next: KeyStorage) => set((latest.current ?? rows).map((row) => (row.engine_id === next.engine_id ? next : row)));
   return (
     <>
       <div className="set-grp">API key storage <SetupPill /></div>
@@ -242,7 +245,7 @@ function DetailRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage
     <>
       {entry.banner ? <Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} /> : null}
       <SettingRow title="API key" description={line(entry.name, entry.choice, "detail")}>
-        <StateChip chip={CHIPS[entry.choice]} />{entry.actions("detail")}
+        <StateChip chip={chipOf(entry.choice)} />{entry.actions("detail")}
       </SettingRow>
       <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on. Today Orbyn never stores a key.</p>
       {entry.dialogs}
@@ -252,11 +255,8 @@ function DetailRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage
 
 /** The API key row on one engine's detail page. Nothing when the service does not offer this engine. */
 export function KeyStorageRow({ engineId }: { engineId: string }) {
-  const { rows, set } = useKeyStorage();
-  const latest = useRef<KeyStorage[] | null>(null);
-  latest.current = rows;
+  const { rows, replace } = useKeyStorage();
   const row = rows?.find((entry) => entry.engine_id === engineId);
   if (!rows || !row) return null;
-  const replace = (next: KeyStorage) => set((latest.current ?? rows).map((entry) => (entry.engine_id === next.engine_id ? next : entry)));
   return <DetailRow row={row} replace={replace} />;
 }

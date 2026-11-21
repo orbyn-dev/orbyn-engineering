@@ -1,5 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createEngineHostMock, storageFixtures } from "../../../../mock/engineHost";
 import { KEYCHAIN_DENIED, KEYCHAIN_LOCKED, type KeyStorage, setEngineHostApi } from "../../enginehost";
@@ -265,4 +267,69 @@ it("puts no key, engine name or choice into a URL or the console", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(location.hash + location.search).toBe("");
   for (const spy of [log, warn, error]) expect(spy).not.toHaveBeenCalled();
+});
+
+it("a refused replace keeps the saved state, says the old key is still there and keeps Remove…", async () => {
+  const mock = createEngineHostMock();
+  setEngineHostApi(mock);
+  const user = userEvent.setup();
+  render(<KeyStorageRow engineId="cursor" />);
+  await user.click(await screen.findByRole("button", { name: "Replace…" }));
+  mock.failNext(KEYCHAIN_LOCKED);
+  await user.type(within(await screen.findByRole("dialog")).getByLabelText("New API key"), KEY);
+  await user.click(screen.getByRole("button", { name: "Save key" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("The new key wasn’t saved; the old key is still in your keychain.");
+  expect(screen.getByText("Saved in your keychain")).toBeVisible();
+  expect(screen.getByText("Saved")).toBeVisible();
+  expect(screen.queryByText(/stores nothing/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Remove…" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("dialog", { name: "Replace Cursor’s API key" })).toBeVisible();
+});
+
+it("two answers that land before a render each keep their own row", async () => {
+  const mock = createEngineHostMock({ delayMs: 10 });
+  setEngineHostApi(mock);
+  const user = userEvent.setup();
+  render(<KeyStorageGroup />);
+  const t = await table();
+  await user.click(within(t).getByRole("button", { name: "Choose…" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Don’t store" }));
+  await user.click(within(t).getByRole("button", { name: "Replace…" }));
+  await user.type(within(await screen.findByRole("dialog")).getByLabelText("New API key"), KEY);
+  await user.click(screen.getByRole("button", { name: "Save key" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(within(rowOf("Antigravity")).getByText("Declined")).toBeVisible();
+  expect(within(rowOf("Cursor")).getByText("Saved")).toBeVisible();
+});
+
+it("shows a state or choice the service made up as Unknown, and never throws on a prototype name", async () => {
+  setEngineHostApi(createEngineHostMock({ storage: [
+    { engine_id: "a", name: "A", choice: "toString" as never }, { engine_id: "b", name: "B", choice: "constructor" as never }] }));
+  render(<KeyStorageGroup />);
+  await table();
+  expect(screen.getAllByText("Unknown")).toHaveLength(2);
+});
+
+it("keeps the key field away from password managers and out of the markup", async () => {
+  setEngineHostApi(createEngineHostMock());
+  const user = userEvent.setup();
+  render(<KeyStorageGroup />);
+  await user.click(await within(await table()).findByRole("button", { name: "Choose…" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Continue" }));
+  const field = within(await screen.findByRole("dialog")).getByLabelText("API key");
+  expect(field).toHaveAttribute("autocomplete", "new-password");
+  expect(field).toHaveAttribute("type", "password");
+  expect(field).not.toHaveAttribute("value");
+});
+
+it("documents that the real routes are Person-class, carry the key in the body and never echo it", () => {
+  const source = readFileSync(join(process.cwd(), "src/features/enginehost/contract.ts"), "utf8");
+  for (const operation of ["saveKey", "removeKey", "decline", "stop", "retry"]) {
+    const at = source.indexOf(`${operation}(`);
+    expect(at).toBeGreaterThan(0);
+    expect(source.slice(Math.max(0, at - 700), at)).toContain("Person-class (ENFORCED");
+  }
+  expect(source).toMatch(/JSON body and never in the path or query/);
+  expect(source).toMatch(/must not\s+\* echo the key/);
 });

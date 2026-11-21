@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { HostRow } from "./contract";
-import { bannerLine, capabilityLine, CHIPS, listLine, restartLine, stateLine } from "./hostText";
+import { bannerLine, capabilityLine, chipFor, CHIPS, listLine, restartLine, stateLine } from "./hostText";
 
 const row = (patch: Partial<HostRow>): HostRow => ({ id: "x", name: "Codex", state: "running", can_retry: false, ...patch });
 const NOW = new Date(2026, 10, 21, 10, 0).getTime();
@@ -44,4 +44,15 @@ it("writes the banner for a crash and for a mismatch, and none otherwise", () =>
   expect(bannerLine(row({ state: "crashed", stopped_at: at(9, 41), failed_threads: 1 }))).toContain("1 thread that was running on it failed.");
   expect(bannerLine(row({ state: "version_mismatch", protocol: 2, app_protocol: 1 }))).toBe("The engine host does not match this app version. The host speaks protocol 2; this app speaks protocol 1.");
   expect(bannerLine(row({}))).toBeNull();
+});
+
+it("does not crash on a state or capability word that is a prototype name, and cuts host-chosen text", () => {
+  expect(chipFor("toString")).toEqual({ label: "Unknown", tone: "plain" });
+  expect(chipFor("running")).toBe(CHIPS.running);
+  expect(capabilityLine(["constructor", "__proto__", "steer"])).toBe("Constructor, __proto__, Steer a run");
+  const long = "n".repeat(300);
+  expect(listLine(row({ state: "running", pooled: true, name: long, since: at(9, 12) }), NOW).length).toBeLessThan(160);
+  expect(listLine(row({ state: "weird" as never }), NOW)).toBe("");
+  expect(bannerLine(row({ state: "crashed", name: long }))!.length).toBeLessThan(200);
+  expect(listLine(row({ state: "running", host_version: long, since: at(9, 12) }), NOW).length).toBeLessThan(120);
 });

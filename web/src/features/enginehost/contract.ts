@@ -108,17 +108,22 @@ export interface EngineHostApi {
   crashes(signal?: AbortSignal): Promise<HostCrash[]>;
   /** The engines that may keep an API key in the keychain, or `null` when the service has none to offer. */
   storage(signal?: AbortSignal): Promise<KeyStorage[] | null>;
-  /** Start a family that is marked unavailable, or start a running one again (`restart`). */
+  /**
+   * Start a family that is marked unavailable, or restart a running one (which ends its threads like `stop`).
+   * The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`): it changes what runs.
+   */
   retry(hostId: string): Promise<void>;
-  /** Stop a running or restarting host; the threads on it end with the host's own sentence. */
+  /** Stop a running or restarting host; the threads on it end with the host's own sentence. The real route must be Person-class (ENFORCED). */
   stop(hostId: string): Promise<void>;
-  /** Never keep this engine's API key (a decision, kept). */
+  /** Never keep this engine's API key (a decision, kept). The real route must be Person-class (ENFORCED). */
   decline(engineId: string): Promise<KeyStorage>;
   /**
    * Save the key in the system keychain. This is the one place a secret crosses the contract, and only outward: the argument is
    * passed once, never stored, echoed, logged or read back. Rejects with `KEYCHAIN_LOCKED` or `KEYCHAIN_DENIED`.
+   * The real route must be Person-class (ENFORCED), carry the key in the JSON body and never in the path or query, and must not
+   * echo the key in any reply or error text.
    */
   saveKey(engineId: string, key: string): Promise<KeyStorage>;
-  /** Delete the key Orbyn saved; the engine's own sign-in is untouched and running threads keep going. */
+  /** Delete the key Orbyn saved; the engine's own sign-in is untouched and running threads keep going. The real route must be Person-class (ENFORCED). */
   removeKey(engineId: string): Promise<KeyStorage>;
 }

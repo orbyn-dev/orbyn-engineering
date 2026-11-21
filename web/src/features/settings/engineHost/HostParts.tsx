@@ -1,7 +1,7 @@
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../../ui/controls";
-import { type HostCause, type HostErrorKind, type HostState, type Chip, CHIPS, plain } from "../../enginehost";
+import { type HostCause, type HostErrorKind, type HostState, type Chip, chipFor, plain } from "../../enginehost";
 import "./engineHost.css";
 
 const LOOP = "[Circular error cause]";
@@ -17,7 +17,7 @@ export function HostPill({ chip }: { chip: Chip }) {
 
 /** The state chip: green only for Running, blue (with a spinner) for a wait, red for what failed, plain for the rest. */
 export function HostChip({ state }: { state: HostState }) {
-  const chip = CHIPS[state];
+  const chip = chipFor(state);
   return (
     <span className={chip.tone === "plain" ? "set-pill dot" : `set-pill ${chip.tone}${chip.spin ? "" : " dot"}`}>
       {chip.spin ? <Loader2 size={11} className="spin" aria-hidden /> : null}{chip.label}
