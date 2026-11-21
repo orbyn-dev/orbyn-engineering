@@ -48,7 +48,8 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
    instructions stops the task, `injection_suspected`. The ledger keeps the class, never the text.
 3. **Always denied:** N1 to N10, before any approver, rule, mode or person's saved allow. The lead is never asked.
 4. **Lease:** every path a file change names must lie in the lease the brief granted this worker; a refusal is the lease's
-   own (H10) and refuses the write, never the task.
+   own (H10) and refuses the write, never the task. It is recorded as a denial (`decided_by: lease`) and counts toward the
+   trip wires (rule 7), so a worker cannot retry out-of-lease writes without limit.
 5. **Tier:** reads and writes inside the leased paths and the brief's own check commands need nobody. Network, installing
    dependencies, running a script or code the worker wrote, and CI files need two keys. The rest is the lead's.
 6. **Chain:** the lead answers a [`Summary`](chain.rs) (kind, target, paths, the brief's outcome, the tier and why), never

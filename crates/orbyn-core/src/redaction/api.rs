@@ -42,22 +42,73 @@ const ORDINARY: &[&str] = &[
     "Please review the change and tell me what you think.",
 ];
 
-/// Compiled sets by the settings text they came from, so a new revision is a new key. A few
-/// entries only; the oldest goes first.
+/// The compiled sets: bounded, and the least recently used set is evicted first.
+const CACHE_MAX: usize = 32;
+
+/// Compiled sets by the settings text they came from, so a new revision is a new key.
+struct CompiledCache {
+    /// Least recently used first.
+    entries: Mutex<Vec<(String, Arc<Redactor>)>>,
+}
+
+impl CompiledCache {
+    const fn new() -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn get_or_build(&self, key: String, build: impl FnOnce() -> Redactor) -> Arc<Redactor> {
+        {
+            let mut entries = self.lock();
+            if let Some(at) = entries.iter().position(|(known, _)| *known == key) {
+                let hit = Arc::clone(&entries[at].1);
+                // The hit is the most recently used one now.
+                let entry = entries.remove(at);
+                entries.push(entry);
+                return hit;
+            }
+        }
+        // Everything slow happens with no lock held, so one compile cannot hold up the others.
+        let built = Arc::new(build());
+        let mut entries = self.lock();
+        if let Some((_, hit)) = entries.iter().find(|(known, _)| *known == key) {
+            // Another read built it while this one did: its set wins.
+            return Arc::clone(hit);
+        }
+        if entries.len() >= CACHE_MAX {
+            entries.remove(0);
+        }
+        entries.push((key, Arc::clone(&built)));
+        built
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(String, Arc<Redactor>)>> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    #[cfg(test)]
+    fn keys(&self) -> Vec<String> {
+        self.lock().iter().map(|(key, _)| key.clone()).collect()
+    }
+
+    #[cfg(test)]
+    fn lock_is_free(&self) -> bool {
+        self.entries.try_lock().is_ok()
+    }
+}
+
+static CACHE: CompiledCache = CompiledCache::new();
+
 fn cached(key: String, build: impl FnOnce() -> Redactor) -> Arc<Redactor> {
-    static CACHE: Mutex<Vec<(String, Arc<Redactor>)>> = Mutex::new(Vec::new());
-    let mut cache = CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((_, hit)) = cache.iter().find(|(known, _)| *known == key) {
-        return Arc::clone(hit);
-    }
-    let built = Arc::new(build());
-    if cache.len() >= 32 {
-        cache.remove(0);
-    }
-    cache.push((key, Arc::clone(&built)));
-    built
+    CACHE.get_or_build(key, build)
 }
 
 fn problem(found: Problem) -> CoreError {
@@ -102,11 +153,13 @@ impl Core {
     /// it uses `Redactor::locked`, which no setting reaches.
     pub fn redactor(&self, surface: Surface, project_id: Option<&str>) -> Result<Arc<Redactor>> {
         let text = self.store.redaction_json()?;
-        let key = format!(
-            "{surface:?}|{}|{}",
-            project_id.unwrap_or(""),
-            text.as_deref().unwrap_or("")
-        );
+        let raw = text.as_deref().unwrap_or("");
+        let key = match surface {
+            // The terminal set reads no project, so every project shares its one entry.
+            Surface::Terminal => format!("terminal|{raw}"),
+            // The agents set is keyed by project: a project can be switched off on its own.
+            Surface::Agents => format!("agents|{}|{raw}", project_id.unwrap_or("")),
+        };
         Ok(cached(key, || {
             Stored::parse(text.as_deref()).redactor(surface, project_id)
         }))
@@ -390,5 +443,69 @@ fn pattern_view(stored: &StoredPattern) -> RedactionPattern {
         name: stored.name.clone(),
         kind: stored.kind,
         applies_to: stored.applies_to,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn the_compiled_cache_stays_at_its_cap() {
+        let cache = CompiledCache::new();
+        for n in 0..CACHE_MAX + 8 {
+            cache.get_or_build(format!("set-{n}"), Redactor::default);
+        }
+        assert_eq!(cache.len(), CACHE_MAX, "the cache grew past its cap");
+        let keys = cache.keys();
+        assert!(!keys.contains(&"set-0".to_owned()), "the oldest went first");
+        assert!(keys.contains(&format!("set-{}", CACHE_MAX + 7)));
+    }
+
+    #[test]
+    fn the_compiled_cache_evicts_the_least_recently_used_set() {
+        let cache = CompiledCache::new();
+        for n in 0..CACHE_MAX {
+            cache.get_or_build(format!("set-{n}"), Redactor::default);
+        }
+        // Read the oldest again: it becomes the most recently used.
+        cache.get_or_build("set-0".into(), || panic!("a cached set was compiled again"));
+        cache.get_or_build("set-new".into(), Redactor::default);
+        cache.get_or_build("set-0".into(), || {
+            panic!("the least recently used set was not evicted first")
+        });
+        let mut rebuilt = false;
+        cache.get_or_build("set-1".into(), || {
+            rebuilt = true;
+            Redactor::default()
+        });
+        assert!(rebuilt, "the second oldest set should have gone");
+    }
+
+    #[test]
+    fn a_compile_runs_with_no_cache_lock_held() {
+        let cache = CompiledCache::new();
+        cache.get_or_build("slow".into(), || {
+            // Another thread can take the lock only when the compile does not hold it.
+            let free = std::thread::scope(|scope| {
+                scope
+                    .spawn(|| cache.lock_is_free())
+                    .join()
+                    .expect("the probe thread panicked")
+            });
+            assert!(free, "a compile ran while the cache lock was held");
+            Redactor::default()
+        });
+    }
+
+    #[test]
+    fn a_set_built_twice_is_stored_once_and_reused() {
+        let cache = CompiledCache::new();
+        let first = cache.get_or_build("same".into(), Redactor::default);
+        let again = cache.get_or_build("same".into(), || panic!("a stored set was rebuilt"));
+        assert!(Arc::ptr_eq(&first, &again));
+        assert_eq!(cache.len(), 1);
     }
 }

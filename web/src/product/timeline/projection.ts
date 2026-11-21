@@ -426,7 +426,8 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
         const taskId = body?.taskId;
         const taskType = typeof body?.taskType === "string" ? body.taskType : "";
         const described = typeof body?.description === "string" && body.description !== "" ? body.description : null;
-        if (typeof taskId === "string" && taskId !== "") {
+        // A workflow keeps its own state (workflow item); it never gets a stopped row.
+        if (typeof taskId === "string" && taskId !== "" && taskType !== "local_workflow") {
           const key = "stopped:" + (wire.run_id ?? "");
           const at = fold.items.findIndex((item) => item.key === key);
           const task = { taskId, taskType, description: described };

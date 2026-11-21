@@ -580,7 +580,13 @@ inline review comments) and `viewer_review_state` (the signed-in login's latest 
 `none`). GitHub answers all of a project's rows with one batched GraphQL request, which
 also names the viewer, so the review state needs no other call. A field is absent when
 unknown, never zero or partial. A row is left out whole when its project cannot be read,
+its returned object has no known fields,
 its own batch yields no data for it or its forge has no details; only GitHub has them.
+The comment count is known only when the review connection is complete: at most 100
+review nodes, no next page, a matching total count, and valid nonnegative component
+counts whose sum fits the wire count. Incomplete, malformed or overflowing counts
+leave that field absent while other known row facts remain available. No extra pages
+are fetched to count comments.
 Repeated rows count once, at most 100 rows are read per request (later ones are ignored),
 and a project is asked in queries of at most 25 rows, so one failed or partly erroring
 query costs only the rows it did not return.
@@ -1295,6 +1301,8 @@ before the page hears it, so outside the desktop app a `mod+w` rule also matches
 key with `alt` in place of `mod`; the editor says which applies. It allows comments and trailing commas, and a
 bad entry is reported while the rest apply. A key with two commands in one exact
 context is a conflict; a key in two contexts is not.
+Saving a rule compares chords without case or spaces around `+`, including when it
+identifies the displaced rule to remove from the account record.
 
 The Worktrees Cleanup form edits the new policy through scoped membership and
 row revisions. Project and checkout selections expose Inherit, Off and Custom;
@@ -2763,7 +2771,10 @@ browser agents use, and needs a trusted folder and an `http` or `https` URL. Up 
 four run at once, and they close when their thread settles, archives or is deleted.
 Frames are polled about five times a second, only while someone watches or records,
 and a frame that did not change is not sent. `/ws/preview` sends each as base64 JPEG
-text. Watching gives no control: input needs a person to take the page first.
+text. A tab refreshes its title and declared icon about once a second on its own, so a
+tab nobody watches still reads correctly; a read that a document swap drops skips that
+look and is retried on the next one. Watching gives no control: input needs a person to
+take the page first.
 The separate authenticated `/ws/preview/:thread/:tab/pointer` feed carries only
 server-created ephemeral cues after successful agent click or scroll input.
 Each tab owns a monotonic sequence; positions are frame pixels, with zoom applied
@@ -3238,7 +3249,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 ## HTTP API
 
-All bodies are JSON and errors are `ApiError` with a stable `code`. Auth is
+All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
+read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
+the value that was sent (an account body can carry a password or a sign-in code). Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
