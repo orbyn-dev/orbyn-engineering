@@ -425,6 +425,29 @@ pub struct MessageSearch {
 }
 
 wire! {
+/// One frame of `GET /api/search/messages/events`: the same matches, in the same
+/// newest-first order, as `GET /api/search/messages`, sent while the read runs.
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageSearchEvent {
+    /// One match.
+    Hit { hit: MessageHit },
+    /// The read finished and these are all its matches. Carries what the whole read
+    /// says about it.
+    Done {
+        /// The words to highlight, lower-cased.
+        words: Vec<String>,
+        /// No word was long enough to search for, so nothing was searched.
+        too_short: bool,
+        /// More matched, or too many messages to read them all. Narrow the search.
+        truncated: bool,
+    },
+    /// The read failed after the frames above, so the matches are incomplete. The
+    /// stream ends; `code` is the same stable code the whole read would answer with.
+    Failed { code: String, message: String },
+}
+}
+
+wire! {
 /// `run_id` is what was stopped, and empty when nothing was running.
 pub struct ForcedStop {
     pub run_id: Option<String>,
