@@ -317,3 +317,56 @@ fn the_flag_off_and_an_empty_host_path_keep_the_rust_drivers() {
     let flag = HostConfig::from_env(Some("/x/h".into()), Some("true")).unwrap();
     assert!(!flag.claude, "the host wants exactly 1");
 }
+
+#[test]
+fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
+    use crate::agents::driver::acp::AcpDriver;
+    use crate::agents::engines::known::known_engine;
+    use orbyn_contracts::PermissionMode;
+
+    let known = known_engine("cursor").unwrap();
+    let rust: Arc<dyn crate::agents::driver::EngineDriver> =
+        Arc::new(AcpDriver::known(known.as_custom(), known));
+    // The Claude flag alone leaves Cursor exactly as it was.
+    let claude_only = HostConfig::from_env(Some("/x/h".into()), Some("1")).unwrap();
+    assert!(!claude_only.cursor);
+    let hub = HostHub::new(&claude_only);
+    assert!(!hub.knows("cursor"));
+    assert!(Arc::ptr_eq(
+        &hub.wrap("cursor", rust.clone(), "cursor-agent".into()),
+        &rust
+    ));
+    // The host wants exactly `1`, as the Claude flag does.
+    assert!(
+        !HostConfig::from_env(Some("/x/h".into()), None)
+            .unwrap()
+            .with_cursor(Some("true"))
+            .cursor
+    );
+    let on = HostConfig::from_env(Some("/x/h".into()), None)
+        .unwrap()
+        .with_cursor(Some("1"));
+    assert!(on.cursor && !on.claude);
+    let hub = HostHub::new(&on);
+    assert!(hub.knows("cursor"));
+    if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        return;
+    }
+    let hosted = hub.wrap("cursor", rust.clone(), "cursor-agent".into());
+    assert!(!Arc::ptr_eq(&hosted, &rust), "the flag wraps Cursor");
+    assert_eq!(
+        hosted.descriptor().capabilities.permission_modes,
+        [PermissionMode::NoApprovals]
+    );
+    // The Rust driver is untouched, and so is every other family.
+    assert_eq!(
+        rust.descriptor().capabilities.permission_modes,
+        PermissionMode::ALL
+    );
+    let claude: Arc<dyn crate::agents::driver::EngineDriver> =
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1)));
+    assert!(Arc::ptr_eq(
+        &hub.wrap("claude", claude.clone(), "claude".into()),
+        &claude
+    ));
+}

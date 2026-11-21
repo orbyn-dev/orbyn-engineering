@@ -1,14 +1,15 @@
 //! Usage from each engine's own local session history. Only timestamps, models
 //! and token counts leave a file, and only history files are opened: no credential
 //! file is ever read. Files are large, so they are streamed and unchanged ones
-//! are served from memory.
+//! are served from memory. Claude and Codex write one log per conversation; Muse
+//! writes a `session.jsonl` per session, including its subagents.
 
 mod limits;
 #[cfg(test)]
 #[path = "usage/limits_tests.rs"]
 pub(crate) mod limits_tests;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -63,6 +64,7 @@ fn tier_of(name: Option<&str>) -> String {
 pub(crate) enum Engine {
     Claude,
     Codex,
+    Muse,
 }
 
 fn number(value: &Value, key: &str) -> u64 {
@@ -184,7 +186,107 @@ pub fn scan_codex(reader: impl BufRead) -> FileTotals {
     totals
 }
 
-fn jsonl_files(root: &Path, found: &mut Vec<PathBuf>) {
+/// One inference from a Muse session log: its identity, day, model and tokens.
+type Inference = (String, String, String, Tokens);
+
+/// Muse records each finished inference as a `runtime.session` event whose
+/// counters are inclusive: the cached part is already inside `input_tokens` and
+/// reasoning is already inside `output_tokens`. A runtime envelope can be copied
+/// into another session's log, so each inference keeps the id that identifies the
+/// inference (`source_run_record_id`, else its own `id`) and is counted once over
+/// the whole history. The record shape is the one T3's
+/// `packages/provider-muse/src/server/usage.ts` reads (MIT, commit 9168ca73d),
+/// including its field precedence and its rejection of unsupported schemas.
+pub fn scan_muse(reader: impl BufRead) -> Vec<Inference> {
+    let mut rows = Vec::new();
+    for line in reader.lines().map_while(Result::ok) {
+        if !line.contains("model_completed") && !line.contains("automated_review_completed") {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(row) = muse_row(&entry) {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// A non-empty string field, for records whose identifiers cannot be blank.
+fn text(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn muse_row(entry: &Value) -> Option<Inference> {
+    if number(entry, "schema_version") != 1
+        || entry.get("record_type").and_then(Value::as_str) != Some("event")
+        || entry.get("payload_type").and_then(Value::as_str) != Some("runtime.session")
+        || !matches!(number(entry, "payload_schema_version"), 1 | 3)
+    {
+        return None;
+    }
+    let id = text(entry.get("id"))?;
+    let stream = entry.get("stream")?;
+    if stream.get("kind").and_then(Value::as_str) != Some("session")
+        || text(stream.get("id")).is_none()
+    {
+        return None;
+    }
+    let day = day_of_micros(entry.get("recorded_at").and_then(Value::as_u64)?)?;
+    let event = entry.pointer("/payload/event")?;
+    if !matches!(
+        event.get("kind").and_then(Value::as_str),
+        Some("model_completed" | "automated_review_completed")
+    ) {
+        return None;
+    }
+    let model = match event.get("model")? {
+        Value::String(name) if !name.is_empty() => name.clone(),
+        model => text(model.get("model_id"))?.to_owned(),
+    };
+    let usage = event.get("usage")?;
+    let input = number(usage, "input_tokens");
+    let cache_read = ["cache_read_tokens", "cached_input_tokens", "cached_tokens"]
+        .into_iter()
+        .find_map(|key| usage.get(key).and_then(Value::as_u64))
+        .unwrap_or(0)
+        .min(input);
+    let cache_write = number(usage, "cache_write_tokens").min(input - cache_read);
+    let output = number(usage, "output_tokens");
+    // A record without tokens proves no spend, so it is not counted at all.
+    if input + output == 0 {
+        return None;
+    }
+    let key = entry
+        .pointer("/payload/source_run_record_id")
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+        .unwrap_or(id);
+    Some((
+        key.to_owned(),
+        day,
+        model,
+        Tokens {
+            input: input - cache_read - cache_write,
+            output,
+            cache_read,
+            cache_write,
+        },
+    ))
+}
+
+/// Muse's `recorded_at` is microseconds from the Unix epoch. A value that names
+/// no day is dropped rather than counted on a made-up one.
+fn day_of_micros(micros: u64) -> Option<String> {
+    let nanos = i128::from(micros).checked_mul(1_000)?;
+    let at = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?;
+    Some(at.date().to_string())
+}
+
+fn jsonl_files(root: &Path, name: Option<&str>, found: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -195,8 +297,11 @@ fn jsonl_files(root: &Path, found: &mut Vec<PathBuf>) {
             continue;
         };
         if kind.is_dir() {
-            jsonl_files(&path, found);
-        } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
+            jsonl_files(&path, name, found);
+        } else if kind.is_file()
+            && path.extension().is_some_and(|ext| ext == "jsonl")
+            && name.is_none_or(|name| path.file_name().is_some_and(|file| file == name))
+        {
             found.push(path);
         }
     }
@@ -216,6 +321,13 @@ pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| home().map(|home| home.join(".codex")))
             .map(|root| root.join("sessions")),
+        // Muse resolves its own home when it starts, and no Muse driver is here to
+        // ask. Its recorded logs sit under the XDG data directory
+        // (`~/.local/share/muse/sessions/2026/10/11/<session>/session.jsonl`).
+        Engine::Muse => std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home().map(|home| home.join(".local").join("share")))
+            .map(|root| root.join("muse").join("sessions")),
     }
 }
 
@@ -224,7 +336,39 @@ pub(crate) fn history_root(engine: Engine) -> Option<PathBuf> {
 struct Cached {
     size: u64,
     modified: Option<SystemTime>,
-    totals: FileTotals,
+    scan: Scan,
+}
+
+/// One file's scan. Muse keeps a row per inference, because the same inference can
+/// appear in another session's log and must still count once over the history.
+#[derive(Clone)]
+enum Scan {
+    Totals(FileTotals),
+    Inferences(Vec<Inference>),
+}
+
+impl Scan {
+    /// Adds this file to the history being combined. `counted` holds the Muse
+    /// inference ids already seen in other files.
+    fn add(self, combined: &mut FileTotals, counted: &mut HashSet<String>) {
+        match self {
+            Scan::Totals(totals) => {
+                for (key, tokens) in totals {
+                    combined.entry(key).or_default().add(tokens);
+                }
+            }
+            Scan::Inferences(rows) => {
+                for (inference, day, model, tokens) in rows {
+                    if counted.insert(inference) {
+                        combined
+                            .entry((day, model, STANDARD_TIER.to_owned()))
+                            .or_default()
+                            .add(tokens);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -241,9 +385,16 @@ fn scan_engine(
         return ("no_history".to_owned(), 0, 0, FileTotals::new());
     };
     let mut files = Vec::new();
-    jsonl_files(&root, &mut files);
+    // Muse names every session log `session.jsonl`, and its folders hold other
+    // `.jsonl` files that are not inference history.
+    jsonl_files(
+        &root,
+        (engine == Engine::Muse).then_some("session.jsonl"),
+        &mut files,
+    );
     let (mut scanned, mut skipped) = (0, 0);
     let mut combined = FileTotals::new();
+    let mut counted = HashSet::new();
     for path in files {
         // A warm-up ends between files when the service is quitting.
         if stop.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
@@ -258,34 +409,33 @@ fn scan_engine(
             .files
             .get(&path)
             .filter(|entry| entry.size == size && entry.modified == modified)
-            .map(|entry| entry.totals.clone());
-        let totals = match cached {
-            Some(totals) => totals,
+            .map(|entry| entry.scan.clone());
+        let scan = match cached {
+            Some(scan) => scan,
             None => {
                 let Ok(file) = std::fs::File::open(&path) else {
                     skipped += 1;
                     continue;
                 };
                 let reader = BufReader::new(file);
-                let totals = match engine {
-                    Engine::Claude => scan_claude(reader),
-                    Engine::Codex => scan_codex(reader),
+                let scan = match engine {
+                    Engine::Claude => Scan::Totals(scan_claude(reader)),
+                    Engine::Codex => Scan::Totals(scan_codex(reader)),
+                    Engine::Muse => Scan::Inferences(scan_muse(reader)),
                 };
                 cache.files.insert(
                     path,
                     Cached {
                         size,
                         modified,
-                        totals: totals.clone(),
+                        scan: scan.clone(),
                     },
                 );
-                totals
+                scan
             }
         };
         scanned += 1;
-        for (key, tokens) in totals {
-            combined.entry(key).or_default().add(tokens);
-        }
+        scan.add(&mut combined, &mut counted);
     }
     ("scanned".to_owned(), scanned, skipped, combined)
 }
@@ -490,6 +640,7 @@ impl UsageCenter {
             [
                 ("claude", scan_engine(Engine::Claude, &mut cache, None)),
                 ("codex", scan_engine(Engine::Codex, &mut cache, None)),
+                ("muse", scan_engine(Engine::Muse, &mut cache, None)),
             ]
         })
         .await
@@ -518,6 +669,7 @@ impl UsageCenter {
                 .clone();
             scan_engine(Engine::Claude, &mut local, Some(&stop));
             scan_engine(Engine::Codex, &mut local, Some(&stop));
+            scan_engine(Engine::Muse, &mut local, Some(&stop));
             let mut shared = cache
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -919,8 +1071,220 @@ mod tests {
         std::fs::write(nested.join("auth.json"), "").unwrap();
         std::fs::write(nested.join(".credentials.json"), "").unwrap();
         let mut found = Vec::new();
-        jsonl_files(dir.path(), &mut found);
+        jsonl_files(dir.path(), None, &mut found);
         assert_eq!(found, [nested.join("s.jsonl")]);
+    }
+
+    /// A Muse transcript entry as Muse writes it: microsecond `recorded_at`, an
+    /// inclusive usage block, and either a model name or a model object.
+    fn muse_entry(id: &str, recorded_at: u64, event: Value) -> Value {
+        json!({
+            "schema_version": 1,
+            "record_type": "event",
+            "payload_type": "runtime.session",
+            "payload_schema_version": 1,
+            "id": id,
+            "recorded_at": recorded_at,
+            "stream": { "kind": "session", "id": "session-1" },
+            "payload": { "source_run_record_id": "inference-1", "event": event },
+        })
+    }
+
+    fn muse_rows(entries: &[Value]) -> Vec<Inference> {
+        let text = entries
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        scan_muse(std::io::Cursor::new(text.into_bytes()))
+    }
+
+    #[test]
+    fn muse_counts_a_finished_inference_once_with_its_inclusive_counters() {
+        // The microsecond stamp is T3's own usage fixture for this record shape.
+        let rows = muse_rows(&[
+            muse_entry(
+                "envelope-1",
+                1_785_578_400_123_456,
+                json!({
+                    "kind": "model_completed",
+                    "model": "muse-wonder-full-1.0",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cached_tokens": 60,
+                        "cache_read_tokens": 60,
+                        "cache_write_tokens": 10,
+                        "output_tokens": 20,
+                        "reasoning_tokens": 8,
+                    },
+                }),
+            ),
+            muse_entry(
+                "envelope-2",
+                1_785_578_400_123_456,
+                json!({
+                    "kind": "automated_review_completed",
+                    "model": { "model_id": "review-model", "provider_id": "meta" },
+                    "usage": { "input_tokens": 100, "cached_input_tokens": 60, "output_tokens": 20 },
+                }),
+            ),
+        ]);
+        assert_eq!(
+            rows[0],
+            (
+                "inference-1".to_owned(),
+                "2026-08-01".to_owned(),
+                "muse-wonder-full-1.0".to_owned(),
+                Tokens {
+                    input: 30,
+                    output: 20,
+                    cache_read: 60,
+                    cache_write: 10,
+                },
+            )
+        );
+        assert_eq!(rows[1].2, "review-model");
+        assert_eq!(
+            rows[1].3,
+            Tokens {
+                input: 40,
+                output: 20,
+                cache_read: 60,
+                cache_write: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn muse_ignores_lines_that_are_not_a_supported_finished_inference() {
+        let event =
+            |kind: &str, usage: Value| json!({ "kind": kind, "model": "m", "usage": usage });
+        let mut entries = vec![
+            muse_entry(
+                "kept",
+                1_785_578_400_000_000,
+                event("model_completed", json!({ "input_tokens": 5 })),
+            ),
+            // Not a record at all, or not the shape a token total comes from.
+            json!({ "record_type": "event" }),
+            json!("a string is not a record"),
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event("workflow_completed", json!({ "input_tokens": 5 })),
+            ),
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event("usage_summary", json!({ "input_tokens": 5 })),
+            ),
+            // A record whose counters cannot prove any spend.
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event("model_completed", json!({})),
+            ),
+            muse_entry(
+                "x",
+                1_785_578_400_000_000,
+                event(
+                    "model_completed",
+                    json!({ "input_tokens": -5, "output_tokens": "20" }),
+                ),
+            ),
+        ];
+        let mut unsupported = muse_entry(
+            "x",
+            1_785_578_400_000_000,
+            event("model_completed", json!({ "input_tokens": 5 })),
+        );
+        unsupported["schema_version"] = json!(2);
+        entries.push(unsupported);
+        let mut wrong_stream = muse_entry(
+            "x",
+            1_785_578_400_000_000,
+            event("model_completed", json!({ "input_tokens": 5 })),
+        );
+        wrong_stream["stream"]["kind"] = json!("run");
+        entries.push(wrong_stream);
+        let mut no_model = muse_entry(
+            "x",
+            1_785_578_400_000_000,
+            event("model_completed", json!({ "input_tokens": 5 })),
+        );
+        no_model["payload"]["event"]
+            .as_object_mut()
+            .unwrap()
+            .remove("model");
+        entries.push(no_model);
+
+        let rows = muse_rows(&entries);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, "inference-1");
+        assert_eq!(rows[0].1, "2026-08-01");
+        assert_eq!(rows[0].2, "m");
+        assert_eq!(rows[0].3.input, 5);
+    }
+
+    #[test]
+    fn muse_counts_a_copied_inference_once_across_session_logs() {
+        let row = (
+            "inference-1".to_owned(),
+            "2026-08-01".to_owned(),
+            "m".to_owned(),
+            Tokens {
+                input: 5,
+                ..Tokens::default()
+            },
+        );
+        let mut combined = FileTotals::new();
+        let mut counted = HashSet::new();
+        Scan::Inferences(vec![row.clone()]).add(&mut combined, &mut counted);
+        Scan::Inferences(vec![row]).add(&mut combined, &mut counted);
+        assert_eq!(only(&combined).input, 5);
+        assert!(combined.contains_key(&(
+            "2026-08-01".to_owned(),
+            "m".to_owned(),
+            STANDARD_TIER.to_owned()
+        )));
+    }
+
+    #[test]
+    fn muse_reads_only_session_logs_and_a_missing_home_reports_nothing() {
+        let dir = crate::testing::TempDir::new();
+        let nested = dir.path().join("2026/08/01/session-1");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("session.jsonl"), "{not json\n").unwrap();
+        std::fs::write(nested.join("telemetry.jsonl"), "").unwrap();
+        let mut found = Vec::new();
+        jsonl_files(dir.path(), Some("session.jsonl"), &mut found);
+        assert_eq!(found, [nested.join("session.jsonl")]);
+        assert!(
+            scan_muse(
+                std::fs::File::open(&found[0])
+                    .map(std::io::BufReader::new)
+                    .unwrap()
+            )
+            .is_empty(),
+            "a malformed log is not a panic and not usage"
+        );
+        let mut missing = Vec::new();
+        jsonl_files(
+            &dir.path().join("absent"),
+            Some("session.jsonl"),
+            &mut missing,
+        );
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn a_muse_inference_with_no_day_is_dropped_rather_than_dated() {
+        assert_eq!(
+            day_of_micros(1_785_578_400_123_456).as_deref(),
+            Some("2026-08-01")
+        );
+        assert_eq!(day_of_micros(0).as_deref(), Some("1970-01-01"));
+        assert_eq!(day_of_micros(u64::MAX), None);
     }
 
     #[test]

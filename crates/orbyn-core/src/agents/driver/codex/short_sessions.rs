@@ -261,4 +261,29 @@ mod tests {
             );
         }
     }
+
+    /// A real `mcpServerStatus/list` reply asked for one server, captured from a
+    /// 0.166.0 app-server with two stdio servers configured. In the same session the
+    /// call without `serverName` listed both servers and started both, while this one
+    /// listed and started only `alpha`; `runtimeStatus` is null on the live entry.
+    const RECORDED: &str = include_str!("../fixtures/codex-0.166.0-mcp-server-status.json");
+
+    #[test]
+    fn mcp_app_a_recorded_server_status_reply_reads_as_advertised() {
+        let reply: Value = serde_json::from_str(RECORDED).unwrap();
+        let found = tool_in_reply(&reply, "alpha", "alpha_tool")
+            .unwrap()
+            .unwrap();
+        assert_eq!(found["name"], "alpha_tool");
+        assert_eq!(found["description"], "alpha_tool from alpha");
+        assert_eq!(found["inputSchema"]["properties"]["text"]["type"], "string");
+        // The reply names this one server only, so the other configured server is an error.
+        assert!(unavailable(tool_in_reply(&reply, "beta", "beta_tool")));
+        // The live entry's null `runtimeStatus` is neither broken nor still starting, so a
+        // tool it does not advertise is the honest "not advertised".
+        assert!(matches!(
+            tool_in_reply(&reply, "alpha", "missing"),
+            Ok(None)
+        ));
+    }
 }

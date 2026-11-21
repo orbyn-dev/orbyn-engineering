@@ -128,7 +128,13 @@ async fn begin(
 #[async_trait]
 impl EngineDriver for HostDriver {
     fn descriptor(&self) -> EngineDescriptor {
-        self.inner.descriptor()
+        let mut descriptor = self.inner.descriptor();
+        // The Cursor SDK has no approval request: its one mode is No approvals, whatever the Rust driver offered.
+        if self.pool.family == "cursor" {
+            descriptor.capabilities.permission_modes =
+                vec![orbyn_contracts::PermissionMode::NoApprovals];
+        }
+        descriptor
     }
 
     fn supports_approval(&self) -> bool {

@@ -50,7 +50,7 @@ export function createTranscriptsMock(init: { delayMs?: number } = {}): Transcri
       await later(init.delayMs ?? 0, signal);
       if (/newer/i.test(file.name)) throw new ApiFailure("transcript_too_new", "Made by a newer Orbyn.", 422);
       if (/notes/i.test(file.name)) throw new ApiFailure("transcript_unreadable", "Not a transcript.", 422);
-      const title = file.name.replace(/\.transcript$/i, "").replace(/[-_]+/g, " ");
+      const title = file.name.replace(/\.orbyn\.json$/i, "").replace(/[-_]+/g, " ");
       return { id: `mock-transcript-${sent.length}`, title: title.charAt(0).toUpperCase() + title.slice(1), message_count: 20 + sent.length * 17 };
     },
   };
