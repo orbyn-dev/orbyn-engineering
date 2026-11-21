@@ -5,6 +5,7 @@ import { Planned } from "../../capacity/Planned";
 import { ProjectChip } from "../../escape/live/parts";
 import { Dialog } from "../../../../ui/Dialog";
 import { Frame } from "../../shared/Frame";
+import { useCrewHref } from "../../shared/nav";
 import { Btn, Ic } from "../../shared/parts";
 import { count, WHY } from "./model";
 import { useBacktestEstimate } from "./useBacktest";
@@ -26,11 +27,12 @@ function Outcomes({ measured }: { measured: boolean }) {
  * could only be invented. Reads only: no load sends a write.
  */
 export function LiveEstimate({ project, projects, onPick }: { project: Project; projects: readonly Project[]; onPick(id: string): void }) {
+  const href = useCrewHref();
   const read = useBacktestEstimate(project.id);
   const estimate = read.status === "ready" ? read.data : null;
   const [dialog, setDialog] = useState(true);
   const openRunning = (id: string) => {
-    window.location.hash = `#/preview/crew/backtest-report?id=${encodeURIComponent(id)}`;
+    window.location.hash = href({ page: "report", id });
   };
   return (
     <Frame live height={760}>
@@ -46,7 +48,7 @@ export function LiveEstimate({ project, projects, onPick }: { project: Project; 
             <span className="cx-rtag cx-lo">This device only</span>
             <span className="cx-t10sp">
               <ProjectChip name={project.name} projects={projects} current={project.id} onPick={onPick} />
-              <Btn className="cx-ghost" reason={WHY.settings}>Settings</Btn>
+              <a className="cx-ghost" href={href({ page: "backtest" })}>Settings</a>
               <button
                 type="button"
                 className="cx-btn"

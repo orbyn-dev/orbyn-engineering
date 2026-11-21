@@ -29,7 +29,7 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "escapes", "escape", "backtest", "estimate", "report"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 export type Route =
@@ -47,9 +47,15 @@ export type Route =
       task?: string;
       /** With `task`: open the editor instead of the task page. */
       edit?: boolean;
-      /** Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent), or Review capacity (which picks its own project). */
+      /**
+       * Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent), or a
+       * page that picks its own project: Review capacity and its coverage map (`repo` names the project the coverage map
+       * opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`).
+       */
       crewPage?: CrewSettingsPage;
       repo?: string;
+      /** The escape or backtest run an `escape` or `report` page names. */
+      id?: string;
     }
   | { name: "usage" }
   | { name: "skills"; skill?: string }
@@ -60,6 +66,22 @@ export type Route =
   | { name: "pulls"; project?: string; number?: number };
 
 const enc = encodeURIComponent;
+
+/** Where each Settings › Crew page lives under `#/settings/crew/`. */
+const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
+  areas: "areas",
+  thresholds: "areas/thresholds",
+  capacity: "capacity",
+  coverage: "capacity/coverage",
+  escapes: "escapes",
+  escape: "escapes/detail",
+  backtest: "backtest",
+  estimate: "backtest/estimate",
+  report: "backtest/report",
+};
+const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "coverage"];
+const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report"];
+
 // Same grammar as Core Flow valid_id. A locator identifies a read, never an action.
 export const isCrewTaskId = (id: string): boolean => /^[A-Za-z0-9_:-][A-Za-z0-9_.:-]{0,95}$/.test(id);
 
@@ -88,17 +110,31 @@ export function routeHref(route: Route): string {
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "settings": {
       const base = route.section ? `#/settings/${route.section}` : "#/settings";
-      const path = route.section === "crew" && route.crewPage ? (route.crewPage === "capacity" ? `${base}/capacity` : `${base}/areas${route.crewPage === "thresholds" ? "/thresholds" : ""}`) : base;
+      const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}` : base;
       const params = new URLSearchParams();
       if (route.machine !== undefined) params.set("machine", route.machine);
       if (route.selection?.kind === "project_group" || route.selection?.kind === "checkout") params.set("project", route.selection.group_key);
       if (route.selection?.kind === "checkout") params.set("checkout", route.selection.project_id);
-      if (route.repo !== undefined && route.crewPage && route.crewPage !== "capacity") params.set("repo", route.repo);
+      if (route.repo !== undefined && route.crewPage && CREW_PAGES_WITH_REPO.includes(route.crewPage)) params.set("repo", route.repo);
+      if (route.id !== undefined && route.crewPage && CREW_PAGES_WITH_ID.includes(route.crewPage)) params.set("id", route.id);
       if (route.task !== undefined) params.set("task", route.task);
       if (route.task !== undefined && route.edit) params.set("edit", "1");
       return params.size ? `${path}?${params}` : path;
     }
   }
+}
+
+/** The Settings › Crew page an address names, with the project or id it carries; an unknown page is the Crew page itself. */
+function crewPageOf(second: string | undefined, third: string | undefined, params: URLSearchParams): { crewPage?: CrewSettingsPage; repo?: string; id?: string } {
+  const both = [second, third].filter(Boolean).join("/");
+  // A longer address wins; an unknown sub-page is its parent (`areas/xyz` is Autopilot by area).
+  const page = CREW_SETTINGS_PAGES.find((entry) => CREW_PAGE_PATH[entry] === both) ?? CREW_SETTINGS_PAGES.find((entry) => CREW_PAGE_PATH[entry] === second);
+  if (!page) return {};
+  return {
+    crewPage: page,
+    ...(CREW_PAGES_WITH_REPO.includes(page) && params.has("repo") ? { repo: params.get("repo") ?? "" } : {}),
+    ...(CREW_PAGES_WITH_ID.includes(page) && params.has("id") ? { id: params.get("id") ?? "" } : {}),
+  };
 }
 
 export function parseRoute(hash: string): Route {
@@ -157,8 +193,7 @@ export function parseRoute(hash: string): Route {
         section: SETTINGS_SECTIONS.find((section) => section === first) ?? null,
         ...(selection ? { selection } : {}),
         ...(params.has("machine") ? { machine: params.get("machine") ?? "" } : {}),
-        ...(first === "crew" && second === "capacity" ? { crewPage: "capacity" as const } : {}),
-        ...(first === "crew" && second === "areas" ? { crewPage: third === "thresholds" ? ("thresholds" as const) : ("areas" as const), ...(params.has("repo") ? { repo: params.get("repo") ?? "" } : {}) } : {}),
+        ...(first === "crew" ? crewPageOf(second, third, params) : {}),
         ...(params.has("task") ? { task: params.get("task") ?? "", ...(params.get("edit") === "1" ? { edit: true } : {}) } : {}),
       };
     }
