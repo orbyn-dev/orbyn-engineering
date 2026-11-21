@@ -727,6 +727,14 @@ even if an inherited PTY descriptor delays EOF. Process termination retains its
 existing process-group/job ownership; detached descendants are not newly claimed
 by this output fence.
 
+`GET /api/threads/:id/terminals/:terminal/output/events` is the read-only output
+subscription: the retained output first as `snapshot` frames, then each live chunk as
+`chunk`, then `ended` when the output ends, so the stream closes by itself. It reads the
+same PTY broadcast the socket reads and pushes rather than asks; a client that falls behind
+gets `overflow` and connects again for the retained output. Text is UTF-8 with a character
+split between reads carried to the next frame, and bytes that are not text read as U+FFFD,
+as `TerminalScrollback` does.
+
 On Windows, direct-child completion retires the retained ConPTY master on the
 child waiter thread. Retaining that handle would otherwise keep its output pipe
 alive while observers wait for EOF. The independent reader continues draining the
@@ -1437,6 +1445,14 @@ no spaces and packs more into a character. Shorter words still have to match; a 
 with none long enough returns `too_short` and reads nothing. At most 16 words and 200
 characters, 200 hits and the newest 50,000 messages are read, and `truncated` says when
 that left something out. Archived threads are searched only when asked.
+
+`GET /api/search/messages/events` is the same search sent as it runs, for a client that
+draws matches while they are found: one `hit` frame per match in the read's newest-first
+order, then `done` carrying the read's `words`, `too_short` and `truncated`, or
+`failed` if the read breaks after some hits. The scan continues between frames, so a
+client may stop reading early. Both routes share one scanner, so the stream never returns
+a different set or order, and a message written while a streamed search runs may not be
+in it.
 
 ## Automatic requests
 
@@ -3400,6 +3416,7 @@ every method, path and which routes need a credential.
 | `DELETE /api/projects/:id?delete_files=&confirm=` | `ProjectRemoval`: unregisters; `delete_files` is `400` unless Orbyn made the folder, and can be `409 project_has_work` |
 | `GET /api/fs/browse?path=` | `FsListing` for the folder picker; no `path` means home |
 | `GET /api/threads?project_id=&archived=`, `POST /api/threads`, `GET, DELETE /api/threads/:id` | Threads; no `project_id` on create makes a scratch folder |
+| `GET /api/threads/:id/family` | `ThreadFamily`: the topmost thread and every thread below it, so any member answers the same tree; the stored edge is `parent_thread_id` with its `fork`, `side` or `subagent` relation, and archived members stay |
 | `POST /api/threads/batch` | `BatchThreads` to `BatchThreadResult[]`; at most 100 entries, oversized batches return `400 invalid_input` before creating any thread; one item failure does not stop an accepted batch |
 | `POST /api/threads/:id/delegate` | `DelegateTask`: a child thread that reports back |
 | `POST /api/threads/:id/project` | `MoveThread`, before the first run; no `project_id` means a new scratch folder |
@@ -3452,6 +3469,7 @@ every method, path and which routes need a credential.
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
 | `GET /api/search/messages?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearch`: `MessageHit[]`, newest first, each with `seq` and `message_id` to open at |
+| `GET /api/search/messages/events?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearchEvent[]`: `hit` frames in the read's order, then `done` (`words`, `too_short`, `truncated`) or `failed` |
 | `GET /api/threads/:id/commands?skills=` | `SlashCommand[]`: Orbyn's, the engine's, its agents (`source: agent`), custom command files, and skills when `true` |
 | `GET /api/questions?thread_id=&state=` | `QuestionRequest[]` |
 | `POST /api/questions/:id/answer`, `/dismiss` | `AnswerQuestion`; `409 already_decided` carries the existing request |
@@ -3533,6 +3551,7 @@ every method, path and which routes need a credential.
 | `GET, POST /api/threads/:id/terminals` | `TerminalInfo[]`; `OpenTerminal` with `split_of` and `direction` |
 | `PATCH, DELETE /api/threads/:id/terminals/:terminal` | Rename, close |
 | `GET, DELETE /api/threads/:id/terminals/:terminal/scrollback` | `TerminalScrollback`; clear |
+| `GET /api/threads/:id/terminals/:terminal/output/events` | `CommandOutputEvent[]`: retained `snapshot`, live `chunk`, `ended` with the exit code when known, or `overflow`; the stream closes after `ended` |
 | `GET, POST /api/threads/:id/scripts` | `ProjectFileView`; `RunScript` to `TerminalInfo` |
 | `GET /api/engines`, `POST /api/engines/refresh` | `EngineStatus[]`; `account` is the signed-in account when the CLI's own status names one (Claude's email; Codex names none) |
 | `GET /api/health/dependencies` | `DependencyHealth`: one empty `GET` each to `api.github.com` and, for an installed Claude or Codex, its provider's host; any HTTP answer is reachable. Only when asked, listed in `/api/network`; offline mode makes no request and says `checked: false` |

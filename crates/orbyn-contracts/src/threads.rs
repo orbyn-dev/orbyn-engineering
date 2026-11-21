@@ -139,6 +139,21 @@ impl PermissionMode {
 }
 
 wire! {
+/// A thread's whole family. The one stored edge is `parent_thread_id`, which a
+/// fork, a side chat and a subagent each set and `relation` names, so this is one
+/// parent/child tree rather than a separate fork lineage.
+pub struct ThreadFamily {
+    /// The thread asked for, which may be the root or any member.
+    pub thread_id: String,
+    /// The topmost thread. Any member asks for the same family.
+    pub root_thread_id: String,
+    /// The root and everything below it, every parent before its children.
+    /// Archived, settled and snoozed members stay: the family is the stored tree.
+    pub threads: Vec<Thread>,
+}
+}
+
+wire! {
 pub struct QueuedMessage {
     pub id: String,
     pub thread_id: String,
@@ -406,6 +421,29 @@ pub struct MessageSearch {
     pub too_short: bool,
     /// More matched, or too many messages to read them all. Narrow the search.
     pub truncated: bool,
+}
+}
+
+wire! {
+/// One frame of `GET /api/search/messages/events`: the same matches, in the same
+/// newest-first order, as `GET /api/search/messages`, sent while the read runs.
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageSearchEvent {
+    /// One match.
+    Hit { hit: MessageHit },
+    /// The read finished and these are all its matches. Carries what the whole read
+    /// says about it.
+    Done {
+        /// The words to highlight, lower-cased.
+        words: Vec<String>,
+        /// No word was long enough to search for, so nothing was searched.
+        too_short: bool,
+        /// More matched, or too many messages to read them all. Narrow the search.
+        truncated: bool,
+    },
+    /// The read failed after the frames above, so the matches are incomplete. The
+    /// stream ends; `code` is the same stable code the whole read would answer with.
+    Failed { code: String, message: String },
 }
 }
 
