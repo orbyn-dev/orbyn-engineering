@@ -4,7 +4,9 @@ import { MessageActions } from "./MessageActions";
 import { failureWantsResend } from "./runFailures";
 import {
   Brain,
+  Check,
   ChevronRight,
+  Loader2,
   Clock,
   FileDiff as FileDiffIcon,
   OctagonAlert,
@@ -39,6 +41,24 @@ import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
 import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, StoppedItem, StoppedTask, ToolItem } from "../../product/timeline/types";
 
+const STEER_MARKS = {
+  pending: { text: "Sending…", icon: <Loader2 size={13} className="spin" aria-hidden /> },
+  delivered: { text: "Delivered", icon: <Check size={13} className="steer-ok" aria-hidden /> },
+  queued: { text: "Queued for the next turn", icon: <Clock size={13} aria-hidden /> },
+  failed: { text: "Not delivered · moved to the queue", icon: <OctagonAlert size={13} aria-hidden /> },
+} as const;
+
+/** Where a mid-turn message went, under its bubble. */
+function SteerMark({ state }: { state: NonNullable<MessageItem["steer"]> }) {
+  const mark = STEER_MARKS[state];
+  return (
+    <span className={`steer-mark${state === "failed" ? " failed" : ""}`} role="status" data-state={state}>
+      {mark.icon}
+      {mark.text}
+    </span>
+  );
+}
+
 function Message({ item, live }: { item: MessageItem; live: boolean }) {
   if (item.role === "user") {
     return (
@@ -46,6 +66,7 @@ function Message({ item, live }: { item: MessageItem; live: boolean }) {
         <span className="sr-only">You said:</span>
         <p className="msg-bubble">{item.text}</p>
         <SentFiles attachments={item.attachments} text={item.text} />
+        {item.steer ? <SteerMark state={item.steer} /> : null}
         <MessageActions text={item.text} runId={item.runId} role="user" />
       </div>
     );

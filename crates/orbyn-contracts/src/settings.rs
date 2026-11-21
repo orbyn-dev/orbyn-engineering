@@ -214,3 +214,63 @@ pub struct ModelAlias {
     pub counts_as: String,
 }
 }
+
+wire_enum! {
+/// What the person is told about an engine's API key, kept in the OS keychain. Never the key, its length or its last characters.
+pub enum EngineCredentialsState {
+    /// The opt-in is off for this engine.
+    Off,
+    /// No usable keychain on this computer.
+    Unavailable,
+    /// The keychain refused for now (locked, denied).
+    Blocked,
+    /// Opted in and no key is saved.
+    NotSaved,
+    /// A key is saved in the keychain.
+    Saved,
+}
+}
+
+wire! {
+/// `GET /api/settings/engine-credentials/{engine}`: booleans and the engine id only, never key text.
+pub struct EngineCredentialsStatus {
+    pub engine: String,
+    pub opted_in: bool,
+    /// A key is saved and the opt-in is on.
+    pub present: bool,
+    pub state: EngineCredentialsState,
+}
+}
+
+wire! {
+/// `DELETE /api/settings/engine-credentials/{engine}/key`: the status after the removal and how many of the
+/// engine's running threads were stopped with it.
+pub struct EngineCredentialsRevoked {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub status: EngineCredentialsStatus,
+    pub stopped: u32,
+}
+}
+
+wire! {
+/// `PUT /api/settings/engine-credentials/{engine}`.
+pub struct EngineCredentialsOptIn {
+    pub opted_in: bool,
+}
+}
+
+/// `PUT /api/settings/engine-credentials/{engine}/key`: the key, in the body only. `Debug` prints nothing
+/// of it, so no log or panic message can carry it.
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../web/src/generated/")]
+pub struct EngineCredentialKeyInput {
+    pub key: String,
+}
+
+impl std::fmt::Debug for EngineCredentialKeyInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineCredentialKeyInput")
+            .finish_non_exhaustive()
+    }
+}

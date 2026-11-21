@@ -286,8 +286,8 @@ export const api = {
   resumeQueue: (threadId: string) => request<void>("POST", `/api/threads/${q(threadId)}/queue/resume`),
   removeQueued: (id: string) => request<void>("DELETE", `/api/queue/${q(id)}`),
   sendQueuedNow: (id: string) => request<void>("POST", `/api/queue/${q(id)}/send-now`),
-  steer: (threadId: string, prompt: string) =>
-    request<SteerResult>("POST", `/api/threads/${q(threadId)}/steer`, { prompt }),
+  steer: (threadId: string, prompt: string, messageId?: string) =>
+    request<SteerResult>("POST", `/api/threads/${q(threadId)}/steer`, messageId ? { prompt, message_id: messageId } : { prompt }),
   restartSession: (threadId: string) => request<void>("POST", `/api/threads/${q(threadId)}/restart-session`),
   patchThread: (id: string, body: UpdateThread) =>
     request<Thread>("PATCH", `/api/threads/${q(id)}`, body),
