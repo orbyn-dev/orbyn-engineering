@@ -1,4 +1,5 @@
 import { looksSecret } from "./classify";
+import { agoWords } from "../../../../lib/format";
 
 export interface HistoryEntry {
   command: string;
@@ -66,4 +67,17 @@ export function suggestion(entries: readonly HistoryEntry[], line: string): stri
     if (command.length > line.length && command.startsWith(line)) return command.slice(line.length);
   }
   return "";
+}
+
+/** The lines run in every terminal of the given threads, oldest first, as if they were one history. */
+export function historyAcross(threadIds: readonly string[]): HistoryEntry[] {
+  const out: HistoryEntry[] = [];
+  for (const [key, list] of history) if (threadIds.some((id) => key.startsWith(`${id}:`))) out.push(...list);
+  return out.sort((a, b) => a.at - b.at);
+}
+
+/** What a history row says about when and how a command ran. The result is shown only when the shell reported one. */
+export function rowWhen(entry: HistoryEntry, now = Date.now()): string {
+  const when = agoWords(entry.at, now);
+  return entry.ok === null ? when : `${entry.ok ? "ok" : "failed"} · ${when}`;
 }
