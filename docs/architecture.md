@@ -584,7 +584,13 @@ the list. The body names the listed rows (`project_id`, `number` and the row's
 `updated_at`) and may set `fresh`. The answer holds, per row, `created_at`,
 `requested_reviewers` (users and teams), `comment_count` (conversation comments plus
 inline review comments) and `viewer_review_state` (the signed-in login's latest review, or
-`none`). GitHub answers all of a project's rows with one batched GraphQL request, which
+`none`), plus optional `approval_count`. GitHub's count is the number of `APPROVED`
+states in `latestOpinionatedReviews(first:100,writersOnly:true)`, the latest opinionated
+review per user with write access, so it counts what GitHub's merge box counts. It is known only when the connection has an integer `totalCount` equal to
+the node count, explicitly has no next page, and every node has a known review state.
+Missing, malformed or truncated connections leave the count absent; a complete empty
+connection proves zero. An error under a pull alias still withholds its whole row.
+GitHub answers all of a project's rows with one batched GraphQL request, which
 also names the viewer, so the review state needs no other call. A field is absent when
 unknown, never zero or partial. A row is left out whole when its project cannot be read,
 its returned object has no known fields,
@@ -603,12 +609,20 @@ comment, review or request) and for at most 10 minutes, so scheduled and backgro
 ask only for new or changed rows, and for none when every row is known. A refresh the person
 starts sets `fresh` and asks again for every row. If GitHub's rate limit is spent, the answer has
 no details, `paused` names every withheld field as it appears on the row (`created_at`,
-`requested_reviewers`, `viewer_review_state`, `comment_count`), and details are not asked
+`requested_reviewers`, `viewer_review_state`, `comment_count`, `approval_count`), and details are not asked
 for again for 2 minutes, `fresh` included. `ForgeStatus.viewer` is the login the CLI is
 signed in as, read on each `GET /api/forges` rescan. Pull request reads (the lists, a pull
 request's detail, checks, comments, timeline, files, revisions and stack, and the reviewer and
 label candidates) answer from the last known value and take `?refresh=1`; any write to a pull
 request drops what was kept for it ([Instant reads](#instant-reads)).
+
+The detail page keys its extras read by the selected project, number and loaded pull
+revision. Local mutations and manual retries force a fresh extras read; an older
+request cannot replace a later read or another selection. In the approved detail,
+a known count replaces `Approved` in the Review row and approved banner. The merge
+hint combines it with `No conflicts` only when the approved state and that conflict
+result are both known. Unknown counts retain the existing words. Counts never
+change review state, page-state precedence or merge eligibility.
 
 A git action runs commit, push and pull request in order, logs each phase as `CUSTOM
 git.phase`, and stops at the first failure; earlier phases stand. These are the
