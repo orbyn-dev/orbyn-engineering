@@ -9,6 +9,7 @@ import { FLOW_SCREENS } from "./flow/screens";
 import { NEEDSYOU_SCREENS } from "./needsyou/screens";
 import { ORACLE_SCREENS } from "./oracle/screens";
 import { SETTINGS_SCREENS } from "./settings/screens";
+import { PreviewNav } from "./shared/preview-nav";
 import "./shared/frame.css";
 
 const DRAWN: Record<string, ComponentType> = { ...ESCAPE_SCREENS, ...ESCAPE_LIVE_SCREENS, ...CAPACITY_SCREENS, ...CAPACITY_LIVE_SCREENS, ...ORACLE_SCREENS, ...BACKTEST_SCREENS, ...BACKTEST_LIVE_SCREENS, ...SETTINGS_SCREENS, ...FLOW_SCREENS };
@@ -18,7 +19,9 @@ export default function DrawnScreens({ name }: { name: string }) {
   const Screen = DRAWN[name] ?? NEEDSYOU_SCREENS[name as keyof typeof NEEDSYOU_SCREENS];
   return Screen ? (
     <main className="cx-root">
-      <Screen />
+      <PreviewNav>
+        <Screen />
+      </PreviewNav>
     </main>
   ) : null;
 }

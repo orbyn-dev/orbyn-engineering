@@ -8,6 +8,7 @@ import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { Dialog } from "../../../../ui/Dialog";
 import { Frame } from "../../shared/Frame";
+import { useCrewHref } from "../../shared/nav";
 import { Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
 import { againstOf, checkStateLabel, eventMoment, gapLabel, gapText, nameOf, refusalOf, sourceLabel, stateLabel, WHY } from "./model";
@@ -279,6 +280,7 @@ export function LiveEscapeDetail({ id }: { id: string }) {
 }
 
 function NamedEscape({ id }: { id: string }) {
+  const href = useCrewHref();
   const read = useEscapeDetail(id);
   const [gapOpen, setGapOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -395,7 +397,7 @@ function NamedEscape({ id }: { id: string }) {
           <span>Dashboard</span>
           <Ic n="right" sm />
           <button type="button" className="cx-linkname" onClick={() => {
-            window.location.hash = "#/preview/crew/escape-log";
+            window.location.hash = href({ page: "escapes" });
           }}>
             Escape log
           </button>

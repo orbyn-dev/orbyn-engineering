@@ -1,5 +1,6 @@
 import { navigate } from "../../../../product/state/route";
 import { Button } from "../../../../ui/controls";
+import { EntryRow } from "../../shared/EntryRow";
 
 /**
  * The Review capacity row of Settings › Crew (Crew Designs v23, `settings-crew`): the title, what the setting is for and the
@@ -8,14 +9,8 @@ import { Button } from "../../../../ui/controls";
  */
 export function CapacityEntry() {
   return (
-    <section className="ar-set ar" aria-labelledby="cap-entry-title">
-      <div className="ar-setrow">
-        <div>
-          <b id="cap-entry-title">Review capacity</b>
-          <small>How many High and Medium changes you can have waiting before Crew pauses new Low-priority starts, and whether low-risk batches are sampled.</small>
-        </div>
-        <Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "capacity" })}>Open Review capacity</Button>
-      </div>
-    </section>
+    <EntryRow id="cap-entry-title" title="Review capacity" action={<Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "capacity" })}>Open Review capacity</Button>}>
+      How many High and Medium changes you can have waiting before Crew pauses new Low-priority starts, and whether low-risk batches are sampled.
+    </EntryRow>
   );
 }
