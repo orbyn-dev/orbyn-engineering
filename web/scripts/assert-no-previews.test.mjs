@@ -24,7 +24,7 @@ describe("assert-no-previews", () => {
   });
 
   it("passes the real Crew screens, which ship behind the service's own flag", () => {
-    const real = `"Crew is not connected to this app yet";"/api/crew/preview";.ap-chip{display:inline-flex}`;
+    const real = `"Crew is not connected to this app yet";"/api/crew/preview";.ap-chip{display:inline-flex};"/api/crew/trust";.cx-dash{display:flex}`;
     expect(run({ "crew.js": real }).status).toBe(0);
   });
 
@@ -35,6 +35,8 @@ describe("assert-no-previews", () => {
     ["a Crew screen class", `.crew-apq{display:grid}`],
     ["the Issues hash route", `location.hash.startsWith("#/preview/issues")`],
     ["the Issues mock", `module.createIssuesMock({ delayMs: 400 })`],
+    ["a Crew dashboard frame id", `["dash-narrow-window"]`],
+    ["the Crew dashboard sample client", `module.createCrewDashboardMock({delayMs:300})`],
     ["a platform screen", `"Sign in to Orbyn"`],
     ["the Cursor thread preview route", `location.hash.startsWith("#/preview/cursor-thread")`],
     ["the Cursor thread mock", `createCursorThreadMock({delayMs:300})`],

@@ -37,3 +37,12 @@ export function BacktestEntry() {
     </EntryRow>
   );
 }
+
+/** The Dashboard row: what the page answers, and the button that opens it. Opening reads nothing; the page reads on its own. */
+export function DashboardEntry() {
+  return (
+    <EntryRow id="dashboard-entry-title" title="Dashboard" action={<Button small onClick={() => navigate({ name: "settings", section: "crew", crewPage: "dashboard" })}>Open Dashboard</Button>}>
+      Whether Crew is paying off, per repository: merges and reverts by engine and area today. Autonomy, cycle time, cost and the weekly bars are Planned.
+    </EntryRow>
+  );
+}

@@ -34,7 +34,7 @@ export type SettingsSubPage = "theme-editor";
 export const CREW_TABS = ["approvals", "trust", "background", "inbox", "flow", "board", "map", "lanes"] as const;
 export type CrewTab = (typeof CREW_TABS)[number];
 
-export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report"] as const;
+export const CREW_SETTINGS_PAGES = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible", "escape-settings", "escape", "backtest", "estimate", "report"] as const;
 export type CrewSettingsPage = (typeof CREW_SETTINGS_PAGES)[number];
 
 /** Where the coverage map was opened from. It comes from the address the link carried, never from history: no origin, no way back drawn. */
@@ -62,8 +62,7 @@ export type Route =
       edit?: boolean;
       /**
        * Settings › Crew › Autopilot by area (and its thresholds), for the repository `repo` (the first one when absent), or a
-       * page that picks its own project: Review capacity and its coverage map (`repo` names the project the coverage map
-       * opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`).
+       * page that picks its own project: Review capacity and its coverage map, the Crew dashboard (`repo` names the project each opens for), the escape log and one escape (`id`), the reviewer backtest, its estimate and one run's report (`id`).
        */
       crewPage?: CrewSettingsPage;
       repo?: string;
@@ -92,6 +91,7 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   thresholds: "areas/thresholds",
   capacity: "capacity",
   coverage: "capacity/coverage",
+  dashboard: "dashboard",
   escapes: "escapes",
   possible: "escapes/possible",
   "escape-settings": "escapes/settings",
@@ -100,7 +100,7 @@ const CREW_PAGE_PATH: Record<CrewSettingsPage, string> = {
   estimate: "backtest/estimate",
   report: "backtest/report",
 };
-const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "escapes", "possible"];
+const CREW_PAGES_WITH_REPO: readonly CrewSettingsPage[] = ["areas", "thresholds", "capacity", "coverage", "dashboard", "escapes", "possible"];
 const CREW_PAGES_WITH_ORIGIN: readonly CrewSettingsPage[] = ["coverage"];
 const CREW_PAGES_WITH_ID: readonly CrewSettingsPage[] = ["escape", "report"];
 
