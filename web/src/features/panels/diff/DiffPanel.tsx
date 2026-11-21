@@ -312,6 +312,8 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       onPick={setPickedPath}
       onMore={() => setAllFiles(true)}
       repos={threadRepos.repos}
+      threadId={threadId}
+      onRepoChanged={threadRepos.reload}
     />
   );
 

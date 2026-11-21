@@ -114,6 +114,7 @@ repositories at once, and moving a thread between repositories. Each is a later 
 - `trust` on a repository is the only way an untrusted one becomes usable; `add-folder` does not trust.
 - `threadRepos` answering `null` is a `404` from the route.
 - The Changes list and Git actions gain `repo_id`.
+- Web side, still guessed and for Eng 4 to confirm: `publish` also takes `provider`, `remote` and `protocol` and answers `pushed` (false when only the remote was added); `ThreadRepo.pull_request`; `threadGit` (commit, push, pull, pull request in ONE repository, refused with `repo_untrusted` for an untrusted one) and `removeThreadRepo` (the worktree's files stay). No call spans repositories.
 
 ## Tests
 

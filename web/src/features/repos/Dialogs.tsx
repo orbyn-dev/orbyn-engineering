@@ -1,19 +1,20 @@
-import { useId, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, Field } from "../../ui/controls";
+import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
 import { ActionDialog } from "./ActionDialog";
-import { checkCloneSource, isPublishName, plain } from "./model";
+import { checkCloneSource, plain } from "./model";
 import { reposApi } from "./api";
 import { canPickFolder, pickFolder } from "./folder";
 import type { RepoRow } from "./contract";
 
 type Done = () => void;
 /** The grey card of facts inside a confirm dialog, in the settings dialogs' own look. */
-const ConfirmFacts = ({ facts }: { facts: { label: string; value: ReactNode; mono?: boolean }[] }) => (
+export const ConfirmFacts = ({ facts }: { facts: { label: string; value: ReactNode; mono?: boolean }[] }) => (
   <div className="set-dlg-card">
     {facts.map((fact) => <div key={fact.label} className="set-dlg-kv"><span>{fact.label}</span><b className={fact.mono ? "mono" : undefined}>{fact.value}</b></div>)}
   </div>
 );
-const Path = ({ path }: { path: string }) => <code className="repos-path" title={plain(path)}>{plain(path)}</code>;
+export const Path = ({ path }: { path: string }) => <code className="repos-path" title={plain(path)}>{plain(path)}</code>;
 
 /**
  * Adds a folder in place. The path is the person's text and goes to the service as typed. In the desktop app Browse… fills the
@@ -74,28 +75,6 @@ export function CloneDialog({ projectId, projectName, directory, onClose, onDone
   );
 }
 
-/** Publishing creates the repository on the host and pushes the current branch: the dialog names both. */
-export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
-  const [name, setName] = useState(`orbyn-dev/${repo.name}`);
-  const [visibility, setVisibility] = useState<"private" | "public">("private");
-  const group = useId();
-  return (
-    <ActionDialog title={`Publish ${plain(repo.name)}?`} confirmLabel="Publish" disabled={!isPublishName(name)} onClose={onClose}
-      onConfirm={async () => { await reposApi().publish(projectId, repo.id, { name: name.trim(), visibility }); onDone(); }}>
-      <Field label="Name" error={name !== "" && !isPublishName(name) ? "Use owner/name." : undefined}>
-        {(field) => <input {...field} data-dialog-focus className="dialog-field" value={name} spellCheck={false} onChange={(event) => setName(event.target.value)} />}
-      </Field>
-      <fieldset className="repos-visibility" aria-labelledby={group}>
-        <legend id={group}>Who can see it</legend>
-        {(["private", "public"] as const).map((value) => (
-          <label key={value}><input type="radio" name={group} checked={visibility === value} onChange={() => setVisibility(value)} />{value === "private" ? "Private" : "Public"}</label>
-        ))}
-      </fieldset>
-      <ConfirmFacts facts={[{ label: "Folder", value: <Path path={repo.path} />, mono: true }, { label: "Branch pushed", value: plain(repo.branch ?? "Unknown"), mono: true }]} />
-    </ActionDialog>
-  );
-}
-
 export function RemoveDialog({ projectId, projectName, repo, onClose, onDone }: { projectId: string; projectName: string; repo: RepoRow; onClose(): void; onDone: Done }) {
   return (
     <ActionDialog title={`Remove ${plain(repo.name)} from ${plain(projectName)}?`} confirmLabel="Remove" tone="danger" cancelFocus onClose={onClose}
@@ -106,14 +85,16 @@ export function RemoveDialog({ projectId, projectName, repo, onClose, onDone }: 
   );
 }
 
-/** Trusts this one folder and no other. Opening it runs nothing. */
+/**
+ * Trusts this one folder and no other. Opening it runs nothing. The prompt is the app's own trust prompt (its title, warning,
+ * path and button words come from product/ui/TrustPrompt), shown as a dialog over the project's settings: no second copy of it lives here.
+ */
 export function TrustDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
   return (
-    <ActionDialog title={`Trust ${plain(repo.name)}?`} confirmLabel="Trust folder" cancelLabel="Don’t trust" cancelFocus onClose={onClose}
+    <ActionDialog title={TRUST_TITLE(plain(repo.name))} confirmLabel={TRUST_CONFIRM} cancelLabel={TRUST_DECLINE} cancelFocus onClose={onClose}
       onConfirm={async () => { await reposApi().trust(projectId, repo.id); onDone(); }}>
-      <p>Agents can read files, run commands and edit code in this folder. Trust folders you know.</p>
+      <TrustBody path={plain(repo.path)} />
       <p className="field-hint">Trusting this folder does not trust the project's other repositories.</p>
-      <ConfirmFacts facts={[{ label: "Path", value: <Path path={repo.path} />, mono: true }]} />
     </ActionDialog>
   );
 }
