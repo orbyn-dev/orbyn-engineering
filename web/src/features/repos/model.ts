@@ -2,10 +2,14 @@ import type { RepoRow, ThreadRepo } from "./contract";
 
 export type RepoState = "trusted" | "untrusted" | "not_git";
 
-/** A folder that is not Git has no trust to decide until Git is set up. */
+/**
+ * Trust comes first: the service refuses `setup-git` on an untrusted folder (`409 repo_untrusted`), so a folder that is not trusted is
+ * `untrusted` whether or not it holds Git. Only a trusted folder with no Git is `not_git`, and only then is Set up Git offered.
+ * `add-folder` and `clone` start untrusted; `create` starts trusted with Git.
+ */
 export function repoState(row: Pick<RepoRow, "is_git" | "trusted">): RepoState {
-  if (!row.is_git) return "not_git";
-  return row.trusted ? "trusted" : "untrusted";
+  if (!row.trusted) return "untrusted";
+  return row.is_git ? "trusted" : "not_git";
 }
 
 export const STATE_LABEL: Record<RepoState, string> = { trusted: "Trusted", untrusted: "Not trusted", not_git: "Not a Git folder" };
@@ -57,11 +61,12 @@ export const PUBLISH_PROVIDERS = [
 /** `owner/name` for a publish, both parts a plain host name. */
 export const isPublishName = (text: string) => /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(text.trim());
 
-/** What the row says about the clone while it runs or after it failed. */
+/** What the row says about the clone while it runs or after it failed. A running clone is busy with no figure; a failed one says why. */
 export function cloneText(row: RepoRow): string | null {
   if (!row.clone) return null;
   if (row.clone.state === "failed") return row.clone.message ? `Clone failed. ${row.clone.message}` : "Clone failed.";
-  return row.clone.percent === null ? "Cloning" : `Cloning ${Math.round(row.clone.percent)}%`;
+  // The service has no percentage (`percent` is always null): busy only, never a figure or a bar.
+  return "Cloning";
 }
 
 /** Folder names the service reports, kept to a single line of plain text for a title. */

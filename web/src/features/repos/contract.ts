@@ -1,7 +1,8 @@
 /**
- * The repositories of a project and the writes the screens make: the shapes of docs/multi-repo.md (Eng 4, PR #923), written by hand
- * until `orbyn-contracts` generates them. When the generated types land, replace these in the same commit. Field names follow the
- * T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
+ * The repositories of a project and the writes the screens make. The project repository routes (list, add-folder, create, clone,
+ * cancel, scan, trust, setup-git, remove) use the generated types below. The thread side (`StartThreadInput`, `ThreadRepo`,
+ * `TaskFolder`, the Git actions) is still hand-written from docs/multi-repo.md until its routes ship; replace those in the same
+ * commit that generates them. Field names follow the T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
  *
  * One thing the screens use is NOT in that document and is marked below: `ThreadRepo.pull_request`. The thread Git actions send
  * the existing thread routes with an optional `repo_id` ("Per-repository Git routes"). Removing a repository from a thread is not in
@@ -11,36 +12,23 @@
  * them as text only, never as a link, a command or markup.
  */
 
-/** One folder of the project. */
-export interface RepoRow {
-  id: string;
-  /** The folder's name, as the service shows it. */
-  name: string;
-  /** Where it is on disk. Shown as text. */
-  path: string;
-  is_git: boolean;
-  /** Each repository is trusted on its own. */
-  trusted: boolean;
-  /** The checked-out branch; `null` for a folder that is not Git. */
-  branch: string | null;
-  /** The branches a thread may start from, current first. Empty when not Git. */
-  branches: string[];
-  /** A repository with no remote can be published. */
-  has_remote: boolean;
-  /** The project's own folder, its first repository (`id` equal to the project id). */
-  primary: boolean;
-  /** Present while the repository is being cloned, or when that clone failed. */
-  clone: { state: "cloning" | "failed"; percent: number | null; message?: string | null } | null;
-}
-
-/** What the project's repository list holds, and the limits the service applies. */
-export interface ReposView {
-  repositories: RepoRow[];
-  /** Where a clone is placed, shown in the clone dialog. `null` when the service has not chosen one. */
-  clone_directory: string | null;
-  /** The most repositories one thread may work in. */
-  max_per_thread: number;
-}
+/**
+ * The list, the row, the clone state and the scan are the service's generated types (`orbyn-contracts`, `src/generated`): same names,
+ * re-exported here so the screens keep one import. Differences from the guess this file once held, all taken from the generated types
+ * and `crates/orbynd/src/routes/repos.rs`:
+ * - `ScannedFolder.source` is `"child" | "code_workspace"` (underscore); the guess and docs/multi-repo.md said `code-workspace`.
+ * - `RepoClone.percent` is optional and always `null` or absent: no screen reads it. A clone has no percentage.
+ * - `RepoClone.state` is `"cloning" | "failed"`; a cancelled clone is `failed` with the message `Cancelled.`.
+ * - `RepoRow.primary` exists (the project's own folder, `id` equal to the project id).
+ */
+export type { RepoClone } from "../../generated/RepoClone";
+export type { RepoRow } from "../../generated/RepoRow";
+export type { ReposView } from "../../generated/ReposView";
+export type { RepoScan } from "../../generated/RepoScan";
+export type { ScannedFolder } from "../../generated/ScannedFolder";
+import type { RepoRow } from "../../generated/RepoRow";
+import type { ReposView } from "../../generated/ReposView";
+import type { RepoScan } from "../../generated/RepoScan";
 
 /** What a publish sends. The service answers the updated `RepoRow`. The host (GitHub) is not a field: the page's provider step only chooses where to publish. */
 export interface PublishInput {
@@ -104,29 +92,6 @@ export interface TaskFolder {
   branch: string;
   repos: ThreadRepo[];
   max_per_thread: number;
-}
-
-/** One entry of a folder scan or workspace import. `name` and `path` are untrusted text. */
-export interface ScannedFolder {
-  name: string;
-  path: string;
-  is_git: boolean;
-  source: "child" | "code-workspace";
-  /** Already a repository of a project. */
-  in_project: boolean;
-  /** Why it cannot be added by import; `null` when it can. */
-  refused: "outside" | "missing" | "not_directory" | null;
-}
-
-/** The answer to a scan. Nothing is added or trusted by it. */
-export interface RepoScan {
-  path: string;
-  is_git: boolean;
-  /** The `.code-workspace` file the entries came from, or `null` for a folder scan. */
-  code_workspace_file: string | null;
-  folders: ScannedFolder[];
-  /** More folders were there than the service returned. */
-  truncated: boolean;
 }
 
 export type StartedThread = import("../../api/types").Thread;

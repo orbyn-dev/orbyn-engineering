@@ -139,7 +139,7 @@ be inside Orbyn's data directory. Answer:
 ```ts
 type RepoScan = { path: string; is_git: boolean; code_workspace_file: string | null;
                   folders: ScannedFolder[]; truncated: boolean };
-type ScannedFolder = { name: string; path: string; is_git: boolean; source: "child" | "code-workspace";
+type ScannedFolder = { name: string; path: string; is_git: boolean; source: "child" | "code_workspace";
                        in_project: boolean; refused: "outside" | "missing" | "not_directory" | null };
 ```
 
@@ -155,7 +155,7 @@ type ScannedFolder = { name: string; path: string; is_git: boolean; source: "chi
 
 The same route. When `path` is a `.code-workspace` file, or a folder with exactly one at its top, the service
 reads that file (at most 256 KiB, JSON with comments and trailing commas; anything else is `400 invalid`)
-and returns its `folders` as `source: "code-workspace"` entries, `code_workspace_file` naming the file. An
+and returns its `folders` as `source: "code_workspace"` entries, `code_workspace_file` naming the file. An
 entry is `{ path, name? }`, at most 64; each is resolved against the file's folder and canonicalized.
 A folder that resolves outside the file's own folder, or whose path has a drive prefix, is listed with
 `refused: "outside"` and cannot be added by import, so a workspace file cannot point the app at an arbitrary
@@ -217,6 +217,28 @@ yet** (the next slice): `repo-threads`, the thread's repository routes, the task
 - **Scan.** As the section above, `RepoScan` and `ScannedFolder` in `orbyn-contracts`; at most 200 entries looked at, 64 returned; a
   workspace file over 256 KiB, not JSON (comments and trailing commas allowed) or without `folders` is `400`.
 - **Errors added:** `repo_exists`, `repo_untrusted`, `repo_limit` (409), `clone_refused` (400), `not_git` (409; for the thread slice).
+
+## As built: web UI
+
+The web client for the project repository routes (`web/src/features/repos/`) uses the generated types (`RepoRow`, `ReposView`,
+`RepoClone`, `RepoScan`, `ScannedFolder`) and was checked against `crates/orbynd/src/routes/repos.rs`. Real against the first guess:
+
+- **Scan source** is `"child" | "code_workspace"` on the wire (snake_case, as every generated enum). The guess and this document's first
+  draft said `code-workspace`; the page dropped such entries as unknown, so a workspace import listed nothing. Fixed in the client and above.
+- **Clone** is `state: "cloning" | "failed"`; `percent` is optional and always `null` or absent, so a running clone shows "Cloning" with no
+  figure or bar. A cancelled clone is `failed` with the message `Cancelled.`; `cancel` answers that row (not Git, untrusted, no branches),
+  and the row stays listed until `remove`.
+- **Trust.** `create` starts trusted with Git; `add-folder` and `clone` start untrusted. The service refuses `setup-git` on an untrusted
+  folder (`409 repo_untrusted`) and `trust` while a clone is running, so the row's state is trust first: a folder that is not trusted
+  is shown as Not trusted (with Trust…) whether or not it holds Git, and only a trusted folder with no Git offers Set up Git. A cloning or
+  failed row offers no Trust. The Create dialog says it starts trusted; the Add a folder and Clone dialogs say they do not.
+- **Publish** answers `422 unsupported` ("Publishing a repository arrives in a later update.") after the trust check, and takes no body.
+  The dialog shows the Planned pill with the service's message on the repository step, leaves Publish off and shows no success.
+- **Answers and codes.** `remove` is `204` with no body. A `404` on the list is "not offered": nothing is drawn, no error is shown and
+  no other call is made. Error codes pass through as `{ code, message }`: `repo_exists`, `repo_limit`, `repo_untrusted` (409),
+  `clone_refused`, `invalid` (400), `not_found` (404), `unsupported` (422).
+- Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `ThreadRepo`, `TaskFolder`, the thread Git actions.
+  The mock (`web/mock/repos.ts`, hidden behind the preview flag) follows the generated shapes and the service's answers above.
 
 ## Not in the beta
 

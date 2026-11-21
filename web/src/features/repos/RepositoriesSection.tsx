@@ -66,7 +66,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
     const state = repoState(row);
     return [
       ...(state === "trusted" && !row.has_remote && row.clone === null ? [{ label: "Publish to GitHub…", onSelect: () => setOpen({ kind: "publish", repo: row }) }] : []),
-      ...(state === "untrusted" ? [{ label: "Trust this folder…", onSelect: () => setOpen({ kind: "trust", repo: row }) }] : []),
+      ...(state === "untrusted" && row.clone === null ? [{ label: "Trust this folder…", onSelect: () => setOpen({ kind: "trust", repo: row }) }] : []),
       { label: "Remove from project…", destructive: true, separatorBefore: true, onSelect: () => setOpen({ kind: "remove", repo: row }) },
     ];
   };
