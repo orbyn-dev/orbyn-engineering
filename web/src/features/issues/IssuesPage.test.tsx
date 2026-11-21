@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock, trackerFixtures } from "../../../mock/issues";
+import { ApiFailure } from "../../api/client";
 import { useUi } from "../../product/state/ui";
 import { MOTION } from "../../lib/motion";
 import { setViewportWidth } from "../../test-support";
@@ -249,11 +250,10 @@ it("says so when a page cannot be loaded, keeps what is shown and keeps the row"
   expect(loadMore()).toBeEnabled();
 });
 
-// ---- state change is Planned ----
+// ---- state change: offered by `states`, Planned without it ----
 
-it("in a production build the State control is Planned text, and no choice is offered or sent even when the answer carries transitions", async () => {
-  vi.stubGlobal("__ORBYN_PREVIEWS__", false);
-  const mock = createIssuesMock();
+it("the State control is Planned text when the answer carries no states, and nothing is offered or sent", async () => {
+  const mock = createIssuesMock({ noStates: true });
   setIssuesApi(mock);
   window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
   render(<IssuesPage />);
@@ -262,6 +262,14 @@ it("in a production build the State control is Planned text, and no choice is of
   expect(within(facts).getByText("Open")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^State:/ })).toBeNull();
   expect(mock.writes).toEqual([]);
+});
+
+it("a production build offers the State menu all the same when the answer carries states", async () => {
+  vi.stubGlobal("__ORBYN_PREVIEWS__", false);
+  setIssuesApi(createIssuesMock());
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
+  render(<IssuesPage />);
+  expect(await screen.findByRole("button", { name: "State: Open" })).toBeEnabled();
 });
 
 // ---- paging: the failure line, the retry and the closed date ----
@@ -333,8 +341,8 @@ it("never says an open issue was closed, even when a tracker sends a closed_at f
   expect(document.querySelector(".iss-sub")!.textContent).not.toMatch(/closed/);
 });
 
-it("shows Sort: Updated as a Planned control that opens nothing", async () => {
-  setIssuesApi(createIssuesMock());
+it("shows Sort: Updated as a Planned control that opens nothing while the service does not offer it", async () => {
+  setIssuesApi(createIssuesMock({ edits: false }));
   const user = userEvent.setup();
   render(<IssuesPage />);
   await screen.findByRole("button", { name: "Login sends people back to /home" });
@@ -344,4 +352,44 @@ it("shows Sort: Updated as a Planned control that opens nothing", async () => {
   await user.click(sort);
   expect(screen.queryByRole("menu")).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("sorts by created date when the service offers it: the query carries `sort`, newest first, and the order changes", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  const sort = await screen.findByRole("button", { name: "Sort: Updated" });
+  await waitFor(() => expect(sort).toBeEnabled());
+  expect(sort.parentElement).not.toHaveTextContent("Planned");
+  await user.click(sort);
+  const menu = await screen.findByRole("menu", { name: "Sort issues" });
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Updated", "Created"]);
+  await user.click(within(menu).getByRole("menuitem", { name: "Created" }));
+  expect(await screen.findByRole("button", { name: "Sort: Created" })).toBeVisible();
+  await waitFor(() => expect(mock.listed.at(-1)!.query.sort).toBe("created"));
+  // Sort is not a filter: no chip, and Clear filters keeps it.
+  expect(document.querySelector(".iss-chips")).toBeNull();
+});
+
+
+it("a sorted list that the service turns down puts Sort back to Planned and asks again in the service's own order", async () => {
+  const mock = createIssuesMock();
+  const real = mock.list;
+  mock.list = async (query, ...rest) => {
+    if (query.sort !== undefined) throw new ApiFailure("invalid", "Unknown query parameter sort.", 400);
+    return real(query, ...rest);
+  };
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  const sort = await screen.findByRole("button", { name: "Sort: Updated" });
+  await waitFor(() => expect(sort).toBeEnabled());
+  await user.click(sort);
+  await user.click(within(await screen.findByRole("menu", { name: "Sort issues" })).getByRole("menuitem", { name: "Created" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Sort: Updated" }).parentElement).toHaveTextContent("Planned"));
+  expect(await screen.findByRole("button", { name: "Login sends people back to /home" })).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
 });

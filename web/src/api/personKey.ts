@@ -93,9 +93,6 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/engines/update-all"],
   ["POST", "/api/engines/{id}/install-recommended"],
   ["POST", "/api/engines/{id}/update"],
-  // The Cursor thread contract (docs/cursor-thread-contract.md): the one-turn override and the engine notice's acknowledgement.
-  ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
-  ["POST", "/api/threads/{id}/send-without-approvals"],
   ["POST", "/api/shell/actions"],
   ["POST", "/api/updates/app/apply"],
   ["POST", "/api/updates/app/download"],
@@ -176,26 +173,17 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/issues/start-thread"],
   ["POST", "/api/threads/{id}/issue-links"],
   ["POST", "/api/threads/{id}/issue-links/remove"],
-];
-
-/**
- * Person routes of service slices that are not merged: the Issues routes (docs/issues.md), the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
- * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
- * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
- */
-export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
-  // Issues (docs/issues.md, "Routes"): the four writes of Orbyn's own. Connect and disconnect are the tracker's credential, link and
-  // unlink are the thread's, start-thread creates a thread and its link in one write. The routes are not merged: when they land in
-  // `routes.json` the test below fails, and each line moves into `PERSON_ROUTES`. Reads are not Person-class and are not listed.
-  ["POST", "/api/issues/trackers/{tracker}/connect"],
-  ["POST", "/api/issues/trackers/{tracker}/disconnect"],
-  ["POST", "/api/threads/{id}/issue-links"],
-  ["POST", "/api/threads/{id}/issue-links/remove"],
-  ["POST", "/api/issues/start-thread"],
-  // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
+  // Execution profiles (docs/execution-profiles-and-library.md, Part 1): every write is Person-class. The reads and `POST /api/profiles/check` are Local.
+  ["POST", "/api/profiles"],
+  ["PATCH", "/api/profiles/{id}"],
+  ["DELETE", "/api/profiles/{id}"],
+  ["PUT", "/api/threads/{id}/profile"],
+  ["POST", "/api/crew/profile/apply"],
+  // Multi-repository projects (docs/multi-repo.md): the project repository writes. The thread ones are still pending below.
   ["POST", "/api/projects/{id}/repos/add-folder"],
   ["POST", "/api/projects/{id}/repos/create"],
   ["POST", "/api/projects/{id}/repos/clone"],
+  ["POST", "/api/projects/{id}/repos/scan"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/publish"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/trust"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/setup-git"],
@@ -203,6 +191,41 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"],
   ["POST", "/api/projects/{id}/repo-threads"],
   ["POST", "/api/threads/{id}/repos"],
+  // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
+  ["PUT", "/api/engines/{id}/code-mode"],
+  // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
+  ["POST", "/api/library/workflows"],
+  ["PATCH", "/api/library/workflows/{id}"],
+  ["DELETE", "/api/library/workflows/{id}"],
+  ["POST", "/api/library/workflows/{id}/run"],
+  ["POST", "/api/library/prompts"],
+  ["PATCH", "/api/library/prompts/{id}"],
+  ["DELETE", "/api/library/prompts/{id}"],
+  ["POST", "/api/library/env-sets"],
+  ["PATCH", "/api/library/env-sets/{id}"],
+  ["DELETE", "/api/library/env-sets/{id}"],
+  ["PUT", "/api/library/env-sets/{id}/keys/{key}"],
+  ["DELETE", "/api/library/env-sets/{id}/keys/{key}"],
+  ["POST", "/api/library/import"],
+  ["POST", "/api/projects/{id}/library/suggestions/copy"],
+  // Cursor thread contract (docs/cursor-thread-contract.md): the one-turn override and the engine notice's acknowledgement.
+  ["POST", "/api/threads/{id}/send-without-approvals"],
+  ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+];
+
+/**
+ * Person routes of service slices that are not merged: the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
+ * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
+ */
+export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
+  // Issues (docs/issues.md, "Issue writes and list controls"): the two writes of the tracker's own data. The five Issues writes of the
+  // first slice (connect, disconnect, link, unlink, start-thread) are in `routes.json` and so in `PERSON_ROUTES`. These two are not
+  // built in the service yet: when they land in `routes.json` the test below fails and each line moves into `PERSON_ROUTES`.
+  ["POST", "/api/issues/item/update"],
+  ["POST", "/api/issues/item/state"],
+  // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
+  // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
   // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
   ["POST", "/api/devices/{id}/actions"],
   // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.

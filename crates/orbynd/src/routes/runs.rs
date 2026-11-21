@@ -2,7 +2,7 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{MatchedPath, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
@@ -42,6 +42,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
 
 async fn start_run(
     State(state): State<AppState>,
+    matched: MatchedPath,
     Path(id): Path<String>,
     headers: HeaderMap,
     ApiJson(body): ApiJson<StartRun>,
@@ -58,7 +59,12 @@ async fn start_run(
                 lifecycle.permission_mode
             });
         if wanted.looser_than(current) {
-            state.access.person_check(&headers)?;
+            state.access.person_check_field(
+                &headers,
+                "POST",
+                matched.as_str(),
+                "permission_mode",
+            )?;
         }
         Ok(())
     };

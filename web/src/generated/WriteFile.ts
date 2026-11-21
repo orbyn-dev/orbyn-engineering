@@ -4,4 +4,8 @@ export type WriteFile = { path: string, content: string,
 /**
  * The revision this edit started from; `None` means the file must not exist.
  */
-base_revision: string | null, };
+base_revision: string | null, 
+/**
+ * A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+ */
+repo_id?: string, };

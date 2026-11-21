@@ -88,12 +88,13 @@ impl McpService {
             .is_some_and(|core| core.crew_enabled())
     }
 
-    /// Whether the Code Mode tools exist: off until `CoreConfig::code_mode`, then listed and callable for every run.
-    fn code_mode_enabled(&self) -> bool {
+    /// Whether the Code Mode tools exist for `engine`: off until `CoreConfig::code_mode`, then only for an engine whose
+    /// own switch is on.
+    fn code_mode_enabled(&self, engine: &str) -> bool {
         self.host
             .get()
             .and_then(Weak::upgrade)
-            .is_some_and(|core| core.config.code_mode)
+            .is_some_and(|core| core.code_mode_on(engine))
     }
 
     pub fn new(
@@ -194,7 +195,7 @@ impl McpService {
                 if self.crew_enabled() {
                     tools.extend(crate::crew::tool_specs());
                 }
-                if self.code_mode_enabled() {
+                if self.code_mode_enabled(&binding.scope.engine) {
                     tools.extend(code::specs());
                 }
                 Ok(json!({ "tools": tools }))
@@ -256,7 +257,7 @@ impl McpService {
                 let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
                 Ok(text_result(&text, failed))
             }
-            tool if code::is_tool(tool) && self.code_mode_enabled() => {
+            tool if code::is_tool(tool) && self.code_mode_enabled(&binding.scope.engine) => {
                 let Some(core) = self.host.get().and_then(Weak::upgrade) else {
                     return Ok(text_result("This service is not ready.", true));
                 };

@@ -53,6 +53,7 @@ impl From<CoreError> for ApiFailure {
             CoreError::ProjectExists(existing) => serde_json::to_value(existing).ok(),
             CoreError::ProjectHasWork { detail, .. } => Some(detail.clone()),
             CoreError::PatternRefused { detail, .. } => Some(detail.clone()),
+            CoreError::Refused { detail, .. } if !detail.is_null() => Some(detail.clone()),
             CoreError::FileConflict { revision } => Some(json!({ "revision": revision })),
             CoreError::Account {
                 retry_after_secs: Some(secs),

@@ -49,6 +49,7 @@
 /* New thread: the Engine and Permission rows. */
 .repos-start-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--color-border); }
 .repos-start-label { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-start-trust { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 8px; }
 .repos-start-control { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 
 /* Publish: three steps in one dialog. */
@@ -62,3 +63,16 @@
 .repos-published { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .repos-published p { margin: 0; }
 .repos-published-tick { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--color-rowHover); color: var(--color-accent); }
+
+/* F70: task folder line in the Repos popover and the scan dialog's rows. */
+.repos-task { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; padding: 6px 0 8px; }
+.repos-task .field-hint { grid-column: 1 / -1; margin: 0; }
+.repos-task-label { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-scan.repos-dialog { max-width: min(640px, calc(100vw - 24px)); }
+.repos-scan-why { font-size: var(--text-meta); color: var(--color-muted); }
+.repos-scan-row[data-refused] { opacity: 0.8; }
+@media (min-width: 721px) {
+  .repos-scan .repos-scan-row { grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr) auto; }
+}
+.branch-repo, .repos-scope { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.repos-scope { margin: 6px 12px 0; }

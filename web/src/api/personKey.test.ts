@@ -121,16 +121,30 @@ describe("the Cursor thread routes", () => {
   });
 });
 
+describe("the Issues writes", () => {
+  it("send the key on every write, the five in the route table and the two edits not built yet, and on no read", () => {
+    for (const path of ["/api/issues/trackers/github/connect", "/api/issues/trackers/github/disconnect", "/api/issues/start-thread", "/api/threads/t1/issue-links", "/api/threads/t1/issue-links/remove", "/api/issues/item/update", "/api/issues/item/state"]) {
+      expect(sendsPersonKey("POST", path), path).toBe(true);
+    }
+    for (const path of ["/api/issues", "/api/issues/item", "/api/issues/candidates", "/api/issues/links"]) expect(sendsPersonKey("GET", path), path).toBe(false);
+    // The five in the first slice are no longer pending: they are in PERSON_ROUTES, from routes.json.
+    const pending = PENDING_PERSON_ROUTES.map(([, pattern]) => pattern);
+    expect(pending).toEqual(expect.arrayContaining(["/api/issues/item/update", "/api/issues/item/state"]));
+    for (const pattern of ["/api/issues/start-thread", "/api/issues/trackers/{tracker}/connect", "/api/threads/{id}/issue-links"]) expect(pending).not.toContain(pattern);
+  });
+});
+
 describe("the multi-repository writes of docs/multi-repo.md", () => {
   const writes = [
     "/api/projects/p1/repos/add-folder", "/api/projects/p1/repos/create", "/api/projects/p1/repos/clone", "/api/projects/p1/repos/r1/publish",
     "/api/projects/p1/repos/r1/trust", "/api/projects/p1/repos/r1/setup-git", "/api/projects/p1/repos/r1/remove", "/api/projects/p1/repos/r1/clone/cancel",
-    "/api/projects/p1/repo-threads", "/api/threads/t1/repos",
+    "/api/projects/p1/repo-threads", "/api/threads/t1/repos", "/api/projects/p1/repos/scan",
   ];
   it("send the key on every write and on no read", () => {
     for (const path of writes) expect(sendsPersonKey("POST", path), path).toBe(true);
     expect(sendsPersonKey("GET", "/api/projects/p1/repos")).toBe(false);
     expect(sendsPersonKey("GET", "/api/threads/t1/repos")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/task-folder")).toBe(false);
     expect(sendsPersonKey("POST", "/api/projects/p1/repos")).toBe(false);
     expect(sendsPersonKey("POST", "/api/projects/p1/repos/r1")).toBe(false);
   });
@@ -210,5 +224,16 @@ describe("the device actions of docs/devices.md", () => {
     vi.stubGlobal("fetch", posted);
     await request("POST", "/api/devices/android%3Aa/actions", { type: "screenshot" });
     expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});
+
+describe("the profile writes of docs/execution-profiles-and-library.md", () => {
+  it("send the key on every write, and on the reads and the check", () => {
+    expect(sendsPersonKey("POST", "/api/profiles")).toBe(true);
+    expect(sendsPersonKey("PATCH", "/api/profiles/01j0")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/profiles/01j0")).toBe(true);
+    expect(sendsPersonKey("PUT", "/api/threads/t1/profile")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/profile/apply")).toBe(true);
+    for (const [method, path] of [["GET", "/api/profiles"], ["GET", "/api/profiles/01j0"], ["POST", "/api/profiles/check"]] as const) expect(sendsPersonKey(method, path), path).toBe(false);
   });
 });

@@ -76,6 +76,7 @@ The final list is an open question below.
 3. Enforce the rest of the `Person` table, add the field-level checks, remove the explorer Preview gate and the core
    `crew_preview` check on file actions, and reword the #441 sentences on Crew's flag. **Done (this change).**
 4. Per-worker tokens, only when a worker needs the HTTP API (item 4 above), and the sandbox work in "Still open after step 3".
+   The `person_route.refused` audit row ("The audit row for a refused call") gains a worker caller class when per-worker tokens land.
 
 ## Tests
 
@@ -199,6 +200,20 @@ workspace and account routes, is closed by step 3.
   refused for want of it, and a socket opens with the subprotocol and is refused without it
   (`tests/person_key.rs`). Web unit tests check the list, the header and the subprotocol; the mock and the browser e2e send
   the fixed fake key or run with the development override.
+
+### The audit row for a refused call
+
+An enforced `Person` route that answers `person_required` or `desktop_required` writes one `person_route.refused` audit row
+(decision `deny`, source `access`), so the owner can see a worker trying one. The row has the target `METHOD pattern` (the
+matched route, never the URL), the caller class as actor and the code; the time is the row's own. It holds no body, header,
+token, id or query. A repeat of the same route and class inside a minute writes no row (the log is append-only, so there is
+no count). The map behind that holds at most 1024 pairs; a full map drops new pairs until a minute passes. A failed write is
+logged and the call is still refused. Caller classes: `service_token` (token, no browser origin) and `browser` (a session
+cookie or an `Origin` header). A worker that read `service.json` is `service_token`: there is no per-worker class until
+per-worker tokens exist. A refusal made inside a handler for part of the request (`FIELD_LEVEL`: the run's `permission_mode`, the
+AG-UI `resume[]`, the pull checkout's `worktree: false`) is audited the same way, through the same helper
+(`Access::person_check_field`), with the field's name added to the target, as `POST /api/threads/{id}/runs [permission_mode]`.
+The name is a fixed label; the row never holds the field's value. The window is shared per route, field and caller class.
 
 ### What browser mode and the CLI lose now
 

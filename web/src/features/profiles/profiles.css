@@ -1,0 +1,23 @@
+/* Execution profiles (frames profile-*): the Settings list, the editor dialog and the composer picker. */
+.prf { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.prf-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.prf-title { margin: 0; font-size: var(--text-body); font-weight: 500; }
+.prf-list { list-style: none; margin: 0; padding: 0; }
+.prf-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; padding: 8px 0; border-top: 1px solid var(--color-border); min-width: 0; }
+.prf-row[data-usable] .prf-name { color: var(--color-text); }
+.prf-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.prf-name { overflow-wrap: anywhere; font-weight: 500; }
+.prf-line, .prf-desc, .prf-reason { grid-column: 1; color: var(--color-muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.prf-more { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.prf-note { margin: 0; color: var(--color-muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.prf-planned { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.prf-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.prf-label { display: block; margin-bottom: 4px; font-size: var(--text-meta); color: var(--color-muted); }
+.prf-fail { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--color-danger); font-size: var(--text-meta); }
+.prf-chip { max-width: 160px; }
+.prf-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prf-pick { display: flex; flex-direction: column; min-width: 0; }
+.prf-pick small { color: var(--color-muted); font-size: var(--text-meta); }
+.prf-grants { margin: 6px 0; padding-left: 18px; }
+@media (max-width: 600px) { .prf-head { flex-direction: column; } }
+.prf-dialog { width: min(480px, calc(100vw - 32px)); }

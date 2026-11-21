@@ -51,7 +51,8 @@ export function toHostRow(status: EngineHostStatus): HostRow | null {
     action: optionalText(status.action) ?? null,
     stopped_at: crash?.at ?? null,
     last_error: crash ? { message: crash.message, causes: [] } : null,
-    can_retry: false,
+    // Only a family that gave up waits for the person; a crashed host is already restarting by itself.
+    can_retry: status.state === "cant_start",
   };
 }
 

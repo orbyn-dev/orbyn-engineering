@@ -7,11 +7,13 @@ import { useRepos } from "./api";
 import type { RepoRow, ReposView } from "./contract";
 import { AddFolderDialog, CancelCloneDialog, CloneDialog, CreateDialog, RemoveDialog, SetupGitDialog, TrustDialog } from "./Dialogs";
 import { PublishDialog } from "./Publish";
+import { ScanDialog, type ScanMode } from "./Scan";
 import { cloneText, plain, repoState, STATE_LABEL } from "./model";
 import "./repos.css";
 
 type Open =
   | { kind: "add-folder" | "clone" | "create" }
+  | { kind: "scan"; mode: ScanMode }
   | { kind: "publish" | "remove" | "trust" | "git" | "cancel-clone"; repo: RepoRow };
 
 const CLONE_POLL_MS = 2000;
@@ -64,7 +66,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
     const state = repoState(row);
     return [
       ...(state === "trusted" && !row.has_remote && row.clone === null ? [{ label: "Publish to GitHub…", onSelect: () => setOpen({ kind: "publish", repo: row }) }] : []),
-      ...(state === "untrusted" ? [{ label: "Trust this folder…", onSelect: () => setOpen({ kind: "trust", repo: row }) }] : []),
+      ...(state === "untrusted" && row.clone === null ? [{ label: "Trust this folder…", onSelect: () => setOpen({ kind: "trust", repo: row }) }] : []),
       { label: "Remove from project…", destructive: true, separatorBefore: true, onSelect: () => setOpen({ kind: "remove", repo: row }) },
     ];
   };
@@ -84,6 +86,8 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
         <Button small disabled={disabled} icon={<Plus size={13} aria-hidden />} aria-haspopup="menu"
           onClick={(event) => setMenu({ ...place(event.currentTarget), items: [
             { label: "Add a folder…", title: "A folder on this computer", onSelect: () => setOpen({ kind: "add-folder" }) },
+            { label: "Scan a folder…", title: "List the folders inside one", onSelect: () => setOpen({ kind: "scan", mode: "folder" }) },
+            { label: "Import a .code-workspace file…", title: "The folders a workspace file names", onSelect: () => setOpen({ kind: "scan", mode: "workspace" }) },
             { label: "Create a new folder…", title: "A new folder with Git", onSelect: () => setOpen({ kind: "create" }) },
             { label: "Clone a repository…", title: "Git URL", onSelect: () => setOpen({ kind: "clone" }) },
           ] })}>Add repository</Button>
@@ -92,6 +96,7 @@ export function RepositoriesSection({ projectId, projectName, disabled = false }
         {menu ? <Menu x={menu.x} y={menu.y} label="Repository" items={menu.items} onClose={() => setMenu(null)} /> : null}
       </Presence>
       {open?.kind === "add-folder" ? <AddFolderDialog {...common} /> : null}
+      {open?.kind === "scan" ? <ScanDialog projectId={projectId} mode={open.mode} onClose={() => setOpen(null)} onChanged={reload} /> : null}
       {open?.kind === "clone" ? <CloneDialog {...common} projectName={projectName} directory={shown.clone_directory} /> : null}
       {open?.kind === "create" ? <CreateDialog {...common} projectName={projectName} directory={shown.clone_directory} /> : null}
       {open?.kind === "cancel-clone" ? <CancelCloneDialog {...common} repo={open.repo} /> : null}

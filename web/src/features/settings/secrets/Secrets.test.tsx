@@ -31,7 +31,7 @@ describe("Settings › Secrets", () => {
     expect(screen.queryByRole("switch", { name: "What agents read" })).toBeNull();
     expect(screen.getByText("What agents read")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(1);
-    expect(screen.getByText(/On by default. Switched off per project. Text you send is masked/)).toBeVisible();
+    expect(screen.getByText(/On by default. Switched off per project. Text you send and attached text files/)).toBeVisible();
     expect(screen.getByText("Crew ledger and Crew objects")).toBeVisible();
     expect(screen.getByText(/Crew blocks every recognised format/)).toBeVisible();
     expect(screen.queryByText(/Reveal/)).toBeNull();

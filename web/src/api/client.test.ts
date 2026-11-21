@@ -85,3 +85,47 @@ describe("commits", () => {
     expect(urls).toEqual(["/api/threads/t%2F1/commits", "/api/threads/t1/commits?repo_id=r%202"]);
   });
 });
+
+describe("repo_id on thread Git calls", () => {
+  const sent = (fetchMock: ReturnType<typeof respond>) =>
+    fetchMock.mock.calls.map((call) => {
+      const [url, init] = call as unknown as [string, RequestInit];
+      return [init.method, url.replace(/^.*?(?=\/api)/, ""), init.body === undefined ? undefined : JSON.parse(String(init.body))];
+    });
+
+  it("puts repo_id in the query of the reads (diff, branches) and keeps the scope", async () => {
+    const fetchMock = respond(200, []);
+    vi.stubGlobal("fetch", fetchMock);
+    await api.diff("t1");
+    await api.diff("t1", undefined, "worktree");
+    await api.diff("t1", undefined, "worktree", "r 2");
+    await api.diff("t1", undefined, undefined, "r2");
+    await api.branches("t1");
+    await api.branches("t1", undefined, "r2");
+    expect(sent(fetchMock).map(([method, url]) => [method, url])).toEqual([
+      ["GET", "/api/threads/t1/diff"],
+      ["GET", "/api/threads/t1/diff?scope=worktree"],
+      ["GET", "/api/threads/t1/diff?scope=worktree&repo_id=r%202"],
+      ["GET", "/api/threads/t1/diff?repo_id=r2"],
+      ["GET", "/api/threads/t1/branches"],
+      ["GET", "/api/threads/t1/branches?repo_id=r2"],
+    ]);
+  });
+
+  it("puts repo_id in the body of the branch writes and the git action, only when one is chosen", async () => {
+    const fetchMock = respond(200, { phases: [], notice: null });
+    vi.stubGlobal("fetch", fetchMock);
+    await api.createBranch("t1", "feat/x");
+    await api.createBranch("t1", "feat/x", "r2");
+    await api.switchBranch("t1", "main");
+    await api.switchBranch("t1", "main", "r2");
+    await api.gitAction("t1", { push: true, repo_id: "r2" });
+    expect(sent(fetchMock)).toEqual([
+      ["POST", "/api/threads/t1/branches", { name: "feat/x" }],
+      ["POST", "/api/threads/t1/branches", { name: "feat/x", repo_id: "r2" }],
+      ["POST", "/api/threads/t1/branches/switch", { name: "main" }],
+      ["POST", "/api/threads/t1/branches/switch", { name: "main", repo_id: "r2" }],
+      ["POST", "/api/threads/t1/git/action", { push: true, repo_id: "r2" }],
+    ]);
+  });
+});

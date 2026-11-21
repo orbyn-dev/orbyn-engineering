@@ -2,7 +2,8 @@ import { isFileTab, type FileTabId } from "./types";
 
 /** What a file tab shows: a file of the thread's own checkout, or one read through the left-bar explorer. */
 export type FileTarget =
-  | { kind: "thread"; path: string }
+  /** `repoId` names another repository of a multi-repository thread (`path` is then relative to it); absent is the thread's own checkout. */
+  | { kind: "thread"; path: string; repoId?: string }
   | { kind: "explorer"; projectId: string; worktreeId: string; path: string }
   /** A worktree with nothing to browse (its folder is missing): the tab says so. */
   | { kind: "worktree"; projectId: string; worktreeId: string }
@@ -13,7 +14,7 @@ export type FileTarget =
 export function fileTabId(target: FileTarget): FileTabId {
   const parts =
     target.kind === "thread"
-      ? ["t", target.path]
+      ? target.repoId === undefined ? ["t", target.path] : ["t", target.path, target.repoId]
       : target.kind === "worktree"
         ? ["w", target.projectId, target.worktreeId]
         : target.kind === "issue"
@@ -33,6 +34,7 @@ export function parseFileTab(id: string): FileTarget | null {
     // An issue tab saved before the scope was part of its name (two parts) cannot be opened, so it is dropped by the caller.
     if (kind === "i" && rest.length === 3) return { kind: "issue", tracker: rest[0]!, scope: rest[1]!, key: rest[2]! };
     if (kind === "t" && rest.length === 1) return { kind: "thread", path: rest[0]! };
+    if (kind === "t" && rest.length === 2 && rest[1] !== "") return { kind: "thread", path: rest[0]!, repoId: rest[1]! };
     // A tab saved before names left the id carries two more parts, which are ignored.
     if (kind === "x" && (rest.length === 3 || rest.length === 5)) {
       const [projectId, worktreeId, path] = rest as [string, string, string];

@@ -117,3 +117,63 @@ fn failure_of(code: i32) -> Failure {
         _ => Failure::Other,
     }
 }
+
+/// An in-memory keychain for tests, with a switch that makes every call fail the way a real keychain can. Never a product backend.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+pub struct MemoryBackend {
+    items: std::sync::Mutex<std::collections::HashMap<(String, String), Vec<u8>>>,
+    fail: std::sync::Mutex<Option<Failure>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl MemoryBackend {
+    /// Every later call fails with this, or works again with `None`.
+    pub fn fail_with(&self, failure: Option<Failure>) {
+        *self.fail.lock().unwrap() = failure;
+    }
+
+    /// Every `(service, account)` that holds an item.
+    pub fn accounts(&self) -> Vec<(String, String)> {
+        let mut all: Vec<_> = self.items.lock().unwrap().keys().cloned().collect();
+        all.sort();
+        all
+    }
+
+    /// The item's bytes, for a test that proves a value reached the keychain.
+    pub fn bytes(&self, service: &str, account: &str) -> Option<Vec<u8>> {
+        self.items
+            .lock()
+            .unwrap()
+            .get(&(service.into(), account.into()))
+            .cloned()
+    }
+
+    fn check(&self) -> Result<(), Failure> {
+        self.fail.lock().unwrap().map_or(Ok(()), Err)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl SecretBackend for MemoryBackend {
+    fn get(&self, service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
+        self.check()?;
+        Ok(self.bytes(service, account).map(Zeroizing::new))
+    }
+    fn set(&self, service: &str, account: &str, bytes: &[u8]) -> Result<(), Failure> {
+        self.check()?;
+        self.items
+            .lock()
+            .unwrap()
+            .insert((service.into(), account.into()), bytes.to_vec());
+        Ok(())
+    }
+    fn delete(&self, service: &str, account: &str) -> Result<(), Failure> {
+        self.check()?;
+        self.items
+            .lock()
+            .unwrap()
+            .remove(&(service.into(), account.into()));
+        Ok(())
+    }
+}
