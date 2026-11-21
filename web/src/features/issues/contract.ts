@@ -135,20 +135,24 @@ export interface IssuesApi {
   links(signal?: AbortSignal): Promise<Record<string, IssueRef[]>>;
   /** A number, words or a pasted issue link, searched over the connected trackers. Empty when nothing matches; empty input lists the latest. */
   find(input: string, signal?: AbortSignal): Promise<IssueRef[]>;
-  /** One write per call: adds the link. A number the tracker does not have is a 404. */
+  /** One write per call: adds the link. A number the tracker does not have is a 404. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
   link(threadId: string, issue: Pick<IssueRef, "tracker" | "scope" | "key">): Promise<void>;
-  /** One write per call: removes the link from this thread only. The issue is untouched. */
+  /** One write per call: removes the link from this thread only. The issue is untouched. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
   unlink(threadId: string, issue: Pick<IssueRef, "tracker" | "scope" | "key">): Promise<void>;
-  /** One write per call: moves the issue to one of its `transitions`. A state the tracker does not offer is a 400. */
+  /** One write per call: moves the issue to one of its `transitions`. A state the tracker does not offer is a 400. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
   setState(tracker: TrackerKind, key: string, state: IssueState): Promise<void>;
   /**
-   * WRITE-ONLY, Person class. One write per call: keeps the token in the keychain behind the service and answers with the
-   * tracker's row, which has no token in it. No call reads a token back. GitHub takes none (it uses `gh`).
+   * WRITE-ONLY. One write per call: keeps the token in the keychain behind the service and answers with the tracker's row, which
+   * has no token in it. No call reads a token back. GitHub takes none (it uses `gh`). This is the one place a secret crosses the
+   * contract, and only outward: the argument is passed once, never stored, echoed, logged or read back.
+   * The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`), carry
+   * the token in the JSON body and never in the path or query, and must not
+   * echo the token in any reply or error text. The service must refuse plain http for a typed address.
    */
   saveToken(tracker: TrackerKind, input: TrackerTokenInput): Promise<TrackerRow>;
-  /** One write per call: deletes the saved token and answers with the tracker's row. */
+  /** One write per call: deletes the saved token and answers with the tracker's row. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
   removeToken(tracker: TrackerKind): Promise<TrackerRow>;
-  /** One write per call: creates the thread, links it to the issue and answers with it. */
+  /** One write per call: creates the thread, links it to the issue and answers with it. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
   startThread(issue: Pick<IssueRef, "tracker" | "scope" | "key">, input: StartThreadInput): Promise<StartedThread>;
 }
 

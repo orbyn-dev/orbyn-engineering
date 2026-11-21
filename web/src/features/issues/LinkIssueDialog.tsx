@@ -9,7 +9,7 @@ import { issuesApi, useTrackers } from "./api";
 import { TRACKER_NAMES, type IssueRef } from "./contract";
 import { IssueGlyph } from "./IssueGlyph";
 import { useThreadIssues } from "./links";
-import { notFoundWords, reasonOf, refKey, stateWord, trackerName } from "./model";
+import { isTracker, notFoundWords, reasonOf, refKey, stateWord, trackerName } from "./model";
 import "./issues.css";
 
 const SEARCH_MS = 150;
@@ -88,7 +88,7 @@ export function LinkIssueDialog({ thread, onClose }: { thread: Thread; onClose()
       </Dialog>
     );
   }
-  const names = connected.map((row) => TRACKER_NAMES[row.tracker]);
+  const names = connected.flatMap((row) => (isTracker(row.tracker) ? [TRACKER_NAMES[row.tracker]] : []));
   const said = names.length === 0 ? "Your trackers" : names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   return (
     <Dialog title="Link an issue" busy={busy} onClose={onClose} className="iss-dialog"

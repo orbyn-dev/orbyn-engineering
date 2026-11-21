@@ -1,7 +1,6 @@
 import { CircleDot } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { Thread } from "../../api/types";
-import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { DRow } from "../../product/ui/DetailRows";
 import { Button } from "../../ui/controls";
@@ -10,22 +9,25 @@ import type { IssueRef } from "./contract";
 import { IssueGlyph } from "./IssueGlyph";
 import { LinkIssueDialog } from "./LinkIssueDialog";
 import { useThreadIssues } from "./links";
-import { refKey, stateWord, trackerName } from "./model";
+import { reasonOf, refKey, stateWord, trackerName } from "./model";
 import "./issues.css";
 
 function IssueLine({ thread, issue, first, icon, onOpen, onUnlinked }: { thread: Thread; issue: IssueRef; first: boolean; icon: ReactNode; onOpen(): void; onUnlinked(): Promise<void> }) {
   const pushToast = useUi((state) => state.pushToast);
   const [busy, setBusy] = useState(false);
-  // One click, one write: a second press while the first is in flight is not a second write.
+  // One click, one write: a second press while the first is in flight is not a second write, even before a render.
+  const pending = useRef(false);
   const unlink = async () => {
-    if (busy) return;
+    if (pending.current) return;
+    pending.current = true;
     setBusy(true);
     try {
       await issuesApi().unlink(thread.id, issue);
       await onUnlinked();
     } catch (failure) {
+      pending.current = false;
       setBusy(false);
-      pushToast(`Couldn’t unlink it. Nothing changed. ${toFailure(failure).message}`);
+      pushToast(`Couldn’t unlink it. Nothing changed. ${reasonOf(failure)}`);
     }
   };
   return (

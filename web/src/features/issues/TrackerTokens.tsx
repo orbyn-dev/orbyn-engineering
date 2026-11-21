@@ -107,9 +107,8 @@ function TrackerRowView({ row, replace, refresh }: { row: TrackerRow; replace(ne
       if (next) replace(next);
       setStep(null);
     } catch (failure) {
-      const said = reasonOf(failure);
-      // The words are the service's own; a token the service echoed back would be cut out of them.
-      setError(secret ? said.split(secret).join("…") : said);
+      // The words are the service's own; one that carries the token, in any form, is replaced whole.
+      setError(reasonOf(failure, secret));
     } finally {
       pending.current = false;
       setBusy(null);

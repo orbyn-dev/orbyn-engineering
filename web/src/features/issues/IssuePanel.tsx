@@ -9,7 +9,7 @@ import { Button } from "../../ui/controls";
 import { issuesApi, useApiVersion } from "./api";
 import { Body, Person } from "./IssueDetail";
 import { IssueGlyph } from "./IssueGlyph";
-import { isTracker, stateWord, trackerName } from "./model";
+import { isIssueKey, isTracker, stateWord, trackerName } from "./model";
 
 /**
  * An issue as a tab of the thread's side panel, read only: the same text the Issues page shows, in the narrow column, so the
@@ -19,7 +19,7 @@ import { isTracker, stateWord, trackerName } from "./model";
 export function IssuePanel({ tracker, issueKey }: { tracker: string; issueKey: string }) {
   const version = useApiVersion();
   const read = useAsync(`issues:panel:${version}:${tracker}:${issueKey}`, async (signal) => {
-    if (!isTracker(tracker)) throw new ApiFailure("not_found", "No such tracker.", 404);
+    if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
     return issuesApi().get(tracker, issueKey, signal);
   });
   const waited = useWaited(read.status === "loading");

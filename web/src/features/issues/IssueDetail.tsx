@@ -12,7 +12,7 @@ import { Button } from "../../ui/controls";
 import { ApiFailure } from "../../api/client";
 import { Markdown } from "../content";
 import { issuesApi, useApiVersion } from "./api";
-import { isTracker, stateWord, trackerName } from "./model";
+import { isIssueKey, isTracker, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail } from "./contract";
 import { IssueGlyph } from "./IssueGlyph";
 import { IssueStateButton } from "./IssueStateMenu";
@@ -87,7 +87,7 @@ export function IssueDetail({ tracker, issueKey }: { tracker: string; issueKey: 
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
   const read = useAsync(`issues:detail:${version}:${tracker}:${issueKey}`, async (signal) => {
-    if (!isTracker(tracker)) throw new ApiFailure("not_found", "No such tracker.", 404);
+    if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
     return issuesApi().get(tracker, issueKey, signal);
   });
   const waited = useWaited(read.status === "loading");

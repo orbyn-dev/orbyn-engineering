@@ -1,13 +1,12 @@
 import { ChevronDown } from "lucide-react";
 import { useRef, useState } from "react";
-import { toFailure } from "../../lib/useAsync";
 import { useUi } from "../../product/state/ui";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { issuesApi } from "./api";
 import type { IssueDetail, IssueState } from "./contract";
 import { IssueGlyph } from "./IssueGlyph";
-import { choiceLabel, sameState, stateWord } from "./model";
+import { choiceLabel, reasonOf, sameState, stateWord } from "./model";
 
 /**
  * The State row of an issue. A tracker that offers states shows a button that lists them in the tracker's own words and order and
@@ -30,7 +29,7 @@ export function IssueStateButton({ issue, onChanged }: { issue: IssueDetail; onC
       await issuesApi().setState(issue.tracker, issue.key, next);
       await onChanged();
     } catch (failure) {
-      pushToast(`Couldn't change the state. Nothing changed. ${toFailure(failure).message}`);
+      pushToast(`Couldn't change the state. Nothing changed. ${reasonOf(failure)}`);
     } finally {
       pending.current = false;
       setBusy(false);

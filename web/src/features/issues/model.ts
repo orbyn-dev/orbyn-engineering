@@ -120,11 +120,46 @@ export function trackerLine(row: TrackerRow): string {
   }
 }
 
-/** The words for a failed write: the service's own message, capped. Never anything the person typed. */
-export const reasonOf = (failure: unknown): string => {
+/** What replaces a failure's words when they carry the token the person typed, in any form. */
+export const TOKEN_REFUSED = "The tracker refused the token.";
+
+const b64 = (text: string): string[] => {
+  try {
+    const plain = btoa(unescape(encodeURIComponent(text)));
+    return [plain, plain.replace(/=+$/, ""), plain.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")];
+  } catch { return []; }
+};
+
+/** Every form a typed token can come back in: as typed, trimmed, URL-encoded, JSON-escaped and base64 (alone and as Basic `:token`). */
+function tokenForms(token: string): string[] {
+  const trimmed = token.trim();
+  const forms = new Set<string>();
+  for (const one of [token, trimmed]) {
+    if (!one) continue;
+    forms.add(one);
+    forms.add(encodeURIComponent(one));
+    forms.add(JSON.stringify(one).slice(1, -1));
+    for (const form of [...b64(one), ...b64(`:${one}`)]) forms.add(form);
+  }
+  return [...forms].filter((form) => form.length > 0).map((form) => form.toLowerCase());
+}
+
+/**
+ * The words for a failed write: the service's own message, capped at 300. When a `secret` (the token just typed) turns up in them
+ * in any form, the whole message is replaced: the match is made on the whole message BEFORE it is cut, never on the cut one.
+ * Never anything the person typed.
+ */
+export const reasonOf = (failure: unknown, secret?: string): string => {
   const text = failure instanceof Error && failure.message ? failure.message : "Something went wrong.";
+  if (secret) {
+    const lower = text.toLowerCase();
+    if (tokenForms(secret).some((form) => lower.includes(form))) return TOKEN_REFUSED;
+  }
   return text.length > 300 ? `${text.slice(0, 299)}…` : text;
 };
+
+/** A key the service gave in a URL or a link must be one plain segment before it is asked for: letters, digits and `. _ : # -`. */
+export const isIssueKey = (key: string): boolean => /^[\w.:#-]{1,64}$/.test(key);
 
 const MARKS = new Map<string, string>([["github", "GH"], ["gitlab", "GL"], ["azure_devops", "AZ"], ["forgejo", "FJ"], ["linear", "LN"]]);
 /** The two letters on a tracker's mark. */

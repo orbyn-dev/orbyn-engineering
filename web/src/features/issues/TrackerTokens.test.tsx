@@ -1,5 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createIssuesMock } from "../../../mock/issues";
 import { ApiFailure } from "../../api/client";
@@ -183,8 +185,8 @@ it("an address that does not answer says so in the dialog, saves nothing and ask
   expect(document.body.innerHTML).not.toContain(TOKEN);
 });
 
-it("never shows a token the service echoes back in a failure", async () => {
-  const api = { ...createIssuesMock({ trackers: none }), saveToken: async (_: string, input: { token: string }) => { throw new ApiFailure("bad", `Bad token ${input.token} for you`, 400); } } as unknown as IssuesApi;
+const echoes = (make: (token: string) => string) => async () => {
+  const api = { ...createIssuesMock({ trackers: none }), saveToken: async (_: string, input: { token: string }) => { throw new ApiFailure("bad", make(input.token), 400); } } as unknown as IssuesApi;
   setIssuesApi(api);
   const user = userEvent.setup();
   render(<IssueTrackersSettings />);
@@ -193,8 +195,28 @@ it("never shows a token the service echoes back in a failure", async () => {
   const dialog = await screen.findByRole("dialog");
   await user.type(within(dialog).getByLabelText("API token"), TOKEN);
   await user.click(within(dialog).getByRole("button", { name: "Save token" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Bad token … for you");
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The tracker refused the token.");
   expect(document.body.innerHTML).not.toContain(TOKEN);
+  expect(document.body.textContent).not.toContain(btoa(`:${TOKEN}`));
+};
+const B64 = (text: string) => btoa(text);
+it("never shows a token the service echoes back as typed", echoes((token) => `Bad token ${token} for you`));
+it("never shows it in another case", echoes((token) => `Bad ${token.toUpperCase()} here`));
+it("never shows it URL-encoded", echoes((token) => `GET /x?t=${encodeURIComponent(token)}`));
+it("never shows it JSON-escaped", echoes((token) => JSON.stringify({ token }).slice(1, -1)));
+it("never shows it as base64", echoes((token) => `Authorization ${B64(token)}`));
+it("never shows it as Basic base64 of :token (Azure DevOps)", echoes((token) => `Basic ${B64(`:${token}`)}`));
+it("never shows a token that sits past the 300 character cut", echoes((token) => `${"x".repeat(310)} ${token}`));
+
+it("documents that the real issue routes are Person-class, carry the token in the body and never echo it", () => {
+  const source = readFileSync(join(process.cwd(), "src/features/issues/contract.ts"), "utf8");
+  for (const operation of ["saveToken", "removeToken", "setState", "link", "unlink", "startThread"]) {
+    const at = source.indexOf(`  ${operation}(`);
+    expect(at, operation).toBeGreaterThan(0);
+    expect(source.slice(Math.max(0, at - 900), at), operation).toContain("Person-class (ENFORCED");
+  }
+  expect(source).toMatch(/JSON body and never in the path or query/);
+  expect(source).toMatch(/must not\s+\* echo the token/);
 });
 
 it("Replace keeps the address in view, asks for the new token only and writes once", async () => {

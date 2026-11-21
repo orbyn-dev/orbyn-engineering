@@ -277,3 +277,24 @@ it("an issue tab is kept in the panel's order and closes like a file tab", () =>
   useUi.getState().closePanelTab(id);
   expect(useUi.getState().panelTabOrder).not.toContain(id);
 });
+
+it("a second Unlink press before the first answers is not a second write", async () => {
+  const mock = createIssuesMock({ delayMs: 50 });
+  setIssuesApi(mock);
+  render(<IssuesRow thread={thread} />);
+  const button = await screen.findByRole("button", { name: "Unlink #412" });
+  button.click();
+  button.click();
+  await screen.findByText("None linked");
+  expect(mock.writes).toEqual(["unlink:thread-1:412"]);
+});
+
+it("an issue key that is not one plain segment is never asked for, and a long one is cut on its tab", async () => {
+  const mock = createIssuesMock();
+  const getting = vi.spyOn(mock, "get");
+  setIssuesApi(mock);
+  render(<IssuePanel tracker="github" issueKey="../../etc?x=1" />);
+  expect(await screen.findByText(/No issue/)).toBeVisible();
+  expect(getting).not.toHaveBeenCalled();
+  expect(tabOf(fileTabId({ kind: "issue", tracker: "github", key: "K".repeat(80) })).label.length).toBeLessThanOrEqual(24);
+});

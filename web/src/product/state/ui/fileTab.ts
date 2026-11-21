@@ -54,4 +54,7 @@ export function canonicalFileTab(id: unknown): unknown {
 }
 
 /** How an issue's key is written on its tab: a bare number is `#412`, anything else (`ORB-87`) as it is. */
-export const issueTabLabel = (key: string): string => (/^\d+$/.test(key) ? `#${key}` : key);
+export const issueTabLabel = (key: string): string => {
+  const capped = key.length > 24 ? `${key.slice(0, 23)}…` : key;
+  return /^\d+$/.test(capped) ? `#${capped}` : capped;
+};
