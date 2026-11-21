@@ -4,7 +4,7 @@ The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, later Codex
 core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. Only the `fake` family exists, for the `HostDriver` tests. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` (behind a flag) and `opencode` are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -46,3 +46,22 @@ ids, background task frames, a run held open by a background agent or workflow, 
 Not done, so Planned: the leftover-turn echo rule, models and usage requests, `rollback`, `stopTask`,
 `background` request, `AskUserQuestion` as a `question` frame, subagent transcripts, and any run against the real SDK
 or a real `claude`.
+
+## OpenCode family
+
+`src/families/opencode.mjs` runs the promise client of `@opencode/client` (2.3.2, MIT, pinned and bundled into the
+single executable) over `opencode serve` of the person's own `opencode` binary (never bundled; `options.opencodePath`
+or `opencode` on PATH). Start it with `orbyn-engine-host opencode`; no flag. One server per distinct confinement, started
+with `--hostname=127.0.0.1 --port=0` and a generated `OPENCODE_PASSWORD` (logged as an added key, never sent in a frame).
+`confinement.argvPrefix` prefixes the server command and `confinement.env` is its whole environment; a malformed prefix is
+`invalid_request`, and `options.serverUrl` (attach to a running server) is refused as `unsupported`.
+
+Done and tested against replayed T3 Code transcripts of OpenCode 2.0.18 (MIT, `test/fixtures/NOTICE`): open (create, resume,
+fork), multi-turn, every ask as a `permission` frame answered by `respond` (allow is `once` only, deny is `reject` with the
+message, never `always`), cancel through `session.interrupt`, steer through `delivery: "steer"`, `fork` at a turn, `runDone`
+exactly once from `session.execution.*`, error kinds. Sessions are created asking for everything; the core decides.
+
+Checked by hand: the bundled binary opened and closed a session against a real `opencode` 2.2.5 on macOS (no model turn).
+Not done, so Planned: a real model turn, permission, cancel or steer against a live `opencode`; the v1 SDK (`@opencode-ai/sdk`,
+not added: no transcript covers it); background shells and subagent sessions as `background` frames; `models`, `usage`,
+`readHistory`, `rollback`, `stopTask`; question frames; attachments; per-send model; a silent-stream watchdog; Windows.
