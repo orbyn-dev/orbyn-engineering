@@ -9,7 +9,7 @@ const EXTRA_ENV_PREFIXES = ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_"];
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "killed", "stopped", "cancelled"]);
 
 function errorKind(status, text = "") {
-  if (status === 401 || status === 403 || /not logged in|authentication/i.test(text)) return "auth";
+  if (status === 401 || status === 403 || /not logged in|authenticat|oauth|\/login/i.test(text)) return "auth";
   if (status === 429) return "rate_limit";
   if (status === 529 || status === 503) return "network";
   if (/No conversation found/i.test(text)) return "session_lost";
