@@ -8,10 +8,10 @@
  */
 export type BackgroundDailyBudget = { 
 /**
- * Runs 1 to 1000.
+ * Runs 1 to 1000 for a new crew; 0 with 0 turns means no daily budget (a crew made before it).
  */
 runs: number, 
 /**
- * Turns 1 to 10000.
+ * Turns 1 to 10000 for a new crew; 0 with 0 runs means no daily budget.
  */
 turns: number, };

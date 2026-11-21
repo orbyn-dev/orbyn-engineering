@@ -71,9 +71,9 @@ wire! {
 /// with what the engine spent shown, never clamped.
 #[serde(deny_unknown_fields)]
 pub struct BackgroundDailyBudget {
-    /// Runs 1 to 1000.
+    /// Runs 1 to 1000 for a new crew; 0 with 0 turns means no daily budget (a crew made before it).
     pub runs: u32,
-    /// Turns 1 to 10000.
+    /// Turns 1 to 10000 for a new crew; 0 with 0 runs means no daily budget.
     pub turns: u32,
 }
 }

@@ -49,13 +49,19 @@ impl Core {
     /// One engine turn of a background run ended, whatever the turn did: it counts live on the run (one more turn, the wall
     /// minutes so far) and, when the crew has a daily budget, on the engine's day. A failure here never changes how the run
     /// ended. Called once per turn from `crew_worker_run_ended`.
-    pub(super) fn crew_background_turn_ended(&self, task: &CrewTask, worker: &str) {
+    pub(super) fn crew_background_turn_ended(
+        &self,
+        task: &CrewTask,
+        worker: &str,
+    ) -> Result<(), &'static str> {
+        const UNCOUNTED: &str =
+            "The crew's daily budget could not be updated, so the run stopped instead of going on.";
         let run = match self.store.background_run(&task.crew_id) {
             Ok(Some(run)) => run,
-            Ok(None) => return,
+            Ok(None) => return Ok(()),
             Err(error) => {
                 tracing::warn!(%error, task = %task.id, "could not read a background run to count its turn");
-                return;
+                return Err(UNCOUNTED);
             }
         };
         // A turn that ends after its run did (a run cancelled at the cap while the engine was mid-turn) still happened: it counts
@@ -68,27 +74,39 @@ impl Core {
                 tracing::warn!(%error, run = %run.id, "could not count a background run's turn");
             }
         }
-        let Ok(Some(crew)) = self.store.background_crew(&run.background_id) else {
-            return;
+        let crew = match self.store.background_crew(&run.background_id) {
+            Ok(Some(crew)) => crew,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                tracing::warn!(%error, run = %run.id, "could not read a background crew to count its daily turn");
+                return Err(UNCOUNTED);
+            }
         };
         // A crew from before the daily budget has none: nothing is counted for it.
         if crew.daily_runs == 0 && crew.daily_turns == 0 {
-            return;
+            return Ok(());
         }
-        let Ok(engine) = self.store.thread(worker).map(|thread| thread.engine) else {
-            tracing::warn!(run = %run.id, "could not read a background worker's engine to count its daily turn");
-            return;
+        // From here the crew has a daily budget: a turn that cannot be counted stops the run, because the check that follows
+        // would read a ledger without it and could let the run go on over the cap.
+        let engine = match self.store.thread(worker) {
+            Ok(thread) => thread.engine,
+            Err(error) => {
+                tracing::warn!(%error, run = %run.id, "could not read a background worker's engine to count its daily turn");
+                return Err(UNCOUNTED);
+            }
         };
         let Some((day, _)) = local_day_and_reset(crew.utc_offset_minutes, crate::util::unix_now())
         else {
-            return;
+            return Err(UNCOUNTED);
         };
         if let Err(error) = self
             .store
             .add_background_daily_turn(&crew.id, &run.id, &day, &engine)
         {
             tracing::warn!(%error, run = %run.id, "could not count a background run's daily turn");
+            return Err(UNCOUNTED);
         }
+        Ok(())
     }
 
     /// Whether the worker's engine has spent this crew's daily turns. The turn was just counted; a run at the cap is cancelled by

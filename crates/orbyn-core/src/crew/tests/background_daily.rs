@@ -358,6 +358,32 @@ async fn a_daily_budget_that_cannot_be_read_refuses_the_start_instead_of_allowin
 }
 
 #[tokio::test]
+async fn a_turn_that_cannot_be_counted_stops_the_run_instead_of_letting_it_go_on() {
+    let w = world(true, outside()).await;
+    let id = crew_daily(&w, "Uncountable", 5, 100);
+    // The write that counts a daily turn fails (it is audited in the same transaction), as under a brief database lock.
+    w.core
+        .store
+        .reader()
+        .execute_batch(
+            "CREATE TRIGGER refuse_daily_count BEFORE INSERT ON audit_events
+             WHEN NEW.action = 'crew.background.daily.spend' BEGIN SELECT RAISE(ABORT, 'locked'); END;",
+        )
+        .unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
+    assert_eq!(
+        stopped.stop_reason,
+        Some(wire::BackgroundStopReason::Budget)
+    );
+    assert!(stopped.review_waiting);
+    let why = stopped.review_reason.clone().unwrap_or_default();
+    assert!(why.contains("could not be updated"), "{why}");
+    // One turn only: the run was not retried over a ledger that was missing it.
+    assert_eq!(stopped.turns_spent, 1, "{stopped:?}");
+}
+
+#[tokio::test]
 async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
     let w = world(true, good()).await;
     let id = crew_daily(&w, "Late turn", 5, 100);
@@ -390,7 +416,7 @@ async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
             .unwrap()
     };
     let counted = day_turns(&w);
-    w.core.crew_background_turn_ended(&task, &worker);
+    w.core.crew_background_turn_ended(&task, &worker).unwrap();
     // The run is over, so its own total stays; the engine's day still grows by the turn.
     assert_eq!(day_turns(&w), counted + 1);
     assert_eq!(run_of(&w, &id).turns_spent, done.turns_spent);

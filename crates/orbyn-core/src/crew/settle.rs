@@ -323,25 +323,7 @@ impl Core {
                 ),
                 _ => "The crew's daily budget could not be read, so the run stopped instead of going on.".to_owned(),
             };
-            if let Some(run) = self.store.background_run(&task.crew_id).ok().flatten()
-                && run.state == "running"
-                && let Err(error) = self.store.end_background_run_daily(
-                    &run.id,
-                    &why,
-                    self.crew_background_run_spent(task),
-                )
-            {
-                tracing::warn!(%error, run = %run.id, "could not stop a background run at its daily cap");
-            }
-            if let Some(task) = self.step_crew_task(&task.id, "stopped", Some("budget")) {
-                self.end_crew_task(
-                    &task,
-                    ResultState::Stopped,
-                    Some(StopReason::Budget),
-                    &why,
-                    judged,
-                );
-            }
+            self.stop_background_daily(task, &why, judged);
             return;
         }
         let (moved, next) = match self.store.fail_crew_verification(&task.id, fingerprint) {
@@ -390,6 +372,35 @@ impl Core {
                     );
                 }
             }
+        }
+    }
+
+    /// Ends a background run and its task at the daily budget (or because it could not be read): stopped `budget`, waiting for
+    /// the person, with `why` shown.
+    pub(super) fn stop_background_daily(
+        self: &Arc<Self>,
+        task: &CrewTask,
+        why: &str,
+        judged: Option<&Judgement>,
+    ) {
+        if let Some(run) = self.store.background_run(&task.crew_id).ok().flatten()
+            && run.state == "running"
+            && let Err(error) = self.store.end_background_run_daily(
+                &run.id,
+                why,
+                self.crew_background_run_spent(task),
+            )
+        {
+            tracing::warn!(%error, run = %run.id, "could not stop a background run at its daily cap");
+        }
+        if let Some(task) = self.step_crew_task(&task.id, "stopped", Some("budget")) {
+            self.end_crew_task(
+                &task,
+                ResultState::Stopped,
+                Some(StopReason::Budget),
+                why,
+                judged,
+            );
         }
     }
 
@@ -506,7 +517,10 @@ impl Core {
         };
         // One engine turn of a background run counts as it happens: on the run, and on the engine's day when the crew has a
         // daily budget (docs/crew/background-engine-start.md, PR 2).
-        self.crew_background_turn_ended(&task, &thread_id);
+        if let Err(why) = self.crew_background_turn_ended(&task, &thread_id) {
+            self.stop_background_daily(&task, why, None);
+            return;
+        }
         let reported = run.last_report_run.as_deref() == Some(run_id.as_str());
         if task.state == "verifying" && reported {
             match ended.state {
