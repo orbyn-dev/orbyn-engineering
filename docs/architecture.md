@@ -621,8 +621,11 @@ bases are each other's heads; a stack action works from the bottom and stops at 
 first failure. Bulk close carries on past a refusal and reports each number.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
-request of the checkout's branch. A merge settles the thread when `on_merge` is set
-and the thread has not opted out. A watch wakes its thread, through the queue, when a
+request of the checkout's branch. The link is kept per thread and number, so a pull
+request's own linked threads are the project's threads that linked it.
+`GET .../pulls/:number/breakdown` counts its changed files by change kind from the
+same rows `/files` serves, so it adds no forge read. A merge settles the thread when
+`on_merge` is set and the thread has not opted out. A watch wakes its thread, through the queue, when a
 check fails, all checks pass, the branch starts to conflict, or someone else comments
 or reviews; the viewer's own comments are not news. It ends at a merge or close, after
 10 wakes in a row that bring only comments, after 8 failed reads in a row, on an
@@ -3438,6 +3441,7 @@ every method, path and which routes need a credential.
 | `POST /api/projects/:id/workflows/:run/approve` | Let a fork's waiting workflow run; GitHub only |
 | `GET, PATCH /api/projects/:id/pulls/:number` | `PullRequestDetail`; `UpdatePull` for title, body, base, draft, maintainer edits |
 | `GET .../pulls/:number/checks`, `/timeline`, `/files` | `PullCheck[]`, `PullTimelineEvent[]`, `PullFile[]` with viewed marks |
+| `GET .../pulls/:number/breakdown`, `/linked-threads` | `PullChangeBreakdown`: counts by change kind and lines over the same files rows; `Thread[]` linked to the pull request, from the service's own links |
 | `GET, POST .../pulls/:number/comments` | `PullConversation`; `AddPullComment` with optional `path`, `line`, `reply_to` |
 | `PATCH .../comments/:comment`, `POST .../comments/:comment/react` | `EditPullComment`; `ReactPullComment` |
 | `POST .../pulls/:number/threads/:thread/resolve` | `ResolvePullThread` |

@@ -602,6 +602,26 @@ impl Store {
             .collect()
     }
 
+    /// Threads of one project that linked a pull request number, most recently changed
+    /// first. A link keeps the number but not the project, so the thread's own project
+    /// is what scopes that number to one repository.
+    pub fn threads_linked_to_pull(&self, project_id: &str, number: u64) -> Result<Vec<Thread>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT threads.* FROM threads
+             JOIN thread_pull_requests ON thread_pull_requests.thread_id = threads.id
+             WHERE threads.project_id = ?1 AND thread_pull_requests.number = ?2
+             ORDER BY threads.updated_at DESC, threads.created_at DESC",
+        )?;
+        let threads = statement
+            .query_map(params![project_id, number as i64], thread_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        threads
+            .into_iter()
+            .map(|thread| with_run_state(&conn, thread))
+            .collect()
+    }
+
     /// The live thread in a trusted project that changed last, where a web link from
     /// another app opens.
     pub fn latest_trusted_thread(&self) -> Result<Option<Thread>> {

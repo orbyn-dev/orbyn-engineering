@@ -9,9 +9,9 @@ use crate::source_control::forge::{
 };
 use crate::source_control::git::{git, text};
 use orbyn_contracts::{
-    MergePull, Project, PullCheck, PullConversation, PullDetails, PullDetailsRequest,
-    PullDetailsResponse, PullFile, PullList, PullListEntry, PullListFailure, PullRequest,
-    PullRequestDetail, PullRevision, PullTimelineEvent, SubmitReview,
+    MergePull, Project, PullChangeBreakdown, PullCheck, PullConversation, PullDetails,
+    PullDetailsRequest, PullDetailsResponse, PullFile, PullList, PullListEntry, PullListFailure,
+    PullRequest, PullRequestDetail, PullRevision, PullTimelineEvent, SubmitReview, Thread,
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -100,6 +100,14 @@ impl Core {
         {
             tracing::debug!(%error, "could not link the branch's pull request");
         }
+    }
+
+    /// The project's threads that linked this pull request, most recently changed
+    /// first. The project owns the number: a link keeps only the number, and a pull
+    /// request number belongs to one repository.
+    pub fn linked_threads(&self, project_id: &str, number: u64) -> Result<Vec<Thread>> {
+        self.store.project(project_id)?;
+        self.store.threads_linked_to_pull(project_id, number)
     }
 
     pub async fn pull_detail(&self, id: &str, number: u64) -> Result<PullRequestDetail> {
@@ -362,6 +370,18 @@ impl Core {
         self.cached_files(project_id, number, refresh).await
     }
 
+    /// Counts by change kind over the same file rows the files read serves, so it adds
+    /// no forge read of its own; `refresh` reads those rows again first.
+    pub async fn pull_change_breakdown(
+        &self,
+        project_id: &str,
+        number: u64,
+        refresh: bool,
+    ) -> Result<PullChangeBreakdown> {
+        let files = self.pull_files(project_id, number, refresh).await?;
+        Ok(change_breakdown(&files))
+    }
+
     pub async fn pull_revisions(
         &self,
         project_id: &str,
@@ -376,6 +396,32 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         forge::revision_files(forge, Path::new(&project.path), sha).await
     }
+}
+
+/// Counts one pull request's changed files by the kind of change. A status none of
+/// these four names counts only in `files`; the line totals cover every file.
+pub(super) fn change_breakdown(files: &[PullFile]) -> PullChangeBreakdown {
+    let mut breakdown = PullChangeBreakdown {
+        files: files.len() as u64,
+        added: 0,
+        modified: 0,
+        deleted: 0,
+        renamed: 0,
+        additions: 0,
+        deletions: 0,
+    };
+    for file in files {
+        match file.status.as_str() {
+            "added" => breakdown.added += 1,
+            "modified" => breakdown.modified += 1,
+            "deleted" => breakdown.deleted += 1,
+            "renamed" => breakdown.renamed += 1,
+            _ => {}
+        }
+        breakdown.additions += file.additions;
+        breakdown.deletions += file.deletions;
+    }
+    breakdown
 }
 
 /// One project's list, read from its forge.
