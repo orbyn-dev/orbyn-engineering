@@ -84,7 +84,8 @@ export function useHunkActions(threadId: string, cwd: string) {
     const saved = await saveThreadFile(threadId, { path: inside, content: next, base_revision: file.revision, ...(repoId === undefined ? {} : { repo_id: repoId }) }) as { revision: string };
     return { before: file.content, revision: saved.revision };
   };
-  const stale = (failure: unknown) => toFailure(failure).status === 409;
+  // A 409 is a changed file (`file_conflict`) unless it is `repo_untrusted`: that repository is not trusted, and the file did not change.
+  const stale = (failure: unknown) => { const one = toFailure(failure); return one.status === 409 && one.code !== "repo_untrusted"; };
 
   const revert = async (path: string, hunk: Hunk, repoId?: string) => {
     if (busy.current) return;

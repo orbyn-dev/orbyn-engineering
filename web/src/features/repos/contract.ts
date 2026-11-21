@@ -1,12 +1,12 @@
 /**
  * The repositories of a project and the writes the screens make. The project repository routes (list, add-folder, create, clone,
- * cancel, scan, trust, setup-git, remove) use the generated types below. The thread side (`StartThreadInput`, `ThreadRepo`,
- * `TaskFolder`, the Git actions) is still hand-written from docs/multi-repo.md until its routes ship; replace those in the same
- * commit that generates them. Field names follow the T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
+ * cancel, scan, trust, setup-git, remove) and `ThreadRepo` (`GET /api/threads/{id}/repos`) use the generated types below. The rest of
+ * the thread side (`StartThreadInput`, `TaskFolder`) is still hand-written from docs/multi-repo.md until its routes ship
+ * (`repo-threads`, `task-folder`, `POST /api/threads/{id}/repos`); replace those in the same commit that generates them. Field names
+ * follow the T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
  *
- * One thing the screens use is NOT in that document and is marked below: `ThreadRepo.pull_request`. The thread Git actions send
- * the existing thread routes with an optional `repo_id` ("Per-repository Git routes"). Removing a repository from a thread is not in
- * the beta, so there is no call for it.
+ * The thread Git actions send the existing thread routes with an optional `repo_id` (`GitAction.repo_id`). Removing a repository from
+ * a thread is not in the beta, so there is no call for it. Pull request routes take no `repo_id` yet, so no merge or review is offered here.
  *
  * Nothing here can carry a secret. Names, paths, URLs and branch names are text from the disk or a remote: untrusted. Render
  * them as text only, never as a link, a command or markup.
@@ -26,9 +26,11 @@ export type { RepoRow } from "../../generated/RepoRow";
 export type { ReposView } from "../../generated/ReposView";
 export type { RepoScan } from "../../generated/RepoScan";
 export type { ScannedFolder } from "../../generated/ScannedFolder";
+export type { ThreadRepo } from "../../generated/ThreadRepo";
 import type { RepoRow } from "../../generated/RepoRow";
 import type { ReposView } from "../../generated/ReposView";
 import type { RepoScan } from "../../generated/RepoScan";
+import type { ThreadRepo } from "../../generated/ThreadRepo";
 
 /** What a publish sends. The service answers the updated `RepoRow`. The host (GitHub) is not a field: the page's provider step only chooses where to publish. */
 export interface PublishInput {
@@ -58,32 +60,16 @@ export interface StartThreadInput {
   branch_name?: string;
 }
 
-/** One repository a thread works in. */
-export interface ThreadRepo {
-  repo_id: string;
-  name: string;
-  /** The thread's own branch in this repository. */
-  branch: string;
-  added: number;
-  deleted: number;
-  trusted: boolean;
-  /** The paths of this repository's changed files, relative to the repository root, so two repositories can each have a `README.md`. Absent when the service has not read the changes yet. */
-  files?: string[];
-  /** NOT IN docs/multi-repo.md: the pull request of this repository's branch. The service sends none today, so the menu says "Create pull request". */
-  pull_request?: { number: number; url: string } | null;
-}
-
 /**
- * One Git action on ONE repository of a thread; no action spans repositories. Each is an existing thread route that takes an
- * optional `repo_id` (docs/multi-repo.md, "Per-repository Git routes"): commit, push and pull request are `POST .../git/action`,
- * merge and review are `POST .../pulls/{number}/merge` and `.../review`. There is no pull (fetch) action: the document defines none.
+ * One Git action on ONE repository of a thread; no action spans repositories. Each is `POST .../git/action`, whose body (`GitAction`)
+ * takes an optional `repo_id` (docs/multi-repo.md, "As built: repo_id on Git and file calls"). Merge and review are NOT here: the
+ * pull request routes take no `repo_id` yet and act on the primary repository, so a menu for another repository must not offer them.
+ * There is no pull (fetch) action: the document defines none.
  */
 export type ThreadGitAction =
   | { kind: "commit"; message: string }
   | { kind: "push" }
-  | { kind: "pull_request"; title: string }
-  | { kind: "merge"; number: number; method: "merge" | "squash" | "rebase" }
-  | { kind: "review"; number: number; event: "comment" | "approve" | "request_changes"; body: string };
+  | { kind: "pull_request"; title: string };
 
 /** The thread folder of a thread in 2 to `max_per_thread` repositories. `root` is shown as text only; a repository's worktree is `<root>/<name>`. */
 export interface TaskFolder {

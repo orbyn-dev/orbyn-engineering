@@ -81,27 +81,21 @@ it("encodes ids into the path", async () => {
 
 it("sends each thread Git action on the existing route, with repo_id for a chosen repository and none for the primary", async () => {
   const phases = { phases: [{ name: "commit", ok: true, message: null, url: null }], notice: null };
-  const fetching = stub(...Array.from({ length: 7 }, () => json(phases)));
+  const fetching = stub(...Array.from({ length: 4 }, () => json(phases)));
   const api = reposApi();
   await api.threadGit("t1", "r2", { kind: "commit", message: "Fix" });
   await api.threadGit("t1", "r2", { kind: "push" });
   await api.threadGit("t1", "r2", { kind: "pull_request", title: "T" });
   await api.threadGit("t1", null, { kind: "push" });
-  await api.threadGit("t1", "r2", { kind: "merge", number: 7, method: "squash" });
-  await api.threadGit("t1", "r2", { kind: "review", number: 7, event: "approve", body: "ok" });
-  await api.threadGit("t/1", null, { kind: "merge", number: 7, method: "merge" });
   const seen = fetching.mock.calls.map((_, index) => call(fetching, index));
   expect(seen.map(({ method, path, body }) => [method, path, body])).toEqual([
     ["POST", "/api/threads/t1/git/action", { commit_message: "Fix", push: false, repo_id: "r2" }],
     ["POST", "/api/threads/t1/git/action", { push: true, repo_id: "r2" }],
     ["POST", "/api/threads/t1/git/action", { push: true, pull_request: { title: "T", body: "" }, repo_id: "r2" }],
     ["POST", "/api/threads/t1/git/action", { push: true }],
-    ["POST", "/api/threads/t1/pulls/7/merge", { method: "squash", auto: false, delete_branch: false, strip_credits: false, repo_id: "r2" }],
-    ["POST", "/api/threads/t1/pulls/7/review", { event: "approve", body: "ok", comments: [], repo_id: "r2" }],
-    ["POST", "/api/threads/t%2F1/pulls/7/merge", { method: "merge", auto: false, delete_branch: false, strip_credits: false }],
   ]);
-  // Merge and review are Person-class routes: the key goes with them. The git action route keeps the class it has.
-  expect(seen.map((one) => one.key !== null)).toEqual([false, false, false, false, true, true, true]);
+  // The git action route keeps the class it has: no person key.
+  expect(seen.map((one) => one.key !== null)).toEqual([false, false, false, false]);
 });
 
 it("reads a failed phase of an action as a failure, and passes 404 and 409 through as they are", async () => {
@@ -182,4 +176,20 @@ it("reads the scan's code_workspace source, and drops an entry whose source this
   const scan = await reposApi().scan("p1", "/w/x.code-workspace");
   expect(scan?.folders.map((folder) => [folder.name, folder.source])).toEqual([["a", "code_workspace"], ["b", "child"]]);
   expect(scan?.code_workspace_file).toBe("x.code-workspace");
+});
+
+// Real service shape of GET /api/threads/{id}/repos (crates/orbyn-core/src/repos/scope.rs): `files` is a list, or null for an untrusted repository.
+it("reads the real thread repositories answer as it is: untrusted entries have no files, and no pull request is invented", async () => {
+  const answer = [
+    { repo_id: "p1", name: "app", branch: "feat/x", added: 3, deleted: 1, trusted: true, files: ["a.ts"] },
+    { repo_id: "r2", name: "lib", branch: "feat/x", added: 0, deleted: 0, trusted: false, files: null },
+  ];
+  stub(json(answer), json({ not: "a list" }));
+  expect(await reposApi().threadRepos("t1")).toEqual(answer);
+  expect(await reposApi().threadRepos("t1")).toBeNull();
+});
+
+it("lets a refused thread repositories read through with the service's code", async () => {
+  stub(json({ code: "repo_untrusted", message: "Trust this repository before using it." }, 409));
+  await expect(reposApi().threadRepos("t1")).rejects.toMatchObject({ code: "repo_untrusted", status: 409 });
 });

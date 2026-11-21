@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
 import { ApiFailure, request } from "../../api/client";
 import type { Thread } from "../../api/types";
+import type { GitAction } from "../../generated/GitAction";
 import type { GitActionResult } from "../../generated/GitActionResult";
 import type { PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
 import { cleanScan, cleanTaskFolder } from "./scanModel";
@@ -51,7 +52,9 @@ const http: ReposApi = {
   async threadRepos(threadId, signal) {
     if (offered === false) return null;
     try {
-      return await request<ThreadRepo[]>("GET", `/api/threads/${q(threadId)}/repos`, undefined, signal);
+      // `404` is an ordinary thread (or the flag off): nothing draws. An answer that is not a list is "nothing" as well.
+      const list = await request<ThreadRepo[]>("GET", `/api/threads/${q(threadId)}/repos`, undefined, signal);
+      return Array.isArray(list) ? list : null;
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;
@@ -78,22 +81,13 @@ const http: ReposApi = {
   },
   addThreadRepo: (threadId, repoId) => request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, { repo_id: repoId }),
   async threadGit(threadId, repoId, action) {
-    const thread = `/api/threads/${q(threadId)}`;
+    // `repo_id` is a body field of `GitAction`; absent is the primary repository.
     const repo = repoId === null ? {} : { repo_id: repoId };
-    switch (action.kind) {
-      case "commit":
-        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { commit_message: action.message, push: false, ...repo }));
-      case "push":
-        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { push: true, ...repo }));
-      case "pull_request":
-        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { push: true, pull_request: { title: action.title, body: "" }, ...repo }));
-      case "merge":
-        await request<void>("POST", `${thread}/pulls/${action.number}/merge`, { method: action.method, auto: false, delete_branch: false, strip_credits: false, ...repo });
-        return;
-      case "review":
-        await request<void>("POST", `${thread}/pulls/${action.number}/review`, { event: action.event, body: action.body, comments: [], ...repo });
-        return;
-    }
+    const body: GitAction =
+      action.kind === "commit" ? { commit_message: action.message, push: false, ...repo }
+        : action.kind === "push" ? { push: true, ...repo }
+          : { push: true, pull_request: { title: action.title, body: "" }, ...repo };
+    check(await request<GitActionResult>("POST", `/api/threads/${q(threadId)}/git/action`, body));
   },
 };
 
