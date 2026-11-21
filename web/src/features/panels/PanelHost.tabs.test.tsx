@@ -190,12 +190,27 @@ describe("surface tabs", () => {
     expect(await screen.findByText("No comments yet")).toBeInTheDocument();
   });
 
+  it("shows Crew views in the launcher as Planned, before Open file…, and opens nothing", async () => {
+    const user = userEvent.setup();
+    panel();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    const item = screen.getByRole("menuitem", { name: "Crew views" });
+    expect(item).toHaveTextContent("Planned");
+    expect(item).toBeDisabled();
+    expect(item).toHaveAttribute("title", "Crew views is not built yet.");
+    // The drawn entry carries no key and no submenu until a read of the thread's crew exists.
+    expect(item).not.toHaveAttribute("aria-haspopup");
+    expect(item.querySelector(".menu-shortcut")).toBeNull();
+    await user.click(item);
+    expect(useUi.getState().panelTab).toBeNull();
+  });
+
   it("always draws the plus; it lists everything that can be opened, and Reset tab order only once the order has changed", async () => {
     const user = userEvent.setup();
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     // Only entries whose commands have keys show them.
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Review and comments", "Open file…Ctrl+P"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Review and comments", "Crew viewsPlanned", "Open file…Ctrl+P"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
     expect(useUi.getState().panelTab).toBe("tools");
     expect(useUi.getState().panelTabsClosed).toEqual(["linked", "review", "devices"]);
