@@ -1529,7 +1529,7 @@ reason.
 - Slices 1 to 4: contracts, router v0 on defaults, runs, verifier, bus, leases
 - 4b: review stages
 - 4e: shell redesign
-- 4f: Autopilot (Full by default), merge queue and watch on main; the after-merge Review queue's backend ships, but its screen is not in the beta (the Designer's ruling, recorded in progress.md)
+- 4f: Autopilot (Full by default), merge queue and watch on main; the after-merge Review queue's backend ships, but its screen is not in the beta (the Designer's ruling, in orbyn-designs `audit/pass-19-capacity-notes.md:24`; see also "the Review queue is not in the beta" under the slice 4l note below)
 - 5: the UI for all of the above
 - The ledger, kept locally
 
