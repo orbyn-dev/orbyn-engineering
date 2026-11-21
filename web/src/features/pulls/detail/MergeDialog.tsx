@@ -32,9 +32,10 @@ export function MergeDialog({
   const [method, setMethod] = useState(initialMethod);
   // The merge menu offers the same two options: they are one state, for this pull request.
   const { auto, setAuto, deleteBranch, setDeleteBranch } = useMergeOptions(projectId, number);
-  // The account setting decides whether credit lines are stripped; the dialog only says which. Unknown shows as off.
+  // The switch starts from the account setting (unknown shows as off) and, once the person sets it, that choice wins for this merge.
   const credits = useAsync(`pull-credits:${projectId}`, (signal) => pullsApi.creditsSetting(projectId, signal));
-  const stripping = credits.data === true;
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const stripping = chosen ?? credits.data === true;
   const [body, setBody] = useState(detail.body);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,8 +50,10 @@ export function MergeDialog({
         method,
         auto,
         delete_branch: deleteBranch,
-        // The service strips the credits itself when the account setting is on; it takes no per-merge "keep".
         strip_credits: false,
+        // The resolved switch value always goes, and wins over the account setting at the service. Left out only when the setting
+        // could not be read and the person never touched the switch, so an unknown setting is not overridden with a guess.
+        ...(chosen !== null || credits.data != null ? { remove_agent_credits: stripping } : {}),
         ...(method === "rebase" ? {} : { body }),
         // The commit the person saw, so a push since then is refused rather than merged unseen.
         ...(seenHead ? { expected_head: seenHead } : {}),
@@ -144,13 +147,12 @@ export function MergeDialog({
         <span>Delete the branch</span>
       </label>
       <label className="check">
-        {/* Read-only until the service obeys a value sent with each merge. */}
-        <input type="checkbox" role="switch" aria-readonly="true" aria-disabled="true" aria-describedby="merge-strip-hint" checked={stripping} onChange={() => undefined} />
+        <input type="checkbox" role="switch" aria-describedby="merge-strip-hint" checked={stripping} onChange={(event) => setChosen(event.target.checked)} />
         <span>Remove agent credits</span>
       </label>
       <p id="merge-strip-hint" className="field-hint">
-        Follows your account setting.
-        {credits.data === null ? "" : stripping ? " Credit lines are stripped from this merge." : " Credit lines stay in this merge."}
+        {chosen === null ? "Follows your account setting." : ""}
+        {chosen === null && credits.data == null ? "" : `${chosen === null ? " " : ""}Credit lines ${stripping ? "are stripped from" : "stay in"} this merge.`}
       </p>
       {error ? (
         <p className="field-error" role="alert">

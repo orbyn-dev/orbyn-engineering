@@ -172,12 +172,15 @@ async fn an_unrestricted_proof_waits_for_a_persons_approval_of_the_exact_change(
 }
 
 /// Where the machine can restrict the proof it runs without an approval, with no network and no reading of the data folder.
+/// A Mac that cannot restrict fails here instead of returning, so a green line means the confined run happened.
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn a_confined_proof_runs_without_an_approval() {
-    if !crate::crew::escapes::check_proof_confined_for_test() {
-        return;
-    }
+    assert!(
+        crate::crew::escapes::check_proof_confined_for_test(),
+        "this Mac cannot confine a proof ({}), so a confined run without an approval was not exercised",
+        crate::host::confine::proof_unavailable().unwrap_or_default()
+    );
     let r = rig_with(true).await;
     r.propose().await;
     r.accept().await;

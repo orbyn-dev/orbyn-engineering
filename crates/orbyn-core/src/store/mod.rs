@@ -84,6 +84,8 @@ mod native_sessions;
 #[cfg(test)]
 mod plan_mode_reset_tests;
 mod profiles;
+#[cfg(test)]
+mod pull_repos_tests;
 pub use profiles::{
     CrewApply, EngineSwitch, PROFILE_LIMIT, ProfileRow, ProfileSettings, ThreadApply,
 };
@@ -113,8 +115,8 @@ pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
-    BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
-    RunEnd, Unwound,
+    BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground,
+    PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
@@ -668,14 +670,15 @@ impl Store {
     }
 
     /// Threads of one project that linked a pull request number, most recently changed
-    /// first. A link keeps the number but not the project, so the thread's own project
-    /// is what scopes that number to one repository.
+    /// first. A link names its repository, and the project's own repository is the
+    /// project, so another repository's number never matches.
     pub fn threads_linked_to_pull(&self, project_id: &str, number: u64) -> Result<Vec<Thread>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT threads.* FROM threads
              JOIN thread_pull_requests ON thread_pull_requests.thread_id = threads.id
-             WHERE threads.project_id = ?1 AND thread_pull_requests.number = ?2
+             WHERE threads.project_id = ?1 AND thread_pull_requests.repo_id = ?1
+               AND thread_pull_requests.number = ?2
              ORDER BY threads.updated_at DESC, threads.created_at DESC",
         )?;
         let threads = statement

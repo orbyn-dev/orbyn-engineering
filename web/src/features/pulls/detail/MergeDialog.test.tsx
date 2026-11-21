@@ -43,7 +43,7 @@ describe("the merge dialog from a row", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Delete the branch" }));
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     await flush();
-    expect(pullsApi.merge).toHaveBeenCalledWith("p", 7, { method: "rebase", auto: false, delete_branch: true, strip_credits: false, expected_head: "abc" });
+    expect(pullsApi.merge).toHaveBeenCalledWith("p", 7, { method: "rebase", auto: false, delete_branch: true, strip_credits: false, remove_agent_credits: false, expected_head: "abc" });
     expect(deleteBranchChoice("p")).toBe(true);
     expect(onMerged).toHaveBeenCalled();
   });
@@ -115,23 +115,19 @@ describe("the merge dialog from a row", () => {
 describe("Remove agent credits", () => {
   const credits = () => screen.getByRole("switch", { name: "Remove agent credits" });
 
-  it("is read-only and follows the account setting: off keeps the credit lines", async () => {
+  it("starts from the account setting: off keeps the credit lines", async () => {
     await open();
     expect(credits()).not.toBeChecked();
-    expect(credits()).toHaveAttribute("aria-readonly", "true");
-    expect(credits()).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(credits());
-    expect(credits()).not.toBeChecked();
+    expect(credits()).not.toHaveAttribute("aria-readonly");
+    expect(credits()).not.toHaveAttribute("aria-disabled");
     expect(pullsApi.creditsSetting).toHaveBeenCalledWith("p", expect.anything());
   });
 
-  it("shows the setting on, and says the credit lines are stripped", async () => {
+  it("shows the setting on, and says the credit lines are stripped, while untouched", async () => {
     vi.mocked(pullsApi.creditsSetting).mockResolvedValue(true);
     await open();
     expect(credits()).toBeChecked();
     expect(credits()).toHaveAccessibleDescription("Follows your account setting. Credit lines are stripped from this merge.");
-    fireEvent.click(credits());
-    expect(credits()).toBeChecked();
   });
 
   it("with no setting to read, shows it off and says only that it follows the account", async () => {
@@ -141,12 +137,39 @@ describe("Remove agent credits", () => {
     expect(credits()).toHaveAccessibleDescription("Follows your account setting.");
   });
 
-  it("sends no credits override: the service applies the account setting", async () => {
+  it("toggles, and the hint names the chosen value instead of the account setting", async () => {
+    await open();
+    fireEvent.click(credits());
+    expect(credits()).toBeChecked();
+    expect(credits()).toHaveAccessibleDescription("Credit lines are stripped from this merge.");
+    fireEvent.click(credits());
+    expect(credits()).not.toBeChecked();
+    expect(credits()).toHaveAccessibleDescription("Credit lines stay in this merge.");
+  });
+
+  it("sends the resolved value: the account setting untouched, and the person's choice over it", async () => {
     vi.mocked(pullsApi.creditsSetting).mockResolvedValue(true);
     await open();
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     await flush();
-    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ strip_credits: false });
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ strip_credits: false, remove_agent_credits: true });
+  });
+
+  it("sends false when the person turns the account's on setting off", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(true);
+    await open();
+    fireEvent.click(credits());
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ remove_agent_credits: false });
+  });
+
+  it("sends nothing when the setting is unknown and the switch was never touched", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(null);
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).not.toHaveProperty("remove_agent_credits");
   });
 });
 

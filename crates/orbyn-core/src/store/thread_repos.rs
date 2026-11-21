@@ -36,6 +36,21 @@ impl Store {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// Drops one repository from a thread, and the pull request links it had. The thread's other rows stay.
+    pub(crate) fn thread_repo_delete(&self, thread_id: &str, repo_id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "DELETE FROM thread_pull_requests WHERE thread_id = ?1 AND repo_id = ?2",
+                params![thread_id, repo_id],
+            )?;
+            tx.execute(
+                "DELETE FROM thread_repos WHERE thread_id = ?1 AND repo_id = ?2",
+                params![thread_id, repo_id],
+            )?;
+            Ok(())
+        })
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn thread_repo_insert(&self, record: &ThreadRepoRecord, now: &str) -> Result<()> {
         self.commit(|tx, _| {

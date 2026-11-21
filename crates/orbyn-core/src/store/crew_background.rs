@@ -66,6 +66,16 @@ pub struct BackgroundRunRow {
     pub ended_at: Option<String>,
 }
 
+/// One run that waits for the person, with the crew it belongs to: the Review queue joins a run to the name and template of
+/// its crew, which are stored on the crew row, not the run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackgroundReviewRow {
+    pub run: BackgroundRunRow,
+    pub crew_name: String,
+    pub project_id: String,
+    pub template: String,
+}
+
 /// How a run ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunEnd<'a> {
@@ -537,6 +547,30 @@ impl Store {
             .query_map(params![crew, limit, offset], run_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok((rows, total))
+    }
+
+    /// The runs that wait for the person, oldest first, each with the crew it belongs to. A run that finished with work to
+    /// review waits; so does a run that stopped for its budget or a failure. A run stopped by the person's own switch
+    /// (`disabled`) needs nothing from them, and a running run is not waiting.
+    pub fn background_reviews(&self) -> Result<Vec<BackgroundReviewRow>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT r.*, c.name AS crew_name, c.project_id AS crew_project, c.template AS crew_template
+             FROM crew_background_runs r JOIN crew_background c ON c.id = r.background_id
+             WHERE r.state = 'needs_review' OR (r.state = 'stopped' AND COALESCE(r.stop_reason, '') <> 'disabled')
+             ORDER BY r.started_at ASC, r.rowid ASC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(BackgroundReviewRow {
+                    run: run_row(row)?,
+                    crew_name: row.get("crew_name")?,
+                    project_id: row.get("crew_project")?,
+                    template: row.get("crew_template")?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// The newest run of a crew, and how many of its runs wait for review.
