@@ -1,12 +1,15 @@
 import { runHost } from "./host.mjs";
 import { claudeFamily } from "./families/claude.mjs";
 import { fake } from "./families/fake.mjs";
+import { museFamily } from "./families/muse.mjs";
 import { opencodeFamily } from "./families/opencode.mjs";
 
 const families = {
   fake,
   // MIT SDK, bundled. It drives the person's own `opencode serve`; no binary is shipped.
   opencode: opencodeFamily({ loadSdk: () => import("@opencode/client") }),
+  // MIT SDK, bundled. It drives the person's own `muse serve`; no binary is shipped.
+  muse: museFamily({ loadSdk: () => import("@muse-code/sdk") }),
 };
 // Gated: the Claude SDK path stays off until Anthropic approves in writing. The SDK is not bundled;
 // it loads from node_modules in development and is missing in the single executable.

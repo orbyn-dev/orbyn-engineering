@@ -4,7 +4,7 @@ The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, later Codex
 core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` (behind a flag) and `opencode` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` (behind a flag), `opencode` and `muse` are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -79,3 +79,26 @@ not send a `uuid`, so lifecycle frames are unconfirmed on a real run.
 
 Not done, so Planned: `rollback`, subagent
 transcripts, and any run against a real `claude` with a valid login.
+
+## Muse family
+
+`src/families/muse.mjs` runs `@muse-code/sdk` (1.4.6, MIT, pinned and bundled into the single executable) over `muse serve`
+of the person's own `muse` binary (never bundled; `options.musePath` or `muse` on PATH). Start it with
+`orbyn-engine-host muse`; no flag. One `muse serve` per open session. `confinement.argvPrefix` prefixes the command and
+`confinement.env` is its whole environment (without `confinement` the host's environment is used minus `META_API_KEY`);
+`MUSE_NO_AUTO_UPDATE=1` is added and logged. A malformed prefix is `invalid_request`; `fork` and `options.serverUrl` are
+`unsupported`. `options.disableSandbox` adds `--disable-sandbox` (Muse's own sandbox, for use under the core's confinement).
+
+Done and tested against replayed T3 Code transcripts of Muse 1.4.3 to 1.4.6 (MIT, `test/fixtures/NOTICE`) under the real SDK
+`Connection`: open (create, resume), multi-turn, every approval as a `permission` frame answered by `respond` (allow is
+`allow_once` only, deny is the once-scope reject, never a policy amendment or session grant; if only a wider allow is
+offered, allow is answered as a refusal), subagent approvals, cancel through `turn/interrupt`, steer through `turn/steer`,
+`runDone` exactly once, workflows as `background` frames that hold the run until the follow-up turn ends it, error kinds.
+Sessions always start asking (`promptUnmatched`, `:ask-me`); T3 recorded two of the four full-access.
+
+Checked by hand: the bundled binary opened and closed a session against a stand-in `muse serve` script over real stdio
+(no `muse` is installed here). Not done, so Planned: any run against a real `muse` or model turn; `question` frames
+(`userInput/*`, from T3's adapter, no transcript); resume against a real server; subagents as `background` frames (their item
+never ends in the recordings); `stopTask`, `models`, `usage`, `readHistory`, `rollback`, fork; attachments; the denial message
+(Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; Windows launchers
+(`.cmd`), verbatim paths and the Linux `env` trampoline.
