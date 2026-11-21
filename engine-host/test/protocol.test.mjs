@@ -170,3 +170,18 @@ test("serializeError survives circular causes and throwing getters", () => {
   };
   assert.equal(serializeError(hostile).name, "Error");
 });
+
+test("send reports the session and turn ids; steer echoes messageId; probe lists refusals", async () => {
+  const h = start();
+  await ready(h);
+  h.send({ id: 2, type: "send", sessionId: "s", message: "hi" });
+  const session = await h.next((f) => f.type === "session");
+  assert.equal(session.turnId, "turn-2");
+  assert.equal(session.engineSessionId, "fake-s");
+  await h.next((f) => f.type === "runDone");
+  h.send({ id: 3, type: "steer", sendId: 2, messageId: "m1", text: "x" });
+  assert.equal((await h.next((f) => f.id === 3)).result.messageId, "m1");
+  h.send({ id: 4, type: "probe", sessionId: "s", kind: "confinement" });
+  assert.deepEqual((await h.next((f) => f.id === 4)).result.allowed, []);
+  h.child.kill();
+});

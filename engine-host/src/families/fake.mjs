@@ -6,7 +6,7 @@
 export const fake = {
   name: "fake",
   sdk: { name: "fake", version: "0" },
-  capabilities: ["steer", "models", "usage", "readHistory"],
+  capabilities: ["steer", "models", "usage", "readHistory", "probe"],
   create(ctx) {
     let nextSession = 0;
     const runs = new Map(); // sendId -> {cancelled, done}
@@ -57,7 +57,10 @@ export const fake = {
             return { engineSessionId: `fake-${++nextSession}` };
           case "send": {
             runs.set(request.id, { cancelled: false, done: false });
-            setImmediate(() => void play(request.id, String(request.message)));
+            setImmediate(() => {
+              ctx.send({ type: "session", sendId: request.id, engineSessionId: `fake-${request.sessionId}`, turnId: `turn-${request.id}` });
+              void play(request.id, String(request.message));
+            });
             return { runId: `run-${request.id}` };
           }
           case "respond": {
@@ -82,7 +85,9 @@ export const fake = {
             return { cancelled: true };
           }
           case "steer":
-            return { outcome: "accepted" };
+            return { outcome: "accepted", messageId: request.messageId };
+          case "probe":
+            return { refused: ["write-outside-roots", "read-forbidden"], allowed: [] };
           case "models":
             return [{ id: "fake-1", efforts: ["low", "high"] }];
           case "usage":
