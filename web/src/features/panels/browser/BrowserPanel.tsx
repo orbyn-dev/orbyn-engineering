@@ -92,16 +92,27 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
   const remember = (url: string) => {
     setPrefs({ recentUrls: addRecent(useUi.getState().recentUrls, url) });
   };
-  const act = async (work: () => Promise<unknown>) => {
+  const act = async (work: () => Promise<unknown>, refused?: string) => {
     setError(null);
     setBusy(true);
     try {
       await work();
       reload();
     } catch (failure) {
-      setError(toFailure(failure).message);
+      setError(refused ? `${refused} ${toFailure(failure).message}` : toFailure(failure).message);
     } finally {
       setBusy(false);
+    }
+  };
+  // Take control and Give control back: one request at a time, so a quick second press sends nothing.
+  const handing = useRef(false);
+  const handOver = async (tabId: string, human: boolean) => {
+    if (handing.current) return;
+    handing.current = true;
+    try {
+      await act(() => setPreviewControl(threadId, tabId, human), human ? "Couldn’t take control." : "Couldn’t give control back.");
+    } finally {
+      handing.current = false;
     }
   };
   const go = (raw: string) => {
@@ -356,7 +367,7 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
             <IconButton
               label={human ? "Give control back" : "Take control"}
               pressed={human}
-              onClick={() => void act(() => setPreviewControl(threadId, active.id, !human))}
+              onClick={() => void handOver(active.id, !human)}
             >
               <Hand size={14} aria-hidden />
             </IconButton>

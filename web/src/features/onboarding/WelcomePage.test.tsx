@@ -9,6 +9,7 @@ import { setIssuesApi } from "../issues/api";
 import { WelcomePage } from "./WelcomePage";
 
 const writes: unknown[] = [];
+let failWrite = false;
 vi.mock("../../api/client", async (original) => {
   const actual = await original<typeof import("../../api/client")>();
   return {
@@ -20,6 +21,7 @@ vi.mock("../../api/client", async (original) => {
           rows: ["default_engine", "default_model", "default_effort", "default_model_options"].map((key) => ({ key, value: key === "default_model_options" ? {} : "", revision: `r-${key}` })),
         };
       if (path === "/api/settings/preferences" && method === "PUT") {
+        if (failWrite) throw new actual.ApiFailure("unavailable", "The service did not answer.", 503);
         writes.push(body);
         return { catalog: { version: "v2" }, rows: [] };
       }
@@ -48,6 +50,8 @@ function load(engines: EngineStatus[] | null, projects: Project[] = [], threads:
 
 beforeEach(() => {
   writes.length = 0;
+  failWrite = false;
+  useUi.setState({ toasts: [] });
   window.location.hash = "";
   useUi.getState().setPalette(null);
 });
@@ -140,6 +144,29 @@ describe("agents", () => {
     await user.click(screen.getAllByRole("button", { name: "Use for new threads" })[1]!);
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toMatchObject({ scope: {}, membership_version: "v1", edits: { default_engine: { op: "set", value: "codex" }, default_model: { op: "set", value: "" } } });
+  });
+
+  it("names the section Agents and says in a toast which engine new threads now start on", async () => {
+    load([engine({}), engine({ id: "codex", name: "Codex" })]);
+    const user = userEvent.setup();
+    render(<WelcomePage />);
+    expect(screen.getByRole("region", { name: "Agents" })).toBeVisible();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Use for new threads" })[1]).toBeEnabled());
+    await user.click(screen.getAllByRole("button", { name: "Use for new threads" })[1]!);
+    await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["New threads start on Codex."]));
+  });
+
+  it("says the engine could not be changed with the reason, keeps the choice where it was and leaves the button pressable again", async () => {
+    load([engine({}), engine({ id: "codex", name: "Codex" })]);
+    const user = userEvent.setup();
+    render(<WelcomePage />);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Use for new threads" })[1]).toBeEnabled());
+    failWrite = true;
+    await user.click(screen.getAllByRole("button", { name: "Use for new threads" })[1]!);
+    await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["Couldn't change the engine. The service did not answer."]));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Use for new threads" })).toHaveLength(2));
+    expect(screen.getAllByRole("button", { name: "Use for new threads" })[1]).toBeEnabled();
+    expect(writes).toHaveLength(0);
   });
 
   it("copies the sign-in command on a click and tells the person to run it", async () => {

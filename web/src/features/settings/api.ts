@@ -11,6 +11,7 @@ import type {
   ScheduledTask,
   Thread,
 } from "../../api/types";
+import type { BrowserProfile } from "../../generated/BrowserProfile";
 import type { AcpNativeSessionImported } from "../../generated/AcpNativeSessionImported";
 import type { AcpNativeSessionPage } from "../../generated/AcpNativeSessionPage";
 import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilities";
@@ -186,4 +187,22 @@ export function trySecretPattern(input: RedactionPatternTestInput, signal?: Abor
 /** One pattern with its text: only the edit dialog the person opens reads it. */
 export function readSecretPattern(id: string, signal?: AbortSignal) {
   return request<RedactionPatternDetail>("GET", `/api/settings/secrets/patterns/${q(id)}`, undefined, signal);
+}
+
+/** The named browser profiles: a folder each, held by one Browser tab at a time. */
+export function listBrowserProfiles(signal?: AbortSignal) {
+  return request<BrowserProfile[]>("GET", "/api/browser-profiles", undefined, signal);
+}
+
+export function createBrowserProfile(name: string) {
+  return request<BrowserProfile>("POST", "/api/browser-profiles", { name });
+}
+
+/** Empties cookies, storage and history; the profile and its name stay. */
+export function clearBrowserProfile(id: string) {
+  return request<void>("POST", `/api/browser-profiles/${q(id)}/clear`);
+}
+
+export function deleteBrowserProfile(id: string) {
+  return request<void>("DELETE", `/api/browser-profiles/${q(id)}`);
 }
