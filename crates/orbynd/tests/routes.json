@@ -280,6 +280,7 @@
     ["POST","/api/projects/add","local"],
     ["POST","/api/projects/clone","local"],
     ["POST","/api/projects/create","local"],
+    ["POST","/api/projects/{id}/git/init","local"],
     ["POST","/api/projects/{id}/publish","person"],
     ["POST","/api/projects/{id}/pull","local"],
     ["POST","/api/projects/{id}/pulls/close","person"],
