@@ -44,6 +44,13 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("GET", "/api/crew/escapes/esc_1")).toBe(false);
     expect(sendsPersonKey("GET", "/api/crew/projects/p1/worker-provider")).toBe(false);
     expect(sendsPersonKey("POST", "/api/threads/t1/runs")).toBe(true);
+    // The routes that move a checkout (ruling F3).
+    expect(sendsPersonKey("POST", "/api/projects/p1/git/init")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/branches")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/branches/switch")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refs/switch")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/threads/t1/branches")).toBe(false);
     for (const [method, path] of [
       ["GET", "/api/approvals/a1/decide"],
       ["GET", "/api/approvals?state=pending"],
@@ -51,7 +58,6 @@ describe("which requests carry the person key", () => {
       ["POST", "/api/approvals//decide"],
       ["POST", "/api/projects/p/worktrees/w/file"],
       ["GET", "/api/threads/t1"],
-      ["POST", "/api/threads/t1/vcs/refs"],
       ["POST", "/api/threads/t1/queue"],
       ["POST", "/api/threads/t1/steer"],
       ["POST", "/api/threads/t1/git/action"],

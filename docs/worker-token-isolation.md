@@ -173,7 +173,9 @@ workspace and account routes, is closed by step 3.
 - **Every `Person` route needs the key.** `ENFORCED` in `routes/classes.rs` now lists all of the `Person` table (96 routes):
   Account, Crew's person writes, engines, updates, workspace, shell actions, scheduled tasks, preferences, policy rules,
   redaction settings, questions, project trust and publish, workflow approve, pull merges and reviews, the explorer, the
-  console, terminals, scripts, file writes and computer use. A test (`routes/tests.rs`) fails for a `Person` route that is
+  console, terminals, scripts, file writes, computer use and the routes that move a checkout (`POST /api/projects/{id}/git/init`,
+  `POST /api/threads/{id}/branches` and `/branches/switch`, `POST /api/threads/{id}/vcs/refs` and `/vcs/refs/switch`; ruling F3:
+  a service-token agent cannot move the checkout under the person; `GET .../branches` stays `Local`). A test (`routes/tests.rs`) fails for a `Person` route that is
   not enforced, and for an `ENFORCED` line that is not a `Person` row. The web side is the same list in
   `PERSON_ROUTES` (`web/src/api/personKey.ts`); its test fails if the list differs from the service's person rows.
 - **Field-level.** `FIELD_LEVEL` lists the two routes that stay `Local` as a whole and check the key for part of the body:
@@ -219,7 +221,8 @@ The `Person` routes are closed to a token-only worker. This is what #441 still h
   token holder can cause a denial of service; it cannot act as the person, so it is not an impersonation route.
 - [ ] **Thread-level pull request bookkeeping** (`POST /api/threads/{id}/pulls`, `.../refresh`, `.../watch`, `DELETE
   .../pulls/{number}`, and a pull's `checkout`, `work`, `guide` and `viewed`) stays `Local`: none of it writes to the forge.
-  Be exact about what it does do: `checkout` runs local `git fetch`, `switch` and `worktree add`, and `work` and `guide`
+  Be exact about what it does do: `checkout` runs local `git fetch`, `switch` and `worktree add`
+  (a plain `switch` moves the project's checkout, unlike the branch routes above, which are `Person`; kept `Local` for now, open for the ruling), and `work` and `guide`
   create a worktree or start an engine thread at the default permission mode. That grants nothing beyond what the open
   `Local` runs route already does.
 - [ ] **A same-user process that reads the shell's memory or drives its devtools** still gets the key (platform notes above).
