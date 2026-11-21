@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { request } from "./client";
-import { forgetPersonKey, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
+import { forgetPersonKey, PENDING_PERSON_ROUTES, PERSON_HEADER, PERSON_ROUTES, personKeyHeaders, personKeyProtocols, sendsPersonKey } from "./personKey";
 
 const ok = () => vi.fn(async () => new Response(null, { status: 204 }));
 const sentHeaders = (fetchMock: ReturnType<typeof ok>) => new Headers((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers);
@@ -84,6 +84,39 @@ describe("which requests carry the person key", () => {
     // The field-level routes are the only local rows in the list.
     const local = PERSON_ROUTES.filter(([method, pattern]) => table.protected.some(([m, p, kind]) => m === method && p === pattern && kind === "local"));
     expect(local.map(([method, pattern]) => `${method} ${pattern}`).sort()).toEqual(["POST /agui/threads/{id}", "POST /api/projects/{id}/pulls/{number}/checkout", "POST /api/threads/{id}/runs"]);
+  });
+});
+
+describe("the Cursor thread routes, which are not on the service yet", () => {
+  it("send the key on the override and the acknowledgement, and on no read of the notice", () => {
+    expect(sendsPersonKey("POST", "/api/threads/t1/send-without-approvals")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/engines/cursor/notice/acknowledge")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/engines/cursor/notice")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/send-without-approvals")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/engines/cursor/notice")).toBe(false);
+  });
+
+  it("stay out of PERSON_ROUTES until routes.json lists them, and leave once it does", () => {
+    const table = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../crates/orbynd/tests/routes.json"), "utf8")) as {
+      protected: [string, string, string][];
+    };
+    for (const [method, pattern] of PENDING_PERSON_ROUTES) {
+      const landed = table.protected.some(([m, p]) => m === method && p === pattern);
+      expect(landed, `${method} ${pattern} is in routes.json now: move it into PERSON_ROUTES and delete it from PENDING_PERSON_ROUTES`).toBe(false);
+      expect(PERSON_ROUTES.some(([m, p]) => m === method && p === pattern)).toBe(false);
+    }
+  });
+
+  it("sends the key with the one-turn override and the acknowledgement through the client", async () => {
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/threads/t1/send-without-approvals", { prompt: "x" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+    const acknowledged = ok();
+    vi.stubGlobal("fetch", acknowledged);
+    await request("POST", "/api/engines/cursor/notice/acknowledge");
+    expect(sentHeaders(acknowledged).get(PERSON_HEADER)).toBe("shell-key");
   });
 });
 
