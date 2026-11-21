@@ -9,9 +9,9 @@
 .iss-glyph[data-state="closed"] { background: currentColor; }
 .iss-glyph[data-state="closed"] svg { color: var(--color-bg); }
 .iss-state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-meta); }
-.iss-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 18px; padding: 0 3px; border-radius: 4px; background: var(--color-rowHover); color: var(--color-muted); font-size: 10px; font-weight: 600; flex: none; }
+.iss-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 18px; padding: 0 3px; border-radius: 4px; background: var(--color-rowHover); color: var(--color-muted); font-size: 10.5px; font-weight: 600; flex: none; }
 .iss-label { display: inline-block; padding: 1px 7px; border: 1px solid var(--color-divider); border-radius: 9px; font-size: var(--text-label); color: var(--color-muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.iss-avatar { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--color-rowHover); font-size: 9px; font-weight: 600; color: var(--color-muted); }
+.iss-avatar { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--color-rowHover); font-size: 10.5px; font-weight: 600; color: var(--color-muted); }
 .iss-person { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; }
 
 /* Toolbar */
@@ -79,6 +79,7 @@
 .iss-actions { display: flex; gap: 8px; }
 .iss-main { display: flex; flex-direction: column; gap: 12px; }
 .iss-entry { padding: 12px 14px; border: 1px solid var(--color-divider); border-radius: 8px; overflow-wrap: anywhere; }
+.iss-body { min-width: 0; font-size: var(--text-body); line-height: 1.5; }
 .iss-entry header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: var(--text-meta); }
 .iss-right { display: flex; flex-direction: column; gap: 12px; }
 .iss-card { padding: 12px 14px; border: 1px solid var(--color-divider); border-radius: 8px; }
@@ -117,6 +118,7 @@
 .iss-options li:hover, .iss-options li[aria-selected="true"] { background: var(--color-rowHover); }
 .iss-link-error { margin: 0; color: var(--color-danger, inherit); font-size: var(--text-label); }
 .iss-link-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.iss-mark-count { font-variant-numeric: tabular-nums; }
 .iss-mark { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; color: var(--color-muted); font-size: var(--text-label); }
 
 @media (max-width: 760px) {
