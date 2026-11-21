@@ -359,6 +359,35 @@ async fn cancelling_gives_the_request_up() {
 }
 
 #[tokio::test]
+async fn a_cancel_the_service_did_not_take_is_answered_and_tried_again() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "blip");
+    asking(&core, "blip@example.com").await;
+    // The Engine is unreachable: the cancel is refused and the request stays open, rather
+    // than the person leaving as if the service had taken it.
+    assert_eq!(
+        code(core.account.cancel_second_factor().await.unwrap_err()),
+        "account_offline"
+    );
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Waiting
+    );
+    assert!(core.account.stand_in().cancelled().is_empty());
+    // The service answers again: the retry sends the cancel, and the sign-in ends.
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(
+        core.account.stand_in().cancelled(),
+        vec!["req-mine".to_owned()]
+    );
+    assert!(core.account.view("macos").await.approval.is_none());
+    assert_eq!(
+        core.account.status().state,
+        SyncState::SignedOut { reason: None }
+    );
+}
+
+#[tokio::test]
 async fn a_trusted_device_lists_requests_and_letting_one_in_needs_a_confirmation_for_that_request()
 {
     let dir = TempDir::new();
@@ -930,4 +959,85 @@ async fn signing_up_on_a_computer_with_settings_asks_how_to_join_them() {
     assert_eq!(view.connect, AccountConnectState::Needed);
     assert_eq!(a.status().state, SyncState::NotConnected);
     assert!(a.stand_in().zones().zone(ZONE).is_none());
+}
+
+#[tokio::test]
+async fn a_second_cancel_waits_for_the_first_and_no_tab_is_told_cancelled_early() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "twice");
+    asking(&core, "blip@example.com").await;
+    let (first, second, polled) = tokio::join!(
+        core.account.cancel_second_factor(),
+        core.account.cancel_second_factor(),
+        core.account.poll_approval()
+    );
+    // The first cancel failed (the Engine blipped): it said so, the second one went through
+    // after it, and nothing answered "cancelled" while the request was still live.
+    assert_eq!(code(first.unwrap_err()), "account_offline");
+    second.unwrap();
+    // The sign-in was still waiting for a poll that came in during the cancel.
+    assert!(polled.unwrap().is_some());
+    assert_eq!(
+        core.account.stand_in().cancelled(),
+        vec!["req-mine".to_owned()]
+    );
+    assert!(core.account.view("macos").await.approval.is_none());
+}
+
+#[tokio::test]
+async fn a_failed_cancel_keeps_the_same_request_for_the_retry() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "meanwhile");
+    asking(&core, "blip@example.com").await;
+    assert_eq!(
+        code(core.account.cancel_second_factor().await.unwrap_err()),
+        "account_offline"
+    );
+    // Still the same waiting request, not a copy: a second cancel ends exactly that one.
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Waiting
+    );
+    core.account.cancel_second_factor().await.unwrap();
+    assert!(core.account.view("macos").await.approval.is_none());
+}
+
+#[tokio::test]
+async fn a_sign_in_that_reuses_the_id_is_not_touched_by_a_cancel_in_flight() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "reuse");
+    asking(&core, "late@example.com").await;
+    // Tab A cancels while tab B signs in again: B's request has the same id.
+    let (cancel, again) = tokio::join!(
+        core.account.cancel_second_factor(),
+        core.account.sign_in("late@example.com", pw(PASSWORD))
+    );
+    cancel.unwrap();
+    assert_eq!(again.unwrap(), AccountSignInOutcome::AwaitingApproval);
+    assert_eq!(
+        core.account.view("macos").await.approval.unwrap().state,
+        AccountApprovalState::Waiting
+    );
+    assert_eq!(core.account.stand_in().cancelled().len(), 1);
+}
+
+#[tokio::test]
+async fn a_cancel_that_finds_the_sign_in_finished_does_not_sign_this_computer_out() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "finished");
+    asking(&core, "late@example.com").await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let right = shown(&core);
+    let (cancel, done) = tokio::join!(
+        core.account.cancel_second_factor(),
+        core.account.submit_digits(typed(&right))
+    );
+    cancel.unwrap();
+    done.unwrap();
+    assert!(core.account.view("macos").await.session.is_some());
+    assert!(!matches!(
+        core.account.status().state,
+        SyncState::SignedOut { .. }
+    ));
 }

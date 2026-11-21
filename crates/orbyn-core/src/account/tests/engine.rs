@@ -216,6 +216,111 @@ async fn cancel_on_the_digits_removes_the_device_and_the_new_device_sees_it_ende
 }
 
 #[tokio::test]
+async fn a_cancel_the_engine_did_not_take_is_returned_and_the_request_is_kept() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    server.set_offline(true);
+    assert_eq!(
+        newcomer.account.cancel_approval(NEWCOMER).await.err(),
+        Some(DeviceError::Offline)
+    );
+    server.set_offline(false);
+    assert!(
+        server.approval_open(),
+        "the Engine still holds the approval"
+    );
+    // The request is still this computer's: it answers, and it is not joined a second time.
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await,
+        Ok(ApprovalStatus::Waiting)
+    );
+    assert_eq!(server.calls("/nonce"), 1);
+    // The cancel handle was spent by the failed call: the next cancel lets go of the request.
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await.err(),
+        Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
+async fn while_a_cancel_is_on_its_way_the_request_is_neither_gone_nor_finished() {
+    let (server, approver, newcomer) = pair();
+    let digits = allow(&approver, &newcomer).await;
+    server.set_offline(true);
+    server.stall_on("/cancel");
+    let (cancel, ()) = tokio::join!(newcomer.account.cancel_approval(NEWCOMER), async {
+        server.stalled().await;
+        // A second cancel does not claim an answer the first has not got.
+        assert_eq!(
+            newcomer.account.cancel_approval(NEWCOMER).await.err(),
+            Some(DeviceError::Server { retryable: true })
+        );
+        // In flight: the request is still there, and the digits are not spent on it.
+        assert_eq!(
+            newcomer.account.approval_status(NEWCOMER).await,
+            Ok(ApprovalStatus::Waiting)
+        );
+        assert_eq!(
+            newcomer
+                .account
+                .finish_approval(NEWCOMER, &digits)
+                .await
+                .err(),
+            Some(DeviceError::Server { retryable: true })
+        );
+        server.release();
+    });
+    assert_eq!(cancel.err(), Some(DeviceError::Offline));
+    // The Engine did not take it: still waiting, digits still not spent, nothing read as gone.
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await,
+        Ok(ApprovalStatus::Waiting)
+    );
+    assert_eq!(
+        newcomer
+            .account
+            .finish_approval(NEWCOMER, &digits)
+            .await
+            .err(),
+        Some(DeviceError::Server { retryable: true })
+    );
+    // The next cancel lets go.
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await.err(),
+        Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_dropped_while_the_engine_is_asked_does_not_stay_in_flight() {
+    let (server, approver, newcomer) = pair();
+    allow(&approver, &newcomer).await;
+    server.stall_on("/cancel");
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(50),
+        newcomer.account.cancel_approval(NEWCOMER),
+    )
+    .await;
+    assert!(
+        dropped.is_err(),
+        "the cancel was still waiting and was dropped"
+    );
+    server.release();
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await,
+        Ok(ApprovalStatus::Waiting)
+    );
+    // Not in flight any more: the next cancel lets go instead of waiting for an answer.
+    newcomer.account.cancel_approval(NEWCOMER).await.unwrap();
+    assert_eq!(
+        newcomer.account.approval_status(NEWCOMER).await.err(),
+        Some(DeviceError::RequestGone)
+    );
+}
+
+#[tokio::test]
 async fn dont_allow_starts_an_approval_and_denies_it_so_the_new_device_sees_it_end() {
     let (server, approver, newcomer) = pair();
     newcomer.account.expect_approval(NEWCOMER).await;
