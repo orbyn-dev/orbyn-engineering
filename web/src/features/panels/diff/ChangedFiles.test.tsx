@@ -48,3 +48,10 @@ it("gives each repository's group its own Git menu only when it is told the thre
   expect(screen.getAllByRole("button", { name: /Git actions for/ }).map((button) => button.getAttribute("aria-label"))).toEqual(["Git actions for engineering", "Git actions for planner"]);
   expect(screen.queryByText(/all repositories/i)).toBeNull();
 });
+
+it("groups by the repo_id each file carries and labels a repo-relative path, two repositories each with a README.md", () => {
+  render(<ChangedFiles files={[{ ...file("README.md"), repo_id: "engineering" }, { ...file("README.md"), repo_id: "planner" }]} more={0} selected={null} filter="" onFilter={() => {}} onPick={() => {}} onMore={() => {}} repos={[repo("engineering"), repo("planner")]} />);
+  const groups = screen.getAllByRole("group").filter((group) => group.classList.contains("fl-repo"));
+  expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["engineering changes", "planner changes"]);
+  for (const group of groups) expect(within(group).getByRole("button", { name: /README\.md/ })).toBeVisible();
+});

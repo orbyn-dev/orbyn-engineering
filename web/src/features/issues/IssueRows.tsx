@@ -54,3 +54,14 @@ export function IssuesSkeleton() {
     </ul>
   );
 }
+
+/** The row after the last issue while the tracker has more: one click asks for the next page, and a second click while it loads does nothing. */
+export function LoadMoreRow({ busy, onLoad }: { busy: boolean; onLoad(): void }) {
+  return (
+    <div className="iss-more">
+      <button type="button" className="iss-state-btn" aria-busy={busy || undefined} onClick={() => { if (!busy) onLoad(); }}>
+        Load more
+      </button>
+    </div>
+  );
+}

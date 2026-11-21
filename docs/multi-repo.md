@@ -131,7 +131,7 @@ repositories at once, and moving a thread between repositories. Each is a later 
 - `trust` on a repository is the only way an untrusted one becomes usable; `add-folder` does not trust.
 - `threadRepos` answering `null` is a `404` from the route.
 - The Changes list and Git actions gain `repo_id`.
-- Web side, adopted as the document defines it: `publish` takes `name` and `visibility` only and answers the `RepoRow`; the `provider`, `remote`, `protocol` and `pushed` the web side had guessed are dropped. Not defined here, so the web client sends no request for them and says the service does not offer them: `threadGit` (commit, push, pull, pull request in ONE repository), `removeThreadRepo` and `ThreadRepo.pull_request`. Each is a later row for Eng 4 to define. No call spans repositories.
+- Web side, adopted as the document defines it: `publish` takes `name` and `visibility` only and answers the `RepoRow`; the `provider`, `remote`, `protocol` and `pushed` the web side had guessed are dropped. The Git actions in ONE repository (commit, push, pull request, merge, review) send the routes in "Per-repository Git routes" with `repo_id`. Not defined here, so the web client has no call and shows no control for them: a git pull, removing a repository from a thread (not in the beta) and `ThreadRepo.pull_request` (shown only when the service sends it). No call spans repositories.
 
 ## Tests
 

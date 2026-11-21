@@ -9,10 +9,15 @@ import { IssueGlyph } from "./IssueGlyph";
 import { choiceLabel, reasonOf, sameState, stateWord } from "./model";
 
 /**
- * The State row of an issue. NOT IN THE BETA CONTRACT: docs/issues.md lists moving an issue to another state as Planned, so the real
- * service sends no `transitions` and this draws the state as text; only the mock offers the menu. A tracker that offers states shows a button that lists them in the tracker's own words and order and
- * marks the current one; one that offers none shows the state as text. Choosing a state is one write, once: while it is in
- * flight the button is off and a second choice is not a second write. The state on screen changes only when the tracker answers.
+ * The State row of an issue. A state change is NOT IN THE BETA: docs/issues.md lists it as Planned, so the real service sends no
+ * `transitions`, the real client refuses `setState`, and in a production build this draws the state as text with a Planned note
+ * and calls nothing. Only the dev-only preview (`__ORBYN_PREVIEWS__`, which is also on in tests) offers the mock's menu. When the
+ * change lands it is a Person-class `POST /api/issues/item/state` with `{ tracker, scope, key, state }`; the route joins
+ * `PENDING_PERSON_ROUTES` with that call, and this menu then reads the states the issue carries.
+ *
+ * In the preview, a tracker that offers states shows a button that lists them in the tracker's own words and order and marks the
+ * current one. Choosing a state is one write, once: while it is in flight the button is off and a second choice is not a second
+ * write. The state on screen changes only when the tracker answers.
  */
 export function IssueStateButton({ issue, onChanged }: { issue: IssueDetail; onChanged(): Promise<unknown> | void }) {
   const pushToast = useUi((state) => state.pushToast);
@@ -21,7 +26,14 @@ export function IssueStateButton({ issue, onChanged }: { issue: IssueDetail; onC
   // A second choice while the first write is in flight is not a second write.
   const pending = useRef(false);
   const choices = issue.transitions ?? [];
-  if (choices.length === 0) return <span className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span>;
+  if (!__ORBYN_PREVIEWS__ || choices.length === 0) {
+    return (
+      <span className="iss-state">
+        <IssueGlyph state={issue.state} />{stateWord(issue.state)}
+        {__ORBYN_PREVIEWS__ ? null : <span className="iss-quiet" title="Changing an issue's state is not available yet.">Planned</span>}
+      </span>
+    );
+  }
   const choose = async (next: IssueState) => {
     if (pending.current || sameState(next, issue.state)) return;
     pending.current = true;
