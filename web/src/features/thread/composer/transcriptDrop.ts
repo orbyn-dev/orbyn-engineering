@@ -1,14 +1,13 @@
 /**
- * A transcript file dragged onto the composer (parity B43), built hidden. The export that makes a transcript file is core work
- * that does not exist yet, so the file ending and type below are placeholders (the design says the same) and `transcriptsApi()`
- * answers `null` in a production build: a file dropped on the composer is then an ordinary attachment, as today. The route is
+ * A transcript file dragged onto the composer (parity B43), built hidden. The file is made by the export (`GET /api/threads/{id}/export`). The per-thread attach route this drop would use is not
+ * built, so `transcriptsApi()` answers `null` in a production build: a file dropped on the composer is then an ordinary attachment, as today. The route is
  * written in docs/attachments-transcripts.md; the mock lives in web/mock/attachments.ts.
  */
 
 export const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
-/** Placeholders until the export is built. */
-export const TRANSCRIPT_EXTENSION = ".transcript";
-export const TRANSCRIPT_TYPE = "application/x-orbyn-transcript";
+/** The service's `TRANSCRIPT_FILE_ENDING` and `TRANSCRIPT_MEDIA_TYPE` (docs/attachments-transcripts.md). */
+export const TRANSCRIPT_EXTENSION = ".orbyn.json";
+export const TRANSCRIPT_TYPE = "application/vnd.orbyn.transcript+json";
 
 /** A transcript the service read and kept for this thread. Its id goes in the run's `attachment_ids`, like a file's. */
 export interface ImportedTranscript {
