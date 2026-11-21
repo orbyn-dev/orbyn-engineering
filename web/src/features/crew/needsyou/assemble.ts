@@ -164,8 +164,8 @@ export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRu
           // The next step of a daily stop is to wait; the time is the one the sentence carries, never one made up here.
           hint: daily
             ? reset
-              ? `Wait for the daily reset: ${reset}. The budget is fixed at creation; nothing needs changing.`
-              : "Wait for the daily reset: Not measured. This stop carries no reset time."
+              ? `This run stays stopped. New runs can start after the daily reset: ${reset}. The budget is fixed at creation.`
+              : "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it."
             : undefined,
           since: time(run.ended_at ?? run.updated_at),
           actions: [{ key: "open" as const, label: "Open", primary: true }],
