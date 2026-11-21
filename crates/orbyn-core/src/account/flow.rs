@@ -569,10 +569,15 @@ impl AccountCenter {
         Ok(())
     }
 
-    /// Signs out of this computer only. It never waits for the network: the server is
-    /// told once, and a failure changes nothing here.
+    /// Signs out of this computer only. The session ends here first, so a failure changes nothing
+    /// on this computer; the server is told once, under the same one-at-a-time gate as a cancel,
+    /// so this can wait behind one. With no session there is nothing to wait for.
     pub async fn sign_out(&self, discard_unsynced: bool) -> Result<()> {
         let backend = self.backend()?.clone();
+        // Nothing to end: answering at once keeps a stuck cancel from holding the person up.
+        if self.inner.lock().await.session.is_none() {
+            return Ok(());
+        }
         let _one_at_a_time = self.cancelling.lock().await;
         let mut inner = self.inner.lock().await;
         if inner.session.is_none() {
