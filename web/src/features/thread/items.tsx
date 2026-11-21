@@ -208,12 +208,16 @@ function Notice({ item }: { item: NoticeItem }) {
   );
 }
 
+/** The kind of a stopped task: a Claude or Codex subagent, a shell, or any other background task. */
+export function stoppedKind(taskType: string): "Subagent" | "Shell" | "Background task" {
+  if (taskType === "local_agent" || taskType === "codex_subagent") return "Subagent";
+  return taskType === "local_bash" ? "Shell" : "Background task";
+}
+
 /** One task the engine stopped when its run ended: its kind, and its own words for it. */
 function StoppedRow({ task }: { task: StoppedTask }) {
-  const subagent = task.taskType === "local_agent";
-  const shell = task.taskType === "local_bash";
-  const Icon = subagent ? Users : shell ? Terminal : Clock;
-  const kind = subagent ? "Subagent" : shell ? "Shell" : "Background task";
+  const kind = stoppedKind(task.taskType);
+  const Icon = kind === "Subagent" ? Users : kind === "Shell" ? Terminal : Clock;
   return (
     <div className="stopped-row">
       <Icon size={14} aria-hidden />
