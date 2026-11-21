@@ -46,11 +46,9 @@ impl Core {
             // Fresh membership: a kept list, even an in-flight refresh, is not removal
             // authority.
             let path = PathBuf::from(&project.path);
-            let records = super::status::bounded(
-                super::status::DEADLINE,
-                worktree_records_hardened(&path),
-            )
-            .await?;
+            let records =
+                super::status::bounded(super::status::DEADLINE, worktree_records_hardened(&path))
+                    .await?;
             if crate::util::canonicalize(&path).is_ok_and(|now| now != path) {
                 return Err(CoreError::NotFound("worktree".into()));
             }

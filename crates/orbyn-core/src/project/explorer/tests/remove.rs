@@ -1,7 +1,10 @@
 use super::*;
 
 fn denied(result: Result<()>) {
-    assert!(matches!(result, Err(CoreError::PolicyDenied(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(CoreError::PolicyDenied(_))),
+        "{result:?}"
+    );
 }
 
 /// A linked worktree `name` under the project's sibling `<repo>-wt` root, and its id.
