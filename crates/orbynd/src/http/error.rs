@@ -10,6 +10,8 @@ use serde_json::json;
 pub struct ApiFailure {
     status: StatusCode,
     body: ApiError,
+    /// Fields sent beside `code` and `message` (a run-start refusal's `engine`, `thread_id` and so on).
+    extra: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl ApiFailure {
@@ -33,6 +35,7 @@ impl ApiFailure {
                 message: message.to_owned(),
                 detail: None,
             },
+            extra: None,
         }
     }
 }
@@ -61,6 +64,10 @@ impl From<CoreError> for ApiFailure {
             } => Some(json!({ "tries_left": left })),
             _ => None,
         };
+        let extra = match &error {
+            CoreError::EngineRefused { fields, .. } => fields.as_object().cloned(),
+            _ => None,
+        };
         Self {
             status,
             body: ApiError {
@@ -68,13 +75,24 @@ impl From<CoreError> for ApiFailure {
                 message: error.public_message(),
                 detail,
             },
+            extra,
         }
     }
 }
 
 impl IntoResponse for ApiFailure {
     fn into_response(self) -> Response {
-        (self.status, Json(self.body)).into_response()
+        let Some(extra) = self.extra else {
+            return (self.status, Json(self.body)).into_response();
+        };
+        let mut body = serde_json::to_value(&self.body).unwrap_or_default();
+        if let Some(object) = body.as_object_mut() {
+            // `code` and `message` stay the error's own.
+            for (name, value) in extra {
+                object.entry(name).or_insert(value);
+            }
+        }
+        (self.status, Json(body)).into_response()
     }
 }
 

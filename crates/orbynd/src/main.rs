@@ -186,7 +186,8 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         engine_host: orbyn_core::agents::driver::host::HostConfig::from_env(
             std::env::var_os("ORBYN_ENGINE_HOST"),
             std::env::var("ORBYN_ENGINE_HOST_CLAUDE").ok().as_deref(),
-        ),
+        )
+        .map(|host| host.with_cursor(std::env::var("ORBYN_ENGINE_HOST_CURSOR").ok().as_deref())),
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds

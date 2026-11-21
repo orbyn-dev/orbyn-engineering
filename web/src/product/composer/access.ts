@@ -14,15 +14,17 @@ export const ACCESS: Record<PermissionMode, { label: string; description: string
     icon: Sparkles,
   },
   full_access: { label: "Full access", description: "Allow commands and edits without prompts in this thread. Crew mode decides for crew workers.", icon: ShieldOff },
+  no_approvals: { label: "No approvals", description: "The engine never asks before acting, so this thread has one mode.", icon: ShieldOff },
 };
 
-const MODES = Object.keys(ACCESS) as PermissionMode[];
-
 /**
- * GUESS (service slice not merged): an engine that never asks before acting lists one mode, spelled `no_approvals`, which the
- * generated `PermissionMode` does not name yet. It is read from the engine's own list, never from the engine's name.
+ * An engine that never asks before acting lists one mode, spelled `no_approvals` (docs/cursor-thread-contract.md). It is read from
+ * the engine's own list, never from the engine's name, and it is not one of the modes a picker offers every engine.
  */
 const NO_APPROVALS = "no_approvals";
+
+/** The modes any engine may offer, in menu order: every mode but the one of an engine that never asks. */
+export const MODES = (Object.keys(ACCESS) as PermissionMode[]).filter((mode) => mode !== NO_APPROVALS);
 
 /** The modes an engine that cannot ask refuses at run start: Supervised and Auto edits. Auto and Full access stay as they are. */
 const REFUSED_WITHOUT_ASKING: PermissionMode[] = ["supervised", "auto_edits"];
