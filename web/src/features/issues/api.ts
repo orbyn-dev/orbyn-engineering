@@ -1,30 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { IssuesApi, TrackerKind, TrackerRow } from "./contract";
+import { createLiveIssuesApi } from "./http";
 import { useAsync } from "../../lib/useAsync";
 
 /**
- * The real client for the issues routes. Those routes are not merged, so this one makes no request at all: the
- * service "reports nothing", the Issues entry stays out of the sidebar, no chip draws and no row has a marker.
- * Swap it for `request(...)` calls the day the generated types and routes land; the screens do not change.
- * For Eng 3/4: the real client must URL-encode every key as ONE path segment, send a token only in a JSON body, and the service
- * must refuse plain http for a typed tracker address. Password managers are told to leave the token field alone, which is
- * best effort: a manager may still offer to save it.
+ * The app's client is the live one (http.ts): it asks `GET /api/issues/trackers` and, on a 404 (the Issues flag is off, or the
+ * routes do not exist), stays quiet: the service "reports nothing", the Issues entry stays out of the sidebar, no chip draws, no
+ * row has a marker and no error shows. Any other answer turns the real routes on. Tests and the dev-only preview install the mock.
  */
-const unreported: IssuesApi = {
-  trackers: async () => null,
-  list: async () => ({ issues: [], counts: null, failed: [] }),
-  get: async () => { throw new Error("Issues are not reported by this service."); },
-  links: async () => ({}),
-  find: async () => [],
-  link: async () => { throw new Error("Issues are not reported by this service."); },
-  unlink: async () => { throw new Error("Issues are not reported by this service."); },
-  setState: async () => { throw new Error("Issues are not reported by this service."); },
-  saveToken: async () => { throw new Error("Issues are not reported by this service."); },
-  removeToken: async () => { throw new Error("Issues are not reported by this service."); },
-  startThread: async () => { throw new Error("Issues are not reported by this service."); },
-};
-
-let current: IssuesApi = unreported;
+let current: IssuesApi = createLiveIssuesApi();
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -36,9 +20,9 @@ if (__ORBYN_PREVIEWS__ && typeof location !== "undefined" && location.hash.start
 
 export const issuesApi = (): IssuesApi => current;
 
-/** Tests and the dev-only preview install the mock here; `null` puts the unreported client back. */
+/** Tests and the dev-only preview install the mock here; `null` puts a fresh live client back, which asks the service again. */
 export function setIssuesApi(next: IssuesApi | null): void {
-  current = next ?? unreported;
+  current = next ?? createLiveIssuesApi();
   version += 1;
   for (const listener of listeners) listener();
 }

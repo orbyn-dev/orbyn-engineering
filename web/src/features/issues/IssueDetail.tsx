@@ -82,13 +82,13 @@ function Facts({ issue, onChanged }: { issue: Detail; onChanged(): Promise<unkno
 }
 
 /** One issue as a page, read only: the tracker is where it is written. The one write is Start a thread, from a click. */
-export function IssueDetail({ tracker, issueKey }: { tracker: string; issueKey: string }) {
+export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; scope: string; issueKey: string }) {
   const version = useApiVersion();
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
-  const read = useAsync(`issues:detail:${version}:${tracker}:${issueKey}`, async (signal) => {
+  const read = useAsync(`issues:detail:${version}:${tracker}:${scope}:${issueKey}`, async (signal) => {
     if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
-    return issuesApi().get(tracker, issueKey, signal);
+    return issuesApi().get({ tracker, scope, key: issueKey }, signal);
   });
   const waited = useWaited(read.status === "loading");
   const back = <a className="iss-back" href={routeHref({ name: "issues" })}><ArrowLeft size={14} aria-hidden />Back to Issues</a>;

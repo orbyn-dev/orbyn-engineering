@@ -17,7 +17,7 @@ const project = { id: "p1", name: "orbyn-engineering", path: "/work/orbyn" } as 
 const thread = { id: "thread-1", project_id: "p1", title: "Fix login redirect", engine: "claude", cwd: "/", worktree: null } as Thread;
 const refOf = (key: string): IssueRef => {
   const one = issueFixtures().find((issue) => issue.key === key)!;
-  return { tracker: one.tracker, scope: one.scope, key: one.key, display_key: one.display_key, title: one.title, state: one.state, labels: one.labels, comment_count: one.comment_count };
+  return { tracker: one.tracker, scope: one.scope, key: one.key, display_key: one.display_key, title: one.title, state: one.state, labels: one.labels };
 };
 
 beforeEach(() => {
@@ -34,7 +34,7 @@ const stateButton = async (name = /^State:/) => screen.findByRole("button", { na
 it("lists the states GitHub offers, marks the current one, and one choice is one write", async () => {
   const mock = createIssuesMock({ delayMs: 20 });
   setIssuesApi(mock);
-  window.location.hash = "#/issues/github/412";
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
   const user = userEvent.setup();
   render(<IssuesPage />);
   const button = await stateButton();
@@ -52,7 +52,7 @@ it("lists the states GitHub offers, marks the current one, and one choice is one
 it("choosing the current state writes nothing", async () => {
   const mock = createIssuesMock();
   setIssuesApi(mock);
-  window.location.hash = "#/issues/github/412";
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
   const user = userEvent.setup();
   render(<IssuesPage />);
   await user.click(await stateButton());
@@ -62,7 +62,7 @@ it("choosing the current state writes nothing", async () => {
 
 it("a tracker with a workflow lists its own names", async () => {
   setIssuesApi(createIssuesMock());
-  window.location.hash = "#/issues/linear/ORB-87";
+  window.location.hash = "#/issues/linear/Orbyn%20team/ORB-87";
   const user = userEvent.setup();
   render(<IssuesPage />);
   await user.click(await stateButton());
@@ -71,7 +71,7 @@ it("a tracker with a workflow lists its own names", async () => {
 
 it("a tracker that cannot change state shows the state as text, with no button", async () => {
   setIssuesApi(createIssuesMock({ fixedState: ["github"] }));
-  window.location.hash = "#/issues/github/412";
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
   render(<IssuesPage />);
   const facts = await screen.findByRole("group", { name: "Facts" });
   expect(within(facts).getByText("Open")).toBeVisible();
@@ -82,7 +82,7 @@ it("a refused change says nothing changed and leaves the state as it was", async
   const mock = createIssuesMock();
   setIssuesApi(mock);
   mock.failNext("state");
-  window.location.hash = "#/issues/github/412";
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
   const user = userEvent.setup();
   render(<IssuesPage />);
   await user.click(await stateButton());
@@ -151,8 +151,8 @@ it("pressing a line opens the issue beside the thread as a tab", async () => {
   await user.click(await screen.findByRole("button", { name: "#412 Login sends people back to /home" }));
   const state = useUi.getState();
   expect(state.panelOpen).toBe(true);
-  expect(state.panelTab).toBe(fileTabId({ kind: "issue", tracker: "github", key: "412" }));
-  expect(parseFileTab(state.panelTab as string)).toEqual({ kind: "issue", tracker: "github", key: "412" });
+  expect(state.panelTab).toBe(fileTabId({ kind: "issue", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" }));
+  expect(parseFileTab(state.panelTab as string)).toEqual({ kind: "issue", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" });
   expect(tabOf(state.panelTab!).label).toBe("#412");
   expect(closed).toHaveBeenCalledOnce();
 });
@@ -246,32 +246,32 @@ it("a refused link says so, links nothing and leaves the dialog open", async () 
 
 it("reads the issue into the panel: key, title, state, labels, body and activity, with a link out", async () => {
   setIssuesApi(createIssuesMock());
-  render(<IssuePanel tracker="github" issueKey="412" />);
+  render(<IssuePanel tracker="github" scope="orbyn-dev/orbyn-engineering" issueKey="412" />);
   expect(await screen.findByRole("heading", { name: "Login sends people back to /home" })).toBeVisible();
   expect(screen.getByText("#412 · GitHub · orbyn-dev/orbyn-engineering")).toBeVisible();
   expect(screen.getByText("auth")).toBeVisible();
   expect(screen.getByText("Reproduced. The redirect reads", { exact: false })).toBeVisible();
   expect(screen.getByRole("link", { name: "Open on GitHub" })).toHaveAttribute("href", "https://github.com/orbyn-dev/orbyn-engineering/issues/412");
-  expect(screen.getByRole("link", { name: "Open as a page" })).toHaveAttribute("href", "#/issues/github/412");
+  expect(screen.getByRole("link", { name: "Open as a page" })).toHaveAttribute("href", "#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   expect(screen.queryByRole("textbox")).toBeNull();
 });
 
 it("says a missing issue is missing, and retries a failed read", async () => {
   const mock = createIssuesMock();
   setIssuesApi(mock);
-  const { unmount } = render(<IssuePanel tracker="github" issueKey="9999" />);
+  const { unmount } = render(<IssuePanel tracker="github" scope="orbyn-dev/orbyn-engineering" issueKey="9999" />);
   expect(await screen.findByText("No issue #9999 on GitHub.")).toBeVisible();
   unmount();
   mock.failNext("get");
   const user = userEvent.setup();
-  render(<IssuePanel tracker="github" issueKey="412" />);
+  render(<IssuePanel tracker="github" scope="orbyn-dev/orbyn-engineering" issueKey="412" />);
   await user.click(await screen.findByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("heading", { name: "Login sends people back to /home" })).toBeVisible();
 });
 
 it("an issue tab is kept in the panel's order and closes like a file tab", () => {
-  const id = fileTabId({ kind: "issue", tracker: "linear", key: "ORB-87" });
-  useUi.getState().openFileTab({ kind: "issue", tracker: "linear", key: "ORB-87" });
+  const id = fileTabId({ kind: "issue", tracker: "linear", scope: "Orbyn team", key: "ORB-87" });
+  useUi.getState().openFileTab({ kind: "issue", tracker: "linear", scope: "Orbyn team", key: "ORB-87" });
   expect(useUi.getState().panelTabOrder).toContain(id);
   expect(tabOf(id).label).toBe("ORB-87");
   useUi.getState().closePanelTab(id);
@@ -293,8 +293,8 @@ it("an issue key that is not one plain segment is never asked for, and a long on
   const mock = createIssuesMock();
   const getting = vi.spyOn(mock, "get");
   setIssuesApi(mock);
-  render(<IssuePanel tracker="github" issueKey="../../etc?x=1" />);
+  render(<IssuePanel tracker="github" scope="orbyn-dev/orbyn-engineering" issueKey="../../etc?x=1" />);
   expect(await screen.findByText(/No issue/)).toBeVisible();
   expect(getting).not.toHaveBeenCalled();
-  expect(tabOf(fileTabId({ kind: "issue", tracker: "github", key: "K".repeat(80) })).label.length).toBeLessThanOrEqual(24);
+  expect(tabOf(fileTabId({ kind: "issue", tracker: "github", scope: "o/r", key: "K".repeat(80) })).label.length).toBeLessThanOrEqual(24);
 });
