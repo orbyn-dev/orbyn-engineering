@@ -118,15 +118,15 @@ describe("rpcWritesApi.refreshVcsStatus (Local)", () => {
   });
 });
 
-describe("rpcWritesApi.createRef and switchRef (Local)", () => {
-  it("creates a ref with an optional start and no person key", async () => {
+describe("rpcWritesApi.createRef and switchRef (Person)", () => {
+  it("creates a ref with an optional start and the person key", async () => {
     const withStart = stub(() => new Response(null, { status: 201 }));
     await expect(rpcWritesApi.createRef("t1", "topic", "main")).resolves.toBeUndefined();
     expect(withStart.method()).toBe("POST");
     expect(withStart.url()).toContain("/api/threads/t1/vcs/refs");
     expect(withStart.url()).not.toContain("switch");
     expect(withStart.body()).toEqual({ name: "topic", start: "main" });
-    expect(withStart.headers().get(PERSON_HEADER)).toBeNull();
+    expect(withStart.headers().get(PERSON_HEADER)).toBe("mock-person-key");
 
     const without = stub(() => new Response(null, { status: 201 }));
     await rpcWritesApi.createRef("t1", "topic");
@@ -139,7 +139,7 @@ describe("rpcWritesApi.createRef and switchRef (Local)", () => {
     expect(sent.method()).toBe("POST");
     expect(sent.url()).toContain("/api/threads/t1/vcs/refs/switch");
     expect(sent.body()).toEqual({ name: "topic" });
-    expect(sent.headers().get(PERSON_HEADER)).toBeNull();
+    expect(sent.headers().get(PERSON_HEADER)).toBe("mock-person-key");
   });
 
   it("maps a refused name or a missing ref to ApiFailure", async () => {
