@@ -25,7 +25,9 @@ describe("one h1 per Settings page", () => {
     expect(title).toHaveAttribute("data-page-title");
     expect(title).not.toHaveTextContent("");
     expect(title).toHaveTextContent(OFF.has(section) ? labels.general : labels[section]);
-    // The page title is the settings page's own, not a heading left over behind it.
+    // The page title is the settings page's own, not a section's and not a heading left over behind it.
+    expect(title.closest(".settings-main")).not.toBeNull();
+    expect(title.closest(".settings-body")).toBeNull();
     expect(title.closest("[inert], [hidden]")).toBeNull();
   });
 
