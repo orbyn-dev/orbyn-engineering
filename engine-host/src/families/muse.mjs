@@ -112,17 +112,77 @@ const usageOf = (u) =>
     ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens, cachedInputTokens: u.cacheReadTokens ?? u.cachedTokens, reasoningTokens: u.reasoningTokens }
     : undefined;
 
+const LATEST_DATE_MS = 8.64e15;
+const finite = (n) => typeof n === "number" && Number.isFinite(n);
+const dateMs = (n) => finite(n) && n > 0 && n <= LATEST_DATE_MS;
+const clampPercent = (n) => Math.min(100, Math.max(0, n));
+
+/** The account-wide `usage/changed` report (T3 MuseSubscriptionUsage); anything malformed is dropped. */
+export function museSubscription(params) {
+  const { observedAtMs, tier, window: w, weekly } = params ?? {};
+  if (!dateMs(observedAtMs) || typeof tier !== "string") return undefined;
+  if (!(finite(w?.usedPercent) && w.usedPercent >= 0 && finite(w.windowDurationMins) && w.windowDurationMins > 0 && dateMs(w.resetsAtMs))) return undefined;
+  if (!(finite(weekly?.usedPercent) && weekly.usedPercent >= 0 && dateMs(weekly.resetsAtMs))) return undefined;
+  return { observedAtMs, tier, window: { usedPercent: w.usedPercent, windowDurationMins: w.windowDurationMins, resetsAtMs: w.resetsAtMs }, weekly: { usedPercent: weekly.usedPercent, resetsAtMs: weekly.resetsAtMs } };
+}
+
+/** The report as limit windows, its tier as the plan label (T3 usageLimits.ts). */
+export function museLimits(usage) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const tier = usage.tier.trim();
+  return {
+    checkedAt: iso(usage.observedAtMs),
+    windows: [
+      { id: "session", kind: "session", label: "Session", usedPercent: clampPercent(usage.window.usedPercent), resetsAt: iso(usage.window.resetsAtMs), windowDurationMins: usage.window.windowDurationMins },
+      { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: clampPercent(usage.weekly.usedPercent), resetsAt: iso(usage.weekly.resetsAtMs), windowDurationMins: 7 * 24 * 60 },
+    ],
+    ...(tier ? { authLabel: tier } : {}),
+  };
+}
+
+const EFFORT_LABELS = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra High", max: "Max", ultra: "Ultra" };
+const FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/** T3 modelCatalog.ts: efforts the model reports (known ones only); without a report, the fallback list defaulting to high. */
+export function museModels(catalog) {
+  if (catalog?.providerId !== "meta" || !Array.isArray(catalog.models)) throw hostError("MuseCatalog", "Muse returned a catalog for another provider.", "engine");
+  const seen = new Set();
+  const out = [];
+  for (const model of catalog.models) {
+    if (!model || typeof model.modelId !== "string" || model.modelId === "" || model.providerId !== "meta" || seen.has(model.modelId)) continue;
+    seen.add(model.modelId);
+    const reported = Array.isArray(model.variants);
+    const efforts = (reported ? model.variants : FALLBACK_EFFORTS).filter((e) => Object.hasOwn(EFFORT_LABELS, e));
+    const preferred = reported ? model.defaultReasoningEffort : "high";
+    const defaultEffort = efforts.find((e) => e === preferred) ?? efforts[0];
+    const label = typeof model.displayLabel === "string" ? model.displayLabel.trim() : "";
+    const name = !label ? model.modelId : label === model.modelId && label.startsWith("muse-") ? label.replaceAll("-", " ").replace(/\b[a-z]/g, (c) => c.toUpperCase()) : label;
+    out.push({
+      id: model.modelId,
+      name,
+      isDefault: model.isDefault === true,
+      efforts: efforts.map((id) => {
+        const description = model.reasoningEffortVariants?.find?.((v) => v?.tier === id)?.description;
+        return { id, label: EFFORT_LABELS[id], ...(id === defaultEffort ? { isDefault: true } : {}), ...(typeof description === "string" && description ? { description } : {}) };
+      }),
+      ...(defaultEffort ? { defaultEffort } : {}),
+    });
+  }
+  return { models: out };
+}
+
 const requirementKey = (approval) => JSON.stringify(approval?.currentRequirementId ?? null);
 
 export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS, wakeGraceMs = WAKE_GRACE_MS }) {
   return {
     name: "muse",
     sdk: { name: "@muse-code/sdk", version: SDK_VERSION },
-    capabilities: ["steer"],
+    capabilities: ["steer", "models", "usage"],
     create(ctx) {
       const sessions = new Map(); // host sessionId -> session
       const pending = new Map(); // requestId -> {session, kind, native}
       let counter = 0;
+      let subscription; // latest account-wide `usage/changed`, shared by every session's process
       let sdkPromise;
       const sdk = () => (sdkPromise ??= loadSdk());
 
@@ -145,6 +205,7 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
         run.done = true;
         clearTimeout(run.grace);
         session.run = null;
+        if (frame.result?.usage) session.lastUsage = frame.result.usage;
         forget(session, { keepChildren: true });
         emit(run, { type: "runDone", sendId: run.sendId, ...frame });
         run.ended?.();
@@ -289,6 +350,12 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
 
       // Notifications that arrive before turn/start has answered cannot be matched to the run's turn yet.
       const onNotification = (session, notification) => {
+        // usage/changed is account-wide and carries no session id: keep the latest, never forward it.
+        if (notification.method === "usage/changed") {
+          const report = museSubscription(notification.params);
+          if (report) subscription = report;
+          return;
+        }
         const run = session.run;
         if (run && run.turnId === undefined && !run.done) return void run.early.push(notification);
         handleNotification(session, notification);
@@ -502,6 +569,24 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
                 throw museError(cause);
               }
               return null;
+            }
+            case "models": {
+              // A throwaway `muse serve` with no session: it lists the catalog and is closed.
+              const { spawnMspConnection } = await sdk();
+              const host = await startProcess({ cwd: request.cwd ?? process.cwd(), options: { musePath: request.musePath }, confinement: request.confinement }, spawnMspConnection);
+              try {
+                const catalog = await withTimeout(host.connection.request("model/list", {}), requestTimeoutMs, () => hostError("MuseTimeout", "Muse model/list timed out; its process was stopped.", "network"));
+                return museModels(catalog);
+              } catch (cause) {
+                throw museError(cause);
+              } finally {
+                await Promise.resolve(host.close()).catch(() => {});
+              }
+            }
+            case "usage": {
+              // Limits are the latest account-wide report (none until Muse sends one); tokens are the named session's last run.
+              const session = request.sessionId === undefined ? undefined : sessionOf(request.sessionId);
+              return { usage: session?.lastUsage ?? null, limits: subscription ? museLimits(subscription) : null };
             }
             case "closeSession": {
               const session = sessions.get(request.sessionId);

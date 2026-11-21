@@ -4,7 +4,7 @@ import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { museFamily, museLaunch, SDK_VERSION, verbatimPath } from "../src/families/muse.mjs";
+import { museFamily, museLaunch, museLimits, museModels, museSubscription, SDK_VERSION, verbatimPath } from "../src/families/muse.mjs";
 import { runHost } from "../src/host.mjs";
 import { replayMuse } from "./replayMuse.mjs";
 
@@ -72,7 +72,7 @@ test("hello names the family, the pinned SDK version and the requests it impleme
   const hello = await h.next((f) => f.type === "hello");
   assert.equal(hello.family, "muse");
   assert.equal(hello.sdk.name, "@muse-code/sdk");
-  assert.deepEqual(hello.capabilities, ["steer"]);
+  assert.deepEqual(hello.capabilities, ["steer", "models", "usage"]);
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(pkg.dependencies["@muse-code/sdk"], SDK_VERSION);
   assert.equal(hello.sdk.version, SDK_VERSION);
@@ -475,7 +475,7 @@ test("close stops every muse serve process", async () => {
 
 test("requests the family does not implement are UnsupportedRequest", async () => {
   const { h } = await synthetic([]);
-  for (const [i, type] of ["fork", "rollback", "models", "usage", "stopTask"].entries()) {
+  for (const [i, type] of ["fork", "rollback", "stopTask"].entries()) {
     h.send({ id: 10 + i, type, sessionId: "s" });
     const res = await h.next((f) => f.id === 10 + i);
     assert.equal(res.error.cause.name, "UnsupportedRequest", type);
@@ -498,4 +498,112 @@ test("verbatim paths for Windows turn roots", () => {
   assert.equal(verbatimPath("C:\\work\\p"), "\\\\?\\C:\\work\\p");
   assert.equal(verbatimPath("\\\\srv\\share\\p"), "\\\\?\\UNC\\srv\\share\\p");
   assert.equal(verbatimPath("\\\\?\\C:\\p"), "\\\\?\\C:\\p");
+});
+
+// Read-only readers. Shapes follow T3 Code's provider-muse modelCatalog, protocol (MuseSubscriptionUsage) and
+// usageLimits tests (MIT, test/fixtures/NOTICE); the connection below is a hand-written fake, not a recording.
+const REPORT = { observedAtMs: 1791447762610, tier: " tier-1 ", window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 }, weekly: { usedPercent: 105, resetsAtMs: 1791763200000 } };
+
+function fakeMuse({ catalog, notify = [], fail } = {}) {
+  const state = { spawned: 0, closed: 0, requests: [], handlers: [] };
+  const spawn = () => {
+    state.spawned++;
+    return {
+      async initialize() {
+        const connection = {
+          onNotification: (fn) => state.handlers.push(fn),
+          onProtocolError() {},
+          onServerRequest() {},
+          closed: new Promise(() => {}),
+          mintCommandId: () => "cmd-1",
+          async request(method, params) {
+            state.requests.push([method, params]);
+            if (fail) throw fail;
+            return catalog;
+          },
+          async command(method) {
+            state.requests.push([method]);
+            return { session: { sessionId: "cmd-1" } };
+          },
+        };
+        return { connection, initializeResult: { schema: { version: 1 } }, exited: new Promise(() => {}), close: async () => void state.closed++ };
+      },
+      async close() {
+        state.closed++;
+      },
+    };
+  };
+  return { spawn, state };
+}
+
+test("models lists the catalog with efforts from a throwaway process that is closed again", async () => {
+  const catalog = {
+    providerId: "meta",
+    models: [
+      { modelId: "muse-spark-1.3", displayLabel: "muse-spark-1.3", providerId: "meta", isDefault: true, variants: ["low", "xhigh", "bogus"], defaultReasoningEffort: "xhigh", reasoningEffortVariants: [{ tier: "low", description: "Fast" }] },
+      { modelId: "muse-wonder-1.0", displayLabel: "Wonder", providerId: "meta", isDefault: false, variants: "unknown" },
+      { modelId: "muse-spark-1.3", displayLabel: "dup", providerId: "meta", isDefault: false },
+      { modelId: "other", displayLabel: "Other", providerId: "else", isDefault: false },
+    ],
+  };
+  const f = fakeMuse({ catalog });
+  const h = boot({ spawn: f.spawn });
+  await handshake(h);
+  h.send({ id: 5, type: "models", cwd: "/work" });
+  const res = await h.next((x) => x.id === 5);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.result.models.map((m) => [m.id, m.name, m.isDefault, m.defaultEffort]), [["muse-spark-1.3", "Muse Spark 1.3", true, "xhigh"], ["muse-wonder-1.0", "Wonder", false, "high"]]);
+  assert.deepEqual(res.result.models[0].efforts, [{ id: "low", label: "Low", description: "Fast" }, { id: "xhigh", label: "Extra High", isDefault: true }]);
+  assert.deepEqual(res.result.models[1].efforts.map((e) => e.id), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(f.state.requests, [["model/list", {}]]);
+  assert.equal(f.state.spawned, 1);
+  assert.equal(f.state.closed, 1);
+});
+
+test("models refuses another provider's catalog and a failing process, and still closes it", async () => {
+  const other = fakeMuse({ catalog: { providerId: "x", models: [] } });
+  const a = boot({ spawn: other.spawn });
+  await handshake(a);
+  a.send({ id: 5, type: "models" });
+  assert.equal((await a.next((x) => x.id === 5)).ok, false);
+  assert.equal(other.state.closed, 1);
+  const broken = fakeMuse({ fail: Object.assign(new Error("boom"), { name: "Error" }) });
+  const b = boot({ spawn: broken.spawn });
+  await handshake(b);
+  b.send({ id: 5, type: "models" });
+  assert.equal((await b.next((x) => x.id === 5)).ok, false);
+  assert.equal(broken.state.closed, 1);
+});
+
+test("usage/changed is kept account-wide, validated and never forwarded; usage reports it as limit windows", async () => {
+  const f = fakeMuse();
+  const h = boot({ spawn: f.spawn });
+  await handshake(h);
+  await open(h);
+  h.send({ id: 7, type: "usage", sessionId: "s" });
+  assert.deepEqual((await h.next((x) => x.id === 7)).result, { usage: null, limits: null });
+  f.state.handlers[0]({ method: "usage/changed", params: { ...REPORT, window: { usedPercent: -1 } } }); // malformed: dropped
+  f.state.handlers[0]({ method: "usage/changed", params: REPORT });
+  h.send({ id: 8, type: "usage" });
+  const res = await h.next((x) => x.id === 8);
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.result.limits, {
+    checkedAt: new Date(1791447762610).toISOString(),
+    windows: [
+      { id: "session", kind: "session", label: "Session", usedPercent: 0, resetsAt: new Date(1791465557000).toISOString(), windowDurationMins: 300 },
+      { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100, resetsAt: new Date(1791763200000).toISOString(), windowDurationMins: 10080 },
+    ],
+    authLabel: "tier-1",
+  });
+  assert.equal(h.all.some((x) => x.type === "delta"), false);
+  h.send({ id: 9, type: "usage", sessionId: "nope" });
+  assert.equal((await h.next((x) => x.id === 9)).error.cause.name, "UnknownSession");
+});
+
+test("museSubscription, museLimits and museModels guard their input", () => {
+  assert.equal(museSubscription({ ...REPORT, observedAtMs: 9e15 }), undefined);
+  assert.equal(museSubscription(undefined), undefined);
+  assert.equal(museLimits(museSubscription({ ...REPORT, tier: "  " })).authLabel, undefined);
+  assert.deepEqual(museModels({ providerId: "meta", models: [{ modelId: "m", providerId: "meta", variants: [] }] }).models[0].efforts, []);
+  assert.throws(() => museModels({ providerId: "x" }), /another provider/);
 });

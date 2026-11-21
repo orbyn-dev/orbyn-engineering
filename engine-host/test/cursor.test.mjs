@@ -15,7 +15,7 @@ const promptOf = (n) => transcript(n).find((l) => l.frame?.type === "run.start")
 const recordedOptions = (n) => transcript(n).find((l) => l.frame?.type === "agent.open").frame.options;
 
 /** Boots the host in process around a fake SDK. `all` keeps every frame in order. */
-function boot(sdk, { env = {} } = {}) {
+function boot(sdk, { env = {}, fetch } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   const all = [];
@@ -27,7 +27,7 @@ function boot(sdk, { env = {} } = {}) {
     frames.push(f);
     for (const w of [...waiters]) w();
   });
-  runHost({ family: cursorFamily({ loadSdk: async () => sdk, env }), input, output });
+  runHost({ family: cursorFamily({ loadSdk: async () => sdk, env, ...(fetch ? { fetch } : {}) }), input, output });
   const next = (pred) =>
     new Promise((resolve) => {
       const check = () => {
@@ -449,14 +449,14 @@ test("respond has nothing to answer: it is logged and ignored", async () => {
   assert.equal(h.all.some((x) => x.type === "log" && x.event.type === "lateRespond"), true);
 });
 
-test("capabilities list steer only; usage and the rest are not claimed", async () => {
+test("capabilities list steer, models and usage; nothing else is claimed", async () => {
   const h = boot(fakeSdk().sdk);
   await h.ready;
   const hello = h.all.find((f) => f.type === "hello");
   assert.equal(hello.family, "cursor");
   assert.equal(hello.sdk.name, "@cursor/sdk");
-  assert.deepEqual(hello.capabilities, ["steer"]);
-  const { response } = await h.call("usage", { sessionId: "a" });
+  assert.deepEqual(hello.capabilities, ["steer", "models", "usage"]);
+  const { response } = await h.call("rollback", { sessionId: "a", toTurn: "t" });
   assert.equal(response.error.cause.name, "UnsupportedRequest");
 });
 
@@ -544,4 +544,113 @@ test("the result's own usage wins over the summed turn-ended usage", async () =>
   const sent = await h.call("send", { sessionId: "a", message: "hi" });
   const done = await h.next((x) => x.type === "runDone" && x.sendId === sent.id);
   assert.deepEqual(done.result.usage, own);
+});
+
+// Read-only readers. Response shapes follow T3 Code's CursorSdkCatalog and usageLimits (MIT, test/fixtures/NOTICE); the data is synthetic.
+const KEY = "key_live_0123456789abcdef";
+const json = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+const ME = { apiKeyName: "work laptop", createdAt: "2026-01-02T03:04:05Z", userId: 7, userEmail: "dev@example.com", userFirstName: "Dev" };
+const MODELS = { items: [{ id: "composer-2.5", displayName: "Composer 2.5", aliases: ["composer"], parameters: [{ id: "effort", displayName: "Effort", values: [{ value: "low" }, { value: "high", displayName: "High" }] }], variants: [{ params: [{ id: "effort", value: "high" }], displayName: "Composer 2.5 High", isDefault: true }] }, { nope: true }] };
+const CYCLE = { billingCycleStart: "1794045847072", billingCycleEnd: "1796637847072", planUsage: { totalPercentUsed: 72.4, autoPercentUsed: 150, apiPercentUsed: "x" } };
+
+function fakeFetch(routes) {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init });
+    const route = Object.entries(routes).find(([suffix]) => String(url).endsWith(suffix));
+    if (!route) throw new Error(`unexpected ${url} with ${KEY}`);
+    const value = typeof route[1] === "function" ? route[1](init) : route[1];
+    if (value instanceof Error) throw value;
+    return value;
+  };
+  return { impl, calls };
+}
+
+test("models reads the catalog and the account label over the key, caches it, and never returns the key", async () => {
+  const net = fakeFetch({ "/v1/me": json(ME), "/v1/models": json(MODELS) });
+  const h = boot(fakeSdk().sdk, { env: { CURSOR_API_KEY: KEY }, fetch: net.impl });
+  await h.ready;
+  const { response } = await h.call("models");
+  assert.equal(response.ok, true, JSON.stringify(response));
+  assert.deepEqual(response.result.account, { apiKeyName: "work laptop", createdAt: "2026-01-02T03:04:05Z", userId: 7, email: "dev@example.com", firstName: "Dev" });
+  assert.equal(response.result.models.length, 1);
+  assert.deepEqual(response.result.models[0], {
+    id: "composer-2.5", displayName: "Composer 2.5", aliases: ["composer"],
+    parameters: [{ id: "effort", displayName: "Effort", values: [{ value: "low" }, { value: "high", displayName: "High" }] }],
+    variants: [{ params: [{ id: "effort", value: "high" }], displayName: "Composer 2.5 High", isDefault: true }],
+  });
+  assert.equal(net.calls.every((c) => c.init.headers.authorization === `Bearer ${KEY}` && c.init.method === undefined), true);
+  assert.deepEqual(net.calls.map((c) => c.url).sort(), ["https://api.cursor.com/v1/me", "https://api.cursor.com/v1/models"]);
+  await h.call("models");
+  assert.equal(net.calls.length, 2, "the second read is served from the cache");
+  assert.equal(JSON.stringify(h.all).includes(KEY), false);
+});
+
+test("models drops the account when the team blocks it, and fails with kind auth without a key or on 401", async () => {
+  const blocked = fakeFetch({ "/v1/me": json({ error: { code: "forbidden" } }, 403), "/v1/models": json(MODELS) });
+  const a = boot(fakeSdk().sdk, { env: { CURSOR_API_KEY: KEY }, fetch: blocked.impl });
+  await a.ready;
+  const ok = (await a.call("models")).response;
+  assert.equal(ok.ok, true);
+  assert.equal("account" in ok.result, false);
+
+  const none = boot(fakeSdk().sdk, { fetch: fakeFetch({}).impl });
+  await none.ready;
+  const missing = (await none.call("models")).response;
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error.cause.kind, "auth");
+
+  const bad = fakeFetch({ "/v1/me": json({}, 401), "/v1/models": json({ error: { message: `bad ${KEY}` } }, 401) });
+  const b = boot(fakeSdk().sdk, { env: { CURSOR_API_KEY: KEY }, fetch: bad.impl });
+  await b.ready;
+  const denied = (await b.call("models")).response;
+  assert.equal(denied.error.cause.kind, "auth");
+  assert.equal(JSON.stringify(b.all).includes(KEY), false);
+});
+
+test("usage returns the plan windows (clamped, with the cycle length) and the last run's tokens", async () => {
+  const f = fakeSdk({ onRun: (r) => setImmediate(() => r.finish({ status: "finished", usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4 } })) });
+  const net = fakeFetch({
+    "/auth/exchange_user_api_key": (init) => (init.headers.authorization === `Bearer ${KEY}` ? json({ accessToken: "tok-1" }) : json({}, 401)),
+    "/aiserver.v1.DashboardService/GetCurrentPeriodUsage": (init) => (init.headers.authorization === "Bearer tok-1" ? json(CYCLE) : json({}, 401)),
+  });
+  const h = boot(f.sdk, { env: { CURSOR_API_KEY: KEY }, fetch: net.impl });
+  await h.ready;
+  await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  const sent = await h.call("send", { sessionId: "a", message: "hi" });
+  await h.next((x) => x.type === "runDone" && x.sendId === sent.id);
+  const { response } = await h.call("usage", { sessionId: "a" });
+  assert.equal(response.ok, true, JSON.stringify(response));
+  assert.deepEqual(response.result.usage, { inputTokens: 3, outputTokens: 1, totalTokens: 4 });
+  const resetsAt = new Date(1796637847072).toISOString();
+  assert.deepEqual(response.result.limits.windows, [
+    { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 72.4, resetsAt, windowDurationMins: 43200 },
+    { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 100, resetsAt, windowDurationMins: 43200 },
+  ]);
+  assert.equal(response.result.limits.unavailable, undefined);
+  // account-wide: no session needed
+  const bare = (await h.call("usage")).response;
+  assert.equal(bare.result.usage, null);
+  assert.equal(bare.result.limits.windows.length, 2);
+  const unknown = (await h.call("usage", { sessionId: "zzz" })).response;
+  assert.equal(unknown.error.cause.name, "UnknownSession");
+  assert.equal(JSON.stringify(h.all).includes(KEY), false);
+  assert.equal(JSON.stringify(h.all).includes("tok-1"), false);
+});
+
+test("usage limits are unavailable, not an error, without a credential, on a custom endpoint, or when the probe fails", async () => {
+  const unavailable = async (env, routes = {}) => {
+    const h = boot(fakeSdk().sdk, { env, fetch: fakeFetch(routes).impl });
+    await h.ready;
+    return (await h.call("usage")).response.result.limits;
+  };
+  assert.equal((await unavailable({})).unavailable, "unsupported");
+  const custom = await unavailable({ CURSOR_API_KEY: KEY, CURSOR_API_ENDPOINT: "https://proxy.example" });
+  assert.equal(custom.unavailable, "unsupported");
+  assert.match(custom.message, /default Cursor endpoint/);
+  const failed = await unavailable({ CURSOR_API_KEY: KEY }, { "/auth/exchange_user_api_key": new Error(`down ${KEY}`) });
+  assert.equal(failed.unavailable, "probeFailed");
+  assert.equal(JSON.stringify(failed).includes(KEY), false);
+  const empty = await unavailable({ CURSOR_AUTH_TOKEN: "t" }, { "/aiserver.v1.DashboardService/GetCurrentPeriodUsage": json({}) });
+  assert.equal(empty.unavailable, "unsupported");
 });

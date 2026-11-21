@@ -18,3 +18,8 @@ node_modules/@muse-code/sdk/LICENSE.
 The Cursor SDK, @cursor/sdk, is not bundled, not a dependency and not tested against: its licence is "SEE LICENSE IN LICENSE.md" and nothing from it is
 copied here. src/families/cursor.mjs adapts ideas (error classes, the benign unhandled-rejection list, the resume no-progress rule, steer outcomes)
 from T3 Code's packages/provider-cursor (same commit, MIT, same notice).
+
+The read-only readers (src/families/cursorReaders.mjs and the usage/models parts of src/families/muse.mjs) adapt logic and response shapes from T3 Code
+(same commit, MIT, same notice): packages/provider-cursor/src/server/{CursorSdkCatalog,usageLimits,apiKey}.ts and
+packages/provider-muse/src/server/{modelCatalog,usageLimits}.ts, protocol.ts (MuseSubscriptionUsage). Their tests use synthetic data shaped like T3's
+usageLimits.test.ts and modelCatalog.test.ts examples (no recorded transcript); nothing from the Cursor SDK is copied.
