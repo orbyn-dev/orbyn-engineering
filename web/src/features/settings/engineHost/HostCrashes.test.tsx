@@ -38,7 +38,7 @@ it("leaves Recent problems as it was while the service reports no host crash", a
   expect(screen.queryByRole("button", { name: "Show details" })).toBeNull();
 });
 
-it("adds a row for each host crash, and Show opens the cause chain and the stack only here", async () => {
+it("adds a row for each host crash, and Show opens how it ended and its last words, with no stack", async () => {
   const crash = { ...crashFixtures()[0]!, at: minutes(5) };
   setEngineHostApi(createEngineHostMock({ crashes: [crash] }));
   const user = userEvent.setup();
@@ -53,15 +53,15 @@ it("adds a row for each host crash, and Show opens the cause chain and the stack
   // Only a host crash has details; the ordinary problem row is unchanged.
   expect(screen.getAllByRole("button", { name: "Show details" })).toHaveLength(1);
   await user.click(within(row).getByRole("button", { name: "Show details" }));
-  expect(screen.getByText("Kind: host · restart 3 of 5 · 2 threads failed")).toBeVisible();
-  expect(screen.getByText("EPIPE")).toBeVisible();
-  expect(screen.getByText("Stack")).toBeVisible();
-  expect(screen.getByText(/HostProcess\.onExit \(host\.mjs:212\)/)).toBeVisible();
-  await user.click(within(row).getByRole("button", { name: "Hide details" }));
+  expect(screen.getByText("Exited with code 3 · The host closed its output")).toBeVisible();
+  expect(screen.getByText("Last words from the host")).toBeVisible();
+  expect(screen.getByText(/write EPIPE/)).toBeVisible();
   expect(screen.queryByText("Stack")).toBeNull();
+  await user.click(within(row).getByRole("button", { name: "Hide details" }));
+  expect(screen.queryByText("Last words from the host")).toBeNull();
 });
 
-it("copies the report with the open crash, stack included, and without it when closed", async () => {
+it("copies the report with the open crash, last words included, and without it when closed", async () => {
   const crash = { ...crashFixtures()[0]!, at: minutes(5) };
   setEngineHostApi(createEngineHostMock({ crashes: [crash] }));
   const written: string[] = [];
@@ -71,11 +71,11 @@ it("copies the report with the open crash, stack included, and without it when c
   await user.click(await screen.findByRole("button", { name: "Show" }));
   await user.click(screen.getByRole("button", { name: "Copy report" }));
   expect(written[0]).toContain("The Codex engine host stopped: the engine host closed its output.");
-  expect(written[0]).not.toContain("HostProcess.onExit");
+  expect(written[0]).not.toContain("write EPIPE");
   await user.click(screen.getByRole("button", { name: "Show details" }));
   await user.click(screen.getByRole("button", { name: "Copy report" }));
+  expect(written[1]).toContain("Exited with code 3 · The host closed its output");
   expect(written[1]).toContain("write EPIPE");
-  expect(written[1]).toContain("HostProcess.onExit (host.mjs:212)");
 });
 
 it("lists the engine hosts under Processes, above the ordinary ones, and leaves Processes alone while none is reported", async () => {

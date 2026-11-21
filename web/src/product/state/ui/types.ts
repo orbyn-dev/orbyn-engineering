@@ -104,6 +104,8 @@ export interface Prefs {
   followUpBehavior: "queue" | "steer";
   diffLayout: "stacked" | "split";
   previewSearchEngine: string;
+  /** The Custom engine's address, with %s where the words go. Only a valid one is kept, and it stays when a built-in engine is chosen. */
+  previewSearchAddress: string;
   /** Opens Changes after a large turn. */
   proactivePanels: boolean;
   recentUrls: string[];

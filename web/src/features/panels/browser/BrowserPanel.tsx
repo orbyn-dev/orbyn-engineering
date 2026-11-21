@@ -1,4 +1,4 @@
-import { AppWindow, ArrowLeft, ArrowRight, Clock, CloudOff, Crosshair, EyeOff, Hand, MoreHorizontal, Plus, RotateCw, X } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowRight, Clock, CloudOff, Crosshair, EyeOff, Hand, Lock, LockOpen, MoreHorizontal, Plus, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { changePreviewView, clearPreview, closePreview, listPreviewTabs, navigatePreview, openPreview, popOutPreview, previewRecordingEndpoint, reloadPreview, resizePreview, setPreviewControl, stepPreviewHistory } from "../api";
 import type { PickedElement, PreviewTab } from "../../../api/types";
@@ -20,7 +20,8 @@ import { inDesktopApp } from "../api";
 import { DEVICES, TAB_POLL_MS, VIEWPORT, addRecent, isLocalUrl, resolveAddress, stepZoom } from "./browserModel";
 import { PageView } from "./PageView";
 import { StartView } from "./StartView";
-import { deviceChoice, pageSize, type PageSize } from "./viewportResize";
+import { deviceChoice, lockedPage, pageSize, type PageSize } from "./viewportResize";
+import { DeviceSizeFields } from "./DeviceSizeFields";
 
 /** The Browser tab's body when the device has no network and the page needs one. */
 function OfflineNotice({ onRetry }: { onRetry(): void }) {
@@ -77,9 +78,13 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
   /** The size a handle has dragged or stepped the page to, before it is committed. */
   const [live, setLive] = useState<PageSize | null>(null);
   const [toolbar, setToolbar] = useState(false);
+  /** The size at the moment the aspect ratio was locked. Not remembered: the toolbar closing puts it off. */
+  const [lock, setLock] = useState<PageSize | null>(null);
+  const [sizeProblem, setSizeProblem] = useState<string | null>(null);
   const recent = useUi((state) => state.recentUrls);
   const waiting = useUi((state) => state.previewRequest);
   const searchEngine = useUi((state) => state.previewSearchEngine);
+  const searchAddress = useUi((state) => state.previewSearchAddress);
   const setPrefs = useUi((state) => state.setPrefs);
   const pushToast = useUi((state) => state.pushToast);
   const reload = tabs.reload;
@@ -117,7 +122,7 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
   };
   const go = (raw: string) => {
     if (!active && onlyTabId) return;
-    const url = resolveAddress(raw, searchEngine);
+    const url = resolveAddress(raw, searchEngine, searchAddress);
     setAddress(url);
     if (!(active?.private ?? isPrivate)) remember(url);
     void act(async () => {
@@ -150,6 +155,14 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
   useEffect(() => {
     setLive(null);
   }, [active?.id, toolbar, device]);
+  useEffect(() => {
+    if (!toolbar) { setLock(null); setSizeProblem(null); }
+  }, [toolbar]);
+  useEffect(() => {
+    setLock(null);
+  }, [active?.id]);
+  /** With the lock on, whichever number changed leads and the other keeps the ratio. */
+  const keepRatio = (next: PageSize) => (lock ? lockedPage(size, next, lock) : next);
   /** One resize for a whole drag or run of key presses, then the tab list catches up. */
   const commitResize = (next: PageSize) => {
     if (!active) return;
@@ -165,6 +178,7 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
   /** Rotates the chosen preset, or the size a custom page has reached. */
   const rotate = () => {
     if (!active || device === "fit") return;
+    if (lock) setLock({ width: lock.height, height: lock.width });
     if (device !== "custom") {
       setDevice(device, true);
       return;
@@ -403,16 +417,22 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
               </option>
             ))}
             {device === "custom" ? (
-              <option value="custom">{`Custom, ${shownSize.width} by ${shownSize.height}`}</option>
+              <option value="custom">Custom</option>
             ) : null}
           </select>
-          <span>
-            {shownSize.width} by {shownSize.height}
+          <span className="browser-devices-sizes">
+            <DeviceSizeFields disabled={device === "fit"} size={shownSize} onCommit={(next) => commitResize(keepRatio(next))} onProblem={setSizeProblem} />
+            <IconButton label="Lock aspect ratio" pressed={lock !== null} disabled={device === "fit"} onClick={() => setLock(lock ? null : { ...size })}>
+              {lock ? <Lock size={14} aria-hidden /> : <LockOpen size={14} aria-hidden />}
+            </IconButton>
+            <IconButton label="Rotate" disabled={device === "fit"} onClick={rotate}>
+              <RotateCw size={14} aria-hidden />
+            </IconButton>
           </span>
-          <IconButton label="Rotate" disabled={device === "fit"} onClick={rotate}>
-            <RotateCw size={14} aria-hidden />
-          </IconButton>
         </div>
+      ) : null}
+      {toolbar && active && sizeProblem ? (
+        <p className="field-error browser-devices-problem" role="alert">{sizeProblem}</p>
       ) : null}
       {serviceAway && active ? (
         <p className="conn-banner conn-panel-banner" role="status">
@@ -432,7 +452,7 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
           tab={active}
           fitted={!detached && device === "fit"}
           picking={picking && !serviceAway}
-          resize={device === "fit" && !detached ? null : { live, handles: device !== "fit" && toolbar, onPreview: setLive, onCommit: commitResize }}
+          resize={device === "fit" && !detached ? null : { live, handles: device !== "fit", onPreview: (next) => setLive(next && keepRatio(next)), onCommit: (next) => commitResize(keepRatio(next)) }}
           onPicked={onPicked}
         />
       ) : busy ? (
@@ -444,6 +464,11 @@ export function BrowserView({ threadId, onlyTabId, excludedTabId, onMove, detach
       ) : (
         <StartView threadId={threadId} onOpen={go} profile={profile} setProfile={setProfile} isPrivate={isPrivate} />
       )}
+      {active && !toolbar && device !== "fit" ? (
+        <button type="button" className="browser-size-pill" onClick={() => setToolbar(true)}>
+          {`${size.width} by ${size.height}`}<span> · Show device toolbar</span>
+        </button>
+      ) : null}
       </>}
     </div>
   );

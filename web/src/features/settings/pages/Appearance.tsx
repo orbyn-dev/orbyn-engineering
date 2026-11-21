@@ -1,6 +1,6 @@
 import { settingsLabel } from "../settingsSearch";
 import { AlertTriangle, Info } from "lucide-react";
-import { useContext, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { navigate } from "../../../product/state/route";
 import { SettingsSubPageContext } from "../subPage";
 import { MAX_PANEL_ANIMATION_MS } from "../../../product/panels/panelAnimations";
@@ -11,6 +11,8 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { displayColour, isColour, presetById, readThemeFile, THEME_PRESETS, THEME_TOKENS, type ThemeColors } from "../../../styles/themes";
 import { ENVIRONMENT_ICON_CHOICES } from "../EnvironmentIcon";
 import { PreferenceGroups } from "../rows/PreferenceRows";
+import { PickedCard, ThemeInspectorLayer } from "./ThemeInspector";
+import type { Inspected } from "./inspectColour";
 
 /** What this environment publishes to every viewer, and when its theme was set. */
 function EnvironmentGroup() {
@@ -197,7 +199,7 @@ function ThemeEditorRow({ open }: { open(): void }) {
 
 const colourOf = (token: string) => getComputedStyle(document.documentElement).getPropertyValue(token).trim();
 
-function TokenRow({ label, value, save }: { label: string; value: string; save(next: string): void }) {
+function TokenRow({ label, value, save, picked }: { label: string; value: string; save(next: string): void; picked?: boolean }) {
   const [draft, setDraft] = useState(value);
   const [seen, setSeen] = useState(value);
   const [problem, setProblem] = useState<string | null>(null);
@@ -210,7 +212,7 @@ function TokenRow({ label, value, save }: { label: string; value: string; save(n
     save(next);
   };
   return (
-    <div className={problem ? "tkn error" : "tkn"}>
+    <div className={problem ? "tkn error" : "tkn"} data-picked={picked || undefined}>
       <b>{label}</b>
       <span className="swc" style={{ background: isColour(draft) ? draft.trim() : value }} aria-hidden />
       <input className="mono" aria-label={label} value={draft} spellCheck={false} aria-invalid={problem ? true : undefined}
@@ -229,6 +231,10 @@ function ThemeEditorPage() {
   const setPrefs = useUi((state) => state.setPrefs);
   const file = useRef<HTMLInputElement>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<Extract<Inspected, { kind: "token" }> | null>(null);
+  const [cancelled, setCancelled] = useState(false);
+  const list = useRef<HTMLDivElement>(null);
   const scheme: "light" | "dark" = theme === "system" ? (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
   const presetKey = scheme === "dark" ? "darkPreset" : "lightPreset";
   const presetValue = scheme === "dark" ? darkPreset : lightPreset;
@@ -246,6 +252,10 @@ function ThemeEditorPage() {
     link.click();
     URL.revokeObjectURL(url);
   };
+  const startPicking = () => { setCancelled(false); setPicking(true); };
+  useEffect(() => {
+    if (picked) list.current?.querySelector("[data-picked]")?.scrollIntoView?.({ block: "nearest" });
+  }, [picked]);
   const importTheme = async (selected: File | undefined) => {
     if (!selected) return;
     const read = readThemeFile(await selected.text());
@@ -263,6 +273,7 @@ function ThemeEditorPage() {
         </select>
         <span className="set-back-end">
           <input ref={file} type="file" accept="application/json,.json" hidden aria-label="Import theme file" onChange={(event) => void importTheme(event.target.files?.[0])} />
+          <Button small onClick={startPicking}>Inspect</Button>
           <Button small onClick={() => file.current?.click()}>Import…</Button>
           <Button small onClick={exportTheme}>Export…</Button>
           <Button small disabled={Object.keys(custom).length === 0} onClick={() => { setFailure(null); save({}); }}>Reset</Button>
@@ -272,9 +283,18 @@ function ThemeEditorPage() {
         <p className="banner banner-err" role="alert"><AlertTriangle size={14} aria-hidden />{failure}
           <Button small className="set-back-end" onClick={() => file.current?.click()}>Choose another file</Button></p>
       ) : null}
-      <div className="tokg">
+      {picking ? <ThemeInspectorLayer onPick={(found) => { setPicked(found); setPicking(false); }} onCancel={() => { setPicking(false); setCancelled(true); }} /> : null}
+      {cancelled && !picking ? (
+        <p className="banner" role="status">Nothing picked. The colours are as they were.
+          <Button small className="set-back-end" onClick={() => setCancelled(false)}>Dismiss</Button></p>
+      ) : null}
+      {picked && !picking ? (
+        <PickedCard found={picked} custom={picked.token in custom} onAgain={startPicking}
+          onReset={() => { const { [picked.token as keyof ThemeColors]: _gone, ...rest } = custom; save(rest); }} />
+      ) : null}
+      <div className="tokg" ref={list}>
         {THEME_TOKENS.map(([token, label]) => (
-          <TokenRow key={token} label={label}
+          <TokenRow key={token} label={label} picked={picked?.token === token && !picking}
             value={custom[token] ?? preset?.colors[token] ?? displayColour(colourOf(token))}
             save={(next) => save({ ...custom, [token]: next })} />
         ))}

@@ -38,6 +38,11 @@ describe("assert-no-previews", () => {
     ["the Repositories mock", `module.createReposMock({delayMs:300})`],
     ["the Devices preview route", `location.hash.startsWith("#/preview/devices")`],
     ["the Devices mock", `module.createDevicesMock({delayMs:300})`],
+    ["the attachments preview route", `location.hash.startsWith("#/preview/attachments")`],
+    ["the photo conversion mock", `module.createPhotoConversionMock({delayMs:1200})`],
+    ["the transcripts mock", `module.createTranscriptsMock({delayMs:800})`],
+    ["the earlier messages preview route", `location.hash.startsWith("#/preview/earlier")`],
+    ["the earlier messages mock", `module.createEarlierMock({delayMs:400})`],
   ])("fails a production bundle holding %s", (_name, text) => {
     const result = run({ "chunk.js": text });
     expect(result.status).toBe(1);

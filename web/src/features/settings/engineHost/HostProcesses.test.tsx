@@ -23,13 +23,13 @@ const hosts = (): HostRow[] => [
   { id: "old", name: "Old", state: "version_mismatch", can_retry: false },
 ];
 
-it("lists nothing, and sends no request, while the service reports no host", async () => {
-  const fetching = vi.fn();
+it("lists nothing while the service answers 404 for the engine host", async () => {
+  const fetching = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404, headers: { "content-type": "application/json" } }));
   vi.stubGlobal("fetch", fetching);
   render(<Rows />);
   await act(async () => { await Promise.resolve(); });
   expect(screen.queryAllByRole("listitem")).toHaveLength(0);
-  expect(fetching).not.toHaveBeenCalled();
+  expect(fetching).toHaveBeenCalled();
 });
 
 it("lists a host that is running, restarting or stuck, and not one that is idle, never started or refused", async () => {
