@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { AutopilotModes } from "../../src/generated/AutopilotModes";
 import type { CapacityState } from "../../src/generated/CapacityState";
+import type { FlowCrewList } from "../../src/generated/FlowCrewList";
 import type { ReviewCoverage } from "../../src/generated/ReviewCoverage";
 import { startProject, type Service } from "./service";
 
@@ -9,17 +10,20 @@ import { startProject, type Service } from "./service";
  * startup choice (`ORBYN_CREW_PREVIEW=1`): with it off every Crew route answers 404 and nothing of Crew is drawn, so a
  * run whose service reports it off fails loudly in `beforeAll` rather than skipping.
  *
- * Covered here: Flow renders from the real crew list read; the Needs you inbox renders from its real sources; the
- * Review capacity and coverage screens read their real routes from the Preview hash; and one person action, the
- * Autopilot mode, is saved through Settings and read back from the service.
+ * Covered here: Flow renders from the real crew list read; the Board and Map tabs render their real, empty states from
+ * that same real read; the Needs you inbox renders from its real sources; the Review capacity and coverage screens read
+ * their real routes from the Preview hash; and one person action, the Autopilot mode, is saved through Settings and
+ * read back from the service.
  *
  * What is not driven through the UI, honestly:
  * - The Review capacity editor is Planned. `LiveSettings` draws its Set a limit and Change the limit buttons disabled
  *   beside a Planned pill and sends no write, so this spec reads the live capacity and coverage screens but cannot save
  *   capacity settings. The person write above is the Autopilot mode instead.
- * - Flow and Needs you have no rows on a fresh service. A task needs a real crew run and an engine (this suite never
- *   starts a live engine), and a held command needs one too, so both surfaces are asserted as the real empty state of
- *   real reads. Their rows stay the component and fixture tests' work until a run can be seeded without an engine.
+ * - Flow, Board, Map and Needs you have no rows on a fresh service. A task needs a real crew run and an engine (this
+ *   suite never starts a live engine), and a held command needs one too, so all four surfaces are asserted as the real
+ *   empty state of real reads. Board and Map cannot reach their own reads this way: the board's `/api/crew/flow/board`,
+ *   and the map's `/api/crew/flow/map`, message and fact reads are only called once a crew row exists. Their rows stay
+ *   the component and fixture tests' work until a run can be seeded without an engine.
  * - Approving a held command needs the desktop shell's presence grant, so no approval is attempted.
  */
 
@@ -71,6 +75,40 @@ test("Flow renders the real, empty crew list", async ({ page }) => {
   await expect(page.getByRole("tab", { name: "Flow", exact: true })).toHaveAttribute("aria-selected", "true");
   // The real crew list is empty, so the Flow tab says so instead of drawing a task table.
   await expect(page.getByText("No crews running", { exact: true })).toBeVisible();
+});
+
+test("Board renders the real, empty crew list", async ({ page }) => {
+  await page.setViewportSize(WINDOW);
+  const list = read(page, "/api/crew/flow/crews");
+  await page.goto(`${service.page}#/crew/board`);
+  const listResponse = await answered(list, "/api/crew/flow/crews");
+  const body = (await listResponse.json()) as FlowCrewList;
+  expect(body.crews).toEqual([]);
+  expect(body.total).toBe(0);
+  expect(body.next_offset ?? null).toBeNull();
+  await expect(page.getByRole("heading", { name: "Crew", level: 1 })).toBeVisible({ timeout: PAGE_READY });
+  await expect(page.getByRole("tab", { name: "Board", exact: true })).toHaveAttribute("aria-selected", "true");
+  // The real crew list is empty, so the Board tab says so instead of drawing its columns or cards.
+  await expect(page.getByRole("tabpanel").getByText("No crews running", { exact: true })).toBeVisible();
+  await expect(page.locator('section[aria-label="Taskboard"]')).toHaveCount(0);
+});
+
+test("Map renders the real, empty crew list", async ({ page }) => {
+  await page.setViewportSize(WINDOW);
+  const list = read(page, "/api/crew/flow/crews");
+  await page.goto(`${service.page}#/crew/map`);
+  const listResponse = await answered(list, "/api/crew/flow/crews");
+  const body = (await listResponse.json()) as FlowCrewList;
+  expect(body.crews).toEqual([]);
+  expect(body.total).toBe(0);
+  expect(body.next_offset ?? null).toBeNull();
+  await expect(page.getByRole("heading", { name: "Crew", level: 1 })).toBeVisible({ timeout: PAGE_READY });
+  await expect(page.getByRole("tab", { name: "Map", exact: true })).toHaveAttribute("aria-selected", "true");
+  // The real crew list is empty, so the map draws no engines, members or message lines: only its real empty state.
+  const map = page.getByRole("region", { name: "Crew map" });
+  await expect(map.getByText("No crews running", { exact: true })).toBeVisible();
+  await expect(map.getByRole("list", { name: "Engines" })).toHaveCount(0);
+  await expect(map.getByRole("list", { name: "Crew" })).toHaveCount(0);
 });
 
 test("Needs you renders its empty inbox from the real sources", async ({ page }) => {
