@@ -5,14 +5,24 @@ import { request } from "../../../api/client";
 import { useUi } from "../../../product/state/ui";
 import { displayColour, readThemeFile } from "../../../styles/themes";
 import { AppearanceSection } from "./Appearance";
+import { SettingsSubPageContext } from "../subPage";
+import { useRoute } from "../../../product/state/route";
 import { scopedFixture } from "../rows/scopedPreferenceFixture.test-support";
 vi.mock("../../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
 
+/** What Settings does around the page: the address names the sub-page. */
+function Host() {
+  const route = useRoute();
+  return <SettingsSubPageContext.Provider value={route.name === "settings" ? route.sub ?? null : null}><AppearanceSection /></SettingsSubPageContext.Provider>;
+}
+
 async function openEditor() {
   vi.mocked(request).mockResolvedValue(scopedFixture([]));
+  window.location.hash = "#/settings/appearance";
   const user = userEvent.setup();
-  render(<AppearanceSection />);
+  render(<Host />);
   await user.click(await screen.findByRole("button", { name: "Edit…" }));
+  await screen.findByRole("heading", { name: "Theme editor" });
   return user;
 }
 
