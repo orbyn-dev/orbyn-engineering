@@ -116,6 +116,29 @@ impl Stored {
             })
     }
 
+    /// For a file that leaves the app (a transcript export): every recognised format and every one of the person's patterns,
+    /// whatever the surface switches say. A switch describes what reaches an agent or a terminal; a file can go anywhere, so
+    /// nothing a surface hides may be in it.
+    pub fn export_redactor(&self) -> Redactor {
+        let mut compiled = Vec::new();
+        for stored in &self.patterns {
+            if let Ok(regex) = custom::compile(stored.kind, &stored.pattern) {
+                compiled.push((stored.name.as_str(), regex, stored.applies_to));
+            }
+        }
+        Redactor::with(
+            &BTreeSet::new(),
+            compiled
+                .into_iter()
+                .map(|(name, regex, applies_to)| Custom {
+                    name,
+                    regex,
+                    applies_to,
+                })
+                .collect(),
+        )
+    }
+
     /// Only the person's patterns, for text shown back to them (the ledger). The formats are not
     /// part of it: what Crew stores is already clean of them.
     pub fn person_redactor(&self) -> Redactor {

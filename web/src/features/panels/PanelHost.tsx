@@ -28,6 +28,7 @@ import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { useDevicesOffered } from "../devices";
 import { useLibraryOffered } from "../library";
+import { setPageResizing, type PanelDrag } from "./strip/panelDrag";
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
 const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
@@ -46,24 +47,6 @@ const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
 };
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
 const NEEDS_NETWORK: readonly RightTab[] = ["browser", "side"];
-
-interface PanelDrag {
-  panel: HTMLElement;
-  handle: HTMLElement;
-  pointerId: number;
-  right: number;
-  layoutKey: string;
-  startWidth: string;
-  /** The width this drag last wrote to the panel, or null before the first move. */
-  writtenWidth: string | null;
-  current: number;
-}
-
-/** Marks the page while an edge is dragged, so no drag can start a selection over its text. */
-const setPageResizing = (resizing: boolean) => {
-  if (resizing) document.documentElement.dataset.resizing = "panel";
-  else delete document.documentElement.dataset.resizing;
-};
 
 /**
  * The panel's left edge. Dragging it resizes the panel, snapping to 380, 520 or 720 px within 12 px
