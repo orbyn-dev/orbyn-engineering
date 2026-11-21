@@ -7,9 +7,12 @@ import { onShellChange } from "./api";
 import { useAsync } from "../../lib/useAsync";
 import { navigate, useRoute } from "../../product/state/route";
 import { Info, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { routeHref, type SettingsSection } from "../../product/state/route";
-import { IconButton } from "../../ui/controls";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNarrowPage } from "./useNarrowPage";
+import { SettingsCrumbs } from "./SettingsCrumbs";
+import { SettingsSubPageContext, SUBPAGES } from "./subPage";
+import { routeHref, type SettingsSection, type SettingsSubPage } from "../../product/state/route";
+import { Button, IconButton } from "../../ui/controls";
 import { AppearanceSection } from "./pages/Appearance";
 import { KeybindingsSection } from "./pages/Keybindings";
 import { AccountSection, useAccountAvailable } from "../account";
@@ -87,14 +90,20 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
 };
 
 /** Settings fill the main area of the frame: a section list on the left, the open section on the right. */
-export function SettingsPage({ section, onClose }: { section: SettingsSection | null; onClose(): void }) {
-  return <SettingsScopeProvider section={section ?? "general"}><SettingsPageContent section={section} onClose={onClose} /></SettingsScopeProvider>;
+export function SettingsPage({ section, sub = null, unknown, onClose }: { section: SettingsSection | null; sub?: SettingsSubPage | null; unknown?: string; onClose(): void }) {
+  return <SettingsScopeProvider section={section ?? "general"}><SettingsPageContent section={section} sub={sub} unknown={unknown} onClose={onClose} /></SettingsScopeProvider>;
 }
 
-function SettingsPageContent({ section, onClose }: { section: SettingsSection | null; onClose(): void }) {
+/** A page name from an address, as the note shows it: plain text, shortened. */
+const shown = (name: string) => (name.length > 40 ? `${name.slice(0, 40)}…` : name);
+
+function SettingsPageContent({ section, sub, unknown, onClose }: { section: SettingsSection | null; sub: SettingsSubPage | null; unknown?: string; onClose(): void }) {
   const route = useRoute();
   const sectionRoute = (next: SettingsSection) => ({ name: "settings" as const, section: next, selection: route.name === "settings" ? route.selection : undefined, machine: route.name === "settings" ? route.machine : undefined });
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLElement | null>(null);
+  const [measure, narrow] = useNarrowPage();
+  const setRef = useCallback((element: HTMLElement | null) => { ref.current = element; return measure(element); }, [measure]);
+  const [dismissed, setDismissed] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<{ id: string } | null>(null);
   const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
@@ -104,6 +113,8 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
   const crewOn = useCrewFlag();
   const current = (section === "account" && !accountOn) || (section === "crew" && !crewOn) ? "general" : (section ?? "general");
   const View = views[current];
+  // A sub-page belongs to its own page only.
+  const open = sub && SUBPAGES[sub].parent === current ? sub : null;
 
   // Escape closes settings from anywhere, unless a dialog, menu or field is handling its own.
   useEffect(() => {
@@ -171,7 +182,7 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
 
   return (
     <section
-      ref={ref}
+      ref={setRef}
       className="settings-page"
       role="region"
       aria-label="Settings"
@@ -224,19 +235,26 @@ function SettingsPageContent({ section, onClose }: { section: SettingsSection | 
         </nav>
       </div>
       <div className="settings-main">
+        <SettingsCrumbs section={current} label={labels[current]} sub={open} narrow={narrow} labelOf={(entry) => labels[entry]} />
         <header className="settings-head">
-          <span className="settings-title" aria-hidden>{labels[current]}</span>
+          <span className="settings-title" aria-hidden>{open ? SUBPAGES[open].label : labels[current]}</span>
           <IconButton label="Close settings" onClick={onClose}>
             <X size={16} aria-hidden />
           </IconButton>
         </header>
         <div className="settings-scroll">
           <div className="settings-body">
+            {unknown !== undefined && dismissed !== unknown ? (
+              <div className="settings-note" role="status">
+                <span>There is no setting called “{shown(unknown)}” in this app. Showing General instead.</span>
+                <Button small onClick={() => setDismissed(unknown)}>Dismiss</Button>
+              </div>
+            ) : null}
             {SCOPE_LINE_SECTIONS.has(current) ? <ScopeSentence /> : null}
             {current === "general" ? <p className="settings-scope"><Info size={13} aria-hidden />{shell.data?.attached ? "Desktop app · applies to this computer" : "Applies to this computer"}</p> : null}
             {current === "maintenance" ? <p className="settings-scope"><Info size={13} aria-hidden />Applies to this computer</p> : null}
             <SettingRowIds.Provider value={(title) => settingSearchId(current, title)}>
-              <View key={current} />
+              <SettingsSubPageContext.Provider value={open}><View key={current} /></SettingsSubPageContext.Provider>
             </SettingRowIds.Provider>
           </div>
         </div>

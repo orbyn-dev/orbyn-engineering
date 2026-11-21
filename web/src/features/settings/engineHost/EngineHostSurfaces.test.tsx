@@ -10,14 +10,15 @@ import { setEngineHostApi, type HostRow } from "../../enginehost";
 afterEach(() => { setEngineHostApi(null); vi.unstubAllGlobals(); });
 const rowOf = (name: string) => screen.getByText(name, { selector: ".name" }).closest("[role=row]") as HTMLElement;
 
-it("draws nothing, and sends no request, while the service reports no engine host data", async () => {
-  const fetching = vi.fn();
+it("draws nothing, and no error, while the service answers 404 for the engine host", async () => {
+  const fetching = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404, headers: { "content-type": "application/json" } }));
   vi.stubGlobal("fetch", fetching);
   render(<><EngineHostGroup /><EngineHostCard engineId="codex" /><EngineHostBanner engineId="codex" /></>);
   await act(async () => { await Promise.resolve(); });
   expect(screen.queryByText("Engine host")).toBeNull();
   expect(screen.queryByRole("table", { name: "Engine host" })).toBeNull();
-  expect(fetching).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(fetching.mock.calls.every(([url, init]) => url === "/api/engine-host" && init!.method === "GET")).toBe(true);
 });
 
 it("lists one row per host with its chip and its line, as the frame does", async () => {
@@ -102,7 +103,7 @@ it("shows Not used with its own sentence", async () => {
   const rows: HostRow[] = [{ id: "claude", name: "Claude Code", state: "not_used", can_retry: false }];
   setEngineHostApi(createEngineHostMock({ hosts: rows }));
   render(<EngineHostCard engineId="claude" />);
-  expect(await screen.findByText("Claude Code runs through its own program here.")).toBeVisible();
+  expect(await screen.findByText("Not used. Claude Code keeps running through its own program.")).toBeVisible();
 });
 
 it("numbers every cause outermost first and ends on the loop marker in plain words", () => {

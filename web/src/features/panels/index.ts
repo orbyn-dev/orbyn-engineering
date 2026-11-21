@@ -7,3 +7,5 @@ export { TerminalBar, TerminalDrawerBody } from "./terminal/TerminalDrawerBody";
 export { previewWindowRoute } from "./browser/browserPanels";
 export { PreviewFloat } from "./preview/PreviewFloat";
 export { PreviewWindow } from "./preview/PreviewWindow";
+export { checkSearchAddress, customSearchUrl, SEARCH_PREVIEW_WORDS } from "./browser/searchAddress";
+export { CommandBlocksPreview, commandBlocksPreviewRoute } from "./terminal/blocks/previews";

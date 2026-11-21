@@ -1,7 +1,7 @@
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../../ui/controls";
-import { type HostCause, type HostErrorKind, type HostState, type Chip, chipFor, plain } from "../../enginehost";
+import { type HostCause, type HostErrorKind, type HostState, type Chip, chipFor, errorKindLine, exitLine, plain } from "../../enginehost";
 import "./engineHost.css";
 
 const LOOP = "[Circular error cause]";
@@ -43,6 +43,22 @@ export function CauseChain({ kind, extra, causes }: { kind?: HostErrorKind | nul
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+/**
+ * What a crash says in its details, all as text: how it ended (the exit code or signal appears only here), how the host failed and the
+ * host's last words on stderr (redacted and capped by the core). Only what the service returned is drawn.
+ */
+export function CrashDetails({ crash }: { crash: { exit_code?: number; signal?: number; error_kind: string; stderr_tail: string } }) {
+  const lines = [exitLine(crash), errorKindLine(crash.error_kind)].filter((line): line is string => line !== null);
+  const tail = typeof crash.stderr_tail === "string" ? plain(crash.stderr_tail, 1024) : "";
+  if (lines.length === 0 && !tail) return null;
+  return (
+    <div className="eh-chain">
+      {lines.length > 0 ? <div className="eh-chain-kind">{lines.join(" · ")}</div> : null}
+      {tail ? <><div className="eh-stack-label">Last words from the host</div><pre className="eh-stack">{tail}</pre></> : null}
     </div>
   );
 }

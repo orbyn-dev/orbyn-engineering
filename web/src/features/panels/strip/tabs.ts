@@ -1,4 +1,4 @@
-import { Activity, CircleDot, FileDiff, File as FileIcon, GitBranch, Globe, MessageSquareText, MessagesSquare, Network, Plug } from "lucide-react";
+import { Activity, CircleDot, FileDiff, File as FileIcon, GitBranch, Globe, MessageSquareText, MessagesSquare, Network, Plug, Smartphone } from "lucide-react";
 import { defaultOrder, fileName, issueTabLabel, parseFileTab, type BuiltinTab, type RightTab } from "../../../product/state/ui";
 
 /** The panel's six surfaces, in the launcher's order. `label` is the tab's name and what it reads. A file tab is named by its file. */
@@ -10,6 +10,8 @@ export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff 
   { id: "tools", label: "Tools", icon: Plug },
   { id: "linked", label: "Linked threads", icon: Network },
   { id: "review", label: "Review and comments", icon: MessageSquareText },
+  // Drawn only when the service reports devices (docs/devices.md); the strip and the "+" leave it out otherwise.
+  { id: "devices", label: "Devices", icon: Smartphone },
 ];
 
 export function tabOf(id: RightTab): { id: RightTab; label: string; icon: typeof FileDiff } {

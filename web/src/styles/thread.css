@@ -697,3 +697,60 @@
     height: 72px;
   }
 }
+
+/* An imported thread's earlier messages (K36, hidden until core reads the provider's history): read only, above a line saying where they came from. */
+.earlier {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.earlier-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.earlier-line::before,
+.earlier-line::after {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+  content: "";
+}
+.earlier-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-textSoft);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.earlier-message svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--color-muted);
+}
+.earlier-user {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-xs) var(--radius-xl);
+  background: var(--color-message);
+  color: var(--color-text);
+}
+.earlier-tool {
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.earlier-banner {
+  margin-bottom: 14px;
+  background: var(--color-sunken);
+  color: var(--color-textSoft);
+}
+.earlier-banner > span {
+  flex: 1;
+  min-width: 240px;
+}

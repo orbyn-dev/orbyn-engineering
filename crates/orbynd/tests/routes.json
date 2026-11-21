@@ -82,6 +82,7 @@
     ["GET","/api/diagnostics/telemetry","local"],
     ["GET","/api/diagnostics/trace","local"],
     ["GET","/api/editors","local"],
+    ["GET","/api/engine-host","local"],
     ["GET","/api/engines","local"],
     ["GET","/api/engines/update-events","local"],
     ["GET","/api/engines/{id}/installs","local"],
