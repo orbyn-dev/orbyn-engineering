@@ -151,6 +151,9 @@ impl RunManager {
         } else {
             warm
         };
+        // The engine reads an attached text file itself, so it is given a masked copy in the run's
+        // own folder; the person's file stays as uploaded (docs/attachments-transcripts.md).
+        let files = self.masked_attachment_copies(&thread.project_id, &files, run_dir)?;
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
