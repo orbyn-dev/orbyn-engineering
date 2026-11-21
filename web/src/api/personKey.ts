@@ -164,14 +164,14 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
 ];
 
 /**
- * Person routes of a service slice that is not merged (HostDriver slice 3, the Cursor thread contract): the one-turn override and
- * the engine notice's acknowledgement. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * Person routes of a service slice that is not merged (HostDriver slice 3, docs/cursor-thread-contract.md): the one-turn override and
+ * the acknowledgement of a project's engine notice. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
   ["POST", "/api/threads/{id}/send-without-approvals"],
-  ["POST", "/api/engines/{engine}/notice/acknowledge"],
+  ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */

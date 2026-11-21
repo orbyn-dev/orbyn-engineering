@@ -3,9 +3,10 @@ import { useAsync } from "../../lib/useAsync";
 import type { CursorThreadApi, NoticeState } from "./contract";
 
 /**
- * The real client for the notice and override routes. Those routes are not merged, so this one makes no request at all: the
- * notice reads as "none", and a write says the service does not offer it. Swap it for `request(...)` calls the day the
- * generated types and routes land (the override and acknowledge are person routes: their paths are already in
+ * The real client for the notice and override routes. Those routes are not in the service's route table yet, so this one makes no
+ * request at all: the notice reads as "none", and a write says the service does not offer it. Swap it for `request(...)` calls the
+ * day they land: `GET /api/projects/{project_id}/engines/{engine}/notice`, `POST .../notice/acknowledge` and
+ * `POST /api/threads/{id}/send-without-approvals` (the two POSTs are person routes: their paths are already in
  * `PENDING_PERSON_ROUTES` in `api/personKey.ts`); the screens do not change.
  */
 const unreported: CursorThreadApi = {
@@ -44,9 +45,10 @@ function useApiVersion(): number {
   return seen;
 }
 
-/** Whether the engine's notice has been answered; `null` while unread or when the service has no notice for this engine. */
-export function useEngineNotice(engine: string, enabled = true): NoticeState | null {
+/** Whether the project has answered the engine's notice; `null` while unread or when the service has no notice for this engine. */
+export function useEngineNotice(projectId: string, engine: string, enabled = true): NoticeState | null {
   const seen = useApiVersion();
-  const read = useAsync(`engine-notice:${engine}:${enabled}:${seen}`, (signal) => (enabled ? cursorThreadApi().notice(engine, signal) : Promise.resolve(null)));
+  const on = enabled && projectId !== "";
+  const read = useAsync(`engine-notice:${projectId}:${engine}:${on}:${seen}`, (signal) => (on ? cursorThreadApi().notice(projectId, engine, signal) : Promise.resolve(null)));
   return read.status === "ready" ? read.data : null;
 }

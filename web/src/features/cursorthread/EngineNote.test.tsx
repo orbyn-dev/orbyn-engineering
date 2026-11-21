@@ -10,7 +10,7 @@ afterEach(() => setCursorThreadApi(null));
 describe("the Engine row of Details", () => {
   it("shows the engine's name and the notice once it has been answered", async () => {
     setCursorThreadApi(createCursorThreadMock({ acknowledged: true }));
-    render(<EngineNote engine="cursor" engineName="Cursor" />);
+    render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
     expect(await screen.findByText("Cursor does not ask before acting. Its own sandbox applies.")).toBeVisible();
     expect(screen.getByText("Engine")).toBeVisible();
     // A note, not a button.
@@ -19,7 +19,7 @@ describe("the Engine row of Details", () => {
 
   it("is drawn for every engine: another engine shows its name and the model under it, never the notice", async () => {
     setCursorThreadApi(createCursorThreadMock({ acknowledged: true }));
-    render(<EngineNote engine="claude" engineName="Claude Code" modelName="Opus 5.5" />);
+    render(<EngineNote projectId="p" engine="claude" engineName="Claude Code" modelName="Opus 5.5" />);
     expect(screen.getByText("Engine")).toBeVisible();
     expect(screen.getByText("Claude Code")).toBeVisible();
     expect(screen.getByText("Opus 5.5")).toBeVisible();
@@ -30,20 +30,20 @@ describe("the Engine row of Details", () => {
 
   it("adds the notice only for an engine that has one and only once it has been answered", async () => {
     setCursorThreadApi(createCursorThreadMock({ acknowledged: false }));
-    const before = render(<EngineNote engine="cursor" engineName="Cursor" />);
+    const before = render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.getByText("Cursor")).toBeVisible();
     expect(screen.queryByText(/does not ask/)).toBeNull();
     before.unmount();
     setCursorThreadApi(null);
-    render(<EngineNote engine="cursor" engineName="Cursor" />);
+    render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.getByText("Engine")).toBeVisible();
     expect(screen.queryByText(/does not ask/)).toBeNull();
   });
 
   it("draws an engine's name as plain text", () => {
-    render(<EngineNote engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
+    render(<EngineNote projectId="p" engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
     expect(document.querySelector("b, i")).toBeNull();
   });
 });
@@ -51,8 +51,8 @@ describe("the Engine row of Details", () => {
 describe("the default client", () => {
   it("sends nothing for the unmerged routes: the notice reads none and each write says it is not offered", async () => {
     const api = cursorThreadApi();
-    expect(await api.notice("cursor")).toBeNull();
-    await expect(api.acknowledge("cursor")).rejects.toThrow("does not offer");
+    expect(await api.notice("p", "cursor")).toBeNull();
+    await expect(api.acknowledge("p", "cursor")).rejects.toThrow("does not offer");
     await expect(api.sendWithoutApprovals("t1", { prompt: "x" })).rejects.toThrow("does not offer");
   });
 });
@@ -64,11 +64,15 @@ describe("Reviewer only", () => {
     expect(crewRoleLabel({})).toBeNull();
     expect(crewRoleLabel(null)).toBeNull();
     render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" }} />);
-    // The chip and its tooltip are Crew's own words (the frame), not the service's reason.
+    // The tooltip is the service's own reason, shown as an attribute (plain text).
     const chip = screen.getByText("Reviewer only");
-    expect(chip.closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
+    expect(chip.closest(".ct-role")).toHaveAttribute("title", "Not yet confined for writing work");
     expect(chip.closest(".ct-role")).toHaveAttribute("tabindex", "0");
-    expect(screen.queryByText(/Not yet confined/)).toBeNull();
+  });
+
+  it("falls back to Crew's own words when the service sends no reason", () => {
+    render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: null }} />);
+    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
   });
 
   it("draws nothing for any, and the reason is plain text", () => {
