@@ -91,6 +91,7 @@ async fn begin(
     claude_path: Option<&Path>,
     confinement: Option<Value>,
     send_id: u64,
+    message_id: &str,
 ) -> Result<Value> {
     let operation = if spec.resume.is_some() {
         "resume"
@@ -118,7 +119,7 @@ async fn begin(
         .request_as(
             send_id,
             "send",
-            json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec) }),
+            json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec), "messageId": message_id }),
         )
         .await
         .map_err(refused)
@@ -250,6 +251,7 @@ impl EngineDriver for HostDriver {
                     "The engine host is stopping. Send your message again.".into(),
                 )
             })?;
+        let message_id = crate::agents::driver::claude::prompt_uuid();
         let accepted = match begin(
             &connection,
             &spec,
@@ -257,6 +259,7 @@ impl EngineDriver for HostDriver {
             claude_path.as_deref(),
             confinement,
             send_id,
+            &message_id,
         )
         .await
         {
@@ -282,6 +285,7 @@ impl EngineDriver for HostDriver {
             controls,
             cancel_grace: self.pool.timings().cancel_grace,
             accepted,
+            message_id,
         };
         Ok(RunHandle {
             cancel,

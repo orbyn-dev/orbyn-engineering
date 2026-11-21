@@ -67,7 +67,7 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `type` | Fields | Result |
 |---|---|---|
 | `open` | `operation` (`create` \| `resume` \| `fork`), `sessionId`, `engineSessionId?`, `cwd`, `options` (model, effort, mode, MCP, system prompt; family-shaped, see below), `confinement` | `{engineSessionId}` |
-| `send` | `sessionId`, `message` (text, or text plus attachments by path), `options?` | `{runId, engineSessionId?, turnId?}` (accepted). Some SDKs assign the session id only on the first message; the host also sends a `session` frame (below) when the id or turn id becomes known later |
+| `send` | `sessionId`, `message` (text, or text plus attachments by path), `messageId?` (a UUID the core chose for this prompt; the host sends it to the engine as the message's `uuid` so the engine's own frames name it, and ignores it if the engine cannot), `options?` | `{runId, engineSessionId?, turnId?, messageId?}` (accepted). Some SDKs assign the session id only on the first message; the host also sends a `session` frame (below) when the id or turn id becomes known later |
 | `steer` | `sendId`, `messageId`, `text` | `{outcome, messageId}` (`accepted` \| `queued` \| `rejected`); a refusal is recorded against that message |
 | `cancel` | `sendId` | `{cancelled: bool}` |
 | `respond` | `requestId`, `decision`: for a `permission`, `{"behavior":"allow"\|"deny","message"?}` and nothing else; for a `question`, `{"answers":{"<question text>":"<answer>"}}` (several selections joined by a comma) or `{"behavior":"deny"}` when the person skips it | `null` |

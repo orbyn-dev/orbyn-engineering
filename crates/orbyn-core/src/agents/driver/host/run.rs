@@ -43,6 +43,44 @@ pub(super) struct Run {
     pub cancel_grace: std::time::Duration,
     /// What the `send` response already said.
     pub accepted: Value,
+    /// The id the prompt went in under; the engine's frames name it when its turn is queued and starts.
+    pub message_id: String,
+}
+
+/// Where the prompt's turn is, from the engine's own frames about this run's `messageId`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Turn {
+    /// The engine said nothing about the prompt, so everything it says counts.
+    Unknown,
+    /// The prompt is queued behind another turn: what arrives now is that turn's.
+    Queued,
+    /// The prompt's turn began.
+    Own,
+}
+
+impl Turn {
+    /// Reads a `delta` for what it says about the prompt. Returns whether it was only bookkeeping.
+    fn note(&mut self, update: &Value, message_id: &str) -> bool {
+        let named = |key: &str| update.get(key).and_then(Value::as_str) == Some(message_id);
+        match update.get("type").and_then(Value::as_str) {
+            Some("command_lifecycle") => {
+                if named("command_uuid") {
+                    match update.get("state").and_then(Value::as_str) {
+                        Some("queued") if *self == Self::Unknown => *self = Self::Queued,
+                        Some("started") => *self = Self::Own,
+                        _ => {}
+                    }
+                }
+                true
+            }
+            // The engine taking the prompt up echoes it.
+            Some("user") if named("uuid") => {
+                *self = Self::Own;
+                false
+            }
+            _ => false,
+        }
+    }
 }
 
 async fn sleep_until_opt(due: Option<tokio::time::Instant>) {
@@ -188,6 +226,7 @@ impl Run {
 
     pub(super) async fn drive(mut self) {
         let mut waiting = Waiting::new();
+        let mut turn = Turn::Unknown;
         let mut tasks: HashMap<String, String> = HashMap::new();
         let mut cancel_sent = false;
         let mut grace: Option<tokio::time::Instant> = None;
@@ -223,7 +262,19 @@ impl Run {
                 frame = self.route.frames.recv() => match frame {
                     None => break self.after_close().await,
                     Some(RunFrame::Delta(update)) => {
+                        if turn.note(&update, &self.message_id) {
+                            // Lifecycle bookkeeping makes no event.
+                            continue;
+                        }
+                        // Output between the prompt being queued and its turn starting is a leftover turn's:
+                        // shown, never counted as the answer (docs/engine-run-contract.md, rule 3).
+                        let leftover = turn == Turn::Queued;
                         for event in self.mapper.map(&update) {
+                            let event = if leftover {
+                                EngineEvent::Leftover(Box::new(event))
+                            } else {
+                                event
+                            };
                             if self.events.send(event).await.is_err() {
                                 self.abandon();
                                 return;

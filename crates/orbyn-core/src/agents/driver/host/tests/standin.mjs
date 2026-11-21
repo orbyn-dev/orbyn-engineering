@@ -88,6 +88,16 @@ async function play(sendId, text) {
     pending.set(`q-${sendId}`, { sendId });
     return;
   }
+  if (text.includes("[leftover")) {
+    // The engine ran a turn for its own leftovers first: the prompt is queued, the old turn speaks, then the prompt starts.
+    const uuid = runs.get(sendId).uuid;
+    const lifecycle = (state) => write({ type: "delta", sendId, update: { type: "command_lifecycle", command_uuid: uuid, state } });
+    lifecycle("queued");
+    write({ type: "delta", sendId, update: { text: "the old agent finished" } });
+    lifecycle("started");
+    if (text.includes("[leftover-answer]")) write({ type: "delta", sendId, update: { text: "here is your answer" } });
+    return done(sendId);
+  }
   if (text.includes("[limit]")) {
     return write({
       type: "runDone", sendId, ok: false,
@@ -114,12 +124,12 @@ const handlers = {
     return { engineSessionId: r.engineSessionId ?? `eng-${r.sessionId}` };
   },
   send: (r) => {
-    runs.set(r.id, { cancelled: false, text: String(r.message), session: r.sessionId });
+    runs.set(r.id, { cancelled: false, text: String(r.message), session: r.sessionId, uuid: r.messageId });
     setImmediate(() => {
       write({ type: "session", sendId: r.id, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}` });
       void play(r.id, String(r.message));
     });
-    return { runId: `run-${r.id}`, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}` };
+    return { runId: `run-${r.id}`, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}`, messageId: r.messageId };
   },
   respond: (r) => {
     const held = pending.get(r.requestId);
@@ -162,7 +172,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } catch {
     return;
   }
-  log({ type: request.type, requestId: request.requestId, decision: request.decision, sendId: request.sendId, taskId: request.taskId, text: request.text, confinement: Boolean(request.confinement) });
+  log({ type: request.type, requestId: request.requestId, decision: request.decision, sendId: request.sendId, taskId: request.taskId, text: request.text, messageId: request.messageId, confinement: Boolean(request.confinement) });
   const handler = handlers[request.type];
   try {
     if (!handler) throw Object.assign(new Error(`unsupported ${request.type}`), { name: "UnsupportedRequest" });
