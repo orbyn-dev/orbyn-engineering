@@ -234,10 +234,13 @@ close button returns to the page behind. The page is a labelled region, not a di
 
 The Orbyn Engineer Designs draw four screens that need engine work that does not
 exist yet (connected-app scopes and a remote-access relay): Sign in to Orbyn, Connect
-Orbyn Planner, Remote access and pairing, and On a phone. They are
-`preview-only` rows in `docs/design-inventory.md`, together with the phone preview's
-"Paired machine offline" state. They are built as real components on sample
-data in `web/src/features/platform`, behind a development-only build flag
+Orbyn Planner, Remote access and pairing, and On a phone. The four frames stay preview
+screens until the platform wiring lands. In `docs/design-inventory.md` the `preview-only`
+rows are Connect Orbyn Planner, Remote access and pairing, On a phone and the phone
+preview's "Paired machine offline" state; Sign in to Orbyn now counts as built because
+Settings › Account implements it (`web/src/features/account`). They are built as real
+components on sample data in `web/src/features/platform`, behind a development-only
+build flag
 (`__ORBYN_PREVIEWS__`, true outside `vite build`). Nothing in the app links to them;
 they open by hash route only: `#/preview/account`, `#/preview/connect-planner`,
 `#/preview/pair-phone` and `#/preview/phone`. In a production build the routes fall

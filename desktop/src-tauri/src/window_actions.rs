@@ -16,8 +16,10 @@ pub fn target<'a>(id: &str, focused: Option<&'a str>) -> Target<'a> {
         "toggle-sidebar" => Target::MainCommand("sidebar.toggle"),
         "palette" => Target::MainCommand("commandPalette.toggle"),
         "speech-start" | "speech-stop" => Target::Responder,
-        "reload" | "force-reload" | "devtools" | "zoom-in" | "zoom-out" | "zoom-reset"
-        | "paste-text" | "close-window" => focused.map_or(Target::None, Target::Window),
+        #[cfg(any(debug_assertions, feature = "devtools"))]
+        "devtools" => focused.map_or(Target::None, Target::Window),
+        "reload" | "force-reload" | "zoom-in" | "zoom-out" | "zoom-reset" | "paste-text"
+        | "close-window" => focused.map_or(Target::None, Target::Window),
         _ => Target::None,
     }
 }
@@ -37,7 +39,6 @@ mod tests {
             "close-window",
             "reload",
             "force-reload",
-            "devtools",
             "zoom-in",
             "zoom-out",
             "zoom-reset",
@@ -52,6 +53,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn devtools_require_debug_or_an_explicit_tester_build() {
+        let enabled = cfg!(any(debug_assertions, feature = "devtools"));
+        for label in ["main", "preview-61-62"] {
+            assert_eq!(
+                target("devtools", Some(label)),
+                if enabled {
+                    Target::Window(label)
+                } else {
+                    Target::None
+                },
+            );
+        }
+        assert_eq!(target("devtools", None), Target::None);
+    }
     #[test]
     fn global_commands_belong_to_main_even_with_a_viewer_or_no_focus() {
         for focused in [Some("preview-61-62"), Some("main"), None] {

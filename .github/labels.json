@@ -21,6 +21,7 @@
   { "name": "platform: windows", "color": "f9d0c4", "description": "Windows only" },
   { "name": "needs triage", "color": "e99695", "description": "New issue, not yet reviewed by a maintainer" },
   { "name": "full-ci", "color": "fbca04", "description": "Run the full CI suite on every OS for this pull request" },
+  { "name": "ci: main red", "color": "b60205", "description": "CI failed on main; one issue per incident" },
   { "name": "parity", "color": "006b75", "description": "A row in docs/parity.md" },
   { "name": "good first issue", "color": "7057ff", "description": "Good for newcomers" },
   { "name": "help wanted", "color": "008672", "description": "Extra attention is needed" },

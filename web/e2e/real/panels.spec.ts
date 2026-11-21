@@ -1,7 +1,8 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { chatSettled, chatTop, expectChatUntouched, mainTop, wheelBothEnds } from "./panel-scroll";
 import { openDetails, openPanelTab, send, settled, startProject, threadIdOf, type Service } from "./service";
 
 /** The chat, the panels and the sidebar scroll on their own. */
@@ -10,29 +11,8 @@ let service: Service;
 let projectId = "";
 
 const chat = (page: Page) => page.getByRole("log", { name: "Thread messages" });
-const chatTop = (page: Page) => chat(page).evaluate((element) => element.scrollTop);
-const mainTop = (page: Page) => page.locator("main").first().evaluate((element) => element.scrollTop);
 const gap = (page: Page) =>
   chat(page).evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight);
-
-/** Wheels over a target to both ends and past them, as a trackpad overscroll would. */
-async function wheelBothEnds(page: Page, target: Locator) {
-  await target.hover();
-  for (const delta of [4000, 4000, 4000, -4000, -4000, -4000, 4000, 4000]) {
-    await page.mouse.wheel(0, delta);
-    await page.waitForTimeout(60);
-  }
-}
-
-/** Resolves once the chat's height and position hold still for 400 ms. */
-async function chatSettled(page: Page) {
-  const state = () => chat(page).evaluate((element) => `${element.scrollHeight}/${element.scrollTop}`);
-  await expect(async () => {
-    const before = await state();
-    await page.waitForTimeout(400);
-    expect(await state()).toBe(before);
-  }).toPass();
-}
 
 /**
  * Parks the chat near 600px. A finished turn folds first, which would move the position set here. Rows that mount at the
@@ -45,13 +25,6 @@ async function parkChat(page: Page) {
     element.scrollTop = 600;
   });
   await chatSettled(page);
-}
-
-async function expectChatUntouched(page: Page, target: Locator) {
-  const before = await chatTop(page);
-  await wheelBothEnds(page, target);
-  expect(await chatTop(page)).toBe(before);
-  expect(await mainTop(page)).toBe(0);
 }
 
 test.beforeAll(async () => {

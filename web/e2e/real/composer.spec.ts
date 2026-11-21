@@ -59,10 +59,13 @@ test("# finds a pull request and @ finds another thread", async ({ page }) => {
   await box(page).pressSequentially("see #7");
   await expect(page.getByRole("option", { name: /#77/ })).toBeVisible();
   await box(page).press("Enter");
-  await expect(box(page)).toHaveValue("see [#77 Tidy the docs](https://github.com/o/r/pull/77) ");
+  await expect(box(page)).toHaveValue("see ");
+  const pullChip = page.locator('ul[aria-label="Context chips"] li[data-kind="pull"]');
+  await expect(pullChip).toHaveCount(1);
+  await expect(pullChip.getByTitle("#77 Tidy the docs")).toBeVisible();
   await box(page).pressSequentially("and @Payment");
   await page.getByRole("option", { name: /Payment retries/ }).click();
-  await expect(box(page)).toHaveValue("see [#77 Tidy the docs](https://github.com/o/r/pull/77) and ");
+  await expect(box(page)).toHaveValue("see and ");
   const chip = page.locator('ul[aria-label="Context chips"] li[data-kind="thread"]');
   await expect(chip).toHaveCount(1);
   await expect(chip.getByTitle("Payment retries")).toBeVisible();

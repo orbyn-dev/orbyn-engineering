@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
-    AppMode, AppUpdateStatus, ApplyAllResult, EngineStatus, EngineUpdateStatus,
-    LibraryUpdateStatus, UpdateStatus, UpdateStep,
+    AppMode, AppUpdatePhase, AppUpdateRequest, AppUpdateStatus, ApplyAllResult, EngineStatus,
+    EngineUpdateStatus, LibraryUpdateStatus, UpdateStatus, UpdateStep,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -34,10 +34,28 @@ const STATUS_FRESH: Duration = Duration::from_secs(20);
 /// reads again on `data_changed`, but it may have missed one, so this stays short.
 const STATUS_MAX_AGE: Duration = Duration::from_secs(60);
 
+#[derive(Clone, Copy)]
+enum AppIntent {
+    Download,
+    Install,
+    Complete,
+}
+
 #[derive(Default)]
 struct Known {
     app_latest: Option<String>,
     app_notes: Option<String>,
+    release_id: Option<String>,
+    phase: AppUpdatePhase,
+    operation: u32,
+    operation_release: Option<String>,
+    operation_version: Option<String>,
+    operation_notes: Option<String>,
+    operation_actor: String,
+    install_after_download: bool,
+    update_error: Option<String>,
+    failed_phase: Option<AppUpdatePhase>,
+    failed_version: Option<String>,
     unconfigured: bool,
     downloaded: Option<u64>,
     total: Option<u64>,
@@ -135,10 +153,11 @@ impl UpdateCenter {
         if mode != "automatic" || self.idle_for() < idle {
             return false;
         }
-        if !self.status().await.app.can_apply {
+        let app = self.status().await.app;
+        if !app.can_apply {
             return false;
         }
-        match self.apply_app("system:auto-update").await {
+        match self.apply_reported_app("system:auto-update", app) {
             Ok(()) => true,
             Err(error) => {
                 tracing::debug!(%error, "an automatic update did not start");
@@ -206,36 +225,179 @@ impl UpdateCenter {
             let mut known = lock(&self.known);
             match message.get("type").and_then(Value::as_str) {
                 Some("app_update_available") => {
+                    let Some(release_id) = text("release_id") else {
+                        return;
+                    };
+                    let changed = known
+                        .release_id
+                        .as_ref()
+                        .is_some_and(|old| old != &release_id);
+                    known.release_id = Some(release_id);
                     known.app_latest = text("version");
                     known.app_notes = text("notes");
+                    if changed
+                        && (known.phase != AppUpdatePhase::Installing
+                            || message.get("settled").and_then(Value::as_bool) == Some(true))
+                    {
+                        self.revoke_app_consent(&mut known);
+                    }
+                    if matches!(
+                        known.phase,
+                        AppUpdatePhase::Idle | AppUpdatePhase::Available
+                    ) {
+                        known.phase = AppUpdatePhase::Available;
+                    }
                     known.unconfigured = false;
                 }
                 Some("app_update_none") => {
+                    if let Some(operation) = message.get("operation").and_then(Value::as_u64) {
+                        if operation != u64::from(known.operation)
+                            || text("release_id") != known.operation_release
+                            || !(matches!(
+                                known.phase,
+                                AppUpdatePhase::Downloading
+                                    | AppUpdatePhase::Preparing
+                                    | AppUpdatePhase::Ready
+                            ) || (known.phase == AppUpdatePhase::Installing
+                                && message.get("settled").and_then(Value::as_bool) == Some(true)))
+                        {
+                            return;
+                        }
+                        // Fresh preflight withdrew the release before any transfer. Reuse the no-update state.
+                        known.phase = AppUpdatePhase::Idle;
+                        known.operation_version = None;
+                        known.operation_notes = None;
+                        known.downloaded = None;
+                        known.total = None;
+                        known.update_error = None;
+                        known.failed_phase = None;
+                        known.failed_version = None;
+                        known.install_after_download = false;
+                        self.workspace.release_install();
+                    }
                     known.app_latest = None;
                     known.app_notes = None;
+                    known.release_id = None;
+                    if known.phase == AppUpdatePhase::Available {
+                        known.phase = AppUpdatePhase::Idle;
+                    }
                     known.unconfigured = false;
                 }
                 Some("app_update_unconfigured") => {
                     known.app_latest = None;
                     known.unconfigured = true;
                 }
-                Some("app_update_progress") => {
-                    known.downloaded = message.get("downloaded").and_then(Value::as_u64);
-                    known.total = message.get("total").and_then(Value::as_u64);
-                }
                 Some("app_update_check_failed") => {
                     known.error = text("message");
                 }
-                Some("app_update_failed") => {
-                    known.error = text("message");
-                    known.downloaded = None;
-                    known.total = None;
-                    self.workspace.release_install();
+                Some(
+                    kind @ ("app_update_progress"
+                    | "app_update_preparing"
+                    | "app_update_ready"
+                    | "app_update_failed"),
+                ) => {
+                    // A replaced transfer or a different release cannot change this operation.
+                    if message.get("operation").and_then(Value::as_u64)
+                        != Some(u64::from(known.operation))
+                        || text("release_id") != known.operation_release
+                        || !matches!(
+                            known.phase,
+                            AppUpdatePhase::Downloading
+                                | AppUpdatePhase::Preparing
+                                | AppUpdatePhase::Installing
+                        )
+                    {
+                        return;
+                    }
+                    match kind {
+                        "app_update_progress" if known.phase == AppUpdatePhase::Downloading => {
+                            known.downloaded = message.get("downloaded").and_then(Value::as_u64);
+                            known.total = message.get("total").and_then(Value::as_u64);
+                        }
+                        "app_update_preparing" if known.phase == AppUpdatePhase::Downloading => {
+                            known.phase = AppUpdatePhase::Preparing
+                        }
+                        "app_update_ready"
+                            if matches!(
+                                known.phase,
+                                AppUpdatePhase::Downloading | AppUpdatePhase::Preparing
+                            ) =>
+                        {
+                            if known.install_after_download {
+                                known.phase = AppUpdatePhase::Installing;
+                                let install = self.audit(&known.operation_actor, "app.update.install", known.operation_release.as_deref().unwrap_or_default())
+                                    .and_then(|()| {
+                                        if self.to_shell(json!({"type":"install_app_update", "release_id":known.operation_release, "operation":known.operation})) { Ok(()) }
+                                        else { Err(CoreError::UpdateFailed("The desktop shell is gone.".into())) }
+                                    });
+                                if let Err(error) = install {
+                                    known.phase = AppUpdatePhase::Ready;
+                                    known.update_error = Some(error.public_message());
+                                    known.failed_phase = Some(AppUpdatePhase::Installing);
+                                    self.workspace.release_install();
+                                }
+                            } else {
+                                known.phase = AppUpdatePhase::Ready;
+                                self.workspace.release_install();
+                            }
+                        }
+                        "app_update_failed" => {
+                            if known.release_id != known.operation_release {
+                                self.revoke_app_consent(&mut known);
+                            } else {
+                                let installing = known.phase == AppUpdatePhase::Installing;
+                                known.failed_phase = Some(if installing {
+                                    AppUpdatePhase::Installing
+                                } else {
+                                    AppUpdatePhase::Downloading
+                                });
+                                if message.get("changed").and_then(Value::as_bool) == Some(true) {
+                                    known.failed_phase = None;
+                                }
+                                known.failed_version = known.operation_version.clone();
+                                known.update_error = text("message");
+                                known.phase = if installing
+                                    && message.get("retained").and_then(Value::as_bool)
+                                        == Some(true)
+                                {
+                                    AppUpdatePhase::Ready
+                                } else if known.release_id.is_some() {
+                                    AppUpdatePhase::Available
+                                } else {
+                                    AppUpdatePhase::Idle
+                                };
+                                known.downloaded = None;
+                                known.total = None;
+                                known.install_after_download = false;
+                                self.workspace.release_install();
+                            }
+                        }
+                        _ => return,
+                    }
                 }
                 _ => return,
             }
         }
         self.changed();
+    }
+
+    fn revoke_app_consent(&self, known: &mut Known) {
+        known.phase = if known.release_id.is_some() {
+            AppUpdatePhase::Available
+        } else {
+            AppUpdatePhase::Idle
+        };
+        known.downloaded = None;
+        known.total = None;
+        known.install_after_download = false;
+        known.operation_release = None;
+        known.operation_version = None;
+        known.operation_notes = None;
+        known.failed_phase = None;
+        known.failed_version = None;
+        known.update_error =
+            Some("The available update changed. Review the new version before downloading.".into());
+        self.workspace.release_install();
     }
 
     /// Looks at the world without changing it. Each source fails on its own.
@@ -432,48 +594,198 @@ impl UpdateCenter {
             AppMode::Desktop if known.unconfigured => {
                 Some("This build has no update channel.".to_owned())
             }
-            AppMode::Desktop if !newer => Some("Orbyn is up to date.".to_owned()),
+            AppMode::Desktop if !newer && known.phase != AppUpdatePhase::Ready => {
+                Some("Orbyn is up to date.".to_owned())
+            }
+            AppMode::Desktop
+                if matches!(
+                    known.phase,
+                    AppUpdatePhase::Downloading
+                        | AppUpdatePhase::Preparing
+                        | AppUpdatePhase::Installing
+                ) =>
+            {
+                Some("An app update is already running.".to_owned())
+            }
             AppMode::Desktop if runs_active => Some("Finish or stop active runs first.".to_owned()),
             AppMode::Desktop => None,
         };
         AppUpdateStatus {
             current: APP_VERSION.to_owned(),
-            latest: known.app_latest.clone(),
-            notes: known.app_notes.clone(),
+            latest: if matches!(
+                known.phase,
+                AppUpdatePhase::Downloading
+                    | AppUpdatePhase::Preparing
+                    | AppUpdatePhase::Ready
+                    | AppUpdatePhase::Installing
+            ) {
+                known.operation_version.clone()
+            } else {
+                known.app_latest.clone()
+            },
+            notes: if matches!(
+                known.phase,
+                AppUpdatePhase::Downloading
+                    | AppUpdatePhase::Preparing
+                    | AppUpdatePhase::Ready
+                    | AppUpdatePhase::Installing
+            ) {
+                known.operation_notes.clone()
+            } else {
+                known.app_notes.clone()
+            },
             mode,
             can_apply: blocked_reason.is_none(),
             blocked_reason,
             unconfigured: known.unconfigured,
+            phase: known.phase,
+            release_id: if matches!(
+                known.phase,
+                AppUpdatePhase::Downloading
+                    | AppUpdatePhase::Preparing
+                    | AppUpdatePhase::Ready
+                    | AppUpdatePhase::Installing
+            ) {
+                known.operation_release.clone()
+            } else {
+                known.release_id.clone()
+            },
+            operation: known.operation,
+            update_error: known.update_error.clone(),
+            failed_phase: known.failed_phase,
+            failed_version: known.failed_version.clone(),
             downloaded: known.downloaded,
             total: known.total,
         }
     }
 
-    /// Asks the shell to install. Admission stays held until exit, or until the
-    /// shell reports that the install failed.
+    /// Explicit consent to fetch one release. This never installs it.
+    pub async fn download_app(&self, actor: &str, request: AppUpdateRequest) -> Result<()> {
+        self.start_app(actor, request, AppIntent::Download)
+    }
+
+    /// Installs only the verified payload the person saw as ready.
+    pub async fn install_app(&self, actor: &str, request: AppUpdateRequest) -> Result<()> {
+        self.start_app(actor, request, AppIntent::Install)
+    }
+
+    /// Explicit consent to download and then install this exact checked release/operation.
+    pub async fn complete_app(&self, actor: &str, request: AppUpdateRequest) -> Result<()> {
+        self.start_app(actor, request, AppIntent::Complete)
+    }
+
+    /// Update everything and automatic mode explicitly select both phases.
     pub async fn apply_app(&self, actor: &str) -> Result<()> {
         let app = self.status().await.app;
-        if app.mode == AppMode::Server {
+        self.apply_reported_app(actor, app)
+    }
+
+    fn apply_reported_app(&self, actor: &str, app: AppUpdateStatus) -> Result<()> {
+        let request = AppUpdateRequest {
+            release_id: app.release_id.unwrap_or_default(),
+            operation: app.operation,
+        };
+        self.start_app(actor, request, AppIntent::Complete)
+    }
+
+    fn start_app(&self, actor: &str, request: AppUpdateRequest, intent: AppIntent) -> Result<()> {
+        if self.mode() == AppMode::Server {
             return Err(CoreError::UpdateUnavailable(
-                app.blocked_reason.unwrap_or_default(),
+                "A server cannot replace itself.".into(),
             ));
         }
+        let mut known = lock(&self.known);
+        let install = matches!(intent, AppIntent::Install)
+            || (matches!(intent, AppIntent::Complete) && known.phase == AppUpdatePhase::Ready);
+        let busy = matches!(
+            known.phase,
+            AppUpdatePhase::Downloading | AppUpdatePhase::Preparing | AppUpdatePhase::Installing
+        );
+        if busy {
+            let same_action = match intent {
+                // A Complete retry cannot upgrade a concurrent download-only consent.
+                AppIntent::Complete => known.install_after_download,
+                AppIntent::Install => known.phase == AppUpdatePhase::Installing,
+                AppIntent::Download => matches!(
+                    known.phase,
+                    AppUpdatePhase::Downloading | AppUpdatePhase::Preparing
+                ),
+            };
+            if same_action
+                && known.operation_release.as_deref() == Some(&request.release_id)
+                && (request.operation == known.operation
+                    || (!matches!(intent, AppIntent::Install)
+                        && request.operation.checked_add(1) == Some(known.operation)))
+            {
+                return Ok(());
+            }
+            return Err(CoreError::UpdateUnavailable(
+                "An app update is already running.".into(),
+            ));
+        }
+        let expected = if install {
+            known.operation_release.as_ref()
+        } else {
+            known.release_id.as_ref()
+        };
+        if expected != Some(&request.release_id) || request.operation != known.operation {
+            return Err(CoreError::UpdateUnavailable(
+                "The available update changed. Review the new version before downloading.".into(),
+            ));
+        }
+        if (install && known.phase != AppUpdatePhase::Ready)
+            || (!install && known.phase != AppUpdatePhase::Available)
+            || (!install
+                && !known
+                    .app_latest
+                    .as_deref()
+                    .is_some_and(|v| is_newer(v, APP_VERSION)))
+        {
+            return Err(CoreError::UpdateUnavailable("No update is ready.".into()));
+        }
+        // Known serializes duplicate requests; admission atomically excludes active/new runs.
         self.workspace.hold_for_install()?;
-        if !app.can_apply {
+        let action = if install {
+            "app.update.install"
+        } else {
+            "app.update.download"
+        };
+        if let Err(error) = self.audit(actor, action, &request.release_id) {
             self.workspace.release_install();
-            return Err(CoreError::UpdateUnavailable(
-                app.blocked_reason.unwrap_or_default(),
-            ));
+            return Err(error);
         }
-        self.audit(
-            actor,
-            "app.update.install",
-            app.latest.as_deref().unwrap_or(""),
-        )?;
-        if !self.to_shell(json!({ "type": "install_app_update" })) {
+        let operation = if install {
+            known.operation
+        } else {
+            known.operation.checked_add(1).ok_or_else(|| {
+                self.workspace.release_install();
+                CoreError::UpdateUnavailable("Restart Orbyn before updating.".into())
+            })?
+        };
+        let line = json!({"type":if install {"install_app_update"} else {"download_app_update"}, "release_id":request.release_id, "operation":operation});
+        if !self.to_shell(line) {
             self.workspace.release_install();
             return Err(CoreError::UpdateFailed("The desktop shell is gone.".into()));
         }
+        if !install {
+            known.operation = operation;
+            known.operation_release = Some(request.release_id);
+            known.operation_version = known.app_latest.clone();
+            known.operation_notes = known.app_notes.clone();
+            known.operation_actor = actor.to_owned();
+        }
+        known.phase = if install {
+            AppUpdatePhase::Installing
+        } else {
+            AppUpdatePhase::Downloading
+        };
+        known.install_after_download = matches!(intent, AppIntent::Complete);
+        known.update_error = None;
+        known.failed_phase = None;
+        known.failed_version = None;
+        known.downloaded = None;
+        known.total = None;
+        drop(known);
         self.changed();
         Ok(())
     }
@@ -504,7 +816,7 @@ impl UpdateCenter {
             }
         }
         if status.app.can_apply {
-            let outcome = self.apply_app(actor).await;
+            let outcome = self.apply_reported_app(actor, status.app);
             record(&mut steps, "app".to_owned(), outcome);
         }
         Ok(self.finish(steps))
@@ -588,3 +900,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(test)]
+mod lifecycle_tests;

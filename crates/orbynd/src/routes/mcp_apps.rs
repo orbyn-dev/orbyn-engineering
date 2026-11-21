@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 use axum::Router;
-use axum::routing::{delete, post, put};
+use axum::routing::{delete, get, post, put};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -25,6 +25,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/threads/{id}/mcp-apps/{render_id}/context",
             put(context),
+        )
+        .route(
+            "/api/threads/{id}/mcp-apps/{render_id}/tool-info",
+            get(tool_info),
         )
         .route("/api/threads/{id}/mcp-app-context", delete(clear_context))
 }
@@ -76,6 +80,20 @@ pub async fn message(
             .core
             .mcp_app_message(&id, &render_id, &body.text, body.confirmed, LOCAL_USER)?;
     Ok(Json(queued))
+}
+
+/// The app's own tool as its MCP server advertises it. The page names nothing here:
+/// the server and tool come from the render's own record, so no request payload can
+/// choose or override what the host is told.
+pub async fn tool_info(
+    State(state): State<AppState>,
+    Path((id, render_id)): Path<(String, String)>,
+) -> ApiResult<impl IntoResponse> {
+    let info = state
+        .core
+        .mcp_app_tool_info(&id, &render_id, LOCAL_USER)
+        .await?;
+    Ok(Json(info))
 }
 
 #[derive(Deserialize)]
