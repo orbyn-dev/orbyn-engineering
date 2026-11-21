@@ -1,4 +1,4 @@
-import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost, WelcomePage } from "../../features/onboarding";
+import { DraftView, EmptyProject, TrustFolder, WelcomeHost, WelcomePage } from "../../features/onboarding";
 import { CrewSurface } from "../../features/crew";
 import { WithFilePanel } from "../../features/panels";
 import { IssuesPage } from "../../features/issues";
@@ -13,12 +13,12 @@ import type { Route } from "../../product/state/route";
 export type PageRoute = Exclude<Route, { name: "settings" }>;
 
 function Home({ needsProject }: { needsProject: boolean }) {
-  // The welcome steps take the whole page while they are open; the empty home is what they leave.
+  // The welcome steps take the whole page while they are open; with no project, the Welcome page is what they leave.
   const welcome = useUi((state) => state.welcomeStep !== null);
   return (
     <div className="home-stack">
       <WelcomeHost needsProject={needsProject} />
-      {welcome ? null : needsProject ? <NoProjects /> : <DraftView key="draft" projectId={null} />}
+      {welcome ? null : needsProject ? <WelcomePage /> : <DraftView key="draft" projectId={null} />}
     </div>
   );
 }
