@@ -662,6 +662,21 @@ the service stops. Every forge write is audited before it happens. A stack is th
 bases are each other's heads; a stack action works from the bottom and stops at the
 first failure. Bulk close carries on past a refusal and reports each number.
 
+The explicit VCS methods beside the branch routes are `Local`: `POST
+.../vcs/refresh-status` reads the checkout's branch or detached HEAD, HEAD, tracking
+ref, ahead/behind and working-tree counts now, and drops the explorer's kept list and
+letters for the project so its next read is Git's too; `POST .../vcs/refs` creates a
+branch at an optional start without switching (the reference client's `createRef` is
+separate from `switchRef`); `POST .../vcs/refs/switch` moves the checkout to an
+existing ref; and `DELETE /api/projects/:id/worktrees/:worktree` removes one worktree
+it made (the reference client's `removeWorktree`). A folder outside Git is `400` for
+all four, and the removal needs the person key: it deletes files, so only a linked
+worktree under the project's sibling `<repo>-wt` root with no thread working in it is
+removed. The removal is refused, with no paths in the error, when `git status --porcelain
+--ignored` lists anything in the worktree (modified, untracked or ignored files such as
+`.env` and build output), because `git worktree remove` without force still deletes
+ignored files. Commits and branches are never touched.
+
 Linked pull requests are polled every two minutes, and a refresh links the open pull
 request of the checkout's branch. The link is kept per thread and number, so a pull
 request's own linked threads are the project's threads that linked it.
@@ -1568,6 +1583,16 @@ on every filesystem. A path is judged where it lands, so a link into `.git` or a
 different spelling of it on a case-insensitive disk is refused too. These saves are the
 user's own edits, audited, and differ from rule 4, which covers what Orbyn adds on its
 own.
+
+`POST .../files/mutate` is the general write the reference client's project `mutate`
+needs: one tagged action creates a file or folder, moves (renames) an entry, or deletes
+a file or empty folder. It reuses the explorer's `ExplorerFileAction` contract, guard and
+active-session fence, scoped by thread instead of worktree id, so the same refusals hold:
+no overwrite, no recursive delete, no parent creation, no absolute or `..` path, no links
+or special files, and nothing in Git's folder, Orbyn's data folder or the library's
+`repo/`. It needs the person key like the other file writes, audits the attempt before
+any effect and its outcome after, and is refused while a run or an engine console is
+active in a folder that overlaps the checkout.
 
 `GET .../files/metadata?path=` answers what one entry is for the file browser without
 reading it: its kind, size, permission bits and modified time, and whether the entry
@@ -3472,6 +3497,7 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
 | `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
+| `DELETE /api/projects/:id/worktrees/:worktree` | Removes one linked worktree under the project's sibling `<repo>-wt` root when no thread works in it, through `git worktree remove` without force, after refusing when the worktree holds any modified, untracked or ignored file; `204`, `403` untrusted/locked/foreign/in use/holds local files, `404` unknown member, `400` for the primary checkout or a folder outside Git |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
@@ -3554,10 +3580,13 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
 | `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
+| `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
 | `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
+| `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
+| `POST /api/threads/:id/vcs/refs`, `POST .../vcs/refs/switch` | `CreateBranch` creates a branch at an optional start without switching (`201`); `SwitchBranch` switches (`204`); `400` invalid name or outside Git, `409 thread_busy`/`git_failed` |
 | `GET /api/forges?rescan=true` | `ForgeStatus[]`; the last answer for a minute, then read again in the background; `rescan` asks the CLIs now |
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |

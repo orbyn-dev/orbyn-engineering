@@ -24,6 +24,9 @@ describe("which requests carry the person key", () => {
     expect(sendsPersonKey("POST", "/api/threads/t1/console")).toBe(true);
     expect(sendsPersonKey("PATCH", "/api/threads/t1")).toBe(true);
     expect(sendsPersonKey("PUT", "/api/threads/t1/files/content")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/files/mutate")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/projects/p/worktrees/w")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/threads/t1/vcs/refresh-status")).toBe(false);
     expect(sendsPersonKey("POST", "/api/account/sign-in/digits")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/tasks/t1/merge")).toBe(true);
     expect(sendsPersonKey("POST", "/api/crew/autopilot/merge-queue/t1/resolve")).toBe(true);
@@ -48,6 +51,7 @@ describe("which requests carry the person key", () => {
       ["POST", "/api/approvals//decide"],
       ["POST", "/api/projects/p/worktrees/w/file"],
       ["GET", "/api/threads/t1"],
+      ["POST", "/api/threads/t1/vcs/refs"],
       ["POST", "/api/threads/t1/queue"],
       ["POST", "/api/threads/t1/steer"],
       ["POST", "/api/threads/t1/git/action"],
