@@ -22,7 +22,12 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
 ## Hard product rules
 
 1. Engines keep their own login. Orbyn runs the unmodified CLI, shows status and
-   opens the vendor's own sign-in flow. It never reads, stores or forwards tokens.
+   opens the vendor's own sign-in flow. It never reads, stores or forwards tokens, with
+   one owner-approved exception: an API key the person chooses to keep for an engine that
+   takes one (today only Cursor). It lives in the OS keychain alone (`orbyn-core`
+   `credentials`), only while that engine's setting is on, is never shown again, and
+   leaves the keychain only as the engine host's spawn environment, never in a frame, a
+   log or an answer. The person can remove it at any time.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
    sessions because it ignores OAuth login.
