@@ -3303,6 +3303,18 @@ saved dismissal. Storage failures suppress the notice, and a dismissal from anot
 tab wins over an in-flight check. Core uses a bounded, noninteractive `gh api` GET
 for the fixed repository; it captures no output, reads no credential file and never
 stars anything. Missing tools or an unavailable check do not interrupt a send.
+The source-control reads answer from local data and the person's own forge login.
+`GET /api/source-control/repository` matches an `owner/name` against the repository
+identity each registered checkout's own Git config names, read without transport; it
+returns the app's checkout records for it and makes no forge call, so a repository the
+person has not added reads as not found rather than as a forge lookup. A project whose
+own identity could not be observed leaves `complete` false instead of proving absence.
+`GET /api/source-control/starred` is the person's starred GitHub repositories, read
+once through their own `gh api user/starred` as one page of 100: a full page reports
+`truncated`, and a missing tool, a signed-out login or a failed read reports
+`unavailable` rather than an empty list. Neither read holds a credential, writes
+anything or stars anything.
+
 The web reload flow is qualified. Native viewer storage now has a stable bundled
 origin, with Light persistence qualified across isolated macOS quit/relaunch and
 service recovery. Star-notice dismissal across native quit/relaunch itself remains
@@ -3376,6 +3388,8 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/title` | Regenerate the title from the conversation. Spends engine usage |
 | `GET, PUT /api/settings` | `ServerSettings` |
 | `GET /api/source-control/repository-star` | Fixed product repository star status; full-app read, no star mutation |
+| `GET /api/source-control/repository?repository=` | `RepositoryLookup`: the registered checkouts whose own Git config names that `owner/name`; local only, no forge call |
+| `GET /api/source-control/starred` | `StarredRepositories`: the person's starred GitHub repositories through their own CLI, one page of 100; `unavailable` says why none could be read |
 | `GET, POST /api/tasks` | `ScheduledTask[]`; `UpsertTask` creates or changes |
 | `PUT /api/tasks/:id` | The whole `UpsertTask`; `404` if unknown, `400` for another task's `id` or another project |
 | `DELETE /api/tasks/:id`, `POST /api/tasks/:id/enabled` | Delete; `TaskEnabled` pauses or resumes |
