@@ -143,7 +143,7 @@ exists: 98, partial: 68, missing: 60, preview-only: 5.)
 | 102 | `pr-detail-files` | Pull requests, every state | Detail: Files changed | `features/pulls/detail/PullCode.tsx` | built | P2 | |
 | 103 | `pr-detail-checks` | Pull requests, every state | Detail: Checks with a log | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
 | 104 | `pr-detail-merge-menu` | Pull requests, every state | Detail: merge options menu | `features/pulls/detail/PullDetail.tsx` | built | P2 | |
-| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/pulls/detail/PullDetail.tsx:526; features/thread/PullChip.tsx` | built | P2 | |
+| 105 | `pr-detail-thread` | Pull requests, every state | Detail: thread linked to the pull request | `features/pulls/detail/PullLinkedCards.tsx; features/thread/PullChip.tsx` | built | P2 | |
 | 106 | `pr-phone-list` | Pull requests, every state | Phone: Pull requests list | `missing` | missing | P2 | |
 | 107 | `pr-phone-detail` | Pull requests, every state | Phone: pull request detail | `missing` | missing | P2 | |
 | 108 | `s-general` | Settings | Settings · General | `features/settings/sections/GeneralSection.tsx:72` | built | P1 | |

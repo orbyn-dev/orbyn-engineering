@@ -34,14 +34,14 @@ beforeEach(() => {
     issues: [],
   } as never);
   useConnection.setState({ offline: false, serviceDown: false });
-  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "browser", "activity", "side", "tools", FILE], panelTabsClosed: ["tools"] });
+  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", FILE], panelTabsClosed: ["tools", "linked"] });
 });
 
 function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximize?: () => void; maximized?: boolean } = {}) {
   return render(
     <PanelHost
       thread={thread}
-      sideChat={<div>Side chat content</div>}
+      content={{ side: <div>Side chat content</div>, linked: <div>Linked threads content</div> }}
       mode={props.mode ?? "docked"}
       closing={false}
       moves={false}
@@ -84,7 +84,7 @@ describe("surface tabs", () => {
   });
 
   it("slots the Tools tab in once it is open, as one more icon-only slot", () => {
-    useUi.setState({ panelTabsClosed: [] });
+    useUi.setState({ panelTabsClosed: ["linked"] });
     panel();
     expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "notes.md"]);
     expect(screen.getByRole("tab", { name: "Tools" })).toHaveAttribute("data-tip", "Tools");
@@ -102,6 +102,17 @@ describe("surface tabs", () => {
     await user.click(screen.getByRole("tab", { name: "Side chat" }));
     expect(screen.getByText("Side chat content")).toBeInTheDocument();
     expect(useUi.getState().panelTab).toBe("side");
+  });
+
+  it("opens the Linked threads tab beside the Side chat one, and the side chat stays", async () => {
+    const user = userEvent.setup();
+    useUi.setState({ panelTabsClosed: ["tools"] });
+    panel();
+    await user.click(screen.getByRole("tab", { name: "Linked threads" }));
+    expect(screen.getByText("Linked threads content")).toBeInTheDocument();
+    expect(useUi.getState().panelTab).toBe("linked");
+    await user.click(screen.getByRole("tab", { name: "Side chat" }));
+    expect(screen.getByText("Side chat content")).toBeInTheDocument();
   });
 
   it("keeps the layout controls: maximise and close", async () => {
@@ -175,10 +186,10 @@ describe("surface tabs", () => {
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     // Only entries whose commands have keys show them.
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Open file…Ctrl+P"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Open file…Ctrl+P"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
     expect(useUi.getState().panelTab).toBe("tools");
-    expect(useUi.getState().panelTabsClosed).toEqual([]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["linked"]);
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.queryByRole("menuitem", { name: "Reset tab order" })).not.toBeInTheDocument();
   });
@@ -207,7 +218,7 @@ describe("surface tabs", () => {
     panel();
     screen.getByRole("tab", { name: "Side chat" }).focus();
     await user.keyboard("{Backspace}");
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "side"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "side"]);
     expect(screen.getByRole("tab", { name: "notes.md" })).toHaveFocus();
   });
 
@@ -221,7 +232,7 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTabOrder).not.toContain(FILE);
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.queryByRole("menuitem", { name: "notes.md" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked"]);
   });
 
   it("greys out Changes in the launcher for a folder outside Git", async () => {
@@ -330,7 +341,7 @@ describe("surface tabs", () => {
     screen.getByRole("tab", { name: "Browser" }).focus();
     await user.keyboard("{Delete}");
     expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "browser"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "browser"]);
   });
 
   it("opens a closed surface when something reveals it", () => {
@@ -583,7 +594,7 @@ describe("tabs that do not fit", () => {
   it("fits all six tabs at 320px with Tools open, with no more button", () => {
     // The strip is 319px inside the panel's left border; the end buttons take 58.
     restore = narrow(319);
-    useUi.setState({ panelTabsClosed: [] });
+    useUi.setState({ panelTabsClosed: ["linked"] });
     panel();
     expect(ids()).toEqual(["diff", "browser", "activity", "side", "tools", FILE]);
     expect(screen.queryByRole("button", { name: "More tabs" })).not.toBeInTheDocument();
