@@ -16,7 +16,7 @@ beforeEach(() => {
   useWorkspace.setState({ threads: { t1: { id: "t1", project_id: "p1" } as never } });
   useUi.getState().setDraft("t1", "");
 });
-afterEach(() => { setLibraryApi(null); vi.unstubAllGlobals(); });
+afterEach(() => { setLibraryApi(null); });
 
 const mount = async (mock = createLibraryMock()) => {
   setLibraryApi(mock);

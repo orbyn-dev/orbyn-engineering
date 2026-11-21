@@ -13,7 +13,7 @@ beforeEach(() => {
   refreshed = vi.fn(async () => undefined);
   useWorkspace.setState({ refreshThread: refreshed as never, threads: { t1: thread() } });
 });
-afterEach(() => { forgetApplications(); setProfilesApi(null); vi.unstubAllGlobals(); });
+afterEach(() => { forgetApplications(); setProfilesApi(null); });
 
 async function open(onError = vi.fn(), disabled = false) {
   const user = userEvent.setup();

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { sendsPersonKey } from "../../api/personKey";
 import { libraryApi, setLibraryApi } from "./api";
 
-afterEach(() => { setLibraryApi(null); vi.unstubAllGlobals(); });
+afterEach(() => { setLibraryApi(null); });
 const answer = (status: number, body: unknown) => vi.fn(async (_url: string, _init?: RequestInit) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 const sent = (fetching: ReturnType<typeof answer>) => { const [url, init] = fetching.mock.calls[0]!; return { url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined, raw: String(init?.body ?? "") }; };
 

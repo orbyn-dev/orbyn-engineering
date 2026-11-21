@@ -5,7 +5,7 @@ import { createProfilesMock, profileFixtures } from "../../../mock/profiles";
 import { ProfilesSettings } from "./ProfilesSettings";
 import { setProfilesApi } from "./api";
 
-afterEach(() => { setProfilesApi(null); vi.unstubAllGlobals(); });
+afterEach(() => { setProfilesApi(null); });
 
 async function menuOf(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
   await user.click(await screen.findByRole("button", { name: `Actions for ${name}` }));
