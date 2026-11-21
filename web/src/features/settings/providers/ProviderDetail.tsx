@@ -154,8 +154,8 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
         </SettingRow>
       </SettingGroup> : null}
       {engine.installed && !opencode ? <NativeSessions engine={engine} /> : null}
-      {!opencode ? <SettingGroup>
-        {hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
+      {!opencode || instance !== undefined ? <SettingGroup>
+        {!opencode && hasFeedback(engine) ? <FeedbackAction engine={engine} /> : null}
         {removable ? (
           <SettingRow title="Remove" description={running ? `A thread is running on ${engine.name}: “${running.title}”. Stop it, then remove it.` : "Removes this engine from Orbyn. Its sign-in and sessions stay with the engine."}>
             <Button small tone="quiet" className="set-remove" aria-label={`Remove ${engine.name}`} disabled={running !== undefined} onClick={() => setRemoving(true)}>Remove…</Button>

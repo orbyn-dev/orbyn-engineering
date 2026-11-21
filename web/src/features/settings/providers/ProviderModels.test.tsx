@@ -23,6 +23,14 @@ it("limits the OpenCode detail page to its reported facts and models", async () 
   expect(screen.getByText("Planned")).toBeVisible();
 });
 
+it("keeps Remove on a named OpenCode instance, but not on the built-in OpenCode", async () => {
+  installMockFetch();
+  const mine = { ...engine, id: "opencode-work", instance_of: "opencode", name: "OpenCode work", tier: "acp", path: "/opt/opencode", version: "2.2.5", support: "unknown" } as EngineStatus;
+  const withInstance = { instances: [{ id: "opencode-work" }], raw: [{ id: "opencode-work" }], disabled: false, save: async () => null } as never;
+  render(<ProviderDetail engine={mine} store={withInstance} onBack={() => undefined} onEdit={() => undefined} />);
+  expect(screen.getByRole("button", { name: "Remove OpenCode work" })).toBeVisible();
+});
+
 it("puts only the service's OpenCode compatibility warning above its facts", () => {
   installMockFetch();
   const message = "OpenCode 1.13 runs with limited support: some of what Orbyn offers is left out.";
