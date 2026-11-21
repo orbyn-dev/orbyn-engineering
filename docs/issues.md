@@ -134,19 +134,45 @@ into them, so they are **data**, never instructions to an engine, and never reac
 4. The title is on one line in the person's draft, with line breaks replaced by spaces.
 5. The UI renders every one of these fields as text only, and opens `url` only on a click on "Open on <tracker>".
 
+## Issue writes and list controls
+
+T3 Code at `9168ca73d` (`issue.ts`: `IssueListSort`, `IssueUpdateInput`, `IssueSetStateInput`,
+`IssueCandidates`) has all of these, so they are in the beta, built after the read routes above. They are
+**not built yet**: the web app keeps the controls as Planned until each route lands. Each write is
+Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the updated `IssueDetail`.
+
+| Route | Person | Answers |
+|---|---|---|
+| `GET /api/issues` adds `sort` (`updated` \| `created`, newest first by that date) | no | `IssueList` |
+| `POST /api/issues/item/update` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, title?, body?, labels?, assignees? }` |
+| `POST /api/issues/item/state` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, state }`, `state` one of the issue's `states` |
+| `GET /api/issues/candidates` | no | `IssueCandidates`. Query `tracker`, `scope` |
+
+- `update`: every field is optional and only the present ones are written; `labels` (at most 50) and
+  `assignees` (at most 25) are the whole set, as every tracker writes them. A body with none present is
+  `400 invalid`. `title` is one line, at most 256 characters; `body` at most 64 KiB. One write covers the
+  description pencil and the label and assignee "+" controls: the page sends the full new set.
+- `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category, and for a
+  close the optional `close_reason: not_planned`). A name the issue does not declare is `400 invalid`.
+- `sort` defaults to `updated`; an unknown value is `400 invalid`. The `label` (repeat, all must match) and `assignee`
+  filters already exist in the read route above and are built; the web side sends T3's `labels[]` as repeated `label`.
+- `candidates` is read when a picker opens, not with every issue: `{ labels: { name, color? }[], assignees:
+  { login, name?, id }[], truncated }`. `id` is how the tracker addresses the person on a write, which is not
+  always the login; at most 200 of each are read, `truncated: true` when there were more, so a missing
+  name is not proof the person is ineligible. A scope outside the connection is refused as everywhere else.
+- A write the tracker refuses answers the usual error (`forbidden`, `not_found`, `rate_limited`,
+  `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
+  out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.
+
 ## What T3 has that this does not (Planned)
 
-Creating, editing and commenting on issues, reactions, moving an issue to another state (`setState` and
-the states an issue can move to; T3 has both), issue templates,
-the event timeline, "involved/mentioned" filters, a sort option, and more than one page of comments. None is
-in the beta; each is a later row.
+Creating and commenting on issues, reactions, issue templates, the event timeline, "involved/mentioned"
+filters and more than one page of comments. None is in the beta; each is a later row.
 
 ## Differences from the web side's guessed contract
 
-- **State changes are not in the beta.** The guessed contract has a state change; the beta issue contract is
-  read-only against the tracker, so the page shows it as Planned and calls nothing. When it lands it is a
-  Person-class write, `POST /api/issues/item/state` with `{ tracker, scope, key, state }`, where `state` is the
-  name of one of the issue's `states` (a list `IssueDetail` will then carry).
+- **State changes** are specified above ("Issue writes and list controls") and not built yet; until they
+  land the page shows them as Planned and calls nothing.
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).
