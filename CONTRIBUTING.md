@@ -57,7 +57,7 @@ node scripts/sync-labels.mjs
 | Area | `area: core`, `area: contracts`, `area: service`, `area: web`, `area: desktop`, `area: library`, `area: ci`, `area: docs` |
 | Engine | `engine: claude`, `engine: codex`, `engine: acp` |
 | Platform | `platform: macos`, `platform: windows` |
-| Workflow | `needs triage`, `full-ci`, `parity`, `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix` |
+| Workflow | `needs triage`, `full-ci`, `ci: main red`, `parity`, `good first issue`, `help wanted`, `duplicate`, `invalid`, `wontfix` |
 
 ## Titles
 
@@ -148,6 +148,15 @@ The pull request then links the issue where it records the limit, so the two pla
 point at each other.
 
 ## Checks
+
+### Optional pre-push hook
+
+`.githooks/pre-push` runs the cheap checks of CI's "Cheap checks" job before a push, for the
+paths you changed: `cargo fmt --all --check`, the script checks, and `npm run check` in `web`
+when `web/node_modules` exists (it prints a SKIPPED line otherwise). It never builds or tests.
+It is opt-in: run `sh scripts/install-hooks.sh` once per clone (undo with
+`git config --unset core.hooksPath`), and skip it once with `git push --no-verify`. Test it
+with `sh scripts/test_pre_push_hook.sh`.
 
 ### Keep Cargo artifacts private to each worktree
 

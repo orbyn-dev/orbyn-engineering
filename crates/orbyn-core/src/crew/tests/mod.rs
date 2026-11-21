@@ -5,8 +5,10 @@
 
 mod autopilot;
 mod autopilot_areas;
+mod autopilot_bisect;
 mod autopilot_enforce;
 mod autopilot_engines;
+mod autopilot_forecast;
 mod autopilot_guard;
 mod autopilot_held;
 mod autopilot_merge;
@@ -22,7 +24,9 @@ mod backtest_escapes;
 mod bus;
 mod bus_flood;
 mod bus_guards;
+mod bus_resume;
 mod bus_review;
+mod bus_rules;
 mod bus_support;
 mod cancel;
 mod capacity_api;
@@ -53,6 +57,7 @@ mod hardening;
 mod harness;
 mod lifecycle;
 mod merging_recovery;
+mod model_ids;
 mod overrides;
 mod protect;
 mod provider_facts;

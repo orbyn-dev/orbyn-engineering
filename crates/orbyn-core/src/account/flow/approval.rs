@@ -27,6 +27,8 @@ pub const APPROVAL_LIFETIME: Duration = Duration::from_secs(10 * 60);
 /// even if the Engine did not count.
 pub(super) struct Approval {
     pub(super) request_id: String,
+    /// Tells this request from a later one that reuses the id.
+    pub(super) serial: u64,
     pub(super) asked: Instant,
     /// A trusted device allowed the request: the digits are due.
     pub(super) allowed: bool,
@@ -85,7 +87,7 @@ impl AccountCenter {
     /// sign in: it asks for the digits ([`Self::submit_digits`]), and only the right ones finish.
     pub async fn poll_approval(&self) -> Result<Option<AccountApprovalView>> {
         let backend = self.backend()?.clone();
-        let (id, expired) = {
+        let (id, serial, expired) = {
             let inner = self.inner.lock().await;
             let Some(approval) = &inner.approval else {
                 return Ok(None);
@@ -95,13 +97,13 @@ impl AccountCenter {
             }
             (
                 approval.request_id.clone(),
+                approval.serial,
                 approval.asked.elapsed() >= self.approval_life(),
             )
         };
         if expired {
-            let _ = backend.account.cancel_approval(&id).await;
             return Ok(self
-                .close_approval(&id, AccountApprovalState::TimedOut)
+                .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
                 .await);
         }
         match backend.account.approval_status(&id).await {
@@ -154,7 +156,7 @@ impl AccountCenter {
                 tries_left: None,
             });
         }
-        let id = {
+        let (id, serial) = {
             let mut inner = self.inner.lock().await;
             let life = self.approval_life();
             let Some(approval) = inner.approval.as_mut() else {
@@ -173,21 +175,22 @@ impl AccountCenter {
                 });
             }
             let id = approval.request_id.clone();
+            let serial = approval.serial;
             if approval.asked.elapsed() >= life {
                 drop(inner);
-                let _ = backend.account.cancel_approval(&id).await;
                 return Ok(self
-                    .close_approval(&id, AccountApprovalState::TimedOut)
+                    .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
                     .await);
             }
             if approval.spent_tries >= digits::TRIES {
                 drop(inner);
-                let _ = backend.account.cancel_approval(&id).await;
-                return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
+                return Ok(self
+                    .end_request(&backend, &id, serial, AccountApprovalState::Locked)
+                    .await);
             }
             // The try is taken before the call, so two entries at once cannot share one.
             approval.spent_tries += 1;
-            id
+            (id, serial)
         };
         match backend.account.finish_approval(&id, &typed).await {
             Ok(session) => self.finish_approval(&id, session).await,
@@ -204,8 +207,9 @@ impl AccountCenter {
                 let left = tries_left.min(own);
                 if left == 0 {
                     drop(inner);
-                    let _ = backend.account.cancel_approval(&id).await;
-                    return Ok(self.close_approval(&id, AccountApprovalState::Locked).await);
+                    return Ok(self
+                        .end_request(&backend, &id, serial, AccountApprovalState::Locked)
+                        .await);
                 }
                 approval.tries_left = Some(left);
                 Ok(Some(self.approval_view(approval)))
@@ -266,6 +270,37 @@ impl AccountCenter {
         self.established_in(&mut inner, session, true).await?;
         shown.state = AccountApprovalState::Approved;
         Ok(Some(shown))
+    }
+
+    /// Ends this computer's own request on the service and closes it with `state`, one cancel
+    /// at a time and only if it is still the request `serial` named: a sign-in that reused the
+    /// id meanwhile is not cancelled or closed by an older request's end.
+    async fn end_request(
+        &self,
+        backend: &super::Backend,
+        id: &str,
+        serial: u64,
+        state: AccountApprovalState,
+    ) -> Option<AccountApprovalView> {
+        let _one_at_a_time = self.cancelling.lock().await;
+        let current = {
+            let inner = self.inner.lock().await;
+            inner
+                .approval
+                .as_ref()
+                .is_some_and(|a| a.serial == serial && a.answer.is_none())
+        };
+        if !current {
+            return self
+                .inner
+                .lock()
+                .await
+                .approval
+                .as_ref()
+                .map(|a| self.approval_view(a));
+        }
+        let _ = backend.account.cancel_approval(id).await;
+        self.close_approval(id, state).await
     }
 
     /// The request ended without signing in: this computer is signed out, and the screen

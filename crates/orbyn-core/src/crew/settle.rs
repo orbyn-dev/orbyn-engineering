@@ -105,6 +105,7 @@ impl Core {
         let minutes = crate::util::parse_time(&task.created_at).map_or(0, |at| {
             u64::try_from((created - at).max(0) / 60).unwrap_or(0)
         });
+        let turns = self.store.crew_turns_spent(&task.id).ok();
         let mut not_verified: Vec<CrewShortText> = judged
             .map(|j| j.not_verified.iter().map(|s| short(s)).collect())
             .unwrap_or_default();
@@ -133,7 +134,7 @@ impl Core {
             not_verified,
             attempts: u64::from(run.attempts),
             usage: ResultUsage {
-                turns: None,
+                turns,
                 minutes: Some(minutes),
                 tokens_in: None,
                 tokens_out: None,
@@ -162,7 +163,12 @@ impl Core {
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
         // prompt is accepted; if it is refused with them, the result goes alone.
         let held = self.held_for_lead(run, result.crew_id.as_str());
-        let notice = lead_message(result);
+        let mut notice = lead_message(result);
+        if result.r#final
+            && let Ok(Some(task)) = self.store.crew_task(result.brief.as_str())
+        {
+            notice.push_str(&self.ended_worker_held_summary(&task, run));
+        }
         let full = format!("{notice}{}", held.text());
         match self.runs.enqueue(&run.lead_thread_id, &full, &[]) {
             Ok(_) => self.commit_held(&held),
@@ -297,13 +303,13 @@ impl Core {
         judged: Option<&Judgement>,
     ) {
         let reason: String = reason.chars().take(REASON_CHARS).collect();
-        if self.over_budget(task) {
+        if let Some(spent) = self.spent_budget(task) {
             if let Some(task) = self.step_crew_task(&task.id, "stopped", Some("budget")) {
                 self.end_crew_task(
                     &task,
                     ResultState::Stopped,
                     Some(StopReason::Budget),
-                    "The task ran past its time budget.",
+                    spent,
                     judged,
                 );
             }
@@ -358,13 +364,29 @@ impl Core {
         }
     }
 
-    fn over_budget(&self, task: &CrewTask) -> bool {
+    /// What a task has run past, when anything: its brief's minutes or its turns, in the plain
+    /// sentence its result carries. The minutes are read first, so a task over both keeps the
+    /// words the minute budget already used.
+    fn spent_budget(&self, task: &CrewTask) -> Option<&'static str> {
         let Ok(Some(brief)) = self.store.crew_brief(&task.id) else {
-            return false;
+            return None;
         };
-        crate::util::parse_time(&task.created_at)
-            .is_some_and(|at| crate::util::unix_now() - at > i64::from(brief.budget.minutes) * 60)
-            || self.crew_background_out_of_turns(task, brief.budget.turns)
+        let over_time = crate::util::parse_time(&task.created_at)
+            .is_some_and(|at| crate::util::unix_now() - at > i64::from(brief.budget.minutes) * 60);
+        if over_time {
+            return Some("The task ran past its time budget.");
+        }
+        let spent = match self.store.crew_turns_spent(&task.id) {
+            Ok(spent) => spent,
+            Err(error) => {
+                tracing::warn!(%error, task = %task.id, "could not count a task's turns; not stopping it for them");
+                return None;
+            }
+        };
+        // A background run keeps its own count of the turns a worker has had: either one running out stops the task.
+        (spent >= u64::from(brief.budget.turns)
+            || self.crew_background_out_of_turns(task, brief.budget.turns))
+        .then_some("The task ran past its turn budget.")
     }
 
     /// Queues `text` on the worker's thread. It is checked for the key's text and for secrets
@@ -410,14 +432,10 @@ impl Core {
         } else {
             text
         };
-        // Messages from other members that arrived while the worker was not in a turn go with
-        // this prompt, each already checked the way a live one is.
-        // They are recorded as sent only once the prompt is accepted; if it is refused with them,
-        // the prompt goes alone (a worker must not lose its retry) and they stay held.
+        // Held messages are added by the common turn launcher, not the person's queue.
+        // Enqueue acceptance alone cannot say an engine has received them.
         between();
-        let held = self.held_for_worker(task, &run);
-        let full = format!("{text}{}", held.text());
-        match self.runs.enqueue(&thread, &full, &[]) {
+        match self.runs.enqueue(&thread, text, &[]) {
             Ok(queued) => {
                 // A cancel that landed between the check and the queue: take the message back and stop what it started.
                 if ended() {
@@ -431,14 +449,8 @@ impl Core {
                     }
                     return Err(CrewError::new(ErrorCode::RunEnded, "the task has ended"));
                 }
-                self.commit_held(&held);
                 Ok(())
             }
-            Err(_) if !held.is_empty() => self
-                .runs
-                .enqueue(&thread, text, &[])
-                .map(|_| ())
-                .map_err(internal),
             Err(error) => Err(internal(error)),
         }
     }

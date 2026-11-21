@@ -24,7 +24,7 @@ impl RunManager {
             || self.store.is_crew_thread(&thread.id).unwrap_or(true);
         let expects_reply = RunKind::parse(&message.0) == RunKind::Turn
             && !message.0.trim_start().starts_with('/')
-            && (!judged_by_work || self.store.is_background_worker(&thread.id).unwrap_or(false));
+            && (!judged_by_work || self.store.is_background_worker(&thread.id).unwrap_or(true));
         match self
             .start(thread, scope, message, run_dir, token, &stops.cancel, retry)
             .await
@@ -196,6 +196,21 @@ impl RunManager {
             RunKind::Goal(GoalAction::Clear) => self.store.set_goal(&thread.id, None)?,
             _ => {}
         }
+        // Crew messages are engine context, never part of the person's queued prompt.
+        // The claim also keeps an engine's early MCP inbox read from taking them twice.
+        let crew = self.crew.get().and_then(std::sync::Weak::upgrade);
+        // Only an ordinary turn takes them: a `/compact` or a goal command is not sent with the extra context by every driver, so
+        // the messages would be marked delivered without the engine seeing them.
+        let held = match &crew {
+            Some(core) if kind == RunKind::Turn => core.held_for_worker_turn(&thread.id)?,
+            _ => None,
+        };
+        if let Some(held) = &held {
+            context.push_str(&held.text());
+        }
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
         let spec = RunSpec {
             run_id: scope.run_id.clone(),
             thread_id: thread.id.clone(),
@@ -247,6 +262,11 @@ impl RunManager {
             handle.cancel.cancel();
             handle.task.abort();
             return Err(error);
+        }
+        if !cancel.is_cancelled()
+            && let (Some(core), Some(held)) = (&crew, &held)
+        {
+            core.accept_worker_held(&thread.id, held);
         }
         Ok(Some((handle, receiver)))
     }
@@ -436,8 +456,8 @@ impl RunManager {
                                 break outcome;
                             }
                         }
-                        EngineEvent::SteerFailed(prompt) => {
-                            self.requeue_steer(scope, &prompt);
+                        EngineEvent::SteerFailed(steer) => {
+                            self.requeue_steer(scope, &steer);
                         }
                         EngineEvent::Limited { resets_at } => {
                             self.limit_signals().insert(scope.run_id.clone(), resets_at);

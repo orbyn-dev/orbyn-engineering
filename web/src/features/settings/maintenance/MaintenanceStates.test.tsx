@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure, request } from "../../../api/client";
@@ -65,7 +65,7 @@ it("says so when the service can't be asked", async () => {
 
 it("offers Restart to update once the update is downloaded", async () => {
   serve(() => diagnostics([]));
-  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", can_apply: true, downloaded: 10, total: 10 }));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", can_apply: true, phase: "ready", release_id: "release-1", operation: 1, downloaded: 10, total: 10 }));
   const apply = vi.spyOn(api, "applyAppUpdate").mockResolvedValue(undefined);
   const user = userEvent.setup();
   render(<MaintenanceSection />);
@@ -89,7 +89,7 @@ it("says a failed check with Retry, and offline without offering the check", asy
 
 it("shows the download with its percentage and no button, then Restart to update", async () => {
   serve(() => diagnostics([]));
-  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", can_apply: true, downloaded: 42, total: 100 }));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", can_apply: false, phase: "downloading", downloaded: 42, total: 100 }));
   render(<MaintenanceSection />);
   expect(await screen.findByText(/Downloading 0\.43\.0…/)).toBeVisible();
   expect(screen.getByRole("progressbar", { name: "Download progress" })).toHaveAttribute("aria-valuenow", "42");
@@ -153,4 +153,82 @@ it("shows Stable as the only live update track, with Nightly dimmed and Planned"
   expect(nightly).toHaveAttribute("aria-disabled", "true");
   expect(within(nightly).getByText("Planned")).toBeVisible();
   expect(screen.getByText("0.42.1 · up to date")).toBeVisible();
+});
+
+
+it("offers explicit download consent and never treats received bytes as verified readiness", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", release_id: "release-1", operation: 0, phase: "available", can_apply: true }));
+  const download = vi.spyOn(api, "downloadAppUpdate").mockResolvedValue(undefined);
+  render(<MaintenanceSection />);
+  await userEvent.click(await screen.findByRole("button", { name: "Download update" }));
+  expect(download).toHaveBeenCalledWith({ release_id: "release-1", operation: 0 });
+});
+
+it("waits for verified readiness even at 100 percent or with an unknown download total", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", phase: "preparing", downloaded: 100, total: 100, can_apply: true }));
+  render(<MaintenanceSection />);
+  expect(await screen.findByText("Preparing 0.43.0…")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Restart to update" })).toBeNull();
+});
+
+
+it("shows unknown-size transfer without a percentage and only the ready phase unlocks offline installation", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", phase: "downloading", downloaded: 12, can_apply: false }));
+  render(<MaintenanceSection />);
+  expect(await screen.findByText("Downloading 0.43.0…")).toBeVisible();
+  expect(screen.queryByRole("progressbar", { name: "Download progress" })).toBeNull();
+  act(() => {
+    useConnection.setState({ offline: true });
+    useWorkspace.getState().putUpdates(app({ latest: "0.43.0", phase: "ready", release_id: "r1", operation: 1, can_apply: true }));
+  });
+  expect(await screen.findByRole("button", { name: "Restart to update" })).toBeEnabled();
+});
+
+it("serializes download clicks and leaving settings does not cancel the accepted request", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", phase: "available", release_id: "r1", operation: 0, can_apply: true }));
+  let finish = () => {};
+  const download = vi.spyOn(api, "downloadAppUpdate").mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+  const view = render(<MaintenanceSection />);
+  await userEvent.dblClick(await screen.findByRole("button", { name: "Download update" }));
+  expect(download).toHaveBeenCalledTimes(1);
+  view.unmount();
+  await act(async () => { finish(); });
+  expect(download).toHaveBeenCalledTimes(1);
+});
+
+it("keeps ready state disabled during active runs and distinguishes install failure from a check error", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.43.0", phase: "ready", release_id: "r1", operation: 1, can_apply: false,
+    blocked_reason: "Finish or stop active runs first.", update_error: "installer refused", failed_phase: "installing" }));
+  render(<MaintenanceSection />);
+  expect(await screen.findByRole("button", { name: "Restart to update" })).toBeDisabled();
+  expect(screen.getByText("Wait for active runs to finish before updating.")).toBeVisible();
+  expect(screen.getByText("Couldn’t install 0.43.0. Try again.")).toBeVisible();
+  expect(screen.queryByText(/Couldn’t check for updates/)).toBeNull();
+});
+
+it("uses renewed consent after a changed release and keeps the failed release in failure copy", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.44.0", phase: "available", release_id: "r2", operation: 1, can_apply: true,
+    update_error: "The available update changed. Review the new version before downloading.", failed_phase: null }));
+  render(<MaintenanceSection />);
+  expect(await screen.findByRole("button", { name: "Download update" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry download" })).toBeNull();
+  act(() => { useWorkspace.getState().putUpdates(app({ latest: "0.44.0", phase: "available", release_id: "r2", operation: 1, can_apply: true,
+    update_error: "network", failed_phase: "downloading", failed_version: "0.43.0" })); });
+  expect(await screen.findByText("Couldn’t download 0.43.0. Try again.")).toBeVisible();
+  expect(screen.queryByText("Couldn’t download 0.44.0. Try again.")).toBeNull();
+});
+
+it("names r1 when its download fails after a newer r2 check", async () => {
+  serve(() => diagnostics([]));
+  useWorkspace.getState().putUpdates(app({ latest: "0.44.0", phase: "available", release_id: "r2", operation: 1, can_apply: true,
+    update_error: "network", failed_phase: "downloading", failed_version: "0.43.0" }));
+  render(<MaintenanceSection />);
+  expect(await screen.findByText("Couldn’t download 0.43.0. Try again.")).toBeVisible();
+  expect(screen.queryByText("Couldn’t download 0.44.0. Try again.")).toBeNull();
 });

@@ -819,6 +819,199 @@
           }
         }
       ]
+    },
+    {
+      "id": "msg-lead-resets-reported-and-unreported-pairs",
+      "title": "Directed intervention resets reported and unreported pairs of its recipient, leaving the third pair unchanged",
+      "rules": [
+        "H4"
+      ],
+      "steps": [
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {},
+          "repeat": 3
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {},
+          "repeat": 2
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {},
+          "repeat": 2
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "all",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "lead"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {},
+          "repeat": 3
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-02",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {},
+          "repeat": 3
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker2"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {}
+        },
+        {
+          "op": "call",
+          "tool": "crew.post",
+          "caller": {
+            "$use": "worker1"
+          },
+          "args": {
+            "to": "worker-03",
+            "kind": "fact",
+            "body": "The shared API has a duration field."
+          },
+          "expect": {
+            "error": "hop_limit_exceeded"
+          }
+        }
+      ]
     }
   ]
 }

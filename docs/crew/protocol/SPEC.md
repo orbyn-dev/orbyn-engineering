@@ -117,8 +117,10 @@ definitions.
 The `Error` schema describes a tool refusal. It is a tool result, not a ledger object, and
 has no id.
 
-**RouteDecision.** `rejected` lists every engine the router refused with one reason each. The `why` codes are
-`not_installed`, `not_signed_in`, `compatibility_broken`, `not_managed`, `no_approvals`, `missing_capability`,
+**RouteDecision.** `rejected` lists every engine the router refused with one reason each. In this unpublished v0 draft,
+`disabled` means the person turned the engine off; older recorded `not_installed` reasons remain valid and unchanged.
+The `why` codes are
+`disabled`, `not_installed`, `not_signed_in`, `compatibility_broken`, `not_managed`, `no_approvals`, `missing_capability`,
 `quota_exhausted`, `tier_below_lead`, `same_engine_refused` and `path_class`. `path_class` means a rule of the
 repository's data classes (`classes` in `.orbyn/crew.json`, read at the commit the task starts from) does not allow the
 engine for the paths in the brief's `files`. It is a hard filter that runs before scoring, so an explicit `engine` that
@@ -434,10 +436,13 @@ These are named so nobody assumes them. They arrive in later versions of this pr
     the lead's own run folder, which the profile denies to other runs' workers.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.
-- A routine lead message to one member restarts the exchange count of every pair that member is in
-  (H4), so it can re-arm a looping pair the lead never looked at (option A). The core records every
-  such reset in its ledger, with the pairs and their counts before, so real runs show whether it
-  happens; a notice id that the lead must name to re-arm (option B) is revisited then.
+- H4 keeps a directed lead message as the intervention boundary for that member. It resets every
+  pair containing that member, including pairs without a hop-limit notice; a message to `all`
+  resets nothing. This deliberately permits a routine intervention to re-arm an unreported pair.
+  The reset ledger records each affected pair and its previous count. No notice id is required.
+  The three-member `msg-lead-resets-reported-and-unreported-pairs` conformance case pins both
+  resets and verifies that the pair not containing the addressed member is unchanged. Narrowing
+  this rule to reported pairs would require a separate versioned protocol proposal.
 - Evidence is meant to be checked: it names the command, the commit and a log hash, so a
   reader can re-run it and see what it does and does not prove.
 

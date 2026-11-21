@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use orbyn_contracts::{CrewCheck, CrewError, CrewObject, Thread};
+use orbyn_contracts::{CheckParams, CrewCheck, CrewError, CrewObject, Thread};
 use serde_json::{Value, json};
 
 use super::{MOST_FIXES, RULES_FILE};
@@ -163,6 +163,26 @@ impl Core {
                 subject,
                 "refused_path",
                 &format!("{path} is not a file in the checkout."),
+            ));
+        }
+        // The fix inherits the reviewed task's checks, so a finding outside a scope check of the task's own key would
+        // fail that check after a wasted run. No fix is sent: the file was outside what the reviewed work was allowed
+        // to change, and only a person can authorise a new task whose scope covers it (the slice 4b limit settled in
+        // #451; a fix never widens the reviewed scope).
+        let outside_scope = subject_key.checks.iter().any(|check| {
+            matches!(
+                check.typed_params(),
+                Ok(CheckParams::FileScope(params))
+                    if !params.only.iter().any(|pattern| covers(pattern, path))
+            )
+        });
+        if outside_scope {
+            return Ok(self.no_fix(
+                subject,
+                "refused_path",
+                &format!(
+                    "{path} is outside the paths the reviewed task's own scope checks allow, so a fix that changed it would fail them. A person can authorise a new task that covers it."
+                ),
             ));
         }
         // Keep the digest in the immutable key, outside the worker's checkout. The verifier

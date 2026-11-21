@@ -141,6 +141,23 @@ function Problems({ problems, onCheck }: { problems: string[]; onCheck(): void }
   );
 }
 
+/** Generic nonblocking diagnostics; the service owns their wording and rule semantics. */
+function RuleNotes({ notes, refreshing, onCheck }: { notes: string[]; refreshing: boolean; onCheck(): void }) {
+  if (!notes.length) return null;
+  return (
+    <aside className="ap-banner ap-banner-am ap-rule-notes" aria-label="Rule notes" data-frame={notes.length > 16 ? "classes-rule-notes-truncated" : "classes-rule-notes"}>
+      <div className="ap-rule-notes-body">
+        <b>Rule notes</b>
+        <p>These notes do not block engines. Existing path-class and host rules still apply.</p>
+        <ul>{notes.slice(0, 16).map((note, at) => <li key={`${at}-${note}`}>{note}</li>)}</ul>
+        {notes.length > 16 ? <p>More rule notes were omitted. Review the remaining entries in .orbyn/crew.json.</p> : null}
+        <p>Edit .orbyn/crew.json in your editor and commit the change, then Check again.</p>
+      </div>
+      <span className="ap-banner-acts"><Button small disabled={refreshing} onClick={onCheck}>Check again</Button></span>
+    </aside>
+  );
+}
+
 /** One path's answer, and what the Route card says of it. */
 function Answer({ path }: { path: CrewClassTestPath }) {
   if (!path.valid) {
@@ -370,6 +387,7 @@ function Loaded({ project }: { project: { id: string; name: string } }) {
         </div>
       ) : write?.phase === "check" ? <div className="ap-banner ap-banner-am" role="alert"><p>{write.message ?? "Couldn’t check the remembered default branch."}</p><Button small onClick={() => void check()}>Check again</Button></div> : null}
       {broken ? <Problems problems={view.problems} onCheck={read.reload} /> : null}
+      <RuleNotes notes={view.notes.filter((entry) => !entry.startsWith(BLOCKED_PREFIX) && entry !== view.working_copy_note)} refreshing={read.refreshing} onCheck={read.reload} />
       <div className="ap-class-split">
         <div className="ap-class-main">
           <Table view={view} pinBlocked={!!note} selected={rule?.name ?? null} onSelect={(name) => setSelected(name === selected ? null : name)} />

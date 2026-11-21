@@ -1,4 +1,5 @@
-//! Whether a forge CLI is installed and signed in, and who the signed-in person is.
+//! Whether a forge CLI is installed and signed in, who the signed-in person is, and
+//! what that person's own CLI says they starred.
 
 use super::Forge;
 use super::parse::person;
@@ -123,4 +124,124 @@ pub(super) fn auth_accounts(output: &str) -> Vec<String> {
         }
     }
     accounts
+}
+
+/// One page of the person's starred repositories: the most a read returns.
+const STARRED_PAGE: usize = 100;
+/// A starred-list read stays short: a CLI that hangs must not hold a request.
+const STARRED_TIMEOUT: Duration = Duration::from_secs(10);
+
+impl crate::app::Core {
+    /// The signed-in person's starred GitHub repositories through their own CLI. This
+    /// is the same `/user/starred` resource the fixed star check reads, one page of
+    /// it. A missing tool, a signed-out login or a failed read is `unavailable`,
+    /// never an empty list.
+    pub async fn starred_repositories(&self) -> orbyn_contracts::StarredRepositories {
+        starred_repositories(&self.config.data_dir).await
+    }
+}
+
+async fn starred_repositories(cwd: &Path) -> orbyn_contracts::StarredRepositories {
+    let page = format!("user/starred?per_page={STARRED_PAGE}");
+    let args = ["api", page.as_str(), "--hostname", "github.com"];
+    let output =
+        match tokio::time::timeout(STARRED_TIMEOUT, spawn(Forge::GitHub, cwd, &args, None)).await {
+            Err(_) => return unavailable("The GitHub CLI did not answer in time."),
+            Ok(Err(error)) => {
+                let reason = match error {
+                    crate::error::CoreError::Unsupported(message)
+                    | crate::error::CoreError::Git(message) => message,
+                    _ => "The GitHub CLI could not start. Check that it is installed.".to_owned(),
+                };
+                return unavailable(&reason);
+            }
+            Ok(Ok(output)) if !output.success => {
+                let reason = crate::util::tail(&output.stderr, 1024);
+                let reason = reason.trim();
+                return unavailable(if reason.is_empty() {
+                    "The GitHub CLI could not read your starred repositories."
+                } else {
+                    reason
+                });
+            }
+            Ok(Ok(output)) => output,
+        };
+    let rows = match serde_json::from_str::<serde_json::Value>(&output.stdout) {
+        Ok(serde_json::Value::Array(rows)) => rows,
+        _ => {
+            return unavailable(
+                "The GitHub CLI answered with something other than a starred list.",
+            );
+        }
+    };
+    // A full page may hide older stars: say so rather than present a partial list as all.
+    let truncated = rows.len() >= STARRED_PAGE;
+    orbyn_contracts::StarredRepositories {
+        repositories: rows.iter().filter_map(starred_repository).collect(),
+        truncated,
+        unavailable: None,
+    }
+}
+
+fn unavailable(reason: &str) -> orbyn_contracts::StarredRepositories {
+    orbyn_contracts::StarredRepositories {
+        repositories: Vec::new(),
+        truncated: false,
+        unavailable: Some(reason.to_owned()),
+    }
+}
+
+/// One row of the forge's starred list. A row the CLI printed without the name or
+/// address the app shows is left out rather than shown half empty.
+fn starred_repository(row: &serde_json::Value) -> Option<orbyn_contracts::StarredRepository> {
+    let full_name = row["full_name"].as_str().filter(|name| !name.is_empty())?;
+    let (owner, name) = full_name.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || name.contains('/') {
+        return None;
+    }
+    let url = row["html_url"].as_str().filter(|url| !url.is_empty())?;
+    Some(orbyn_contracts::StarredRepository {
+        owner: owner.to_owned(),
+        name: name.to_owned(),
+        full_name: full_name.to_owned(),
+        url: url.to_owned(),
+        description: row["description"].as_str().map(str::to_owned),
+        private: row["private"].as_bool().unwrap_or_default(),
+        archived: row["archived"].as_bool().unwrap_or_default(),
+        default_branch: row["default_branch"].as_str().map(str::to_owned),
+        language: row["language"].as_str().map(str::to_owned),
+        stars: u32::try_from(row["stargazers_count"].as_u64().unwrap_or(0)).unwrap_or(u32::MAX),
+    })
+}
+
+#[cfg(test)]
+mod starred_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_starred_row_needs_the_name_and_address_the_app_shows() {
+        assert!(starred_repository(&json!({"full_name": "o/r"})).is_none());
+        assert!(
+            starred_repository(&json!({"full_name": "o", "html_url": "https://github.com/o"}))
+                .is_none()
+        );
+        let row = starred_repository(&json!({
+            "full_name": "o/r",
+            "html_url": "https://github.com/o/r",
+            "description": null,
+            "private": true,
+            "archived": false,
+            "default_branch": "main",
+            "language": null,
+            "stargazers_count": 9_000_000_000u64,
+        }))
+        .unwrap();
+        assert_eq!(row.owner, "o");
+        assert_eq!(row.name, "r");
+        assert_eq!(row.stars, u32::MAX);
+        assert!(row.private && !row.archived);
+        assert!(row.description.is_none() && row.language.is_none());
+        assert_eq!(row.default_branch.as_deref(), Some("main"));
+    }
 }
