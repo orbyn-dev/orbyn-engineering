@@ -66,3 +66,11 @@ describe("checks the person asked for", () => {
     expect(urls[3]).not.toContain("refresh");
   });
 });
+
+describe("api surface", () => {
+  it("has no per-file restore of a turn; only the whole-turn restore and the rewind remain", async () => {
+    const { api } = await import("./client");
+    expect(Object.keys(api)).not.toContain("restoreChanges");
+    expect(Object.keys(api)).toContain("restoreWorkspace");
+  });
+});

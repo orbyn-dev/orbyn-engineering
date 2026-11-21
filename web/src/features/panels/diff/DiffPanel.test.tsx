@@ -783,3 +783,21 @@ it("comments are reachable by keyboard: the arrows carry focus to a line's butto
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("textbox", { name: /Review comment on/ })).toBeInTheDocument();
 });
+
+// E19: a turn's change list is read-only per file; the only restore is the whole-turn one, and it asks first.
+it("a turn shows its files without a per-file restore, and the whole-turn restore changes nothing until confirmed", async () => {
+  const user = userEvent.setup();
+  setup();
+  vi.spyOn(api, "checkpoints").mockResolvedValue([{ run_id: "r1", start: "s1", end: "e1", created_at: "2026-11-12T14:12:00" }]);
+  const restore = vi.spyOn(api, "restoreWorkspace").mockResolvedValue(undefined);
+  await open();
+  await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Turn" }));
+  await user.click(within(await screen.findByRole("menu", { name: "Turn" })).getByRole("menuitem", { name: /^Turn 1/ }));
+  await screen.findByRole("button", { name: "Restore files to before this response" });
+  const restoreButtons = screen.getAllByRole("button", { name: /^Restore / }).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
+  expect(restoreButtons).toEqual(["Restore files to before this response"]);
+  await user.click(screen.getByRole("button", { name: "Restore files to before this response" }));
+  expect(await screen.findByRole("dialog", { name: "Restore files?" })).toBeInTheDocument();
+  expect(restore).not.toHaveBeenCalled();
+});
