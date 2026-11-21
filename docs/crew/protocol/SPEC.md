@@ -436,10 +436,13 @@ These are named so nobody assumes them. They arrive in later versions of this pr
     the lead's own run folder, which the profile denies to other runs' workers.
   - Where no such sandbox is available the core refuses to start a worker. A process a member leaves
     running can outlive its turn.
-- A routine lead message to one member restarts the exchange count of every pair that member is in
-  (H4), so it can re-arm a looping pair the lead never looked at (option A). The core records every
-  such reset in its ledger, with the pairs and their counts before, so real runs show whether it
-  happens; a notice id that the lead must name to re-arm (option B) is revisited then.
+- H4 keeps a directed lead message as the intervention boundary for that member. It resets every
+  pair containing that member, including pairs without a hop-limit notice; a message to `all`
+  resets nothing. This deliberately permits a routine intervention to re-arm an unreported pair.
+  The reset ledger records each affected pair and its previous count. No notice id is required.
+  The three-member `msg-lead-resets-reported-and-unreported-pairs` conformance case pins both
+  resets and verifies that the pair not containing the addressed member is unchanged. Narrowing
+  this rule to reported pairs would require a separate versioned protocol proposal.
 - Evidence is meant to be checked: it names the command, the commit and a log hash, so a
   reader can re-run it and see what it does and does not prove.
 
