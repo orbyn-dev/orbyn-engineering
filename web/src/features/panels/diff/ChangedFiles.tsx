@@ -29,6 +29,9 @@ export function fileName(file: FileDiff): string {
   return from ? `${file.path} ← ${from}` : file.path;
 }
 
+/** The most files the service lists for one repository (`ThreadRepo.files`); a list this long may be cut short. */
+const REPO_FILE_CAP = 200;
+
 /** A changed file as the thread's Changes read answers it: in a multi-repository thread it also carries its `repo_id`, and its path is relative to that repository. */
 export type RepoFile = FileDiff & { repo_id?: string };
 
@@ -100,6 +103,7 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
                 <span className="nm">{plain(group.repo.name)}</span>
                 <code>{plain(group.repo.branch)}</code>
                 <span className="num">{`+${count(group.repo.added)} −${count(group.repo.deleted)}`}</span>
+                {(group.repo.files?.length ?? 0) >= REPO_FILE_CAP ? <span className="fl-cap" title="The service lists at most 200 files for a repository.">{`${REPO_FILE_CAP} shown`}</span> : null}
                 {threadId ? <RepoGitMenu threadId={threadId} repo={group.repo} onChanged={onRepoChanged ?? (() => {})} /> : null}
               </h3>
             ) : <h3 className="fl-repo-head"><span className="nm">Other files</span></h3>}

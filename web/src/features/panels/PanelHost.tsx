@@ -19,6 +19,7 @@ import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
+import { repoLabel, useThreadRepos } from "../repos";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
 import { useConnectionKind } from "../../product/state/connection";
@@ -230,6 +231,10 @@ export function PanelHost({
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number } | null>(null);
   const count = rowIds.length;
+  // A file of another repository names its repository on its tab and under its title; the thread's repositories are asked only while one is open.
+  const hasRepoTab = rowIds.some((id) => { const file = parseFileTab(id); return file?.kind === "thread" && file.repoId !== undefined; });
+  const threadRepos = useThreadRepos(thread.id, 0, hasRepoTab).repos;
+  const repoName = (repoId: string): string | undefined => { const found = threadRepos?.find((repo) => repo.repo_id === repoId); return found ? repoLabel(found.name) : undefined; };
   // The line beside the open file's name: the worktree it is in, and for another project's, which project.
   const target = tab ? parseFileTab(tab) : null;
   // An issue tab has no folder: only a file of another worktree has names to look up.
@@ -242,7 +247,7 @@ export function PanelHost({
   const gitless = notGit && jj.status === "ready" && jj.data === null;
   const subtitle =
     target === null ? null
-    : target.kind === "thread" ? (thread.worktree?.branch ?? null)
+    : target.kind === "thread" ? (target.repoId !== undefined ? (repoName(target.repoId) ?? null) : (thread.worktree?.branch ?? null))
     : placed === null || !names.worktree ? null
     : placed.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
@@ -286,7 +291,7 @@ export function PanelHost({
   const reset: MenuItem = { label: "Reset tab order", icon: <RefreshCw size={14} aria-hidden />, separatorBefore: true, onSelect: resetTabs };
   // The "..." menu: the tabs that do not fit, by name. The one chosen takes the last visible slot.
   const hiddenTabs: MenuItem[] = hidden.map((id) => {
-    const { label, icon: Icon } = tabOf(id);
+    const { label, icon: Icon } = tabOf(id, repoName);
     return {
       label,
       icon: <Icon size={14} aria-hidden />,
@@ -430,7 +435,7 @@ export function PanelHost({
       <header ref={strip} className="ctx-strip">
         <div ref={list} className="ctx-tabs" role={shown.length > 0 ? "tablist" : undefined} aria-label={shown.length > 0 ? "Panel tabs" : undefined} onKeyDown={onTabKey}>
           {shown.map((id) => {
-            const { label, icon: Icon } = tabOf(id);
+            const { label, icon: Icon } = tabOf(id, repoName);
             return (
               <button
                 key={id}
@@ -514,7 +519,7 @@ export function PanelHost({
       </header>
       {tab === null ? null : (
         <div className="ctx-title">
-          <b>{tabOf(tab).label}</b>
+          <b>{tabOf(tab, repoName).label}</b>
           {subtitle ? <span className="ctx-sub">{subtitle}</span> : null}
           {isFileTab(tab) ? <EditorTitleExtras threadId={thread.id} tabId={tab} onSave={() => { const own = sessionFor(tab); return own ? saveSession(own.key) : undefined; }} /> : null}
           <IconButton

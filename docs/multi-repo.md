@@ -273,10 +273,27 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
 - **Trust from a refused write.** `409 repo_untrusted` on a hunk revert, undo or line edit adds a "Trust repository…" button to the
   notice, which opens the same trust dialog the repository's Git menu opens (one click, one write, busy guard). Trusting clears the
   notice and re-reads; the refused write is not repeated, the person tries again. It is offered for a multi-repository thread only.
+- **Editor and file tabs of another repository's file.** A file tab can name a repository: its id is `["t", path, repo_id]` where a
+  primary-repository or ordinary-thread tab is still `["t", path]` (byte for byte what older sessions saved; those restore as before).
+  "Open" and "Open in editor" on a changed file of another repository open that tab, with the repo-relative path, instead of a notice.
+  The read is `GET .../files/content?path=&repo_id=`, the write sends `repo_id` in the body with the revision of that repository's own
+  read, and the editor session is keyed by repository and path, so the same path in two repositories is two files that never share
+  text. The title line names the repository and the tab's tooltip reads `README.md (name)`. `409 file_conflict` keeps its Changed on
+  disk banner (Keep mine, Reload); `409 repo_untrusted` on a read or a write shows the service's message and the existing trust
+  dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
+  said in words. That tab is the editor only: no rendered preview, no line comments, no "Add file to message", no outside editor and
+  no absolute path, and images, archives, documents, binary and truncated files say they can't be shown yet, because those routes
+  (`.../files/raw`, zip, office, download, `previews/file`, `open-in-editor`) take no `repo_id`.
+- **Turn totals.** The turn picker's per-turn figures were the primary repository's alone. In a multi-repository thread each turn's
+  totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
+  An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
+  counting them as zero changes; if no repository could be read the row has no figures. `ThreadRepo.added`, `deleted` and `files` are
+  against `HEAD`, not per turn, so they are not used. An ordinary thread reads once, as before. Whether the service keeps a turn's
+  checkpoint in a repository other than the primary is not known; a refusal there shows as "not counted".
+- **The 200-file cap.** A repository's `ThreadRepo.files` is cut at 200 by the service. A repository group whose list holds 200
+  says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
-  chosen), the editor and file tabs, "Open in editor" and the Create pull request base check of the Changes footer act on the primary
-  repository; opening a file of another repository from the Changes panel shows a notice instead of opening the primary's file at the
-  same path. `ThreadRepo.files` is capped at 200 by the service; the list at that cap is unchecked.
+  chosen) and the Create pull request base check of the Changes footer act on the primary repository.
 - **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
   `orbynd` with `ORBYN_MULTI_REPO=1`.
 
