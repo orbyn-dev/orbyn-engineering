@@ -2,11 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
 import { ApiFailure, request } from "../../api/client";
 import type { Thread } from "../../api/types";
-import type { PublishInput, ReposApi, ReposView, RepoRow, StartThreadInput, ThreadGitAction, ThreadRepo } from "./contract";
+import type { GitActionResult } from "../../generated/GitActionResult";
+import type { PublishInput, ReposApi, ReposView, RepoRow, StartThreadInput, ThreadRepo } from "./contract";
 
 const q = encodeURIComponent;
-const notOffered = (what: string) => new ApiFailure("not_offered", `This service does not offer ${what} yet.`, 0);
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
+
+/** A phase that ran and failed is the last one in the answer: it is the person's failure to read, not a success. */
+function check(result: GitActionResult): void {
+  const failed = result.phases.find((phase) => !phase.ok);
+  if (failed) throw new ApiFailure("git_failed", failed.message ?? `The ${failed.name.replace("_", " ")} did not finish.`, 0);
+}
 
 /** `false` once the service answered the repository list with `404`: the flag is off or the routes are missing. */
 let offered: boolean | null = null;
@@ -15,7 +21,8 @@ let offered: boolean | null = null;
  * The real client for the routes of docs/multi-repo.md. The page asks for the project's list first; a `404` is "this service has
  * no multi-repository projects" (flag off or routes missing), answered as `null` with no error, so nothing draws and no write is
  * ever offered. Every write is Person-class (`personKey.ts`): `request` adds the key for each. Ids are encoded into the path.
- * The thread Git actions and removing a repository from a thread are not in that document, so they send nothing.
+ * The thread Git actions send the existing thread routes with an optional `repo_id` (absent is the primary repository). Removing a
+ * repository from a thread is not in the beta and has no call.
  */
 const http: ReposApi = {
   async list(projectId, signal) {
@@ -50,8 +57,24 @@ const http: ReposApi = {
     }
   },
   addThreadRepo: (threadId, repoId) => request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, { repo_id: repoId }),
-  threadGit: async (_threadId: string, _repoId: string, _action: ThreadGitAction) => { throw notOffered("Git actions on one repository of a thread"); },
-  removeThreadRepo: async () => { throw notOffered("removing a repository from a thread"); },
+  async threadGit(threadId, repoId, action) {
+    const thread = `/api/threads/${q(threadId)}`;
+    const repo = repoId === null ? {} : { repo_id: repoId };
+    switch (action.kind) {
+      case "commit":
+        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { commit_message: action.message, push: false, ...repo }));
+      case "push":
+        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { push: true, ...repo }));
+      case "pull_request":
+        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { push: true, pull_request: { title: action.title, body: "" }, ...repo }));
+      case "merge":
+        await request<void>("POST", `${thread}/pulls/${action.number}/merge`, { method: action.method, auto: false, delete_branch: false, strip_credits: false, ...repo });
+        return;
+      case "review":
+        await request<void>("POST", `${thread}/pulls/${action.number}/review`, { event: action.event, body: action.body, comments: [], ...repo });
+        return;
+    }
+  },
 };
 
 let current: ReposApi = http;

@@ -70,18 +70,21 @@ export const plain = (text: string) => text.replace(/[\u0000-\u001f\u007f]+/g, "
 
 /**
  * The changed files of a multi-repository thread, one group per repository in the thread's own order, then the files no repository
- * claims. A repository with no file in the list has no group. `[]` means the service did not say which repository a file belongs to,
+ * claims. A file that carries a `repo_id` (docs/multi-repo.md: the Changes list says which repository, with a repo-relative path) is
+ * grouped by it, so two repositories can each have a `README.md`. Otherwise a file is claimed by a repository whose `files` list its
+ * path. A repository with no file in the list has no group. `[]` means the service did not say which repository a file belongs to,
  * and the list stays flat.
  */
-export function groupByRepo<T extends { path: string }>(files: readonly T[], repos: readonly ThreadRepo[]): { repo: ThreadRepo | null; files: T[] }[] {
-  if (!repos.some((repo) => (repo.files?.length ?? 0) > 0)) return [];
-  const claimed = new Set<string>();
+export function groupByRepo<T extends { path: string; repo_id?: string }>(files: readonly T[], repos: readonly ThreadRepo[]): { repo: ThreadRepo | null; files: T[] }[] {
+  const byId = files.some((file) => file.repo_id !== undefined);
+  if (!byId && !repos.some((repo) => (repo.files?.length ?? 0) > 0)) return [];
+  const claimed = new Set<T>();
   const groups = repos.flatMap((repo) => {
     const mine = new Set(repo.files ?? []);
-    const found = files.filter((file) => mine.has(file.path) && !claimed.has(file.path));
-    found.forEach((file) => claimed.add(file.path));
+    const found = files.filter((file) => !claimed.has(file) && (file.repo_id !== undefined ? file.repo_id === repo.repo_id : mine.has(file.path)));
+    found.forEach((file) => claimed.add(file));
     return found.length > 0 ? [{ repo, files: found }] : [];
   });
-  const rest = files.filter((file) => !claimed.has(file.path));
+  const rest = files.filter((file) => !claimed.has(file));
   return rest.length > 0 ? [...groups, { repo: null, files: rest }] : groups;
 }
