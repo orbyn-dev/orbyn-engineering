@@ -2,6 +2,7 @@
 //! A token is random per run, reaches only that run's engine and dies with the run.
 
 pub mod apps;
+pub(crate) mod code;
 mod flight;
 pub mod tools;
 
@@ -85,6 +86,14 @@ impl McpService {
             .get()
             .and_then(Weak::upgrade)
             .is_some_and(|core| core.crew_enabled())
+    }
+
+    /// Whether the Code Mode tools exist: off until `CoreConfig::code_mode`, then listed and callable for every run.
+    fn code_mode_enabled(&self) -> bool {
+        self.host
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|core| core.config.code_mode)
     }
 
     pub fn new(
@@ -185,6 +194,9 @@ impl McpService {
                 if self.crew_enabled() {
                     tools.extend(crate::crew::tool_specs());
                 }
+                if self.code_mode_enabled() {
+                    tools.extend(code::specs());
+                }
                 Ok(json!({ "tools": tools }))
             }
             "tools/call" => {
@@ -242,6 +254,13 @@ impl McpService {
                     return Ok(text_result("This service is not ready.", true));
                 };
                 let (text, failed) = core.crew_tool_text(binding, tool, &args).await;
+                Ok(text_result(&text, failed))
+            }
+            tool if code::is_tool(tool) && self.code_mode_enabled() => {
+                let Some(core) = self.host.get().and_then(Weak::upgrade) else {
+                    return Ok(text_result("This service is not ready.", true));
+                };
+                let (text, failed) = core.code_tool_text(binding, tool, &args).await;
                 Ok(text_result(&text, failed))
             }
             other if crate::tools::mcp_tools::is_tool(other) => {
