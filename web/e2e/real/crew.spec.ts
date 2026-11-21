@@ -78,7 +78,6 @@ test("Flow renders the real, empty crew list", async ({ page }) => {
 });
 
 test("Board renders the real, empty crew list", async ({ page }) => {
-  needsPreview();
   await page.setViewportSize(WINDOW);
   const list = read(page, "/api/crew/flow/crews");
   await page.goto(`${service.page}#/crew/board`);
@@ -95,7 +94,6 @@ test("Board renders the real, empty crew list", async ({ page }) => {
 });
 
 test("Map renders the real, empty crew list", async ({ page }) => {
-  needsPreview();
   await page.setViewportSize(WINDOW);
   const list = read(page, "/api/crew/flow/crews");
   await page.goto(`${service.page}#/crew/map`);
