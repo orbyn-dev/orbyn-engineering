@@ -2,7 +2,7 @@
 .fv-root { display: flex; flex-direction: column; gap: 12px; padding: 12px 20px 20px; min-width: 0; color: var(--color-textSoft); font-size: var(--text-meta); }
 .fv-zoom { min-width: 0; overflow-wrap: anywhere; }
 .fv-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.fv-crew { display: flex; align-items: center; gap: 8px; color: var(--color-muted); font-size: 12px; }
+.fv-crew { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-muted); font-size: 12px; }
 .fv-crew select { max-width: 360px; }
 .fv-crew select, .fv-engine select { height: 26px; border: 0; border-radius: 8px; background: var(--color-sunken); color: var(--color-text); font: inherit; font-size: 12px; padding: 0 10px; max-width: 100%; }
 .fv-tool { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
@@ -42,7 +42,7 @@
 .fv-crumb h2 { margin: 0; font-size: 15px; font-weight: 500; color: var(--color-text); min-width: 0; overflow-wrap: anywhere; }
 .fv-spacer { flex: 1; }
 .fv-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; color: var(--color-text); background: var(--color-selected); white-space: nowrap; }
-.fv-off { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--color-sunken); color: var(--color-textSoft); font: inherit; font-size: 12px; }
+.fv-off { display: inline-flex; flex: none; white-space: nowrap; align-items: center; height: 26px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--color-sunken); color: var(--color-textSoft); font: inherit; font-size: 12px; }
 .fv-off:disabled { opacity: 0.45; cursor: default; }
 .fv-later { margin: 0; color: var(--color-muted); font-size: 11.5px; }
 .fv-muted { color: var(--color-muted); font-size: 12px; margin: 0; }
@@ -80,7 +80,7 @@
 .fv-tablist { display: flex; gap: 2px; position: relative; min-width: 0; }
 .fv-more-views { display: inline-grid; place-items: center; width: 28px; height: 32px; margin-left: auto; border: 0; background: none; color: var(--color-muted); cursor: pointer; border-radius: var(--radius-sm); }
 .fv-more-views:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-.fv-label { display: inline-flex; align-items: center; height: 18px; margin-left: 6px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--color-textSoft); box-shadow: inset 0 0 0 1px var(--color-borderStrong); }
+.fv-label { display: inline-flex; white-space: nowrap; align-items: center; height: 18px; margin-left: 6px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--color-textSoft); box-shadow: inset 0 0 0 1px var(--color-borderStrong); }
 .fv-lane-facts { flex-basis: 100%; color: var(--color-muted); font-size: 11.5px; }
 
 /* Approved consent drawer geometry; the underlying Flow stays a stage list. */

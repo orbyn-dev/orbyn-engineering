@@ -155,6 +155,8 @@ h4.ap-sub { margin: 0; }
 .ap-crew-row { grid-template-columns: minmax(0, 1.2fr) 90px minmax(0, 1.4fr); }
 .ap-target-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); }
 .ap-destroy-row { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+/* A target's name and kind are the person's own words: in a narrow column they wrap instead of ending in an ellipsis nothing explains. */
+.ap-target-row b, .ap-target-row small { white-space: normal; overflow-wrap: anywhere; }
 .ap-target-row code { display: block; font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; color: var(--color-text); overflow-wrap: anywhere; }
 .ap-note { padding: 9px 12px; border-top: 1px solid var(--color-border); }
 .ap-dialog { width: min(560px, calc(100vw - 32px)); }
