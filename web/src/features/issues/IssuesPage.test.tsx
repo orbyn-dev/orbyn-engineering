@@ -2,13 +2,14 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createIssuesMock, trackerFixtures } from "../../../mock/issues";
+import { useUi } from "../../product/state/ui";
 import { MOTION } from "../../lib/motion";
 import { setViewportWidth } from "../../test-support";
 import { IssuesPage } from "./IssuesPage";
 import { setIssuesApi } from "./api";
 
 beforeEach(() => { window.location.hash = "#/issues"; });
-afterEach(() => { setIssuesApi(null); window.location.hash = ""; vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { setIssuesApi(null); window.location.hash = ""; vi.restoreAllMocks(); vi.stubGlobal("__ORBYN_PREVIEWS__", true); vi.useRealTimers(); });
 
 const rows = () => document.querySelectorAll(".iss-rows > li");
 
@@ -178,4 +179,87 @@ it("keeps one column on a phone and moves the tracker and filters into one Filte
   const sheet = await screen.findByRole("dialog", { name: "Filters" });
   expect(within(sheet).getByRole("group", { name: "Tracker" })).toBeVisible();
   expect(within(sheet).getByRole("group", { name: "Labels" })).toBeVisible();
+});
+
+// ---- paging ----
+
+const loadMore = () => screen.queryByRole("button", { name: "Load more" });
+
+it("shows a Load more row only while the answer has next_cursors, and appends the next page with the same filters", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(rows()).toHaveLength(4);
+  await user.click(loadMore()!);
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(loadMore()).toBeNull();
+  expect(mock.listed).toHaveLength(2);
+  expect(mock.listed[0]!.cursors).toBeUndefined();
+  expect(mock.listed[1]!.query).toEqual(mock.listed[0]!.query);
+  // The cursor is the service's own, sent back unchanged.
+  expect(Object.keys(mock.listed[1]!.cursors!)).toHaveLength(1);
+  expect(Object.values(mock.listed[1]!.cursors!)).toEqual(["4"]);
+});
+
+it("has no Load more row when the answer has no next_cursors", async () => {
+  setIssuesApi(createIssuesMock());
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  expect(loadMore()).toBeNull();
+});
+
+it("one click is one request while a page is loading, and the row says it is busy", async () => {
+  const mock = createIssuesMock({ pageSize: 4, delayMs: 30 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  await user.dblClick(loadMore()!);
+  expect(screen.getByRole("button", { name: "Load more" })).toHaveAttribute("aria-busy", "true");
+  await waitFor(() => expect(rows()).toHaveLength(6));
+  expect(mock.listed).toHaveLength(2);
+});
+
+it("drops a page that lands after the filter changed: the latest request wins", async () => {
+  const mock = createIssuesMock({ pageSize: 4, delayMs: 40 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  await user.click(loadMore()!);
+  await user.click(screen.getByRole("button", { name: /^Closed/ }));
+  await waitFor(() => expect(screen.getByText("Closed as not planned")).toBeVisible());
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  expect(rows()).toHaveLength(2);
+  expect(loadMore()).toBeNull();
+});
+
+it("says so when a page cannot be loaded, keeps what is shown and keeps the row", async () => {
+  const mock = createIssuesMock({ pageSize: 4 });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await screen.findByRole("button", { name: "Login sends people back to /home" });
+  mock.failNext("list");
+  await user.click(loadMore()!);
+  await waitFor(() => expect(useUi.getState().toasts.some((toast) => /Couldn.t load more/.test(toast.text))).toBe(true));
+  expect(rows()).toHaveLength(4);
+  expect(loadMore()).toBeEnabled();
+});
+
+// ---- state change is Planned ----
+
+it("in a production build the State control is Planned text, and no choice is offered or sent even when the answer carries transitions", async () => {
+  vi.stubGlobal("__ORBYN_PREVIEWS__", false);
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
+  render(<IssuesPage />);
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("Planned")).toBeVisible();
+  expect(within(facts).getByText("Open")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^State:/ })).toBeNull();
+  expect(mock.writes).toEqual([]);
 });

@@ -29,9 +29,12 @@ export function fileName(file: FileDiff): string {
   return from ? `${file.path} ← ${from}` : file.path;
 }
 
+/** A changed file as the thread's Changes read answers it: in a multi-repository thread it also carries its `repo_id`, and its path is relative to that repository. */
+export type RepoFile = FileDiff & { repo_id?: string };
+
 /** The filter and the changed files, one row each. The row of the file on show is marked, and the arrow keys move between rows. */
 export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, onMore, repos, threadId, onRepoChanged }: {
-  files: readonly FileDiff[];
+  files: readonly RepoFile[];
   /** How many files the list has not drawn yet; Show adds all of them. */
   more: number;
   selected: string | null;
@@ -58,9 +61,9 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
     event.preventDefault();
     next.focus();
   };
-  const row = (file: FileDiff) => (
+  const row = (file: RepoFile) => (
     <button
-      key={file.path}
+      key={`${file.repo_id ?? ""}\u0000${file.path}`}
       type="button"
       className={`fli ${file.path === selected ? "on" : ""}`}
       data-diff-row={file.path}
