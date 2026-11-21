@@ -570,7 +570,7 @@ fn details_response() -> Value {
                     { "author": { "login": "me" }, "state": "CHANGES_REQUESTED" },
                 ] },
                 "comments": { "totalCount": 2 },
-                "reviews": { "nodes": [
+                "reviews": { "totalCount": 2, "pageInfo": {"hasNextPage": false}, "nodes": [
                     { "comments": { "totalCount": 3 } },
                     { "comments": { "totalCount": 0 } },
                 ] },
@@ -580,7 +580,7 @@ fn details_response() -> Value {
                 "reviewRequests": { "nodes": [] },
                 "latestReviews": { "nodes": [] },
                 "comments": { "totalCount": 0 },
-                "reviews": { "nodes": [] },
+                "reviews": { "totalCount": 0, "pageInfo": {"hasNextPage": false}, "nodes": [] },
             },
             "p5": null,
             "p6": { "comments": { "totalCount": 1 } },
@@ -686,4 +686,230 @@ fn the_details_query_names_one_alias_per_pull_request() {
         query.contains("p3:pullRequest(number:3)") && query.contains("p40:pullRequest(number:40)")
     );
     assert_eq!(query.matches("pullRequest(").count(), 2);
+    assert!(query.contains("reviews(first:100){totalCount pageInfo{hasNextPage} nodes"));
+    assert!(query.contains("latestReviews(first:50)"));
+    assert!(query.contains("reviewRequests(first:50)"));
+    assert_eq!(super::details::DETAILS_BATCH, 25);
+    assert_eq!(super::details::DETAILS_ROW_LIMIT, 100);
+    assert_eq!(super::details::DETAILS_TIMEOUT, Duration::from_secs(20));
+}
+
+#[test]
+fn details_comment_count_is_unknown_when_reviews_are_paginated() {
+    let mut response = details_response();
+    response["data"]["repository"]["p3"]["reviews"] = json!({
+        "totalCount": 101, "pageInfo": {"hasNextPage": true},
+        "nodes": vec![json!({"comments": {"totalCount": 1}}); 100]
+    });
+    let details = parse_details(&response, "p", &[3]);
+    assert_eq!(details[&3].comment_count, None);
+    assert_eq!(
+        details[&3].viewer_review_state.as_deref(),
+        Some("changes_requested")
+    );
+    assert_eq!(details[&3].requested_reviewers.as_ref().unwrap().len(), 2);
+    // The flag is independently required, even when a stale total matches the page.
+    response["data"]["repository"]["p3"]["reviews"]["totalCount"] = 100.into();
+    assert_eq!(parse_details(&response, "p", &[3])[&3].comment_count, None);
+}
+
+#[test]
+fn details_comment_count_requires_consistent_complete_connection_metadata() {
+    for bad in [
+        Value::Null,
+        json!(-1),
+        json!(1.5),
+        json!("2"),
+        json!(1),
+        json!(3),
+    ] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["reviews"]["totalCount"] = bad;
+        assert_eq!(parse_details(&response, "p", &[3])[&3].comment_count, None);
+    }
+    for bad in [
+        Value::Null,
+        json!({}),
+        json!({"hasNextPage": null}),
+        json!({"hasNextPage": "false"}),
+    ] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["reviews"]["pageInfo"] = bad;
+        assert_eq!(parse_details(&response, "p", &[3])[&3].comment_count, None);
+    }
+    let mut missing = details_response();
+    missing["data"]["repository"]["p3"]["reviews"]
+        .as_object_mut()
+        .unwrap()
+        .remove("totalCount");
+    assert_eq!(parse_details(&missing, "p", &[3])[&3].comment_count, None);
+}
+
+#[test]
+fn details_malformed_review_arrays_leave_other_known_fields_available() {
+    for bad in [
+        Value::Null,
+        json!([]),
+        json!({}),
+        json!({"nodes": null}),
+        json!({"nodes": {}}),
+    ] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["reviews"] = bad;
+        let details = parse_details(&response, "p", &[3]);
+        assert_eq!(details[&3].comment_count, None);
+        assert!(details[&3].created_at.is_some());
+        assert_eq!(
+            details[&3].viewer_review_state.as_deref(),
+            Some("changes_requested")
+        );
+    }
+}
+
+#[test]
+fn details_missing_or_invalid_comment_counts_are_never_summed_as_zero() {
+    for bad in [
+        Value::Null,
+        json!({}),
+        json!({"comments": {}}),
+        json!({"comments": {"totalCount": -1}}),
+        json!({"comments": {"totalCount": 1.5}}),
+        json!({"comments": {"totalCount": "3"}}),
+    ] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["reviews"]["nodes"][0] = bad;
+        assert_eq!(parse_details(&response, "p", &[3])[&3].comment_count, None);
+    }
+    for bad in [Value::Null, json!(-1), json!(1.5), json!("2")] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["comments"]["totalCount"] = bad;
+        let details = parse_details(&response, "p", &[3]);
+        assert_eq!(details[&3].comment_count, None);
+        assert!(details[&3].created_at.is_some());
+    }
+}
+
+#[test]
+fn details_comment_count_overflow_is_unknown_instead_of_saturated_or_wrapped() {
+    for count in [u64::from(u32::MAX), u64::MAX] {
+        let mut response = details_response();
+        response["data"]["repository"]["p3"]["reviews"]["nodes"][0]["comments"]["totalCount"] =
+            count.into();
+        assert_eq!(parse_details(&response, "p", &[3])[&3].comment_count, None);
+    }
+}
+
+#[test]
+fn details_complete_hundred_review_boundary_and_known_zero_are_preserved() {
+    let mut response = details_response();
+    for count in [100, 101] {
+        response["data"]["repository"]["p3"]["reviews"] = json!({
+            "totalCount": count, "pageInfo": {"hasNextPage": false},
+            "nodes": vec![json!({"comments": {"totalCount": 1}}); count]
+        });
+        assert_eq!(
+            parse_details(&response, "p", &[3])[&3].comment_count,
+            if count == 100 { Some(102) } else { None }
+        );
+    }
+    assert_eq!(
+        parse_details(&response, "p", &[4])[&4].comment_count,
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn details_core_cache_and_wire_keep_unknown_distinct_from_zero() {
+    use orbyn_contracts::{PullDetailsRef, PullDetailsRequest};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let dir = crate::testing::TempDir::new();
+    let folder = dir.path().join("repo");
+    std::fs::create_dir(&folder).unwrap();
+    crate::testing::run_git(&folder, &["init", "-q", "-b", "main"]);
+    crate::testing::run_git(
+        &folder,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/fixture.git",
+        ],
+    );
+    let mut config = crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    config.engines.known_engine_ids = Some(Vec::new());
+    let core = crate::Core::open(config).unwrap();
+    let project = core
+        .store
+        .add_project(crate::store::NewProject {
+            path: folder.to_str().unwrap(),
+            name: "fixture",
+            is_git: true,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    core.store.trust_project(&project.id, "fixture").unwrap();
+    let answer = Arc::new(Mutex::new(details_response()));
+    answer.lock().unwrap()["data"]["repository"]["p3"]["reviews"]["pageInfo"]["hasNextPage"] =
+        true.into();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (read_answer, read_calls) = (answer.clone(), calls.clone());
+    let fixture = Arc::new(move |forge, _cwd: &Path, args: &[&str]| {
+        assert_eq!(forge, Forge::GitHub);
+        assert_eq!(&args[..2], &["api", "graphql"]);
+        assert!(args.last().unwrap().contains("pageInfo{hasNextPage}"));
+        read_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(read_answer.lock().unwrap().to_string())
+    });
+    super::process::with_crew_fixture(fixture, async {
+        let mut request = PullDetailsRequest {
+            pulls: [3, 4, 3]
+                .into_iter()
+                .map(|number| PullDetailsRef {
+                    project_id: project.id.clone(),
+                    number,
+                    updated_at: Some("unchanged".into()),
+                })
+                .collect(),
+            fresh: false,
+        };
+        let first = core.pull_details(&request).await.unwrap();
+        assert_eq!(first.details.len(), 2);
+        let wire = serde_json::to_value(&first).unwrap();
+        let rows = wire["details"].as_array().unwrap();
+        assert!(
+            rows.iter()
+                .find(|r| r["number"] == 3)
+                .unwrap()
+                .get("comment_count")
+                .is_none()
+        );
+        assert_eq!(
+            rows.iter().find(|r| r["number"] == 4).unwrap()["comment_count"],
+            0
+        );
+        assert_eq!(
+            core.pull_details(&request).await.unwrap().details,
+            first.details
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        *answer.lock().unwrap() = details_response();
+        request.fresh = true;
+        let complete = core.pull_details(&request).await.unwrap();
+        assert_eq!(
+            complete
+                .details
+                .iter()
+                .find(|r| r.number == 3)
+                .unwrap()
+                .comment_count,
+            Some(5)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    })
+    .await;
 }
