@@ -410,6 +410,7 @@
     ["POST","/api/threads/order","local"],
     ["POST","/api/threads/{id}/adopt","local"],
     ["POST","/api/threads/{id}/attachments","local"],
+    ["POST","/api/threads/{id}/attachments/convert","local"],
     ["POST","/api/threads/{id}/branches","person"],
     ["POST","/api/threads/{id}/branches/switch","person"],
     ["POST","/api/threads/{id}/bring-back","local"],

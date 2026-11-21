@@ -1,7 +1,8 @@
 # Photo conversion, transcript import and earlier messages
 
-What the web composer and thread need from the service for three Beta frame groups. **Planned**: the web side is built hidden, the
-service routes are not built. In a production build the web has no client for any of them and sends nothing; a dev-only preview
+What the web composer and thread need from the service for three Beta frame groups. **Partly built**: the photo
+conversion route exists (below); transcript import and export and the earlier-messages read are still planned. In a
+production build the web has no client for any of them and sends nothing; a dev-only preview
 (`#/preview/attachments`, `#/preview/earlier`) installs the mocks in `web/mock/attachments.ts` and `web/mock/earlier.ts`. A name here
 changes only if the service pull request says so. Rows: B8, B43, K36 in [parity](parity.md).
 
@@ -34,15 +35,21 @@ transcript…" chip reuses the converting chip (no new frame).
 
 ## Photo conversion (B8)
 
-`POST /api/threads/{id}/attachments/convert?name=<label>` with the photo as the body.
+Built: `POST /api/threads/{id}/attachments/convert?name=<label>` with the photo as the body (decision in
+`orbyn-core`'s `conversation/photo_conversion.rs`, route in `orbynd`'s `routes/composer.rs`, class `local`).
 
-- Allowed input types: `image/heic`, `image/heif`, `image/png`, `image/jpeg`, `image/webp`. Anything else is `415 unsupported_type`
-  and the web does not send it here (it goes to the ordinary upload). A GIF is never shrunk, since that would drop its frames.
-- Behaviour: HEIC and HEIF become JPEG; PNG, JPEG and WebP over 10 MiB are made smaller until they are at most 10 MiB. A photo
-  already within the limit and not HEIC is stored as it is and answers `action: "none"` (the web only sends photos that need work).
-  The stored file is the converted one; the original is not kept and the chip never offers it back.
-- Cap on the input: 50 MiB (`413 file_too_large`) and a pixel cap of 100 megapixels, so a small file cannot expand into memory.
-  The decoder runs with a time limit and no network access; metadata that locates a person (GPS) is dropped from the result.
+- Allowed input types: `image/png` and `image/jpeg`, decided from the bytes and never from the claimed one. Anything
+  else is `415 unsupported_type`. **Deferred:** HEIC and HEIF decoding needs libheif (LGPL-3.0, a C library this build
+  does not link) and WebP needs `image`'s `webp` feature and the `image-webp` crate, so all three are refused with a
+  message that names HEIC and no `converted` answer exists yet. Each is its own decision, recorded in row B8.
+- Behaviour: a PNG or JPEG over 10 MiB is made smaller until it is at most 10 MiB (`action: "shrunk"`). A photo already
+  within the limit is written again at its own size (`action: "none"`), which is what drops its metadata. The stored file
+  is the written one; the original is not kept and the chip never offers it back.
+- Cap on the input: 50 MiB (`413 file_too_large`), refused from the declared `Content-Length` before the body is read and
+  then by a counting read, so a request without a length also stops. A pixel cap of 100 megapixels and a 512 MiB decoder
+  allocation are checked from the header before a decoder allocates, so a small file cannot expand into memory. The
+  decoder runs in process and touches no network.
+- Metadata: every answer is written from decoded pixels, so no EXIF, and no GPS location, travels with it.
 - Answer `200`:
 
   ```json
@@ -51,10 +58,12 @@ transcript…" chip reuses the converting chip (no new frame).
 
   `action` is `converted`, `shrunk` or `none`. `id` goes in the run's `attachment_ids`, as an uploaded file's does. `name` is the new
   name with the new ending; the web shows it.
-- Errors, each `{code, message}` as the other routes: `unreadable_image` (`422`, damaged or not an image), `still_too_large` (`422`,
-  still over 10 MiB after shrinking), `file_too_large` (`413`), `unsupported_type` (`415`). The web shows its own sentence for the
-  first two and the service's message for the rest.
-- The request can be cancelled by the client closing it; the service then keeps nothing.
+- Errors, each `{code, message}` as the other routes: `unreadable_image` (`422`, damaged or not an image, and a photo over
+  the pixel cap), `still_too_large` (`422`, still over 10 MiB after shrinking), `file_too_large` (`413`), `unsupported_type`
+  (`415`). The web shows its own sentence for the first two and the service's message for the rest.
+- The request can be cancelled by the client closing it, but the decode is in process and is not interrupted: the
+  converted photo is stored just before the answer, so a cancelled request leaves that one attachment on the thread and
+  nothing else.
 
 ## Transcript export and import (B43)
 
