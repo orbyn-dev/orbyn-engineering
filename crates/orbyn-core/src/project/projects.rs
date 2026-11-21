@@ -373,7 +373,13 @@ impl Core {
         if !path.is_dir() {
             return Err(CoreError::Invalid("The project's folder is gone.".into()));
         }
-        if project.is_git || is_git_repo(&path) {
+        // The stored path can be swapped for a symlink, or an enclosing repository can
+        // appear, after the folder was added: start Git only where the folder still is.
+        let resolved = resolve_project(&self.workspace.root()?, &path).await?;
+        if resolved.path != path {
+            return Err(CoreError::Invalid("The project's folder has moved.".into()));
+        }
+        if project.is_git || is_git_repo(&path) || resolved.is_git {
             return Err(CoreError::Invalid(
                 "This project is already a Git repository.".into(),
             ));
