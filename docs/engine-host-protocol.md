@@ -128,8 +128,8 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
   `cancelled` as named; `failed`, `maxTurns` and `refused` become `Failed(<plain sentence>)` with a
   `detail` code; a `kind: session_lost` error becomes `SessionLost`. The host adds
   `threadDisposition: "reusable" | "broken"`, and on a failure may add
-  `retry: {"afterMs"?, "why": "rate_limit"|"network"|"overloaded"}` and, for `rate_limit`, `resetsAt`
-  (unix seconds) so the core can emit its `Limited { resets_at }` event.
+  `retry: {"afterMs"?, "why": "rate_limit"|"network"|"overloaded", "resetsAt"?}`; `resetsAt` (unix seconds,
+  inside `retry`, only for `rate_limit`) lets the core emit its `Limited { resets_at }` event.
 - `background` frames report shells, subagents and workflows the engine started, so rule 1 of the
   run-end contract can hold or report them. The host keeps the run open per the family's rule
   (see [engine-run-contract.md](engine-run-contract.md)) and sends `runDone` only when the hold ends.
