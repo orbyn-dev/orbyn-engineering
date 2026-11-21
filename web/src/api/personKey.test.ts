@@ -122,6 +122,19 @@ describe("the Cursor thread routes, which are not on the service yet", () => {
   });
 });
 
+describe("the Issues writes", () => {
+  it("send the key on every write, the five in the route table and the two edits not built yet, and on no read", () => {
+    for (const path of ["/api/issues/trackers/github/connect", "/api/issues/trackers/github/disconnect", "/api/issues/start-thread", "/api/threads/t1/issue-links", "/api/threads/t1/issue-links/remove", "/api/issues/item/update", "/api/issues/item/state"]) {
+      expect(sendsPersonKey("POST", path), path).toBe(true);
+    }
+    for (const path of ["/api/issues", "/api/issues/item", "/api/issues/candidates", "/api/issues/links"]) expect(sendsPersonKey("GET", path), path).toBe(false);
+    // The five in the first slice are no longer pending: they are in PERSON_ROUTES, from routes.json.
+    const pending = PENDING_PERSON_ROUTES.map(([, pattern]) => pattern);
+    expect(pending).toEqual(expect.arrayContaining(["/api/issues/item/update", "/api/issues/item/state"]));
+    for (const pattern of ["/api/issues/start-thread", "/api/issues/trackers/{tracker}/connect", "/api/threads/{id}/issue-links"]) expect(pending).not.toContain(pattern);
+  });
+});
+
 describe("the multi-repository writes of docs/multi-repo.md", () => {
   const writes = [
     "/api/projects/p1/repos/add-folder", "/api/projects/p1/repos/create", "/api/projects/p1/repos/clone", "/api/projects/p1/repos/r1/publish",
