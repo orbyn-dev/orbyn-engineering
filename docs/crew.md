@@ -356,8 +356,7 @@ retries with the reason. The same failure twice means one change of approach, an
     one still passes. With Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`):
     with the default 30 turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
   - **A crew-wide turn budget** (owner ruling, 2026-11-20) is a device-local number of turns
-    (`crew_turn_budget`; unset or 0 is no crew budget). There is no Settings control yet: it can be set only through the
-    settings API for now. A crew's spend is the same per-task tally summed over its
+    (`crew_turn_budget`; unset or 0 is no crew budget), set in Settings › General (`Crew turn budget`). A crew's spend is the same per-task tally summed over its
     tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
     refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
     stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
