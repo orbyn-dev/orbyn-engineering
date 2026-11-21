@@ -174,7 +174,11 @@ async fn server_compares_a_release_manifest_and_keeps_it_when_it_disappears() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
+        // A service that never asks for the manifest must fail the test, not hang it.
+        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
+            .await
+            .expect("the service never asked for the update manifest")
+            .unwrap();
         let mut buffer = [0u8; 2048];
         let _ = socket.read(&mut buffer).await;
         let body = r#"{"version":"99.0.0","notes":"Big release"}"#;
@@ -194,7 +198,10 @@ async fn server_compares_a_release_manifest_and_keeps_it_when_it_disappears() {
             ..Options::default()
         },
     );
-    server.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .expect("the manifest server never finished")
+        .unwrap();
     for _ in 0..500 {
         if app(&service).await["latest"] == "99.0.0" {
             break;
