@@ -227,3 +227,14 @@ describe("the device actions of docs/devices.md", () => {
     expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
   });
 });
+
+describe("the profile writes of docs/execution-profiles-and-library.md", () => {
+  it("send the key on every write, and on the reads and the check", () => {
+    expect(sendsPersonKey("POST", "/api/profiles")).toBe(true);
+    expect(sendsPersonKey("PATCH", "/api/profiles/01j0")).toBe(true);
+    expect(sendsPersonKey("DELETE", "/api/profiles/01j0")).toBe(true);
+    expect(sendsPersonKey("PUT", "/api/threads/t1/profile")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/crew/profile/apply")).toBe(true);
+    for (const [method, path] of [["GET", "/api/profiles"], ["GET", "/api/profiles/01j0"], ["POST", "/api/profiles/check"]] as const) expect(sendsPersonKey(method, path), path).toBe(false);
+  });
+});

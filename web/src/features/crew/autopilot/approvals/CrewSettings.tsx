@@ -12,6 +12,7 @@ import { DigestTime } from "./DigestTime";
 import { BacktestEntry, DashboardEntry, EscapesEntry, OracleEntry } from "./CrewEntries";
 import { PathClasses } from "./PathClasses";
 import { ProductionTargets } from "./ProductionTargets";
+import { ProfilesSettings } from "../../../profiles";
 import { EngineTiers } from "./EngineTiers";
 import { WorkerProvider } from "./WorkerProvider";
 
@@ -52,6 +53,7 @@ export function CrewSettingsSection() {
           <LiveBacktest view="report" id={id} />
         ) : (
           <>
+            <ProfilesSettings />
             <AutopilotSettings />
             <DigestTime />
             <CapacityEntry />
