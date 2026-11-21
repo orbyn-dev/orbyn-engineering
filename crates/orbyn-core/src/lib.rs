@@ -12,6 +12,7 @@ pub mod error;
 pub mod governance;
 pub mod host;
 pub mod issues;
+pub mod library;
 pub mod operations;
 pub mod profiles;
 pub mod project;

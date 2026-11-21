@@ -194,6 +194,8 @@ pub struct Core {
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
     /// Engine API keys, kept in the OS keychain only (`credentials`).
     pub(crate) credentials: crate::credentials::Credentials,
+    /// Personal-library environment-set values, kept in the OS keychain only, in their own service (`credentials::env_sets`).
+    pub(crate) env_sets: crate::credentials::EnvSets,
     _lock: OwnerLock,
 }
 
@@ -349,6 +351,7 @@ impl Core {
             crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
             credentials: Self::system_credentials(),
+            env_sets: crate::credentials::EnvSets::system(crate::credentials::default_env_service()),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared

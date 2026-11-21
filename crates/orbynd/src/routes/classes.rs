@@ -210,6 +210,21 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("PUT", "/api/threads/{id}/profile"),
     ("POST", "/api/crew/profile/apply"),
     ("PUT", "/api/engines/{id}/code-mode"),
+    // The personal library (docs/execution-profiles-and-library.md, Part 2).
+    ("POST", "/api/library/workflows"),
+    ("PATCH", "/api/library/workflows/{id}"),
+    ("DELETE", "/api/library/workflows/{id}"),
+    ("POST", "/api/library/workflows/{id}/run"),
+    ("POST", "/api/library/prompts"),
+    ("PATCH", "/api/library/prompts/{id}"),
+    ("DELETE", "/api/library/prompts/{id}"),
+    ("POST", "/api/library/env-sets"),
+    ("PATCH", "/api/library/env-sets/{id}"),
+    ("DELETE", "/api/library/env-sets/{id}"),
+    ("PUT", "/api/library/env-sets/{id}/keys/{key}"),
+    ("DELETE", "/api/library/env-sets/{id}/keys/{key}"),
+    ("POST", "/api/library/import"),
+    ("POST", "/api/projects/{id}/library/suggestions/copy"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -1012,6 +1027,76 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "PUT",
         "/api/engines/{id}/code-mode",
         "the person turns Code Mode on or off for an engine, which changes what the engine may call",
+    ),
+    (
+        "POST",
+        "/api/library/workflows",
+        "the person saves a library workflow, a command that can later run in their shell",
+    ),
+    (
+        "PATCH",
+        "/api/library/workflows/{id}",
+        "the person changes a library workflow, a command that can later run in their shell",
+    ),
+    (
+        "DELETE",
+        "/api/library/workflows/{id}",
+        "the person deletes a library workflow",
+    ),
+    (
+        "POST",
+        "/api/library/workflows/{id}/run",
+        "starts a library workflow in the person's shell, with the values of its environment sets",
+    ),
+    (
+        "POST",
+        "/api/library/prompts",
+        "the person saves a library prompt",
+    ),
+    (
+        "PATCH",
+        "/api/library/prompts/{id}",
+        "the person changes a library prompt",
+    ),
+    (
+        "DELETE",
+        "/api/library/prompts/{id}",
+        "the person deletes a library prompt",
+    ),
+    (
+        "POST",
+        "/api/library/env-sets",
+        "the person creates an environment set",
+    ),
+    (
+        "PATCH",
+        "/api/library/env-sets/{id}",
+        "the person renames an environment set or changes its key names, which deletes the keychain item of a removed key",
+    ),
+    (
+        "DELETE",
+        "/api/library/env-sets/{id}",
+        "the person deletes an environment set and every keychain value in it",
+    ),
+    (
+        "PUT",
+        "/api/library/env-sets/{id}/keys/{key}",
+        "the person stores a secret value in the OS keychain",
+    ),
+    (
+        "DELETE",
+        "/api/library/env-sets/{id}/keys/{key}",
+        "the person removes a secret value from the OS keychain",
+    ),
+    (
+        "POST",
+        "/api/library/import",
+        "imports an untrusted document into the personal library",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/library/suggestions/copy",
+        "the person copies an entry from a repository's committed .orbyn/ file into the device library",
     ),
 ];
 

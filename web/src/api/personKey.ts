@@ -181,6 +181,21 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/profile/apply"],
   // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
   ["PUT", "/api/engines/{id}/code-mode"],
+  // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
+  ["POST", "/api/library/workflows"],
+  ["PATCH", "/api/library/workflows/{id}"],
+  ["DELETE", "/api/library/workflows/{id}"],
+  ["POST", "/api/library/workflows/{id}/run"],
+  ["POST", "/api/library/prompts"],
+  ["PATCH", "/api/library/prompts/{id}"],
+  ["DELETE", "/api/library/prompts/{id}"],
+  ["POST", "/api/library/env-sets"],
+  ["PATCH", "/api/library/env-sets/{id}"],
+  ["DELETE", "/api/library/env-sets/{id}"],
+  ["PUT", "/api/library/env-sets/{id}/keys/{key}"],
+  ["DELETE", "/api/library/env-sets/{id}/keys/{key}"],
+  ["POST", "/api/library/import"],
+  ["POST", "/api/projects/{id}/library/suggestions/copy"],
 ];
 
 /**
@@ -214,21 +229,6 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/devices/{id}/actions"],
   // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.
   ["POST", "/api/threads/{id}/transcripts"],
-  // The personal library (same doc, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
-  ["POST", "/api/library/workflows"],
-  ["PATCH", "/api/library/workflows/{id}"],
-  ["DELETE", "/api/library/workflows/{id}"],
-  ["POST", "/api/library/workflows/{id}/run"],
-  ["POST", "/api/library/prompts"],
-  ["PATCH", "/api/library/prompts/{id}"],
-  ["DELETE", "/api/library/prompts/{id}"],
-  ["POST", "/api/library/env-sets"],
-  ["PATCH", "/api/library/env-sets/{id}"],
-  ["DELETE", "/api/library/env-sets/{id}"],
-  ["PUT", "/api/library/env-sets/{id}/keys/{key}"],
-  ["DELETE", "/api/library/env-sets/{id}/keys/{key}"],
-  ["POST", "/api/library/import"],
-  ["POST", "/api/projects/{id}/library/suggestions/copy"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */
