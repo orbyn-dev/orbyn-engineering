@@ -14,6 +14,7 @@ import { AppearanceSection } from "./pages/Appearance";
 import { KeybindingsSection } from "./pages/Keybindings";
 import { AccountSection, useAccountAvailable } from "../account";
 import { CrewSettingsSection, useCrewFlag } from "../crew";
+import { BrowserProfilesSection } from "./browser/BrowserProfiles";
 import { MaintenanceSection } from "./maintenance/Maintenance";
 import { ProjectsSection } from "./projects/Projects";
 import { ProvidersSection } from "./providers/Providers";
@@ -45,6 +46,7 @@ export const labels: Record<SettingsSection, string> = {
   projects: "Projects",
   "source-control": "Source control",
   worktrees: "Worktrees",
+  browser: "Browser",
   crew: "Crew",
   secrets: "Secrets",
   maintenance: "Maintenance",
@@ -57,7 +59,7 @@ export const labels: Record<SettingsSection, string> = {
 const groups: { label: string | null; sections: SettingsSection[] }[] = [
   { label: null, sections: ["general", "account", "appearance", "chat", "diffs", "keybindings"] },
   { label: "Agents", sections: ["providers", "tools", "threads", "tasks", "crew", "secrets"] },
-  { label: "Code", sections: ["projects", "source-control", "worktrees"] },
+  { label: "Code", sections: ["projects", "source-control", "worktrees", "browser"] },
   { label: null, sections: ["maintenance", "labs", "about", "archive"] },
 ];
 
@@ -70,6 +72,7 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
   tasks: ScheduledTasksSection,
   "source-control": SourceControlSection,
   worktrees: WorktreesSection,
+  browser: BrowserProfilesSection,
   crew: CrewSettingsSection,
   secrets: SecretsSection,
   labs: LabsSection,

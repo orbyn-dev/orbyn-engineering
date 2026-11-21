@@ -24,6 +24,7 @@ import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./st
 import { useConnectionKind } from "../../product/state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
+import { useDevicesOffered } from "../devices";
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
 const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
@@ -36,6 +37,7 @@ const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
   linked: "Linked threads show again as soon as it is back.",
   tools: "The tools list comes back when the service does.",
+  devices: "Devices show again as soon as it is back.",
   review: "Your comments are kept here and show again when it is back.",
 };
 /** Tabs that need this device's network. Diff, Files, Activity and the terminal keep working offline. */
@@ -196,7 +198,8 @@ export function PanelHost({
 }) {
   const order = useUi((state) => state.panelTabOrder);
   const closedTabs = useUi((state) => state.panelTabsClosed);
-  const rowIds = order.filter((id) => isFileTab(id) || !closedTabs.includes(id));
+  const devicesOffered = useDevicesOffered();
+  const rowIds = order.filter((id) => isFileTab(id) || (!closedTabs.includes(id) && (id !== "devices" || devicesOffered)));
   // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row; with none open, it is empty.
   const chosen = useUi((state) => state.panelTab);
   const tab: RightTab | null = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? null);
@@ -293,7 +296,7 @@ export function PanelHost({
   });
   // The "+" lists everything that can be opened; choosing one already open shows it. Reset tab order shows once the order has changed.
   const launcher: MenuItem[] = [
-    ...RIGHT_TABS.map(({ id, label, icon: Icon }) => {
+    ...RIGHT_TABS.filter(({ id }) => id !== "devices" || devicesOffered).map(({ id, label, icon: Icon }) => {
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
     }),

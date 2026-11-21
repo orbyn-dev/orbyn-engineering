@@ -71,6 +71,13 @@ describe("grouping changed files by repository", () => {
     ]);
   });
 
+  it("groups by the repo_id a file carries when it has one, so two repositories can each have a README.md", () => {
+    const groups = groupByRepo([{ path: "README.md", repo_id: "planner" }, { path: "README.md", repo_id: "engineering" }, { path: "x.ts", repo_id: "gone" }, { path: "y.ts" }], [repo("engineering"), repo("planner")]);
+    expect(groups.map((group) => [group.repo?.repo_id ?? null, group.files.map((entry) => entry.repo_id ?? null)])).toEqual([
+      ["engineering", ["engineering"]], ["planner", ["planner"]], [null, ["gone", null]],
+    ]);
+  });
+
   it("leaves out a repository with no file in the list, for instance under a filter", () => {
     const groups = groupByRepo([file("auth/redirect.ts")], [repo("engineering", ["auth/redirect.ts"]), repo("planner", ["calendar/feed.ts"])]);
     expect(groups.map((group) => group.repo?.repo_id)).toEqual(["engineering"]);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forgetPersonKey, PERSON_HEADER } from "../../api/personKey";
 import { createHttpIssuesApi, createLiveIssuesApi } from "./http";
+import type { IssueQuery } from "./contract";
 
 const TOKEN = "glpat-SECRET-0123456789";
 const REF = { tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" } as const;
@@ -136,8 +137,38 @@ describe("the routes", () => {
     await expect(createHttpIssuesApi().link("t", REF)).rejects.toMatchObject({ code: "tracker_not_connected", status: 409, message: "gh is signed out." });
   });
 
-  it("has no state change: the doc names none", async () => {
+  it("has no state change: the beta contract is read only against the tracker, so nothing is sent", async () => {
+    service(() => json({}));
     await expect(createHttpIssuesApi().setState(REF, { category: "closed", name: "Closed" })).rejects.toThrow();
+    await expect(createLiveIssuesApi().setState(REF, { category: "closed", name: "Closed" })).rejects.toThrow();
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
+    expect(calls.some((call) => call.url.pathname.includes("/state"))).toBe(false);
+  });
+
+  it("pages with `cursors`: once, JSON then URL-encoded, with the same filters", async () => {
+    service(() => json({ issues: [], counts: null, failed: [], next_cursors: {} }));
+    const query: IssueQuery = { tracker: "github", state: "open", labels: ["bug"], assignee: "me", text: "x" };
+    await createHttpIssuesApi().list(query, undefined, { "github o/r": "abc", "linear Orbyn team": "z9" });
+    const raw = calls[0]!.url.search;
+    expect(raw).toContain("cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%2C%22linear%20Orbyn%20team%22%3A%22z9%22%7D");
+    expect(calls[0]!.url.searchParams.getAll("cursors")).toHaveLength(1);
+    expect(JSON.parse(calls[0]!.url.searchParams.get("cursors")!)).toEqual({ "github o/r": "abc", "linear Orbyn team": "z9" });
+    expect(calls[0]!.url.searchParams.get("state")).toBe("open");
+    expect(calls[0]!.url.searchParams.getAll("label")).toEqual(["bug"]);
+    expect(calls[0]!.url.searchParams.get("assignee")).toBe("me");
+    expect(calls[0]!.url.searchParams.get("q")).toBe("x");
+    // No cursors, no parameter. An empty object is no paging either.
+    await createHttpIssuesApi().list(query);
+    await createHttpIssuesApi().list(query, undefined, {});
+    expect(calls[1]!.url.searchParams.has("cursors")).toBe(false);
+    expect(calls[2]!.url.searchParams.has("cursors")).toBe(false);
+  });
+
+  it("refuses a cursors value over 4 KiB before anything is sent", async () => {
+    service(() => json({ issues: [], counts: null }));
+    const query: IssueQuery = { tracker: null, state: "open", labels: [], assignee: "any", text: "" };
+    await expect(createHttpIssuesApi().list(query, undefined, { "github o/r": "x".repeat(4200) })).rejects.toThrow(/too many pages/i);
+    expect(calls).toEqual([]);
   });
 });
 

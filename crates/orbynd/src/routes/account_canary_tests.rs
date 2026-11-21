@@ -117,7 +117,7 @@ async fn raw(
     for (name, value) in response.headers() {
         shown += &format!("{name}: {}\n", String::from_utf8_lossy(value.as_bytes()));
     }
-    shown + &response.text().await.unwrap()
+    shown + response.text().await.unwrap().as_str()
 }
 
 #[tokio::test]

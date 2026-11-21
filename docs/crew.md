@@ -1535,7 +1535,7 @@ elapsed time; usage; worktree and branch; file lease; unread messages.
 - **Revert hunk:** Undo toast for 10 seconds, then checkpoints. It is disabled on staged hunks. Orbyn stays out of
   staging.
 - **Profiles:** they pick among the four existing permission modes (Supervised, Auto edits, Auto, Full access). There is
-  no read-only mode. Examples are "Careful", "Fast" and "Hands-off".
+  no read-only mode. The built-in profiles are "Careful", "Fast" and "Cheap".
 - **Start a crew dialog:** Profile, Budget and Autopilot mode (Full by default) in one dialog.
 - **Settings:** Crew and Secrets are both in the Settings Agents group, beside providers, tools, threads and tasks; there is no Privacy or Telemetry section.
 
@@ -1694,7 +1694,7 @@ reason.
 **In the Crew beta (Preview):**
 
 - Phase 1 wiring: optional Orbyn account on staging, with personal settings syncing across devices
-- Warp features W1, W4, W5, W6, W7, W8, W9, W11 and W12 (above); W2 and W3 are Beta (partial, see [parity.md](parity.md) G15 and G16); W10 is After the beta or Planned in the designs
+- all twelve Warp features W1 to W12 (above); W2 and W3 are partial (see [parity.md](parity.md) G15 and G16)
 - Slice 0: protocol v0 spec and schemas (not yet published)
 - Slices 1 to 4: contracts, router v0 on defaults, runs, verifier, bus, leases
 - 4b: review stages

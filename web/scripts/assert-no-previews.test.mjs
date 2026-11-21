@@ -36,6 +36,8 @@ describe("assert-no-previews", () => {
     ["the Cursor thread mock", `createCursorThreadMock({delayMs:300})`],
     ["the Repositories preview route", `location.hash.startsWith("#/preview/repos")`],
     ["the Repositories mock", `module.createReposMock({delayMs:300})`],
+    ["the Devices preview route", `location.hash.startsWith("#/preview/devices")`],
+    ["the Devices mock", `module.createDevicesMock({delayMs:300})`],
   ])("fails a production bundle holding %s", (_name, text) => {
     const result = run({ "chunk.js": text });
     expect(result.status).toBe(1);

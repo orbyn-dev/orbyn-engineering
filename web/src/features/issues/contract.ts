@@ -136,7 +136,7 @@ export interface IssueList {
   counts: { open: number; closed: number } | null;
   /** A tracker that did not answer while others did: its name and the service's own message. */
   failed: { tracker: TrackerKind; message: string }[];
-  /** Where each tracker and scope left off, to ask for the next page. The beta screens do not page, so they ignore it. */
+  /** Where each tracker and scope left off, `"<tracker> <scope>"` to an opaque cursor; only those with more are listed. Send it back as `cursors` for the next page. */
   next_cursors: Record<string, string>;
 }
 
@@ -159,7 +159,12 @@ export interface ThreadDraft { message: string }
 export interface IssuesApi {
   /** `null` is "this service does not report issues" (the Issues flag is off, a 404): the screens hide and no other call is made. */
   trackers(signal?: AbortSignal): Promise<TrackerRow[] | null>;
-  list(query: IssueQuery, signal?: AbortSignal): Promise<IssueList>;
+  /**
+   * `cursors` is a `next_cursors` the previous answer gave, for the next page of those scopes only, with the same query. The
+   * client sends it once, as JSON then URL-encoded, at most 4 KiB; a larger value is refused before anything is sent. A cursor is
+   * opaque: the page never builds or edits one.
+   */
+  list(query: IssueQuery, signal?: AbortSignal, cursors?: Record<string, string>): Promise<IssueList>;
   get(issue: IssueTarget, signal?: AbortSignal): Promise<IssueDetail>;
   /** Every thread's linked issues, by thread id, oldest link first. One read for the chip, the rows and the detail card. */
   links(signal?: AbortSignal): Promise<Record<string, IssueRef[]>>;
@@ -182,8 +187,10 @@ export interface IssuesApi {
   /** One write per call: creates the thread, links it to the issue and queues `message`, and answers with the thread. */
   startThread(issue: IssueTarget, input: StartThreadInput): Promise<StartedThread>;
   /**
-   * NOT IN THE BETA CONTRACT: the mock only (see `IssueDetail.transitions`). The real client refuses it, and never draws a menu that
-   * calls it, because the real service sends no transitions.
+   * NOT IN THE BETA: state changes are Planned (docs/issues.md). The real client refuses it and sends nothing; the State control
+   * shows Planned and no production path reaches this call. When it lands it is a Person-class write,
+   * `POST /api/issues/item/state` with `{ tracker, scope, key, state }` where `state` is the name of one of the issue's `states`:
+   * add it to `PENDING_PERSON_ROUTES` then, and not before.
    */
   setState(issue: IssueTarget, state: IssueState): Promise<void>;
 }

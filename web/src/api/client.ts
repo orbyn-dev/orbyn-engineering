@@ -301,8 +301,9 @@ export const api = {
     request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits`, undefined, signal),
   searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal) =>
     request<SearchHit[]>("GET", `/api/threads/${q(threadId)}/files/search?q=${q(query)}&content=${content}`, undefined, signal),
-  commits: (threadId: string, signal?: AbortSignal) =>
-    request<CommitInfo[]>("GET", `/api/threads/${q(threadId)}/commits`, undefined, signal),
+  /** `repoId` names one repository of a multi-repository thread (docs/multi-repo.md); left out, the primary repository's commits. */
+  commits: (threadId: string, signal?: AbortSignal, repoId?: string) =>
+    request<CommitInfo[]>("GET", `/api/threads/${q(threadId)}/commits${repoId === undefined ? "" : `?repo_id=${q(repoId)}`}`, undefined, signal),
   keybindings: (signal?: AbortSignal) =>
     request<KeybindingsView>("GET", "/api/keybindings", undefined, signal),
   threadItem: (threadId: string, itemId: string, signal?: AbortSignal) =>

@@ -71,6 +71,8 @@ export interface IssuesMock extends IssuesApi {
   /** The first message of every thread started, exactly as the screen sent it. */
   messages: string[];
   /** Make the next call of that kind fail: `reject` is a token the tracker does not accept, `unreachable` a host that does not answer, `token` a locked keychain. */
+  /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
+  listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
   failNext(what: "list" | "get" | "start" | "find" | "state" | "draft" | "token" | "reject" | "unreachable" | null): void;
 }
 
@@ -78,12 +80,15 @@ export function createIssuesMock(init: {
   trackers?: TrackerRow[] | null; issues?: IssueSummary[]; links?: Record<string, IssueRef[]>; delayMs?: number; viewer?: string;
   /** Trackers whose issues cannot change state from here. */
   fixedState?: TrackerKind[];
+  /** Answer this many issues a page; the first scope's cursor (`"<tracker> <scope>"`, the offset as text) says where the next page starts. Absent: one page. */
+  pageSize?: number;
 } = {}): IssuesMock {
   let trackers = init.trackers === undefined ? trackerFixtures() : init.trackers;
   const issues = init.issues ?? issueFixtures();
   let links: Record<string, IssueRef[]> = init.links ?? (issues[0] ? { "thread-1": [refOf(issues[0])] } : {});
   const writes: string[] = [];
   const messages: string[] = [];
+  const listed: IssuesMock["listed"] = [];
   let fail: Parameters<IssuesMock["failNext"]>[0] = null;
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, init.delayMs ?? 0));
   const take = (what: "list" | "get" | "start" | "find" | "state" | "draft") => {
@@ -97,14 +102,22 @@ export function createIssuesMock(init: {
   return {
     writes,
     messages,
+    listed,
     failNext: (what) => { fail = what; },
     trackers: async () => trackers,
-    list: async (query: IssueQuery): Promise<IssueList> => {
+    list: async (query: IssueQuery, _signal?: AbortSignal, cursors?: Record<string, string>): Promise<IssueList> => {
+      listed.push({ query, cursors });
       await wait();
       take("list");
       const pool = connectedIssues().filter((one) => query.tracker === null || one.tracker === query.tracker);
       const open = pool.filter((one) => one.state.category === "open").length;
-      return { issues: applyQuery(pool, query, init.viewer ?? "riley"), counts: { open, closed: pool.length - open }, failed: [], next_cursors: {} };
+      const all = applyQuery(pool, query, init.viewer ?? "riley");
+      const counts = { open, closed: pool.length - open };
+      if (init.pageSize === undefined) return { issues: all, counts, failed: [], next_cursors: {} };
+      const key = all[0] ? `${all[0].tracker} ${all[0].scope}` : "";
+      const from = cursors && key in cursors ? Number(cursors[key]) : 0;
+      const to = from + init.pageSize;
+      return { issues: all.slice(from, to), counts, failed: [], next_cursors: to < all.length ? { [key]: String(to) } : {} };
     },
     get: async (ref): Promise<IssueDetail> => {
       await wait();
