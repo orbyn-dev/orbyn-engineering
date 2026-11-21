@@ -8,6 +8,7 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { Button } from "../../../ui/controls";
 import { usePopover } from "../../../ui/usePopover";
+import { EngineNote } from "../../cursorthread";
 import { ToolsRow } from "../../tools";
 import { BranchRow } from "../GitControl";
 import { OpenInEditor } from "../OpenInEditor";
@@ -50,6 +51,7 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
   const loads = useDetailsLoads(thread.id, shows);
   const projectBranch = useWorkspace((state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null);
   const branch = thread.worktree?.branch ?? projectBranch;
+  const engineName = useWorkspace((state) => state.engines.data?.find((entry) => entry.id === thread.engine)?.name ?? thread.engine);
 
   // Anchored to the button's right edge, whatever the window's width.
   useLayoutEffect(() => {
@@ -120,6 +122,8 @@ export function DetailsPopover({ thread, onClose }: { thread: Thread; onClose():
           {shows("limits") ? <LimitsRow threadId={thread.id} engine={thread.engine} /> : null}
           {shows("usage") ? <UsageRow threadId={thread.id} /> : null}
           {read("scripts", <ScriptsRow threadId={thread.id} scripts={loads.scripts} />)}
+          {/* Only where the service has a notice for the engine and it has been answered; a note, not a row to turn off. */}
+          <EngineNote engine={thread.engine} engineName={engineName} />
           {shows("editor") ? <OpenInEditor threadId={thread.id} /> : null}
         </div>
       </DetailsDismiss.Provider>
