@@ -106,6 +106,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["PUT", "/api/settings/preferences"],
   ["PUT", "/api/settings/secrets/formats/{id}"],
   ["POST", "/api/settings/secrets/patterns"],
+  ["GET", "/api/settings/secrets/patterns/{id}"],
   ["DELETE", "/api/settings/secrets/patterns/{id}"],
   ["PUT", "/api/settings/secrets/patterns/{id}"],
   ["PUT", "/api/settings/secrets/projects/{id}"],
