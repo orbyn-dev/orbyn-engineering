@@ -8,9 +8,10 @@ export {
   bannerLine, cantStartLead, capabilityLine, CHIPS, chipFor, clock, errorKindLine, exitLine, notUsedReason, isProcess, listLine, mismatchLine, plain, processLine, restartLine, runningFor, shortDate, stateLine, STOPPED_SENTENCE,
 } from "./hostText";
 export type { Chip } from "./hostText";
-export { KEYCHAIN_DENIED, KEYCHAIN_LOCKED } from "./contract";
+export { BACKGROUND_OPEN, KEYCHAIN_DENIED, KEYCHAIN_LOCKED } from "./contract";
+export { isBackgroundOpen } from "./hostControl";
 export type {
-  EngineHostApi, HostCause, HostCrash, HostError, HostErrorKind, HostRow, HostState, KeyStorage, StorageChoice,
+  EngineHostApi, HostCause, HostControlOptions, HostCrash, HostError, HostErrorKind, HostRow, HostState, KeyStorage, StorageChoice,
 } from "./contract";
 export { ComposerHostLine, PickerGapRow, useHostFor, useHostLine } from "./HostUi";
 export type { HostLine } from "./HostUi";

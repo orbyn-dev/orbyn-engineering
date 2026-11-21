@@ -200,6 +200,9 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
   for a mismatch (only an update fixes it), `409 not_used` for a family on its Rust driver, `404` for an unknown family. Each call writes an `engine_host.stop` or
   `engine_host.restart` audit row (actor, family, `stop_background`) before it acts. Answers carry fixed words and the status with every host-derived string passed through the
   redactor, so a key the host printed never leaves.
+  The web client (`web/src/features/enginehost/hostControl.ts`) calls both: Stop and Restart in Maintenance › Processes, Try again (the restart) for a `cant_start` family and the
+  composer's Restart engine host. A `409 background_open` opens a question with the service's sentence, and only its confirm sends again with `stop_background: true`. Stubbed
+  fetch tests only: not run against a running service.
 - **Spawn secret.** A host's spawn environment gets an engine's key only from `Core::engine_spawn_secret(engine)`, which honours the person's per-engine opt-in. The key goes
   in the child's environment and nowhere else: not argv, not a frame, not a log line or an error. No key and no core bound yet mean no key.
 

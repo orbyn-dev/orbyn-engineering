@@ -39,6 +39,9 @@ function setup(options: { width?: number; files?: FileDiff[] } = {}) {
 const open = async () => {
   render(<DiffPanel threadId="t" />);
   await screen.findByRole("button", { name: "Scope: Working tree" });
+  // The scope button is in the header and is there before the diff has been read; every test below looks at the patch with a plain
+  // `getBy`, so wait for the patch here. Without this a loaded machine reads the screen between the two.
+  await screen.findByRole("group", { name: "Patch" });
 };
 
 beforeEach(() => {

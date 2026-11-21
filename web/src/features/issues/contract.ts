@@ -221,7 +221,7 @@ export interface IssuesApi {
   candidates(issue: IssueTarget, signal?: AbortSignal): Promise<IssueCandidates>;
   /** One write per call, Person-class: `POST /api/issues/item/update`. Answers the updated issue. */
   update(issue: IssueTarget, input: IssueUpdateInput): Promise<IssueDetail>;
-  /** One write per call, Person-class: `POST /api/issues/item/state`, `state` one of the issue's `states`. Answers the updated issue. */
+  /** One write per call, Person-class: `POST /api/issues/item/state`, `state` (plus `close_reason` when the entry has one) one of the issue's `states`. Answers the updated issue. */
   setState(issue: IssueTarget, state: IssueState): Promise<IssueDetail>;
 }
 
