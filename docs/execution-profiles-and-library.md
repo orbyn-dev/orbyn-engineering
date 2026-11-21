@@ -5,7 +5,7 @@ prompts and environment sets. Both are local and on this device. Neither needs a
 
 This file is the contract. The stores and routes are built against it, and so is the web UI (the profile picker, the
 Settings pages and the library panel). Change it by pull request, and say so to whoever builds on the part you change.
-Status: **contract written, nothing built.** No route, table or keychain item below exists yet.
+Status: **contract decided by the lead, nothing built.** No route, table or keychain item below exists yet.
 
 Owner rulings this file carries:
 
@@ -14,6 +14,7 @@ Owner rulings this file carries:
 - **W9.** Workflows, prompts and environment sets live in an on-device library only. Orbyn never writes into a target
   repository (hard rule 4 in [architecture.md](architecture.md#hard-product-rules)). Reading an already committed `.orbyn/`
   file is fine. This replaces the "stored in `.orbyn/` in the repository" wording in the W9 row of crew.md.
+- **Beta scope.** W8 and W9 are in the beta (the Beta cut in crew.md says so).
 - Environment-set **values are secrets**. They live in the OS keychain through `orbyn_core::credentials` and nowhere else
   (hard rule 1), and are redacted everywhere.
 - Every write route is a **Person** route ([classes.rs](../crates/orbynd/src/routes/classes.rs)).
@@ -45,9 +46,11 @@ Owner rulings this file carries:
   mapping Crew uses: Opus, Sonnet, Haiku on Claude; Sol, Terra, Luna on Codex; the person's own tier mapping for an ACP
   engine. An engine with no mapping offers only `builder`.
 - No `read_only` value exists and the server refuses one (`400 invalid_input`).
-- Built-ins ship in code, not in SQLite: **Careful** (`supervised`, Autopilot `off`), **Fast** (`auto_edits`, Autopilot
-  `on`), **Hands-off** (`full_access`, Autopilot `full`), all `engine: null`, `model_tier: builder`. The values are a proposal
-  (open question 1).
+- Built-ins ship in code, not in SQLite: **Careful** (`supervised`, Autopilot `off`, tier `builder`), **Fast**
+  (`auto_edits`, Autopilot `on`, tier `builder`) and **Cheap** (`supervised`, Autopilot `off`, tier `scout`), all
+  `engine: null`. There is **no built-in Hands-off** or any other full-access preset.
+- A person may save a profile with `full_access` or Autopilot `full`. Applying one needs a single confirm that lists what it
+  grants (see "Applying a grant-raising profile"). One click never grants full access silently.
 - At most 50 saved profiles.
 
 ### Where a profile can be applied
@@ -56,12 +59,27 @@ Owner rulings this file carries:
 | --- | --- |
 | New-thread draft | The picker fills the draft's engine, model and permission mode. Creating the thread sends those values; nothing refers to the profile after that except the chip |
 | Existing thread | The apply route writes the thread's own settings once |
-| Crew | The apply route sets the crew's engine tier, permission mode and its Autopilot mode (scope `crew`, the same store and checks as `POST /api/crew/autopilot/mode`) |
+| Crew | The apply route sets the crew's engine, its permission mode and its Autopilot mode (scope `crew`, the same store and checks as `POST /api/crew/autopilot/mode`). The profile's model tier sets only the crew's **builder default**; the router still picks the model per brief |
 
 A profile is **copied on apply, not linked.** Editing or deleting a profile never changes a thread or crew that already
 used it. Reason: a linked profile could raise a permission mode or an Autopilot mode on running work without the person
 there. Apply is a Person route, so raising a mode always needs the person key, as `permission_mode` already does on
 `POST /api/threads/{id}/runs` and `PATCH /api/threads/{id}`.
+
+### Applying a grant-raising profile
+
+A profile is **grant-raising** when its `permission_mode` is `full_access` or its `autopilot_mode` is `full`. Applying one
+is a Person action and shows **one confirm** that lists what it grants (for example "Full access: runs any command
+without asking. Autopilot Full: merges when checks pass"). Rules:
+
+- The apply body carries `ack_grants`, the list of grant codes the person saw (`full_access`, `autopilot_full`). The
+  server computes the grants the apply would add. If `ack_grants` does not cover them it answers
+  `409 confirm_required` with the grants, and applies nothing. This is one request with a checked field, not a two-step
+  token flow: it is the simplest option, and the client shows the confirm on the first `409` or before the request when it
+  already knows the profile.
+- The confirm is per apply. Nothing is remembered, so the next apply of the same profile asks again.
+- A profile that grants nothing beyond what the target already has needs no `ack_grants`.
+- The audit row for `profile.applied` records the acknowledged grant codes.
 
 ### Precedence with per-thread settings
 
@@ -72,8 +90,9 @@ there. Apply is a Person route, so raising a mode always needs the person key, a
    that they travel only with their model; the thread's remembered effort for the new model applies.
 3. An engine switch follows the existing engine-switch rule ([Models](architecture.md#models)): the new engine takes what
    was asked, never the old engine's values.
-4. Autopilot mode is a Crew setting today (per crew, repository or default). On a thread outside Crew the profile's
-   `autopilot_mode` is **not applied** and the answer lists it in `ignored`. The profile still shows it.
+4. There is **no per-thread Autopilot.** Autopilot mode is a Crew setting (per crew, repository or default). On a plain
+   thread the profile's `autopilot_mode` is **ignored**: the answer lists it in `ignored` and the UI shows it as
+   "applies to crews only". The profile still stores it.
 5. A run in flight is not touched. The change takes effect from the next turn's process, as a mode change does today.
 
 ### Validation
@@ -105,11 +124,11 @@ A profile may name an engine this machine does not have (not found, can't start,
 
 ### SQLite sketch
 
-Migration numbers are the next free ones at build time. At the time of writing main ends at 59, so these are 60 and 61;
-a later change that takes 60 first pushes these down, keeping the sequence contiguous.
+Migration numbers are the next free numbers at merge time. Do not hard-code them in the implementing PR; other changes
+take numbers first, and the sequence stays contiguous.
 
 ```sql
--- 60: execution profiles
+-- next free number: execution profiles
 CREATE TABLE profiles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -150,8 +169,8 @@ Every route is under the existing bearer or session credential. Crew routes answ
 | `POST /api/profiles` | **Person** | Create. Body is the shape minus `id`, `builtin`, `revision`, timestamps. Answers `201 Profile` |
 | `PATCH /api/profiles/{id}` | **Person** | Change any of the settings or name. Body adds `seen_revision`; `409 revision_conflict` when stale. Answers the `Profile` |
 | `DELETE /api/profiles/{id}` | **Person** | `204`. Built-ins: `403 builtin_profile` |
-| `PUT /api/threads/{id}/profile` | **Person** | Apply to a thread, or clear (`profile_id: null`, which only forgets the chip and keeps the values) |
-| `POST /api/crew/profile/apply` | **Person** | Apply to a crew. Body `{ crew_id, profile_id }`. Same rules, same audit row as the Autopilot mode route |
+| `PUT /api/threads/{id}/profile` | **Person** | Apply to a thread, or clear (`profile_id: null`, which only forgets the chip and keeps the values). Grant-raising profiles need `ack_grants` |
+| `POST /api/crew/profile/apply` | **Person** | Apply to a crew. Body `{ crew_id, profile_id }`. Same rules, same audit row as the Autopilot mode route. Body adds `ack_grants` when the profile is grant-raising |
 
 `availability`: `{ engine: "ok" | "not_found" | "cannot_start" | "disabled" | "unmanaged" | "none", reason?: string }`.
 `none` means `engine` is null.
@@ -160,11 +179,11 @@ Apply request and answer:
 
 ```jsonc
 // PUT /api/threads/{id}/profile   (and the same body, with crew_id, for the crew route)
-{ "profile_id": "01j...", "seen_revision": 3 }
+{ "profile_id": "01j...", "seen_revision": 3, "ack_grants": [] }   // ack_grants only for a grant-raising profile
 // 200
 {
   "applied": { "engine": "claude", "model": "claude-sonnet-4-5", "permission_mode": "supervised" },
-  "ignored": ["autopilot_mode"],          // fields that do not apply to this target
+  "ignored": ["autopilot_mode"],          // fields that do not apply to this target (every plain thread)
   "application": { "profile_id": "01j...", "name": "Careful", "revision": 3, "customized": false, "applied_at": "..." }
 }
 ```
@@ -174,7 +193,7 @@ the person sees what they are about to apply.
 
 Errors for the family: `400 invalid_input` (field named, value never echoed), `404 not_found` (profile, thread or crew),
 `403 desktop_required` (browser mode or CLI on a Person route), `403 builtin_profile`, `409 revision_conflict`,
-`409 profile_limit` (50 saved), `409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
+`409 confirm_required` (grants not acknowledged; the answer lists them), `409 profile_limit` (50 saved), `409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
 `409 run_active` when a thread's engine would change during a run (the model and mode alone change from the next turn).
 
 Audit: each Person write adds a row before the effect, with ids and names only (`profile.created`, `profile.changed`,
@@ -186,7 +205,7 @@ Adding the routes also means, per the classes.rs rule: one row in `PERSON`, one 
 ## Part 2: The personal library (W9)
 
 Three kinds of item: workflows, prompts and environment sets. One list each, all on this device, all under the
-`/api/library` prefix. Nothing syncs in the beta (open question 6).
+`/api/library` prefix. Nothing syncs in the beta. Later sync is decided: names sync, values never (see "Sync later").
 
 ### Shared rules
 
@@ -206,7 +225,7 @@ Three kinds of item: workflows, prompts and environment sets. One list each, all
   "id": "01j...", "name": "Run the tests", "description": "",       // description at most 200
   "command": "cargo test -p {{crate}} {{filter}}",                  // at most 4,000 bytes, one line or a short script
   "params": [ /* Parameter[] */ ],
-  "env_set_ids": [],                                                // at most 4 environment sets, by id
+  "env_set_ids": [],                                                // at most 4 environment sets, by id; workflow runs only
   "revision": 1, "created_at": "...", "updated_at": "..."
 }
 ```
@@ -246,6 +265,7 @@ A set is a name and a list of key names. The values are in the keychain.
   "id": "01j...", "name": "Staging", "description": "",
   "keys": [ { "name": "API_BASE", "present": true }, { "name": "API_TOKEN", "present": false } ],
   "keychain": "ok",                       // "ok" | "unavailable" | "blocked"
+  "status": "stored",                     // "stored" | "planned" (below)
   "revision": 4, "created_at": "...", "updated_at": "..."
 }
 ```
@@ -256,6 +276,12 @@ A set is a name and a list of key names. The values are in the keychain.
 - A value is 1 to 8,192 bytes, no NUL. A line break is allowed.
 - `present` is `true` only when the keychain holds a non-empty value. When the keychain is unusable every key is
   `present: false` and `keychain` says why. No length, prefix or suffix is ever reported.
+- **Status values.** Every set read and every list item carries `status`: `stored` (macOS: values can be saved) or
+  `planned` (Windows and Linux in the beta: names only, no values). The UI shows a **Planned** pill on a `planned` set. On
+  those platforms `keychain` is `unavailable`, `PUT .../keys/{key}` answers `503 keychain_unavailable`, and a workflow that
+  lists the set can render and run, but the set contributes no values.
+- **Attachment.** Env sets attach to **workflow runs only**. They never attach to an engine spawn (a thread's engine
+  process, a Crew worker or a verifier). Attaching one to an engine would widen where a secret leaves the keychain.
 
 #### Keychain layout
 
@@ -273,12 +299,17 @@ module beside `credentials` (`credentials::env_sets`, same crate) owns it; the a
 The only way out of the keychain is a spawn-time function that returns `SpawnSecret` values (prints nothing in `Debug`,
 zeroizes on drop) to the one caller that starts a workflow's command. Nothing else formats, logs or returns a value.
 
-macOS only for now: other platforms answer `keychain: "unavailable"` and a value cannot be saved there (open question 3).
+macOS only in the beta. On Windows and Linux an env set keeps names only, with no values, and shows the Planned pill
+(`status: "planned"`). The beta does not wait for those backends.
+
+**Requirement of the implementing PR.** It must amend hard rule 1 in [architecture.md](architecture.md#hard-product-rules)
+(env-set values are a second, owner-approved keychain use) and the `credentials` module doc. This file does not edit them.
+The separate `app.orbyn.engineering.env-sets` service name is confirmed.
 
 #### SQLite sketch
 
 ```sql
--- 61: personal library
+-- next free number after profiles: personal library
 CREATE TABLE library_workflows (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '',
   command TEXT NOT NULL, params_json TEXT NOT NULL, env_set_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -349,11 +380,16 @@ diagnostics report, a thread or Crew object, or a settings sync record. In detai
    logged and never echoed; an invalid body is refused naming the field only, as every route already does.
 2. It is held as `Zeroizing`, formatted by nothing, and leaves the keychain only as a `SpawnSecret` at the spawn of one
    workflow run.
-3. During a run, core registers the run's values as exact literals in a per-run redactor. Terminal frames and the run's
-   saved output pass through it before they leave core: a match shows as `[hidden: env <KEY>]`. This is best effort. A
-   command that transforms a value (base64, split, reversed) is not caught. The run card says so (open question 4).
+3. Values are known exactly, so core masks them in the workflow run's terminal output by **exact match with the existing
+   Redactor** (`orbyn-core` redaction). It registers the run's values as literals, and terminal frames and the run's saved
+   output pass through it before they leave core: a match shows as `[hidden: env <KEY>]`. Matching works across output
+   chunks: a value split over two or more frames is still masked (the redactor keeps a tail buffer of the longest value
+   minus one byte between frames). A **test is required**: a value split across chunks, at every split point, never appears
+   in a frame or in saved output. The run card may still say that masking is best effort for derived values: a command
+   that transforms a value (base64, reversed, sliced) is not caught.
 4. A Crew worker or any service-token caller cannot start a workflow or write a set (Person routes). The Crew rule "no
    secrets in any object" is unchanged: no library value can reach a Crew object because no Crew path reads the library.
+   **No Crew or Autopilot path runs a library or repository workflow in the beta.**
 5. A set's key names are not secret but are never put in an error with a value, a path or a command.
 
 ### Reading committed `.orbyn/` files
@@ -405,29 +441,7 @@ Allowed, read only, never written (hard rule 4). Orbyn offers a repository's own
   refused singly. Import creates items. It never replaces or deletes one that exists.
 - A profile imported with an engine this machine lacks saves with a warning, as in Part 1.
 
-## Open questions for the lead
+### Sync later
 
-1. **Built-in profiles.** Are Careful, Fast and Hands-off right as shipped presets, and is "Hands-off" = `full_access` +
-   Autopilot `full` too loose to ship as a one-click preset? The proposal keeps Person-key apply as the guard.
-2. **Autopilot on a plain thread.** Autopilot is per crew or repository today. The proposal ignores a profile's
-   `autopilot_mode` on a thread outside Crew (answer `ignored`). Alternative: define a per-thread Autopilot. That is a
-   larger change in the Autopilot group.
-3. **Keychain on Windows and Linux.** `credentials` has a macOS backend only. Until others exist, a value cannot be saved
-   elsewhere, so env sets work as name lists there. Is that acceptable for the beta, or does the beta wait for the backends?
-4. **Output redaction is best effort.** Exact-literal masking misses a transformed value, and Settings › Secrets
-   terminal masking is not built yet. Is the run-card warning enough, or should a workflow with an env set be refused
-   until terminal redaction (W4) exists?
-5. **Rule 1 wording.** Hard rule 1 names engine keys only. Env-set values are a second, owner-approved keychain use. The
-   implementing PR must amend rule 1 and the `credentials` module doc. Confirm the separate `env-sets` service name, and the
-   release service-name string, which this file proposes and does not take from existing code.
-6. **Sync.** crew.md D4 and account.md list profiles, workflows, prompts and env-set names as later sync records. This
-   file adds no sync. Env-set names would sync and values never; confirm that stays after the beta.
-7. **Beta scope.** The Beta cut section of crew.md still says W8 and W9 are After the beta or Planned in the designs.
-   Confirm they are now in the beta, and that the cut text should be updated with the implementing PR.
-8. **Where a tier is resolved.** Apply resolves the tier to a model at apply time and stores the model on the thread. A
-   crew resolves it per brief through the router. Confirm the crew path should keep using the router and treat the
-   profile's tier as the builder default only.
-9. **Env sets on engine spawns.** This contract attaches sets to workflow runs only. Attaching a set to a thread's engine
-   process (for example a proxy variable) is not included; it would widen where a secret leaves the keychain.
-10. **Repository entries and Autopilot.** A committed workflow from a pulled branch is data until the person runs it.
-    Confirm no Crew or Autopilot path may run a library or repository workflow in the beta (the proposal: none can).
+crew.md D4 and account.md list profiles, workflows, prompts and env-set names as later sync records. This file adds no sync.
+Decided: env-set **names sync, values never**, after the beta too.
