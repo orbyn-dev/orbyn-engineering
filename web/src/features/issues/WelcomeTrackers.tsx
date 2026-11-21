@@ -3,7 +3,7 @@ import { navigate } from "../../product/state/route";
 import { Button } from "../../ui/controls";
 import { useTrackers } from "./api";
 import { TRACKER_NAMES } from "./contract";
-import { knownTrackers, trackerLine, trackerMark, trackerStatus } from "./model";
+import { knownTrackers, trackerDetail, trackerLine, trackerMark, trackerStatus } from "./model";
 import { StatusChip } from "./TrackerTokens";
 import "./trackers.css";
 
@@ -16,13 +16,13 @@ export function WelcomeTrackers() {
   const { rows } = useTrackers();
   if (rows === null) return null;
   const list = knownTrackers(rows);
-  const rejected = list.find((row) => trackerStatus(row) === "rejected");
+  const failing = list.find((row) => trackerStatus(row) === "attention");
   const toSettings = () => navigate({ name: "settings", section: "source-control" });
   return (
     <section aria-labelledby="welcome-trackers">
       <h2 id="welcome-trackers">Issue trackers <span className="trk-beta">Beta</span></h2>
-      {rejected ? (
-        <p className="trk-welcome-warn" role="alert"><TriangleAlert size={14} aria-hidden />{TRACKER_NAMES[rejected.tracker]} didn’t accept the saved token. Replace it or remove it in Settings › Source control.</p>
+      {failing ? (
+        <p className="trk-welcome-warn" role="alert"><TriangleAlert size={14} aria-hidden />{TRACKER_NAMES[failing.tracker]} needs attention{trackerDetail(failing) ? `: ${trackerDetail(failing)}` : "."} Replace the token or remove it in Settings › Source control.</p>
       ) : null}
       <ul className="trk-welcome" aria-label="Issue trackers">
         {list.map((row) => {
@@ -34,7 +34,7 @@ export function WelcomeTrackers() {
               <span><b>{name}</b><small>{trackerLine(row)}</small></span>
               <StatusChip status={status} />
               {row.tracker !== "github" && status === "not_connected" ? <Button small aria-label={`Add a token for ${name}`} onClick={toSettings}>Add token…</Button> : null}
-              {row.tracker !== "github" && (status === "saved" || status === "rejected" || status === "unreachable") ? <Button small tone="quiet" aria-label={`Replace the token for ${name}`} onClick={toSettings}>Replace…</Button> : null}
+              {row.tracker !== "github" && (status === "saved" || status === "attention") ? <Button small tone="quiet" aria-label={`Replace the token for ${name}`} onClick={toSettings}>Replace…</Button> : null}
             </li>
           );
         })}

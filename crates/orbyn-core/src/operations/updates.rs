@@ -91,6 +91,8 @@ pub struct UpdateCenter {
     engines: Arc<EngineManager>,
     http: reqwest::Client,
     manifest_url: Option<String>,
+    /// ORBYN_OFFLINE: no automatic request at all.
+    offline: bool,
     known: Mutex<Known>,
     /// Lines for the desktop shell. Present exactly when one is attached.
     shell: Mutex<Option<mpsc::UnboundedSender<Value>>>,
@@ -115,6 +117,7 @@ impl UpdateCenter {
         engines: Arc<EngineManager>,
         http: reqwest::Client,
         manifest_url: Option<String>,
+        offline: bool,
     ) -> Self {
         Self {
             store,
@@ -122,6 +125,7 @@ impl UpdateCenter {
             engines,
             http,
             manifest_url,
+            offline,
             known: Mutex::new(Known::default()),
             shell: Mutex::new(None),
             changes: watch::channel(0).0,
@@ -841,14 +845,16 @@ impl UpdateCenter {
         Ok(())
     }
 
-    /// Checks at startup, then every six hours, unless the setting turns it off.
+    /// Checks at startup, then every six hours, unless the setting or ORBYN_OFFLINE turns
+    /// it off. This is the only schedule: the desktop shell checks when core asks.
     pub async fn run_checks(&self, stop: CancellationToken) {
         let mut ticks = tokio::time::interval(CHECK_INTERVAL);
         loop {
             tokio::select! {
                 () = stop.cancelled() => return,
                 _ = ticks.tick() => {
-                    let enabled = self
+                    let enabled = !self.offline
+                        && self
                         .store
                         .settings()
                         .map_or(true, |settings| settings.background_update_checks != Some(false));

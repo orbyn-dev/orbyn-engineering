@@ -44,7 +44,7 @@ function Row({ thread, issue, phone, onOpen, onUnlinked }: { thread: Thread; iss
         onPointerUp={phone ? () => clearTimeout(timer.current) : undefined}
         onPointerLeave={phone ? () => clearTimeout(timer.current) : undefined}
         onContextMenu={phone ? (event) => { event.preventDefault(); setArmed(true); } : undefined}
-        onClick={() => { onOpen(); navigate({ name: "issues", tracker: issue.tracker, key: issue.key }); }}
+        onClick={() => { onOpen(); navigate({ name: "issues", tracker: issue.tracker, scope: issue.scope, key: issue.key }); }}
       >
         <span className="iss-prow-title"><span className="iss-key">{issue.display_key}</span><b>{issue.title}</b></span>
         <span className="iss-prow-meta">

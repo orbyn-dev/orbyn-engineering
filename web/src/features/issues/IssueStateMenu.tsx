@@ -9,7 +9,8 @@ import { IssueGlyph } from "./IssueGlyph";
 import { choiceLabel, reasonOf, sameState, stateWord } from "./model";
 
 /**
- * The State row of an issue. A tracker that offers states shows a button that lists them in the tracker's own words and order and
+ * The State row of an issue. NOT IN THE BETA CONTRACT: docs/issues.md lists moving an issue to another state as Planned, so the real
+ * service sends no `transitions` and this draws the state as text; only the mock offers the menu. A tracker that offers states shows a button that lists them in the tracker's own words and order and
  * marks the current one; one that offers none shows the state as text. Choosing a state is one write, once: while it is in
  * flight the button is off and a second choice is not a second write. The state on screen changes only when the tracker answers.
  */
@@ -26,7 +27,7 @@ export function IssueStateButton({ issue, onChanged }: { issue: IssueDetail; onC
     pending.current = true;
     setBusy(true);
     try {
-      await issuesApi().setState(issue.tracker, issue.key, next);
+      await issuesApi().setState(issue, next);
       await onChanged();
     } catch (failure) {
       pushToast(`Couldn't change the state. Nothing changed. ${reasonOf(failure)}`);

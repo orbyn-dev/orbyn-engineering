@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { repoFixtures } from "../../../mock/repos";
-import { groupByRepo, canJoinThread, checkCloneSource, cloneText, defaultTicks, isPublishName, plain, repoState, startLabel } from "./model";
+import { groupByRepo, canJoinThread, checkCloneSource, cloneText, defaultTicks, isFolderName, isPublishName, plain, repoState, startLabel } from "./model";
 
 describe("repository state", () => {
   it("reads trusted, not trusted and not a Git folder from the row", () => {
@@ -28,11 +28,11 @@ describe("repository state", () => {
 });
 
 describe("untrusted text", () => {
-  it.each(["orbyn-dev/orbyn-docs", "https://github.com/orbyn-dev/orbyn-docs.git", "git@github.com:orbyn-dev/orbyn-docs.git", "ssh://git@host/x/y.git"])("accepts %s", (text) => {
+  it.each(["https://github.com/orbyn-dev/orbyn-docs.git", "git@github.com:orbyn-dev/orbyn-docs.git", "ssh://git@host/x/y.git"])("accepts %s", (text) => {
     expect(checkCloneSource(` ${text} `)).toEqual({ ok: true, source: text });
   });
 
-  it.each([["", "Enter"], ["--upload-pack=touch /tmp/x", "space"], ["-oProxyCommand=x", "dash"], ["ext::sh -c x", "space"], ["file:///etc", "https or ssh"], ["a b/c", "space"], ["../up/dir", "https or ssh"], ["https://h/x\u0000y", "control"]])("refuses %j", (text, why) => {
+  it.each([["", "Enter"], ["--upload-pack=touch /tmp/x", "space"], ["-oProxyCommand=x", "dash"], ["ext::sh -c x", "space"], ["file:///etc", "https or ssh"], ["fd::1", "https or ssh"], ["orbyn-dev/orbyn-docs", "https or ssh"], ["/etc/passwd", "https or ssh"], ["https://user:secret@host/x.git", "password"], ["ssh://u:p@host/x", "password"], ["https://h/x\ny", "control"], ["git@host:-x", "https or ssh"], ["a b/c", "space"], ["../up/dir", "https or ssh"], ["https://h/x\u0000y", "control"]])("refuses %j", (text, why) => {
     const checked = checkCloneSource(text);
     expect(checked.ok).toBe(false);
     if (!checked.ok) expect(checked.reason).toContain(why);
@@ -41,6 +41,11 @@ describe("untrusted text", () => {
   it("checks a publish name as owner/name", () => {
     expect(isPublishName("orbyn-dev/orbyn-planner")).toBe(true);
     expect(["", "name", "/x", "a/", "a/b/c", "-a/b"].some(isPublishName)).toBe(false);
+  });
+
+  it("accepts a folder name only without a dot-dot, a separator, a drive prefix or a leading dot", () => {
+    expect(["orbyn-docs", "a_b.c", "A1"].every(isFolderName)).toBe(true);
+    expect(["", "a/b", "a\\b", "..", "a..b", ".x", "C:x", "-x", "a b"].some(isFolderName)).toBe(false);
   });
 
   it("keeps a title to one line of text", () => {

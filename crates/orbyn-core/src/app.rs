@@ -268,6 +268,7 @@ impl Core {
             engines.clone(),
             http.clone(),
             config.update_manifest.clone(),
+            !config.engines.lookup_latest,
         ));
         let keybinding_writer = Arc::new(Mutex::new(()));
         let account = Arc::new(crate::account::AccountCenter::new(

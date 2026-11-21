@@ -72,8 +72,8 @@ export type Route =
   | { name: "crew"; tab: CrewTab; task?: string }
   /** The list, or one pull request of one project. */
   | { name: "pulls"; project?: string; number?: number }
-  /** The issues of the connected trackers, or one issue by its tracker and key. Drawn only while the service reports issues. */
-  | { name: "issues"; tracker?: string; key?: string };
+  /** The issues of the connected trackers, or one issue by its tracker, scope and key (a key is unique only within a scope). Drawn only while the service reports issues. */
+  | { name: "issues"; tracker?: string; scope?: string; key?: string };
 
 const enc = encodeURIComponent;
 
@@ -124,7 +124,7 @@ export function routeHref(route: Route): string {
     case "pulls":
       return route.project !== undefined && route.number !== undefined ? `#/pulls/${enc(route.project)}/${route.number}` : "#/pulls";
     case "issues":
-      return route.tracker !== undefined && route.key !== undefined ? `#/issues/${enc(route.tracker)}/${enc(route.key)}` : "#/issues";
+      return route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? `#/issues/${enc(route.tracker)}/${enc(route.scope)}/${enc(route.key)}` : "#/issues";
     case "settings": {
       const base = route.section ? `#/settings/${route.section}` : "#/settings";
       const path = route.section === "crew" && route.crewPage ? `${base}/${CREW_PAGE_PATH[route.crewPage]}` : base;
@@ -206,7 +206,7 @@ export function parseRoute(hash: string): Route {
       return first && Number.isInteger(number) && number > 0 ? { name: "pulls", project: first, number } : { name: "pulls" };
     }
     case "issues":
-      return first && second ? { name: "issues", tracker: first, key: second } : { name: "issues" };
+      return first && second && third ? { name: "issues", tracker: first, scope: second, key: third } : { name: "issues" };
     case "settings": {
       // Presence matters: stale and empty IDs remain explicit instead of widening scope.
       const selection: ProjectSettingsSelection | undefined = params.has("checkout")

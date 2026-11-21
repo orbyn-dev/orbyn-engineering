@@ -16,11 +16,11 @@ import { isIssueKey, isTracker, stateWord, trackerName } from "./model";
  * thread stays beside it. The tracker is where it is written; its state is changed on the issue's own page. The title, labels,
  * names and body are the tracker's text and are drawn as text.
  */
-export function IssuePanel({ tracker, issueKey }: { tracker: string; issueKey: string }) {
+export function IssuePanel({ tracker, scope, issueKey }: { tracker: string; scope: string; issueKey: string }) {
   const version = useApiVersion();
-  const read = useAsync(`issues:panel:${version}:${tracker}:${issueKey}`, async (signal) => {
+  const read = useAsync(`issues:panel:${version}:${tracker}:${scope}:${issueKey}`, async (signal) => {
     if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
-    return issuesApi().get(tracker, issueKey, signal);
+    return issuesApi().get({ tracker, scope, key: issueKey }, signal);
   });
   const waited = useWaited(read.status === "loading");
   const display = /^\d+$/.test(issueKey) ? `#${issueKey}` : issueKey;
@@ -53,7 +53,7 @@ export function IssuePanel({ tracker, issueKey }: { tracker: string; issueKey: s
       </dl>
       <div className="iss-actions">
         {href ? <a className="btn btn-secondary" href={href} target="_blank" rel="noopener noreferrer"><ExternalIcon size={14} aria-hidden />Open on {trackerName(issue.tracker)}</a> : null}
-        <a className="btn btn-secondary" href={routeHref({ name: "issues", tracker: issue.tracker, key: issue.key })}>Open as a page</a>
+        <a className="btn btn-secondary" href={routeHref({ name: "issues", tracker: issue.tracker, scope: issue.scope, key: issue.key })}>Open as a page</a>
       </div>
       <Body issue={issue} />
     </div>

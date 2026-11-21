@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { issueFixtures } from "../../../mock/issues";
 import type { IssueRef } from "./contract";
-import { activeChips, applyQuery, choiceLabel, knownTrackers, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, stateWord, threadMarker } from "./model";
+import { activeChips, applyQuery, choiceLabel, hostFor, knownTrackers, trackerDetail, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, stateWord, threadMarker } from "./model";
 
 const ref = (state: IssueRef["state"], key = "1"): IssueRef => ({ tracker: "github", scope: "o/r", key, display_key: `#${key}`, title: "t", state, labels: [] });
 
@@ -68,7 +68,17 @@ describe("state choices and tracker lines", () => {
     expect(trackerStatus({ tracker: "github", connected: true })).toBe("signed_in");
     expect(trackerStatus({ tracker: "gitlab", connected: true })).toBe("saved");
     expect(trackerStatus({ tracker: "gitlab", connected: false })).toBe("not_connected");
-    expect(trackerLine({ tracker: "gitlab", connected: true, status: "saved", address: "x".repeat(200) }).length).toBeLessThan(120);
+    expect(trackerLine({ tracker: "gitlab", connected: true, host: `https://${"x".repeat(200)}` }).length).toBeLessThan(120);
+    // A stored connection that is not working needs attention, and its reason is the service's, capped.
+    expect(trackerStatus({ tracker: "gitlab", connected: false, host: "https://g.example", detail: "No answer." })).toBe("attention");
+    expect(trackerStatus({ tracker: "github", connected: false, detail: "gh is not installed" })).toBe("not_connected");
+    expect(trackerLine({ tracker: "github", connected: false, detail: "gh is not installed" })).toBe("gh is not installed");
+    expect(trackerDetail({ tracker: "gitlab", connected: false, detail: "y".repeat(400) }).length).toBe(200);
+  });
+  it("sends a bare host name with https in front and leaves a scheme the person typed for the service to refuse", () => {
+    expect(hostFor(" gitlab.example.com ")).toBe("https://gitlab.example.com");
+    expect(hostFor("https://git.orbyn.dev")).toBe("https://git.orbyn.dev");
+    expect(hostFor("http://git.orbyn.dev")).toBe("http://git.orbyn.dev");
   });
   it("keeps the five known trackers in the design's order and drops one the service invents", () => {
     const rows = knownTrackers([{ tracker: "linear", connected: false }, { tracker: "__proto__" as never, connected: true }, { tracker: "github", connected: true }]);
