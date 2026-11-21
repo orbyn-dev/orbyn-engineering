@@ -679,4 +679,11 @@ export const FRAMES = {
   "escape-dashboard": { route: "#/preview/crew/escape-dashboard" },
   "escape-route-counts": { route: "#/preview/crew/escape-route-counts" },
   "escape-route-shifted": { route: "#/preview/crew/escape-route-shifted" },
+
+  /** Crew, Settings › Review capacity (Crew Designs v77), on the real capacity and settings routes: the editor that
+   *  Change the limit and Set a limit open, that editor in a 640 px window, and a save the service refused for want of
+   *  the person key. The mock's crew-capacity scenarios answer the two reads and the Person-only settings write. */
+  "capacity-settings-editor": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", steps: [click("button", "Change the limit")] },
+  "capacity-settings-editor-narrow": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", width: 640, steps: [click("button", "Change the limit")] },
+  "capacity-settings-editor-error": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity-save-fails", steps: [click("button", "Change the limit"), click("button", "Save")] },
 };
