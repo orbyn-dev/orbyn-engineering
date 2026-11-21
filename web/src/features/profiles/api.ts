@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiFailure, request } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
-import { PROFILE_LIMIT, type ApplyAnswer, type ApplyBody, type Profile, type ProfileCheck, type ProfileDraft, type ProfileList, type ProfilesApi } from "./contract";
+import { PROFILE_LIMIT, type ApplyProfileAnswer, type ApplyBody, type Profile, type ProfileCheck, type ProfileDraft, type ProfileList, type ProfilesApi } from "./contract";
 
 const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
@@ -31,8 +31,8 @@ const http: ProfilesApi = {
   async remove(id) {
     await request<unknown>("DELETE", `/api/profiles/${q(id)}`);
   },
-  applyToThread: (threadId, body: ApplyBody) => request<ApplyAnswer>("PUT", `/api/threads/${q(threadId)}/profile`, body),
-  applyToCrew: (crewId, body) => request<ApplyAnswer>("POST", "/api/crew/profile/apply", { crew_id: crewId, ...body }),
+  applyToThread: (threadId, body: ApplyBody) => request<ApplyProfileAnswer>("PUT", `/api/threads/${q(threadId)}/profile`, body),
+  applyToCrew: (crewId, body) => request<ApplyProfileAnswer>("POST", "/api/crew/profile/apply", { crew_id: crewId, ...body }),
 };
 
 let current: ProfilesApi = http;
