@@ -43,9 +43,11 @@ one query, permission frames with once-only allow and deny, cancel through `inte
 ids, background task frames, a run held open by a background agent or workflow, confinement through
 `spawnClaudeCodeProcess` (argv prefix and env allowlist).
 
+`AskUserQuestion` is a `question` frame answered with `answers`.
+
 Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
 `usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
 
 Not done, so Planned: the leftover-turn echo rule (needs the CLI's replay flag and a run with a valid login to
-confirm), `rollback`, `AskUserQuestion` as a `question` frame (the protocol has no answer shape yet), subagent
+confirm), `rollback`, subagent
 transcripts, and any run against a real `claude` with a valid login.
