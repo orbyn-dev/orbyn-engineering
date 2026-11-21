@@ -40,7 +40,8 @@
     ],
     "externalBin": [
       "binaries/orbynd",
-      "binaries/orbyn"
+      "binaries/orbyn",
+      "binaries/orbyn-engine-host"
     ],
     "resources": {
       "../../build/ui": "ui",
@@ -55,7 +56,8 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.0",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "entitlements": "../../engine-host/entitlements.plist"
     },
     "windows": {
       "webviewInstallMode": {

@@ -79,3 +79,16 @@ for the prompt's uuid before the result. A leftover turn has not been seen on a 
 
 Not done, so Planned: `rollback`, subagent
 transcripts, and any run against a real `claude` with a valid login.
+
+## In the app bundle (macOS arm64)
+
+`scripts/prepare-bundle.mjs` builds the host and stages it as `binaries/orbyn-engine-host-<triple>`; every other target
+stages an empty placeholder (Tauri needs each `externalBin` file), and Intel Macs keep the Rust drivers.
+`tauri.conf.json` lists it in `externalBin` and sets `bundle.macOS.entitlements` to `entitlements.plist`, which Tauri
+applies when it signs each sidecar and the app. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
+`orbynd` when the file is non-empty; with none, the service keeps the Rust drivers.
+
+Checked by hand on macOS arm64: a stand-in app bundle signed ad hoc in Tauri's order (sidecars, then the bundle,
+hardened runtime) verifies, and the host launched from inside it answers the handshake. With the same signing but
+without the entitlements the host crashes (SIGTRAP), so the entitlements are required. Not checked: a full `tauri build`
+(the app was not built), notarization, other platforms. The entitlements apply to the whole app, not only the host.
