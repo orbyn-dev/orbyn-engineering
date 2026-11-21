@@ -13,8 +13,6 @@ export interface KeyContext {
   active: number;
   history: string[];
   recall: RecallPosition | null;
-  planControls: boolean;
-  planMode: boolean;
   busy: boolean;
   sendShortcut: "enter" | "mod-enter-multiline" | "mod-enter";
   shiftPaste: MutableRefObject<boolean>;
@@ -25,7 +23,6 @@ export interface KeyContext {
   setRecall(position: RecallPosition | null): void;
   setDraft(threadId: string, text: string): void;
   pick(suggestion: Suggestion): void;
-  setPlanMode(on: boolean): Promise<void>;
   send(followUp?: "default" | "opposite"): Promise<boolean>;
 }
 
@@ -40,8 +37,6 @@ export function handleComposerKey(
     active,
     history,
     recall,
-    planControls,
-    planMode,
     busy,
     sendShortcut,
     shiftPaste,
@@ -52,7 +47,6 @@ export function handleComposerKey(
     setRecall,
     setDraft,
     pick,
-    setPlanMode,
     send,
   }: KeyContext,
 ) {
@@ -104,11 +98,6 @@ export function handleComposerKey(
       event.preventDefault();
       setDraft(thread.id, next.text);
       caretAfterEdit.current = next.caret;
-      return;
-    }
-    if (event.shiftKey && planControls && !busy && thread.lifecycle) {
-      event.preventDefault();
-      void setPlanMode(!planMode);
       return;
     }
   }

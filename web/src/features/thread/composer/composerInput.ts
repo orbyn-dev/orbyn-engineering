@@ -2,9 +2,9 @@ import type { ThreadItem } from "../../../product/timeline/types";
 
 export const LARGE_PASTE_BYTES = 32 * 1024;
 
-const LOCAL = new Set(["plan", "default", "usage-limits"]);
+const LOCAL = new Set(["usage-limits"]);
 
-/** `/plan` and friends act on the composer rather than reaching the agent. */
+/** `/usage-limits` acts on the composer rather than reaching the agent. */
 export function localCommand(text: string): string | null {
   const match = /^\/([a-z-]+)\s*$/.exec(text.trim());
   return match?.[1] && LOCAL.has(match[1]) ? match[1] : null;

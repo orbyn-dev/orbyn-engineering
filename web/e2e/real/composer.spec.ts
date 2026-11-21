@@ -90,19 +90,18 @@ test("send shortcut modes follow the setting", async ({ page }) => {
   await page.getByRole("combobox", { name: "Send shortcut" }).selectOption("enter");
 });
 
-test("Plan switches with the button and /plan, and /usage-limits answers inline", async ({ page }) => {
+test("there is no Plan button or /plan and /default, and /usage-limits answers inline", async ({ page }) => {
   const id = await newThread(page);
-  const plan = page.getByRole("button", { name: "Plan", exact: true });
-  await plan.click();
-  await expect(plan).toHaveAttribute("aria-pressed", "true");
-  await expect
-    .poll(async () => (await service.api<{ lifecycle: { plan_mode: boolean } }>("GET", `/api/threads/${id}`)).lifecycle.plan_mode)
-    .toBe(true);
-  await send(page, "/default");
-  await expect(plan).toHaveAttribute("aria-pressed", "false");
-  await send(page, "/plan");
-  await expect(plan).toHaveAttribute("aria-pressed", "true");
-  await send(page, "/default");
+  // Plan mode is removed (B66): no button, no Shift+Tab switch, and the slash menu lists neither command.
+  await expect(page.getByRole("button", { name: "Plan", exact: true })).toHaveCount(0);
+  await box(page).focus();
+  await page.keyboard.press("Shift+Tab");
+  await box(page).fill("/pla");
+  await expect(page.getByRole("option", { name: /^plan/ })).toHaveCount(0);
+  await box(page).fill("/defa");
+  await expect(page.getByRole("option", { name: /^default/ })).toHaveCount(0);
+  await box(page).fill("");
+  expect((await service.api<{ lifecycle: { plan_mode: boolean } }>("GET", `/api/threads/${id}`)).lifecycle.plan_mode).toBe(false);
 
   await send(page, "/usage-limits");
   const limits = page.getByRole("region", { name: "Usage limits" });
