@@ -1,5 +1,7 @@
-//! Git actions, branches, worktrees and publishing a project.
+//! Git actions, branches, worktrees and publishing a project, and the app's own
+//! record of a repository it already has checkouts of.
 
+use crate::ProjectScopeCheckout;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -106,5 +108,18 @@ pub struct JjStatus {
     pub changed_files: u32,
     pub additions: u32,
     pub deletions: u32,
+}
+}
+
+wire! {
+/// What the app already knows about one repository, looked up by the `owner/name`
+/// its registered checkouts' own Git configs name. Read without a transport, so a
+/// repository the person has not added is simply not found and no forge is asked.
+pub struct RepositoryLookup {
+    /// Every registered project's repository identity could be observed. When false,
+    /// empty `checkouts` is not proof that no checkout names the repository.
+    pub complete: bool,
+    /// The app's records of the checkouts that name the repository, by project id.
+    pub checkouts: Vec<ProjectScopeCheckout>,
 }
 }

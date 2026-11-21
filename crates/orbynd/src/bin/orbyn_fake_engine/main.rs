@@ -31,21 +31,11 @@ fn main() {
     record_pid();
     let first = args.first().map(String::as_str).unwrap_or_default();
     match first {
-        "api" if std::env::var_os("ORBYN_FAKE_GH_STAR_STATE").is_some() => {
-            let state =
-                std::fs::read_to_string(std::env::var_os("ORBYN_FAKE_GH_STAR_STATE").unwrap())
-                    .unwrap();
-            if let Some(path) = std::env::var_os("ORBYN_FAKE_GH_ARGUMENTS") {
-                std::fs::write(
-                    path,
-                    serde_json::to_vec(&json!({"args":args,"pid":std::process::id()})).unwrap(),
-                )
-                .unwrap();
-            }
-            if state.trim() == "hang" {
-                std::thread::sleep(std::time::Duration::from_secs(30));
-            }
-            std::process::exit(if state.trim() == "starred" { 0 } else { 1 });
+        "api"
+            if std::env::var_os("ORBYN_FAKE_GH_STAR_STATE").is_some()
+                || std::env::var_os("ORBYN_FAKE_GH_STARS").is_some() =>
+        {
+            fake_gh(&args);
         }
         "mcp" if args.get(1).map(String::as_str) == Some("list") => {
             record_launch("claude-mcp-list", &args);
@@ -95,4 +85,40 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// A stand-in `gh`. The fixed star check answers from `ORBYN_FAKE_GH_STAR_STATE`
+/// (`starred` exits 0, `hang` never answers); the starred-list read answers from
+/// `ORBYN_FAKE_GH_STARS`, a file holding the JSON to print, `fail:<message>` to
+/// refuse like a signed-out CLI, or `hang`. The last call's arguments are written
+/// to `ORBYN_FAKE_GH_ARGUMENTS` for the test.
+fn fake_gh(args: &[String]) {
+    if let Some(path) = std::env::var_os("ORBYN_FAKE_GH_ARGUMENTS") {
+        std::fs::write(
+            path,
+            serde_json::to_vec(&json!({"args":args,"pid":std::process::id()})).unwrap(),
+        )
+        .unwrap();
+    }
+    if args.iter().any(|arg| arg.starts_with("user/starred?")) {
+        let fixture = std::env::var_os("ORBYN_FAKE_GH_STARS")
+            .map(|path| std::fs::read_to_string(path).unwrap())
+            .unwrap_or_default();
+        if fixture.trim() == "hang" {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        }
+        if let Some(message) = fixture.trim().strip_prefix("fail:") {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        print!("{fixture}");
+        return;
+    }
+    let state = std::env::var_os("ORBYN_FAKE_GH_STAR_STATE")
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .unwrap_or_default();
+    if state.trim() == "hang" {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+    std::process::exit(if state.trim() == "starred" { 0 } else { 1 });
 }

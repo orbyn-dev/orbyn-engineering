@@ -49,7 +49,14 @@ const host = (over: Partial<AppHost> = {}): AppHost => ({
   ...over,
 });
 
-beforeEach(() => useUi.setState({ theme: "dark" }));
+/** The descriptor the fake service returns for the app's own tool. */
+const TOOL_INFO = { name: "show_widget", description: "Shows a widget", inputSchema: { type: "object" } };
+
+beforeEach(() => {
+  useUi.setState({ theme: "dark" });
+  // The service read never settles unless a test says so: the mount effect stays quiet.
+  vi.spyOn(api, "mcpAppToolInfo").mockReturnValue(new Promise(() => {}));
+});
 
 describe("MCP App marker", () => {
   it("attaches the page to its tool row", () => {
@@ -140,6 +147,16 @@ describe("MCP App bridge", () => {
         hostContext: { theme: "dark", displayMode: "inline", availableDisplayModes: ["inline"] },
       },
     });
+  });
+
+  it("offers its tool's descriptor and ignores one the page claims", async () => {
+    const reply = await answerApp(
+      { id: 1, method: "ui/initialize", params: { hostContext: { toolInfo: { tool: { name: "spoofed" } } } } },
+      host({ toolInfo: TOOL_INFO }),
+    );
+    expect(reply).toMatchObject({ result: { hostContext: { toolInfo: { tool: TOOL_INFO } } } });
+    const absent = await answerApp({ id: 2, method: "ui/initialize", params: {} }, host());
+    expect((absent as { result: { hostContext: Record<string, unknown> } }).result.hostContext).not.toHaveProperty("toolInfo");
   });
 
   it("refuses a request it does not serve and ignores unknown notifications", async () => {
@@ -245,6 +262,93 @@ describe("MCP App frame", () => {
     });
     expect(message).not.toHaveBeenCalled();
     expect(sent).toHaveBeenCalledWith({ jsonrpc: "2.0", id: 10, error: { code: -32000, message: "The person declined." } }, "*");
+  });
+
+  it("shows the page the descriptor the service read, not fields the page sent", async () => {
+    const read = vi.spyOn(api, "mcpAppToolInfo").mockResolvedValue(TOOL_INFO);
+    render(<McpApp item={appRow()} threadId={THREAD} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(read).toHaveBeenCalledWith(THREAD, RENDER, expect.any(AbortSignal));
+    const own = (screen.getByTitle("demo show_widget") as HTMLIFrameElement).contentWindow as Window;
+    const sent = vi.spyOn(own, "postMessage");
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            jsonrpc: "2.0",
+            id: 20,
+            method: "ui/initialize",
+            params: { hostContext: { toolInfo: { tool: { name: "spoofed", inputSchema: { type: "string" } } } } },
+          },
+          source: own,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reply = sent.mock.calls
+      .map(([message]) => message as { id?: number; result?: { hostContext?: Record<string, unknown> } })
+      .find((message) => message.id === 20);
+    expect(reply?.result?.hostContext?.toolInfo).toEqual({ tool: TOOL_INFO });
+  });
+
+  it("aborts the descriptor read on unmount and reads once per render, not per re-projection", async () => {
+    const read = vi.spyOn(api, "mcpAppToolInfo").mockReturnValue(new Promise(() => {}));
+    const first = appRow();
+    const { rerender, unmount } = render(<McpApp item={first} threadId={THREAD} />);
+    expect(read).toHaveBeenCalledTimes(1);
+    const signal = read.mock.calls[0]?.[2] as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    // A re-projection hands the card a new item object for the same render: no new read.
+    rerender(<McpApp item={{ ...first, app: first.app && { ...first.app } }} threadId={THREAD} />);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(false);
+
+    unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("aborts the read and asks again when the card shows another render", () => {
+    const read = vi.spyOn(api, "mcpAppToolInfo").mockReturnValue(new Promise(() => {}));
+    const first = appRow();
+    const { rerender } = render(<McpApp item={first} threadId={THREAD} />);
+    const signal = read.mock.calls[0]?.[2] as AbortSignal;
+    const other = { ...first, app: first.app && { ...first.app, renderId: "01jc8xw9kq00000000000000cc" } };
+    rerender(<McpApp item={other} threadId={THREAD} />);
+    expect(signal.aborted).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read.mock.calls[1]?.[1]).toBe("01jc8xw9kq00000000000000cc");
+  });
+
+  it("shows no descriptor at all when the service will not read one", async () => {
+    vi.spyOn(api, "mcpAppToolInfo").mockRejectedValue(new Error("engine_unavailable"));
+    render(<McpApp item={appRow()} threadId={THREAD} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const own = (screen.getByTitle("demo show_widget") as HTMLIFrameElement).contentWindow as Window;
+    const sent = vi.spyOn(own, "postMessage");
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { jsonrpc: "2.0", id: 21, method: "ui/initialize", params: {} },
+          source: own,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reply = sent.mock.calls
+      .map(([message]) => message as { id?: number; result?: { hostContext?: Record<string, unknown> } })
+      .find((message) => message.id === 21);
+    expect(reply?.result?.hostContext).not.toHaveProperty("toolInfo");
+    const claimed = sent.mock.calls
+      .map(([message]) => message as { method?: string; params?: Record<string, unknown> })
+      .filter((message) => message.method === "ui/notifications/host-context-changed" && message.params?.toolInfo !== undefined);
+    expect(claimed).toEqual([]);
   });
 
   it("shows the same frame full screen and back", () => {

@@ -1831,9 +1831,10 @@ The page is untrusted and gets nothing a published page does not: the C21 frame
 `connect-src`, and only its own `?render=` token. A server's requested CSP domains and
 permissions are not honoured, so an app that loads remote scripts or data does not work
 here. The host takes `postMessage` JSON-RPC only from that frame's window and answers only
-to it. It answers `ui/initialize` with the theme and display mode, sends the call's
-arguments and result as `tool-input` and `tool-result` after `ui/notifications/initialized`,
-holds `size-changed` heights to 80..2000, and refuses every request it does not serve.
+to it. It answers `ui/initialize` with the theme, display mode and the app's own tool
+descriptor (below), sends the call's arguments and result as `tool-input` and `tool-result`
+after `ui/notifications/initialized`, holds `size-changed` heights to 80..2000, and refuses
+every request it does not serve.
 
 A page may ask for a tool call (`tools/call`) or a message (`ui/message`, user-role text
 only). Each waits for the person in a host dialog outside the frame, which the page cannot
@@ -1843,7 +1844,8 @@ reach or click, and names the server and what it asked. The web then calls
 token, which opens nothing but its own page. The service finds the app's server in the
 render's own record, which only an app render has, and checks the policy rules as a `tool`
 action on `mcp_app:<server>:<tool>` or `mcp_app:<server>:message`: a deny rule refuses even
-a confirmed request, an allow rule passes without one, and otherwise an unconfirmed request
+a confirmed request (the tool-info read below is included, as `mcp_app:<server>:tool_info`),
+an allow rule passes without one, and otherwise an unconfirmed request
 is refused. The decision is audited before the effect. There is no run to pause for a page
 shown after its run, so this is the person's answer rather than an approval card, as the
 computer gateway does for a call with no run. A tool call reaches only the app's own server:
@@ -1855,6 +1857,25 @@ result is audited and held to 256 KiB. A message is queued as the person's own n
 `ui/request-display-mode` switches between the inline card and full screen, which keeps the
 same frame so the page keeps its state; Escape or the card's control returns it inline, and
 the page hears the mode through `host-context-changed`.
+
+Every app also sees its own tool's descriptor. The web reads it at
+`GET /api/threads/:id/mcp-apps/:render_id/tool-info`; the service takes the server and the
+tool from the render's own record — never from the page or the request — asks the engine
+for that one server's tool list, and answers only the advertised `name`, `description` and
+`inputSchema`. The rest of the descriptor and anything about the connection stay in the
+service. The page gets it as `hostContext.toolInfo.tool`, in the `ui/initialize` answer or
+in a later `host-context-changed`; a read the service refuses leaves the context without
+it rather than guessing. An unknown render, a render that is not an app, or a tool its
+server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
+names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
+starts no model turn and reaches no other server. It is evaluated read-only against the
+policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
+only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+`ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
+starts a short engine session, so the service holds at most two at once and identical
+concurrent reads of one render share one (single-flight: the answer goes to the callers
+waiting and nothing is kept, so it is not a cache); the card reads once per render and
+aborts the request when it unmounts.
 
 `ui/update-model-context` leaves a note for the model: its text blocks, then its structured
 content as JSON, at most 8000 characters. The web sends it with
@@ -3303,6 +3324,18 @@ saved dismissal. Storage failures suppress the notice, and a dismissal from anot
 tab wins over an in-flight check. Core uses a bounded, noninteractive `gh api` GET
 for the fixed repository; it captures no output, reads no credential file and never
 stars anything. Missing tools or an unavailable check do not interrupt a send.
+The source-control reads answer from local data and the person's own forge login.
+`GET /api/source-control/repository` matches an `owner/name` against the repository
+identity each registered checkout's own Git config names, read without transport; it
+returns the app's checkout records for it and makes no forge call, so a repository the
+person has not added reads as not found rather than as a forge lookup. A project whose
+own identity could not be observed leaves `complete` false instead of proving absence.
+`GET /api/source-control/starred` is the person's starred GitHub repositories, read
+once through their own `gh api user/starred` as one page of 100: a full page reports
+`truncated`, and a missing tool, a signed-out login or a failed read reports
+`unavailable` rather than an empty list. Neither read holds a credential, writes
+anything or stars anything.
+
 The web reload flow is qualified. Native viewer storage now has a stable bundled
 origin, with Light persistence qualified across isolated macOS quit/relaunch and
 service recovery. Star-notice dismissal across native quit/relaunch itself remains
@@ -3377,6 +3410,8 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/title` | Regenerate the title from the conversation. Spends engine usage |
 | `GET, PUT /api/settings` | `ServerSettings` |
 | `GET /api/source-control/repository-star` | Fixed product repository star status; full-app read, no star mutation |
+| `GET /api/source-control/repository?repository=` | `RepositoryLookup`: the registered checkouts whose own Git config names that `owner/name`; local only, no forge call |
+| `GET /api/source-control/starred` | `StarredRepositories`: the person's starred GitHub repositories through their own CLI, one page of 100; `unavailable` says why none could be read |
 | `GET, POST /api/tasks` | `ScheduledTask[]`; `UpsertTask` creates or changes |
 | `PUT /api/tasks/:id` | The whole `UpsertTask`; `404` if unknown, `400` for another task's `id` or another project |
 | `DELETE /api/tasks/:id`, `POST /api/tasks/:id/enabled` | Delete; `TaskEnabled` pauses or resumes |
@@ -3408,6 +3443,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/mcp-apps/:render_id/tool-call` | An MCP App's confirmed tool call on its own server |
 | `POST /api/threads/:id/mcp-apps/:render_id/message` | An MCP App's confirmed message, queued |
 | `PUT /api/threads/:id/mcp-apps/:render_id/context` | An MCP App's note for the next turn |
+| `GET /api/threads/:id/mcp-apps/:render_id/tool-info` | `McpAppToolInfo`: the app's own tool's advertised name, description and input schema from its server; `404` when the app or tool is unknown, `502` when the server cannot be asked |
 | `DELETE /api/threads/:id/mcp-app-context` | Drop the unsent app note |
 | `PATCH, DELETE /api/queue/:id` | Edit or remove a queued message |
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
