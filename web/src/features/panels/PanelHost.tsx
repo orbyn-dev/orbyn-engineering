@@ -20,6 +20,7 @@ import { ToolsTab } from "../tools";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
+import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
@@ -300,9 +301,8 @@ export function PanelHost({
     { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
-  const plusButton = useRef<HTMLButtonElement>(null);
-  const focusTab = (id: RightTab) =>
-    requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(tabSelector(id))?.focus());
+  const plusButton = usePanelShortcuts(setPlusMenu, mode !== "sheet" ? onToggleMaximize : null);
+  const focusTab = (id: RightTab) => requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(tabSelector(id))?.focus());
   // A file with unsaved changes asks before its tab goes, one file at a time: Save, Don't save or Cancel. Closing several asks for each.
   const cwd = useWorkspace((state) => state.threads[thread.id]?.cwd ?? "");
   const sessions = useEditorSessions((state) => state.sessions);
