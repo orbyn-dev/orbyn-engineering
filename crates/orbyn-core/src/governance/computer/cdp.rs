@@ -423,11 +423,6 @@ impl BrowserSession {
     }
 
     /// Gives up as soon as the page opens a dialog, which would hold the reply.
-    async fn call_unless_dialog(&mut self, method: &str, params: Value) -> Result<Value> {
-        self.call_unless_dialog_within(method, params, CALL_TIMEOUT)
-            .await
-    }
-
     async fn call_unless_dialog_within(
         &mut self,
         method: &str,
