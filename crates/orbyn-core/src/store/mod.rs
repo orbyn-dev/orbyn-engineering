@@ -105,7 +105,7 @@ pub use crew_background::{
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
-    MOST_BUDGET_TOKENS, ResultOutcome,
+    MOST_BUDGET_TOKENS, NewLane, ResultOutcome,
 };
 pub use crew_bus::{CrewBusEvent, CrewDelivery, FactWrite};
 pub use crew_cancel::CancelStart;

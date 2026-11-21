@@ -1,5 +1,5 @@
-//! The reviewer backtest over HTTP (Preview, slice 4n PR 3): the estimate and the report read, the start and the stop are a
-//! person's. Transport only: `orbyn_core::crew::backtest` owns every rule.
+//! The reviewer backtest over HTTP (Preview, slice 4n PR 3): the estimate, the start input and the report read, the start
+//! and the stop are a person's. Transport only: `orbyn_core::crew::backtest` owns every rule.
 //!
 //! Both routers are merged by [`super::crew::routes`]: the reads under the Preview gate, the writes under the gate and
 //! `local_only`, so a remote viewer reads and is refused the start and the stop. The writes are in
@@ -7,7 +7,8 @@
 //! by itself and nothing schedules one. No live engine is connected: a start is refused until one is.
 //!
 //! The estimate takes the lanes as ordered `lane`, `engine` and `model` triples (`lane=correctness&engine=a&model=m`, repeated).
-//! Every lane in an estimate is a review lane.
+//! Every lane in an estimate is a review lane. The start input (`start-view`) takes the project only and reads back the lanes
+//! and per-engine budgets of the project's most recent run: nothing is defaulted, so a project that never ran one gets none.
 
 use axum::Json;
 use axum::Router;
@@ -17,7 +18,7 @@ use axum::routing::{get, post};
 use orbyn_contracts as wire;
 use orbyn_core::CoreError;
 
-use crate::http::{ApiJson, ApiResult, AppState};
+use crate::http::{ApiJson, ApiResult, AppState, QueryMap};
 
 type Pairs =
     Result<axum::extract::Query<Vec<(String, String)>>, axum::extract::rejection::QueryRejection>;
@@ -25,6 +26,7 @@ type Pairs =
 pub fn reads() -> Router<AppState> {
     Router::new()
         .route("/api/crew/backtest/estimate", get(estimate))
+        .route("/api/crew/backtest/start-view", get(start_view))
         .route("/api/crew/backtest/{id}/report", get(report))
 }
 
@@ -92,6 +94,21 @@ fn read_query(
         .collect::<Result<Vec<_>, CoreError>>()?;
     let project = project.ok_or_else(|| CoreError::Invalid("project is required".into()))?;
     Ok((project, lanes))
+}
+
+/// The input a start request needs, read back from the project's most recent run: its lanes (with the kind each was
+/// started as) and its per-engine token budgets. Reads only, and nothing is defaulted: a project that never ran a
+/// backtest gets no lane and no budget, and a budget the run did not record reads unset.
+async fn start_view(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    let project = query
+        .0
+        .get("project")
+        .cloned()
+        .ok_or_else(|| CoreError::Invalid("project is required".into()))?;
+    Ok(Json(state.core.crew_backtest_start_view(&project)?))
 }
 
 /// A run and each lane's score, or "Not measured" where the escape log cannot say. Reads only.
