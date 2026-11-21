@@ -369,6 +369,7 @@ async fn init_git_refuses_a_folder_that_is_gone() {
     assert!(!core.store.project(&project.id).unwrap().is_git);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn init_git_refuses_a_folder_swapped_for_a_symlink() {
     let dir = TempDir::new();
