@@ -348,13 +348,45 @@ retries with the reason. The same failure twice means one change of approach, an
   - The failure fingerprint is the failing checks, how each ended and the names of what failed; the output is
     left out, since it changes between runs. The checks run after the worker's turn has ended. A different fingerprint starts the count again, so a worker that makes progress is not stopped.
   - A turn that ends with no `crew_report` is a failed attempt with its own fingerprint. An engine that fails ends the
-    task (`engine_error`). `budget.minutes` ends a task even mid-turn. `budget.turns` is not enforced for worker turns yet, but with
-    Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`): with the default 30
-    turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
+    task (`engine_error`). `budget.minutes` ends a task even mid-turn. `budget.turns` is enforced on the next failed attempt:
+    the worker's turns and the approvals reserved against the same budget are counted (`crew_turns_spent`), and once they reach
+    the brief's turns the task stops with the same `budget` reason and a result that counts them; a turn that passes on the last
+    one still passes. With Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`):
+    with the default 30 turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
+  - **A crew-wide turn budget** (owner ruling, 2026-11-20) is a device-local number of turns
+    (`crew_turn_budget`; unset or 0 is no crew budget). There is no Settings control yet: it can be set only through the
+    settings API for now. A crew's spend is the same per-task tally summed over its
+    tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
+    refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
+    stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
+    the number. There is no reset: a new crew starts at zero because its count is read from its tasks. Every new
+    task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
+    directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
+    counts at least one turn.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
-  - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
-    `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report
-    `skipped` and are listed as not verified. A key with nothing it can run goes to `needs_person`.
+  - **Check kinds this version runs (#437):** besides the command kinds, `file_scope` and `diff_size`,
+    `schema`, `secret_scan` and `repo_required` run in the checkout and record their Evidence:
+    - `schema`: `{schema, instance}` name two files in the checkout. The instance must be JSON that validates
+      against the schema (draft 2020-12). A mismatch, or an instance that is not JSON, is a finding (fail) that
+      names the instance locations and never the value; a missing or unreadable file, a schema that is not JSON,
+      and a schema that references another file or a URL — the schema is one self-contained document, so only
+      `#` references are allowed — are errors, never a pass.
+    - `secret_scan`: reads every changed path (as `file_scope` and `diff_size` read them) for the secret formats
+      of the spec, all of them and always. The Evidence names the path, line and class, never the match. A changed
+      file over 8 MiB, or one the scan cannot read, is an error: the scan never passes over what it did not read.
+      Symlinks and other non-regular changed files hold no bytes of the change and are not scanned.
+    - `repo_required`: runs the repository's own checks from `.orbyn/crew.json` (`checks[].run`), in order, each
+      passing on exit 0. The file is read at the commit the task started from, as the merge queue reads it, so a
+      worker's edit to that file cannot lower the bar. The commands still run in the checkout the worker left, so the scripts
+      and tests they call are guarded only by the key's `protected_paths`. A task with no recorded starting commit is an
+      error. `name` and `note` are labels for the log. No declared
+      checks is a pass with that fact in the log; a failing check is a finding that names the check, and a check
+      that cannot run is an error. `when` is not read, as the merge queue does not read it.
+  - **Check kinds this version does not run** (`http_probe`, `preview`, `visual_compare`, `manual`,
+    `screenshot_only`, `accessibility_audit`, `performance_budget`, `licence_scan`) report `skipped` and are listed as
+    not verified. `http_probe` and the page kinds need a live loopback page or the app's browser; `manual` needs a
+    person's Gate, which no route writes yet; `licence_scan` needs a licence policy and an offline source of
+    dependency licences. A key with nothing it can run goes to `needs_person`.
 
 **Harness-to-harness communication** (the new part)
 
@@ -399,7 +431,10 @@ Guards, all enforced in code:
 
 - **Planned:** a writing worker gets its own worktree through the existing worktree handoff.
 - **Today:** workers run in the lead's checkout. There is no merge gate for a single worker, and diff checks see the lead's uncommitted changes too.
-- The brief's file lease prevents two writers on the same files.
+- The brief's file lease prevents two writers on the same files, and a worker's file-change tool outside it is refused
+  at the gate with the lease's own words, before the write; the verifier's `file_scope` is no longer what catches it. A
+  shell command is not read, so a command can still write outside the lease (issue #441's sandbox). A refused write is
+  recorded as a denial and counts toward the trip wires (3 in a row, 20 in a run).
 - The lead merges in order.
 - Read-only workers share the lead's checkout.
 
@@ -452,7 +487,10 @@ merge).
 **As built (slice 4b):**
 
 - The tools are `crew_review` (lanes, no cap, also after a pass), `crew_finding` (a reviewer files a finding),
-  `crew_check_finding` and `crew_review_status`, behind the Preview flag. See the
+  `crew_check_finding` and `crew_review_status`, behind the Preview flag. A `crew_review` call starts lanes while the
+  tool call's own deadline leaves room, and is then an error listing the lanes that started, those waiting on a person,
+  those refused and those not reached, with the `lanes` to ask for again. The lanes the repo's rules ask for are added on
+  every call, so asking again re-runs them. See the
   [review README](../crates/orbyn-core/src/crew/review/README.md).
 - A finding is confirmed by code: a repro check the lead supplies that fails, or an independent second review on the
   other vendor that reports the same file within 3 lines. Otherwise it is unconfirmed and blocks nothing. Both
@@ -482,6 +520,51 @@ merge).
   Mock-backed Chromium checks cover the controls, native-select Escape behavior, dirty navigation and narrow Light, Dark and Dim layouts;
   real engines and actual forge publication remain unqualified.
   `crew_finding` refuses after the reviewer's run has ended (H7); the Gates are core writes and do not.
+
+**Known limits of the review stages (#451, 2026-11-20).** Every limit the slice 4b review rounds named now has a decision.
+A fixed item names its test; an accepted one says why and what would close it. Implementation notes and the decision table
+stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decisions-for-451).
+
+- **A reworded claim is a new finding — accepted.** The fingerprint is the lane, the file and the claim with case and spacing
+  ignored, so only the label uses it. Blocking and the one-fix-per-place guard keep to the lane and file: a paraphrase never
+  clears a confirmed finding and a silent lane clears nothing; a fixed place can read as "fixed" plus a new report. Exact
+  semantic identity (compare by file and nearby line as the second review does, or let the lead mark two findings the same)
+  is a product decision with no agreed rule. Unblocked by that decision; `the_same_place_twice_stops_the_loop` and
+  `a_fingerprint_ignores_the_line_the_case_and_the_spacing` cover today's rule.
+- **A reviewer shares the lead's checkout — blocked on #436.** Read-only comes from the lease, the protected-byte comparison
+  and the scope check; no process or filesystem isolation exists. A reviewer's own checkout at the exact commit needs #436.
+  Unblocked by #436.
+- **The second blind review lane costs a whole lane run — accepted.** A finding without a repro is checked by an independent
+  run on another vendor, and a cheaper check anchored on the claim would break that independence. The cost is unmeasured
+  because it needs real engine runs; only fake engines are tested here. Unblocked by a real-lane measurement.
+- **A finding outside the reviewed task's own scope — closed.** A fix inherits the reviewed task's checks and writes only the
+  finding's file. A finding outside the task's own `file_scope` checks now sends no fix brief; the lead is told a person must
+  authorise a new task (`a_fix_outside_the_tasks_scope_checks_is_refused`). Check-defining manifests, tests, CI, rule files and
+  protected paths stay refused. The residual is accepted: a fix never widens the reviewed scope.
+- **Real Claude and Codex yield — unqualified.** Only fake engines ran, so no real lane has shown how often reviewers file
+  findings the check confirms. Unblocked by real-lane runs on signed-in engines, which need a live-run decision rather than
+  code work (#451).
+- **Hidden paths and index flags — index flags closed; ignored new files accepted.** Any `assume-unchanged` or
+  `skip-worktree` entry, sparse checkouts included, refuses admission and fails verification whenever it appears. A new file
+  hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile` stays invisible to the Git-based scope and size checks:
+  counting every ignored file would charge pre-existing caches and local data to a narrow task. A crafted `.git/index` with
+  matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class. Unblocked by isolated
+  checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
+  `an_index_flag_does_not_hide_a_reviewers_edit` and `a_flag_that_was_there_at_the_start_refuses_admission` cover today's
+  behaviour.
+- **The clearing repro runs at the current checkout — blocked on #436.** It must pass now, is not shown to have failed before
+  the fix (the Gate says so), and its Evidence records the commit it ran on. Fail-before/pass-after at the finding's exact
+  commit needs a throwaway checkout and process ownership in #436. Unblocked by #436.
+- **Byte-exact Git is scoped to the checks that decide — accepted.** Crew's scope, size and changed-path checks run
+  `git_byte_exact` (line-ending conversion and the untracked cache off) and refuse a nonempty or unreadable `info/attributes`;
+  `git_hardened` keeps its previous behaviour for every other caller. Adding the flags to every hardened read would change
+  file explorer and merge reads too, and real Windows `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)).
+  Repository metadata remains writable. Unblocked by auditing every caller and recording Windows evidence;
+  `autocrlf_cannot_hide_a_byte_change_from_scope_or_size` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
+- **The touched guard and HEAD reads — closed.** `chk-fix-touched` is a core byte comparison in the immutable key, run only for
+  a stored fix task, never a shell command; a missing, unreadable or nonregular file cannot pass. The two plain
+  `rev-parse HEAD` reads the issue named use `git_hardened`, in `review/lanes.rs` and the start path. Covered by
+  `a_fix_with_spaces_and_valid_punctuation_gets_a_core_byte_check` and the verifier tests.
 
 **Review decisions** (2026-11-11, Designer part 2, frames in `crew-designs.html`):
 
@@ -581,6 +664,23 @@ by a live engine. See the [Autopilot group](../crates/orbyn-core/src/crew/autopi
 after-merge Review queue and the watch on main with a bisect revert. Local only: a merge or a revert moves a local branch that
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
+
+**As built (slice 4f, conflict forecast):** the merge queue's forecast is no longer a constant. For up to eight
+queued local candidates, in queue order, the read dry-runs the candidate's merge onto the branch tip with a hardened
+`git merge-tree --write-tree --name-only --no-messages` (output capped, no ref, index or worktree moves) and reports the task,
+its candidate commit and at most 20 conflicting paths; `checked` says how many candidates the dry run covered and
+`conflict_forecast` is true when at least one would conflict as the branch stands now. A candidate whose repository or commit
+cannot be read locally, and a forge intent (its merge is tried on the forge), is left out rather than guessed at. This is a dry
+run at read time, not the dependency-graph forecast the plan draws: it says that a merge would conflict now, not that two
+tasks overlap before work starts.
+
+**As built (slice 4f, bisect progress):** the watch read serves the bisect a watch is running now as `bisect`; the old
+`bisect_progress` boolean is gone. It carries `phase` (`checking_tip`, `checking_boundary`, `bisecting`, `confirming` or
+`checking_parent`), `tested` and `steps` (the runs finished and the most this history can need), `after` and `before` (the
+last commit known to pass and the first known to fail, while bisecting), `testing` (the commit whose checks are in flight) and
+`checked` (each finished run and whether the checks passed there). Each entry is a real run of the repository's checks at that
+commit. It is in memory only, cleared when the watch ends, so a restart keeps the stored outcome (the merge rows and the
+ledger) and shows no stale bisect.
 
 **A local merge a crash interrupted.** A queue write names the state it expects (a compare-and-set), so a person's reject or a recovery is
 never overwritten: a changed row is left as it is and each caller decides (the lane skips the entry; a reject of an entry already
@@ -767,8 +867,8 @@ ledger rows hold the lead's and second key's reasons but not the asker's model, 
 class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
 comment is kept and is not yet a fix brief.
 
-Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), the
-conflict forecast, bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g),
+background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
 
 **As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
 a second key, even in Full, and the person can always approve it alone, once. It extends the always-denied list (N8 stays above it) and the
@@ -1586,9 +1686,10 @@ The person's "Re-run checks" for a Crew task (Preview). Backend only: the card t
   work", and the reviewer's commit is the last Evidence's), the merge proof reads the same rows, and the protocol's Evidence has no
   field that says "a person's re-run", which this PR does not change. So a re-run's record is its two audit rows, counts only; its
   logs are not kept. A later Flow route that shows a re-run needs its own table or a protocol field.
-- **What runs.** The key's checks only, in the task's own checkout: its command kinds, `file_scope` and `diff_size`; any other kind
-  is `skipped`, as in a live verification. It does **not** run the repository's own checks (`.orbyn/crew.json`), and it does not touch
-  the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
+- **What runs.** The key's checks only, in the task's own checkout: the command kinds, `file_scope`, `diff_size`,
+  `schema`, `secret_scan` and `repo_required`; any other kind is `skipped`, as in a live verification. A `repo_required`
+  check runs the repository's own checks (`.orbyn/crew.json`) unscreened, as the merge queue runs them; the re-run does not
+  otherwise touch the merge queue. A key with protected paths is compared with the record taken when the task started, so a checkout whose protected
   files changed runs nothing, as a live verification does (N7, H9).
 - **Which tasks.** An unknown id is `404 not_found`. A task with no key or no checkout is `422 unsupported`. Allowed: a `passed` task,
   and a `stopped` task whose reason is `repeated_failure`, `budget` or `engine_error` **and** whose checks ran live at least once (it
@@ -1729,7 +1830,8 @@ The person's stop button for a Crew task (Preview). Backend only: the card actio
 - Steering differs by engine. A Claude message may land mid-tool-call. Test with real engines before claiming "live".
 - Login and quota are per engine on the person's machine. The router must fail clearly ("Codex isn't signed in") rather
   than silently falling back.
-- Cost: several engines at once multiply usage. A crew-wide budget is in slice 3, not later.
+- Cost: several engines at once multiply usage. The crew-wide turn budget (slice 3 above) refuses new tasks and
+  never stops in-flight work, so a crew over its number finishes what it started.
 - openbot is non-commercial: no code or text from it, only the ideas listed above.
 
 ## Appendices

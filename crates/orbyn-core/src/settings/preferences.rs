@@ -132,7 +132,11 @@ const DEFINITIONS: &[Definition] = defs![
     "custom_models" Kind::List, [], false;
     "disabled_engines" Kind::List, [], true;
     "provider_instances" Kind::List, [], false;
+    "crew_turn_budget" Kind::Number, 0, false;
 ];
+
+/// The crew-wide turn budget's catalog key. Its value is whole turns; 0 is no crew budget.
+pub(crate) const CREW_TURN_BUDGET: &str = "crew_turn_budget";
 
 /// Keys the service writes itself; a client edit names them only through their owner.
 const SERVICE_OWNED: &[&str] = &["default_theme_set_at"];
@@ -196,6 +200,12 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
         return Err(CoreError::Invalid(
             "Model options are option ids with one value each, and effort is set on its own."
                 .into(),
+        ));
+    }
+    if fits && definition.key == CREW_TURN_BUDGET && value.as_u64().is_none() {
+        // Whole turns only: a fraction could never be spent, and 0 is no crew-wide budget.
+        return Err(CoreError::Invalid(
+            "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
     }
     if fits {
@@ -515,6 +525,16 @@ mod tests {
         assert!(serde_json::from_value::<ScopedPreferencesQuery>(json!({"scope":null})).is_err());
         assert!(check(definition("auto_settle_after_days").unwrap(), &Value::Null).is_ok());
         assert!(check(definition("auto_pull").unwrap(), &Value::Null).is_err());
+    }
+
+    #[test]
+    fn a_crew_turn_budget_is_whole_turns_or_none() {
+        let budget = definition(CREW_TURN_BUDGET).unwrap();
+        assert!(check(budget, &json!(0)).is_ok(), "0 is no crew budget");
+        assert!(check(budget, &json!(30)).is_ok());
+        assert!(check(budget, &json!(1.5)).is_err());
+        assert!(check(budget, &json!("30")).is_err());
+        assert!(check(budget, &json!(-1)).is_err());
     }
 
     #[test]

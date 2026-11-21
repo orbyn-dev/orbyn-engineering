@@ -466,12 +466,20 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Subscription
 limits appear only where an engine reports them itself, as Codex does through
-`account/rateLimits/read`, answered from the last report and read again in the background after
-five minutes. Only Codex's `rateLimits`,
+`account/rateLimits/read`. Subscription reports are read fresh on every request:
+the supported drivers do not expose an authoritative current account/workspace binding
+that can validate a kept report. Email, plan and cached signed-in status are not identities.
+A failed read returns unavailable without an old-account fallback, including in the client;
+opening or refreshing Limits waits for the bounded provider read. An overlapping older read
+cannot answer after a newer read, a forget or an engine configuration change. No subscription
+report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
+and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
 reset-credit offers are dropped; `?force=true` reads again and
 spends no model usage. `/api/limits` also gives one number per window length across
-engines, the highest used percentage, since that engine stops first.
+engines, the highest used percentage, since that engine stops first. The overview excludes
+the Claude family, including named instances, before any status or usage probe; an explicit
+engine/thread limits read can still ask Claude.
 Windows with an unknown duration remain separate, because an absent duration does
 not establish that they share a budget.
 Claude uses its unmodified CLI's promptless `initialize` then `get_usage` control
@@ -653,6 +661,21 @@ behind stop when it exits, when the call is cancelled and when
 the service stops. Every forge write is audited before it happens. A stack is the chain of open pull requests whose
 bases are each other's heads; a stack action works from the bottom and stops at the
 first failure. Bulk close carries on past a refusal and reports each number.
+
+The explicit VCS methods beside the branch routes are `Local`: `POST
+.../vcs/refresh-status` reads the checkout's branch or detached HEAD, HEAD, tracking
+ref, ahead/behind and working-tree counts now, and drops the explorer's kept list and
+letters for the project so its next read is Git's too; `POST .../vcs/refs` creates a
+branch at an optional start without switching (the reference client's `createRef` is
+separate from `switchRef`); `POST .../vcs/refs/switch` moves the checkout to an
+existing ref; and `DELETE /api/projects/:id/worktrees/:worktree` removes one worktree
+it made (the reference client's `removeWorktree`). A folder outside Git is `400` for
+all four, and the removal needs the person key: it deletes files, so only a linked
+worktree under the project's sibling `<repo>-wt` root with no thread working in it is
+removed. The removal is refused, with no paths in the error, when `git status --porcelain
+--ignored` lists anything in the worktree (modified, untracked or ignored files such as
+`.env` and build output), because `git worktree remove` without force still deletes
+ignored files. Commits and branches are never touched.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
 request of the checkout's branch. The link is kept per thread and number, so a pull
@@ -1561,6 +1584,16 @@ different spelling of it on a case-insensitive disk is refused too. These saves 
 user's own edits, audited, and differ from rule 4, which covers what Orbyn adds on its
 own.
 
+`POST .../files/mutate` is the general write the reference client's project `mutate`
+needs: one tagged action creates a file or folder, moves (renames) an entry, or deletes
+a file or empty folder. It reuses the explorer's `ExplorerFileAction` contract, guard and
+active-session fence, scoped by thread instead of worktree id, so the same refusals hold:
+no overwrite, no recursive delete, no parent creation, no absolute or `..` path, no links
+or special files, and nothing in Git's folder, Orbyn's data folder or the library's
+`repo/`. It needs the person key like the other file writes, audits the attempt before
+any effect and its outcome after, and is refused while a run or an engine console is
+active in a folder that overlaps the checkout.
+
 `GET .../files/metadata?path=` answers what one entry is for the file browser without
 reading it: its kind, size, permission bits and modified time, and whether the entry
 stays inside the checkout. Every folder above it passes the same rules as a file read, so
@@ -2013,7 +2046,9 @@ therefore answer from the last known value and refresh in the background
   older than its maximum age is not shown: that call waits for a read, which concurrent
   callers share. The web reads again on `data_changed` (`useAsync`'s `refreshOn`, held for 200 ms so a burst
   reads once) and after the event stream reconnects from a gap of two seconds or more. These
-  reads are quiet: no loading state, and an error never replaces data on screen. Those that
+  cacheable reads are quiet: no loading state, and an error never replaces data on screen.
+  Subscription limits opt into fresh reads instead: loading clears the unvalidated report,
+  and an event-driven failure shows the existing error/no-data state too. Those that
   the slow lane carries (pull requests, forges, models, limits, tools) queue behind slow reads a
   person started; the workspace and update status and a thread's linked pull requests use the
   interactive lane. A refresh control the person presses sends the read-now flag.
@@ -2023,12 +2058,14 @@ therefore answer from the last known value and refresh in the background
   active), so a change to any of them is a new key and shows at once. A value is never served
   for another key. Keys are capped and the least recently used one goes first. Trust is
   checked on every call, before the kept value is looked at.
-- **A failure never clobbers.** A failed refresh keeps the last good value and is not
+- **A failure never clobbers a validated cache entry.** Subscription limits are excluded:
+  neither service nor client keeps an unvalidated account's report, even on network failure.
+  Other failed refreshes keep the last good value and are not
   retried for 5 seconds. With nothing kept, the call gets the read's own error, as before,
   and nothing is stored. An engine's model list with `error` set and no stand-in is returned
   to its callers but not kept; a stand-in list is kept, as before.
 - **`?refresh=1` (or `true`; models keep `refresh=true`, limits `force=true` and forges
-  `rescan=true`) reads now** and waits for the read, whatever is kept. Forced reads that
+  `rescan=true`) reads now** and waits for the read, whatever is kept. Cacheable forced reads that
   overlap share one read per key. A forced read that fails reports its error and keeps the
   last good value. A forges rescan also drops every pull request read, since the account may
   have changed.
@@ -2065,7 +2102,7 @@ therefore answer from the last known value and refresh in the background
 | `GET /api/engines/:id/models` | 30 s, then the engine's catalog key is compared at most once a minute | 30 min |
 | `GET /api/workspace` | 15 s | 60 s |
 | `GET /api/updates` | 20 s | 60 s |
-| `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 2 min | 5 min |
+| `GET /api/engines/:id/limits`, `/api/threads/:id/limits`, `/api/limits` | fresh read | no cache |
 | `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 5 min |
 | `GET /api/projects/:id/worktrees`, a worktree's tree and file letters (one status per worktree) | 10 s list, 5 s status | 60 s list, 30 s status |
 | `GET /api/health/dependencies` | 60 s | 10 min |
@@ -2646,13 +2683,19 @@ A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or
 `crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
 the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the
 attempt, without naming the file, if a protected path changed, then runs every check of the key in the task's checkout, writes
-one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. A pass needs
+one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. The kinds it runs are those
+`crew/checks.rs` implements (docs/crew.md, "Verification without limits"); a kind it does not run is listed as not verified. A pass needs
 Evidence (H8). A failure goes through `failed` to the state the loop guard names, in one transaction: a different failure
 retries with the reason, the same failure twice changes approach once, and the same failure after that stops the run
 (`repeated_failure`). The worker is told the reason a check failed, never the check, its id or any other part of the key,
 and the text is proven free of the key and of secrets before it is queued (H1). `failed` and `needs_person` are interim;
 `final` is true only for `passed`, `stopped` and `cancelled`, and the lead is told through its queue when a run ends or
-needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`).
+needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
+brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
+the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
+a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; no Settings control yet, so it is set only through the settings API) refuses a new task once its crew
+has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
+against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
 A lease's expiry is read when it is used and a lapsed lease is recorded `expired` and blocks nobody. Its refusals use the Crew Protocol's error codes
 ([Crew group](../crates/orbyn-core/src/crew/README.md)).
@@ -2676,8 +2719,14 @@ and the commit and never a check. A reviewer files typed findings with `crew_fin
 has ended, H7). A finding has no state and blocks nothing until the core confirms it at a `finding_check` Gate, decided by code and
 citing Evidence: a repro check the lead states that fails, or an independent second review that reports the same file within 3 lines.
 A confirmed finding sends the core's own fix brief to a builder, checked like `crew_start`'s, and the lanes then run again; the same
-finding after a fix is not sent again. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
-([review group](../crates/orbyn-core/src/crew/review/README.md)).
+finding after a fix is not sent again. The brief inherits the reviewed task's checks and may write only the finding's file; a finding
+outside the task's lease or its own `file_scope` checks gets no brief, and a person may authorise a new task, so a fix never widens
+the reviewed scope. A repo's `.orbyn/crew.json` `lanes` can add lanes and never remove one
+([review group](../crates/orbyn-core/src/crew/review/README.md)). A call starts lanes while the deadline of its own 45-second
+timer leaves room for the longest lane start seen so far plus a 5-second reserve (the first lane always starts), and is
+then an error that lists the lanes that started (with their task), those waiting on a person, those refused with the
+reason and those not reached, plus the `lanes` to pass to ask again. The lanes it started keep running, and only the
+not-reached ones are worth asking for. The lanes the repo's rules ask for are added on every call, so asking again re-runs them.
 
 Review controls are person-owned. Before same-vendor fallback, the core asks for once consent bound to the
 subject, lane, commit, round, engine and model, expiring after ten minutes. Wait grants nothing. Actual launch
@@ -2758,7 +2807,8 @@ With Preview enabled the service registers request-scoped engine approvers. The 
 are captured for a separate short delegated turn; a busy lead receives no injected work. A second key must pass the registry, quota,
 data-class and lead-tier filters on a different vendor. The shared deadline is 30 seconds or the task's remaining minute budget,
 whichever is shorter. Each approval atomically reserves one existing brief turn, counting prior approval reservations and known
-worker admissions; global worker-turn enforcement remains #438. Reported usage is recorded even when the answer is rejected, and
+worker admissions; a task whose turns are spent stops on its next failed attempt, and a crew that has spent its Settings turn
+budget starts no new task (see above). Reported usage is recorded even when the answer is rejected, and
 missing usage is unknown. The Claude adapter requires version 2.1.295+, no builtin tools, strict empty MCP, hooks/customizations off,
 no session persistence and one turn, with a 1,024-output-token cap and $0.05 estimated-spend stop. Reported usage above 16,384 tokens
 or estimated cost above $0.05 rejects the answer after spending. The provider stop can overshoot; neither is a hard pre-spend total-token
@@ -2817,7 +2867,9 @@ An unknown publication or merge only read-reconciles its existing intent. Target
 admitting a second one. The original merge remains standing until an exact corrective merge receipt projects its reverted state
 and area breaker once. Completion remains pending after parent projection until the idempotent area effect succeeds; the final receipt and revert ledger event commit together. Startup resumes this projector even when the corrective merge record already exists. HTTP Revert reports the actual persisted review state and no revert commit while the correction waits.
 The owner releases merge/start locks before queue admission, which revalidates the binding and target; startup and the periodic tick only read effects that already reached publishing and never run the lane. Queueing publishes nothing; the person's merge route does, pushing the verified candidate by its commit id (never forced) with fixed code-written pull request text. A completed correction's checkout and object reference are removed once no review reads them; the pushed branch on the forge is left for the person. No local main ref is moved.
-Local compatibility watch retains its verified bisect/revert behavior. A durable repository/commit claim fences duplicate watch
+Local compatibility watch retains its verified bisect/revert behavior. While it bisects, the watch read serves the progress it
+keeps in memory (the phase, the runs made and the bound, the window the cause is between and each answer), cleared when the
+watch ends; the outcome stays the stored rows and ledger. A durable repository/commit claim fences duplicate watch
 work across restart. Daily digest, overdue and break messages commit to the lead's visible chat together with their dedupe receipt,
 without starting a provider turn. An optional cancellation-owned watch future defaults off, accepts intervals from 60 seconds to
 24 hours, observes at most 32 confirmed forge targets. Corrective tasks use the same guarded forge lane; no separate writer schedules effects. With Preview enabled, startup
@@ -3061,7 +3113,8 @@ A tool call answers within 45 seconds, under the minute engines allow, and one t
 can wait on a person gets 240. Going over drops the call, and a dropped wait expires its
 approval, so a late answer does nothing. Claude's `approve` is a run's permission prompt
 and stays on `ORBYN_APPROVAL_TIMEOUT_SECS`. `orbyn_thread_wait` waits at most 40 seconds
-and reports `ended: false`. A request can be 512 KiB and a reply is cut at 256 KiB.
+and reports `ended: false`. `crew_review` paces itself by that timer's own deadline: it stops starting lanes in time and its
+error lists the lanes that started, waited on a person, were refused and were not reached. A request can be 512 KiB and a reply is cut at 256 KiB.
 
 ## Service access
 
@@ -3464,6 +3517,7 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/file?path=` | `ExplorerFile`: text, binary or too large; read-only content |
 | `POST /api/projects/:id/worktrees/:worktree/file-actions` | `ExplorerFileAction`: create, move or nonrecursive delete; `204`, `403` read-only/untrusted, `404` unknown member, `400` invalid path/destination |
+| `DELETE /api/projects/:id/worktrees/:worktree` | Removes one linked worktree under the project's sibling `<repo>-wt` root when no thread works in it, through `git worktree remove` without force, after refusing when the worktree holds any modified, untracked or ignored file; `204`, `403` untrusted/locked/foreign/in use/holds local files, `404` unknown member, `400` for the primary checkout or a folder outside Git |
 | `GET /api/projects/:id/icon` | `ProjectIconImage`; bounded passive registered-root metadata, no path or URL argument |
 | `GET /api/projects/:id/icon/resource` | `ProjectIconResource`; checked image metadata and content revision without embedded bytes |
 | `GET, HEAD /api/projects/:id/icon/raw`, `/api/projects/:id/images/raw?path=` | Selected/candidate image bytes, checked registered roots, conditional and range handling |
@@ -3546,10 +3600,13 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
 | `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
+| `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |
 | `POST /api/threads/:id/files/open`, `GET /api/editors` | `OpenInEditor` with optional `line` and `column`; `file_manager` reveals the file |
 | `POST /api/threads/:id/git/action` | `GitAction` to `GitActionResult`: commit, push, pull request |
 | `GET, POST /api/threads/:id/branches`, `POST .../branches/switch` | List, create and switch |
+| `POST /api/threads/:id/vcs/refresh-status` | `VcsStatus`: branch or detached HEAD, HEAD, tracking ref, ahead/behind and working-tree change counts, read from Git now; `400` outside Git, `403 folder_untrusted` |
+| `POST /api/threads/:id/vcs/refs`, `POST .../vcs/refs/switch` | `CreateBranch` creates a branch at an optional start without switching (`201`); `SwitchBranch` switches (`204`); `400` invalid name or outside Git, `409 thread_busy`/`git_failed` |
 | `GET /api/forges?rescan=true` | `ForgeStatus[]`; the last answer for a minute, then read again in the background; `rescan` asks the CLIs now |
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |

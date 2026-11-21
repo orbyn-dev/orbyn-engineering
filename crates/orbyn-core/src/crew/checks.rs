@@ -3,21 +3,34 @@
 //! model, and it never decides pass or fail for the whole key: `verify` does that.
 //!
 //! This version runs the command kinds (`command`, `test`, `lint`, `typecheck`,
-//! `custom_script`), `file_scope` and `diff_size`. Any other kind reports `skipped`, so the
-//! result lists it as not verified rather than passing or failing on a guess.
+//! `custom_script`), `file_scope`, `diff_size`, `schema`, `secret_scan` and `repo_required`.
+//! Any other kind reports `skipped`, so the result lists it as not verified rather than passing
+//! or failing on a guess; `manual` is one of those until a person's Gate exists to wait for.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use orbyn_contracts::{CheckOutcome, CheckParams, CrewCheck, CrewPathPattern};
+use orbyn_contracts::{
+    CheckKind, CheckOutcome, CheckParams, CrewCheck, CrewPath, CrewPathPattern, NamedParams,
+    SchemaParams,
+};
 use tokio::process::Command;
 
 use crate::error::CoreError;
+use crate::redaction::Redactor;
 
 /// No check runs longer than this.
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// The most a diff-size count reads of an untracked file.
 const COUNTED_BYTES: u64 = 2 * 1024 * 1024;
+/// The most a secret scan reads of one changed file: a larger one fails as an error, never as a
+/// pass over the part that was read.
+const SCANNED_BYTES: u64 = 8 * 1024 * 1024;
+/// The most instance locations a schema failure names.
+const SCHEMA_NAMES: usize = 20;
+/// Where a `schema` check's one file is registered while it is compiled. References to another
+/// file or a URL cannot be resolved, so the check reads only the two files it was given.
+const SCHEMA_LOC: &str = "https://orbyn.dev/crew/check/schema.json";
 
 /// What one check did.
 #[derive(Clone, Debug)]
@@ -66,8 +79,8 @@ fn kind_name(check: &CrewCheck) -> String {
     super::wire_name(&check.kind)
 }
 
-/// The core's fix guard. Only the verifier of a recorded fix task calls this;
-/// ordinary `repo_required` checks remain unimplemented.
+/// The core's fix guard. Only the verifier of a recorded fix task calls this; an ordinary
+/// `repo_required` check runs the repository's own checks instead.
 pub(super) fn fix_touched(path: &str, digest: &str, site: &Site<'_>) -> Ran {
     let started = Instant::now();
     let description = "byte comparison: chk-fix-touched".to_owned();
@@ -141,14 +154,34 @@ pub async fn run_check(check: &CrewCheck, site: &Site<'_>) -> Ran {
             )
             .await
         }
-        Ok(_) => ran(
-            CheckOutcome::Skipped,
-            format!("{}: not run by this version", kind_name(check)),
-            String::new(),
-            started,
-        ),
+        Ok(CheckParams::Schema(params)) => schema(&params, site, description, started),
+        Ok(CheckParams::Named(params)) => {
+            if check.kind == CheckKind::RepoRequired {
+                repo_required(&params, site, description, started).await
+            } else {
+                skipped(check, started)
+            }
+        }
+        Ok(CheckParams::Empty(_)) => {
+            if check.kind == CheckKind::SecretScan {
+                secret_scan(site, description, started).await
+            } else {
+                skipped(check, started)
+            }
+        }
+        Ok(_) => skipped(check, started),
         Err(why) => error(description, &why.message, started),
     }
+}
+
+/// The result of a kind this version does not run: it says so, and it passes and fails nothing.
+fn skipped(check: &CrewCheck, started: Instant) -> Ran {
+    ran(
+        CheckOutcome::Skipped,
+        format!("{}: not run by this version", kind_name(check)),
+        String::new(),
+        started,
+    )
 }
 
 /// Runs one command line in `worktree`, as the answer key's command checks run: it passes on exit 0.
@@ -446,5 +479,403 @@ async fn diff_size(
             "The change is larger than allowed: {files} files and {lines} lines."
         ));
     }
+    result
+}
+
+/// A schema check reads one file: a reference to another file or a URL is refused rather than
+/// resolved, so nothing outside the two files the key names is ever read.
+struct NoExternal;
+
+/// The first reference in a schema that is not an internal `#` one, if there is one. A schema
+/// this check reads is one self-contained document; a reference to another file or URL is refused
+/// before it is compiled, so the check never reads or fetches anything the key did not name.
+fn external_reference(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            for key in ["$ref", "$dynamicRef", "$recursiveRef"] {
+                if let Some(text) = map.get(key).and_then(serde_json::Value::as_str)
+                    && !text.starts_with('#')
+                {
+                    return Some(text.to_owned());
+                }
+            }
+            map.values().find_map(external_reference)
+        }
+        serde_json::Value::Array(items) => items.iter().find_map(external_reference),
+        _ => None,
+    }
+}
+
+impl boon::UrlLoader for NoExternal {
+    fn load(&self, _url: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        Err("a schema check reads one self-contained schema file".into())
+    }
+}
+
+/// Reads one regular file of the checkout, as the checks that name files read it. A symlink,
+/// directory or file that cannot be read is an error, never an empty value.
+fn checkout_file(site: &Site<'_>, path: &CrewPath, what: &str) -> Result<String, String> {
+    let full = site.worktree.join(path.as_str());
+    let meta = std::fs::symlink_metadata(&full)
+        .map_err(|_| format!("the {what} file {} cannot be read", path.as_str()))?;
+    if !meta.is_file() {
+        return Err(format!(
+            "the {what} file {} is not a regular file",
+            path.as_str()
+        ));
+    }
+    std::fs::read_to_string(&full)
+        .map_err(|_| format!("the {what} file {} cannot be read", path.as_str()))
+}
+
+/// The instance locations a schema validation failed at, deduplicated and ordered.
+fn schema_locations(why: &boon::ValidationError<'_, '_>) -> Vec<String> {
+    let output = serde_json::to_value(why.basic_output()).unwrap_or(serde_json::Value::Null);
+    let mut names: Vec<String> = Vec::new();
+    let mut units = vec![&output];
+    while let Some(unit) = units.pop() {
+        if let Some(children) = unit["errors"].as_array() {
+            units.extend(children);
+        }
+        let Some(at) = unit["instanceLocation"].as_str() else {
+            continue;
+        };
+        let at = if at.is_empty() { "(root)" } else { at };
+        if names.iter().all(|name| name != at) {
+            names.push(at.to_owned());
+        }
+    }
+    names.sort();
+    names.truncate(SCHEMA_NAMES);
+    names
+}
+
+/// Runs a `schema` check: the instance file, read from the checkout, must validate against the
+/// schema file it names. Both are JSON, and the schema is one self-contained document. A mismatch
+/// is a finding (fail); a file that cannot be read or a schema that cannot be compiled is an error.
+fn schema(params: &SchemaParams, site: &Site<'_>, description: String, started: Instant) -> Ran {
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    let source = match checkout_file(site, &params.schema, "schema") {
+        Ok(text) => text,
+        Err(why) => return error(description, &why, started),
+    };
+    let schema: serde_json::Value = match serde_json::from_str(&source) {
+        Ok(value) => value,
+        Err(why) => {
+            return error(
+                description,
+                &format!(
+                    "the schema file {} is not valid JSON: {why}",
+                    params.schema.as_str()
+                ),
+                started,
+            );
+        }
+    };
+    if let Some(reference) = external_reference(&schema) {
+        return error(
+            description,
+            &format!(
+                "the schema file {} refers to {reference}; a schema check reads one self-contained schema file",
+                params.schema.as_str()
+            ),
+            started,
+        );
+    }
+    let instance = match checkout_file(site, &params.instance, "instance") {
+        Ok(text) => text,
+        Err(why) => return error(description, &why, started),
+    };
+    let instance: serde_json::Value = match serde_json::from_str(&instance) {
+        Ok(value) => value,
+        Err(why) => {
+            let mut result = ran(
+                CheckOutcome::Fail,
+                description,
+                format!("{} is not valid JSON: {why}\n", params.instance.as_str()),
+                started,
+            );
+            result.names.push(params.instance.as_str().to_owned());
+            result.reason = Some(format!(
+                "The instance {} is not valid JSON: {why}",
+                params.instance.as_str()
+            ));
+            return result;
+        }
+    };
+    let mut compiler = boon::Compiler::new();
+    compiler.set_default_draft(boon::Draft::V2020_12);
+    compiler.use_loader(Box::new(NoExternal));
+    if let Err(why) = compiler.add_resource(SCHEMA_LOC, schema) {
+        return error(
+            description,
+            &format!(
+                "the schema file {} cannot be read: {why}",
+                params.schema.as_str()
+            ),
+            started,
+        );
+    }
+    let mut schemas = boon::Schemas::new();
+    let index = match compiler.compile(SCHEMA_LOC, &mut schemas) {
+        Ok(index) => index,
+        Err(why) => {
+            return error(
+                description,
+                &format!(
+                    "the schema file {} is not a JSON Schema this version compiles: {why}",
+                    params.schema.as_str()
+                ),
+                started,
+            );
+        }
+    };
+    match schemas.validate(&instance, index) {
+        Ok(()) => ran(
+            CheckOutcome::Pass,
+            description,
+            format!(
+                "{} is valid against {}\n",
+                params.instance.as_str(),
+                params.schema.as_str()
+            ),
+            started,
+        ),
+        Err(why) => {
+            let names = schema_locations(&why);
+            let found = if names.is_empty() {
+                "(no location reported)".to_owned()
+            } else {
+                names.join(", ")
+            };
+            let mut result = ran(
+                CheckOutcome::Fail,
+                description,
+                format!(
+                    "{} does not match {}: {found}\n",
+                    params.instance.as_str(),
+                    params.schema.as_str()
+                ),
+                started,
+            );
+            result.reason = Some(format!(
+                "The instance {} does not match the schema at: {found}.",
+                params.instance.as_str()
+            ));
+            result.names = names;
+            result
+        }
+    }
+}
+
+/// Runs a `secret_scan` check: every changed file in the checkout is read for the recognised
+/// secret formats of the spec, all of them and always. The evidence names the path, the line and
+/// the class, never the secret. A changed file too large to read in full, or one the scan cannot
+/// read, is an error: the scan never passes over what it did not read.
+async fn secret_scan(site: &Site<'_>, description: String, started: Instant) -> Ran {
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    let files = match changed(site).await {
+        Ok(files) => files,
+        Err(why) => return error(description, &why.public_message(), started),
+    };
+    let mut found: Vec<(String, usize, &'static str)> = Vec::new();
+    let mut unreadable: Vec<String> = Vec::new();
+    let mut scanned = 0_usize;
+    for path in &files {
+        let full = site.worktree.join(path);
+        let meta = match std::fs::symlink_metadata(&full) {
+            Ok(meta) => meta,
+            // A path deleted in the change holds nothing to scan.
+            Err(why) if why.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                unreadable.push(path.clone());
+                continue;
+            }
+        };
+        // A symlink, a directory or a submodule has no bytes of its own in the change.
+        if !meta.is_file() {
+            continue;
+        }
+        if meta.len() > SCANNED_BYTES {
+            return error(
+                description,
+                &format!(
+                    "the changed file {path} is larger than the {SCANNED_BYTES}-byte limit of this scan"
+                ),
+                started,
+            );
+        }
+        let bytes = match std::fs::read(&full) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                unreadable.push(path.clone());
+                continue;
+            }
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        for (line, content) in text.lines().enumerate() {
+            if let Some(class) = Redactor::locked().class_of(content) {
+                found.push((path.clone(), line + 1, class));
+                break;
+            }
+        }
+        scanned += 1;
+    }
+    if !unreadable.is_empty() {
+        return error(
+            description,
+            &format!(
+                "changed files could not be read for the scan: {}",
+                unreadable.join(", ")
+            ),
+            started,
+        );
+    }
+    if found.is_empty() {
+        return ran(
+            CheckOutcome::Pass,
+            description,
+            format!("{scanned} changed file(s) scanned, no recognised secret\n"),
+            started,
+        );
+    }
+    let mut log = format!("{} changed file(s) hold a recognised secret\n", found.len());
+    let mut names: Vec<String> = Vec::new();
+    for (path, line, class) in &found {
+        log.push_str(&format!("{path}:{line}: {class}\n"));
+        if names.iter().all(|name| name != path) {
+            names.push(path.clone());
+        }
+    }
+    let listed: Vec<String> = found
+        .iter()
+        .take(5)
+        .map(|(path, line, class)| format!("{path} line {line} ({class})"))
+        .collect();
+    let more = found.len().saturating_sub(listed.len());
+    let mut result = ran(CheckOutcome::Fail, description, log, started);
+    result.reason = Some(format!(
+        "Changed files hold a recognised secret: {}{}. Remove it from the change, and rotate it if it was real.",
+        listed.join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    ));
+    result.names = names;
+    result
+}
+
+/// Runs a `repo_required` check: the repository's own checks from `.orbyn/crew.json`, in order,
+/// as the merge queue reads them. The file is read at the commit the task started from, so a
+/// worker's edit to that file cannot lower the bar (the commands themselves still run in the checkout the worker left, so
+/// files they call are guarded only by the key's `protected_paths`). Every check must exit 0; the check passes
+/// when the repository declares none.
+async fn repo_required(
+    params: &NamedParams,
+    site: &Site<'_>,
+    description: String,
+    started: Instant,
+) -> Ran {
+    if Instant::now() >= site.deadline {
+        return error(
+            description,
+            "The task's time budget ran out before this check could run.",
+            started,
+        );
+    }
+    // No starting commit is an error: the checkout's own HEAD is a commit the worker controls, so reading the file there would
+    // let a worker lower the bar by committing a `crew.json` with no checks.
+    let Some(commit) = site.base.map(str::to_owned) else {
+        return error(
+            description,
+            "The task's starting commit is not recorded, so the repository's own checks cannot be read at it.",
+            started,
+        );
+    };
+    let checks = match super::autopilot::merge::repo_checks(site.worktree, &commit).await {
+        Ok(checks) => checks,
+        Err(why) => return error(description, &why.public_message(), started),
+    };
+    let label = params
+        .name
+        .as_ref()
+        .map(|name| format!(" ({})", name.as_str()))
+        .or_else(|| {
+            params
+                .note
+                .as_ref()
+                .map(|note| format!(" ({})", note.as_str()))
+        })
+        .unwrap_or_default();
+    if checks.is_empty() {
+        return ran(
+            CheckOutcome::Pass,
+            description,
+            format!(".orbyn/crew.json{label} declares no checks\n"),
+            started,
+        );
+    }
+    let mut log = format!("{} repository check(s){label} at {commit}\n", checks.len());
+    let mut failed: Vec<String> = Vec::new();
+    let mut errored: Vec<String> = Vec::new();
+    for line in &checks {
+        if Instant::now() >= site.deadline {
+            return error(
+                description,
+                "The task's time budget ran out while the repository's own checks ran.",
+                started,
+            );
+        }
+        let one = run_line(line, site.worktree, site.deadline).await;
+        match one.outcome {
+            CheckOutcome::Pass => log.push_str(&format!("pass: {line}\n")),
+            CheckOutcome::Fail => {
+                log.push_str(&format!("fail: {line}\n{}\n", tail(&one.log, 800)));
+                failed.push(line.clone());
+            }
+            _ => {
+                log.push_str(&format!(
+                    "error: {line}: {}\n",
+                    one.reason.unwrap_or_default()
+                ));
+                errored.push(line.clone());
+            }
+        }
+    }
+    if failed.is_empty() && errored.is_empty() {
+        return ran(CheckOutcome::Pass, description, log, started);
+    }
+    let outcome = if errored.is_empty() {
+        CheckOutcome::Fail
+    } else {
+        CheckOutcome::Error
+    };
+    let mut result = ran(outcome, description, log, started);
+    let listed: Vec<String> = failed
+        .iter()
+        .chain(errored.iter())
+        .take(5)
+        .map(|line| format!("`{line}`"))
+        .collect();
+    result.reason = Some(format!(
+        "The repository's own checks did not pass: {}.",
+        listed.join(", ")
+    ));
+    result.names = failed;
+    result.names.extend(errored);
     result
 }

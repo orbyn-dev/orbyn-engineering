@@ -781,22 +781,6 @@ async fn a_firing_still_starting_is_settled_as_interrupted_when_the_service_rest
     assert_eq!(reopened.task_runs("t1").unwrap()[0].outcome, "interrupted");
 }
 
-fn nearly_used(engine: &str) -> orbyn_contracts::EngineLimits {
-    orbyn_contracts::EngineLimits {
-        engine: engine.to_owned(),
-        checked_at: crate::util::now(),
-        limits: serde_json::Value::Null,
-        windows: vec![orbyn_contracts::LimitWindow {
-            id: "primary".into(),
-            label: "5 hours".into(),
-            used_percent: 95.0,
-            window_minutes: Some(300),
-            resets_at: None,
-        }],
-        plan: None,
-    }
-}
-
 async fn due(core: &Core, task: &orbyn_contracts::ScheduledTask) {
     core.store
         .save_task(task, Some(crate::util::unix_now() - 1), None)
@@ -809,8 +793,16 @@ async fn a_due_task_waits_when_its_engine_is_near_a_limit_and_the_preference_is_
     let dir = TempDir::new();
     let core = core(&dir).await;
     let project = core.new_project("app", false, None).await.unwrap();
-    let task = core.save_task(interval_task(&project.id), "user").unwrap();
-    core.usage.keep_limits(&nearly_used("claude"));
+    crate::agents::usage::limits_tests::register_report(
+        &core,
+        "limit-fixture",
+        serde_json::json!({
+            "rateLimits": {"primary": {"usedPercent": 95.0, "windowDurationMins": 300}}
+        }),
+    );
+    let mut input = interval_task(&project.id);
+    input.engine = "limit-fixture".into();
+    let task = core.save_task(input, "user").unwrap();
     core.set_preferences(
         None,
         &BTreeMap::from([("task_skip_near_limit".into(), true.into())]),
@@ -834,8 +826,16 @@ async fn a_due_task_fires_near_a_limit_when_the_preference_is_off() {
     let dir = TempDir::new();
     let core = core(&dir).await;
     let project = core.new_project("app", false, None).await.unwrap();
-    let task = core.save_task(interval_task(&project.id), "user").unwrap();
-    core.usage.keep_limits(&nearly_used("claude"));
+    crate::agents::usage::limits_tests::register_report(
+        &core,
+        "limit-fixture",
+        serde_json::json!({
+            "rateLimits": {"primary": {"usedPercent": 95.0, "windowDurationMins": 300}}
+        }),
+    );
+    let mut input = interval_task(&project.id);
+    input.engine = "limit-fixture".into();
+    let task = core.save_task(input, "user").unwrap();
 
     due(&core, &task).await;
 

@@ -12,7 +12,7 @@ mod hard_tools;
 mod held;
 mod hosts;
 pub(super) mod ledger;
-mod merge;
+pub(super) mod merge;
 mod notices;
 mod presence;
 mod review;

@@ -460,6 +460,25 @@ impl EngineManager {
         change()
     }
 
+    /// Limits-only discovery: ids of installed non-Claude engines. It filters by
+    /// family before any probe (Claude and its instances are never started) and
+    /// only checks the CLI path, so it never waits on an update lookup.
+    pub(crate) async fn limits_engine_ids(&self) -> Result<Vec<String>> {
+        let drivers: Vec<_> = self
+            .all_drivers()?
+            .into_iter()
+            .filter(|driver| driver.family() != "claude")
+            .collect();
+        let probes = drivers.iter().map(|driver| driver.probe());
+        let probed = futures_util::future::join_all(probes).await;
+        Ok(drivers
+            .iter()
+            .zip(probed)
+            .filter(|(_, probe)| probe.path.is_some())
+            .map(|(driver, _)| driver.descriptor().id)
+            .collect())
+    }
+
     pub async fn statuses(&self, refresh: bool) -> Result<Vec<EngineStatus>> {
         let mut cached = self.statuses.lock().await;
         if refresh || cached.is_none() {

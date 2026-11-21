@@ -45,6 +45,7 @@ pub enum RouteAssigner {
 
 wire_enum! {
 pub enum RejectionWhy {
+    Disabled,
     NotInstalled,
     NotSignedIn,
     CompatibilityBroken,
