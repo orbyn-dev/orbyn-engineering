@@ -665,6 +665,23 @@ after-merge Review queue and the watch on main with a bisect revert. Local only:
 no one has checked out, and nothing is pushed or sent to a forge. Merges are `--no-ff` merge commits rather than rebases, so
 a revert is one command and a bisect walks first parents.
 
+**As built (slice 4f, conflict forecast):** the merge queue's forecast is no longer a constant. For up to eight
+queued local candidates, in queue order, the read dry-runs the candidate's merge onto the branch tip with a hardened
+`git merge-tree --write-tree --name-only --no-messages` (output capped, no ref, index or worktree moves) and reports the task,
+its candidate commit and at most 20 conflicting paths; `checked` says how many candidates the dry run covered and
+`conflict_forecast` is true when at least one would conflict as the branch stands now. A candidate whose repository or commit
+cannot be read locally, and a forge intent (its merge is tried on the forge), is left out rather than guessed at. This is a dry
+run at read time, not the dependency-graph forecast the plan draws: it says that a merge would conflict now, not that two
+tasks overlap before work starts.
+
+**As built (slice 4f, bisect progress):** the watch read serves the bisect a watch is running now as `bisect`; the old
+`bisect_progress` boolean is gone. It carries `phase` (`checking_tip`, `checking_boundary`, `bisecting`, `confirming` or
+`checking_parent`), `tested` and `steps` (the runs finished and the most this history can need), `after` and `before` (the
+last commit known to pass and the first known to fail, while bisecting), `testing` (the commit whose checks are in flight) and
+`checked` (each finished run and whether the checks passed there). Each entry is a real run of the repository's checks at that
+commit. It is in memory only, cleared when the watch ends, so a restart keeps the stored outcome (the merge rows and the
+ledger) and shows no stale bisect.
+
 **A local merge a crash interrupted.** A queue write names the state it expects (a compare-and-set), so a person's reject or a recovery is
 never overwritten: a changed row is left as it is and each caller decides (the lane skips the entry; a reject of an entry already
 `merging` is refused). A crash while a local entry is `merging` would leave it so for good, so the watch's first tick at startup, and each tick
@@ -850,8 +867,8 @@ ledger rows hold the lead's and second key's reasons but not the asker's model, 
 class only. The risk, review and queue views read the whole table and then page, which is fine for one person's repositories. A
 comment is kept and is not yet a fix brief.
 
-Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g), the
-conflict forecast, bisect progress, background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
+Not built, so not served: earning a higher mode per area (4j; the circuit breaker's demotion is built in shadow, see below), trust scores for reviewers and the crew-versus-solo baseline (4g),
+background crews' triggers and runs (4h; their stored state is below), and the digest's send time.
 
 **As built (slice 4i, guard):** the blast-radius guard, backend only. A *destructive* command against a *production-linked* target always needs
 a second key, even in Full, and the person can always approve it alone, once. It extends the always-denied list (N8 stays above it) and the
