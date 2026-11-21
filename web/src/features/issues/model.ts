@@ -1,4 +1,4 @@
-import type { IssueQuery, IssueRef, IssueState, IssueSummary, TrackerKind } from "./contract";
+import type { IssueQuery, IssueRef, IssueState, IssueSummary, TrackerKind, TrackerRow, TrackerStatus } from "./contract";
 import { TRACKER_KINDS, TRACKER_NAMES } from "./contract";
 
 /** The word the state shows: Open, Closed, or Closed as not planned when the tracker says so. Never colour alone. */
@@ -90,4 +90,48 @@ export function threadMarker(issues: readonly IssueRef[]): { count: number; clos
   const closed = issues.every((issue) => issue.state.category === "closed");
   const names = issues.map((issue) => issue.display_key).join(", ");
   return { count: issues.length, closed, label: issues.length === 1 ? `Issue ${names}, ${closed ? "closed" : "open"}` : `${issues.length} issues: ${names}` };
+}
+
+/** The word a state choice shows: the tracker's own name for a workflow state (In review, Done), the plain words otherwise. */
+export function choiceLabel(state: IssueState): string {
+  return state.name && state.name !== "Open" && state.name !== "Closed" ? state.name : stateWord(state);
+}
+
+export const sameState = (a: IssueState, b: IssueState): boolean =>
+  a.category === b.category && a.name === b.name && (a.close_reason ?? null) === (b.close_reason ?? null);
+
+/** Where a tracker's credential stands, from the row alone. */
+export function trackerStatus(row: TrackerRow): TrackerStatus {
+  if (row.status) return row.status;
+  if (!row.connected) return "not_connected";
+  return row.tracker === "github" ? "signed_in" : "saved";
+}
+
+/** The one line under a tracker's name in Settings and on the Welcome page. Service text is capped; it is drawn as text. */
+export function trackerLine(row: TrackerRow): string {
+  const where = row.address || row.scope || null;
+  const capped = where && where.length > 80 ? `${where.slice(0, 79)}…` : where;
+  switch (trackerStatus(row)) {
+    case "signed_in": return `Uses the gh sign-in on this computer${row.account ? ` · ${row.account.slice(0, 60)}` : ""}`;
+    case "saved": return `Saved in your keychain${capped ? ` · ${capped}` : ""}`;
+    case "rejected": return `Saved in your keychain${capped ? ` · ${capped}` : ""}. ${trackerName(row.tracker)} rejected the token.`;
+    case "unreachable": return `Saved in your keychain${capped ? ` · ${capped}` : ""}. No answer from that address.`;
+    default: return row.tracker === "github" ? "Uses the gh sign-in on this computer" : row.tracker === "linear" ? "API token, kept in your keychain" : "Address and API token, kept in your keychain";
+  }
+}
+
+/** The words for a failed write: the service's own message, capped. Never anything the person typed. */
+export const reasonOf = (failure: unknown): string => {
+  const text = failure instanceof Error && failure.message ? failure.message : "Something went wrong.";
+  return text.length > 300 ? `${text.slice(0, 299)}…` : text;
+};
+
+const MARKS = new Map<string, string>([["github", "GH"], ["gitlab", "GL"], ["azure_devops", "AZ"], ["forgejo", "FJ"], ["linear", "LN"]]);
+/** The two letters on a tracker's mark. */
+export const trackerMark = (tracker: TrackerKind): string => MARKS.get(tracker) ?? "";
+
+/** The rows this screen knows how to draw, in the order the design lists them; a tracker the service adds later is not drawn. */
+export function knownTrackers(rows: readonly TrackerRow[]): TrackerRow[] {
+  const byKind = new Map(rows.filter((row) => isTracker(row.tracker)).map((row) => [row.tracker, row] as const));
+  return TRACKER_KINDS.flatMap((kind) => { const row = byKind.get(kind); return row ? [row] : []; });
 }

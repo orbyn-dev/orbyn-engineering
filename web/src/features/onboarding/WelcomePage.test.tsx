@@ -150,31 +150,45 @@ describe("agents", () => {
   });
 });
 
-describe("connect a tracker", () => {
+describe("Issue trackers section", () => {
   it("is not drawn while the service reports no trackers", async () => {
     load([engine({})]);
     render(<WelcomePage />);
     await act(async () => undefined);
-    expect(screen.queryByRole("button", { name: /Connect a tracker/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Issue trackers/ })).toBeNull();
     expect(screen.getByText(/pick the engine/)).not.toHaveTextContent(/tracker/);
   });
 
-  it("lists the five trackers, and Connect goes to Settings without a write or a field for a token", async () => {
-    setIssuesApi(createIssuesMock());
+  it("lists the five trackers with their states; Add token and Replace go to Settings with no field and no write", async () => {
+    setIssuesApi(createIssuesMock({
+      trackers: [
+        { tracker: "github", connected: true, status: "signed_in", account: "sam-arden" },
+        { tracker: "gitlab", connected: true, status: "saved", address: "gitlab.com" },
+        { tracker: "azure_devops", connected: false, status: "rejected", address: "dev.azure.com/orbyn" },
+        { tracker: "forgejo", connected: false, status: "not_connected" },
+        { tracker: "linear", connected: true, status: "saved", scope: "Orbyn team" },
+      ],
+    }));
     load([engine({})]);
     const user = userEvent.setup();
     render(<WelcomePage />);
-    await user.click(await screen.findByRole("button", { name: /Connect a tracker/ }));
-    const menu = await screen.findByRole("menu", { name: "Connect a tracker" });
-    const items = within(menu).getAllByRole("menuitem");
-    expect(items.map((item) => item.textContent)).toEqual([
-      expect.stringContaining("GitHub"), expect.stringContaining("GitLab"), expect.stringContaining("Azure DevOps"), expect.stringContaining("Forgejo"), expect.stringContaining("Linear"),
-    ]);
-    expect(items[1]).toHaveTextContent("Connect");
-    expect(items[0]).toHaveTextContent("Connected");
-    expect(document.querySelector("input")).toBeNull();
-    await user.click(items[1]!);
+    const list = await screen.findByRole("list", { name: "Issue trackers" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((row) => row.querySelector("b")?.textContent)).toEqual(["GitHub", "GitLab", "Azure DevOps", "Forgejo", "Linear"]);
+    expect(rows[0]).toHaveTextContent("Uses the gh sign-in on this computer · sam-arden");
+    expect(rows[0]).toHaveTextContent("Signed in");
+    expect(rows[1]).toHaveTextContent("Saved in your keychain · gitlab.com");
+    expect(rows[2]).toHaveTextContent("Rejected");
+    expect(screen.getByRole("alert")).toHaveTextContent("Azure DevOps didn’t accept the saved token. Replace it or remove it in Settings › Source control.");
+    expect(rows[3]).toHaveTextContent("Not connected");
+    expect(screen.getByText("Issues appear in the left bar once a tracker is connected.")).toBeVisible();
+    expect(document.querySelector("input[type=password]")).toBeNull();
+    await user.click(within(rows[3]!).getByRole("button", { name: "Add a token for Forgejo" }));
     expect(window.location.hash).toBe("#/settings/source-control");
+    window.location.hash = "";
+    await user.click(within(rows[1]!).getByRole("button", { name: "Replace the token for GitLab" }));
+    expect(window.location.hash).toBe("#/settings/source-control");
+    expect(within(rows[0]!).queryByRole("button")).toBeNull();
     expect(writes).toHaveLength(0);
   });
 });

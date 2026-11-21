@@ -226,7 +226,9 @@ export function PanelHost({
   const count = rowIds.length;
   // The line beside the open file's name: the worktree it is in, and for another project's, which project.
   const target = tab ? parseFileTab(tab) : null;
-  const names = useFileTabNames(target && target.kind !== "thread" ? target.projectId : "", target && target.kind !== "thread" ? target.worktreeId : "", thread.id);
+  // An issue tab has no folder: only a file of another worktree has names to look up.
+  const placed = target && target.kind !== "thread" && target.kind !== "issue" ? target : null;
+  const names = useFileTabNames(placed ? placed.projectId : "", placed ? placed.worktreeId : "", thread.id);
   // A folder outside Git has nothing to compare with: Changes is offered greyed out, and the empty panel says why.
   // A Jujutsu checkout is no Git repository either, but has changes to show: only a folder with neither is gitless.
   const notGit = useWorkspace((state) => state.projects.data?.find((one) => one.id === thread.project_id)?.is_git === false);
@@ -235,8 +237,8 @@ export function PanelHost({
   const subtitle =
     target === null ? null
     : target.kind === "thread" ? (thread.worktree?.branch ?? null)
-    : !names.worktree ? null
-    : target.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
+    : placed === null || !names.worktree ? null
+    : placed.projectId === thread.project_id || !names.project ? names.worktree : `${names.project} · ${names.worktree}`;
   const latest = useRef({ count });
   latest.current = { count };
   const refit = useCallback(() => {

@@ -15,6 +15,9 @@ const unreported: IssuesApi = {
   find: async () => [],
   link: async () => { throw new Error("Issues are not reported by this service."); },
   unlink: async () => { throw new Error("Issues are not reported by this service."); },
+  setState: async () => { throw new Error("Issues are not reported by this service."); },
+  saveToken: async () => { throw new Error("Issues are not reported by this service."); },
+  removeToken: async () => { throw new Error("Issues are not reported by this service."); },
   startThread: async () => { throw new Error("Issues are not reported by this service."); },
 };
 
@@ -50,10 +53,14 @@ export function useApiVersion(): number {
 }
 
 /** The trackers the service reports; `rows` is `null` while loading and when the service reports none at all. */
-export function useTrackers(): { rows: TrackerRow[] | null; settled: boolean; reload(): void } {
+export function useTrackers(): { rows: TrackerRow[] | null; settled: boolean; reload(): void; refresh(): void; replace(next: TrackerRow): void } {
   const seen = useApiVersion();
   const read = useAsync(`issues:trackers:${seen}`, (signal) => issuesApi().trackers(signal));
-  return { rows: read.status === "ready" ? read.data : null, settled: read.status !== "loading", reload: read.reload };
+  const rows = read.status === "ready" ? read.data : null;
+  // A write answers with the tracker's own row: it is put in place where it stands, and the others are left as they are.
+  const { setData } = read;
+  const replace = (next: TrackerRow) => setData((rows ?? []).map((row) => (row.tracker === next.tracker ? next : row)));
+  return { rows, settled: read.status !== "loading", reload: read.reload, refresh: () => void read.refreshQuietly(), replace };
 }
 
 export type { TrackerKind };

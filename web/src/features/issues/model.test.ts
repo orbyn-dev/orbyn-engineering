@@ -1,7 +1,7 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { issueFixtures } from "../../../mock/issues";
 import type { IssueRef } from "./contract";
-import { activeChips, applyQuery, labelCounts, noQuery, numberOf, parseSearch, shownLine, stateWord, threadMarker } from "./model";
+import { activeChips, applyQuery, choiceLabel, knownTrackers, sameState, trackerLine, trackerStatus, labelCounts, noQuery, numberOf, parseSearch, shownLine, stateWord, threadMarker } from "./model";
 
 const ref = (state: IssueRef["state"], key = "1"): IssueRef => ({ tracker: "github", scope: "o/r", key, display_key: `#${key}`, title: "t", state, labels: [] });
 
@@ -56,4 +56,22 @@ it("marks a thread with the ring, closed only when every issue is closed, and sa
   expect(threadMarker([ref({ category: "open", name: "Open" })])).toMatchObject({ count: 1, closed: false, label: "Issue #1, open" });
   expect(threadMarker([ref({ category: "closed", name: "Closed" })])?.closed).toBe(true);
   expect(threadMarker([ref({ category: "closed", name: "Closed" }), ref({ category: "open", name: "Open" }, "2")])).toMatchObject({ count: 2, closed: false, label: "2 issues: #1, #2" });
+});
+
+describe("state choices and tracker lines", () => {
+  it("names a workflow state by its own word and a plain one by the usual words", () => {
+    expect(choiceLabel({ category: "open", name: "In review" })).toBe("In review");
+    expect(choiceLabel({ category: "closed", name: "Closed", close_reason: "not_planned" })).toBe("Closed as not planned");
+    expect(sameState({ category: "closed", name: "Closed" }, { category: "closed", name: "Closed", close_reason: "completed" })).toBe(false);
+  });
+  it("reads a tracker's credential from the row and caps the service's text", () => {
+    expect(trackerStatus({ tracker: "github", connected: true })).toBe("signed_in");
+    expect(trackerStatus({ tracker: "gitlab", connected: true })).toBe("saved");
+    expect(trackerStatus({ tracker: "gitlab", connected: false })).toBe("not_connected");
+    expect(trackerLine({ tracker: "gitlab", connected: true, status: "saved", address: "x".repeat(200) }).length).toBeLessThan(120);
+  });
+  it("keeps the five known trackers in the design's order and drops one the service invents", () => {
+    const rows = knownTrackers([{ tracker: "linear", connected: false }, { tracker: "__proto__" as never, connected: true }, { tracker: "github", connected: true }]);
+    expect(rows.map((row) => row.tracker)).toEqual(["github", "linear"]);
+  });
 });

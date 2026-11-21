@@ -13,12 +13,13 @@ import { ApiFailure } from "../../api/client";
 import { Markdown } from "../content";
 import { issuesApi, useApiVersion } from "./api";
 import { isTracker, stateWord, trackerName } from "./model";
-import type { IssueDetail as Detail, IssueSummary } from "./contract";
+import type { IssueDetail as Detail } from "./contract";
 import { IssueGlyph } from "./IssueGlyph";
-import { useIssueThreads } from "./links";
+import { IssueStateButton } from "./IssueStateMenu";
+import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
 
-function Person({ login }: { login: string }) {
+export function Person({ login }: { login: string }) {
   return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
 }
 
@@ -47,7 +48,7 @@ function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
   );
 }
 
-function Body({ issue }: { issue: Detail }) {
+export function Body({ issue }: { issue: Detail }) {
   return (
     <div className="iss-main">
       <article className="iss-entry">
@@ -65,11 +66,11 @@ function Body({ issue }: { issue: Detail }) {
   );
 }
 
-function Facts({ issue }: { issue: IssueSummary }) {
+function Facts({ issue, onChanged }: { issue: Detail; onChanged(): Promise<unknown> | void }) {
   return (
     <section className="iss-card" role="group" aria-label="Facts">
       <dl>
-        <dt>State</dt><dd className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</dd>
+        <dt>State</dt><dd><IssueStateButton issue={issue} onChanged={onChanged} /></dd>
         <dt>Tracker</dt><dd>{trackerName(issue.tracker)}</dd>
         <dt>Author</dt><dd>{issue.author?.login ?? "Unknown"}</dd>
         <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}</dd>
@@ -119,7 +120,7 @@ export function IssueDetail({ tracker, issueKey }: { tracker: string; issueKey: 
               <Body issue={read.data} />
             </div>
             <aside className="iss-right">
-              <Facts issue={read.data} />
+              <Facts issue={read.data} onChanged={async () => { await Promise.all([read.reload(), reloadIssueLinks(version)]); }} />
               <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
             </aside>
           </div>
