@@ -131,9 +131,25 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       : source === "branch" ? `diff:branch:${base}`
         : source === "commit" ? `diff:commit:${sha ?? ""}`
           : `diff:${source}`;
-  const diff = useAsync(`diff:${threadId}:${scope ?? "none"}`, (signal) =>
-    scope ? api.diff(threadId, signal, scope) : Promise.resolve([]),
-  );
+  // The project's own folder is the primary repository and its id is the project's: its reads and writes leave `repo_id` out.
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
+  // The service answers one repository's files per read (`?repo_id=`), and a file carries no repository of its own. So a thread in
+  // several repositories reads once per repository and marks each file with the repository it came from; any other thread reads once.
+  const repoList = threadRepos.repos;
+  const repoKey = repoList ? repoList.map((repo) => repo.repo_id).join(",") : "";
+  const diff = useAsync(`diff:${threadId}:${scope ?? "none"}:${repoKey}`, async (signal): Promise<RepoFile[]> => {
+    if (!scope) return [];
+    if (!repoList || repoList.length === 0) return api.diff(threadId, signal, scope);
+    // An untrusted repository reports no changes and its reads are refused (`409 repo_untrusted`): it is not read.
+    const reads = await Promise.allSettled(repoList.filter((repo) => repo.trusted).map(async (repo) => {
+      const files = await api.diff(threadId, signal, scope, repo.repo_id === projectId ? undefined : repo.repo_id);
+      return files.map((file): RepoFile => ({ ...file, repo_id: repo.repo_id }));
+    }));
+    // A repository that can't be read (untrusted, say) lists nothing; the thread's Changes fail only when none could be read.
+    const failed = reads.find((read): read is PromiseRejectedResult => read.status === "rejected");
+    if (failed && reads.every((read) => read.status === "rejected")) throw failed.reason;
+    return reads.flatMap((read) => (read.status === "fulfilled" ? read.value : []));
+  });
   const { reload } = diff;
   // Whether a pull request has anything to carry is the branch's question, not this view's:
   // a clean working tree after a commit, or Hide test files filtering a test-only change, still
@@ -183,8 +199,6 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   }, []);
   const wide = width >= WIDE;
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
-  // The project's own folder is the primary repository and its id is the project's: an edit there leaves `repo_id` out.
-  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
   const hunkActions = useHunkActions(threadId, cwd);
 
   const files = useMemo(() => {

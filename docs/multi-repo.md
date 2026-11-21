@@ -237,8 +237,34 @@ The web client for the project repository routes (`web/src/features/repos/`) use
 - **Answers and codes.** `remove` is `204` with no body. A `404` on the list is "not offered": nothing is drawn, no error is shown and
   no other call is made. Error codes pass through as `{ code, message }`: `repo_exists`, `repo_limit`, `repo_untrusted` (409),
   `clone_refused`, `invalid` (400), `not_found` (404), `unsupported` (422).
-- Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `ThreadRepo`, `TaskFolder`, the thread Git actions.
-  The mock (`web/mock/repos.ts`, hidden behind the preview flag) follows the generated shapes and the service's answers above.
+- Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `TaskFolder` (`repo-threads`, `task-folder` and
+  `POST /api/threads/{id}/repos` are not built; they stay hidden or Planned). `ThreadRepo` and the `repo_id` request fields (`GitAction`,
+  `CreateBranch`, `SwitchBranch`, `WriteFile`) are the generated types. The mock (`web/mock/repos.ts`, hidden behind the preview flag)
+  follows the generated shapes and the service's answers above.
+
+Thread repositories and `repo_id` on Git and file calls, real against the first guess (`ThreadRepo`, `repo_id`; closes #1046):
+
+- **A diff file carries no `repo_id`.** The Changes panel assumed `GET .../diff` returned every repository's files, each marked with its
+  repository. The service answers ONE repository's files per read (`?repo_id=`, absent is the primary) and `FileDiff` has no repository
+  field. The panel now reads once per trusted repository of `GET .../repos` and marks each file itself; a thread with no repositories
+  reads once, as before. An untrusted repository reports no changes (`files: null`) and its reads are `409 repo_untrusted`, so it is not
+  read; if every read fails the Changes show the error.
+- **`ThreadRepo.files` is `string[] | null`** (null for an untrusted repository); `pull_request` does not exist. The menu on a
+  repository's group therefore offers Commit, Push and Create pull request only (`POST .../git/action` with `repo_id`). Open, Merge
+  and Review pull request are gone until the pull request routes take `repo_id`; they would have acted on the primary repository's
+  pull request number, and a `repo_id` sent to them was ignored.
+- **Where `repo_id` goes** is as built above: query on the diff, commits, branches and file reads, body on the git action, branch writes
+  and file write. `api.diff`, `api.branches`, `api.createBranch` and `api.switchBranch` now take it (they had none).
+- **Hunk revert, undo and line edit** send `repo_id` on the read and the write; the revision of a repository's read goes back on a write
+  to that same repository. A Markdown file shown rendered read the primary checkout's file at the same path; it now reads the file of its
+  own repository.
+- **Errors.** `409 repo_untrusted` is not a changed file: a hunk or line write shows the service's message, not "The file has changed";
+  the file conflict is `409 file_conflict` and keeps its message. A git action on an untrusted repository opens the existing trust
+  prompt; a `404` says it is not one of the thread's repositories. `GET .../repos` `404` is an ordinary thread (or the flag off): nothing
+  draws and nothing is said.
+- **Primary only for now.** The header Git menu, the branch and commit pickers, the editor and file tabs, "Open in editor" and pull
+  request screens act on the primary repository; opening a file of another repository from the Changes panel shows a notice instead
+  of opening the primary's file at the same path.
 
 ## As built: repo_id on Git and file calls
 
