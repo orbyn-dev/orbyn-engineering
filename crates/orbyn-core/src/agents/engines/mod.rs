@@ -2,6 +2,7 @@
 //! that provably owns the binary, and never while a run is active.
 
 pub mod catalog_cache;
+pub mod host_status;
 pub mod instances;
 pub mod known;
 pub mod maintenance;
@@ -74,6 +75,8 @@ pub struct EngineConfig {
     /// How long the service waits for a person to answer an approval. Claude's permission prompt is a long
     /// poll to the service, so its own MCP timeout has to outlast this.
     pub approval_timeout: Duration,
+    /// The engine host the desktop shell found, when the service was told to use one.
+    pub engine_host: Option<crate::agents::driver::host::HostConfig>,
 }
 
 impl Default for EngineConfig {
@@ -88,6 +91,7 @@ impl Default for EngineConfig {
             known_engine_ids: None,
             cache_dir: None,
             approval_timeout: crate::app::DEFAULT_APPROVAL_TIMEOUT,
+            engine_host: None,
         }
     }
 }
@@ -99,6 +103,8 @@ pub struct EngineManager {
     config: EngineConfig,
     manifest: TestedManifest,
     drivers: Mutex<Vec<Arc<dyn EngineDriver>>>,
+    /// The engine host's pools, when the service uses the host.
+    host: Option<Arc<crate::agents::driver::host::HostHub>>,
     /// Engines being updated. This lock also serializes the admission check
     /// against the update check, so neither can slip past the other.
     updating: Mutex<HashSet<String>>,
@@ -149,11 +155,20 @@ impl EngineManager {
         http: reqwest::Client,
         config: EngineConfig,
     ) -> Self {
+        let host = config
+            .engine_host
+            .as_ref()
+            .map(|host| Arc::new(crate::agents::driver::host::HostHub::new(host)));
+        let claude: Arc<dyn EngineDriver> = Arc::new(
+            ClaudeDriver::new(config.claude_program.clone(), config.approval_timeout)
+                .with_task_tools(config.claude_task_tools),
+        );
+        let claude = match &host {
+            Some(hub) => hub.wrap("claude", claude, config.claude_program.clone()),
+            None => claude,
+        };
         let drivers: Vec<Arc<dyn EngineDriver>> = vec![
-            Arc::new(
-                ClaudeDriver::new(config.claude_program.clone(), config.approval_timeout)
-                    .with_task_tools(config.claude_task_tools),
-            ),
+            claude,
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),
@@ -167,6 +182,7 @@ impl EngineManager {
             config,
             manifest: TestedManifest::embedded(),
             drivers: Mutex::new(drivers),
+            host,
             updating: Mutex::new(HashSet::new()),
             native_operations: Arc::default(),
             installer_locks: Mutex::new(HashMap::new()),

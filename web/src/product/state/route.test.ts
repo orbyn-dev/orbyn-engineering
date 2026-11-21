@@ -21,6 +21,7 @@ describe("routes", () => {
     { name: "trust", projectId: "p", threadId: "t" },
     { name: "settings", section: null },
     { name: "settings", section: "projects" },
+    { name: "settings", section: "appearance", sub: "theme-editor" },
     { name: "settings", section: "threads", machine: "remote/missing" },
     { name: "settings", section: "worktrees", selection: { kind: "project_group", group_key: "group:/one?x" } },
     { name: "settings", section: "threads", selection: { kind: "checkout", group_key: "group:/one", project_id: "id/2" } },
@@ -114,8 +115,22 @@ describe("routes", () => {
     expect(window.location.hash).toBe("#/settings/threads?project=g");
   });
 
+  it("reads a page inside a page, and keeps an unknown page name as data, never as a lookup key", () => {
+    expect(parseRoute("#/settings/appearance/theme-editor")).toEqual({ name: "settings", section: "appearance", sub: "theme-editor" });
+    // A sub-page the section does not have is the section itself; so is one under a section with none.
+    expect(parseRoute("#/settings/appearance/nope")).toEqual({ name: "settings", section: "appearance" });
+    expect(parseRoute("#/settings/chat/theme-editor")).toEqual({ name: "settings", section: "chat" });
+    expect(routeHref({ name: "settings", section: "chat", sub: "theme-editor" })).toBe("#/settings/chat");
+    for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(parseRoute(`#/settings/${name}`)).toEqual({ name: "settings", section: null, unknown: name });
+      expect(parseRoute(`#/settings/appearance/${name}`)).toEqual({ name: "settings", section: "appearance" });
+    }
+    // The note is shown once; an address never carries it.
+    expect(routeHref({ name: "settings", section: null, unknown: "voice" })).toBe("#/settings");
+  });
+
   it("treats unknown hashes as home and unknown sections as none", () => {
     expect(parseRoute("#/nowhere")).toEqual({ name: "home" });
-    expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null });
+    expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null, unknown: "nope" });
   });
 });

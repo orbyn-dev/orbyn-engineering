@@ -1,7 +1,7 @@
 /**
- * MOCK of the engine host routes, which are not merged on the service yet. It is never called against the real
- * service: the app's own client reports "nothing" until the routes exist, and only a test or the dev-only preview
- * (`#/preview/engine-host`) installs this through `setEngineHostApi`. Fixtures follow the Engineer frames
+ * MOCK of the engine host API. The real client reads `GET /api/engine-host` and has no stop, restart or retry-host route yet; this mock
+ * also fills the Planned fields and answers the writes. It is never the app's client: only a test or the dev-only preview
+ * (`#/preview/engine-host`) installs it through `setEngineHostApi`. Fixtures follow the Engineer frames
  * `enginehost-*`; none holds a credential: a key sent to `saveKey` is dropped on arrival, and only the word `save:<id>` is recorded.
  */
 import { KEYCHAIN_DENIED, KEYCHAIN_LOCKED, type EngineHostApi, type HostCrash, type HostRow, type KeyStorage, type StorageChoice } from "../src/features/enginehost/index.ts";
@@ -28,9 +28,8 @@ export function hostFixtures(): HostRow[] {
 }
 
 export function crashFixtures(): HostCrash[] {
-  return [{ id: "crash-1", at: at(9, 41), message: "The Codex engine host stopped: the engine host closed its output.", kind: "host",
-    restart: { attempt: 3, limit: 5 }, failed_threads: 2, causes: [{ name: "Error", message: "write EPIPE", code: "EPIPE" }],
-    stack: "at HostProcess.onExit (host.mjs:212)\nat ChildProcess.emit (node:events:518)\nat Process.onexit (node:child_process:293)" }];
+  return [{ id: "codex:crash-1", family: "codex", at: at(9, 41), message: "The Codex engine host stopped: the engine host closed its output.", error_kind: "closed_output", exit_code: 3,
+    stderr_tail: "Error: write EPIPE\n    at HostProcess.onExit (host.mjs:212)" }];
 }
 
 export function storageFixtures(): KeyStorage[] {

@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import type { FileDiff } from "../../../api/types";
-import { ChangedFiles } from "./ChangedFiles";
+import { ChangedFiles, fileKey } from "./ChangedFiles";
 
 const file = (path: string, additions = 1): FileDiff => ({ path, status: "modified", additions, deletions: 0, patch: "" });
 const repo = (id: string, files?: string[]) => ({ repo_id: id, name: id, branch: "fix/login", added: 4, deleted: 3, trusted: true, files });
@@ -54,4 +54,22 @@ it("groups by the repo_id each file carries and labels a repo-relative path, two
   const groups = screen.getAllByRole("group").filter((group) => group.classList.contains("fl-repo"));
   expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["engineering changes", "planner changes"]);
   for (const group of groups) expect(within(group).getByRole("button", { name: /README\.md/ })).toBeVisible();
+});
+
+it("marks only the picked README.md when two repositories each change one, and picks by repository and path", async () => {
+  const picked: string[] = [];
+  const files = [{ ...file("README.md"), repo_id: "engineering" }, { ...file("README.md"), repo_id: "planner" }];
+  render(<ChangedFiles files={files} more={0} selected={fileKey(files[1]!)} filter="" onFilter={() => {}} onPick={(key) => picked.push(key)} onMore={() => {}} repos={[repo("engineering"), repo("planner")]} />);
+  const [first, second] = screen.getAllByRole("button", { name: /README\.md/ });
+  expect(first).not.toHaveAttribute("aria-current");
+  expect(second).toHaveAttribute("aria-current", "true");
+  expect(first).toHaveAttribute("tabindex", "-1");
+  expect(second).toHaveAttribute("tabindex", "0");
+  first!.click();
+  expect(picked).toEqual([fileKey(files[0]!)]);
+  expect(fileKey(files[0]!)).not.toBe(fileKey(files[1]!));
+});
+
+it("keys a file with no repository by its path alone", () => {
+  expect(fileKey({ path: "a.ts" })).toBe("a.ts");
 });

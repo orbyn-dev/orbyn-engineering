@@ -199,3 +199,17 @@ describe("the key, from the shell", () => {
 it("download consent is a person-only update effect", () => {
   expect(sendsPersonKey("POST", "/api/updates/app/download")).toBe(true);
 });
+
+describe("the device actions of docs/devices.md", () => {
+  it("send the key for every action type through one route, and not for the reads", async () => {
+    expect(sendsPersonKey("POST", "/api/devices/android%3APixel_Fold/actions")).toBe(true);
+    expect(sendsPersonKey("POST", "/api/devices/ios%3AUDID/actions")).toBe(true);
+    expect(sendsPersonKey("GET", "/api/devices")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/devices/android%3Aa")).toBe(false);
+    shell(vi.fn(async () => "shell-key"));
+    const posted = ok();
+    vi.stubGlobal("fetch", posted);
+    await request("POST", "/api/devices/android%3Aa/actions", { type: "screenshot" });
+    expect(sentHeaders(posted).get(PERSON_HEADER)).toBe("shell-key");
+  });
+});

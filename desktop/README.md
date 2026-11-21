@@ -8,9 +8,10 @@ app updates. Its rules are in
 ## Contract
 
 - It runs `orbynd` with `--parent-stdin` and talks to it over that process's
-  stdin and stdout. The product UI calls the shell in one place only: `crew_presence`, which
+  stdin and stdout. The product UI calls the shell in three places only: `crew_presence`, which
   shows the native dialog for approving one held Crew command
-  (`src/presence.rs`).
+  (`src/presence.rs`); `person_key`; and `pick_folder`, which shows the native folder
+  dialog and returns the chosen path or null (`src/folder_picker.rs`).
 - The product UI comes from `build/ui`, which `npm run prepare-bundle` fills.
   `loader/index.html` is the embedded startup page, the only document allowed to
   call `restart_core`. The product UI restarts the service through the service's

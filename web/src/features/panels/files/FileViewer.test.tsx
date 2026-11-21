@@ -178,6 +178,20 @@ it("copies the text the viewer shows", async () => {
   expect(screen.getByRole("radio", { name: "Edit" })).toBeInTheDocument();
 });
 
+it("raises a Download started toast when Save file is pressed, and keeps the link that downloads", async () => {
+  const user = userEvent.setup();
+  serve({ content: "alpha\n", binary: false, truncated: false, size: 6 });
+  render(<Viewer threadId="t" tabId="tab" path="notes.md" line={null} onBack={() => undefined} />);
+
+  const save = await screen.findByRole("link", { name: "Save file" });
+  expect(save).toHaveAttribute("download");
+  expect(lastToast()).not.toBe("Download started");
+  // A click on a download link navigates nowhere in the test browser; the toast is the part under test.
+  save.addEventListener("click", (event) => event.preventDefault());
+  await user.click(save);
+  await waitFor(() => expect(lastToast()).toBe("Download started"));
+});
+
 it("reports a clipboard failure", async () => {
   const user = userEvent.setup();
   setClipboard(vi.fn(async () => Promise.reject(new Error("Clipboard is blocked."))));

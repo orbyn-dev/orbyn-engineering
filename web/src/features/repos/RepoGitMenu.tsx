@@ -56,7 +56,7 @@ export function RepoGitMenu({ threadId, repo, onChanged }: { threadId: string; r
     }
     return false;
   };
-  const run = async (action: ThreadGitAction) => {
+  const run = async (action: ThreadGitAction, notice?: string) => {
     try {
       await reposApi().threadGit(threadId, primary ? null : repo.repo_id, action);
     } catch (failure) {
@@ -64,6 +64,8 @@ export function RepoGitMenu({ threadId, repo, onChanged }: { threadId: string; r
       if (await answered(failure)) { setOpen(null); return; }
       throw failure;
     }
+    // A plain notice for a merge or a review only, after the service has answered (a proposal in the frames: none was shown before).
+    if (notice) pushToast(notice);
     onChanged();
   };
   const quick = async (action: ThreadGitAction & { kind: "push" }) => {
@@ -117,7 +119,7 @@ export function RepoGitMenu({ threadId, repo, onChanged }: { threadId: string; r
       ) : null}
       {open === "merge" ? (
         <ActionDialog title={`Merge the pull request for ${name}`} confirmLabel="Merge" onClose={close}
-          onConfirm={() => run({ kind: "merge", number, method })}>
+          onConfirm={() => run({ kind: "merge", number, method }, `Merged pull request #${number} of ${name}.`)}>
           <Field label="Method">{(field) => (
             <select {...field} data-dialog-focus className="dialog-field" value={method} onChange={(event) => setMethod(event.target.value as typeof method)}>
               <option value="merge">Merge commit</option>
@@ -130,7 +132,7 @@ export function RepoGitMenu({ threadId, repo, onChanged }: { threadId: string; r
       ) : null}
       {open === "review" ? (
         <ActionDialog title={`Review the pull request for ${name}`} confirmLabel="Send review" disabled={event !== "approve" && text.trim() === ""} onClose={close}
-          onConfirm={() => run({ kind: "review", number, event, body: text.trim() })}>
+          onConfirm={() => run({ kind: "review", number, event, body: text.trim() }, `Sent your review of pull request #${number} of ${name}.`)}>
           <Field label="Decision">{(field) => (
             <select {...field} data-dialog-focus className="dialog-field" value={event} onChange={(change) => setEvent(change.target.value as typeof event)}>
               <option value="comment">Comment</option>

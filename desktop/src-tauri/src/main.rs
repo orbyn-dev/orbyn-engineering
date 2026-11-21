@@ -6,6 +6,7 @@ mod chrome;
 mod core_process;
 mod desktop_origin;
 mod engine_host;
+mod folder_picker;
 mod image_picker;
 mod links;
 mod menu;
@@ -496,7 +497,7 @@ fn main() {
         .manage(menu::QuitItem::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
-        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key])
+        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key, folder_picker::pick_folder])
         .setup(|app| {
             core_process::startup_phase("setup-started");
             let handle = app.handle().clone();
