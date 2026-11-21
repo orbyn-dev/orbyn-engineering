@@ -237,9 +237,7 @@ The web client for the project repository routes (`web/src/features/repos/`) use
 - **Answers and codes.** `remove` is `204` with no body. A `404` on the list is "not offered": nothing is drawn, no error is shown and
   no other call is made. Error codes pass through as `{ code, message }`: `repo_exists`, `repo_limit`, `repo_untrusted` (409),
   `clone_refused`, `invalid` (400), `not_found` (404), `unsupported` (422).
-- Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `TaskFolder` (`repo-threads`, `task-folder` and
-  `POST /api/threads/{id}/repos` are not built; they stay hidden or Planned). `ThreadRepo` and the `repo_id` request fields (`GitAction`,
-  `CreateBranch`, `SwitchBranch`, `WriteFile`) are the generated types. The mock (`web/mock/repos.ts`, hidden behind the preview flag)
+- `StartThreadInput`, `TaskFolder`, `ThreadRepo` and the `repo_id` request fields are the generated types; the mock (`web/mock/repos.ts`, hidden behind the preview flag)
   follows the generated shapes and the service's answers above.
 
 Thread repositories and `repo_id` on Git and file calls, real against the first guess (`ThreadRepo`, `repo_id`; closes #1046):
