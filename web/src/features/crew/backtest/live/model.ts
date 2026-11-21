@@ -27,7 +27,7 @@ export const backtestIdOfHash = (): string => new URLSearchParams(window.locatio
 
 export const count = (n: number) => n.toLocaleString("en-US");
 
-const trim = (text: string) => text.replace(/.0+$/, "").replace(/(\.\d)0$/, "$1");
+const trim = (text: string) => text.replace(/\.0+$/, "").replace(/(\.\d)0$/, "$1");
 
 /** Tokens in the engine's own unit, as the designs write them: 1.28M, 396k, none. Never a money figure. */
 export function tokens(n: number): string {

@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { LiveBacktest } from "./LiveBacktest";
-import { WHY } from "./model";
+import { tokens, WHY } from "./model";
 import { estimate, lane, notMeasuredLane, posts, project, run, stubFetch, type Answer, type Call } from "./support";
 
 let calls: Call[] = [];
@@ -38,6 +38,37 @@ describe("the reviewer backtest on the real 4n routes", () => {
     render(<LiveBacktest view="estimate" />);
     expect(await screen.findByText(/Outcomes: Not measured/)).toBeInTheDocument();
     expect(screen.getByText(/the report shows finding counts only, never a zero/)).toBeInTheDocument();
+  });
+
+  it("opens the run dialog once, even on a double-click, and Escape closes it", async () => {
+    const user = userEvent.setup();
+    render(<LiveBacktest view="estimate" />);
+    const dialog = await screen.findByRole("dialog", { name: "Run a reviewer backtest" });
+    // jsdom has no Escape-to-cancel for a native modal; the browser's own step is this event.
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.dblClick(screen.getByRole("button", { name: "Run a backtest" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("closes the run dialog on Cancel, even on a double-click, and keeps Start Planned inside it", async () => {
+    const user = userEvent.setup();
+    render(<LiveBacktest view="estimate" />);
+    const dialog = await screen.findByRole("dialog", { name: "Run a reviewer backtest" });
+    expect(dialog).toHaveClass("dialog");
+    expect(within(dialog).getByRole("button", { name: "Start the backtest" })).toBeDisabled();
+    await user.dblClick(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText(/No backtest is running here/)).toBeInTheDocument();
+  });
+
+  it("writes token counts with no stray point", () => {
+    expect(tokens(1_500_000)).toBe("1.5M tokens");
+    expect(tokens(12_500_000)).toBe("12.5M tokens");
+    expect(tokens(2_000_000)).toBe("2M tokens");
+    expect(tokens(1_280_000)).toBe("1.28M tokens");
+    expect(tokens(396_000)).toBe("396k tokens");
+    expect(tokens(1_500)).toBe("1.5k tokens");
   });
 
   it("says so when nothing is old enough to replay", async () => {

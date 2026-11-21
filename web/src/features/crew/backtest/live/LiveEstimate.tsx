@@ -3,6 +3,7 @@ import type { Project } from "../../../../api/types";
 import { ErrorState, Loading } from "../../../../product/ui/states";
 import { Planned } from "../../capacity/Planned";
 import { ProjectChip } from "../../escape/live/parts";
+import { Dialog } from "../../../../ui/Dialog";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { count, WHY } from "./model";
@@ -93,39 +94,40 @@ export function LiveEstimate({ project, projects, onPick }: { project: Project; 
           ) : null}
         </div>
         {estimate && estimate.eligible_prs > 0 && dialog ? (
-          <div className="cx-cwov">
-            <div>
-              <div className="cx-cwdlg" style={{ width: "640px", minHeight: "320px" }}>
-                <h4>Run a reviewer backtest</h4>
-                <p>
-                  Crew would replay the review lanes and the checks on {count(estimate.eligible_prs)} merged pull requests in {project.name} (the last{" "}
-                  {estimate.history_days} days, {estimate.outcome_days} days old or more). It never replays the builder, and nothing is merged, reverted
-                  or changed.
-                </p>
-                {estimate.outcomes_measured ? null : (
-                  <div className="cx-cwbn" style={{ margin: "0" }}>
-                    <Ic n="info" sm />
-                    <span>This project’s escape log can’t say, so the report will show finding counts only, never a zero.</span>
-                  </div>
-                )}
-                <div className="cx-t14opt">
-                  <Ic n="info" sm />
-                  <span>
-                    <b>The lanes and the token estimate per engine are not served yet.</b>
-                    <small>
-                      {" The app has no read of your lanes, their engines and models, or of the per-engine token budgets, so no estimate per lane is shown. "}
-                      <Planned why={`${WHY.lanes} and ${WHY.budgets}`} />
-                    </small>
-                  </span>
-                </div>
-                <div className="cx-ra">
-                  <Planned why={WHY.start} style={{ marginLeft: "0", marginRight: "auto" }} />
-                  <button type="button" className="cx-ghost" onClick={() => setDialog(false)}>Cancel</button>
-                  <Btn className="cx-btn" reason={`Planned: ${WHY.start}`}>Start the backtest</Btn>
-                </div>
+          <Dialog
+            title="Run a reviewer backtest"
+            className="cx-cwdlg"
+            onClose={() => setDialog(false)}
+            footer={
+              <>
+                <Planned why={WHY.start} style={{ marginLeft: "0", marginRight: "auto" }} />
+                <button type="button" className="cx-ghost" data-dialog-focus onClick={() => setDialog(false)}>Cancel</button>
+                <Btn className="cx-btn" reason={`Planned: ${WHY.start}`}>Start the backtest</Btn>
+              </>
+            }
+          >
+            <p>
+              Crew would replay the review lanes and the checks on {count(estimate.eligible_prs)} merged pull requests in {project.name} (the last{" "}
+              {estimate.history_days} days, {estimate.outcome_days} days old or more). It never replays the builder, and nothing is merged, reverted
+              or changed.
+            </p>
+            {estimate.outcomes_measured ? null : (
+              <div className="cx-cwbn" style={{ margin: "0" }}>
+                <Ic n="info" sm />
+                <span>This project’s escape log can’t say, so the report will show finding counts only, never a zero.</span>
               </div>
+            )}
+            <div className="cx-t14opt">
+              <Ic n="info" sm />
+              <span>
+                <b>The lanes and the token estimate per engine are not served yet.</b>
+                <small>
+                  {" The app has no read of your lanes, their engines and models, or of the per-engine token budgets, so no estimate per lane is shown. "}
+                  <Planned why={`${WHY.lanes} and ${WHY.budgets}`} />
+                </small>
+              </span>
             </div>
-          </div>
+          </Dialog>
         ) : null}
       </div>
     </Frame>
