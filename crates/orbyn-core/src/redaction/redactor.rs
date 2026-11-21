@@ -41,6 +41,34 @@ pub struct Redactor {
     detectors: Vec<Detector>,
 }
 
+/// The start of what `Redactor::labelled` writes in place of a hidden value.
+const MARKER: &str = "[hidden: ";
+
+/// `text` cut to at most `max` characters, without leaving a piece of a value behind. A cut that
+/// lands inside a `[hidden: ...]` marker drops the marker; one that lands inside a run of
+/// non-space characters drops that run's head, because a pattern that no longer matches the
+/// shortened run would show the front of a secret. Hide values first, then cut.
+pub fn cut_safely(text: &str, max: usize) -> String {
+    let Some((at, _)) = text.char_indices().nth(max) else {
+        return text.to_owned();
+    };
+    let mut head = &text[..at];
+    if let Some(open) = head
+        .rfind(MARKER)
+        .filter(|open| !head[*open..].contains(']'))
+    {
+        head = &head[..open];
+    }
+    let inside_run = !head.ends_with(char::is_whitespace)
+        && text[head.len()..].starts_with(|c: char| !c.is_whitespace());
+    if inside_run {
+        head = &head[..head.rfind(char::is_whitespace).map_or(0, |at| {
+            at + head[at..].chars().next().map_or(0, char::len_utf8)
+        })];
+    }
+    head.trim_end().to_owned()
+}
+
 fn assignments() -> &'static Regex {
     static VALUES: OnceLock<Regex> = OnceLock::new();
     VALUES.get_or_init(|| {
