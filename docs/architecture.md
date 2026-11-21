@@ -466,12 +466,20 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Subscription
 limits appear only where an engine reports them itself, as Codex does through
-`account/rateLimits/read`, answered from the last report and read again in the background after
-five minutes. Only Codex's `rateLimits`,
+`account/rateLimits/read`. Subscription reports are read fresh on every request:
+the supported drivers do not expose an authoritative current account/workspace binding
+that can validate a kept report. Email, plan and cached signed-in status are not identities.
+A failed read returns unavailable without an old-account fallback, including in the client;
+opening or refreshing Limits waits for the bounded provider read. An overlapping older read
+cannot answer after a newer read, a forget or an engine configuration change. No subscription
+report is exposed through the no-I/O `cached_limits` path: Crew treats it as not reported,
+and scheduled near-limit checks still ask the engine afresh. Only Codex's `rateLimits`,
 `rateLimitsByLimitId` and plan leave the driver; its account ID, upsell copy and
 reset-credit offers are dropped; `?force=true` reads again and
 spends no model usage. `/api/limits` also gives one number per window length across
-engines, the highest used percentage, since that engine stops first.
+engines, the highest used percentage, since that engine stops first. The overview excludes
+the Claude family, including named instances, before any status or usage probe; an explicit
+engine/thread limits read can still ask Claude.
 Windows with an unknown duration remain separate, because an absent duration does
 not establish that they share a budget.
 Claude uses its unmodified CLI's promptless `initialize` then `get_usage` control
@@ -2013,7 +2021,9 @@ therefore answer from the last known value and refresh in the background
   older than its maximum age is not shown: that call waits for a read, which concurrent
   callers share. The web reads again on `data_changed` (`useAsync`'s `refreshOn`, held for 200 ms so a burst
   reads once) and after the event stream reconnects from a gap of two seconds or more. These
-  reads are quiet: no loading state, and an error never replaces data on screen. Those that
+  cacheable reads are quiet: no loading state, and an error never replaces data on screen.
+  Subscription limits opt into fresh reads instead: loading clears the unvalidated report,
+  and an event-driven failure shows the existing error/no-data state too. Those that
   the slow lane carries (pull requests, forges, models, limits, tools) queue behind slow reads a
   person started; the workspace and update status and a thread's linked pull requests use the
   interactive lane. A refresh control the person presses sends the read-now flag.
@@ -2023,12 +2033,14 @@ therefore answer from the last known value and refresh in the background
   active), so a change to any of them is a new key and shows at once. A value is never served
   for another key. Keys are capped and the least recently used one goes first. Trust is
   checked on every call, before the kept value is looked at.
-- **A failure never clobbers.** A failed refresh keeps the last good value and is not
+- **A failure never clobbers a validated cache entry.** Subscription limits are excluded:
+  neither service nor client keeps an unvalidated account's report, even on network failure.
+  Other failed refreshes keep the last good value and are not
   retried for 5 seconds. With nothing kept, the call gets the read's own error, as before,
   and nothing is stored. An engine's model list with `error` set and no stand-in is returned
   to its callers but not kept; a stand-in list is kept, as before.
 - **`?refresh=1` (or `true`; models keep `refresh=true`, limits `force=true` and forges
-  `rescan=true`) reads now** and waits for the read, whatever is kept. Forced reads that
+  `rescan=true`) reads now** and waits for the read, whatever is kept. Cacheable forced reads that
   overlap share one read per key. A forced read that fails reports its error and keeps the
   last good value. A forges rescan also drops every pull request read, since the account may
   have changed.
@@ -2065,7 +2077,7 @@ therefore answer from the last known value and refresh in the background
 | `GET /api/engines/:id/models` | 30 s, then the engine's catalog key is compared at most once a minute | 30 min |
 | `GET /api/workspace` | 15 s | 60 s |
 | `GET /api/updates` | 20 s | 60 s |
-| `GET /api/engines/:id/limits`, `/api/threads/:id/limits` | 2 min | 5 min |
+| `GET /api/engines/:id/limits`, `/api/threads/:id/limits`, `/api/limits` | fresh read | no cache |
 | `GET /api/threads/:id/tools`, `/api/engines/:id/tools` | 30 s | 5 min |
 | `GET /api/projects/:id/worktrees`, a worktree's tree and file letters (one status per worktree) | 10 s list, 5 s status | 60 s list, 30 s status |
 | `GET /api/health/dependencies` | 60 s | 10 min |

@@ -209,6 +209,52 @@ const openLimits = async () => {
   await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
 };
 
+it("clears an unvalidated account's windows when a refresh fails at the network", async () => {
+  const read = vi.spyOn(api, "limits").mockResolvedValueOnce(limitsOf([
+    { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 37 })] },
+  ])).mockRejectedValue(new ApiFailure("unavailable", "Limits unavailable.", 503));
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  await openLimits();
+  expect(await screen.findByRole("meter")).toHaveAttribute("aria-valuenow", "37");
+  // A CLI account switch may leave the cached status logged_in. Its old report
+  // cannot be used as a fallback without an authoritative account binding.
+  await userEvent.click(screen.getByRole("button", { name: "Refresh limits" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Limits unavailable.");
+  expect(screen.queryByRole("meter")).toBeNull();
+  expect(screen.queryByText(/37% used/)).toBeNull();
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("does not restore a prior account's session-kept window when Limits remounts", async () => {
+  const next = deferred<never>();
+  vi.spyOn(api, "limits").mockResolvedValueOnce(limitsOf([
+    { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 37 })] },
+  ])).mockReturnValue(next.promise);
+  const first = render(<UsagePage />);
+  await screen.findByRole("row", { name: /local-model/ });
+  await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  await screen.findByRole("meter");
+  first.unmount();
+  render(<UsagePage />);
+  expect(screen.queryByRole("meter")).toBeNull();
+  await act(async () => next.reject(new ApiFailure("unavailable", "Limits unavailable.", 503)));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Limits unavailable.");
+  expect(screen.queryByRole("meter")).toBeNull();
+});
+
+it("shows a per-engine failure without the previous account's window while still logged in", async () => {
+  vi.spyOn(api, "limits").mockResolvedValueOnce(limitsOf([
+    { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 37 })] },
+  ])).mockResolvedValue(limitsOf([], [{ engine: "codex", reason: "The new account is unavailable." }]));
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  await openLimits();
+  await screen.findByRole("meter");
+  await userEvent.click(screen.getByRole("button", { name: "Refresh limits" }));
+  expect(await screen.findByText("Couldn\u2019t read the limit.")).toBeVisible();
+  expect(screen.queryByRole("meter")).toBeNull();
+  expect(screen.queryByText(/37% used/)).toBeNull();
+});
+
 it("moves between the Usage and Limits tabs with the arrow keys and reads a meter as what is used", async () => {
   vi.spyOn(api, "limits").mockResolvedValue(limitsOf([{ engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow()] }]));
   render(<UsagePage />);
@@ -283,7 +329,7 @@ it("sends a signed-out Codex to Providers and checks again, engine status includ
   expect(screen.getByRole("link", { name: "Open Providers" })).toHaveAttribute("href", "#/settings/providers");
   expect(screen.queryByText(/Not signed in/)).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Check again" }));
-  await waitFor(() => expect(read).toHaveBeenCalledWith(true));
+  await waitFor(() => expect(read).toHaveBeenCalledWith(true, expect.any(AbortSignal)));
   expect(refreshEngines).toHaveBeenCalled();
 });
 

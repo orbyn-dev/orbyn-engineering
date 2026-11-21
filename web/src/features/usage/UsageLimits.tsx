@@ -134,7 +134,7 @@ export function LimitsView({ data, nameOf, engines, onCheck, onRetry }: LimitsVi
   const claude = present("claude");
   const codex = present(WINDOW_ENGINE);
   const codexWindows = reported.get(WINDOW_ENGINE)?.windows ?? [];
-  // Signed out wins over any window in the answer: the service keeps a read per engine, so it can outlive a sign-out.
+  // A status sign-out can arrive after the last fresh limits response.
   const signedOut = codex && known.get(WINDOW_ENGINE)?.auth === "logged_out";
   const codexFailed = codex && !signedOut && failed.has(WINDOW_ENGINE);
   // The short line only where Codex has no window to show (signed out or unreadable); the full line everywhere else.

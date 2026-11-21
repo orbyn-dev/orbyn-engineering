@@ -45,6 +45,20 @@ it("leaves Codex to its own window: no Not reported while it has none", async ()
   expect(screen.queryByText("Not reported")).toBeNull();
 });
 
+it("reads again on remount instead of showing another account's five-minute promise", async () => {
+  const read = vi.spyOn(api.api, "threadLimits").mockResolvedValueOnce({
+    engine: "codex", checked_at: "", limits: {}, plan: null,
+    windows: [{ id: "primary", label: "5h", used_percent: 37, window_minutes: 300, resets_at: null }],
+  }).mockRejectedValue(new Error("new account unavailable"));
+  const first = render(<LimitsRow threadId="account-a" engine="codex" />);
+  expect(await screen.findByText("5h 63% left")).toBeVisible();
+  first.unmount();
+  render(<LimitsRow threadId="account-b" engine="codex" />);
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.queryByText("5h 63% left")).toBeNull();
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
 it("Changes says No changes without a chevron, and with changes shows the totals and opens the Changes tab", async () => {
   useUi.setState({ panelOpen: false });
   const toggle = vi.spyOn(useUi.getState(), "togglePanel");
