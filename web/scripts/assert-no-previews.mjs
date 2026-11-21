@@ -50,6 +50,11 @@ const markers = [
   "createTranscriptsMock",
   "preview/earlier",
   "createEarlierMock",
+  // Command blocks design preview (features/panels/terminal/blocks): the dev-only hash route (plain and as a regex source), its mock and its page class.
+  "preview/command-blocks",
+  "preview\\/command-blocks",
+  "createCommandBlocksMock",
+  "cbp-drawer",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

@@ -19,6 +19,10 @@ describe("assert-no-previews", () => {
     expect(run({ "index.js": "console.log('app')" }).status).toBe(0);
   });
 
+  it("passes the real command blocks, which ship hidden behind a client that is null in production", () => {
+    expect(run({ "term.js": `.cb-block{display:flex}.cb-head{position:sticky}"Commands Orbyn runs appear here as blocks"` }).status).toBe(0);
+  });
+
   it("passes the real Crew screens, which ship behind the service's own flag", () => {
     const real = `"Crew is not connected to this app yet";"/api/crew/preview";.ap-chip{display:inline-flex};"/api/crew/trust";.cx-dash{display:flex}`;
     expect(run({ "crew.js": real }).status).toBe(0);
@@ -45,6 +49,10 @@ describe("assert-no-previews", () => {
     ["the transcripts mock", `module.createTranscriptsMock({delayMs:800})`],
     ["the earlier messages preview route", `location.hash.startsWith("#/preview/earlier")`],
     ["the earlier messages mock", `module.createEarlierMock({delayMs:400})`],
+    ["the command blocks preview route", `location.hash.startsWith("#/preview/command-blocks")`],
+    ["the command blocks preview route as a regex source", `const r=/^#\\/preview\\/command-blocks$/;`],
+    ["the command blocks mock", `module.createCommandBlocksMock({delayMs:250})`],
+    ["the command blocks preview page", `.cbp-drawer{display:flex}`],
   ])("fails a production bundle holding %s", (_name, text) => {
     const result = run({ "chunk.js": text });
     expect(result.status).toBe(1);

@@ -2,7 +2,7 @@
 
 What the web Crew dashboard (W12 in [crew.md](crew.md), frames `dash-*` of Crew Designs "23. Dashboard") needs from the service. **Planned**: the web page is
 built and draws the live parts today; the one read written here is not served, so the page shows a Planned mark where only that read can answer. Eng 2 owns
-the service side. A name here changes only if the service PR says so. Row: G17 in [parity](parity.md).
+the service side. A name here changes only if the service PR says so. Row: G18 in [parity](parity.md).
 
 ## What exists today and what the page draws from it
 
@@ -71,7 +71,7 @@ Limits: one repository per request; the answer is at most about 40 KiB; the read
 - Page: Settings › Crew › Dashboard at `#/settings/crew/dashboard?repo=<project>`, behind Crew Preview. The project and period are remembered per person
   in browser storage (`orbyn.crew-dashboard`), with a fallback when storage is off.
 - When the service serves the read: set `history` in `contract.ts` to the typed request and the Planned marks drop out by themselves; update this note's
-  "What exists today" table and the G17 row.
+  "What exists today" table and the G18 row.
 
 ## Open questions for Eng 2
 
