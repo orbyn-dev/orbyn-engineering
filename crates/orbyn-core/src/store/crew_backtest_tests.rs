@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, params};
 
 use super::*;
+use crate::crew::backtest::LaneKind;
 use crate::testing::TempDir;
 
 fn open() -> (TempDir, Store, String) {
@@ -28,10 +29,20 @@ fn budgets() -> BTreeMap<String, u64> {
     BTreeMap::from([("engine-a".to_owned(), 500), ("engine-b".to_owned(), 900)])
 }
 
-fn lanes() -> Vec<(String, String, String)> {
+fn lanes() -> Vec<NewLane> {
     vec![
-        ("correctness".into(), "engine-a".into(), "model-a".into()),
-        ("correctness".into(), "engine-b".into(), "model-b".into()),
+        NewLane {
+            lane: "correctness".into(),
+            engine: "engine-a".into(),
+            model: "model-a".into(),
+            kind: LaneKind::Review,
+        },
+        NewLane {
+            lane: "correctness".into(),
+            engine: "engine-b".into(),
+            model: "model-b".into(),
+            kind: LaneKind::Review,
+        },
     ]
 }
 
@@ -53,6 +64,7 @@ fn lane(engine: &str, tokens: u64, state: LaneState) -> BacktestLaneRow {
         lane: "correctness".into(),
         engine: engine.into(),
         model: format!("model-{}", &engine[7..]),
+        kind: Some(LaneKind::Review),
         tokens_used: tokens,
         state,
         escapes_n: None,
@@ -159,6 +171,7 @@ fn the_tables_refuse_values_outside_their_checks() {
         "INSERT INTO crew_backtest_lanes (run_id, lane, engine, model, state) VALUES ('no-run', 'l', 'e', 'm', 'done')",
         "INSERT INTO crew_backtest_lanes (run_id, lane, engine, model, state) VALUES ('run-1', 'correctness', 'engine-a', 'm', 'done')",
         "INSERT INTO crew_backtest_lanes (run_id, lane, engine, model, state, escapes_n) VALUES ('run-1', 'l', 'e', 'm', 'done', -2)",
+        "INSERT INTO crew_backtest_lanes (run_id, lane, engine, model, state, kind) VALUES ('run-1', 'l', 'e', 'm', 'done', 'builder')",
         "INSERT INTO crew_backtest_results (run_id, lane, engine, pr, finding_fp, outcome) VALUES ('run-1', 'correctness', 'engine-a', 1, 'fp', 'wrong')",
         "INSERT INTO crew_backtest_results (run_id, lane, engine, pr, finding_fp, outcome) VALUES ('run-1', 'other', 'engine-a', 1, 'fp', 'caught')",
         "INSERT INTO crew_backtest_results (run_id, lane, engine, pr, finding_fp, outcome) VALUES ('run-1', 'correctness', 'engine-a', -1, 'fp', 'caught')",
@@ -191,6 +204,7 @@ fn the_tables_keep_ids_and_counts_only() {
                 "lane",
                 "engine",
                 "model",
+                "kind",
                 "tokens_used",
                 "state",
                 "escapes_n",
@@ -508,5 +522,102 @@ fn a_budget_above_the_maximum_is_refused_and_a_not_measured_outcome_is_stored() 
     assert_eq!(
         store.crew_backtest_results("run-1").unwrap()[0].outcome,
         ResultOutcome::NotMeasured
+    );
+}
+
+#[test]
+fn a_lane_keeps_the_kind_it_was_started_as_and_a_row_from_before_it_has_none() {
+    let (_dir, store, project) = open();
+    let lanes = vec![
+        NewLane {
+            lane: "correctness".into(),
+            engine: "engine-a".into(),
+            model: "model-a".into(),
+            kind: LaneKind::Review,
+        },
+        NewLane {
+            lane: "chk-tests".into(),
+            engine: "engine-b".into(),
+            model: "model-b".into(),
+            kind: LaneKind::Check,
+        },
+    ];
+    store
+        .crew_backtest_create(
+            "run-1",
+            &project,
+            BacktestState::Estimated,
+            &budgets(),
+            &lanes,
+            100,
+        )
+        .unwrap();
+    // In lane then engine order: `chk-tests` sorts before `correctness`.
+    let kinds: Vec<Option<LaneKind>> = store
+        .crew_backtest_lanes("run-1")
+        .unwrap()
+        .iter()
+        .map(|l| l.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![Some(LaneKind::Check), Some(LaneKind::Review)],
+        "each lane keeps the kind it was started as"
+    );
+    // A lane recorded before migration 71 has no kind. It reads none, never a guessed review.
+    store
+        .writer()
+        .execute("UPDATE crew_backtest_lanes SET kind = NULL", [])
+        .unwrap();
+    assert!(
+        store
+            .crew_backtest_lanes("run-1")
+            .unwrap()
+            .iter()
+            .all(|l| l.kind.is_none())
+    );
+    // A kind is written once with the run: saving the lane later still leaves it as it was.
+    store
+        .crew_backtest_save_lane(
+            "run-1",
+            &BacktestLaneRow {
+                kind: Some(LaneKind::Check),
+                ..lane("engine-a", 5, LaneState::Done)
+            },
+            &[],
+        )
+        .unwrap();
+    let saved = store.crew_backtest_lanes("run-1").unwrap();
+    assert_eq!(saved[0].lane, "chk-tests");
+    assert!(saved.iter().all(|l| l.kind.is_none()));
+}
+
+#[test]
+fn the_latest_run_of_a_project_is_the_newest_and_absent_before_any() {
+    let (_dir, store, project) = open();
+    assert!(store.crew_backtest_latest_run(&project).unwrap().is_none());
+    create(&store, "run-1", &project);
+    store
+        .crew_backtest_create(
+            "run-2",
+            &project,
+            BacktestState::Finished,
+            &budgets(),
+            &lanes(),
+            300,
+        )
+        .unwrap();
+    let latest = store.crew_backtest_latest_run(&project).unwrap().unwrap();
+    assert_eq!(latest.id, "run-2");
+    // The same run `crew_backtest_runs_of` names first, so both agree.
+    assert_eq!(
+        store.crew_backtest_runs_of(&project).unwrap()[0].id,
+        latest.id
+    );
+    assert!(
+        store
+            .crew_backtest_latest_run("no-such-project")
+            .unwrap()
+            .is_none()
     );
 }
