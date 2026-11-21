@@ -21,9 +21,10 @@ fn responds(rig: &Rig) -> Vec<Value> {
 async fn next_permission(started: &mut Started) -> PermissionRequest {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            match started.events.recv().await.expect("the run ended first") {
-                EngineEvent::Permission(request) => return request,
-                _ => {}
+            if let EngineEvent::Permission(request) =
+                started.events.recv().await.expect("the run ended first")
+            {
+                return request;
             }
         }
     })
@@ -34,9 +35,10 @@ async fn next_permission(started: &mut Started) -> PermissionRequest {
 async fn next_question(started: &mut Started) -> QuestionAsk {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            match started.events.recv().await.expect("the run ended first") {
-                EngineEvent::Question(ask) => return ask,
-                _ => {}
+            if let EngineEvent::Question(ask) =
+                started.events.recv().await.expect("the run ended first")
+            {
+                return ask;
             }
         }
     })
