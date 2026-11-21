@@ -29,7 +29,7 @@ function serve(...answers: (Response | Error)[]) {
 it("reads the status with a plain GET that carries no person header, and maps each service state", async () => {
   const api = createCredentialsApi();
   for (const [state, opted, expected] of [
-    ["off", false, "not_asked"], ["not_saved", true, "not_asked"], ["saved", true, "saved"], ["blocked", true, "locked"], ["unavailable", true, "denied"],
+    ["off", false, "not_asked"], ["not_saved", true, "opted_in_no_key"], ["not_saved", false, "not_asked"], ["saved", true, "saved"], ["blocked", true, "locked"], ["unavailable", true, "denied"],
   ] as const) {
     const calls = serve(json(status({ state, opted_in: opted, present: state === "saved" })));
     const rows = await api.storage();
@@ -124,7 +124,7 @@ it("removing is DELETE .../key with the person header and no body, and reports h
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ method: "DELETE", path: `${BASE}/key`, body: undefined });
   expect(calls[0]?.headers.get(PERSON_HEADER)).toBe("mock-person-key");
-  expect(row).toMatchObject({ engine_id: "cursor", choice: "not_asked", stopped: 3 });
+  expect(row).toMatchObject({ engine_id: "cursor", choice: "opted_in_no_key", stopped: 3 });
 });
 
 it("retry is POST .../retry with the person header and answers the status", async () => {
@@ -143,4 +143,19 @@ it("an engine id the service did not choose is encoded into the path and never r
   expect(calls[0]?.path).toBe("/api/settings/engine-credentials/a%2Fb/key");
   serve(json(status()));
   await expect(api.decline("__proto__")).resolves.toMatchObject({ engine_id: "__proto__" });
+});
+
+it("opted in with no key (read after a reload) retries with the key PUT only, and Remove opt-in sends opted_in false, both with the person header", async () => {
+  const api = createCredentialsApi();
+  serve(json(status()));
+  expect(await api.storage()).toEqual([{ engine_id: "cursor", name: "Cursor", choice: "opted_in_no_key" }]);
+  const retry = serve(json(status({ present: true, state: "saved" })));
+  expect(await api.saveKey("cursor", KEY)).toMatchObject({ choice: "saved" });
+  expect(retry.map((call) => `${call.method} ${call.path}`)).toEqual([`PUT ${BASE}/key`]);
+  expect(retry[0]?.headers.get(PERSON_HEADER)).toBe("mock-person-key");
+  const out = serve(json(status({ state: "off", opted_in: false })));
+  expect(await api.removeOptIn("cursor")).toMatchObject({ choice: "not_asked" });
+  expect(out.map((call) => `${call.method} ${call.path}`)).toEqual([`PUT ${BASE}`]);
+  expect(out[0]?.body).toBe(JSON.stringify({ opted_in: false }));
+  expect(out[0]?.headers.get(PERSON_HEADER)).toBe("mock-person-key");
 });
