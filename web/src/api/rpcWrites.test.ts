@@ -45,14 +45,14 @@ describe("rpcWritesApi.mutateFile (Person)", () => {
   });
 
   it("maps a refusal to ApiFailure with the service's code and status", async () => {
-    stub(refused(403, "desktop_required"));
+    stub(refused(403, "policy_denied"));
     await expect(rpcWritesApi.mutateFile("t1", { action: "delete", path: "x" })).rejects.toMatchObject({
       name: "ApiFailure",
-      code: "desktop_required",
+      code: "policy_denied",
       status: 403,
     });
     stub(refused(400, "invalid_path"));
-    await expect(rpcWritesApi.mutateFile("t1", { action: "delete", path: ".git/config" })).rejects.toMatchObject({ code: "invalid_path", status: 400 });
+    await expect(rpcWritesApi.mutateFile("t1", { action: "delete", path: ".git/config" })).rejects.toMatchObject({ code: "invalid_input", status: 400 });
   });
 
   it("forgets a key the service refused, so the next call asks the shell again", async () => {
@@ -93,7 +93,7 @@ describe("rpcWritesApi.removeWorktree (Person)", () => {
   });
 
   it("maps refusals (primary checkout, in use, token only) to ApiFailure", async () => {
-    for (const [status, code] of [[403, "desktop_required"], [409, "conflict"], [404, "not_found"]] as const) {
+    for (const [status, code] of [[403, "policy_denied"], [409, "conflict"], [404, "not_found"]] as const) {
       stub(refused(status, code));
       await expect(rpcWritesApi.removeWorktree("p", "wt-0000000000000000")).rejects.toMatchObject({ code, status });
     }
@@ -144,7 +144,7 @@ describe("rpcWritesApi.createRef and switchRef (Local)", () => {
 
   it("maps a refused name or a missing ref to ApiFailure", async () => {
     stub(refused(400, "invalid_name"));
-    await expect(rpcWritesApi.createRef("t1", "x", "-bad")).rejects.toMatchObject({ code: "invalid_name", status: 400 });
+    await expect(rpcWritesApi.createRef("t1", "x", "-bad")).rejects.toMatchObject({ code: "invalid_input", status: 400 });
     stub(refused(404, "not_found"));
     await expect(rpcWritesApi.switchRef("t1", "missing")).rejects.toMatchObject({ code: "not_found", status: 404 });
   });

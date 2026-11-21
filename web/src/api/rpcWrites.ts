@@ -13,7 +13,7 @@ export const rpcWritesApi = {
   /** Person. Creates a file or folder, moves or renames, or deletes a file or empty folder in the thread's own checkout. */
   mutateFile: (threadId: string, action: ExplorerFileAction) =>
     request<void>("POST", `/api/threads/${q(threadId)}/files/mutate`, action),
-  /** Person. Removes a linked worktree Orbyn made, by the opaque id of a fresh listing. Git keeps uncommitted work. */
+  /** Person. Removes a linked worktree Orbyn made, by the opaque id of a fresh listing. Refused while the worktree holds changed, untracked or ignored files, or a thread; commits and branches are never touched. */
   removeWorktree: (projectId: string, worktreeId: string) =>
     request<void>("DELETE", `/api/projects/${q(projectId)}/worktrees/${q(worktreeId)}`),
   /** Local. The checkout's branch, tracking ref and working-tree counts, read now. */
