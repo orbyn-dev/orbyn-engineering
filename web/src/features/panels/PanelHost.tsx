@@ -55,6 +55,12 @@ interface PanelDrag {
   current: number;
 }
 
+/** Marks the page while an edge is dragged, so no drag can start a selection over its text. */
+const setPageResizing = (resizing: boolean) => {
+  if (resizing) document.documentElement.dataset.resizing = "panel";
+  else delete document.documentElement.dataset.resizing;
+};
+
 /**
  * The panel's left edge. Dragging it resizes the panel, snapping to 380, 520 or 720 px within 12 px
  * and staying between 320 px and 60% of the window; a pill shows the width and faint ticks mark the
@@ -73,10 +79,11 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
   const widthOfRef = useRef(widthOf);
   widthOfRef.current = widthOf;
 
-  /** Lets go of the pointer and clears the drag's marks on the panel. */
+  /** Lets go of the pointer and clears the drag's marks on the page and the panel. */
   const release = (active: PanelDrag) => {
     drag.current = null;
     delete active.panel.dataset.resizing;
+    setPageResizing(false);
     if (active.handle.hasPointerCapture?.(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
   };
 
@@ -121,6 +128,7 @@ export function PanelResizer({ drawer = false }: { drawer?: boolean }) {
           // Without this the drag selects the text it passes over.
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
+          setPageResizing(true);
           const current = clampPanelWidth(panel.getBoundingClientRect().width, window.innerWidth);
           panel.dataset.resizing = "";
           drag.current = {

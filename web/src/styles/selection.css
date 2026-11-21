@@ -12,6 +12,17 @@ body,
   cursor: default;
 }
 
+/*
+ * While a panel edge is dragged, nothing on the page is selectable. The drag also cancels its own
+ * pointer down, for browsers that start a selection there; this covers the ones that do not, so the
+ * drag never selects the transcript, the details popover or the composer it passes over.
+ */
+:root[data-resizing],
+:root[data-resizing] * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
 /* Transcript, markdown, code, tool output, diffs and previews. */
 .msg-bubble,
 .md,
