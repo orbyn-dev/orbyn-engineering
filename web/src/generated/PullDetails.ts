@@ -24,6 +24,12 @@ comment_count?: number,
 approval_count?: number, 
 /**
  * The signed-in viewer's latest review: `approved`, `changes_requested`,
- * `commented`, `dismissed`, `pending` or `none`.
+ * `commented`, `dismissed`, `pending` or `none`. Absent when the read could not
+ * see every review, so the viewer's may be past it.
  */
-viewer_review_state?: string, };
+viewer_review_state?: string, 
+/**
+ * Whether the forge can merge the pull request: `mergeable`, `conflicting` or
+ * `unknown`. Absent when the forge does not say.
+ */
+mergeable?: string, };
