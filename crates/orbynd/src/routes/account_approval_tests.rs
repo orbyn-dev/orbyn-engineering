@@ -403,3 +403,45 @@ async fn sign_up_goes_invite_password_then_the_code_which_signs_in_and_there_is_
         404
     );
 }
+
+/// The right code still does its job, and the refusal stays a fixed answer: the emailed code
+/// signs the new account in (the view then carries the session the client needs), and a wrong
+/// code is the same 422 `invalid_code` with a message that carries no value.
+#[tokio::test]
+async fn the_right_emailed_code_still_signs_in_and_a_wrong_one_answers_invalid_code() {
+    let served = serve("code-success", AccountGate::LocalOnly, false).await;
+    let ok = served
+        .call(
+            "POST",
+            "/api/account/sign-up/start",
+            json!({
+                "invite": "K7QM-2XWH-9QXA-3C2D",
+                "email": "right@example.com",
+                "password": "a fresh throwaway phrase",
+            }),
+        )
+        .await;
+    assert_eq!(ok.0, 204);
+    let (status, refused) = served
+        .call(
+            "POST",
+            "/api/account/sign-up/code",
+            json!({ "code": "ZZZZ-ZZZZ" }),
+        )
+        .await;
+    assert_eq!(
+        (status, refused["code"].as_str()),
+        (422, Some("invalid_code"))
+    );
+    assert_eq!(refused["message"], "That code isn't right.");
+    let (status, _) = served
+        .call(
+            "POST",
+            "/api/account/sign-up/code",
+            json!({ "code": "ABCD-EFGH" }),
+        )
+        .await;
+    assert_eq!(status, 204);
+    let (_, view) = served.call("GET", "/api/account", json!({})).await;
+    assert_eq!(view["session"]["email"], "right@example.com");
+}

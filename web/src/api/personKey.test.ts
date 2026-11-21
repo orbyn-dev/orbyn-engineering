@@ -136,3 +136,7 @@ describe("the key, from the shell", () => {
     expect(sentHeaders(fetchMock).get(PERSON_HEADER)).toBe("mock-person-key");
   });
 });
+
+it("download consent is a person-only update effect", () => {
+  expect(sendsPersonKey("POST", "/api/updates/app/download")).toBe(true);
+});

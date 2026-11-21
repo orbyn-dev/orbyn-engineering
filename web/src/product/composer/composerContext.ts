@@ -1,16 +1,16 @@
-import { threadToken } from "./skillMention";
+import { pullToken, threadToken } from "./skillMention";
 
 /**
  * Context a message carries as a chip instead of typed text: a file, a terminal
- * selection, a review comment, a picked page element, a cited reply, or a thread
- * picked from the @ menu.
+ * selection, a review comment, a picked page element, a cited reply, a thread
+ * picked from the @ menu, or a pull request picked from the # menu.
  *
  * A chip is kept in the composer's own state. When the message is sent, each
  * chip becomes a readable block at the top of the prompt, so the engine sees
  * exactly what the person attached and the transcript shows it.
  */
 
-export type ChipKind = "file" | "terminal" | "review" | "annotation" | "citation" | "thread";
+export type ChipKind = "file" | "terminal" | "review" | "annotation" | "citation" | "thread" | "pull";
 
 interface ChipBase {
   id: string;
@@ -77,7 +77,15 @@ export interface ThreadChip extends ChipBase {
   title: string;
 }
 
-export type ComposerChip = FileChip | TerminalChip | ReviewChip | AnnotationChip | CitationChip | ThreadChip;
+/** A pull request picked from the # menu, carried as its own link. */
+export interface PullChip extends ChipBase {
+  kind: "pull";
+  number: number;
+  title: string;
+  url: string;
+}
+
+export type ComposerChip = FileChip | TerminalChip | ReviewChip | AnnotationChip | CitationChip | ThreadChip | PullChip;
 
 export const CHIP_MIME = "application/x-orbyn-composer+json";
 export const CHIP_ATTRIBUTE = "data-orbyn-composer";
@@ -152,6 +160,8 @@ export function chipLabel(chip: ComposerChip): string {
     }
     case "thread":
       return chip.title;
+    case "pull":
+      return `#${chip.number} ${chip.title}`;
   }
 }
 
@@ -188,6 +198,9 @@ export function chipPrompt(chip: ComposerChip): string {
       // The link itself: the timeline renders it as a thread, and the agent
       // reads the thread on demand instead of the chip carrying its text.
       return `Thread: ${threadToken(chip.threadId, chip.title)}`;
+    case "pull":
+      // The link itself, with the number and title the pick carried.
+      return `Pull request: ${pullToken(chip.number, chip.title, chip.url)}`;
   }
 }
 
@@ -316,6 +329,13 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
       const title = text(chip.title, 4096);
       if (!threadId || !title) return null;
       return { id, kind: "thread", threadId, title };
+    }
+    case "pull": {
+      const pullNumber = number(chip.number);
+      const title = text(chip.title, 4096);
+      const url = text(chip.url, 8192);
+      if (pullNumber === null || !title || !url) return null;
+      return { id, kind: "pull", number: pullNumber, title, url };
     }
     default:
       return null;

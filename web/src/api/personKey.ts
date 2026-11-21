@@ -92,6 +92,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/engines/{id}/update"],
   ["POST", "/api/shell/actions"],
   ["POST", "/api/updates/app/apply"],
+  ["POST", "/api/updates/app/download"],
   ["POST", "/api/updates/apply-all"],
   ["POST", "/api/workspace/rollback"],
   ["POST", "/api/workspace/setup"],

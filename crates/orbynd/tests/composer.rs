@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use support::{Options, Service, TempDir, setup, text_of};
+use support::{FAKE, Options, Service, TempDir, setup, text_of};
 
 async fn queue(service: &Service, thread: &str) -> Vec<Value> {
     service
@@ -252,6 +252,160 @@ async fn steering_reaches_claude_and_is_refused_when_idle_or_unsupported() {
         text_of(&service.all_events(&thread).await),
         "steered: go left"
     );
+}
+
+/// Waits until the engine's turn ended with a sub-agent running, which holds the
+/// run open: a steer then has nowhere to go but the queue.
+async fn codex_held(service: &Service, thread: &str) {
+    service
+        .events_until(thread, None, |event| {
+            event["event"]["name"] == "engine.warning"
+        })
+        .await;
+    let body = service.json(&format!("/api/threads/{thread}")).await;
+    assert!(!body["active_run"].is_null(), "the run ended: {body}");
+}
+
+#[tokio::test]
+async fn a_delivered_steer_is_marked_with_the_client_message_id() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "claude").await;
+    service.admit(&thread, "[hang]").await;
+    until_running(&service, &thread).await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/steer"),
+            json!({ "message_id": "client-delivered-1", "prompt": "go left" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(body["message_id"], "client-delivered-1");
+    assert_eq!(body["state"], "delivered");
+    assert_eq!(service.finished(&thread).await, "completed");
+    let events = service.all_events(&thread).await;
+    let marked: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["event"]["name"] == "steer.state")
+        .collect();
+    assert_eq!(marked.len(), 1, "{events:?}");
+    assert_eq!(
+        marked[0]["event"]["value"],
+        json!({ "message_id": "client-delivered-1", "state": "delivered" })
+    );
+}
+
+#[tokio::test]
+async fn a_queued_steer_returns_its_queue_row_and_is_marked_queued() {
+    let dir = TempDir::new();
+    let (service, _) = setup(&dir, Options::default(), "codex").await;
+    let (code, engine) = service
+        .send(
+            "/api/engines/custom",
+            json!({ "id": "custom", "name": "Custom", "tier": "acp", "target": FAKE, "args": ["acp"] }),
+        )
+        .await;
+    assert_eq!(code, 201, "{engine}");
+    let projects = service.json("/api/projects").await;
+    let project = projects.as_array().unwrap()[0]["id"].as_str().unwrap();
+    let thread = service.thread(project, "custom").await;
+    service.admit(&thread, "[hang]").await;
+    until_running(&service, &thread).await;
+
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/steer"),
+            json!({ "message_id": "client-queued-1", "prompt": "wait your turn" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    assert_eq!(body["message_id"], "client-queued-1");
+    assert_eq!(body["state"], "queued");
+    let queued_id = body["queued_message_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no queue row id: {body}"));
+    let rows = queue(&service, &thread).await;
+    assert!(
+        rows.iter()
+            .any(|row| row["id"] == queued_id && row["prompt"] == "wait your turn"),
+        "{rows:?}"
+    );
+    let events = service
+        .events_until(&thread, None, |event| {
+            event["event"]["name"] == "steer.state"
+        })
+        .await;
+    assert_eq!(
+        events.last().unwrap()["event"]["value"],
+        json!({ "message_id": "client-queued-1", "state": "queued" })
+    );
+}
+
+#[tokio::test]
+async fn a_refused_steer_logs_a_typed_failure_with_the_client_message_id() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    service.admit(&thread, "go [bg-agent-hang]").await;
+    codex_held(&service, &thread).await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/steer"),
+            json!({ "message_id": "client-refused-1", "prompt": "next please" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    let events = service
+        .events_until(&thread, None, |event| {
+            event["event"]["name"] == "steer.state" && event["event"]["value"]["state"] == "failed"
+        })
+        .await;
+    let failed = events
+        .iter()
+        .find(|event| event["event"]["name"] == "steer.failed")
+        .unwrap_or_else(|| panic!("no steer.failed event: {events:?}"));
+    assert_eq!(
+        failed["event"]["value"],
+        json!({ "message_id": "client-refused-1", "prompt": "next please" })
+    );
+    // `failed` always wins over `delivered` for a message: a client reads the last mark.
+    let marked: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["event"]["name"] == "steer.state")
+        .map(|event| &event["event"]["value"])
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            &json!({ "message_id": "client-refused-1", "state": "delivered" }),
+            &json!({ "message_id": "client-refused-1", "state": "failed" }),
+        ],
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_client_message_id_round_trips_from_the_route_to_the_logged_message() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "claude").await;
+    service.admit(&thread, "[hang]").await;
+    until_running(&service, &thread).await;
+    let (code, body) = service
+        .send(
+            &format!("/api/threads/{thread}/steer"),
+            json!({ "message_id": "round-trip-7", "prompt": "carry me" }),
+        )
+        .await;
+    assert_eq!(code, 202, "{body}");
+    let messages = service
+        .json(&format!("/api/threads/{thread}/messages?limit=100"))
+        .await;
+    let logged = messages
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["message_id"] == "round-trip-7")
+        .unwrap_or_else(|| panic!("the logged message did not keep the client id: {messages}"));
+    assert_eq!(logged["text"], "carry me");
+    assert_eq!(logged["role"], "user");
 }
 
 #[tokio::test]

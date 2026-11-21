@@ -14,7 +14,9 @@ use super::sandbox::{
 use super::{CALL_TIMEOUT, INTERRUPT_GRACE, TOOLS_LIMIT};
 use crate::agents::driver::pipes::{EngineProcess, exit_message};
 use crate::agents::driver::rpc::{Inbound, RpcClient};
-use crate::agents::driver::{EngineEvent, EngineOutcome, GoalAction, RunKind, RunSpec};
+use crate::agents::driver::{
+    EngineEvent, EngineOutcome, GoalAction, RunKind, RunSpec, SteerMessage,
+};
 use crate::error::{CoreError, Result};
 
 pub(super) async fn run_protocol(
@@ -22,7 +24,7 @@ pub(super) async fn run_protocol(
     spec: RunSpec,
     sandbox: String,
     events: mpsc::Sender<EngineEvent>,
-    mut steering: mpsc::UnboundedReceiver<String>,
+    mut steering: mpsc::UnboundedReceiver<SteerMessage>,
     cancel: CancellationToken,
 ) {
     let (rpc, mut inbound) = RpcClient::start(process.stdin, process.stdout, false);
@@ -98,16 +100,17 @@ pub(super) async fn run_protocol(
             () = sleep_until(settle_at), if settle_at.is_some() => {
                 break held.take().unwrap_or(EngineOutcome::Completed);
             }
-            Some(text) = steering.recv() => {
+            Some(steer) = steering.recv() => {
                 if held.is_some() {
                     // The parent's turn is over, so there is none to steer. The
                     // message ends the hold and is requeued as the next turn.
                     reason = "new message";
-                    let _ = events.send(EngineEvent::SteerFailed(text)).await;
+                    let _ = events.send(EngineEvent::SteerFailed(steer)).await;
                     break held.take().unwrap_or(EngineOutcome::Completed);
                 }
                 if let Some(turn) = &turn_id {
                     let rpc = rpc.clone();
+                    let text = steer.prompt.clone();
                     let params = json!({
                         "threadId": session,
                         "expectedTurnId": turn,
@@ -117,7 +120,7 @@ pub(super) async fn run_protocol(
                     tokio::spawn(async move {
                         if let Err(error) = rpc.call("turn/steer", params, CALL_TIMEOUT).await {
                             tracing::debug!(%error, "could not steer the run");
-                            let _ = refused.send(EngineEvent::SteerFailed(text)).await;
+                            let _ = refused.send(EngineEvent::SteerFailed(steer)).await;
                         }
                     });
                 }

@@ -1,4 +1,5 @@
-//! Source control for a thread: git actions, branches, commits, the diff and Jujutsu status.
+//! Source control for a thread: git actions, branches, commits, the diff and Jujutsu
+//! status, and the local repository reads the app answers from its own records.
 
 use axum::Json;
 use axum::Router;
@@ -31,12 +32,32 @@ pub fn routes() -> Router<AppState> {
             "/api/source-control/repository-star",
             get(repository_star_status),
         )
+        .route("/api/source-control/repository", get(repository_lookup))
+        .route("/api/source-control/starred", get(starred_repositories))
         .route("/api/threads/{id}/jj", get(thread_jj_status))
         .route("/api/threads/{id}/diff", get(thread_diff))
 }
 
 async fn repository_star_status(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.core.repository_star_status().await)
+}
+
+/// The repository's `owner/name` as its remotes name it; the lookup is local.
+#[derive(Deserialize)]
+struct RepositoryQuery {
+    #[serde(default)]
+    repository: String,
+}
+
+async fn repository_lookup(
+    State(state): State<AppState>,
+    Query(query): Query<RepositoryQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.repository_lookup(&query.repository).await?))
+}
+
+async fn starred_repositories(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.core.starred_repositories().await)
 }
 
 async fn git_action(

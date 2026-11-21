@@ -31,6 +31,43 @@ pub struct SearchScope {
     pub limit: Option<usize>,
 }
 
+/// One page of a message search: every match among the messages this page read, in the
+/// same newest-first order the whole read returns them.
+#[derive(Clone, Debug, Default)]
+pub struct SearchPage {
+    pub hits: Vec<MessageHit>,
+    /// The words to highlight, lower-cased.
+    pub words: Vec<String>,
+    /// No word was long enough to search for, so nothing was searched.
+    pub too_short: bool,
+}
+
+/// Where a paged search continues and what it has said so far. One loop of
+/// [`Store::search_messages_page`] over one cursor returns exactly the hits and flags
+/// [`Store::search_messages`] returns, in the same order.
+#[derive(Clone, Debug, Default)]
+pub struct SearchCursor {
+    /// The `(ts, seq)` of the last message the scan read, newest-first.
+    after: Option<(String, i64)>,
+    scanned: usize,
+    emitted: usize,
+    limit: usize,
+    done: bool,
+    truncated: bool,
+}
+
+impl SearchCursor {
+    /// No message is left to read; a further page is empty.
+    pub fn done(&self) -> bool {
+        self.done
+    }
+
+    /// The read stopped before it could rule out more matches.
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
 /// Han, Kana, Hangul and their punctuation-free extensions.
 fn is_cjk(c: char) -> bool {
     matches!(u32::from(c),
@@ -125,17 +162,47 @@ impl Store {
         Ok(messages)
     }
 
-    pub fn search_messages(&self, query: &str, scope: &SearchScope) -> Result<MessageSearch> {
+    /// Reads up to `rows` messages from the cursor and returns every match among them.
+    /// The cursor carries the position, the hit limit and the flags, so a loop of
+    /// pages fits together as the same matches, in the same order, as one whole read.
+    pub fn search_messages_page(
+        &self,
+        query: &str,
+        scope: &SearchScope,
+        cursor: &mut SearchCursor,
+        rows: usize,
+    ) -> Result<SearchPage> {
         let words = words_of(query)?;
         if !words.iter().any(|word| long_enough(word)) {
-            return Ok(MessageSearch {
+            cursor.done = true;
+            return Ok(SearchPage {
                 hits: Vec::new(),
                 words,
                 too_short: true,
-                truncated: false,
             });
         }
-        let limit = scope.limit.unwrap_or(DEFAULT_HITS).clamp(1, MAX_HITS);
+        if cursor.done {
+            return Ok(SearchPage {
+                hits: Vec::new(),
+                words,
+                too_short: false,
+            });
+        }
+        if cursor.limit == 0 {
+            cursor.limit = scope.limit.unwrap_or(DEFAULT_HITS).clamp(1, MAX_HITS);
+        }
+        let unscanned = MAX_SCAN.saturating_sub(cursor.scanned);
+        if unscanned == 0 {
+            cursor.done = true;
+            cursor.truncated = true;
+            return Ok(SearchPage {
+                hits: Vec::new(),
+                words,
+                too_short: false,
+            });
+        }
+        let rows = rows.max(1).min(unscanned);
+
         let mut sql = String::from(
             "SELECT m.thread_id, t.title, t.project_id, m.message_id, m.seq, m.role, m.ts, m.text
              FROM thread_messages m JOIN threads t ON t.id = m.thread_id
@@ -154,40 +221,83 @@ impl Store {
             sql.push_str(" AND m.text LIKE ? ESCAPE '\\'");
             values.push(like_pattern(word).into());
         }
+        if let Some((ts, seq)) = &cursor.after {
+            sql.push_str(" AND (m.ts < ? OR (m.ts = ? AND m.seq < ?))");
+            values.push(ts.clone().into());
+            values.push(ts.clone().into());
+            values.push((*seq).into());
+        }
         sql.push_str(" ORDER BY m.ts DESC, m.seq DESC LIMIT ?");
-        values.push(SqlValue::from(i64::try_from(MAX_SCAN).unwrap_or(i64::MAX)));
+        values.push(SqlValue::from(i64::try_from(rows).unwrap_or(i64::MAX)));
 
         let conn = self.reader();
         let mut statement = conn.prepare(&sql)?;
-        let mut rows = statement.query(params_from_iter(values))?;
-        let (mut hits, mut read, mut truncated) = (Vec::new(), 0, false);
-        while let Some(row) = rows.next()? {
+        let mut read_rows = statement.query(params_from_iter(values))?;
+        let mut page = SearchPage {
+            hits: Vec::new(),
+            words,
+            too_short: false,
+        };
+        let mut read = 0usize;
+        let mut at_limit = false;
+        while let Some(row) = read_rows.next()? {
             read += 1;
+            let ts: String = row.get(6)?;
+            let seq: i64 = row.get(4)?;
+            cursor.after = Some((ts.clone(), seq));
             let text: String = row.get(7)?;
             let lowered = text.to_lowercase();
-            if !words.iter().all(|word| lowered.contains(word.as_str())) {
+            if !page
+                .words
+                .iter()
+                .all(|word| lowered.contains(word.as_str()))
+            {
                 continue;
             }
-            if hits.len() == limit {
-                truncated = true;
+            if cursor.emitted + page.hits.len() == cursor.limit {
+                at_limit = true;
                 break;
             }
-            hits.push(MessageHit {
+            page.hits.push(MessageHit {
                 thread_id: row.get(0)?,
                 thread_title: row.get(1)?,
                 project_id: row.get(2)?,
                 message_id: row.get(3)?,
-                seq: row.get(4)?,
+                seq,
                 role: row.get(5)?,
-                ts: row.get(6)?,
-                snippet: snippet(&text, &lowered, &words),
+                ts,
+                snippet: snippet(&text, &lowered, &page.words),
             });
+        }
+        cursor.scanned += read;
+        cursor.emitted += page.hits.len();
+        if at_limit {
+            cursor.truncated = true;
+            cursor.done = true;
+        } else if read < rows || cursor.scanned >= MAX_SCAN {
+            cursor.done = true;
+            cursor.truncated |= cursor.scanned >= MAX_SCAN;
+        }
+        Ok(page)
+    }
+
+    pub fn search_messages(&self, query: &str, scope: &SearchScope) -> Result<MessageSearch> {
+        let mut cursor = SearchCursor::default();
+        // One whole read fits in the first page, so its words and `too_short` hold for
+        // the rest; only a later page can add hits.
+        let first = self.search_messages_page(query, scope, &mut cursor, MAX_SCAN)?;
+        let (mut hits, words, too_short) = (first.hits, first.words, first.too_short);
+        while !cursor.done() {
+            hits.extend(
+                self.search_messages_page(query, scope, &mut cursor, MAX_SCAN)?
+                    .hits,
+            );
         }
         Ok(MessageSearch {
             hits,
             words,
-            too_short: false,
-            truncated: truncated || read == MAX_SCAN,
+            too_short,
+            truncated: cursor.truncated(),
         })
     }
 }

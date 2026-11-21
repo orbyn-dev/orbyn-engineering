@@ -12,7 +12,9 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::Core;
-use crate::agents::driver::{EngineDescriptor, EngineDriver, EngineProbe, UpdatePlan, ask};
+use crate::agents::driver::{
+    EngineDescriptor, EngineDriver, EngineProbe, SteerMessage, UpdatePlan, ask,
+};
 use crate::app::CoreConfig;
 use crate::governance::approvals::Verdict;
 use crate::testing::TempDir;
@@ -497,7 +499,13 @@ async fn late_rejected_steer_after_cancel_remains_held_without_starting_work() {
         mode: PermissionMode::Supervised,
         plan: false,
     };
-    f.core.runs.requeue_steer(&scope, "keep rejected prompt");
+    f.core.runs.requeue_steer(
+        &scope,
+        &SteerMessage {
+            message_id: "late-steer".into(),
+            prompt: "keep rejected prompt".into(),
+        },
+    );
     let queued = f.core.store.list_queue(&f.thread).unwrap();
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].prompt, "keep rejected prompt");

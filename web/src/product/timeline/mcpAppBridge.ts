@@ -5,6 +5,8 @@
  * answers only what it supports and refuses everything else.
  */
 
+import type { McpAppToolInfo } from "../../generated/McpAppToolInfo";
+
 export const MCP_APP_PROTOCOL_VERSION = "2026-01-26";
 /** A render id: lowercase ULID text, and nothing else. */
 const RENDER_ID = /^[0-9a-z]{1,64}$/;
@@ -90,6 +92,11 @@ export interface AppHost {
   toolInput: unknown;
   /** The tool call's result, as the page's `tool-result` notification carries it. */
   toolResult: { content: unknown[]; structuredContent?: unknown };
+  /**
+   * The app's own tool as its MCP server advertises it, read by the service. Absent
+   * when the service would not read it: the page is shown no guess instead.
+   */
+  toolInfo?: McpAppToolInfo;
   /** Resize the inline frame. */
   resize(height: number): void;
   /** Calls a tool on the app's own server, once a person has confirmed it. */
@@ -115,6 +122,7 @@ export function hostContext(host: AppHost): Record<string, unknown> {
     displayMode: host.displayMode,
     availableDisplayModes: host.requestDisplayMode ? ["inline", "fullscreen"] : ["inline"],
     platform: "web",
+    ...(host.toolInfo === undefined ? {} : { toolInfo: { tool: host.toolInfo } }),
   };
 }
 
