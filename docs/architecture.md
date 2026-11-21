@@ -1972,9 +1972,12 @@ in a later `host-context-changed`; a read the service refuses leaves the context
 it rather than guessing. An unknown render, a render that is not an app, or a tool its
 server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
 names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
-starts no model turn and reaches no other server. It is evaluated read-only against the
-policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
-only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+starts no model turn and reaches no other server. Codex 0.166.0 starts only the server it
+is asked about, so with two configured a read started that one alone; a build that ignored
+the name would list the others, and the read refuses such a reply rather than answer with
+another server's tool. It is evaluated read-only against the policy rules as a `tool`
+action on `mcp_app:<server>:tool_info` before any server starts: only an explicit deny
+refuses it (`403`, with an `action.deny` audit row); the default
 `ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
 starts a short engine session, so the service holds at most two at once and identical
 concurrent reads of one render share one (single-flight: the answer goes to the callers
