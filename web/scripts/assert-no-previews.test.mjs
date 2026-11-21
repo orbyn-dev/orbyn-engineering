@@ -29,6 +29,8 @@ describe("assert-no-previews", () => {
     ["the Crew route as text", `location.hash="#/preview/crew/review-queue"`],
     ["a Crew frame id", `["mergequeue-narrow-panel"]`],
     ["a Crew screen class", `.crew-apq{display:grid}`],
+    ["the Issues hash route", `location.hash.startsWith("#/preview/issues")`],
+    ["the Issues mock", `module.createIssuesMock({ delayMs: 400 })`],
     ["a platform screen", `"Sign in to Orbyn"`],
   ])("fails a production bundle holding %s", (_name, text) => {
     const result = run({ "chunk.js": text });

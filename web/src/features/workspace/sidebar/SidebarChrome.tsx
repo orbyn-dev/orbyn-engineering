@@ -6,6 +6,7 @@ import { routeHref, type Route } from "../../../product/state/route";
 import { DEFAULT_SIDEBAR_WIDTH, useUi } from "../../../product/state/ui";
 import { UpdatePill } from "../app-chrome/Updates";
 import { CrewNavRow } from "../../crew";
+import { IssuesNav } from "../../issues";
 import { SkillsNav } from "../../skills";
 import { undoLabel, undoLatest, useUndoNotice } from "./threadUndo";
 
@@ -125,7 +126,7 @@ export function SidebarNav({ route, ledger }: { route: Route; ledger: boolean })
       {navRows.map((row) => (
         <Fragment key={row.label}>
           <NavRow label={row.label} icon={row.icon} route={row.route} current={row.current(route)} />
-          {row.label === "Pull requests" ? <CrewNavRow route={route} /> : null}
+          {row.label === "Pull requests" ? <><IssuesNav current={route.name === "issues"} /><CrewNavRow route={route} /></> : null}
         </Fragment>
       ))}
       <SkillsNav route={route} />

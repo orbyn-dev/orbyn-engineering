@@ -9,6 +9,7 @@ import { routeHref } from "../../../product/state/route";
 import { engineById, useWorkspace } from "../../../product/state/workspace";
 import { EngineGlyph, ProjectBadge } from "../../../product/ui/badges";
 import type { DropVerb, SidebarSection } from "./groups";
+import { IssueMark } from "../../issues";
 import { createLongPress } from "./longPress";
 import { threadRunState } from "./RunState";
 
@@ -262,6 +263,7 @@ export function ThreadRow({
       {badge ?? (
         <>
           <span className="row-rest">
+            {ledger ? null : <IssueMark threadId={thread.id} />}
             {section === "snoozed" && lifecycle?.snoozed_until ? (
               <time className="row-age" dateTime={lifecycle.snoozed_until}>
                 {compactAge(lifecycle.snoozed_until)}

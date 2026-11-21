@@ -1,6 +1,7 @@
 import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from "../../features/onboarding";
 import { CrewSurface } from "../../features/crew";
 import { WithFilePanel } from "../../features/panels";
+import { IssuesPage } from "../../features/issues";
 import { PullsPage } from "../../features/pulls";
 import { ScheduledTasksPage } from "../../features/settings";
 import { SkillsPage } from "../../features/skills";
@@ -32,6 +33,8 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
       );
     case "pulls":
       return <PullsPage />;
+    case "issues":
+      return <IssuesPage />;
     case "usage":
       return <UsagePage />;
     case "skills":
