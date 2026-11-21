@@ -148,6 +148,7 @@
     ["GET","/api/threads/{id}/files","local"],
     ["GET","/api/threads/{id}/files/content","local"],
     ["GET","/api/threads/{id}/files/ignored","local"],
+    ["GET","/api/threads/{id}/files/metadata","local"],
     ["GET","/api/threads/{id}/files/outside","local"],
     ["GET","/api/threads/{id}/files/raw","local"],
     ["GET","/api/threads/{id}/files/search","local"],

@@ -1508,6 +1508,15 @@ different spelling of it on a case-insensitive disk is refused too. These saves 
 user's own edits, audited, and differ from rule 4, which covers what Orbyn adds on its
 own.
 
+`GET .../files/metadata?path=` answers what one entry is for the file browser without
+reading it: its kind, size, permission bits and modified time, and whether the entry
+stays inside the checkout. Every folder above it passes the same rules as a file read, so
+`..`, Git's folder and a link out of the checkout are refused. The last name is read as
+itself, never opened and never followed: a link that lands outside the checkout, in Git's
+folder or in the library's `repo/` is still reported as a link, with `inside: false` and
+nothing about where it points, and a path with nothing there is `exists: false`, not an
+error.
+
 The source viewer offers comments on one line or a Shift-selected range. Comments
 capture at most 4,000 source characters and 20,000 comment characters, within the
 complete prompt limit. Their annotation positions belong to the displayed revision
@@ -3418,6 +3427,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/runs/:run/changes/restore` | `RestoreChanges` to `RestoredFile[]`: `restored`, `unchanged`, `conflict`, `not_kept`; `409 thread_busy` |
 | `GET /api/network` | `NetworkRequest[]`: every automatic outbound request, its switch and whether it is on |
 | `GET /api/threads/:id/files?path=` | `FileEntry[]`, one folder |
+| `GET /api/threads/:id/files/metadata?path=` | `FileMetadata`: one entry's own kind, size, mode, modified time and whether a final link stays inside; no bytes read; `exists: false` for a missing path |
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
 | `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
