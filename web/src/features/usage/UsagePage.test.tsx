@@ -321,7 +321,7 @@ it("reads Not reported for Claude Code even when its driver sends a window, with
   await openLimits();
   expect(await screen.findByRole("heading", { name: "claude \u00b7 Personal" })).toBeVisible();
   expect(screen.getByText("Not reported")).toBeVisible();
-  expect(screen.getByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+  expect(screen.getByText(/claude doesn\u2019t report one\. Usage is on the Usage tab\./)).toBeVisible();
   expect(screen.queryByRole("meter")).toBeNull();
   expect(screen.queryByText(/% used/)).toBeNull();
 });
@@ -394,7 +394,7 @@ it("says a Codex read failed with no last figure, and Try again asks that engine
   expect(screen.queryByRole("meter")).toBeNull();
   expect(screen.queryByText(/boom/)).toBeNull();
   expect(screen.queryByText("Subscription window")).toBeNull();
-  expect(screen.getByText(/Orbyn reads a limit only through the engine\u2019s own CLI/)).toBeVisible();
+  expect(screen.getByText(/Orbyn reads a limit through the engine\u2019s own CLI or a supported session protocol, not from token files/)).toBeVisible();
   expect(screen.getByText("OpenCode Go")).toBeVisible();
   expect(screen.getByText("No supported route yet")).toBeVisible();
   all.mockClear();
@@ -410,7 +410,7 @@ for (const used of [62, 100]) {
     const codex = { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: used })] };
     vi.spyOn(api, "limits").mockResolvedValue(limitsOf([claude, codex]));
     await openLimits();
-    expect(await screen.findByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+    expect(await screen.findByText(/claude doesn\u2019t report one\. Usage is on the Usage tab\./)).toBeVisible();
   });
 }
 
