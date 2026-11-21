@@ -2,9 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../../api/client";
-import type { Run, SlashCommand, Thread } from "../../../api/types";
+import type { QueuedMessage, Run, SlashCommand, Thread, WireThreadEvent } from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useThreadLogs } from "../../../product/state/threadLogs";
+import { emptyLog } from "../../../product/timeline/projection";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Composer } from "./Composer";
@@ -27,6 +28,14 @@ const thread: Thread = {
 };
 
 const run = { id: "r1" } as Run;
+/** The service's own event when the engine refused a steer mid-turn and requeued its text. */
+const steerFailed = (seq: number, prompt: string): WireThreadEvent => ({
+  seq,
+  thread_id: "t1",
+  run_id: null,
+  ts: "2026-01-01T00:00:00Z",
+  event: { type: "CUSTOM", name: "steer.failed", value: { prompt } },
+});
 const box = () => screen.getByRole("textbox");
 const terminalChip: TerminalChip = {
   id: "t-chip",
@@ -258,6 +267,27 @@ describe("Composer", () => {
     queue.mockRestore();
     steer.mockRestore();
     remove.mockRestore();
+  });
+
+  it("returns a refused steer to the queue", async () => {
+    const queue = vi.spyOn(api, "queue").mockResolvedValue([]);
+    setup({ active_run: { ...run, state: "running" } as Run });
+    await waitFor(() => expect(queue).toHaveBeenCalled());
+    const before = queue.mock.calls.length;
+    // The thread's log is already being followed, so the refusal is news rather than a replay.
+    act(() => useThreadLogs.setState({ logs: { t1: { ...emptyLog, lastSeq: 5 } }, queueVersion: {} }));
+    const requeued: QueuedMessage = {
+      id: "q2", thread_id: "t1", prompt: "keep this", attachment_ids: [], held: false, created_at: "",
+    };
+    queue.mockResolvedValue([requeued]);
+    act(() => useThreadLogs.getState().ingest("t1", [steerFailed(6, "keep this")]));
+    // One reload, so the queued strip the service now answers with is drawn.
+    await waitFor(() => expect(queue).toHaveBeenCalledTimes(before + 1));
+    expect(await screen.findByLabelText("Queued messages")).toHaveTextContent("keep this");
+    // Nothing else moves: the draft is untouched and no error is raised.
+    expect(box()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    queue.mockRestore();
   });
 
   it("keeps the draft and explains a failed start", async () => {
