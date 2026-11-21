@@ -6,6 +6,31 @@ remains open. All 26 batch issues below are closed; their closeouts explain the
 work delivered, refused or left unqualified. The umbrella's 5 November assignment
 comment is historical and must not be used to claim a batch.
 
+## Current pickup check
+
+Checked 19 November 2026 UTC against product revision
+[`38ece38f`](https://github.com/orbyn-dev/orbyn-engineering/tree/38ece38f0417186d0f41b091b9c8e2a99be45bc5).
+All 26 batch issues are still closed. #187 remains the reconciliation index,
+not a claim that the unfinished rows are complete.
+
+At that revision, `python scripts/count-parity.py` reports 713 rows and 466
+source checkboxes ticked. Of 533 included rows, 396 are declared checked, 100
+partial, 33 open and 4 not doable; 180 are excluded and none have unresolved
+scope. These are checklist declarations, not fresh runtime qualification.
+
+The four successor issues named in the historical pickup paragraph now stand as follows:
+
+| Issue | Current issue state | Merged work |
+| --- | --- | --- |
+| [#272](https://github.com/orbyn-dev/orbyn-engineering/issues/272) | Open | #286 and #366; the issue remains open |
+| [#276](https://github.com/orbyn-dev/orbyn-engineering/issues/276) | Closed | #283 |
+| [#277](https://github.com/orbyn-dev/orbyn-engineering/issues/277) | Closed | #589; #285 closed without merging |
+| [#280](https://github.com/orbyn-dev/orbyn-engineering/issues/280) | Closed | #287 |
+
+Use current row notes and live successor issues before claiming work. Preserve
+their scope, refusal and platform-evidence limits. The counts and active-owner
+claims below remain the 7 November snapshot, not the current pickup queue.
+
 ## Closed batch index
 
 | Batch | Closed issues | Surface |

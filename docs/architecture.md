@@ -181,8 +181,13 @@ context are both retained. The collaboration mode does not widen permissions.
 `paragraph` is the default and writes it as it comes, merged over 33 ms. Reasoning and
 tools always go out as they happen. Steering answers `delivered` or `queued`: an engine
 with no mid-turn input takes it on the next turn, and an engine that refuses one sends it
-to the queue with a `steer.failed` note. A typed decline carries its words only on
-engines with `decline_feedback`, which today is Claude; elsewhere the message queues.
+to the queue with a `steer.failed` note. The person's own `message_id` is used for the
+logged message and always echoed in the answer; a queued steer also names its
+`queued_message_id` and logs nothing on the timeline. Each transition logs
+`CUSTOM steer.state` with the message id and `delivered`, `queued` or `failed`, and a
+refusal's `steer.failed` names the message it moved to the queue. A typed decline carries
+its words only on engines with `decline_feedback`, which today is Claude; elsewhere the
+message queues.
 
 Attachments stay in app data, never in a target, and are removed with their thread.
 The limits are 100 per thread, 10 MiB per image, 80 MiB of images and 50 MiB per other
@@ -200,11 +205,13 @@ block keeps the list and focus rules.
 
 Context can sit above the draft as a chip: a cited reply, a terminal selection, a
 review comment on a diff line or range, a picked page element, the open file at
-its revealed line, or a thread picked from the @ menu. A chip is not engine
-protocol; when the message is sent, each chip becomes a readable block at the top
-of the prompt and the typed draft follows. A picked thread's block is the thread
-link itself, `Thread: [title](orbyn://thread/<id>)`, which the timeline renders
-as a thread and the agent reads on demand.
+its revealed line, a thread picked from the @ menu, or a pull request picked from
+the # menu. A chip is not engine protocol; when the message is sent, each chip
+becomes a readable block at the top of the prompt and the typed draft follows. A
+picked thread's block is the thread link itself,
+`Thread: [title](orbyn://thread/<id>)`, which the timeline renders as a thread and
+the agent reads on demand; a picked pull request's block is its link with the
+number and title, `Pull request: [#77 title](<url>)`.
 A terminal selection inside one command's output also carries that command line and
 exit code when the shell marks its commands with OSC 133 or 633 shell-integration
 sequences. Orbyn installs no shell integration, so a shell that emits no marks gives
@@ -580,7 +587,13 @@ inline review comments) and `viewer_review_state` (the signed-in login's latest 
 `none`). GitHub answers all of a project's rows with one batched GraphQL request, which
 also names the viewer, so the review state needs no other call. A field is absent when
 unknown, never zero or partial. A row is left out whole when its project cannot be read,
+its returned object has no known fields,
 its own batch yields no data for it or its forge has no details; only GitHub has them.
+The comment count is known only when the review connection is complete: at most 100
+review nodes, no next page, a matching total count, and valid nonnegative component
+counts whose sum fits the wire count. Incomplete, malformed or overflowing counts
+leave that field absent while other known row facts remain available. No extra pages
+are fetched to count comments.
 Repeated rows count once, at most 100 rows are read per request (later ones are ignored),
 and a project is asked in queries of at most 25 rows, so one failed or partly erroring
 query costs only the rows it did not return.
@@ -608,8 +621,11 @@ bases are each other's heads; a stack action works from the bottom and stops at 
 first failure. Bulk close carries on past a refusal and reports each number.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
-request of the checkout's branch. A merge settles the thread when `on_merge` is set
-and the thread has not opted out. A watch wakes its thread, through the queue, when a
+request of the checkout's branch. The link is kept per thread and number, so a pull
+request's own linked threads are the project's threads that linked it.
+`GET .../pulls/:number/breakdown` counts its changed files by change kind from the
+same rows `/files` serves, so it adds no forge read. A merge settles the thread when
+`on_merge` is set and the thread has not opted out. A watch wakes its thread, through the queue, when a
 check fails, all checks pass, the branch starts to conflict, or someone else comments
 or reviews; the viewer's own comments are not news. It ends at a merge or close, after
 10 wakes in a row that bring only comments, after 8 failed reads in a row, on an
@@ -1295,6 +1311,8 @@ before the page hears it, so outside the desktop app a `mod+w` rule also matches
 key with `alt` in place of `mod`; the editor says which applies. It allows comments and trailing commas, and a
 bad entry is reported while the rest apply. A key with two commands in one exact
 context is a conflict; a key in two contexts is not.
+Saving a rule compares chords without case or spaces around `+`, including when it
+identifies the displaced rule to remove from the account record.
 
 The Worktrees Cleanup form edits the new policy through scoped membership and
 row revisions. Project and checkout selections expose Inherit, Off and Custom;
@@ -1489,6 +1507,15 @@ on every filesystem. A path is judged where it lands, so a link into `.git` or a
 different spelling of it on a case-insensitive disk is refused too. These saves are the
 user's own edits, audited, and differ from rule 4, which covers what Orbyn adds on its
 own.
+
+`GET .../files/metadata?path=` answers what one entry is for the file browser without
+reading it: its kind, size, permission bits and modified time, and whether the entry
+stays inside the checkout. Every folder above it passes the same rules as a file read, so
+`..`, Git's folder and a link out of the checkout are refused. The last name is read as
+itself, never opened and never followed: a link that lands outside the checkout, in Git's
+folder or in the library's `repo/` is still reported as a link, with `inside: false` and
+nothing about where it points, and a path with nothing there is `exists: false`, not an
+error.
 
 The source viewer offers comments on one line or a Shift-selected range. Comments
 capture at most 4,000 source characters and 20,000 comment characters, within the
@@ -1804,9 +1831,10 @@ The page is untrusted and gets nothing a published page does not: the C21 frame
 `connect-src`, and only its own `?render=` token. A server's requested CSP domains and
 permissions are not honoured, so an app that loads remote scripts or data does not work
 here. The host takes `postMessage` JSON-RPC only from that frame's window and answers only
-to it. It answers `ui/initialize` with the theme and display mode, sends the call's
-arguments and result as `tool-input` and `tool-result` after `ui/notifications/initialized`,
-holds `size-changed` heights to 80..2000, and refuses every request it does not serve.
+to it. It answers `ui/initialize` with the theme, display mode and the app's own tool
+descriptor (below), sends the call's arguments and result as `tool-input` and `tool-result`
+after `ui/notifications/initialized`, holds `size-changed` heights to 80..2000, and refuses
+every request it does not serve.
 
 A page may ask for a tool call (`tools/call`) or a message (`ui/message`, user-role text
 only). Each waits for the person in a host dialog outside the frame, which the page cannot
@@ -1816,7 +1844,8 @@ reach or click, and names the server and what it asked. The web then calls
 token, which opens nothing but its own page. The service finds the app's server in the
 render's own record, which only an app render has, and checks the policy rules as a `tool`
 action on `mcp_app:<server>:<tool>` or `mcp_app:<server>:message`: a deny rule refuses even
-a confirmed request, an allow rule passes without one, and otherwise an unconfirmed request
+a confirmed request (the tool-info read below is included, as `mcp_app:<server>:tool_info`),
+an allow rule passes without one, and otherwise an unconfirmed request
 is refused. The decision is audited before the effect. There is no run to pause for a page
 shown after its run, so this is the person's answer rather than an approval card, as the
 computer gateway does for a call with no run. A tool call reaches only the app's own server:
@@ -1828,6 +1857,25 @@ result is audited and held to 256 KiB. A message is queued as the person's own n
 `ui/request-display-mode` switches between the inline card and full screen, which keeps the
 same frame so the page keeps its state; Escape or the card's control returns it inline, and
 the page hears the mode through `host-context-changed`.
+
+Every app also sees its own tool's descriptor. The web reads it at
+`GET /api/threads/:id/mcp-apps/:render_id/tool-info`; the service takes the server and the
+tool from the render's own record — never from the page or the request — asks the engine
+for that one server's tool list, and answers only the advertised `name`, `description` and
+`inputSchema`. The rest of the descriptor and anything about the connection stay in the
+service. The page gets it as `hostContext.toolInfo.tool`, in the `ui/initialize` answer or
+in a later `host-context-changed`; a read the service refuses leaves the context without
+it rather than guessing. An unknown render, a render that is not an app, or a tool its
+server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
+names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
+starts no model turn and reaches no other server. It is evaluated read-only against the
+policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
+only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+`ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
+starts a short engine session, so the service holds at most two at once and identical
+concurrent reads of one render share one (single-flight: the answer goes to the callers
+waiting and nothing is kept, so it is not a cache); the card reads once per render and
+aborts the request when it unmounts.
 
 `ui/update-model-context` leaves a note for the model: its text blocks, then its structured
 content as JSON, at most 8000 characters. The web sends it with
@@ -2017,6 +2065,14 @@ OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limit
 and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
 for are not verified on a real install.
+
+Provider detail pages in the beta are limited to Claude Code, Codex and OpenCode,
+including their named instances. Other registered providers retain their list and
+instance-edit controls, but cannot open an unbuilt detail page, including before
+the catalog arrives. OpenCode reports its version through the bounded CLI probe;
+compatibility still comes only from the authenticated manifest. Without an
+OpenCode entry its support stays Unknown. Its detail page shows reported version,
+login, location and models; Crew tier mapping remains Planned.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
@@ -2235,19 +2291,68 @@ the first failure, and is refused while any run is active (`409 runs_active`). E
 applied update is audited. `GET /api/updates/events` sends the status, then each
 change, for the UI's badge.
 
-With `--parent-stdin` a desktop shell owns app updates over newline JSON. It sends
-`app_update_available`, `app_update_none`, `app_update_unconfigured`,
-`app_update_progress`, `app_update_check_failed` and `app_update_failed` on stdin;
-unknown or malformed lines are ignored, and EOF still means shut down. After the ready line `orbynd` sends
-`check_app_update` and `install_app_update` on stdout. Install first checks for
-active runs and then holds admission (`503 updating`) under the admission lock, until
-exit or until the shell reports an install failure.
+With `--parent-stdin` the desktop shell owns the updater handle and verified package bytes in memory.
+Checks are read-only and report an opaque `release_id` bound to the captured release, target, URL and
+signature. Overlapping checks discard an older completion. A new check can replace the available
+candidate without retargeting an in-flight package. A fresh successful check for a different release
+revokes the older download consent and stage; a failed check retains a verified stage. Identical
+release descriptors keep the same id. The shell cancels the old network task and waits for settlement
+before publishing the new candidate, then late callbacks cannot restore old readiness.
+An already-running installer keeps its exclusion until it actually settles; only then can a changed
+candidate replace its operation state. The explicit download and install requests carry
+that release id and the operation generation shown in `AppUpdateStatus`; stale consent is refused.
 
-`app_update_check_failed` reports a check error without clearing install progress
-or releasing admission: a check may finish while an install is in progress.
-`app_update_failed` reports an install failure, clears its progress and releases
-admission. Both messages carry the error in `message`; check failures keep the
-last known release version and notes.
+`POST /api/updates/app/download` starts only a download. `UpdateCenter` serializes duplicate actions,
+atomically refuses active runs and holds admission (`503 updating`) through downloading and preparing.
+The shell rechecks availability before each attempt, including retries; a different release is reported
+for renewed consent and is never substituted into the transfer. Progress reports carry the operation
+and release id, so callbacks from another transfer are ignored. The download-finish callback means
+preparing, not ready: only a successful awaited `Update::download` (after its signature verification)
+permits `app_update_ready`. Byte completion and an unknown total do not establish readiness.
+An explicit download releases admission at ready and never installs or restarts.
+
+`POST /api/updates/app/apply` installs only that ready generation. It rechecks active runs and holds
+admission until exit or failure. The shell installs the same captured handle and verified bytes on a
+blocking worker; the plugin verifies them again. On Windows the plugin launches the installer and
+exits; neither its pre-exit callback nor a process exit proves the new version installed. On macOS
+installation returns before the shell requests restart. There is no completed-install status based on
+those events. An install error retains the verified payload for an explicit retry and releases admission;
+a download/verification error retains no stage and releases admission. Check errors preserve the
+candidate, operation and admission; operation errors have their own `update_error` and `failed_phase`.
+
+An explicit `POST /api/updates/app/apply?complete=true` requests download followed by install for the
+exact `AppUpdateRequest` release id and operation. The typed boolean defaults to false, preserving the
+UI's install-only request. Complete waits for explicit verified Ready and keeps admission held across
+both phases. It cannot upgrade a concurrent download-only operation's consent; that request is refused.
+A duplicate Complete for the same correlated operation starts no second effect. Stale release or
+operation consent is refused without substituting a newly checked candidate.
+`orbyn update` sends this complete request from its single checked status, after its existing version,
+channel and downgrade checks; missing/empty release ids or invalid operation generations are refused
+before POST. This does not grant new authority: the route remains enforced Person, and production CLI
+or browser callers without the desktop launch's person key still receive `403 desktop_required`.
+The CLI request contract is tested with a fake shell and development-authorized service only.
+
+The default notify mode requires separate Download update and Restart to update consent. Manual
+mode gains no background download. Automatic mode retains its two-minute idle/no-active-run gate;
+it and Update everything explicitly request download followed by install through this same lifecycle,
+keeping admission held across verified readiness. Leaving the page does not cancel a shell-owned
+transfer. No stage is persisted: a shell crash/restart loses readiness and the next session must check
+and download again. A restarted service does not infer readiness from bytes or saved UI state.
+The shell fences updater commands and callbacks to a service generation. A service crash cancels its
+owned network future and discards that generation's candidate/stage. A blocking installer owns a
+shell lease until its effect actually settles, including unwind; a dropped join handle cannot release
+it. Automatic or explicit service restart waits behind that lease, so a replacement core cannot admit
+work while an earlier installer still acts. Cancelled downloads and installer failures settle through
+RAII, then permit an already-authorized deferred restart. App shutdown revokes deferred restart.
+Download consent is an enforced Person route and requires this launch's person key. Failed operations
+carry their captured display version separately from a newer available candidate; failure copy never
+names a release that the operation did not attempt.
+
+Shell messages are `app_update_available`, `app_update_none`, `app_update_unconfigured`,
+`app_update_progress`, `app_update_preparing`, `app_update_ready`, `app_update_check_failed` and
+`app_update_failed`; operation messages include `release_id` and `operation`. Service commands are
+`check_app_update`, `download_app_update` and `install_app_update`. Unknown or malformed lines are
+ignored, and EOF still means shut down.
 
 With no shell, `--update-manifest` names a release manifest `{version, notes}` to
 compare with the running version; with none, the app reports `unconfigured`. A
@@ -2301,7 +2406,10 @@ characters, without words that look like a path, an address (`host:port`), an `@
 value or a 20-character token, and cut at 160 characters. It is not log text.
 It follows the system light or dark appearance; the app's own theme choice lives in the
 product origin and does not reach this page, and Dim is not offered here.
-There are no default core/plugin command permissions; the one product command, `crew_presence`, is described below. The startup document is embedded,
+There are no default core/plugin command permissions. Of the five app-owned commands,
+the product document may call only `crew_presence` and `person_key`; the main window
+capability and each command's runtime origin check enforce that split. The explicit
+macOS title-bar capability grants only dragging and toggle-maximize. The startup document is embedded,
 has no frames or external resources, and displays errors as text. Product actions ask
 the service, which asks the shell over stdin/stdout; results return through
 `GET /api/shell/events`, which also carries `data_changed` when data the service answers from
@@ -2322,8 +2430,11 @@ first without using it, runs its other checks, then takes it. A service without 
 nonce in `x-orbyn-confirm` is `403 presence_required`. No caller that only speaks HTTP to the
 service can approve once, with or without the service token. This is not OS-level presence: a
 process of the same OS user can still drive the native dialog (Accessibility, SendInput), read the
-shell's memory or write into its pipe. The devtools feature is on in release builds, so a script in
-the page can call `invoke` but cannot click the native dialog (known exposure, issue #532).
+shell's memory or write into its pipe. Ordinary release builds omit devtools and its menu/shortcut;
+debug builds and technical-tester builds with the explicit Cargo `devtools` feature retain them
+(see docs/setup.md). This removes the shipped inspector, not the product page's IPC authority:
+a hostile script in the product origin can still call its allowed `invoke` commands, but cannot
+click the native dialog. The startup commands still require the separate startup document.
 The shell's side is `desktop/src-tauri/src/presence.rs`: the Tauri command `crew_presence(hold_id)`,
 granted to the `main` window by the `allow-crew-presence` permission and allowed at run time only
 from the bundled product document (`desktop_origin::is_application`). It sends `presence_describe`,
@@ -2757,7 +2868,10 @@ browser agents use, and needs a trusted folder and an `http` or `https` URL. Up 
 four run at once, and they close when their thread settles, archives or is deleted.
 Frames are polled about five times a second, only while someone watches or records,
 and a frame that did not change is not sent. `/ws/preview` sends each as base64 JPEG
-text. Watching gives no control: input needs a person to take the page first.
+text. A tab refreshes its title and declared icon about once a second on its own, so a
+tab nobody watches still reads correctly; a read that a document swap drops skips that
+look and is retried on the next one. Watching gives no control: input needs a person to
+take the page first.
 The separate authenticated `/ws/preview/:thread/:tab/pointer` feed carries only
 server-created ephemeral cues after successful agent click or scroll input.
 Each tab owns a monotonic sequence; positions are frame pixels, with zoom applied
@@ -3244,7 +3358,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 ## HTTP API
 
-All bodies are JSON and errors are `ApiError` with a stable `code`. Auth is
+All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
+read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
+the value that was sent (an account body can carry a password or a sign-in code). Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
@@ -3265,6 +3381,7 @@ every method, path and which routes need a credential.
 | `GET /api/projects/:id/pulls/:number/revisions`, `GET /api/projects/:id/commits/:sha/files` | A pull request's commits, oldest first, and what one commit changed |
 | `GET /api/diagnostics`, `POST /api/diagnostics/processes/:pid/stop` | `Diagnostics`, in memory only; a stop reaches only this service's own descendants |
 | `GET /api/projects`, `POST /api/projects/:id/trust` | Projects and folder trust |
+| `POST /api/projects/:id/git/init` | `Project`: start Git in a trusted project folder added without one; `403 folder_untrusted`, `400 invalid_input` when it is already a repository or the folder is gone; only `.git` is written and no commit is made |
 | `POST /api/projects/add` | `AddProject`: register a folder in place; `403 workspace_refused`, `409 project_exists` |
 | `GET /api/projects/:id/worktrees?thread=&refresh=` | `ExplorerWorktrees`: the project's worktrees with branch, read-only state, threads and a dirty summary; `403 folder_untrusted`, `404` |
 | `GET /api/projects/:id/worktrees/:worktree/tree?path=&filter=&refresh=` | `ExplorerTree`: one folder level with change letters, cut at 1,000 entries with `truncated`, the `total` the folder holds (a floor, `total_at_least`, past a 20,000-entry scan); `400 invalid_input` for a refused path, `404` |
@@ -3316,7 +3433,8 @@ every method, path and which routes need a credential.
 | `POST /api/shell/actions` | `ShellRequest` (`202`, `422` with no shell) |
 | `GET /api/updates`, `POST /api/updates/check` | `UpdateStatus`; a check only reads |
 | `GET /api/updates/events` | SSE `UpdateStatus` on each change |
-| `POST /api/updates/app/apply` | Ask the shell to install (`202`, `409 runs_active`, `422` on a server) |
+| `POST /api/updates/app/download` | `AppUpdateRequest`: download and verify one release without installing (`202`, `409 runs_active`, `422` stale/unavailable) |
+| `POST /api/updates/app/apply` | `AppUpdateRequest`: install the verified staged release; typed `?complete=true` explicitly requests download then install for that same correlation (`202`, `409 runs_active`, `422` stale/unavailable or server; enforced Person) |
 | `POST /api/updates/apply-all` | `ApplyAllResult`; engines, library, app; stops at the first failure |
 | `POST /api/threads/:id/runs` | Admit a run with an optional `model`, `effort` and `options` (`202`, `409 thread_busy`, `403 folder_untrusted`, `422 unsupported_option`) |
 | `GET, POST /api/threads/:id/queue` | `QueuedMessage[]`; queue a message, which starts at once if idle and can carry a selection (`422 unsupported_option`) |
@@ -3324,10 +3442,11 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/mcp-apps/:render_id/tool-call` | An MCP App's confirmed tool call on its own server |
 | `POST /api/threads/:id/mcp-apps/:render_id/message` | An MCP App's confirmed message, queued |
 | `PUT /api/threads/:id/mcp-apps/:render_id/context` | An MCP App's note for the next turn |
+| `GET /api/threads/:id/mcp-apps/:render_id/tool-info` | `McpAppToolInfo`: the app's own tool's advertised name, description and input schema from its server; `404` when the app or tool is unknown, `502` when the server cannot be asked |
 | `DELETE /api/threads/:id/mcp-app-context` | Drop the unsent app note |
 | `PATCH, DELETE /api/queue/:id` | Edit or remove a queued message |
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
-| `POST /api/threads/:id/steer` | `SteerRun`: add text to the running turn (`422` if unsupported); a selection applies from the next turn |
+| `POST /api/threads/:id/steer` | `SteerRun` with an optional `message_id`: add text to the running turn (`422` if unsupported); `SteerResult` echoes the id and says `delivered` or `queued`, the latter with its queue row; a selection applies from the next turn |
 | `GET, POST /api/threads/:id/attachments?name=` | Raw upload body; `Content-Type` is the kind |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
@@ -3344,6 +3463,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/runs/:run/changes/restore` | `RestoreChanges` to `RestoredFile[]`: `restored`, `unchanged`, `conflict`, `not_kept`; `409 thread_busy` |
 | `GET /api/network` | `NetworkRequest[]`: every automatic outbound request, its switch and whether it is on |
 | `GET /api/threads/:id/files?path=` | `FileEntry[]`, one folder |
+| `GET /api/threads/:id/files/metadata?path=` | `FileMetadata`: one entry's own kind, size, mode, modified time and whether a final link stays inside; no bytes read; `exists: false` for a missing path |
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
 | `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
@@ -3367,6 +3487,7 @@ every method, path and which routes need a credential.
 | `POST /api/projects/:id/workflows/:run/approve` | Let a fork's waiting workflow run; GitHub only |
 | `GET, PATCH /api/projects/:id/pulls/:number` | `PullRequestDetail`; `UpdatePull` for title, body, base, draft, maintainer edits |
 | `GET .../pulls/:number/checks`, `/timeline`, `/files` | `PullCheck[]`, `PullTimelineEvent[]`, `PullFile[]` with viewed marks |
+| `GET .../pulls/:number/breakdown`, `/linked-threads` | `PullChangeBreakdown`: counts by change kind and lines over the same files rows; `Thread[]` linked to the pull request, from the service's own links |
 | `GET, POST .../pulls/:number/comments` | `PullConversation`; `AddPullComment` with optional `path`, `line`, `reply_to` |
 | `PATCH .../comments/:comment`, `POST .../comments/:comment/react` | `EditPullComment`; `ReactPullComment` |
 | `POST .../pulls/:number/threads/:thread/resolve` | `ResolvePullThread` |

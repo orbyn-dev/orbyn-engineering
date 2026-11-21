@@ -1,6 +1,6 @@
 import { ChevronLeft, Search } from "lucide-react";
 import { settingsLabel } from "../settingsSearch";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, readTriagePlaybook } from "../api";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
@@ -106,14 +106,24 @@ function useDownloadedUpdate() {
   const app = useWorkspace((state) => state.updates.data?.app);
   const [later, setLater] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const done = !!app?.latest && app.downloaded !== undefined && app.total !== undefined && Number(app.total) > 0
-    && Number(app.downloaded) >= Number(app.total) && !!app.can_apply;
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+  const done = !!app?.latest && (app.phase === "ready" || app.phase === "installing");
   if (!done || later) return null;
   return {
     latest: app.latest,
     error,
+    disabled: pending || app.phase === "installing" || !app.can_apply,
     later: () => setLater(true),
-    restart: () => { setError(null); void api.applyAppUpdate().catch((problem: unknown) => setError(toFailure(problem).message)); },
+    restart: () => {
+      if (submitting.current || !app.release_id || !app.can_apply || app.phase !== "ready") return;
+      submitting.current = true;
+      setPending(true);
+      setError(null);
+      void api.applyAppUpdate({ release_id: app.release_id, operation: app.operation ?? 0 })
+        .catch((problem: unknown) => setError(toFailure(problem).message))
+        .finally(() => { submitting.current = false; setPending(false); });
+    },
   };
 }
 
@@ -134,7 +144,7 @@ export function AboutSection() {
         {update ? (
           <span className="set-card-end">
             <Button small tone="quiet" onClick={update.later}>Later</Button>
-            <Button small tone="primary" onClick={update.restart}>Restart to update</Button>
+            <Button small tone="primary" disabled={update.disabled} onClick={update.restart}>Restart to update</Button>
           </span>
         ) : null}
       </div>

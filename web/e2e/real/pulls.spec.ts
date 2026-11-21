@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -401,15 +401,36 @@ test("a merge is refused when the branch moved after the page was read, and Relo
   // A changed field proves the returned detail reached the screen, not merely that gh started.
   const title = "Unrelated fix after the push";
   service.ghEdit(3, { title, headRefOid: "ddddddd" });
-  const reloaded = page.waitForResponse((response) =>
-    response.request().method() === "GET" && new URL(response.url()).pathname === `/api/projects/${projectId}/pulls/3`,
-  );
-  await dialog.getByRole("button", { name: "Reload" }).click();
-  const response = await reloaded;
-  expect(response.ok()).toBe(true);
-  expect(await response.json()).toMatchObject({ head_sha: "ddddddd", pull: { title } });
-  await expect(dialog).toBeHidden();
-  await expect(detail(page, title)).toBeVisible();
+  // The page reads this pull request on its own, so a response arriving now can answer an
+  // earlier read with the data from before the push, or an aborted one. Wait for the read
+  // carrying what the click asked for instead of whichever detail response arrives first.
+  const reads: Response[] = [];
+  const isDetailRead = (response: Response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === `/api/projects/${projectId}/pulls/3`;
+  const collect = (response: Response) => {
+    if (isDetailRead(response)) reads.push(response);
+  };
+  page.on("response", collect);
+  try {
+    await dialog.getByRole("button", { name: "Reload" }).click();
+    let reloaded: { head_sha: string; pull: { title: string } } | null = null;
+    await expect
+      .poll(
+        async () => {
+          for (const response of reads.splice(0)) {
+            const body = (await response.json().catch(() => null)) as { head_sha: string; pull: { title: string } } | null;
+            if (response.ok() && body?.head_sha === "ddddddd" && body.pull?.title === title) reloaded = body;
+          }
+          return reloaded;
+        },
+        { timeout: 15_000 },
+      )
+      .not.toBeNull();
+    await expect(dialog).toBeHidden();
+    await expect(detail(page, title)).toBeVisible();
+  } finally {
+    page.off("response", collect);
+  }
   // Keep the changed head until the reload has finished reading it.
   service.ghEdit(3, { headNow: undefined });
 });

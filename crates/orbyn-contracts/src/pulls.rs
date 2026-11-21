@@ -202,6 +202,22 @@ pub struct PullFile {
 }
 
 wire! {
+/// Counts by change kind over one pull request's changed files. A kind the forge
+/// names that is none of the four below counts only in `files`.
+pub struct PullChangeBreakdown {
+    pub files: u64,
+    pub added: u64,
+    pub modified: u64,
+    pub deleted: u64,
+    pub renamed: u64,
+    /// Lines added over every file.
+    pub additions: u64,
+    /// Lines deleted over every file.
+    pub deletions: u64,
+}
+}
+
+wire! {
 /// One commit of a pull request, oldest first.
 pub struct PullRevision {
     pub sha: String,
