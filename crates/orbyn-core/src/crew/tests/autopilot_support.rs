@@ -106,12 +106,14 @@ pub fn scope(w: &World, task: &str) -> RunScope {
     }
 }
 
+/// A request as an engine makes one: the command it would run is in the detail, as Codex, ACP and Claude's own permission
+/// prompt all send it, so a hold made from it can be approved once.
 pub fn ask(kind: ActionKind, target: &str, paths: &[&str]) -> ActionAsk {
     ActionAsk {
         kind,
         target: target.to_owned(),
         summary: "A request from the worker.".to_owned(),
-        detail: json!({}),
+        detail: json!({ "command": target }),
         paths: paths.iter().map(|p| (*p).to_owned()).collect(),
     }
 }

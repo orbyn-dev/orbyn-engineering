@@ -803,8 +803,8 @@ export function createMockApi(options: MockOptions = {}) {
           body: {
             details: all
               .filter((one) => asked.includes(`${one.project_id}:${one.number}`))
-              .map((one) => (scenario === "pulls-rate-limited" ? { ...one, comment_count: undefined } : one)),
-            paused: scenario === "pulls-rate-limited" ? ["comment_count"] : [],
+              .map((one) => (scenario === "pulls-rate-limited" ? { ...one, comment_count: undefined, approval_count: undefined } : one)),
+            paused: scenario === "pulls-rate-limited" ? ["comment_count", "approval_count"] : [],
           },
         };
       }
