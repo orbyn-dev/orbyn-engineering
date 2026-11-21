@@ -2434,7 +2434,10 @@ The shell rechecks availability before each attempt, including retries; a differ
 for renewed consent and is never substituted into the transfer. Progress reports carry the operation
 and release id, so callbacks from another transfer are ignored. The download-finish callback means
 preparing, not ready: only a successful awaited `Update::download` (after its signature verification)
-permits `app_update_ready`. Byte completion and an unknown total do not establish readiness.
+permits `app_update_ready`, and only when the verified signature names the announced version. The
+endpoint response is not itself signed, so an unsigned release, or one signed for a different
+version, fails visibly instead of staging bytes: `app_update_failed` carries the reason and nothing
+becomes installable. Byte completion and an unknown total do not establish readiness.
 An explicit download releases admission at ready and never installs or restarts.
 
 `POST /api/updates/app/apply` installs only that ready generation. It rechecks active runs and holds
