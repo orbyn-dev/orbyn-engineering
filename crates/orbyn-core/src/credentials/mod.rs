@@ -66,6 +66,18 @@ pub const ENGINES: &[EngineKey] = &[EngineKey {
     env: "CURSOR_API_KEY",
 }];
 
+/// The issue trackers that read with a keychain token (docs/issues.md). GitHub reads through the person's own
+/// `gh` and keeps nothing. Adding one is a code change and a security-review item, never a setting.
+pub const TRACKERS: &[&str] = &["gitlab", "azure_devops", "forgejo", "linear"];
+
+fn tracker_account(tracker: &str) -> Result<String, CredentialError> {
+    if TRACKERS.contains(&tracker) {
+        Ok(format!("tracker:{tracker}"))
+    } else {
+        Err(CredentialError::UnknownEngine)
+    }
+}
+
 /// What the person may be told. Never the key, not even its length or last characters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -219,6 +231,59 @@ impl Credentials {
                     value: Zeroizing::new(value),
                 }))
             }
+            _ => Ok(None),
+        }
+    }
+}
+
+impl Credentials {
+    /// Whether a tracker token is saved. Never the token.
+    pub fn tracker_saved(&self, tracker: &str) -> Result<bool, CredentialError> {
+        let account = tracker_account(tracker)?;
+        match self.backend.get(&self.service, &account) {
+            Ok(Some(bytes)) => Ok(!bytes.is_empty()),
+            Ok(None) => Ok(false),
+            Err(failure) => Err(Self::map(failure)),
+        }
+    }
+
+    /// Saves or replaces a tracker token. The caller drops its copy right after.
+    pub fn tracker_save(&self, tracker: &str, token: &str) -> Result<(), CredentialError> {
+        let account = tracker_account(tracker)?;
+        let token = token.trim();
+        if token.is_empty()
+            || token.len() > MAX_KEY_LEN
+            || token.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err(CredentialError::InvalidKey);
+        }
+        self.backend
+            .set(&self.service, &account, token.as_bytes())
+            .map_err(Self::map)
+    }
+
+    /// Deletes the token. Fine when there is none.
+    pub fn tracker_remove(&self, tracker: &str) -> Result<(), CredentialError> {
+        let account = tracker_account(tracker)?;
+        self.backend
+            .delete(&self.service, &account)
+            .map_err(Self::map)
+    }
+
+    /// The token for a request to the tracker's own host, and nowhere else.
+    pub fn tracker_token(
+        &self,
+        tracker: &str,
+    ) -> Result<Option<Zeroizing<String>>, CredentialError> {
+        let account = tracker_account(tracker)?;
+        match self
+            .backend
+            .get(&self.service, &account)
+            .map_err(Self::map)?
+        {
+            Some(bytes) if !bytes.is_empty() => String::from_utf8(bytes.to_vec())
+                .map(|value| Some(Zeroizing::new(value)))
+                .map_err(|_| CredentialError::Failed),
             _ => Ok(None),
         }
     }

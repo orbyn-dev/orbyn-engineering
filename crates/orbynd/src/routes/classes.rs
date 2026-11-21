@@ -196,6 +196,11 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/terminals"),
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
+    ("POST", "/api/issues/trackers/{tracker}/connect"),
+    ("POST", "/api/issues/trackers/{tracker}/disconnect"),
+    ("POST", "/api/issues/start-thread"),
+    ("POST", "/api/threads/{id}/issue-links"),
+    ("POST", "/api/threads/{id}/issue-links/remove"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -924,6 +929,31 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "GET",
         "/ws/terminal/{thread_id}/{terminal}",
         "attaches to a person's shell, which takes keystrokes",
+    ),
+    (
+        "POST",
+        "/api/issues/trackers/{tracker}/connect",
+        "the person connects an issue tracker: a token goes to the keychain and a host is stored",
+    ),
+    (
+        "POST",
+        "/api/issues/trackers/{tracker}/disconnect",
+        "the person disconnects an issue tracker: its token and host are removed",
+    ),
+    (
+        "POST",
+        "/api/issues/start-thread",
+        "the person starts a thread from an issue, which creates and links it and queues a message",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/issue-links",
+        "the person links a thread to an issue",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/issue-links/remove",
+        "the person removes a thread's link to an issue",
     ),
 ];
 
