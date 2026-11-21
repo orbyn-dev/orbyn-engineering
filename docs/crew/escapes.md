@@ -1,7 +1,7 @@
 # Crew escape flywheel: backend design
 
 Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built, the web screens of PR 5 (5a-5c) are built, and
-capacity-pressure retention (#686, migration 58; #757 fixed its log capacity) is built, as the as-built sections below record.
+capacity-pressure retention (issue #686, built in #757, migration 58) is built, as the as-built sections below record.
 Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts frames stay drawn), the Review
 queue that would open `escape-report`'s mark dialog, the create-check form, and the scan from the merge and revert paths. Retention
 is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
@@ -222,7 +222,7 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
 
-## Capacity pressure and writer migration (#686)
+## Capacity pressure and writer migration (#686, #757)
 
 Migration **58** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
 escape stops gap changes at 99 events, reserving event 100 for confirm or dismiss. An identical gap on a non-dismissed escape remains an idempotent
