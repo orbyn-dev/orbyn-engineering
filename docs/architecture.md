@@ -578,8 +578,8 @@ the list. The body names the listed rows (`project_id`, `number` and the row's
 `requested_reviewers` (users and teams), `comment_count` (conversation comments plus
 inline review comments) and `viewer_review_state` (the signed-in login's latest review, or
 `none`), plus optional `approval_count`. GitHub's count is the number of `APPROVED`
-states in `latestOpinionatedReviews(first:100)`, the host's latest opinionated review
-per user. It is known only when the connection has an integer `totalCount` equal to
+states in `latestOpinionatedReviews(first:100,writersOnly:true)`, the latest opinionated
+review per user with write access, so it counts what GitHub's merge box counts. It is known only when the connection has an integer `totalCount` equal to
 the node count, explicitly has no next page, and every node has a known review state.
 Missing, malformed or truncated connections leave the count absent; a complete empty
 connection proves zero. An error under a pull alias still withholds its whole row.

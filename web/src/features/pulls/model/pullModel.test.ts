@@ -218,7 +218,7 @@ describe("who a review waits on", () => {
   const pull = (over: Partial<PullListEntry["pull"]> = {}) => entry(1, over).pull;
 
   it.each([0, 1, 4, undefined])("formats known approvals without changing other review states: %s", (count) => {
-    expect(reviewWords(pull({ review_state: "approved" }), ["sam"], ["me"], false, count)).toBe(count === undefined ? "Approved" : `${count} ${count === 1 ? "approval" : "approvals"}`);
+    expect(reviewWords(pull({ review_state: "approved" }), ["sam"], ["me"], false, count)).toBe(!count ? "Approved" : `${count} ${count === 1 ? "approval" : "approvals"}`);
     expect(reviewWords(pull({ review_state: "approved", draft: true }), ["sam"], ["me"], false, count)).toBe("Not requested");
     expect(reviewWords(pull({ review_state: "changes_requested" }), ["sam"], ["me"], true, count)).toBe("Changes requested by you");
     expect(reviewWords(pull({ review_state: "review_required" }), ["me"], ["me"], false, count)).toBe("Requested from you");

@@ -59,8 +59,8 @@ export function PullDetail({
   const fileList = useAsync(`pull-files:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.files(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
   const checkList = useAsync(`pull-checklist:${projectId}:${number}:${page}`, (signal) => (page ? pullsApi.checks(projectId, number, signal) : Promise.resolve([])), { refreshOn: changed });
   const revision = detail.data?.pull.updated_at ?? null;
-  const extras = useAsync(`pull-extras:${projectId}:${number}:${page}:${revision}`, (signal, how) =>
-    page ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: revision }], fresh: how.force }, signal) : Promise.resolve({ details: [], paused: [] }),
+  const extras = useAsync(`pull-extras:${projectId}:${number}:${page}:${detail.data ? "loaded" : "pending"}:${revision}`, (signal, how) =>
+    page && detail.data ? pullsApi.details({ pulls: [{ project_id: projectId, number, updated_at: revision }], fresh: how.force }, signal) : Promise.resolve({ details: [], paused: [] }),
     { refreshOn: changed },
   );
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
@@ -385,8 +385,10 @@ export function PullDetail({
   const state = pageState(pull, mergeable, reviewAsked);
   const failedCheck = (checkList.data ?? []).find((check) => check.state === "fail");
   const gate = mergeGate(pull, mergeable, { offline, auto, forge: forgeLabel });
-  const mergeHint = state === "approved" && mine?.approval_count !== undefined && gate.hint === "No conflicts"
-    ? `${approvalWords(mine.approval_count)} · No conflicts`
+  // A known zero cannot sit beside an approved state, so it reads as unknown.
+  const approvals = mine?.approval_count ? mine.approval_count : undefined;
+  const mergeHint = state === "approved" && approvals !== undefined && gate.hint === "No conflicts"
+    ? `${approvalWords(approvals)} · No conflicts`
     : gate.hint;
   const submitReview = (event: "approve" | "request_changes") =>
     run(pullsApi.review(projectId, number, event, ""), event === "approve" ? "Approved" : "Changes requested");
@@ -465,7 +467,7 @@ export function PullDetail({
           failed={failedCheck}
           own={own}
           reviewing={reviewing}
-          approvalCount={mine?.approval_count}
+          approvalCount={approvals}
           actions={{
             reopen: () => void act("reopen", "Reopened"),
             ready: () => void update({ draft: false }, "Ready for review"),
@@ -529,7 +531,7 @@ export function PullDetail({
           </Row>
           {/* Amber only where the person is waited on; a conflict and changes the person asked for stay ink. */}
           <Row name="Review" tone={requested === null && (state === "review" || (state === "changes" && changesNeedYou(pull, viewers))) ? "warn" : undefined}>
-            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested", mine?.approval_count)}
+            {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested", approvals)}
           </Row>
           <Row name="Conflicts">{conflictWords(mergeable)}</Row>
           {threadTitle ? (

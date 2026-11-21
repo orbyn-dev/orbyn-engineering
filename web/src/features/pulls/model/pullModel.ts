@@ -334,7 +334,7 @@ export function mergeGate(
  */
 export function reviewWords(pull: PullRequest, reviewers: readonly string[], viewers: readonly string[] = [], byYou = false, approvalCount?: number): string {
   if (pull.draft) return "Not requested";
-  if (pull.review_state === "approved") return approvalCount === undefined ? "Approved" : approvalWords(approvalCount);
+  if (pull.review_state === "approved") return approvalCount ? approvalWords(approvalCount) : "Approved";
   if (pull.review_state === "changes_requested" || byYou) return byYou ? "Changes requested by you" : "Changes requested";
   const names = reviewers.map((name) => (viewers.some((login) => sameLogin(login, name)) ? "you" : `@${name}`));
   return names.length > 0 ? `Requested from ${names.join(", ")}` : "Not requested";

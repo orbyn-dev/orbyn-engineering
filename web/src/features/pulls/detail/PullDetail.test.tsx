@@ -51,6 +51,8 @@ const checks: PullCheck[] = [
 const show = async (response: PullRequestDetail | Promise<PullRequestDetail>) => {
   vi.mocked(pullsApi.detail).mockImplementation(() => Promise.resolve(response));
   render(<PullDetail layout="page" projectId="p" number={142} />);
+  // The detail loads first, then the extras read for its revision.
+  await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
   await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
 };
 
@@ -78,12 +80,12 @@ afterEach(() => {
 const merge = () => screen.getByRole("button", { name: /^Merge$/ });
 
 describe("one pull request as a page", () => {
-  it.each([[0, "0 approvals"], [1, "1 approval"], [3, "3 approvals"], [undefined, "Approved"]] as const)("shows the known approval count %s in all three approved placements", async (count, words) => {
+  it.each([[0, "Approved"], [1, "1 approval"], [3, "3 approvals"], [undefined, "Approved"]] as const)("shows the known approval count %s (a known zero reads as unknown) in all three approved placements", async (count, words) => {
     vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: count }], paused: [] });
     await show(detail({ review_state: "approved" }));
     expect(screen.getByText("Review").nextElementSibling).toHaveTextContent(words);
     expect(document.querySelector(".pulls-banner")).toHaveTextContent(`${words}. Checks passed and there are no conflicts.`);
-    expect(document.querySelector(".pull-merge-hint")).toHaveTextContent(count === undefined ? "No conflicts" : `${words} · No conflicts`);
+    expect(document.querySelector(".pull-merge-hint")).toHaveTextContent(count ? `${words} · No conflicts` : "No conflicts");
     expect(merge()).toBeEnabled();
   });
 
@@ -105,6 +107,8 @@ describe("one pull request as a page", () => {
     vi.spyOn(pullsApi, "review").mockResolvedValue(undefined);
     vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, requested_reviewers: [{ name: "me", kind: "user" }], approval_count: 0 }], paused: [] });
     await show(detail({ review_state: "review_required", updated_at: "t1" }));
+    // The read waits for the loaded revision: no request ever carries a null one.
+    expect(vi.mocked(pullsApi.details).mock.calls.map(([body]) => body.pulls[0]?.updated_at)).toEqual(["t1"]);
     expect(pullsApi.details).toHaveBeenLastCalledWith({ pulls: [{ project_id: "p", number: 142, updated_at: "t1" }], fresh: false }, expect.any(AbortSignal));
     vi.mocked(pullsApi.detail).mockResolvedValue(detail({ review_state: "approved", updated_at: "t1" }));
     vi.mocked(pullsApi.details).mockResolvedValue({ details: [{ project_id: "p", number: 142, approval_count: 1 }], paused: [] });

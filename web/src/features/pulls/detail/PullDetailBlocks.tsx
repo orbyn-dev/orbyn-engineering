@@ -140,7 +140,7 @@ export function PullStateBanner({
     case "approved":
       return (
         <PullsBanner icon={<SquareCheck size={14} aria-hidden />} actions={null}>
-          {approvalCount === undefined ? "Approved" : approvalWords(approvalCount)}. Checks passed and there are no conflicts.
+          {approvalCount ? approvalWords(approvalCount) : "Approved"}. Checks passed and there are no conflicts.
         </PullsBanner>
       );
     default:
