@@ -8,7 +8,7 @@ use crate::agents::driver::claude::SdkMapper;
 
 pub enum DeltaMapper {
     /// The Claude Agent SDK's messages, mapped as the CLI driver maps stream-json.
-    Claude(SdkMapper),
+    Claude(Box<SdkMapper>),
     /// The fake family's `{type:"text", text}`, for the transport tests.
     #[cfg(test)]
     Fake { open: bool },
@@ -18,7 +18,7 @@ impl DeltaMapper {
     /// The mapping for a family, or `None` for one this app cannot map yet (the run is refused).
     pub fn for_family(family: &str) -> Option<Self> {
         match family {
-            "claude" => Some(Self::Claude(SdkMapper::default())),
+            "claude" => Some(Self::Claude(Box::default())),
             #[cfg(test)]
             "fake" => Some(Self::Fake { open: false }),
             _ => None,
