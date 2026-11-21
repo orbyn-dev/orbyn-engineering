@@ -262,9 +262,23 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   the file conflict is `409 file_conflict` and keeps its message. A git action on an untrusted repository opens the existing trust
   prompt; a `404` says it is not one of the thread's repositories. `GET .../repos` `404` is an ordinary thread (or the flag off): nothing
   draws and nothing is said.
-- **Primary only for now.** The header Git menu, the branch and commit pickers, the editor and file tabs, "Open in editor" and pull
-  request screens act on the primary repository; opening a file of another repository from the Changes panel shows a notice instead
-  of opening the primary's file at the same path.
+- **Repository choice (header Git menu and pickers).** A thread in two or more repositories shows one chip, "Repository: <name>", beside the
+  header Git button, in the branch dialog and, in the Commit and Branch scopes, under the Changes header. The choice is shared by those
+  places for the thread (kept in memory, the primary by default: the repository whose id is the project's, else the first). Every read
+  and write they make carries its `repo_id`: `GET .../branches` and `.../commits` in the query, `POST .../git/action`, `.../branches`
+  and `.../branches/switch` in the body; the primary's calls leave it out. A commit or branch comparison is one repository's, so those
+  two scopes read the diff of the chosen repository only. An ordinary thread (or one in a single repository) gets no chip and no call
+  changes (no extra argument at all). If the chosen repository can't answer Git questions, the Git menu stays so another can be picked,
+  with its Git items off. Names from the service are drawn as one capped line of text.
+- **Trust from a refused write.** `409 repo_untrusted` on a hunk revert, undo or line edit adds a "Trust repository…" button to the
+  notice, which opens the same trust dialog the repository's Git menu opens (one click, one write, busy guard). Trusting clears the
+  notice and re-reads; the refused write is not repeated, the person tries again. It is offered for a multi-repository thread only.
+- **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
+  chosen), the editor and file tabs, "Open in editor" and the Create pull request base check of the Changes footer act on the primary
+  repository; opening a file of another repository from the Changes panel shows a notice instead of opening the primary's file at the
+  same path. `ThreadRepo.files` is capped at 200 by the service; the list at that cap is unchecked.
+- **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
+  `orbynd` with `ORBYN_MULTI_REPO=1`.
 
 ## As built: repo_id on Git and file calls
 

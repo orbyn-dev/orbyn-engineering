@@ -22,7 +22,7 @@ import { ChangesHeader, DIFF_SOURCES, NARROW, WIDE, type ComparePair, type DiffS
 import { FileView } from "./FileView";
 import { FindBar } from "./FindBar";
 import { commitItems, turnItems, type TurnTotals } from "./pickers";
-import { plain, useThreadRepos } from "../../repos";
+import { chooseRepo, plain, RepoChooser, TrustRepo, usePickedRepo, useThreadRepos } from "../../repos";
 import { findHits, shownLimit, parsePatch, withoutWhitespaceChanges, type DiffLine } from "./diffModel";
 
 const TEST_FILE = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z]+$/i;
@@ -73,6 +73,10 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const version = useThreadLogs((state) => state.diffVersion[threadId] ?? 0);
   // A thread in several repositories groups its files; any other thread gets nothing here and keeps one flat list.
   const threadRepos = useThreadRepos(threadId, version);
+  // The repository the branch and commit pickers act on: the primary until another is chosen. An ordinary thread has no choice.
+  const choice = usePickedRepo(threadId, threadRepos.repos, threadRepos.reload);
+  const repoId = choice.repoId;
+  const repoSuffix = repoId === undefined ? "" : `:${repoId}`;
   const [source, setSource] = useState<DiffSource>("worktree");
   const checkpoints = useAsync(`checkpoints:${threadId}:${source === "turn" ? version : "off"}`, (signal) =>
     source === "turn" ? api.checkpoints(threadId, signal) : Promise.resolve([]),
@@ -96,12 +100,15 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const linkedPulls = useAsync(`diff-linked:${threadId}`, (signal) => pullsApi.linked(threadId, signal));
   // The same read the header's Git menu uses: a checkout that can't answer Git questions hides what needs Git.
   const branches = useAsync(`git-branches:${threadId}`, (signal) => api.branches(threadId, signal));
+  // The chosen repository's own branches, for the base and commit pickers; the primary's read above is the one used when none is chosen.
+  const chosenBranches = useAsync(`git-branches:${threadId}${repoSuffix}`, (signal) => repoId === undefined ? Promise.resolve(null) : api.branches(threadId, signal, repoId));
+  const pairBranches = repoId === undefined ? (branches.status === "ready" ? branches.data : null) : chosenBranches.status === "ready" ? chosenBranches.data : null;
   const gitAvailable = branches.status !== "error";
   const canCreate = gitAvailable && linkedPulls.status === "ready" && linkedPulls.data.length === 0;
   const [restoring, setRestoring] = useState(false);
   const [creating, setCreating] = useState(false);
-  const commits = useAsync(`commits:${threadId}:${source}`, (signal) =>
-    source === "commit" ? api.commits(threadId, signal) : Promise.resolve([]),
+  const commits = useAsync(`commits:${threadId}:${source}${repoSuffix}`, (signal) =>
+    source === "commit" ? (repoId === undefined ? api.commits(threadId, signal) : api.commits(threadId, signal, repoId)) : Promise.resolve([]),
   );
   const [picked, setPicked] = useState<string | null>(null);
   const commitReveal = useUi((state) => state.commitReveal);
@@ -109,9 +116,21 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     if (!commitReveal) return;
     setSource("commit");
     setPicked(commitReveal.sha);
-  }, [commitReveal]);
+    // A commit named by a link is the primary repository's.
+    chooseRepo(threadId, null);
+  }, [commitReveal, threadId]);
   const sha = picked ?? commits.data?.[0]?.sha ?? null;
   const [pickedBase, setPickedBase] = useState<string | null>(null);
+  // A base or commit belongs to the repository it was picked in.
+  const seenRepo = useRef(repoId);
+  useEffect(() => {
+    if (seenRepo.current === repoId) return;
+    seenRepo.current = repoId;
+    // A commit a link just revealed is the primary's own and stays.
+    if (commitReveal && picked === commitReveal.sha) return;
+    setPickedBase(null);
+    setPicked(null);
+  }, [repoId]); // eslint-disable-line react-hooks/exhaustive-deps
   const base = pickedBase ?? thread?.worktree?.base ?? "main";
   const scope =
     source === "turn"
@@ -137,11 +156,13 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   // several repositories reads once per repository and marks each file with the repository it came from; any other thread reads once.
   const repoList = threadRepos.repos;
   const repoKey = repoList ? repoList.map((repo) => repo.repo_id).join(",") : "";
-  const diff = useAsync(`diff:${threadId}:${scope ?? "none"}:${repoKey}`, async (signal): Promise<RepoFile[]> => {
+  const diff = useAsync(`diff:${threadId}:${scope ?? "none"}:${repoKey}${source === "commit" || source === "branch" ? repoSuffix || ":primary" : ""}`, async (signal): Promise<RepoFile[]> => {
     if (!scope) return [];
     if (!repoList || repoList.length === 0) return api.diff(threadId, signal, scope);
-    // An untrusted repository reports no changes and its reads are refused (`409 repo_untrusted`): it is not read.
-    const reads = await Promise.allSettled(repoList.filter((repo) => repo.trusted).map(async (repo) => {
+    // An untrusted repository reports no changes and its reads are refused (`409 repo_untrusted`): it is not read. A commit or a
+    // branch comparison is one repository's, so those scopes read only the repository the pickers are on.
+    const only = (source === "commit" || source === "branch") && choice.selected ? choice.selected.repo_id : null;
+    const reads = await Promise.allSettled(repoList.filter((repo) => repo.trusted && (only === null || repo.repo_id === only)).map(async (repo) => {
       const files = await api.diff(threadId, signal, scope, repo.repo_id === projectId ? undefined : repo.repo_id);
       return files.map((file): RepoFile => ({ ...file, repo_id: repo.repo_id }));
     }));
@@ -200,6 +221,9 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const wide = width >= WIDE;
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   const hunkActions = useHunkActions(threadId, cwd);
+  // The trust prompt a refused hunk or line write offers; the write is never repeated by it.
+  const [trusting, setTrusting] = useState<string | null>(null);
+  const pushToast = useUi((state) => state.pushToast);
 
   const files = useMemo(() => {
     const every: RepoFile[] = diff.data ?? [];
@@ -266,11 +290,11 @@ export function DiffPanel({ threadId }: { threadId: string }) {
     }
   }, [reveal, resolved.value, files, consume, threadId]);
 
-  const pair: ComparePair | null = branches.status === "ready"
+  const pair: ComparePair | null = pairBranches
     ? {
         base,
-        head: branches.data.find((branch) => branch.current)?.name ?? null,
-        bases: [...new Set(branches.data.filter((branch) => !branch.current).map((branch) => branch.name))],
+        head: pairBranches.find((branch) => branch.current)?.name ?? null,
+        bases: [...new Set(pairBranches.filter((branch) => !branch.current).map((branch) => branch.name))],
         enabled: source === "branch",
         onBase: setPickedBase,
       }
@@ -356,6 +380,9 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       }}
     >
       <JjChange threadId={threadId} version={version} />
+      {choice.multi && (source === "commit" || source === "branch") ? (
+        <div className="repos-scope"><span className="field-hint">Repository</span><RepoChooser choice={choice} /></div>
+      ) : null}
       <ChangesHeader
         source={source}
         onSource={pickSource}
@@ -369,6 +396,9 @@ export function DiffPanel({ threadId }: { threadId: string }) {
         <div className="hunk-banner" role="alert">
           <CircleAlert size={14} aria-hidden />
           <span><b>{hunkActions.notice.title}</b> {hunkActions.notice.detail}</span>
+          {hunkActions.notice.untrusted && (hunkActions.notice.untrusted.repoId !== null || choice.multi) ? (
+            <Button small onClick={() => setTrusting(hunkActions.notice?.untrusted?.repoId ?? projectId)}>Trust repository…</Button>
+          ) : null}
           <Button small onClick={() => { hunkActions.clearNotice(); reload(); }}>{hunkActions.notice.action}</Button>
         </div>
       ) : null}
@@ -381,13 +411,18 @@ export function DiffPanel({ threadId }: { threadId: string }) {
           </span>
         </div>
       ) : null}
+      {trusting ? (
+        <TrustRepo projectId={projectId} repoId={trusting} name={choice.repos.find((one) => one.repo_id === trusting)?.name ?? "This repository"}
+          onClose={() => setTrusting(null)}
+          onDone={() => { hunkActions.clearNotice(); threadRepos.reload(); reload(); pushToast("Trusted. Try the change again."); }} />
+      ) : null}
       <Presence>
         {pickerAt && pickerItems.length > 0 && (source === "turn" || source === "commit") ? (
           <Menu
             x={pickerAt.x}
             y={pickerAt.y}
             label={source === "turn" ? "Turn" : "Commit"}
-            heading={source === "turn" ? "Turns in this thread" : `Commits on ${branches.data?.find((branch) => branch.current)?.name ?? "this branch"}`}
+            heading={source === "turn" ? "Turns in this thread" : `Commits on ${pairBranches?.find((branch) => branch.current)?.name ?? "this branch"}`}
             minWidth={PICKER_WIDTH[source]}
             items={pickerItems}
             onClose={() => setPickerAt(null)}
