@@ -1608,3 +1608,49 @@ async fn with_the_agents_switch_off_an_attached_file_is_passed_unchanged() {
     let (got, stored) = attach_and_run(".env", body.as_bytes(), true).await;
     assert_eq!(got, vec![(stored, body.into_bytes())]);
 }
+
+#[tokio::test]
+async fn when_the_redaction_settings_cannot_be_read_nothing_reaches_the_engine() {
+    let secret = a_secret();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let read: Read = Arc::default();
+    let both: Script = {
+        let (recorder, reader) = (recording(&seen), reading(&read));
+        Arc::new(move |spec, events, cancel| {
+            reader(spec.clone(), events.clone(), cancel.clone());
+            recorder(spec, events, cancel)
+        })
+    };
+    let f = fixture(both).await;
+    let body = format!("REMOTE={secret}\n");
+    let attachment = f
+        .core
+        .add_attachment(
+            &f.thread,
+            ".env",
+            "application/octet-stream",
+            body.as_bytes(),
+        )
+        .unwrap();
+    // The redaction row holds a value that is not text, so reading it fails while every other
+    // setting still reads: admission passes and the failure is the settings read of the turn.
+    rusqlite::Connection::open(f.core.config.data_dir.join("orbyn.sqlite3"))
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('redaction', x'00ff')",
+            [],
+        )
+        .unwrap();
+    assert!(f.core.store.redaction_json().is_err());
+    for files in [vec![attachment.id.clone()], Vec::new()] {
+        let run = f
+            .core
+            .runs
+            .admit_with(&f.thread, &format!("deploy with {secret}"), &files, "t")
+            .unwrap();
+        assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+        assert!(f.core.store.run(&run.id).unwrap().error.is_some());
+    }
+    assert!(seen.lock().unwrap().is_empty(), "the engine was started");
+    assert!(read.lock().unwrap().is_empty(), "the engine read a file");
+}
