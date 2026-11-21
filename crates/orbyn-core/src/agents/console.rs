@@ -88,7 +88,7 @@ impl Core {
             .console(&ConsoleSpec {
                 session: &session,
                 model: thread.model.as_deref(),
-                plan: thread.lifecycle.as_ref().is_some_and(|l| l.plan_mode),
+                plan: false, // a saved plan_mode never restricts a run
                 root: &root,
                 checkout: &checkout,
             })

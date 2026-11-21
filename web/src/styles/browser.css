@@ -806,3 +806,49 @@ div.browser-bridge-row {
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* Device toolbar: width and height fields, the aspect-ratio lock and the pill that brings the toolbar back (parity H36). */
+.browser-devices {
+  flex-wrap: wrap;
+}
+.browser-devices-sizes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.browser-size-field {
+  width: 64px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.browser-size-field[aria-invalid="true"] {
+  border-color: var(--color-danger);
+  box-shadow: inset 0 0 0 1px var(--color-danger);
+}
+.browser-devices-problem {
+  margin: 0;
+  padding: 0 8px 4px;
+}
+/* In a narrow panel the device choice takes its own row, and the fields, the lock and Rotate share the row under it. */
+.browser-devices > select {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.browser-size-pill {
+  align-self: center;
+  flex: none;
+  margin: 4px 0;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-sunken);
+  color: var(--color-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.browser-size-pill span {
+  color: var(--color-muted);
+  opacity: 0.8;
+}

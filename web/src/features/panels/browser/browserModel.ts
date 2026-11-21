@@ -1,4 +1,5 @@
 // The address, zoom, device and recent-page rules of the Browser panel.
+import { customSearchUrl } from "./searchAddress";
 
 /** A page on this machine: it loads with no network, and needs nothing from the Orbyn service. */
 export function isLocalUrl(url: string): boolean {
@@ -22,12 +23,19 @@ const ENGINES: Record<string, string> = {
   startpage: "https://www.startpage.com/sp/search?query=",
 };
 
-/** A URL, a local address, or words for the chosen search engine. */
-export function resolveAddress(input: string, engine: string): string {
+/**
+ * A URL, a local address, or words for the chosen search engine. `custom` uses `customAddress` when it is usable, and DuckDuckGo
+ * otherwise, as for an engine the app does not know.
+ */
+export function resolveAddress(input: string, engine: string, customAddress?: string): string {
   const text = input.trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text;
   if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(text)) return `http://${text}`;
   if (/^[^\s/]+\.[a-z]{2,}(\/|$)/i.test(text)) return `https://${text}`;
+  if (engine === "custom") {
+    const custom = customSearchUrl(customAddress ?? "", text);
+    if (custom) return custom;
+  }
   return `${ENGINES[engine] ?? ENGINES.duckduckgo}${q(text)}`;
 }
 

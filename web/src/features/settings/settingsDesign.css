@@ -979,3 +979,17 @@
   color: var(--color-text);
   font-size: var(--text-small);
 }
+
+/* Theme editor: the element inspector (parity K15). Settings is hidden while picking so the app behind it can be pointed at. */
+html[data-inspecting] .settings-page { display: none; }
+html[data-inspecting] .main-view[hidden] { display: block; }
+.inspector-layer { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
+.inspector-dim { position: absolute; inset: 0; background: color-mix(in srgb, var(--color-text) 18%, transparent); }
+.inspector-outline { position: fixed; outline: 2px solid var(--color-blue); outline-offset: -1px; background: color-mix(in srgb, var(--color-blue) 10%, transparent); }
+.inspector-tip { position: fixed; padding: 2px 8px; border-radius: var(--radius-5); background: var(--color-primary); color: var(--color-onAccent); font-size: 11.5px; font-family: var(--font-mono); white-space: nowrap; }
+.inspector-bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 14px; border-radius: 10px; background: var(--color-background); border: 1px solid var(--color-borderStrong); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); pointer-events: auto; max-width: calc(100vw - 32px); }
+.inspector-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-sunken); }
+.inspector-card p { margin: 0; }
+.inspector-card-head { display: flex; align-items: center; gap: 8px; }
+.inspector-card-head code { color: var(--color-muted); font-size: 11.5px; }
+.tkn[data-picked] { outline: 2px solid var(--color-blue); outline-offset: 4px; border-radius: var(--radius-5); }
