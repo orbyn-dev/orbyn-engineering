@@ -1,4 +1,4 @@
-import { Check, Download, Folder, RefreshCw, TriangleAlert } from "lucide-react";
+import { Check, Download, Folder, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import type { EngineStatus } from "../../api/types";
 import { relativeTime } from "../../lib/format";
@@ -9,6 +9,7 @@ import { useVisibleProjects, useWorkspace } from "../../product/state/workspace"
 import { ProjectBadge } from "../../product/ui/badges";
 import { Button } from "../../ui/controls";
 import { useTrackers, WelcomeTrackers } from "../issues";
+import { SkillsNotice } from "./SkillsNotice";
 import { useDefaultEngine } from "./useDefaultEngine";
 import { agentRow, listedAgents, noEngineReady, recentProjects, type AgentRow } from "./welcomeModel";
 import "./onboarding.css";
@@ -83,6 +84,7 @@ export function WelcomePage() {
         <h1 tabIndex={-1} data-page-title>Welcome to Orbyn Engineering</h1>
         <p>Open a project{trackers.rows !== null ? ", connect a tracker" : ""} and pick the engine your threads start with.</p>
       </header>
+      <SkillsNotice />
       {noEngineReady(engines) ? (
         <div className="welcome-banner" role="status">
           <TriangleAlert size={15} aria-hidden />
@@ -90,18 +92,6 @@ export function WelcomePage() {
           <Button small icon={<RefreshCw size={13} aria-hidden />} onClick={() => void refresh()}>Check again</Button>
         </div>
       ) : null}
-      <div className="welcome-cards">
-        <button type="button" className="welcome-card" onClick={() => setPalette("add-project")}>
-          <Folder size={18} aria-hidden />
-          <b>Open a project</b>
-          <span>A folder on this computer</span>
-        </button>
-        <button type="button" className="welcome-card" onClick={() => setPalette("add-project-url")}>
-          <Download size={18} aria-hidden />
-          <b>Clone a repository</b>
-          <span>Git URL, or owner/name on GitHub</span>
-        </button>
-      </div>
       <section aria-labelledby="welcome-agents">
         <h2 id="welcome-agents">Agents</h2>
         {engines === null ? (
@@ -116,7 +106,13 @@ export function WelcomePage() {
       </section>
       <WelcomeTrackers />
       <section aria-labelledby="welcome-projects">
-        <h2 id="welcome-projects">Recent projects</h2>
+        <h2 id="welcome-projects">Projects</h2>
+        <div className="welcome-project-actions">
+          <Button small icon={<Plus size={13} aria-hidden />} onClick={() => setPalette("add-project-new")}>New project</Button>
+          <Button small icon={<Download size={13} aria-hidden />} onClick={() => setPalette("add-project-url")}>Clone a repository</Button>
+          <Button tone="primary" small icon={<Folder size={13} aria-hidden />} onClick={() => setPalette("add-project")}>Add a folder</Button>
+        </div>
+        <h3 className="welcome-subhead">Recent projects</h3>
         {recent.length === 0 ? (
           <p className="welcome-quiet">Projects you open or clone show up here.</p>
         ) : (

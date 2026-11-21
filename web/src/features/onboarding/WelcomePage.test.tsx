@@ -61,14 +61,37 @@ afterEach(() => {
 });
 
 describe("Welcome page", () => {
-  it("opens the add-project and clone palettes from its two actions, one click each", async () => {
+  it("opens the add-project flows from its three Projects actions, one click each", async () => {
     load([engine({})]);
     const user = userEvent.setup();
     render(<WelcomePage />);
-    await user.click(screen.getByRole("button", { name: /Open a project/ }));
-    expect(useUi.getState().palette).toBe("add-project");
-    await user.click(screen.getByRole("button", { name: /Clone a repository/ }));
+    await user.click(screen.getByRole("button", { name: "New project" }));
+    expect(useUi.getState().palette).toBe("add-project-new");
+    await user.click(screen.getByRole("button", { name: "Clone a repository" }));
     expect(useUi.getState().palette).toBe("add-project-url");
+    await user.click(screen.getByRole("button", { name: "Add a folder" }));
+    expect(useUi.getState().palette).toBe("add-project");
+  });
+
+  it("reaches New project by keyboard, and Esc closes the flow it opened", async () => {
+    load([engine({})]);
+    const user = userEvent.setup();
+    render(<WelcomePage />);
+    const button = screen.getByRole("button", { name: "New project" });
+    button.focus();
+    await user.keyboard("{Enter}");
+    expect(useUi.getState().palette).toBe("add-project-new");
+    act(() => useUi.getState().setPalette(null));
+    expect(useUi.getState().palette).toBeNull();
+  });
+
+  it("draws Projects as the section that holds the actions and the recent list, in the design's order", () => {
+    load([engine({})], [project("a", "orbyn-engineering")]);
+    render(<WelcomePage />);
+    const section = screen.getByRole("region", { name: "Projects" });
+    const buttons = within(section).getAllByRole("button").map((b) => b.textContent);
+    expect(buttons).toEqual(["New project", "Clone a repository", "Add a folder"]);
+    expect(within(section).getByRole("heading", { name: "Recent projects" })).toBeVisible();
   });
 
   it("says where projects will appear on a first run", () => {

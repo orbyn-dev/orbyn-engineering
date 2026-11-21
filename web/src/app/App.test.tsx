@@ -368,7 +368,7 @@ describe("App against the mock API", () => {
     mock.reset("empty");
     const user = userEvent.setup();
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Add your first project" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to Orbyn Engineering" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add a folder" }));
     const palette = await screen.findByRole("dialog", { name: "Command palette" });
     const field = await within(palette).findByLabelText("Folder path");
@@ -431,12 +431,48 @@ describe("App against the mock API", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Welcome to Orbyn Engineering" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Add your first project" })).toBeNull();
+    // The wizard stands alone: the Welcome page's Projects section is not beneath it.
+    expect(screen.queryByRole("region", { name: "Projects" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New project" })).toBeNull();
+  });
+
+  it("shows the Welcome page on an empty home once the welcome steps are finished", async () => {
+    mock.reset("first-run");
+    useUi.getState().setPrefs({ welcomeDone: false });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Skip for now" }));
+    expect(await screen.findByRole("region", { name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Agents" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Add your first project" })).toBeNull();
+  });
+
+  it("opens the add-project flow from New project on the Welcome page", async () => {
+    mock.reset("empty");
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "New project" }));
+    const dialog = await screen.findByRole("dialog", { name: "New project" });
+    await user.type(within(dialog).getByLabelText("Name"), "fresh-idea{Enter}");
+    expect(await screen.findByRole("heading", { name: /What should we build in/ })).toBeInTheDocument();
+  });
+
+  it("leaves the home as the draft flow when there are projects, and reaches Welcome from the palette", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: /What should we build in/ })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Projects" })).toBeNull();
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Command palette" });
+    await user.click(within(palette).getByRole("button", { name: "Welcome" }));
+    expect(await screen.findByRole("region", { name: "Projects" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/welcome");
   });
 
   it("opens straight on the draft flow, with nothing to set up", async () => {
     mock.reset("first-run");
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Add your first project" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to Orbyn Engineering" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Workspace" })).toBeInTheDocument();
     expect(screen.queryByText(/set up/i)).toBeNull();
     expect(screen.queryByRole("link", { name: "Skill library settings" })).toBeNull();
@@ -447,7 +483,7 @@ describe("App against the mock API", () => {
     mock.failSetup();
     const user = userEvent.setup();
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Add your first project" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome to Orbyn Engineering" })).toBeInTheDocument();
     await user.click(await screen.findByRole("link", { name: "Skill library settings" }));
     await user.click(await screen.findByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't be reached/);
