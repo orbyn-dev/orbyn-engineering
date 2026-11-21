@@ -76,7 +76,7 @@ export function SecretsSection() {
       {heading("Secrets")}
       <p className="secrets-intro">
         Orbyn hides values that look like secrets in the Crew ledger and in what Crew stores. Your own patterns also mask
-        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers and review text reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed. Terminal blocks follow later.
+        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers, review text and attached text files reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed and attached. Terminal blocks follow later.
       </p>
       <SettingsBanner>
         Hiding in terminal blocks is not applied yet. These choices are saved and take effect when it arrives. Crew already blocks every format, always.
@@ -96,7 +96,7 @@ export function SecretsSection() {
             onChange={(event) => void quiet(changeSecretSurfaces({ terminal: event.target.checked }))}
           />
         </SettingRow>
-        <SettingRow title="What agents read" description="On by default. Switched off per project. Text you send is masked; files, attachments and what an engine reads on its own are not.">
+        <SettingRow title="What agents read" description="On by default. Switched off per project. Text you send and attached text files (up to 1 MiB) are masked; images, other attachments and what an engine reads on its own are not.">
           <span />
         </SettingRow>
         <SettingRow

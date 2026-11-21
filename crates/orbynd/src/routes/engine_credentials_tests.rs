@@ -538,3 +538,30 @@ async fn a_key_in_the_url_is_never_taken() {
     assert!(app.memory.items.lock().unwrap().is_empty());
     assert_eq!(app.status().await["state"], json!("not_saved"));
 }
+
+#[tokio::test]
+async fn the_engine_hosts_secret_source_is_the_cores_and_follows_the_opt_in() {
+    use orbyn_core::agents::driver::host::{CoreCell, secrets_from};
+
+    let app = serve("hostsource", false).await;
+    let cell = CoreCell::default();
+    let cursor = secrets_from(cell.clone(), "cursor");
+    // Not bound to a core yet: no key, never a fallback to the keychain.
+    assert!(cursor().is_none());
+    cell.set(Arc::downgrade(&app.core)).unwrap();
+    app.opt_in(true).await;
+    app.call(
+        "PUT",
+        &format!("{BASE}/cursor/key"),
+        json!({"key": KEY}),
+        true,
+    )
+    .await;
+    let secret = cursor().expect("opted in with a saved key");
+    assert_eq!((secret.env, secret.expose()), ("CURSOR_API_KEY", KEY));
+    // A family the allowlist does not name gets nothing, whatever is saved.
+    assert!(secrets_from(cell.clone(), "claude")().is_none());
+    // Turning it off stops the next spawn from getting the key.
+    app.opt_in(false).await;
+    assert!(cursor().is_none());
+}

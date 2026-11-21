@@ -24,10 +24,14 @@ breaks one looks like a message with no reply, and the person has to send it twi
    exception to all of this is the worker of a background crew's run, whose turn nobody reads live: no reply there ends the run
    `engine_error`.
 
-Rule 3 is partly met. The core counts a run as having replied on any event that shows work (`shows_work` in
-`conversation::runs::turn`): words, a tool start, a permission ask, an activity snapshot, a question. It does not yet
-count only the prompt's own turn. If a Claude leftover turn says something and the prompt's turn says nothing, the run
-still completes as success. Counting a reply only after the echo (Claude) or for the prompt's turn id (Codex) is open work.
+Rule 3 counts only output that belongs to the prompt's own turn. The core counts a run as having replied on an event
+that shows work (`shows_work` in `conversation::runs::turn`): words, a tool start, a permission ask, an activity snapshot,
+a question. A driver that can tell a leftover turn from the prompt's wraps what that turn says in `EngineEvent::Leftover`:
+the core shows it as it shows any event, and does not count it. A silent prompt turn after a leftover turn that spoke
+therefore ends as "No reply". The Claude CLI driver wraps what arrives after a `task_notification` and before the echo of the
+prompt; the engine host's Claude family wraps what arrives after the prompt's own `command_lifecycle` `queued` and before its
+`started` (the core sends the prompt's `messageId`, the host sends it as the SDK message `uuid`). Codex wraps what a notification names with another turn's `turnId` than the prompt's. A driver with no such
+signal wraps nothing, so nothing it says is dropped. ACP runs one process per run and drops another session's updates, so no leftover turn reaches the core.
 
 ## How each rule is met
 

@@ -7,8 +7,9 @@ import type { EngineHostState } from "../../generated/EngineHostState";
  * The engine host's status and the API key storage choice, as the settings screens read them.
  *
  * The host status is REAL: `GET /api/engine-host` (Local read, Eng 2's HostDriver slice 1) answers one `EngineHostStatus` per family, and
- * `hostStatus.ts` turns each into the `HostRow` below. Stop, restart and retry-host are not routes yet (slice 2, Person-class): the real
- * client reports `writable: false` and the screens draw no button for them. Fields marked PLANNED are in docs/engine-host-protocol.md
+ * `hostStatus.ts` turns each into the `HostRow` below. Stop and restart are Person routes
+ * (`POST /api/engine-host/{family}/stop` and `/restart`); Try again is the restart. A host with a background task open answers 409
+ * `background_open`, and only a second request with `stopBackground: true`, sent after the person confirmed, goes through. Fields marked PLANNED are in docs/engine-host-protocol.md
  * (Host status, Planned) or guessed; the real client never fills them, and a screen draws one only when it is there. The mock fills them.
  *
  * Nothing a screen reads can carry a secret: the API key storage choice is a word and a date. The key goes outward once, as the argument of `saveKey`.
@@ -66,7 +67,7 @@ export interface HostRow {
   stopped_at?: string | null;
   /** The crash as a sentence plus (PLANNED) a cause chain; derived from `last_crash` for a real row. */
   last_error?: HostError | null;
-  /** Only a family marked unavailable waits for the person. Always false from the real client: retry is slice 2. */
+  /** Only a family marked unavailable (`cant_start`) waits for the person: the real client sets it for that state. */
   can_retry: boolean;
   /** PLANNED: one host serves every thread of the family (Cursor). */
   pooled?: boolean;
@@ -122,6 +123,12 @@ export interface KeyStorage {
   stopped?: number | null;
 }
 
+/** The service's code for a stop or restart refused because the host has a background task open. */
+export const BACKGROUND_OPEN = "background_open";
+
+/** What a stop or restart asks beyond the host: `stopBackground` is sent only after the person was told background work would end. */
+export interface HostControlOptions { stopBackground?: boolean }
+
 /** A refused keychain write: the service answers with one of these codes and nothing else about why. */
 export const KEYCHAIN_LOCKED = "keychain_locked";
 export const KEYCHAIN_DENIED = "keychain_denied";
@@ -131,7 +138,7 @@ export const KEYCHAIN_DENIED = "keychain_denied";
  * screens then draw nothing. Every write is one request for one click.
  */
 export interface EngineHostApi {
-  /** False when the service has no stop, restart or retry-host route: the screens then draw no button for them. Absent means true (the mock). */
+  /** False when the service has no stop or restart route: the screens then draw no button for them. Absent means true (the real client and the mock). */
   writable?: boolean;
   hosts(signal?: AbortSignal): Promise<HostRow[] | null>;
   crashes(signal?: AbortSignal): Promise<HostCrash[]>;
@@ -141,9 +148,9 @@ export interface EngineHostApi {
    * Start a family that is marked unavailable, or restart a running one (which ends its threads like `stop`).
    * The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`): it changes what runs.
    */
-  retry(hostId: string): Promise<void>;
+  retry(hostId: string, options?: HostControlOptions): Promise<void>;
   /** Stop a running or restarting host; the threads on it end with the host's own sentence. The real route must be Person-class (ENFORCED). */
-  stop(hostId: string): Promise<void>;
+  stop(hostId: string, options?: HostControlOptions): Promise<void>;
   /** Never keep this engine's API key (a decision, kept). The real route must be Person-class (ENFORCED). */
   decline(engineId: string): Promise<KeyStorage>;
   /**

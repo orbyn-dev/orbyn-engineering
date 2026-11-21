@@ -152,3 +152,24 @@ it("while loading, Local servers shows a still bar after 400 ms but Changes keep
     vi.useRealTimers();
   }
 });
+
+const codexRead = (used: number) => ({
+  engine: "codex", checked_at: "", limits: {}, plan: null,
+  windows: [{ id: "primary", label: "5h", used_percent: used, window_minutes: 300, resets_at: null }],
+});
+
+it("gives the Limits row an age line and a refresh that forces a read and keeps the figures", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    const read = vi.spyOn(api.api, "threadLimits").mockResolvedValueOnce(codexRead(38) as never).mockRejectedValue(new Error("down"));
+    render(<LimitsRow threadId="row-a" engine="codex" />);
+    expect(await screen.findByText("Checked just now")).toBeVisible();
+    act(() => { vi.advanceTimersByTime(3 * 60 * 60_000); });
+    expect(screen.getByText("Checked 3 hr ago")).toBeVisible();
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole("button", { name: "Refresh limits" }));
+    expect(read).toHaveBeenLastCalledWith("row-a", expect.any(AbortSignal), true);
+    expect(await screen.findByText("Couldn\u2019t check limits")).toBeVisible();
+    expect(screen.getByText("5h 62% left")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  } finally { vi.useRealTimers(); }
+});

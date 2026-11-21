@@ -43,6 +43,11 @@ export function limitsAge(key: string): number | null {
   return at === undefined ? null : Date.now() - at;
 }
 
+/** When the last good answer for this key arrived (epoch ms), or null when there is none: the label's "Checked …". */
+export function limitsAnsweredAt(key: string): number | null {
+  return entries.get(key)?.at ?? null;
+}
+
 /** Drops what is remembered for one key, so the next read goes out (for a read made outside the store). */
 export function forgetLimits(key: string) {
   entries.delete(key);

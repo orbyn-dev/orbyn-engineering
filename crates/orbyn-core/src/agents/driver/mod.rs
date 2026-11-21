@@ -245,6 +245,10 @@ pub enum EngineEvent {
     Goal(Option<orbyn_contracts::ThreadGoal>),
     /// An MCP App page for a finished tool call, read while the engine was alive.
     McpApp(crate::tools::mcp_apps::McpAppSnapshot),
+    /// An event from a turn the engine ran for its own leftovers (a background agent that finished while
+    /// the process was down) ahead of the prompt's. The run shows it as it shows any event, but it never
+    /// counts as the engine answering the prompt (docs/engine-run-contract.md, rule 3).
+    Leftover(Box<EngineEvent>),
     Finished(EngineOutcome),
 }
 

@@ -229,6 +229,20 @@ impl TurnMapper {
             }
             _ => tracing::trace!(%method, "ignored Codex notification"),
         }
+        // Output of another turn on this thread (one that ran before the prompt's, or beside it)
+        // is shown but is not the engine answering the prompt.
+        let theirs = params.get("turnId").and_then(Value::as_str);
+        if method != "turn/completed"
+            && let (Some(ours), Some(theirs)) = (self.turn.as_deref(), theirs)
+            && theirs != ours
+        {
+            for event in &mut step.events {
+                if matches!(event, EngineEvent::Agui(_) | EngineEvent::Item(_)) {
+                    let inner = std::mem::replace(event, EngineEvent::Files(Vec::new()));
+                    *event = EngineEvent::Leftover(Box::new(inner));
+                }
+            }
+        }
         step
     }
 

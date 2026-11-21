@@ -151,6 +151,9 @@ impl RunManager {
         } else {
             warm
         };
+        // The engine reads an attached text file itself, so it is given a masked copy in the run's
+        // own folder; the person's file stays as uploaded (docs/attachments-transcripts.md).
+        let files = self.masked_attachment_copies(&thread.project_id, &files, run_dir)?;
         let mut context = run_context(&RunContext {
             library: &root,
             revision: &revision,
@@ -455,13 +458,15 @@ impl RunManager {
                             EngineOutcome::Failed("The engine stopped without finishing.".into())
                         };
                     };
+                    // A leftover turn's events are shown like any other, but are not the engine answering.
+                    let (event, own_turn) = split_leftover(event);
                     // Anything else keeps its place after the text before it.
                     if !matches!(event, EngineEvent::Agui(_))
                         && let Some(outcome) = self.write_events(scope, shaper.flush())
                     {
                         break outcome;
                     }
-                    replied |= shows_work(&event, &mut user_messages);
+                    replied |= shows_work(&event, &mut user_messages) && own_turn;
                     match event {
                         EngineEvent::Agui(event) => {
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
@@ -530,6 +535,7 @@ impl RunManager {
                                 break outcome;
                             }
                         }
+                        EngineEvent::Leftover(_) => {}
                         EngineEvent::Finished(EngineOutcome::Completed)
                             if expects_reply && !replied =>
                         {
@@ -612,6 +618,14 @@ impl RunManager {
     }
 }
 
+/// A leftover turn's event as itself, and whether it is the prompt's own: only the prompt's own counts as the engine answering.
+fn split_leftover(event: EngineEvent) -> (EngineEvent, bool) {
+    match event {
+        EngineEvent::Leftover(inner) => (*inner, false),
+        event => (event, true),
+    }
+}
+
 /// How a run reads when the engine ended an ordinary turn without saying or doing anything.
 pub(super) const NO_REPLY: &str =
     "No reply: the engine finished without answering. Send your message again.";
@@ -657,6 +671,24 @@ mod reply_tests {
 
     fn agui(event: AgUiEvent) -> EngineEvent {
         EngineEvent::Agui(event)
+    }
+
+    #[test]
+    fn a_leftover_turns_words_are_shown_but_are_not_the_engine_answering() {
+        let said = || {
+            agui(AgUiEvent::TextMessageContent {
+                message_id: "a".into(),
+                delta: "the old agent finished".into(),
+            })
+        };
+        let (shown, own) = split_leftover(EngineEvent::Leftover(Box::new(said())));
+        assert!(!own, "a leftover turn is not the prompt's");
+        assert!(
+            matches!(shown, EngineEvent::Agui(_)),
+            "it is still shown as itself"
+        );
+        let (_, own) = split_leftover(said());
+        assert!(own, "an ordinary event is the prompt's");
     }
 
     #[test]

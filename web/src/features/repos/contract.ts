@@ -66,6 +66,8 @@ export interface StartThreadInput {
   permission_mode: import("../../api/types").PermissionMode;
   /** The optional first message. */
   message?: string;
+  /** docs/multi-repo.md "Task folder": one new branch name cut in every chosen repository. Sent only for two or more repositories; absent, the service makes one name. */
+  branch_name?: string;
 }
 
 /** One repository a thread works in. */
@@ -95,6 +97,38 @@ export type ThreadGitAction =
   | { kind: "merge"; number: number; method: "merge" | "squash" | "rebase" }
   | { kind: "review"; number: number; event: "comment" | "approve" | "request_changes"; body: string };
 
+/** The thread folder of a thread in 2 to `max_per_thread` repositories. `root` is shown as text only; a repository's worktree is `<root>/<name>`. */
+export interface TaskFolder {
+  root: string;
+  /** The one branch name the thread uses in every repository. */
+  branch: string;
+  repos: ThreadRepo[];
+  max_per_thread: number;
+}
+
+/** One entry of a folder scan or workspace import. `name` and `path` are untrusted text. */
+export interface ScannedFolder {
+  name: string;
+  path: string;
+  is_git: boolean;
+  source: "child" | "code-workspace";
+  /** Already a repository of a project. */
+  in_project: boolean;
+  /** Why it cannot be added by import; `null` when it can. */
+  refused: "outside" | "missing" | "not_directory" | null;
+}
+
+/** The answer to a scan. Nothing is added or trusted by it. */
+export interface RepoScan {
+  path: string;
+  is_git: boolean;
+  /** The `.code-workspace` file the entries came from, or `null` for a folder scan. */
+  code_workspace_file: string | null;
+  folders: ScannedFolder[];
+  /** More folders were there than the service returned. */
+  truncated: boolean;
+}
+
 export type StartedThread = import("../../api/types").Thread;
 
 /** `null` from a read is "this service has no multi-repository projects" (`404`): the screens hide and no write is made. Every write is Person-class and one write per call. */
@@ -120,6 +154,13 @@ export interface ReposApi {
   startThread(projectId: string, input: StartThreadInput): Promise<StartedThread>;
   /** The repositories a thread works in; `null` (`404`) when the thread is not a multi-repository thread. */
   threadRepos(threadId: string, signal?: AbortSignal): Promise<ThreadRepo[] | null>;
+  /**
+   * Reads one folder (or a `.code-workspace` file) and lists what could be added: `POST /api/projects/{id}/repos/scan`, Person-class,
+   * writes nothing. `null` (`404`) means the service has no scan. A newer call supersedes an older one through `signal`.
+   */
+  scan(projectId: string, path: string, signal?: AbortSignal): Promise<RepoScan | null>;
+  /** The thread's task folder; `null` (`404`) when the thread has none or the service does not know the route. */
+  taskFolder(threadId: string, signal?: AbortSignal): Promise<TaskFolder | null>;
   /** Adds one trusted repository of the project to the thread. */
   addThreadRepo(threadId: string, repoId: string): Promise<ThreadRepo>;
   /**

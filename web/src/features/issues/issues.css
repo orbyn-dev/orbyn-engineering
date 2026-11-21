@@ -184,3 +184,18 @@
 .iss-pr-line b { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
 .iss-pr-sub { display: flex; flex-wrap: wrap; gap: 6px; color: var(--color-muted); overflow-wrap: anywhere; }
 .iss-pr-state { color: var(--color-muted); }
+
+/* Inline editors: the description, and the label and assignee pickers. Minimal: no frame draws them yet. */
+.iss-edit { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.iss-edit-label { font-size: var(--text-label); color: var(--color-muted); }
+.iss-edit textarea, .iss-edit input[type="search"] { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--color-borderStrong); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--text-meta); }
+.iss-edit textarea { min-height: 160px; resize: vertical; }
+.iss-edit textarea:focus-visible, .iss-edit input[type="search"]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.iss-edit-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.iss-edit-count { margin-right: auto; font-size: var(--text-label); }
+.iss-edit-over, .iss-edit-error { color: var(--color-danger, var(--color-text)); }
+.iss-edit-error { margin: 0; font-size: var(--text-meta); }
+.iss-pick-form { padding: 8px; border: 1px solid var(--color-divider); border-radius: 8px; }
+.iss-pick-items { display: flex; flex-direction: column; gap: 2px; max-height: 220px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.iss-pick-items label { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 4px; font-size: var(--text-meta); overflow-wrap: anywhere; }
+.iss-pick-items label:hover { background: var(--color-rowHover); }

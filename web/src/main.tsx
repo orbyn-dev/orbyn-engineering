@@ -28,6 +28,7 @@ import "./styles/tools.css";
 import "./styles/panelTabs.css";
 import "./styles/terminalInput.css";
 import "./styles/commandBlocks.css";
+import "./styles/terminalAttention.css";
 import "./styles/panelStrip.css";
 import "./styles/review.css";
 import "./styles/explorer.css";

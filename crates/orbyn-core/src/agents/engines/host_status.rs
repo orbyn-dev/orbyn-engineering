@@ -1,11 +1,24 @@
 //! The engine host's state as the wire contract the UI reads (`GET /api/engine-host`).
 
 use orbyn_contracts::{
-    EngineHostCrash, EngineHostErrorKind, EngineHostNotUsed, EngineHostState, EngineHostStatus,
+    EngineHostCrash, EngineHostErrorKind, EngineHostNotUsed, EngineHostRunError, EngineHostState,
+    EngineHostStatus, EngineHostThread, EngineHostThreadState,
 };
 
 use super::EngineManager;
-use crate::agents::driver::host::{CrashKind, HostState, HostStatus, NotUsed};
+use crate::agents::driver::host::{
+    ControlError, CrashKind, ErrorKind, HostState, HostStatus, NotUsed,
+};
+use crate::error::CoreError;
+use crate::store::AuditRecord;
+
+/// Why the person's stop or restart of a host did nothing.
+#[derive(Debug)]
+pub enum HostControlFailure {
+    Control(ControlError),
+    /// The audit row could not be written, so nothing was done.
+    Audit(CoreError),
+}
 
 fn error_kind(kind: CrashKind) -> EngineHostErrorKind {
     match kind {
@@ -17,6 +30,21 @@ fn error_kind(kind: CrashKind) -> EngineHostErrorKind {
         CrashKind::HelloTimeout => EngineHostErrorKind::HelloTimeout,
         CrashKind::StartFailed => EngineHostErrorKind::StartFailed,
     }
+}
+
+fn run_error(kind: ErrorKind) -> Option<EngineHostRunError> {
+    Some(match kind {
+        ErrorKind::Auth => EngineHostRunError::Auth,
+        ErrorKind::RateLimit => EngineHostRunError::RateLimit,
+        ErrorKind::Network => EngineHostRunError::Network,
+        ErrorKind::InvalidRequest => EngineHostRunError::InvalidRequest,
+        ErrorKind::Unsupported => EngineHostRunError::Unsupported,
+        ErrorKind::Cancelled => EngineHostRunError::Cancelled,
+        ErrorKind::Engine => EngineHostRunError::Engine,
+        ErrorKind::Host => EngineHostRunError::Host,
+        ErrorKind::SessionLost => EngineHostRunError::SessionLost,
+        ErrorKind::Unknown => return None,
+    })
 }
 
 /// One family's status for the wire. Never carries an environment, arguments or a key: the
@@ -65,6 +93,18 @@ pub fn contract(status: &HostStatus) -> EngineHostStatus {
         not_used,
         detail: status.state.problem(),
         action: status.state.action().map(str::to_owned),
+        threads: (!status.threads.is_empty()).then(|| {
+            status
+                .threads
+                .iter()
+                .map(|thread| EngineHostThread {
+                    thread_id: thread.clone(),
+                    family: status.family.clone(),
+                    state: EngineHostThreadState::Running,
+                })
+                .collect()
+        }),
+        last_error_kind: status.last_error.and_then(run_error),
     }
 }
 
@@ -75,6 +115,53 @@ impl EngineManager {
             Some(hub) => hub.statuses().await.iter().map(contract).collect(),
             None => Vec::new(),
         }
+    }
+
+    /// Hands the host the core that owns the person's keys, so a spawn asks it for the engine's key.
+    pub fn bind_host_core(&self, core: &std::sync::Arc<crate::app::Core>) {
+        if let Some(hub) = &self.host {
+            hub.bind(core);
+        }
+    }
+
+    /// The person's stop (`restart` false) or restart of a family's host. The audit row is written first, so
+    /// it always precedes the effect, and a failed write stops it. The row names the person's choice about
+    /// background work and carries nothing the host said.
+    pub async fn host_control(
+        &self,
+        family: &str,
+        restart: bool,
+        stop_background: bool,
+        actor: &str,
+    ) -> Result<EngineHostStatus, HostControlFailure> {
+        let Some(hub) = self.host.as_ref().filter(|hub| hub.knows(family)) else {
+            return Err(HostControlFailure::Control(ControlError::UnknownFamily));
+        };
+        self.store
+            .append_audit(&AuditRecord {
+                actor: actor.to_owned(),
+                action: if restart {
+                    "engine_host.restart"
+                } else {
+                    "engine_host.stop"
+                }
+                .into(),
+                target: family.to_owned(),
+                decision: None,
+                source: "user".into(),
+                thread_id: None,
+                run_id: None,
+                detail: serde_json::json!({ "stop_background": stop_background }),
+            })
+            .map_err(HostControlFailure::Audit)?;
+        let status = if restart {
+            hub.restart(family, stop_background).await
+        } else {
+            hub.stop(family, stop_background).await
+        };
+        status
+            .map(|status| contract(&status))
+            .map_err(HostControlFailure::Control)
     }
 
     /// The person asked again after a family gave up.
