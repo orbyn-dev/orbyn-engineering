@@ -23,6 +23,7 @@ pub fn routes() -> Router<AppState> {
             "/api/threads/{id}",
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
+        .route("/api/threads/{id}/family", get(thread_family))
         .route("/api/threads/{id}/items", get(list_items))
         .route("/api/threads/{id}/messages", get(thread_messages))
         .route("/api/threads/{id}/items/{item}", get(get_item))
@@ -94,6 +95,14 @@ async fn get_thread(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.store.thread(&id)?))
+}
+
+/// A thread's whole family: the topmost thread and everything below it.
+async fn thread_family(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.store.thread_family(&id)?))
 }
 
 async fn delete_thread(

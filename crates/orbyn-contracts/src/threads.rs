@@ -139,6 +139,21 @@ impl PermissionMode {
 }
 
 wire! {
+/// A thread's whole family. The one stored edge is `parent_thread_id`, which a
+/// fork, a side chat and a subagent each set and `relation` names, so this is one
+/// parent/child tree rather than a separate fork lineage.
+pub struct ThreadFamily {
+    /// The thread asked for, which may be the root or any member.
+    pub thread_id: String,
+    /// The topmost thread. Any member asks for the same family.
+    pub root_thread_id: String,
+    /// The root and everything below it, every parent before its children.
+    /// Archived, settled and snoozed members stay: the family is the stored tree.
+    pub threads: Vec<Thread>,
+}
+}
+
+wire! {
 pub struct QueuedMessage {
     pub id: String,
     pub thread_id: String,

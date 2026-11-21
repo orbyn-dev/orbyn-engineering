@@ -125,7 +125,8 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use orbyn_contracts::{
-    AgUiEvent, AuditEvent, Project, Run, RunState, Thread, ThreadEvent, ThreadLifecycle, Worktree,
+    AgUiEvent, AuditEvent, Project, Run, RunState, Thread, ThreadEvent, ThreadFamily,
+    ThreadLifecycle, Worktree,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 use serde::Serialize;
@@ -140,7 +141,7 @@ pub use hub::EventHub;
 pub use queue::{PullGuideWrite, WatchRow, WatchUpdate};
 pub use runs::{Admission, Recovery};
 pub(crate) use setup::{NewSetup, SetupState};
-use threads::thread_family;
+use threads::thread_family_ids;
 pub use threads::{LifecycleRules, LimitStop, TickReport, default_settings};
 
 const ACTIVE_STATES: &str = "('admitted', 'starting', 'running', 'awaiting_approval')";
@@ -585,6 +586,49 @@ impl Store {
         with_run_state(&conn, thread)
     }
 
+    /// The thread's whole family: the topmost thread and everything below it. The
+    /// stored edge is `parent_thread_id` (a fork, a side chat and a subagent each set
+    /// it, and `relation` names which), so any member asks for the same tree.
+    /// Archived, settled and snoozed members stay, because the family is the tree the
+    /// store holds and not a view of it.
+    pub fn thread_family(&self, id: &str) -> Result<ThreadFamily> {
+        let conn = self.reader();
+        let mut root = id.to_owned();
+        let mut walked = std::collections::BTreeSet::new();
+        // Walk to the top. A thread that changed parent in a way that made a loop
+        // would otherwise never end here.
+        loop {
+            if !walked.insert(root.clone()) {
+                return Err(CoreError::Invalid(
+                    "A thread cannot be its own ancestor.".into(),
+                ));
+            }
+            let parent: Option<Option<String>> = conn
+                .query_row(
+                    "SELECT parent_thread_id FROM threads WHERE id = ?1",
+                    [&root],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match parent {
+                None => return Err(CoreError::NotFound("thread".into())),
+                Some(Some(parent)) => root = parent,
+                Some(None) => break,
+            }
+        }
+        let mut threads = Vec::new();
+        for member in thread_family_ids(&conn, &root)? {
+            let thread =
+                conn.query_row("SELECT * FROM threads WHERE id = ?1", [&member], thread_row)?;
+            threads.push(with_run_state(&conn, thread)?);
+        }
+        Ok(ThreadFamily {
+            thread_id: id.to_owned(),
+            root_thread_id: root,
+            threads,
+        })
+    }
+
     /// Live threads, or archived ones, pinned first and then by saved position.
     pub fn list_threads(&self, project_id: Option<&str>, archived: bool) -> Result<Vec<Thread>> {
         let conn = self.reader();
@@ -645,7 +689,7 @@ impl Store {
     /// rows outlive the threads. Returns every deleted id.
     pub fn delete_thread(&self, id: &str, actor: &str) -> Result<Vec<String>> {
         let deleted = self.commit(|tx, _| {
-            let family = thread_family(tx, id)?;
+            let family = thread_family_ids(tx, id)?;
             for member in &family {
                 let active: i64 = tx.query_row(
                     &format!(
