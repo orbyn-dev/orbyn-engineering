@@ -5,6 +5,7 @@ import { navigate, routeHref, type Route } from "../../product/state/route";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, LinkButton } from "../../ui/controls";
 import { Empty, Loading } from "../../product/ui/states";
+import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
 import "./onboarding.css";
 
 export function TrustFolder({ projectId, threadId }: { projectId: string; threadId: string | null }) {
@@ -47,34 +48,21 @@ export function TrustFolder({ projectId, threadId }: { projectId: string; thread
     <div className="trust">
       <div className="trust-card" role="group" aria-labelledby="trust-title">
         <h1 id="trust-title" tabIndex={-1} data-page-title>
-          Trust {project.name}?
+          {TRUST_TITLE(project.name)}
         </h1>
-        <p>Agents can read files, run commands and edit code in this folder. Only trust folders you know.</p>
-        <dl className="trust-facts">
-          <div>
-            <dt>Path</dt>
-            <dd>
-              <code className="trust-path">{homeRelative(project.path)}</code>
-            </dd>
-          </div>
-        </dl>
+        <TrustBody path={project.path} />
         {error ? (
           <p className="field-error" role="alert">
             {error}
           </p>
         ) : null}
         <div className="trust-actions">
-          <LinkButton href={routeHref(leave)}>Don’t trust</LinkButton>
+          <LinkButton href={routeHref(leave)}>{TRUST_DECLINE}</LinkButton>
           <Button tone="primary" busy={busy} onClick={() => void trust()}>
-            Trust folder
+            {TRUST_CONFIRM}
           </Button>
         </div>
       </div>
     </div>
   );
-}
-
-/** The folder as the person writes it: the home directory shortened to ~. */
-export function homeRelative(path: string): string {
-  return path.replace(/^(?:\/Users|\/home)\/[^/]+(?=\/|$)/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~");
 }

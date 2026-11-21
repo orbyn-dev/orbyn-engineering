@@ -6,7 +6,7 @@
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { Thread } from "../src/api/types.ts";
-import type { PublishInput, ReposApi, RepoRow, StartThreadInput, ThreadRepo } from "../src/features/repos/contract.ts";
+import type { PublishInput, PublishedRepo, ReposApi, RepoRow, StartThreadInput, ThreadRepo } from "../src/features/repos/contract.ts";
 
 const row = (id: string, branch: string | null, extra: Partial<RepoRow> = {}): RepoRow => ({
   id, name: id, path: `~/Documents/Github/${id}`, is_git: branch !== null, trusted: true, branch,
@@ -24,12 +24,13 @@ export function repoFixtures(): RepoRow[] {
 
 export interface ReposMock extends ReposApi {
   /** Every write the screens made, in order: `add:<path>`, `clone:<source>`, `publish:<repo>:<name>:<visibility>`, `trust:<repo>`,
-   * `git:<repo>`, `remove:<repo>`, `start:<repo>@<base>,...`, `thread-add:<thread>:<repo>`. */
+   * `git:<repo>`, `remove:<repo>`, `start:<repo>@<base>,...`, `thread-add:<thread>:<repo>`,
+   * `thread-git:<thread>:<repo>:<kind>`, `thread-remove:<thread>:<repo>`. */
   writes: string[];
   /** The engine, model and permission each `start` write carried, in order. */
   starts: Pick<StartThreadInput, "engine" | "model" | "permission_mode">[];
   /** Make the next write of that kind fail. */
-  failNext(what: "add" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | null): void;
+  failNext(what: "add" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | "thread-git" | "thread-remove" | null): void;
 }
 
 export function createReposMock(init: {
@@ -84,11 +85,11 @@ export function createReposMock(init: {
       repositories = [...held(), added];
       return added;
     },
-    publish: async (_project, repoId, input: PublishInput) => {
-      writes.push(`publish:${repoId}:${input.name}:${input.visibility}`);
+    publish: async (_project, repoId, input: PublishInput): Promise<PublishedRepo> => {
+      writes.push(`publish:${repoId}:${input.name}:${input.visibility}${input.remote ? `:${input.remote}:${input.protocol ?? "ssh"}` : ""}`);
       await wait();
       take("publish");
-      return replace({ ...find(repoId), has_remote: true });
+      return { ...replace({ ...find(repoId), has_remote: true }), pushed: true };
     },
     trust: async (_project, repoId) => {
       writes.push(`trust:${repoId}`);
@@ -132,6 +133,23 @@ export function createReposMock(init: {
       const added: ThreadRepo = { repo_id: one.id, name: one.name, branch: "fix/login", added: 0, deleted: 0, trusted: true };
       threads[threadId] = [...(threads[threadId] ?? []), added];
       return added;
+    },
+    threadGit: async (threadId, repoId, action) => {
+      writes.push(`thread-git:${threadId}:${repoId}:${action.kind}`);
+      await wait();
+      take("thread-git");
+      const entry = (threads[threadId] ?? []).find((one) => one.repo_id === repoId);
+      if (!entry) throw new ApiFailure("not_found", "This thread does not work in that repository.", 404);
+      if (!entry.trusted) throw new ApiFailure("untrusted_repository", `${entry.name} is not trusted.`, 403);
+      const next = action.kind === "pull_request" ? { ...entry, pull_request: { number: 143, url: `https://github.com/orbyn-dev/${entry.name}/pull/143` } } : entry;
+      threads[threadId] = (threads[threadId] ?? []).map((one) => (one.repo_id === repoId ? next : one));
+      return next;
+    },
+    removeThreadRepo: async (threadId, repoId) => {
+      writes.push(`thread-remove:${threadId}:${repoId}`);
+      await wait();
+      take("thread-remove");
+      threads[threadId] = (threads[threadId] ?? []).filter((one) => one.repo_id !== repoId);
     },
   };
 }

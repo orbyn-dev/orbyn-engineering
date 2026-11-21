@@ -6,7 +6,7 @@ import { viewOf } from "./assemble";
 import { kindChips, NeedsBar, NeedsCard, NeedsEmpty, NeedsList, CHIP_NOTE, type Chip } from "./NeedsYou";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import type { NeedsItem } from "./model";
-import { BACKGROUND_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MAIN_ITEM, QUESTIONS_ITEM, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
+import { BACKGROUND_ITEMS, DAILY_NARROW_ITEMS, DAILY_NO_RESET_ITEMS, DAILY_STOP_ITEMS, DEMOTED_ITEMS, FULL_ITEMS, MAIN_ITEM, QUESTIONS_ITEM, MANY_GROUPS, MANY_ITEMS, NARROW_ITEMS, OFF_ITEMS, STOP_ITEMS } from "./samples";
 import type { NeedsYouFrameId } from "./names";
 
 const SUB = "Login redirect crew · Lead: Fix login redirect on Claude Code";
@@ -150,16 +150,18 @@ function PanelHead() {
   );
 }
 
-function NarrowPanel() {
+const narrowFrame = (items: NeedsItem[]): ComponentType => function NeedsYouNarrow() {
   return (
     <Frame panel>
       <PanelHead />
       <ol className="ny-cards" aria-label="Needs you">
-        {NARROW_ITEMS.map((item) => <NeedsCard key={item.id} item={item} handlers={{}} />)}
+        {items.map((item) => <NeedsCard key={item.id} item={item} handlers={{}} />)}
       </ol>
     </Frame>
   );
-}
+};
+
+const NarrowPanel = narrowFrame(NARROW_ITEMS);
 
 const RULES: [string, string, string][] = [
   ["1 · Risk", "What could go wrong if the answer is wrong: a command that touches the network, a deletion, a merge.", "“A change waiting for your review”: High"],
@@ -220,6 +222,9 @@ export const NEEDSYOU_SCREENS: Record<NeedsYouFrameId, ComponentType> = {
   "needsyou-demoted": listFrame(DEMOTED_ITEMS),
   "needsyou-stop": listFrame(STOP_ITEMS),
   "needsyou-background": listFrame(BACKGROUND_ITEMS),
+  "needsyou-daily-budget-stop": listFrame(DAILY_STOP_ITEMS),
+  "needsyou-daily-budget-stop-narrow": narrowFrame(DAILY_NARROW_ITEMS),
+  "needsyou-daily-budget-stop-no-reset": listFrame(DAILY_NO_RESET_ITEMS),
   "needsyou-source-error": listFrame([QUESTIONS_ITEM, MAIN_ITEM], { errors: ["held commands"] }),
   "needsyou-live": Live,
 };
