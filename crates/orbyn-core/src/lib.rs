@@ -17,6 +17,7 @@ pub mod profiles;
 pub mod project;
 pub mod redaction;
 mod repos;
+pub use repos::in_repo;
 pub mod settings;
 pub mod source_control;
 pub mod store;

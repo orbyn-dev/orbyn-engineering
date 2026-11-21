@@ -112,3 +112,20 @@ pub struct RepoScan {
     pub truncated: bool,
 }
 }
+
+wire! {
+/// One repository a thread works in, with what changed in its worktree.
+pub struct ThreadRepo {
+    pub repo_id: String,
+    pub name: String,
+    /// The thread's own branch in this repository.
+    pub branch: String,
+    pub added: u32,
+    pub deleted: u32,
+    pub trusted: bool,
+    /// The changed files, relative to the repository root; at most 200.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub files: Option<Vec<String>>,
+}
+}

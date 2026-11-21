@@ -8,4 +8,8 @@ export type GitAction = {
 /**
  * Commits every change with this message.
  */
-commit_message?: string, push: boolean, pull_request?: PullRequestDraft, };
+commit_message?: string, push: boolean, pull_request?: PullRequestDraft, 
+/**
+ * A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+ */
+repo_id?: string, };
