@@ -4,7 +4,7 @@ import { Button } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { useNow } from "../../../lib/useNow";
 import { SettingRow } from "../rows/SettingRow";
-import { type HostRow, engineHostApi, useEngineHosts, isProcess, plain, processLine, STOPPED_SENTENCE } from "../../enginehost";
+import { type HostRow, engineHostApi, hostWritable, useEngineHosts, isProcess, plain, processLine, STOPPED_SENTENCE } from "../../enginehost";
 import { reasonOf } from "./HostParts";
 
 /** The hosts that are a process now. Empty while the service reports none, which leaves Processes as it is today. */
@@ -41,8 +41,10 @@ function Row({ row, reload }: { row: HostRow; reload(): void }) {
     finally { pending.current = false; }
   };
 
-  const canStop = row.state !== "cant_start";
-  const canRestart = row.state === "running" || row.state === "cant_start";
+  // Stop and restart are Person routes of a later slice: with none, the row says what runs and has no button.
+  const writable = hostWritable();
+  const canStop = writable && row.state !== "cant_start";
+  const canRestart = writable && (row.state === "running" || row.state === "cant_start");
   const threads = row.running_threads ?? 0;
   // Restarting a running host ends its threads the way Stop does. The frames draw no question for Restart; one is asked anyway
   // when threads would end, and a host with none restarts at once.

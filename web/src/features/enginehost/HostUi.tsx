@@ -8,7 +8,7 @@ import { Button } from "../../ui/controls";
 import type { HostRow } from "./contract";
 import "./enginehost.css";
 import { cannotSend, sendsWithoutHost, type Gap, type GapAction } from "./gaps";
-import { engineHostApi, useEngineHosts } from "./hostApi";
+import { engineHostApi, hostWritable, useEngineHosts } from "./hostApi";
 import { plain } from "./hostText";
 
 /** The host row for an engine, or null while the service reports none. */
@@ -106,13 +106,13 @@ export function ComposerHostLine({ line }: { line: HostLine }) {
   const once = useOnce(() => engineHostApi().retry(host.id));
   const last = host.last_error ? ` Last error: ${plain(host.last_error.message, 200).replace(/\.$/, "")}.` : "";
   const text = fallback
-    ? `${engineName} can’t start: its engine host stopped ${host.stops_in_window ?? 5} times in 5 minutes.${last}`
+    ? `${engineName} can’t start: its engine host ${host.detail ? plain(host.detail, 200).replace(/\.$/, "") : `stopped ${host.stops_in_window ?? 5} times in 5 minutes`}.${last}`
     : `${engineName} can’t send: its engine host is unavailable and ${engineName} has no other way to run here.${last}`;
   return (
     <div className="eh-line" role="alert" data-send={fallback ? "falls-back" : "off"}>
       <CircleAlert size={16} aria-hidden />
       <span>{text}{once.error ? ` ${once.error}` : ""}</span>
-      <Button small busy={once.busy} onClick={once.click}>{fallback ? "Try again" : "Restart engine host"}</Button>
+      {hostWritable() ? <Button small busy={once.busy} onClick={once.click}>{fallback ? "Try again" : "Restart engine host"}</Button> : null}
     </div>
   );
 }
