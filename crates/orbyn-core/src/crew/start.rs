@@ -761,6 +761,16 @@ impl Core {
             .store
             .crew_worker_objects(brief.id.as_str(), member.as_str())
             .map_err(internal)?;
+        // Pending messages belong to the common turn-launch collector, not both the brief
+        // and that context. Previously delivered history remains part of the initial brief.
+        let pending: std::collections::HashSet<_> = self
+            .store
+            .held_crew_messages(brief.crew_id.as_str(), member.as_str())
+            .map_err(internal)?
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        objects.retain(|object| !matches!(object, WorkerObject::Message(message) if pending.contains(&message.id)));
         // The board and the messages of the whole crew can reach this worker, and a key added since
         // they were stored may cover them: such an object is left out, not the start refused.
         // The brief itself was checked against its own key at the start.
