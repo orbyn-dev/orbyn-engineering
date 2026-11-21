@@ -69,6 +69,20 @@ Not done, so Planned: the leftover-turn echo rule, models and usage requests, `r
 `background` request, `AskUserQuestion` as a `question` frame, subagent transcripts, and any run against the real SDK
 or a real `claude`.
 
+`AskUserQuestion` is a `question` frame answered with `answers`.
+
+Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
+`usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
+
+Run-end rules: the prompt goes in with a `uuid`; a `result` that arrives after a `command_lifecycle` `queued` for it but
+before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
+background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
+transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`
+for the prompt's uuid before the result. A leftover turn has not been seen on a real run.
+
+Not done, so Planned: `rollback`, subagent
+transcripts, and any run against a real `claude` with a valid login.
+
 ## OpenCode family
 
 `src/families/opencode.mjs` runs the promise client of `@opencode/client` (2.3.2, MIT, pinned and bundled into the
@@ -83,24 +97,11 @@ fork), multi-turn, every ask as a `permission` frame answered by `respond` (allo
 message, never `always`), cancel through `session.interrupt`, steer through `delivery: "steer"`, `fork` at a turn, `runDone`
 exactly once from `session.execution.*`, error kinds. Sessions are created asking for everything; the core decides.
 
-Checked by hand: the bundled binary opened and closed a session against a real `opencode` 2.2.5 on macOS (no model turn).
-Not done, so Planned: a real model turn, permission, cancel or steer against a live `opencode`; the v1 SDK (`@opencode-ai/sdk`,
+Real runs (macOS arm64, `opencode` 2.2.5, free model `opencode/beam-free`, empty temp folder, cost 0): a one-word reply completed with usage;
+a file write raised one `permission` frame (tool `edit`), allowed once, the file was written and the run completed.
+Not done, so Planned: cancel, steer or fork against a live `opencode`; the v1 SDK (`@opencode-ai/sdk`,
 not added: no transcript covers it); background shells and subagent sessions as `background` frames; `models`, `usage`,
 `readHistory`, `rollback`, `stopTask`; question frames; attachments; per-send model; a silent-stream watchdog; Windows.
-
-`AskUserQuestion` is a `question` frame answered with `answers`.
-
-Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
-`usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
-
-Run-end rules: the prompt goes in with a `uuid`; a `result` that arrives after a `command_lifecycle` `queued` for it but
-before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
-background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
-transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`
-for the prompt's uuid before the result. A leftover turn has not been seen on a real run.
-
-Not done, so Planned: `rollback`, subagent
-transcripts, and any run against a real `claude` with a valid login.
 
 ## Muse family
 
