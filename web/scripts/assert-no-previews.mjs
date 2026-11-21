@@ -23,6 +23,9 @@ const markers = [
   "oracle-narrow-window",
   "backtest-narrow-window",
   "settings-crew",
+  // Crew dashboard (features/crew/dashboard): a frame id and the sample client the Preview frames use. The page itself ships behind Crew Preview.
+  "dash-narrow-window",
+  "createCrewDashboardMock",
   // Crew Designs Flow (features/crew/flow): a frame id.
   "flow-narrow-panel",
   "needsyou-narrow-panel",
