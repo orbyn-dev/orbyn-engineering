@@ -353,13 +353,16 @@ retries with the reason. The same failure twice means one change of approach, an
     the brief's turns the task stops with the same `budget` reason and a result that counts them; a turn that passes on the last
     one still passes. With Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`):
     with the default 30 turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
-  - **A crew-wide turn budget** (owner ruling, 2026-11-20) is a device-local number of turns in Settings
-    (`crew_turn_budget`; unset or 0 is no crew budget). A crew's spend is the same per-task tally summed over its
+  - **A crew-wide turn budget** (owner ruling, 2026-11-20) is a device-local number of turns
+    (`crew_turn_budget`; unset or 0 is no crew budget). There is no Settings control yet: it can be set only through the
+    settings API for now. A crew's spend is the same per-task tally summed over its
     tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
     refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
     stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past
     the number. There is no reset: a new crew starts at zero because its count is read from its tasks. Every new
-    task counts, including review lanes and fixes.
+    task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
+    directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
+    counts at least one turn.
   - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
   - Check kinds this version does not run (`schema`, `http_probe`, `preview`, `visual_compare`, `repo_required`,
     `manual`, `screenshot_only`, `accessibility_audit`, `performance_budget`, `secret_scan`, `licence_scan`) report

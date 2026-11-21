@@ -293,7 +293,7 @@ fn leased(path: &str) -> Value {
     brief(json!({ "files": [{ "path": path, "mode": "write" }] }))
 }
 
-/// The owner's crew-wide budget (2026-11-20): turns per crew, set in Settings, refusing a new
+/// The owner's crew-wide budget (2026-11-20): turns per crew, set through the settings API, refusing a new
 /// start and never killing in-flight work. The spend is the per-task tally summed over the crew,
 /// so the crew's budget and a task's own cannot disagree.
 #[tokio::test]
@@ -455,4 +455,43 @@ async fn a_crew_budget_measures_each_crew_on_its_own() {
     // The first crew is still spent: nothing reset it.
     let (refused, error) = w.start(leased("src/d.txt"), key()).await;
     assert!(error, "{refused}");
+}
+
+/// A task whose first prompt is still queued (no `runs` row yet) already counts a turn, so a lead
+/// cannot be granted unlimited starts while the queue holds them back.
+#[tokio::test]
+async fn a_task_whose_first_prompt_is_queued_counts_a_turn() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(1))]),
+        )
+        .unwrap();
+    let (answer, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let thread = w.worker(&id);
+    w.until("the worker was sent its brief", |w| {
+        !w.sent_to(&thread).is_empty()
+    })
+    .await;
+    // Put the worker back to where a queued first prompt leaves it: no run, one queued message.
+    {
+        let conn = w.core.store.reader();
+        conn.execute("DELETE FROM runs WHERE thread_id = ?1", [&thread])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO queued_messages (id, thread_id, prompt, attachment_ids, created_at)
+             VALUES ('queued-1', ?1, 'brief', '[]', '2026-11-21T00:00:00Z')",
+            [&thread],
+        )
+        .unwrap();
+    }
+    assert_eq!(w.core.store.crew_turns_spent(&id).unwrap(), 1);
+    assert_eq!(w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap(), 1);
+    let (refusal, error) = w.start(leased("src/b.txt"), key()).await;
+    assert!(error, "a queued start was counted as free: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(count(&w, "crew_tasks"), 1);
 }

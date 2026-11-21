@@ -22,7 +22,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `guard` | The secret scan (H2) and the answer-key leak check (H1) |
 | `persist` | Storing a decision with its task, after both checks |
 | `tool` | The tool list and `crew_route`, the dry-run tool |
-| `start` | `crew_start`: validates the brief and key, refuses a crew that spent its Settings turn budget, routes, grants the leases and runs the worker through `delegate` |
+| `start` | `crew_start`: validates the brief and key, refuses a crew that spent its turn budget, routes, grants the leases and runs the worker through `delegate` |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
 | `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
@@ -71,8 +71,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
   A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
-- A crew-wide turn budget is one device-local Settings number (`crew_turn_budget`, whole turns; 0 or unset is
-  none). A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
+- A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
+  none). There is no Settings control yet: it can be set only through the settings API for now. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
   task is refused once the crew has spent it, and a task already running is never stopped by it.
 
 ## Known limits of Preview
@@ -96,8 +96,11 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - `budget.minutes` ends a task even in the middle of a turn, through a timer that holds the core weakly and
   is set again after a restart. A verification gets what is left of the budget and stops once the task has
   been stopped. `budget.turns` stops the next failed attempt once the worker's turns and the approvals reserved
-  against the same budget reach the brief's turns. A crew whose Settings turn budget is spent starts no new task,
-  and a task already running is not stopped by it; the start path's check is the one place the crew budget is read.
+  against the same budget reach the brief's turns. A crew whose turn budget is spent starts no new task,
+  and a task already running is not stopped by it. The check sits in `launch_crew_task`, so `crew_start`, background
+  Run-now, escape checks, review lanes and fixes pass it. Autopilot's merge corrections (`autopilot/merge/correction.rs`)
+  call `create_crew_task` directly and are not checked: they are deterministic and spend no worker turns. A task whose
+  worker thread exists or whose first prompt is still queued counts at least one turn, so a queued start is not free.
 - Windows: the leak test (`a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker`) is
   Unix-only. On Windows a command's echo can differ in quotes and line endings, so the withholding needs its
   own test there, and a check's deadline must kill every process the check started (the process owner does;

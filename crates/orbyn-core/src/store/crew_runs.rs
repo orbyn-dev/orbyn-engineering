@@ -58,12 +58,24 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
 /// The brief's turns a task has spent: the worker's runs and its verification attempts (the
 /// larger, because a run that just ended is both) plus the approvals reserved against the same
 /// budget. The approval reservation and the budget stop read this one count, so they agree.
+/// A task with a worker thread or a queued message has been sent its brief, so it counts at least
+/// one turn even while that first prompt is still queued and no `runs` row exists yet.
 pub(super) fn turns_spent(conn: &Connection, run: &CrewRun) -> Result<u64> {
     let worker: i64 = conn.query_row(
         "SELECT COUNT(*) FROM runs WHERE thread_id = ?1",
         [run.worker_thread_id.as_deref()],
         |row| row.get(0),
     )?;
+    let queued: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM queued_messages WHERE thread_id = ?1)",
+        [run.worker_thread_id.as_deref()],
+        |row| row.get(0),
+    )?;
+    let worker = if run.worker_thread_id.is_some() || queued {
+        worker.max(1)
+    } else {
+        worker
+    };
     let approvals: i64 = conn.query_row(
         "SELECT COUNT(*) FROM crew_autopilot_events WHERE task_id = ?1 AND kind = 'approval_started'",
         [&run.task_id],
