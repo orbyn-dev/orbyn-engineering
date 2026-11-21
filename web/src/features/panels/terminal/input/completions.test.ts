@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyCompletion, completeAt, type CompleteContext, type PathEntry } from "./completions";
+import { applyCompletion, completeAt, resolveDir, type CompleteContext, type PathEntry } from "./completions";
 
 const tree: Record<string, PathEntry[]> = {
   "": [{ name: "src", kind: "directory" }, { name: "README.md", kind: "file" }, { name: ".env", kind: "file" }, { name: "scripts", kind: "directory" }],
   "src/": [{ name: "main.tsx", kind: "file" }, { name: "features", kind: "directory" }],
+  "src/features/": [{ name: "panels", kind: "directory" }, { name: "index.ts", kind: "file" }],
 };
 const context: CompleteContext = { history: ["deploy --now", "git status", "FOO=1 x"], listDir: (dir) => tree[dir] ?? null };
 const labels = (line: string, cursor = line.length, explicit = false) => completeAt(line, cursor, context, explicit)?.items.map((item) => item.label);
@@ -45,5 +46,43 @@ describe("completeAt", () => {
     expect(applyCompletion("git st", result, result.items[0]!)).toEqual({ line: "git status ", cursor: 11 });
     const path = completeAt("cat s", 5, context)!;
     expect(applyCompletion("cat s", path, path.items[0]!)).toEqual({ line: "cat src/", cursor: 8 });
+  });
+});
+
+describe("paths from the shell's folder", () => {
+  const within = (cwd: string): CompleteContext => ({ ...context, cwd });
+  const at = (cwd: string, line: string) => completeAt(line, line.length, within(cwd))?.items.map((item) => item.insert);
+  it("lists the folder the shell is in for a bare word", () => {
+    expect(at("src/", "cat m")).toEqual(["main.tsx"]);
+    expect(at("src/", "cat f")).toEqual(["features/"]);
+  });
+  it("resolves a typed folder against it, and inserts what was typed", () => {
+    expect(at("src/", "cat features/")).toEqual(["features/panels/", "features/index.ts"]);
+    expect(at("src/", "cat ./features/p")).toEqual(["./features/panels/"]);
+  });
+  it("climbs inside the root and never out of it", () => {
+    expect(at("src/features/", "cat ../m")).toEqual(["../main.tsx"]);
+    expect(at("src/", "cat ../s")).toEqual(["../src/", "../scripts/"]);
+    expect(at("src/", "cat ../../x")).toBeUndefined();
+    expect(at("", "cat ../x")).toBeUndefined();
+  });
+  it("is the root when no folder is given", () => {
+    expect(at("", "cat s")).toEqual(["src/", "scripts/"]);
+    expect(labels("cat s")).toEqual(["src/", "scripts/"]);
+  });
+  it("still leaves absolute and home paths alone", () => {
+    expect(at("src/", "cat /etc/h")).toBeUndefined();
+    expect(at("src/", "cat ~/x")).toBeUndefined();
+  });
+  it("names the folder to list", () => {
+    expect(resolveDir("", "")).toBe("");
+    expect(resolveDir("src/", "")).toBe("src/");
+    expect(resolveDir("src/", "features/")).toBe("src/features/");
+    expect(resolveDir("src/", "./features/")).toBe("src/features/");
+    expect(resolveDir("src/features/", "../")).toBe("src/");
+    expect(resolveDir("src/", "../")).toBe("");
+    expect(resolveDir("src/", "../../")).toBeNull();
+    expect(resolveDir("", "/etc/")).toBeNull();
+    expect(resolveDir("", "~/")).toBeNull();
   });
 });

@@ -30,7 +30,12 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    log or an answer. The person can remove it at any time. The routes are
    `/api/settings/engine-credentials/{engine}` (status, `Local`, booleans only; opt-in `PUT`) and
    `.../{engine}/key` (`PUT` save, `DELETE` remove): all writes are `Person` routes and the key travels
-   in the request body only.
+   in the request body only. A second owner-approved keychain use is the **values of personal-library environment
+   sets** (`docs/execution-profiles-and-library.md`, Part 2): `orbyn-core` `credentials::env_sets`, its own service
+   name (`app.orbyn.engineering.env-sets`, `.dev` in an unsigned build), one item per key, written through
+   `PUT /api/library/env-sets/{id}/keys/{key}` (`Person`) and read back only as the environment of one workflow run the
+   person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
+   output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
 3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
    sessions because it ignores OAuth login.

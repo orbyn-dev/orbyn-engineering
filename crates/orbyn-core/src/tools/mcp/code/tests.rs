@@ -34,8 +34,15 @@ async fn start(
     thread: &str,
     code: &str,
 ) -> Result<Arc<super::runs::Live>, Refused> {
-    runs.start(id, thread, code, seed(), |_: PendingList| Arc::new(Echo))
-        .await
+    runs.start(
+        id,
+        thread,
+        code,
+        seed(),
+        |_: PendingList| Arc::new(Echo),
+        |step| step,
+    )
+    .await
 }
 
 #[tokio::test]

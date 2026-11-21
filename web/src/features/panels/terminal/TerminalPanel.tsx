@@ -13,6 +13,7 @@ import { registerTerminal, terminalKey } from "./terminalControls";
 import { captureFocusReturn } from "../../../ui/focusReturn";
 import { linkProvider } from "./terminalLinks";
 import { ShellMarks, type Position, type ShellCommand } from "./shellMarks";
+import { hearShellFolder } from "./shellFolder";
 import { TerminalInput } from "./input/TerminalInput";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
@@ -156,6 +157,8 @@ export function TerminalPanel({
           return true;
         }),
       );
+      // The shell's own report of its folder (OSC 7) is untrusted text: parsed strictly, kept per terminal, never shown or logged.
+      const folder = hearShellFolder(terminal.parser, terminalKey(threadId, terminalId));
       const links = terminal.registerLinkProvider(
         linkProvider(terminal, (link) => {
           if (link.kind === "url") {
@@ -271,6 +274,7 @@ export function TerminalPanel({
         input.dispose();
         chosen.dispose();
         for (const osc of oscs) osc.dispose();
+        folder.dispose();
         links.dispose();
         socket.onclose = null;
         socket.close();

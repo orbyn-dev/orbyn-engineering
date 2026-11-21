@@ -48,6 +48,7 @@ mod crew_guard;
 mod crew_merge_corrections;
 mod crew_merge_forge;
 pub(crate) use crew_merge_corrections::ForgeCorrection;
+pub(crate) mod code_runs;
 mod crew_merges;
 mod crew_paused_starts;
 #[cfg(test)]
@@ -73,12 +74,23 @@ mod crew_worker_provider;
 mod hub;
 mod installs;
 mod issues;
+pub(crate) mod project_repos;
+pub(crate) mod thread_repos;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;
 mod native_sessions;
 #[cfg(test)]
 mod plan_mode_reset_tests;
+mod profiles;
+pub use profiles::{
+    CrewApply, EngineSwitch, PROFILE_LIMIT, ProfileRow, ProfileSettings, ThreadApply,
+};
+mod library;
+pub use library::{
+    EnvSetFields, EnvSetRow, MAX_ENV_SETS, MAX_PROMPTS, MAX_WORKFLOWS, PromptFields, PromptRow,
+    WorkflowFields, WorkflowRow, name_key as library_name_key,
+};
 mod project_changes;
 mod project_names;
 mod questions;
@@ -870,6 +882,7 @@ pub(crate) fn delete_thread_in(tx: &Transaction<'_>, id: &str, actor: &str) -> R
     if deleted == 0 {
         return Err(CoreError::NotFound("thread".into()));
     }
+    profiles::forget_applications(tx, &family)?;
     prune_scratch(tx)?;
     Ok(family)
 }

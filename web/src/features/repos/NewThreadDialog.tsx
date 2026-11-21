@@ -3,11 +3,12 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import { navigate } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
-import { Field, Pill } from "../../ui/controls";
+import { Button, Field, Pill } from "../../ui/controls";
 import { ActionDialog } from "./ActionDialog";
 import { reposApi, useRepos } from "./api";
 import type { RepoRow, StartThreadInput } from "./contract";
 import { canJoinThread, defaultTicks, plain, repoState, startLabel, STATE_LABEL } from "./model";
+import { TrustDialog } from "./Dialogs";
 import { checkBranchName } from "./scanModel";
 import "./repos.css";
 
@@ -58,7 +59,7 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
   note?: string | null;
   onClose(): void;
 }) {
-  const { view } = useRepos(projectId);
+  const { view, reload } = useRepos(projectId);
   const putThread = useWorkspace((state) => state.putThread);
   const pushToast = useUi((state) => state.pushToast);
   const [edit, setEdit] = useState<{ ticked: string[]; branches: Record<string, string> } | null>(null);
@@ -68,22 +69,37 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
   const branches = edit?.branches ?? {};
   const baseOf = (row: RepoRow) => branches[row.id] ?? row.branch ?? row.branches[0] ?? "";
   const [branchText, setBranchText] = useState("");
+  // Repositories the service refused as not trusted (`409 repo_untrusted`), read again from the project's list: the trust prompt is offered for each.
+  const [untrusted, setUntrusted] = useState<RepoRow[]>([]);
+  const [trusting, setTrusting] = useState<RepoRow | null>(null);
   // A task folder (2 or more repositories) shares one branch name. Left empty, the service makes one name.
   const taskFolder = ticked.length >= 2;
   const branchCheck = branchText.trim() === "" ? null : checkBranchName(branchText);
   const branchError = taskFolder && branchCheck && !branchCheck.ok ? branchCheck.reason : undefined;
   const branchBad = branchError !== undefined;
   const refused = rows.filter((row) => !canJoinThread(row) && repoState(row) === "untrusted");
+  // The service wants two to `limit` repositories; one repository uses the normal New thread. It still decides: this only keeps the button honest.
+  const needsTwo = ticked.length < 2;
+  /** `409 repo_untrusted`: read the list again and offer the trust prompt for each chosen repository that is not trusted now. The message stays as the service wrote it. */
+  const onRefused = async (failure: unknown): Promise<never> => {
+    if (failure instanceof ApiFailure && failure.code === "repo_untrusted") {
+      const fresh = await reposApi().list(projectId).catch(() => null);
+      setUntrusted((fresh?.repositories ?? []).filter((row) => ticked.includes(row.id) && !row.trusted));
+      reload();
+    }
+    throw failure;
+  };
   const change = (next: Partial<{ ticked: string[]; branches: Record<string, string> }>) => setEdit({ ticked, branches, ...next });
   return (
-    <ActionDialog title={<>New thread in {plain(projectName)} <Pill tone="info">Beta</Pill></>} confirmLabel={startLabel(ticked.length)} disabled={ticked.length === 0 || !view || branchBad}
+    <>
+    <ActionDialog title={<>New thread in {plain(projectName)} <Pill tone="info">Beta</Pill></>} confirmLabel={startLabel(ticked.length)} disabled={needsTwo || ticked.length > limit || !view || branchBad}
       onClose={onClose}
       onConfirm={async () => {
         const thread = await reposApi().startThread(projectId, { repos: ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })), ...start, ...(taskFolder && branchCheck?.ok ? { branch_name: branchCheck.name } : {}) })
           .catch((failure: unknown) => {
             // The engine does not offer this permission mode: say so, and the dialog stays open for another choice.
             if (failure instanceof ApiFailure && failure.code === "permission_mode_unsupported") throw new ApiFailure(failure.code, `This engine does not offer that permission. ${failure.message} Pick another permission and start again.`, failure.status);
-            throw failure;
+            return onRefused(failure);
           });
         putThread(thread);
         pushToast(`Started a thread in ${ticked.length === 1 ? "1 repository" : `${ticked.length} repositories`}`);
@@ -109,6 +125,14 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
       {note ? <p className="field-hint" role="note">{note}</p> : null}
       {refused.length > 0 ? <p className="field-hint" role="note">{refused.map((row) => plain(row.name)).join(", ")} {refused.length === 1 ? "is" : "are"} not trusted, so it cannot be included. Trust it in Settings › Projects.</p> : null}
       {ticked.length >= limit ? <p className="field-hint" role="note">A thread works in up to {limit} repositories.</p> : null}
+      {needsTwo && view ? <p className="field-hint" role="note">Choose two or more repositories. A thread in one repository starts from the normal New thread.</p> : null}
+      {untrusted.length > 0 ? (
+        <div className="repos-start-trust">
+          {untrusted.map((row) => <Button key={row.id} small onClick={() => setTrusting(row)}>Trust {plain(row.name)}…</Button>)}
+        </div>
+      ) : null}
     </ActionDialog>
+    {trusting ? <TrustDialog projectId={projectId} repo={trusting} onClose={() => setTrusting(null)} onDone={() => { setUntrusted((rows) => rows.filter((row) => row.id !== trusting.id)); setTrusting(null); reload(); }} /> : null}
+    </>
   );
 }

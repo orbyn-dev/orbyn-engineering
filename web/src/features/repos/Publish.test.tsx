@@ -7,7 +7,7 @@ import { setReposApi } from "./api";
 
 afterEach(() => setReposApi(null));
 
-const open = async (mock = createReposMock()) => {
+const open = async (mock = createReposMock({ publish: "works" })) => {
   setReposApi(mock);
   render(<RepositoriesSection projectId="p1" projectName="orbyn" />);
   const user = userEvent.setup();
@@ -73,7 +73,7 @@ it("step 3 says the repository was published and links to it; Done closes", asyn
 });
 
 it("sends the name and the visibility only, as docs/multi-repo.md defines PublishInput", async () => {
-  const mock = createReposMock();
+  const mock = createReposMock({ publish: "works" });
   const seen: unknown[] = [];
   const publish = mock.publish;
   mock.publish = async (project, repo, input) => { seen.push(input); return publish(project, repo, input); };
@@ -85,7 +85,7 @@ it("sends the name and the visibility only, as docs/multi-repo.md defines Publis
 });
 
 it("a failure says Publish failed with the host's message on step 2, and Publish can be pressed again", async () => {
-  const mock = createReposMock();
+  const mock = createReposMock({ publish: "works" });
   const { user, dialog } = await open(mock);
   await toStepTwo(user, dialog);
   mock.failNext("publish");
@@ -106,4 +106,19 @@ it("shows a hostile repository name as text", async () => {
   await user.click(await screen.findByRole("menuitem", { name: "Publish to GitHub…" }));
   await screen.findByRole("dialog", { name: "Publish repository" });
   expect(document.querySelector("img")).toBeNull();
+});
+
+it("shows the service's 422 unsupported as the Planned state with its message: not a success, not an error, and no second try", async () => {
+  const { mock, user, dialog } = await open(createReposMock());
+  await toStepTwo(user, dialog);
+  await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+  expect(await within(dialog).findByText("Planned")).toBeVisible();
+  expect(within(dialog).getByText(/Publishing a repository arrives in a later update\./)).toBeVisible();
+  expect(within(dialog).queryByText("Repository published")).toBeNull();
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  expect(within(dialog).getByText("Step 2 of 3 · Repository")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Publish" })).toBeDisabled();
+  expect(mock.writes).toEqual(["publish:orbyn-planner:orbyn-dev/orbyn-planner:private"]);
+  await user.click(within(dialog).getByRole("button", { name: "Back" }));
+  expect(within(dialog).queryByText("Planned")).toBeNull();
 });

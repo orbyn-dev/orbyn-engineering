@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { Param } from "./contract";
-import { capped, checkItem, checkKeyName, isOneLine, keychainNote, placeholdersOf, plain, scrubValue, startValues, valueProblems, valuesBody } from "./model";
+import { capped, checkItem, checkKeyName, isOneLine, keychainNote, confirmFromFailure, placeholdersOf, plain, runGrantText, sourceLabel, scrubValue, startValues, valueProblems, valuesBody } from "./model";
 
 const choice: Param = { name: "package", label: "Package", kind: "choice", default: "auth", required: true, choices: ["auth", "web"] };
 
@@ -78,4 +78,22 @@ it("cuts text for display", () => {
   expect(capped("x".repeat(10), 4)).toEqual({ text: "xxxx", cut: true });
   expect(capped(5, 4)).toEqual({ text: "", cut: false });
   expect(plain("y".repeat(10), 3)).toBe("yyy…");
+});
+
+it("reads a confirm_required detail: the grants exactly as listed, set names only, never a key or a value", () => {
+  expect(confirmFromFailure({ grants: ["env_values", "untrusted_source"], env_sets: [{ name: "Staging", keys: ["API_TOKEN"] }, "Prod"] })).toEqual({ grants: ["env_values", "untrusted_source"], envSets: ["Staging", "Prod"] });
+  expect(confirmFromFailure({ grants: ["untrusted_source", "untrusted_source"] })).toEqual({ grants: ["untrusted_source"], envSets: [] });
+  expect(confirmFromFailure({ grants: ["some_new_grant"] })?.grants).toEqual(["some_new_grant"]);
+  expect(runGrantText("some_new_grant")).toMatch(/Another permission/);
+});
+
+it("reads a malformed confirm_required detail as nothing to confirm, never as an empty ack", () => {
+  for (const bad of [undefined, null, "x", [], {}, { grants: [] }, { grants: [1, null, ""] }, { grants: "env_values" }]) expect(confirmFromFailure(bad), JSON.stringify(bad)).toBeNull();
+  expect(confirmFromFailure({ grants: ["env_values"], env_sets: "no" })?.envSets).toEqual([]);
+  expect(confirmFromFailure({ grants: Array.from({ length: 30 }, (_, at) => `g${at}`) })?.grants).toHaveLength(8);
+});
+
+it("labels a non-local source in words and says nothing for local or an unknown word", () => {
+  expect([sourceLabel("import"), sourceLabel("repo"), sourceLabel("shared")]).toEqual(["Imported", "From repo", "Shared"]);
+  expect([sourceLabel("local"), sourceLabel("<b>x</b>"), sourceLabel(undefined), sourceLabel("__proto__")]).toEqual([null, null, null, null]);
 });

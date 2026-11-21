@@ -54,7 +54,7 @@ pub(crate) fn thread_family_ids(conn: &Connection, id: &str) -> Result<Vec<Strin
     Ok(family)
 }
 
-fn has_active_run(tx: &Transaction<'_>, id: &str) -> Result<bool> {
+pub(super) fn has_active_run(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     Ok(tx.query_row(
         &format!(
             "SELECT EXISTS (SELECT 1 FROM runs WHERE thread_id = ?1 AND state IN {ACTIVE_STATES})"
@@ -247,6 +247,10 @@ impl Store {
                     params![id, value],
                 )?;
                 notify(tx, appended, id, "auto_settle")?;
+            }
+            if patch.permission_mode.is_some() || patch.model.is_some() {
+                // A person's own choice after a profile was applied: the chip reads "edited".
+                super::profiles::mark_customized(tx, id)?;
             }
             if let Some(mode) = patch.permission_mode {
                 tx.execute(

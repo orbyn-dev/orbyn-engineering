@@ -7,6 +7,8 @@ export interface TurnTotals {
   added: number;
   removed: number;
   files: number;
+  /** Repositories of a multi-repository thread this turn's figures leave out: not trusted, or their read failed. Absent for an ordinary thread. */
+  skipped?: number;
 }
 
 const count = (value: number) => value.toLocaleString("en-US");
@@ -25,6 +27,7 @@ export function turnItems(turns: readonly Checkpoint[], totals: readonly (TurnTo
         clock(turn.created_at),
         own ? `+${count(own.added)} −${count(own.removed)}` : "",
         own ? (own.files === 1 ? "1 file" : `${count(own.files)} files`) : "",
+        own?.skipped ? `${own.skipped} repo not counted` : "",
       ].filter(Boolean).join(" · ");
       return {
         label: `Turn ${at + 1}`,

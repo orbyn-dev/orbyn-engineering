@@ -317,11 +317,11 @@ export function PullsPage() {
             </span>
             {picked.length > 0 ? (
               <div className="pulls-bulk" role="status">
-                <span>{picked.length} selected</span>
-                <Button small tone="danger" onClick={() => void closePicked()}>
-                  Close selected
+                <b>{picked.length} selected</b>
+                <Button small aria-label="Close selected" onClick={() => void closePicked()}>
+                  Close
                 </Button>
-                <Button small tone="quiet" onClick={() => setPicked([])}>
+                <Button small onClick={() => setPicked([])}>
                   Clear
                 </Button>
               </div>
@@ -348,7 +348,7 @@ export function PullsPage() {
             ) : rows.length === 0 && criteria.length > 0 ? (
               <div className="pulls-nomatch">
                 <Search size={20} aria-hidden />
-                <b>No pull requests match</b>
+                <b>{filters.project ? "No pull requests" : "No pull requests match"}</b>
                 <p>
                   {filters.project
                     ? `No pull requests in ${nameOf(filters.project)} match these filters.`

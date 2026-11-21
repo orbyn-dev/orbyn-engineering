@@ -611,7 +611,7 @@ impl Core {
 
     /// A thread's checkout, gated on trust like any other work in the folder.
     pub(crate) fn file_scope(&self, thread_id: &str) -> Result<(Thread, WriteScope)> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }

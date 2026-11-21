@@ -7,7 +7,7 @@ import { Button } from "../../ui/controls";
 import { libraryApi, useLibrary, useSuggestions, type LibraryData } from "./api";
 import type { EnvSet, Kind, Prompt, RepoEnvSet, RepoPrompt, RepoWorkflow, Suggestions, SuggestionFile, Workflow } from "./contract";
 import { ItemForm } from "./ItemForm";
-import { plain } from "./model";
+import { plain, sourceLabel } from "./model";
 import { DeleteItem, EnvSetPage, PromptPage, WorkflowPage } from "./Pages";
 import { UseDialog, type UseMode } from "./UseDialog";
 import "./library.css";
@@ -19,7 +19,8 @@ type Open =
   | { what: "use"; mode: UseMode; kind: "workflow" | "prompt"; item: Workflow | Prompt }
   | { what: "delete"; kind: Kind; id: string; name: string };
 
-const FILE: Record<Kind, SuggestionFile> = { workflow: "workflows.json", prompt: "prompts.json", env_set: "env-sets.json" };
+/** One repository entry is named by its own file and its index in that file. */
+const refKey = (entry: { file: SuggestionFile; index: number }) => `${entry.file}#${entry.index}`;
 const KIND_TITLE: Record<Kind, string> = { workflow: "Workflows", prompt: "Prompts", env_set: "Env sets" };
 
 const matches = (query: string, ...parts: unknown[]) => query === "" || parts.some((part) => typeof part === "string" && part.toLowerCase().includes(query));
@@ -95,13 +96,13 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
   const shownTotal = tab === "repo" ? repoWorkflows.length + repoPrompts.length + repoSets.length : workflows.length + prompts.length + sets.length;
   const total = tab === "repo" ? repoTotal : personalTotal;
 
-  const copyOne = async (kind: Kind, index: number) => {
+  const copyOne = async (entry: { file: SuggestionFile; index: number }) => {
     if (copying.current) return;
     copying.current = true;
     setBusyCopy(true);
     setNotice("");
     try {
-      await libraryApi().copySuggestion(projectId, FILE[kind], index);
+      await libraryApi().copySuggestion(projectId, entry.file, entry.index);
       setNotice("Copied to Personal. It is on this computer only; nothing was written to the repository.");
       setTab("personal");
       reload();
@@ -126,28 +127,29 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
     <div className="lib-group" key={kind}><h3 className="lib-group-title">{KIND_TITLE[kind]} · {rows.length}</h3><ul className="lib-list">{rows}</ul></div>
   ));
 
+  const from = (source: unknown) => { const label = sourceLabel(source); return label ? `${label} · ` : ""; };
   const personal = tab === "personal" ? [
-    section("workflow", workflows.map((one) => row("personal", "workflow", one.id, one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
-    section("prompt", prompts.map((one) => row("personal", "prompt", one.id, one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
+    section("workflow", workflows.map((one) => row("personal", "workflow", one.id, one.name, `${from(one.source)}${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
+    section("prompt", prompts.map((one) => row("personal", "prompt", one.id, one.name, `${from(one.source)}${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
     section("env_set", sets.map((one) => row("personal", "env_set", one.id, one.name, `${count(one.keys.length, "variable")}${one.status === "planned" ? " · Planned" : ""}`))),
   ] : [];
   const repo = tab === "repo" ? [
-    section("workflow", repoWorkflows.map((one) => row("repo", "workflow", String(one.index), one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
-    section("prompt", repoPrompts.map((one) => row("repo", "prompt", String(one.index), one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
-    section("env_set", repoSets.map((one) => row("repo", "env_set", String(one.index), one.name, count(one.keys.length, "variable")))),
+    section("workflow", repoWorkflows.map((one) => row("repo", "workflow", refKey(one), one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
+    section("prompt", repoPrompts.map((one) => row("repo", "prompt", refKey(one), one.name, `${one.description || "No description"} · ${count(one.params.length, "parameter")}`))),
+    section("env_set", repoSets.map((one) => row("repo", "env_set", refKey(one), one.name, count(one.keys.length, "variable")))),
   ] : [];
 
   const selected = (() => {
     if (!pick) return null;
     const personalAt = pick.origin === "personal";
-    if (pick.kind === "workflow") return personalAt ? (data.workflows.find((one) => one.id === pick.key) ?? null) : (suggestions.workflows.find((one) => String(one.index) === pick.key) ?? null);
-    if (pick.kind === "prompt") return personalAt ? (data.prompts.find((one) => one.id === pick.key) ?? null) : (suggestions.prompts.find((one) => String(one.index) === pick.key) ?? null);
-    return personalAt ? (data.envSets.find((one) => one.id === pick.key) ?? null) : (suggestions.env_sets.find((one) => String(one.index) === pick.key) ?? null);
+    if (pick.kind === "workflow") return personalAt ? (data.workflows.find((one) => one.id === pick.key) ?? null) : (suggestions.workflows.find((one) => refKey(one) === pick.key) ?? null);
+    if (pick.kind === "prompt") return personalAt ? (data.prompts.find((one) => one.id === pick.key) ?? null) : (suggestions.prompts.find((one) => refKey(one) === pick.key) ?? null);
+    return personalAt ? (data.envSets.find((one) => one.id === pick.key) ?? null) : (suggestions.env_sets.find((one) => refKey(one) === pick.key) ?? null);
   })();
 
   const page = pick && selected ? (() => {
     const repoItem = pick.origin === "repo";
-    const copy = () => void copyOne(pick.kind, repoItem ? Number(pick.key) : 0);
+    const copy = () => { if (repoItem) void copyOne(selected as RepoWorkflow | RepoPrompt | RepoEnvSet); };
     if (pick.kind === "workflow") {
       const one = selected as Workflow | RepoWorkflow;
       return <WorkflowPage workflow={one} repo={repoItem} sets={data.envSets} hasThread busyCopy={busyCopy} onCopy={copy}

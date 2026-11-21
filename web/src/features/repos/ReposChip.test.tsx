@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createReposMock } from "../../../mock/repos";
+import { ApiFailure } from "../../api/client";
 import type { Thread } from "../../api/types";
 import { setViewportWidth } from "../../test-support";
 import { ReposChip } from "./ReposChip";
@@ -86,4 +87,35 @@ it("draws no task folder line when the service has no task folder route", async 
   await userEvent.click(await screen.findByRole("button", { name: "Repos 2" }));
   const popover = await screen.findByRole("dialog", { name: "Repositories" });
   expect(within(popover).queryByLabelText("Task folder")).toBeNull();
+});
+
+it("says how many repositories the task folder holds out of the most a thread can have, and updates after an add", async () => {
+  setReposApi(createReposMock({ maxPerThread: 5, threads: { t: [
+    { repo_id: "orbyn-engineering", name: "orbyn-engineering", branch: "fix/login", added: 1, deleted: 0, trusted: true },
+    { repo_id: "orbyn-notes", name: "orbyn-notes", branch: "fix/login", added: 0, deleted: 0, trusted: true },
+  ] } }));
+  render(<ReposChip thread={thread("t")} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Repos 2" }));
+  const popover = await screen.findByRole("dialog", { name: "Repositories" });
+  expect(await within(popover).findByText("2 of 5 repositories")).toBeVisible();
+  await user.click(within(popover).getByRole("button", { name: "Add a repository to this thread…" }));
+  await user.click(screen.getByRole("menuitem", { name: "orbyn-planner" }));
+  expect(await within(popover).findByText("3 of 5 repositories")).toBeVisible();
+});
+
+it("keeps the thread as it was and says why when the service refuses an add", async () => {
+  const mock = createReposMock({ threads: { t: [
+    { repo_id: "orbyn-engineering", name: "orbyn-engineering", branch: "fix/login", added: 1, deleted: 0, trusted: true },
+    { repo_id: "orbyn-notes", name: "orbyn-notes", branch: "fix/login", added: 0, deleted: 0, trusted: true },
+  ] } });
+  setReposApi(mock);
+  mock.rejectNext("thread-add", new ApiFailure("invalid", "orbyn-planner already has a branch named fix/login.", 400));
+  render(<ReposChip thread={thread("t")} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Repos 2" }));
+  await user.click(await screen.findByRole("button", { name: "Add a repository to this thread…" }));
+  await user.click(screen.getByRole("menuitem", { name: "orbyn-planner" }));
+  await waitFor(() => expect(mock.writes).toEqual(["thread-add:t:orbyn-planner"]));
+  expect(await screen.findByRole("button", { name: "Repos 2" })).toBeVisible();
 });

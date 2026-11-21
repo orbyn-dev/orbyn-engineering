@@ -18,12 +18,12 @@ afterEach(() => vi.restoreAllMocks());
 const puts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
 
 describe("the Code Mode switch of an engine", () => {
-  it("is off by default, says so, and names the Planned state", async () => {
+  it("is off by default and says so, and the Planned pill goes once the service has answered", async () => {
     render(<CodeModeSetting engine={engine()} />);
     const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
     await waitFor(() => expect(toggle).toBeEnabled());
     expect(toggle).not.toBeChecked();
-    expect(screen.getByText("Planned")).toBeInTheDocument();
+    expect(screen.queryByText("Planned")).toBeNull();
     expect(screen.getByText("Off by default. The three tools are not listed to this engine.")).toBeInTheDocument();
     expect(screen.getByText(/Every call in the script still asks as usual\./)).toBeInTheDocument();
     expect(puts()).toHaveLength(0);
@@ -83,6 +83,60 @@ describe("the Code Mode switch of an engine", () => {
     finish();
     await waitFor(() => expect(toggle).toBeEnabled());
     expect(toggle).toBeChecked();
+  });
+
+  it("keeps the Planned pill and a frozen switch until the service has answered the read", async () => {
+    vi.mocked(fetch).mockImplementation(() => new Promise<Response>(() => undefined));
+    render(<CodeModeSetting engine={engine()} />);
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    expect(screen.getByText("Planned")).toBeInTheDocument();
+    expect(toggle).toBeDisabled();
+  });
+
+  it("reads the engine's own route, once, when the page opens", async () => {
+    render(<CodeModeSetting engine={engine({ id: "codex", name: "Codex" })} />);
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Use Code Mode" })).toBeEnabled());
+    const reads = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/api/engines/codex/code-mode"));
+    expect(reads).toHaveLength(1);
+    expect((reads[0]?.[1] as RequestInit | undefined)?.method ?? "GET").toBe("GET");
+  });
+
+  it("is not offered when the service answers 404: switch off and frozen, Planned stays, no error, nothing written", async () => {
+    mock.codeMode.setOffered(false);
+    render(<CodeModeSetting engine={engine()} />);
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByText("Planned")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await userEvent.click(toggle);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("goes back to not offered, with no error, when the write itself answers 404", async () => {
+    render(<CodeModeSetting engine={engine()} />);
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    mock.codeMode.setOffered(false);
+    await userEvent.click(toggle);
+    await waitFor(() => expect(screen.getByText("Planned")).toBeInTheDocument());
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("sends the new value as { enabled } with one PUT per click", async () => {
+    render(<CodeModeSetting engine={engine()} />);
+    const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await userEvent.click(toggle);
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(puts()).toHaveLength(1);
+    const [url, init] = puts()[0] as [string, RequestInit];
+    expect(url).toBe("/api/engines/claude/code-mode");
+    expect(JSON.parse(String(init.body))).toEqual({ enabled: true });
   });
 
   it("says when it could not read the setting and shows it off", async () => {

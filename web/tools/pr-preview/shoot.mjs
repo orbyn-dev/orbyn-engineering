@@ -66,6 +66,11 @@ async function run(page, step) {
       await (step.within ? page.getByRole("region", { name: step.within }) : page).getByRole(step.role, { name: nameOf(step), exact: step.exact }).first().click();
       await page.waitForTimeout(400);
       return;
+    case "hover":
+      // Where the pointer rests, for a state that shows only under it: a role and name, or a CSS selector with the text it holds.
+      await (step.selector ? page.locator(step.selector, step.text ? { hasText: step.text } : {}) : page.getByRole(step.role, { name: nameOf(step), exact: step.exact })).first().hover();
+      await page.waitForTimeout(700);
+      return;
     case "fill":
       await page.getByLabel(step.label, { exact: step.exact }).fill(step.value);
       return;

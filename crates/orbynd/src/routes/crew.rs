@@ -271,6 +271,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/profile/apply",
+        "core apply_profile_to_crew: a person applies an execution profile to a crew, a copy and never a link; a profile that grants full access or Autopilot Full needs its grant codes acknowledged or answers confirm_required and applies nothing; the audit row first in the same transaction; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -331,6 +336,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/api/crew/projects/{id}/worker-provider/set",
             post(worker_provider_set),
         )
+        .route("/api/crew/profile/apply", post(apply_profile))
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
@@ -634,6 +640,14 @@ async fn set_mode(
 ) -> ApiResult<impl IntoResponse> {
     state.core.autopilot_set_mode(&change)?;
     Ok(Json(state.core.autopilot_modes()?))
+}
+
+/// Applies an execution profile to a crew (docs/execution-profiles-and-library.md): `Person`, a copy, never a link.
+async fn apply_profile(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<orbyn_contracts::ApplyCrewProfile>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.apply_profile_to_crew(&body).await?))
 }
 
 async fn confirm(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
