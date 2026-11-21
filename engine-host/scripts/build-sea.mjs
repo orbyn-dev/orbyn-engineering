@@ -17,6 +17,7 @@ await build({
   format: "cjs", // SEA main scripts are CommonJS
   target: "node22",
   outfile: join(out, "host.cjs"),
+  external: ["@anthropic-ai/claude-agent-sdk"], // never bundled: Anthropic terms gate
   logLevel: "warning",
 });
 

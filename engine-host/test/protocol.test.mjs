@@ -27,7 +27,8 @@ function start() {
         const i = frames.findIndex(pred);
         if (i < 0) return false;
         resolve(frames.splice(i, 1)[0]);
-        waiters.splice(waiters.indexOf(check), 1);
+        const w = waiters.indexOf(check);
+        if (w >= 0) waiters.splice(w, 1);
         return true;
       };
       if (!check()) waiters.push(check);

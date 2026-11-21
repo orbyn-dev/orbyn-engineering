@@ -28,3 +28,20 @@ disable-library-validation, the set T3 ships). Not checked: Developer ID signing
 Gatekeeper first launch, Windows, Linux, Intel macOS (T3 found SEA crashes there, so Intel keeps the
 Rust drivers). The release job owns signing with the app's certificate; no certificate is used here.
 The Tauri `externalBin` wiring and `scripts/check-desktop-assets.mjs` entry come with the first real family.
+
+## Claude family (behind a flag)
+
+`src/families/claude.mjs` runs `query()` from `@anthropic-ai/claude-agent-sdk` over the person's own
+`claude` (`options.claudePath`). It starts only with `ORBYN_ENGINE_HOST_CLAUDE=1`, and the Rust side keeps
+the CLI driver as the default for subscription sign-in until Anthropic approves the SDK path in writing.
+The SDK is **not bundled** (esbuild `external`, no dependency in `package.json`): in development it loads from
+`node_modules`, in the single executable it is absent and the family fails with a plain message.
+
+Done and tested against replayed transcripts (T3 Code, MIT, `test/fixtures/NOTICE`): multi-turn session on
+one query, permission frames with once-only allow and deny, cancel through `interrupt()`, session and turn
+ids, background task frames, a run held open by a background agent or workflow, confinement through
+`spawnClaudeCodeProcess` (argv prefix and env allowlist).
+
+Not done, so Planned: the leftover-turn echo rule, models and usage requests, `rollback`, `stopTask`,
+`background` request, `AskUserQuestion` as a `question` frame, subagent transcripts, and any run against the real SDK
+or a real `claude`.

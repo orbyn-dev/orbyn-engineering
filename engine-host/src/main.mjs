@@ -1,7 +1,18 @@
 import { runHost } from "./host.mjs";
+import { claudeFamily } from "./families/claude.mjs";
 import { fake } from "./families/fake.mjs";
 
 const families = { fake };
+// Gated: the Claude SDK path stays off until Anthropic approves in writing. The SDK is not bundled;
+// it loads from node_modules in development and is missing in the single executable.
+if (process.env.ORBYN_ENGINE_HOST_CLAUDE === "1") {
+  families.claude = claudeFamily({
+    loadSdk: () =>
+      import("@anthropic-ai/claude-agent-sdk").catch((cause) => {
+        throw new Error("The Claude Agent SDK is not available in this build.", { cause });
+      }),
+  });
+}
 const name = process.argv[2];
 const family = families[name];
 if (!family) {
