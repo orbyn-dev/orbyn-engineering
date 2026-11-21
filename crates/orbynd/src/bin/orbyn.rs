@@ -700,7 +700,8 @@ fn checked_app_request(app: &Value) -> Outcome<orbyn_contracts::AppUpdateRequest
 }
 
 /// Checks through the running service and, unless only checking, asks it to have the
-/// desktop shell install the latest release. A version that is not the latest is
+/// desktop shell install the latest release; where the person key is enforced it only
+/// checks and says to install from the desktop app. A version that is not the latest is
 /// refused: the installer only offers the latest.
 async fn update(cli: &Cli, wanted: &Wanted<'_>) -> Outcome<()> {
     if let Some(message) = refused_request(wanted) {
@@ -758,20 +759,44 @@ async fn update(cli: &Cli, wanted: &Wanted<'_>) -> Outcome<()> {
         )));
     }
     let request = checked_app_request(&app)?;
-    service
+    let applied = service
         .post(
             "/api/updates/app/apply?complete=true",
             json!({
                 "release_id": request.release_id, "operation": request.operation,
             }),
         )
-        .await?;
+        .await;
+    match applied {
+        Ok(_) => {}
+        // Installing is a person action and this program holds only the service token, so a
+        // build that enforces the person key refuses it. That is not a failure: this run only
+        // checked, and the desktop app installs.
+        Err(failure) if needs_the_desktop_app(&failure) => {
+            return show(cli.json, &app, |_| {
+                println!(
+                    "Orbyn {} is available (running {current}). Install it from the desktop app.",
+                    latest.as_deref().unwrap_or_default()
+                )
+            });
+        }
+        Err(failure) => return Err(failure),
+    }
     show(cli.json, &app, |_| {
         println!(
             "Installing Orbyn {} through the desktop app. It restarts when done.",
             latest.unwrap_or_default()
         );
     })
+}
+
+/// The service answered that the action belongs to the person at the desktop app.
+fn needs_the_desktop_app(failure: &Failure) -> bool {
+    failure
+        .api_error
+        .as_ref()
+        .and_then(|error| error["code"].as_str())
+        .is_some_and(|code| matches!(code, "person_required" | "desktop_required"))
 }
 
 /// `orbynd` sits beside this program in every install.
