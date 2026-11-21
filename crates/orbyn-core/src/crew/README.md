@@ -25,7 +25,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `start` | `crew_start`: validates the brief and key, routes, grants the leases and runs the worker through `delegate` |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
-| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use |
+| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
@@ -40,7 +40,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `background` | Background crews' state: definition, strict validation, redaction, runs with spend against a budget set at creation, and the stop for the budget that queues a review. Stored in the data folder, audited, no trigger and no engine |
 | `background_start` | Run now (slice 4h, PR 1): a person starts one run of an enabled background crew by hand (the `manual` event, `Core::crew_background_run_now`). It makes the run's lead thread (the run's id is the thread's id, the `crew_id` of its tasks; no engine ever runs it and `tell_lead` skips it), stores no Autopilot mode row: a background run's merges are `off` in code, so every merge of the run waits for a person, and starts the task through `launch_crew_task` as Crew-started and Low priority, so `capacity_start_check` can pause it (the refusal is a held `background` start with key `<crew>:manual`, and the run and thread are taken back). The crew's turns and minutes are the brief's budget: minutes are the existing task timer, turns are the worker's runs, checked when a verification fails. A background worker's turn with no output fails the run (`NO_REPLY`, engine error) instead of being judged by what it leaves behind. A task's end ends the run: passed is `needs_review`; budget, repeated failure and engine error are `stopped` with that reason; anything else is `needs_review` with a plain sentence. The brief is code-owned per template (no event or repository text in it) and may write under the repository's top-level entries except `.orbyn/` and `.github/`; its checks are a file scope and a size cap, so a person reads every change. `issue_label` and `dependency_update` crews and crews that are off are refused. No listener, no daily budget, no route yet |
 | `triggers` | `.orbyn/crew.json` `background` triggers and templates, parsed and checked: kinds, budgets, engines, schedules, hidden text and name collisions. Pure policy: nothing starts, writes or calls a model |
-| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
+| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the budget stop for the brief's minutes or turns; the result for the lead; a worker's run ending |
 
 ## Rules to keep
 
@@ -71,6 +71,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   thread or messages to others (see the [bus](bus/README.md)).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
+  A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
 
 ## Known limits of Preview
 
@@ -82,6 +83,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   the app data folder (#441).
 - An attachment tool takes a thread id; a worker may name only its own. `computer_*` and every `orbyn_*` tool
   off the allow list are refused to a worker.
+- A worker's shell command is not read, so it can still write outside its lease; the gate sees the engine's
+  file-change tools, not files a command writes (#441).
 - A key with protected paths and no record of them from the start fails closed (`needs_person`).
 
 ## Follow-ups
@@ -90,7 +93,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - Evidence names HEAD as its commit; when the checkout had uncommitted changes, `does_not_prove` says so.
 - `budget.minutes` ends a task even in the middle of a turn, through a timer that holds the core weakly and
   is set again after a restart. A verification gets what is left of the budget and stops once the task has
-  been stopped. Turn limits are #438.
+  been stopped. `budget.turns` stops the next failed attempt once the worker's turns and the approvals reserved
+  against the same budget reach the brief's turns; a crew-wide budget is still #438.
 - Windows: the leak test (`a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker`) is
   Unix-only. On Windows a command's echo can differ in quotes and line endings, so the withholding needs its
   own test there, and a check's deadline must kill every process the check started (the process owner does;

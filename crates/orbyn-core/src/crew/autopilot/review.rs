@@ -262,6 +262,19 @@ impl Core {
             );
         }
 
+        // The lease (H10) at the boundary: a file change may name only paths the brief granted this
+        // worker. Refused here with the lease's own words, before the write, rather than left to the
+        // verifier's file_scope to notice afterwards. The always-denied list above keeps its own
+        // words for a protected path. A refused write is recorded as a denial (`decided_by: lease`), so it counts
+        // toward the trip wires (3 in a row, 20 in a run) like any other: a worker cannot retry out-of-lease
+        // writes without limit.
+        if let Some(words) =
+            self.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, ask)
+        {
+            let body = json!({ "action": action, "decided_by": "lease", "mode": mode.name() });
+            return self.autopilot_denied(task, &body, &words, &needles);
+        }
+
         // The blast-radius guard: a destructive command against a production-linked target needs a second key, even in Full. It is
         // above the tier (a check command or a lease does not exempt it) and below N3 and N8, which have already refused.
         let guard = self.guard_of(&ctx, &worktree).await?;

@@ -4,16 +4,18 @@
 //! recorded as `expired` the first time anyone looks, and then blocks nobody.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use orbyn_contracts::{
-    Brief, BriefKind, CrewAuthor, CrewError, CrewId, CrewMember, CrewObject, CrewPathPattern,
-    CrewRole, CrewShortText, CrewTimestamp, CrewToken, CrewUtcSeconds, ErrorCode, Lease, LeaseMode,
-    LeaseState,
+    ActionKind, Brief, BriefKind, CrewAuthor, CrewError, CrewId, CrewMember, CrewObject,
+    CrewPathPattern, CrewRole, CrewShortText, CrewTimestamp, CrewToken, CrewUtcSeconds, ErrorCode,
+    Lease, LeaseMode, LeaseState,
 };
 use time::OffsetDateTime;
 
 use crate::app::Core;
 use crate::error::CoreError;
+use crate::governance::approvals::{ActionAsk, resolve_existing};
 
 fn invalid(message: impl Into<String>) -> CrewError {
     CrewError::new(ErrorCode::InvalidObject, message)
@@ -292,6 +294,77 @@ impl Core {
                 format!("{path} is outside the files the brief asked for"),
             ))
         }
+    }
+
+    /// The gate's lease check (H10): a worker's file-change tool may name only paths the lease
+    /// its brief granted covers. The refusal is the lease's own, made before the write, not left
+    /// to the verifier's file_scope to notice afterwards. The run's write scope has already
+    /// refused a path outside the checkout, so one that cannot be read is left to it. It never
+    /// fails open: an error reading the task, brief or leases is a refusal in that error's words.
+    pub(crate) fn crew_refuse_lease_write(
+        &self,
+        task_id: &str,
+        member: &str,
+        worktree: &Path,
+        ask: &ActionAsk,
+    ) -> Option<String> {
+        if ask.kind != ActionKind::FileChange {
+            return None;
+        }
+        let Ok(worktree) = crate::util::canonicalize(worktree) else {
+            return Some(
+                "Orbyn could not read this task's checkout, so a worker may not write here."
+                    .to_owned(),
+            );
+        };
+        let single = std::slice::from_ref(&ask.target);
+        let paths: &[String] = if ask.paths.is_empty() {
+            single
+        } else {
+            &ask.paths
+        };
+        for path in paths {
+            // A relative path is joined to the task's worktree here. The run's write scope joins it to
+            // the engine's own cwd (the library for Claude, the checkout for an engine that runs in
+            // it), so the two agree only when those are the same; where they differ, the write scope
+            // has already refused or resolved the path somewhere this check would not read.
+            let absolute = if Path::new(path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                worktree.join(path)
+            };
+            // `..`, links and a path that is not there yet resolve the way the write scope
+            // resolves them, so the lease is read against where the bytes land.
+            let Some(resolved) = resolve_existing(&absolute) else {
+                // A `..` that climbs past the root: the write scope refuses it as outside the checkout.
+                continue;
+            };
+            let Ok(relative) = resolved.strip_prefix(&worktree) else {
+                // Resolves outside the worktree: not a leasable path, and the write scope refuses it.
+                continue;
+            };
+            let mut parts = Vec::new();
+            for part in relative.components() {
+                let Some(text) = part.as_os_str().to_str() else {
+                    return Some(
+                        "A path Orbyn cannot read is not one a lease can name, so a worker may not write it."
+                            .to_owned(),
+                    );
+                };
+                parts.push(text.to_owned());
+            }
+            let relative = parts.join("/");
+            let Ok(pattern) = CrewPathPattern::new(&relative) else {
+                return Some(format!(
+                    "{relative} is not a path a lease can name, so a worker may not write it"
+                ));
+            };
+            if let Err(refusal) = self.crew_check_lease(task_id, member, &pattern, LeaseMode::Write)
+            {
+                return Some(refusal.message);
+            }
+        }
+        None
     }
 
     /// Writes `released` for every lease the task still holds, when its run ends.

@@ -3,7 +3,7 @@
 //! transaction that writes it, so two callers cannot both win a move.
 
 use orbyn_contracts::{CrewObject, Lease, Report};
-use rusqlite::{OptionalExtension, Row, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::Store;
 use super::crew::{CrewTask, checked, find_task, insert_object};
@@ -53,6 +53,26 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
         verifying_since: row.get("verifying_since")?,
         index_flags: row.get("index_flags")?,
     })
+}
+
+/// The brief's turns a task has spent: the worker's runs and its verification attempts (the
+/// larger, because a run that just ended is both) plus the approvals reserved against the same
+/// budget. The approval reservation and the budget stop read this one count, so they agree.
+pub(super) fn turns_spent(conn: &Connection, run: &CrewRun) -> Result<u64> {
+    let worker: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM runs WHERE thread_id = ?1",
+        [run.worker_thread_id.as_deref()],
+        |row| row.get(0),
+    )?;
+    let approvals: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM crew_autopilot_events WHERE task_id = ?1 AND kind = 'approval_started'",
+        [&run.task_id],
+        |row| row.get(0),
+    )?;
+    let turns = i64::from(run.attempts)
+        .max(worker)
+        .saturating_add(approvals);
+    Ok(u64::try_from(turns).unwrap_or(u64::MAX))
 }
 
 pub(super) fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
@@ -174,6 +194,15 @@ impl Store {
             tx.execute("UPDATE crew_runs SET verifying_since = NULL", [])?;
             Ok(())
         })
+    }
+
+    /// The turns a task has spent of its brief's budget: worker turns and reserved approvals.
+    /// The budget stop and a result's usage read it.
+    pub fn crew_turns_spent(&self, task_id: &str) -> Result<u64> {
+        let run = self
+            .crew_run(task_id)?
+            .ok_or_else(|| CoreError::NotFound(format!("crew run {task_id}")))?;
+        turns_spent(&self.reader(), &run)
     }
 
     pub fn crew_run(&self, task_id: &str) -> Result<Option<CrewRun>> {
