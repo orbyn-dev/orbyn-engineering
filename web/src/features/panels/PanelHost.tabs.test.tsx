@@ -34,7 +34,7 @@ beforeEach(() => {
     issues: [],
   } as never);
   useConnection.setState({ offline: false, serviceDown: false });
-  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", FILE], panelTabsClosed: ["tools", "linked"] });
+  useUi.setState({ panelOpen: true, panelTab: null, terminalOpen: false, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review", FILE], panelTabsClosed: ["tools", "linked", "review"] });
 });
 
 function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximize?: () => void; maximized?: boolean } = {}) {
@@ -84,7 +84,7 @@ describe("surface tabs", () => {
   });
 
   it("slots the Tools tab in once it is open, as one more icon-only slot", () => {
-    useUi.setState({ panelTabsClosed: ["linked"] });
+    useUi.setState({ panelTabsClosed: ["linked", "review"] });
     panel();
     expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "Tools", "notes.md"]);
     expect(screen.getByRole("tab", { name: "Tools" })).toHaveAttribute("data-tip", "Tools");
@@ -181,15 +181,24 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTab).toBe("diff");
   });
 
+  it("opens Review and comments from the plus and shows its empty state", async () => {
+    const user = userEvent.setup();
+    panel();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    await user.click(screen.getByRole("menuitem", { name: "Review and comments" }));
+    expect(useUi.getState().panelTab).toBe("review");
+    expect(await screen.findByText("No comments yet")).toBeInTheDocument();
+  });
+
   it("always draws the plus; it lists everything that can be opened, and Reset tab order only once the order has changed", async () => {
     const user = userEvent.setup();
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     // Only entries whose commands have keys show them.
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Open file…Ctrl+P"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Linked threads", "Review and comments", "Open file…Ctrl+P"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
     expect(useUi.getState().panelTab).toBe("tools");
-    expect(useUi.getState().panelTabsClosed).toEqual(["linked"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["linked", "review"]);
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.queryByRole("menuitem", { name: "Reset tab order" })).not.toBeInTheDocument();
   });
@@ -218,7 +227,7 @@ describe("surface tabs", () => {
     panel();
     screen.getByRole("tab", { name: "Side chat" }).focus();
     await user.keyboard("{Backspace}");
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "side"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "review", "side"]);
     expect(screen.getByRole("tab", { name: "notes.md" })).toHaveFocus();
   });
 
@@ -232,7 +241,7 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTabOrder).not.toContain(FILE);
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
     expect(screen.queryByRole("menuitem", { name: "notes.md" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "review"]);
   });
 
   it("greys out Changes in the launcher for a folder outside Git", async () => {
@@ -341,7 +350,7 @@ describe("surface tabs", () => {
     screen.getByRole("tab", { name: "Browser" }).focus();
     await user.keyboard("{Delete}");
     expect(screen.queryByRole("tab", { name: "Browser" })).not.toBeInTheDocument();
-    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "browser"]);
+    expect(useUi.getState().panelTabsClosed).toEqual(["tools", "linked", "review", "browser"]);
   });
 
   it("opens a closed surface when something reveals it", () => {
@@ -594,7 +603,7 @@ describe("tabs that do not fit", () => {
   it("fits all six tabs at 320px with Tools open, with no more button", () => {
     // The strip is 319px inside the panel's left border; the end buttons take 58.
     restore = narrow(319);
-    useUi.setState({ panelTabsClosed: ["linked"] });
+    useUi.setState({ panelTabsClosed: ["linked", "review"] });
     panel();
     expect(ids()).toEqual(["diff", "browser", "activity", "side", "tools", FILE]);
     expect(screen.queryByRole("button", { name: "More tabs" })).not.toBeInTheDocument();
@@ -646,7 +655,7 @@ describe("unsaved files and the tab menu", () => {
   it("keeps every unsaved edit when Cancel comes partway through Close all tabs", async () => {
     const user = userEvent.setup();
     const SECOND = fileTabId({ kind: "thread", path: "other.md" });
-    useUi.setState({ panelTabOrder: ["diff", "browser", "activity", "side", "tools", FILE, SECOND] });
+    useUi.setState({ panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review", FILE, SECOND] });
     useEditorSessions.setState({
       sessions: {
         "k-thread-1": unsaved("thread-1"),
