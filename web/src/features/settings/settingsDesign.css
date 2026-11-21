@@ -910,3 +910,72 @@
   color: var(--color-muted);
   font-size: 11.5px;
 }
+
+/* The breadcrumb above the page title, and the way back that replaces it on a sub-page in a narrow window (pb-k55-*). */
+.settings-crumbs {
+  flex: none;
+  padding: 18px 28px 0;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.settings-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-crumbs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-crumbs a {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+.settings-crumbs a:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.settings-crumbs a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.settings-crumbs b {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.settings-crumbs-back {
+  padding: 18px 16px 0;
+}
+.settings-crumbs-back a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-textSoft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.settings-crumbs + .settings-head {
+  padding-top: 6px;
+}
+
+/* The note for an address Settings does not have. */
+.settings-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 4px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-sunken);
+  color: var(--color-text);
+  font-size: var(--text-small);
+}
