@@ -129,12 +129,14 @@ it("clones from a Git URL, naming the project it joins, and never from text Git 
   await user.dblClick(within(dialog).getByRole("button", { name: "Clone" }));
   await waitFor(() => expect(mock.writes).toEqual(["clone:https://github.com/orbyn-dev/orbyn-docs.git"]));
   const added = await rowOf("orbyn-docs");
-  expect(within(added).getByText("Cloning 0%")).toBeVisible();
+  expect(within(added).getByText("Cloning")).toBeVisible();
+  expect(within(added).queryByText(/%/)).toBeNull();
+  expect(within(added).queryByRole("progressbar")).toBeNull();
   expect(within(added).queryByRole("button", { name: "Trust…" })).toBeNull();
 });
 
 it("creates a new folder by a safe name only, and cancels a running clone after a confirm", async () => {
-  const mock = show(createReposMock({ repositories: [...repoFixtures(), { ...repoFixtures()[0]!, id: "big", name: "big", primary: false, clone: { state: "cloning", percent: 10 } }] }));
+  const mock = show(createReposMock({ repositories: [...repoFixtures(), { ...repoFixtures()[0]!, id: "big", name: "big", primary: false, clone: { state: "cloning" } }] }));
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Add repository" }));
   await user.click(await screen.findByRole("menuitem", { name: "Create a new folder…" }));
@@ -199,4 +201,60 @@ it("does not run anything on open: no write happens until a dialog's confirm but
   await screen.findByRole("dialog", { name: "Clone a repository" });
   await user.keyboard("{Escape}");
   expect(mock.writes).toEqual([]);
+});
+
+it("a running clone draws no percentage or bar even when the answer carries a figure", async () => {
+  show(createReposMock({ repositories: [...repoFixtures(), { ...repoFixtures()[0]!, id: "big", name: "big", primary: false, trusted: false, clone: { state: "cloning", percent: 55 } }] }));
+  const big = await rowOf("big");
+  expect(within(big).getByText("Cloning")).toBeVisible();
+  expect(big.textContent).not.toMatch(/%/);
+  expect(within(big).queryByRole("progressbar")).toBeNull();
+  expect(within(big).queryByRole("button", { name: "Trust…" })).toBeNull();
+});
+
+it("a cancelled clone stays listed as failed, with no Trust offered for it, and Remove clears it", async () => {
+  const mock = show(createReposMock({ repositories: [...repoFixtures(), { ...repoFixtures()[0]!, id: "big", name: "big", primary: false, trusted: false, clone: { state: "cloning" } }] }));
+  const user = userEvent.setup();
+  await user.click(within(await rowOf("big")).getByRole("button", { name: "Cancel" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel clone" }));
+  await waitFor(() => expect(within(screen.getByText("big").closest("li") as HTMLElement).getByText("Clone failed. Cancelled.")).toBeVisible());
+  expect(mock.writes).toEqual(["cancel-clone:big"]);
+  const big = screen.getByText("big").closest("li") as HTMLElement;
+  expect(within(big).queryByRole("button", { name: "Trust…" })).toBeNull();
+  await user.click(within(big).getByRole("button", { name: "Actions for big" }));
+  expect(screen.queryByRole("menuitem", { name: "Trust this folder…" })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "Remove from project…" })).toBeVisible();
+});
+
+it("offers the trust prompt for untrusted rows only: a folder or clone added untrusted shows it, a created folder starts trusted", async () => {
+  const mock = show(createReposMock({ repositories: [repoFixtures()[0]!] }));
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Add repository" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Create a new folder…" }));
+  const create = await screen.findByRole("dialog", { name: "Create a repository" });
+  expect(within(create).getByText(/It starts trusted/)).toBeVisible();
+  expect(within(create).queryByText(/not trusted until/)).toBeNull();
+  await user.type(within(create).getByRole("textbox", { name: "Folder name" }), "made");
+  await user.click(within(create).getByRole("button", { name: "Create" }));
+  const made = await rowOf("made");
+  expect(within(made).getByText("Trusted")).toBeVisible();
+  expect(within(made).queryByRole("button", { name: "Trust…" })).toBeNull();
+  await user.click(await screen.findByRole("button", { name: "Add repository" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Add a folder…" }));
+  const add = await screen.findByRole("dialog", { name: "Add a folder" });
+  expect(within(add).getByText(/not trusted until you trust it/)).toBeVisible();
+  await user.type(within(add).getByRole("textbox", { name: "Folder on this computer" }), "/work/added");
+  await user.click(within(add).getByRole("button", { name: "Add" }));
+  const added = await rowOf("added");
+  expect(within(added).getByText("Not trusted")).toBeVisible();
+  expect(within(added).getByRole("button", { name: "Trust…" })).toBeVisible();
+  expect(mock.writes).toEqual(["create:made", "add:/work/added"]);
+});
+
+it("an untrusted folder with no Git is trusted first: Trust is offered and Set up Git is not, until it is trusted", async () => {
+  show(createReposMock({ repositories: [repoFixtures()[0]!, { ...repoFixtures()[3]!, trusted: false }] }));
+  const notes = await rowOf("orbyn-notes");
+  expect(within(notes).getByText("Not trusted")).toBeVisible();
+  expect(within(notes).getByRole("button", { name: "Trust…" })).toBeVisible();
+  expect(within(notes).queryByRole("button", { name: "Set up Git" })).toBeNull();
 });

@@ -74,6 +74,7 @@ mod crew_worker_provider;
 mod hub;
 mod installs;
 mod issues;
+pub(crate) mod project_repos;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;

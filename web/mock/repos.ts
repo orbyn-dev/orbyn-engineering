@@ -19,7 +19,7 @@ export function repoFixtures(): RepoRow[] {
     row("orbyn-engineering", "main", { primary: true }),
     row("orbyn-planner", "feat/calendar", { has_remote: false }),
     row("orbyn-engine", "main", { trusted: false }),
-    row("orbyn-notes", null, { trusted: false, has_remote: false }),
+    row("orbyn-notes", null, { trusted: true, has_remote: false }),
   ];
 }
 
@@ -39,7 +39,7 @@ export interface ReposMock extends ReposApi {
 }
 
 export function createReposMock(init: {
-  repositories?: RepoRow[] | null; threads?: Record<string, ThreadRepo[]>; permissionModes?: Record<string, PermissionMode[]>; delayMs?: number; maxPerThread?: number; cloneDirectory?: string | null; scan?: (path: string) => RepoScan | null;
+  repositories?: RepoRow[] | null; threads?: Record<string, ThreadRepo[]>; permissionModes?: Record<string, PermissionMode[]>; delayMs?: number; publish?: "unsupported" | "works"; maxPerThread?: number; cloneDirectory?: string | null; scan?: (path: string) => RepoScan | null;
 } = {}): ReposMock {
   let repositories = init.repositories === undefined ? repoFixtures() : init.repositories;
   const threads: Record<string, ThreadRepo[]> = init.threads ?? {
@@ -90,7 +90,8 @@ export function createReposMock(init: {
       await wait();
       take("create");
       if (!/^[A-Za-z0-9_][\w.-]*$/.test(name) || name.includes("..")) throw new ApiFailure("invalid", "That is not a folder name.", 400);
-      const added = row(name, "main", { path: `~/Documents/Github/${name}`, trusted: false, has_remote: false });
+      // The service: `create` starts trusted (Orbyn made an empty folder); `add-folder` and `clone` start untrusted.
+      const added = row(name, "main", { path: `~/Documents/Github/${name}`, trusted: true, has_remote: false });
       repositories = [...held(), added];
       return added;
     },
@@ -99,8 +100,10 @@ export function createReposMock(init: {
       await wait();
       take("cancel-clone");
       const one = find(repoId);
-      repositories = held().filter((entry) => entry.id !== repoId);
-      return { ...one, clone: null };
+      if (one.clone?.state !== "cloning") throw new ApiFailure("invalid", "That repository is not being cloned.", 400);
+      // The service answers the row as failed, "Cancelled."; it stays listed until it is removed.
+      const cancelled: RepoRow = { ...one, is_git: false, trusted: false, branch: null, branches: [], has_remote: false, clone: { state: "failed", percent: null, message: "Cancelled." } };
+      return replace(cancelled);
     },
     clone: async (_project, source) => {
       writes.push(`clone:${source}`);
@@ -108,7 +111,7 @@ export function createReposMock(init: {
       take("clone");
       if (!/^(https:\/\/|ssh:\/\/|[\w.-]+@[\w.-]+:)[^\s]+$/.test(source)) throw new ApiFailure("clone_refused", "That source cannot be cloned.", 400);
       const name = source.replace(/\.git$/, "").split(/[/:]/).pop() ?? source;
-      const added = row(name, "main", { trusted: false, clone: { state: "cloning", percent: 0 } });
+      const added = row(name, "main", { trusted: false, clone: { state: "cloning", percent: null } });
       repositories = [...held(), added];
       return added;
     },
@@ -116,19 +119,23 @@ export function createReposMock(init: {
       writes.push(`publish:${repoId}:${input.name}:${input.visibility}`);
       await wait();
       take("publish");
-      if (!find(repoId).trusted) throw new ApiFailure("repo_untrusted", "This repository is not trusted.", 409);
+      if (!find(repoId).trusted) throw new ApiFailure("repo_untrusted", "Trust this repository before publishing it.", 409);
+      // The service today: 422 unsupported after the trust check.
+      if ((init.publish ?? "unsupported") === "unsupported") throw new ApiFailure("unsupported", "Publishing a repository arrives in a later update.", 422);
       return replace({ ...find(repoId), has_remote: true });
     },
     trust: async (_project, repoId) => {
       writes.push(`trust:${repoId}`);
       await wait();
       take("trust");
+      if (find(repoId).clone !== null) throw new ApiFailure("invalid", "Wait for the clone to finish.", 400);
       return replace({ ...find(repoId), trusted: true });
     },
     setupGit: async (_project, repoId) => {
       writes.push(`git:${repoId}`);
       await wait();
       take("git");
+      if (!find(repoId).trusted) throw new ApiFailure("repo_untrusted", "Trust this folder before setting up Git.", 409);
       return replace({ ...find(repoId), is_git: true, branch: "main", branches: ["main"] });
     },
     remove: async (_project, repoId) => {
@@ -162,10 +169,10 @@ export function createReposMock(init: {
       if (init.scan !== undefined) return init.scan(path);
       const workspace = path.endsWith(".code-workspace");
       const folders: RepoScan["folders"] = [
-        { name: "orbyn-docs", path: `${path}/orbyn-docs`, is_git: true, source: workspace ? "code-workspace" : "child", in_project: false, refused: null },
-        { name: "orbyn-planner", path: `${path}/orbyn-planner`, is_git: true, source: workspace ? "code-workspace" : "child", in_project: true, refused: null },
-        { name: "notes", path: `${path}/notes`, is_git: false, source: workspace ? "code-workspace" : "child", in_project: false, refused: null },
-        ...(workspace ? [{ name: "shared", path: "/elsewhere/shared", is_git: true, source: "code-workspace" as const, in_project: false, refused: "outside" as const }] : []),
+        { name: "orbyn-docs", path: `${path}/orbyn-docs`, is_git: true, source: workspace ? "code_workspace" : "child", in_project: false, refused: null },
+        { name: "orbyn-planner", path: `${path}/orbyn-planner`, is_git: true, source: workspace ? "code_workspace" : "child", in_project: true, refused: null },
+        { name: "notes", path: `${path}/notes`, is_git: false, source: workspace ? "code_workspace" : "child", in_project: false, refused: null },
+        ...(workspace ? [{ name: "shared", path: "/elsewhere/shared", is_git: true, source: "code_workspace" as const, in_project: false, refused: "outside" as const }] : []),
       ];
       return { path, is_git: false, code_workspace_file: workspace ? path : null, folders, truncated: false };
     },

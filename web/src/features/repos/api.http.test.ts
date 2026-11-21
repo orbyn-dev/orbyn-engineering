@@ -144,3 +144,42 @@ it("sends branch_name on a thread start only when it is given", async () => {
   expect(call(fetching, 0).body.branch_name).toBe("feat/x");
   expect("branch_name" in call(fetching, 1).body).toBe(false);
 });
+
+// Real service shapes (crates/orbynd/src/routes/repos.rs, docs/multi-repo.md "As built: project repositories").
+it("reads the service's own clone object: state cloning or failed, percent absent, a message only after a failure", async () => {
+  const cloning = { ...row, id: "c1", clone: { state: "cloning" } };
+  const failed = { ...row, id: "c2", clone: { state: "failed", message: "The clone failed: no access." } };
+  stub(json({ repositories: [row, cloning, failed], clone_directory: "/data/repos", max_per_thread: 8 }));
+  const view = await reposApi().list("p1");
+  expect(view?.repositories.map((one) => one.clone)).toEqual([null, { state: "cloning" }, { state: "failed", message: "The clone failed: no access." }]);
+});
+
+it("reads cancel as the failed row the service answers, and remove as an empty 204", async () => {
+  const cancelled = { ...row, id: "c1", is_git: false, trusted: false, branch: null, branches: [], clone: { state: "failed", percent: null, message: "Cancelled." } };
+  const fetching = stub(json(cancelled), new Response(null, { status: 204 }));
+  expect(await reposApi().cancelClone("p1", "c1")).toEqual(cancelled);
+  await expect(reposApi().remove("p1", "c1")).resolves.toBeUndefined();
+  expect(call(fetching, 0)).toMatchObject({ method: "POST", path: "/api/projects/p1/repos/c1/clone/cancel", body: undefined });
+  expect(call(fetching, 1)).toMatchObject({ method: "POST", path: "/api/projects/p1/repos/c1/remove", body: undefined });
+});
+
+it("passes the service's repository error codes through with their status", async () => {
+  const cases: [number, string][] = [[409, "repo_exists"], [409, "repo_limit"], [400, "clone_refused"], [409, "repo_untrusted"], [400, "invalid"], [404, "not_found"]];
+  for (const [status, code] of cases) {
+    stub(json({ code, message: "no" }, status));
+    await expect(reposApi().addFolder("p1", "/x")).rejects.toMatchObject({ code, status });
+  }
+});
+
+it("reads publish's 422 unsupported as that failure, not as an answer", async () => {
+  stub(json({ code: "unsupported", message: "Publishing a repository arrives in a later update." }, 422));
+  await expect(reposApi().publish("p1", "r1", { name: "o/r", visibility: "private" })).rejects.toMatchObject({ code: "unsupported", status: 422, message: "Publishing a repository arrives in a later update." });
+});
+
+it("reads the scan's code_workspace source, and drops an entry whose source this page does not know (the old guess, code-workspace)", async () => {
+  const entry = (name: string, source: string) => ({ name, path: `/w/${name}`, is_git: true, source, in_project: false, refused: null });
+  stub(json({ path: "/w/x.code-workspace", is_git: false, code_workspace_file: "x.code-workspace", truncated: false, folders: [entry("a", "code_workspace"), entry("b", "child"), entry("c", "code-workspace")] }));
+  const scan = await reposApi().scan("p1", "/w/x.code-workspace");
+  expect(scan?.folders.map((folder) => [folder.name, folder.source])).toEqual([["a", "code_workspace"], ["b", "child"]]);
+  expect(scan?.code_workspace_file).toBe("x.code-workspace");
+});

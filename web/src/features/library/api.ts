@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiFailure, request } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
-import type { EnvSet, LibraryApi, LibrarySummary, Prompt, Suggestions, Workflow } from "./contract";
+import type { Copied, EnvSet, LibraryApi, LibrarySummary, Prompt, Suggestions, Workflow } from "./contract";
 
 const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
@@ -10,8 +10,8 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 const items = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value.filter(isObject) as unknown as T[]) : []);
 
 /**
- * The real client for the routes of docs/execution-profiles-and-library.md, Part 2 (not run against a real service: none answers
- * them yet). `GET /api/library` answering `404` is "this service has no library" and is answered as `null` with no error, so
+ * The real client for the routes of docs/execution-profiles-and-library.md, Part 2 (the routes are not built yet, so this is
+ * not run against a real service). `GET /api/library` answering `404` is "this service has no library" and is answered as `null` with no error, so
  * nothing draws. Every write is Person-class (`personKey.ts`): `request` adds the key. Ids in a path are encoded and only ever ones
  * a list gave. An environment value goes only in the body of `PUT .../keys/{key}`: never in a path, a query or a log.
  */
@@ -48,7 +48,7 @@ const http: LibraryApi = {
     const body = isObject(answer) ? answer : {};
     return { workflows: items(body.workflows), prompts: items(body.prompts), env_sets: items(body.env_sets), problems: items(body.problems) } as Suggestions;
   },
-  copySuggestion: async (projectId, file, index) => { await request<unknown>("POST", `/api/projects/${q(projectId)}/library/suggestions/copy`, { file, index }); },
+  copySuggestion: (projectId, file, index) => request<Copied>("POST", `/api/projects/${q(projectId)}/library/suggestions/copy`, { file, index }),
 };
 
 let current: LibraryApi = http;

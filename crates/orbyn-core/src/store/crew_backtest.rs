@@ -142,7 +142,7 @@ pub struct BacktestLaneRow {
     pub engine: String,
     pub model: String,
     /// The kind the lane was started as, written once with the run. `None` only for a lane recorded before the store
-    /// kept kinds (migration 65): an old row's kind is unknown, never guessed as a review.
+    /// kept kinds (migration 66): an old row's kind is unknown, never guessed as a review.
     pub kind: Option<LaneKind>,
     pub tokens_used: u64,
     pub state: LaneState,
@@ -550,7 +550,7 @@ impl Store {
                         lane,
                         engine,
                         model,
-                        // A row written before migration 65 has no kind: unknown, never read as a review.
+                        // A row written before migration 66 has no kind: unknown, never read as a review.
                         kind: kind.map(|name| kind_of(&name)).transpose()?,
                         tokens_used: u64::try_from(tokens).map_err(|_| {
                             CoreError::Internal("stored backtest tokens are invalid".into())

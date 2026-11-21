@@ -43,8 +43,8 @@ it("says in words why an imported workspace folder cannot be added, and offers n
 
 it("says each refusal and notes a truncated list", async () => {
   const scan = (): RepoScan => ({ path: "/w", is_git: false, code_workspace_file: "/w/a.code-workspace", truncated: true, folders: [
-    { name: "gone", path: "/w/gone", is_git: false, source: "code-workspace", in_project: false, refused: "missing" },
-    { name: "file", path: "/w/file", is_git: false, source: "code-workspace", in_project: false, refused: "not_directory" },
+    { name: "gone", path: "/w/gone", is_git: false, source: "code_workspace", in_project: false, refused: "missing" },
+    { name: "file", path: "/w/file", is_git: false, source: "code_workspace", in_project: false, refused: "not_directory" },
   ] });
   const { dialog } = open("workspace", createReposMock({ scan }));
   const { results } = await scanOf(dialog, "/w/a.code-workspace", "Read file");

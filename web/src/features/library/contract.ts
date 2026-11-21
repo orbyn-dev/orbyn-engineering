@@ -1,7 +1,6 @@
 /**
- * The personal library contract of docs/execution-profiles-and-library.md, Part 2 (W9). Hand-written: no generated types exist for
- * these routes and no service answers them yet. Field names are the doc's. Anything the doc leaves open is marked "guess" and is
- * listed in the pull request.
+ * The personal library contract of docs/execution-profiles-and-library.md, Part 2 (W9). Hand-written to the shapes the doc pins:
+ * no generated types exist for these routes and no service answers them yet (the routes are not built). Field names are the doc's.
  */
 
 export type ParamKind = "text" | "choice" | "path";
@@ -57,13 +56,28 @@ export interface EnvSet extends Stamped {
 
 export type Kind = "workflow" | "prompt" | "env_set";
 
-/** `GET /api/library`: counts and the keychain state. The `limits` shape is a guess; the doc names the numbers, not the keys. */
+/** The flat `limits` object of `GET /api/library`: exactly these keys, all integers. Byte limits are in bytes. */
+export interface LibraryLimits {
+  workflows: number;
+  prompts: number;
+  env_sets: number;
+  env_keys_per_set: number;
+  env_sets_per_workflow: number;
+  params_per_item: number;
+  workflow_command_bytes: number;
+  prompt_body_bytes: number;
+  env_value_bytes: number;
+  suggestions_file_bytes: number;
+  import_bytes: number;
+}
+
+/** `GET /api/library`: counts, the keychain state and the limits. */
 export interface LibrarySummary {
   workflows: number;
   prompts: number;
   env_sets: number;
   keychain: "ok" | "unavailable" | "blocked";
-  limits?: { workflows?: number; prompts?: number; env_sets?: number; env_keys?: number };
+  limits: LibraryLimits;
 }
 
 /** The writable part of each kind. */
@@ -71,14 +85,21 @@ export interface WorkflowDraft { name: string; description: string; command: str
 export interface PromptDraft { name: string; description: string; body: string; params: Param[] }
 export interface EnvSetDraft { name: string; description: string; keys: string[] }
 
-/** Guess: a repository entry is the library shape without `id`, `revision` and timestamps, plus the `index` it has in its file. */
-export type RepoWorkflow = WorkflowDraft & { index: number };
-export type RepoPrompt = PromptDraft & { index: number };
-export type RepoEnvSet = { name: string; description: string; keys: string[]; index: number };
+export type SuggestionFile = "workflows.json" | "prompts.json" | "env-sets.json";
 
+/**
+ * A repository entry is the library shape without `id`, `revision` and timestamps, plus `file` (its path under `.orbyn/`) and `index`
+ * (its zero-based position in that file's array, counting dropped entries). `(file, index)` names one entry and is what copy takes.
+ */
+export interface RepoRef { file: SuggestionFile; index: number }
+export type RepoWorkflow = WorkflowDraft & RepoRef;
+export type RepoPrompt = PromptDraft & RepoRef;
+export type RepoEnvSet = { name: string; description: string; keys: string[] } & RepoRef;
+
+/** A whole-file problem has no entry to point at and uses `index: 0`. */
 export interface Problem { file: string; index: number; code: string }
 
-/** `GET /api/projects/{id}/library/suggestions`. The array names are a guess. */
+/** `GET /api/projects/{id}/library/suggestions`. */
 export interface Suggestions {
   workflows: RepoWorkflow[];
   prompts: RepoPrompt[];
@@ -86,7 +107,11 @@ export interface Suggestions {
   problems: Problem[];
 }
 
-export type SuggestionFile = "workflows.json" | "prompts.json" | "env-sets.json";
+/** `POST .../suggestions/copy` answers `201` with the created device-library entry and its kind. */
+export type Copied =
+  | { kind: "workflow"; entry: Workflow }
+  | { kind: "prompt"; entry: Prompt }
+  | { kind: "env_set"; entry: EnvSet };
 
 export const LIMITS = { name: 60, description: 200, command: 4000, body: 32 * 1024, params: 16, defaultValue: 500, choiceText: 60, choiceMin: 2, choiceMax: 20, envSetsPerWorkflow: 4, keysPerSet: 64, value: 8192 } as const;
 
@@ -114,5 +139,5 @@ export interface LibraryApi {
   setKey(setId: string, key: string, value: string): Promise<{ name: string; present: boolean }>;
   removeKey(setId: string, key: string): Promise<{ name: string; present: boolean }>;
   suggestions(projectId: string, signal?: AbortSignal): Promise<Suggestions>;
-  copySuggestion(projectId: string, file: SuggestionFile, index: number): Promise<void>;
+  copySuggestion(projectId: string, file: SuggestionFile, index: number): Promise<Copied>;
 }

@@ -7,12 +7,19 @@ describe("repository state", () => {
     expect(repoFixtures().map(repoState)).toEqual(["trusted", "trusted", "untrusted", "not_git"]);
   });
 
+  it("puts trust before Git: an untrusted folder is untrusted even with no Git (setup-git refuses it with 409), then Set up Git", () => {
+    expect(repoState({ is_git: false, trusted: false })).toBe("untrusted");
+    expect(repoState({ is_git: true, trusted: false })).toBe("untrusted");
+    expect(repoState({ is_git: false, trusted: true })).toBe("not_git");
+    expect(repoState({ is_git: true, trusted: true })).toBe("trusted");
+  });
+
   it("lets only a trusted Git folder that is not cloning join a thread", () => {
     const [engineering, , engine, notes] = repoFixtures();
     expect(canJoinThread(engineering!)).toBe(true);
     expect(canJoinThread(engine!)).toBe(false);
     expect(canJoinThread(notes!)).toBe(false);
-    expect(canJoinThread({ ...engineering!, clone: { state: "cloning", percent: 10 } })).toBe(false);
+    expect(canJoinThread({ ...engineering!, clone: { state: "cloning" } })).toBe(false);
   });
 
   it("ticks every trusted repository up to the limit and none beyond", () => {
@@ -52,10 +59,12 @@ describe("untrusted text", () => {
     expect(plain("a\nb\u0000c")).toBe("a b c");
   });
 
-  it("says how far a clone is", () => {
+  it("says a clone is running, never how far: the service's percent is always null, and a stray figure is not drawn", () => {
     const [row] = repoFixtures();
     expect(cloneText(row!)).toBeNull();
-    expect(cloneText({ ...row!, clone: { state: "cloning", percent: 41.6 } })).toBe("Cloning 42%");
+    expect(cloneText({ ...row!, clone: { state: "cloning" } })).toBe("Cloning");
+    expect(cloneText({ ...row!, clone: { state: "cloning", percent: null } })).toBe("Cloning");
+    expect(cloneText({ ...row!, clone: { state: "cloning", percent: 41.6 } })).toBe("Cloning");
     expect(cloneText({ ...row!, clone: { state: "failed", percent: null, message: "No access." } })).toBe("Clone failed. No access.");
   });
 });

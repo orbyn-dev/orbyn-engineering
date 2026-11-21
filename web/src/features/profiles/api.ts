@@ -1,24 +1,25 @@
 import { useEffect, useState } from "react";
 import { ApiFailure, request } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
-import type { ApplyAnswer, ApplyBody, Profile, ProfileCheck, ProfileDraft, ProfileList, ProfilesApi } from "./contract";
+import { PROFILE_LIMIT, type ApplyAnswer, type ApplyBody, type Profile, type ProfileCheck, type ProfileDraft, type ProfileList, type ProfilesApi } from "./contract";
 
 const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const isProfileLike = (value: unknown): value is Record<string, unknown> => isObject(value) && typeof value.id === "string";
 
 /**
- * The real client for the routes of docs/execution-profiles-and-library.md, Part 1 (not run against a real service: none answers
- * them yet). `GET /api/profiles` answering `404` is "this service has no profiles" and is answered as `null` with no error, so
- * nothing draws. Every write is Person-class (`personKey.ts`): `request` adds the key. A profile id in a path is encoded and
+ * The real client for the routes of docs/execution-profiles-and-library.md, Part 1. `GET /api/profiles` answers a bare array of
+ * profiles (the limit of 50 is a constant, not in the answer); `404` is "this service has no profiles" and is answered as `null`
+ * with no error, so nothing draws. Every write is Person-class (`personKey.ts`): `request` adds the key. A profile id in a path is encoded and
  * only ever one the list gave. Crew routes answer 404 with Crew Preview off: the Settings page is hidden then too.
  */
 const http: ProfilesApi = {
   async list(signal) {
     try {
-      const list = await request<ProfileList>("GET", "/api/profiles", undefined, signal);
-      if (!isObject(list) || !Array.isArray(list.profiles)) return null;
-      return { profiles: list.profiles.filter(isObject) as unknown as Profile[], limit: typeof list.limit === "number" ? list.limit : 50 };
+      const list = await request<unknown>("GET", "/api/profiles", undefined, signal);
+      if (!Array.isArray(list)) return null;
+      return { profiles: list.filter(isProfileLike) as unknown as Profile[], limit: PROFILE_LIMIT };
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;
