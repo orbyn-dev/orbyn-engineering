@@ -1061,6 +1061,9 @@ export function updateStatus(behind: number): UpdateStatus {
       latest: "0.2.0",
       notes: "## Changes\n\n- Faster thread loading\n- Fixes terminal resize on Windows",
       mode: "desktop",
+      phase: "available",
+      release_id: "fixture-release-1",
+      operation: 0,
       can_apply: true,
       blocked_reason: null,
       unconfigured: false,
@@ -1265,7 +1268,7 @@ export const pullDetails = () => [
   { project_id: "p-app", number: 131, created_at: iso(-400000), requested_reviewers: [{ name: "you", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 0, viewer_review_state: "none" },
   { project_id: "p-site", number: 136, created_at: iso(-500000), requested_reviewers: [{ name: "riley-chen", kind: "user" }, { name: "sam-reyes", kind: "user" }, { name: "marilyn", kind: "user" }], comment_count: 1, viewer_review_state: "none" },
   { project_id: "p-app", number: 203, requested_reviewers: [{ name: "you", kind: "user" }], comment_count: 3, viewer_review_state: "none" },
-  { project_id: "p-app", number: 205, requested_reviewers: [], comment_count: 3, viewer_review_state: "approved" },
+  { project_id: "p-app", number: 205, requested_reviewers: [], comment_count: 3, viewer_review_state: "approved", approval_count: 1 },
   { project_id: "p-app", number: 210, requested_reviewers: [{ name: "sam", kind: "user" }], comment_count: 3, viewer_review_state: "none" },
   // A forge that gives none of these: every cell shows an en dash.
   { project_id: "p-app", number: 57 },

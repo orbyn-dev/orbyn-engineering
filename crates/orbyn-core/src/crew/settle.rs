@@ -156,6 +156,10 @@ impl Core {
         if !result.r#final && result.state != ResultState::NeedsPerson {
             return;
         }
+        // A background run's lead thread runs no engine: telling it would start one.
+        if self.crew_background_lead(&run.lead_thread_id) {
+            return;
+        }
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
         // prompt is accepted; if it is refused with them, the result goes alone.
         let held = self.held_for_lead(run, result.crew_id.as_str());
@@ -205,6 +209,8 @@ impl Core {
             }
             Err(error) => tracing::warn!(%error, "could not write a crew task's result"),
         }
+        // The run of a background crew that this task belongs to ends with it.
+        self.crew_background_task_ended(task, state, stop);
         // A fix that ends without passing may be the last one a deferred rerun of the lanes was waiting for.
         if state != ResultState::Passed {
             self.spawn_review_unpassed(&task.id);
@@ -228,6 +234,8 @@ impl Core {
     /// answering the lead in the same call passes false.
     pub(super) fn crew_needs_person(self: &Arc<Self>, task_id: &str, why: &str, tell: bool) {
         if let Some(task) = self.step_crew_task(task_id, "needs_person", None) {
+            // A background run waits for a person instead of running on with nobody at it.
+            self.crew_background_task_waits(&task, why);
             let run = self.store.crew_run(task_id).ok().flatten();
             match self.record_result(&task, ResultState::NeedsPerson, None, why, None) {
                 Ok(result) => {
@@ -370,7 +378,10 @@ impl Core {
                 return None;
             }
         };
-        (spent >= u64::from(brief.budget.turns)).then_some("The task ran past its turn budget.")
+        // A background run keeps its own count of the turns a worker has had: either one running out stops the task.
+        (spent >= u64::from(brief.budget.turns)
+            || self.crew_background_out_of_turns(task, brief.budget.turns))
+        .then_some("The task ran past its turn budget.")
     }
 
     /// Queues `text` on the worker's thread. It is checked for the key's text and for secrets

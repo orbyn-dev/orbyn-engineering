@@ -19,6 +19,10 @@ requested_reviewers?: Array<RequestedReviewer>,
  */
 comment_count?: number, 
 /**
+ * Approved latest opinionated reviews, only when the host's connection is complete.
+ */
+approval_count?: number, 
+/**
  * The signed-in viewer's latest review: `approved`, `changes_requested`,
  * `commented`, `dismissed`, `pending` or `none`.
  */

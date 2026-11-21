@@ -1,18 +1,30 @@
 //! Threads: create, read, change, move and delete, their messages and items, and the preparation of a thread's checkout.
 
+use std::collections::VecDeque;
+use std::convert::Infallible;
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
+use futures_util::{Stream, stream};
 use orbyn_contracts::{
-    AdoptScratch, BatchThreads, CreateThread, DelegateTask, ForkThread, MoveThread, ReorderThreads,
-    RetryPreparation, SwitchEngine, UpdateThread,
+    AdoptScratch, BatchThreads, CreateThread, DelegateTask, ForkThread, MessageSearchEvent,
+    MoveThread, ReorderThreads, RetryPreparation, SwitchEngine, UpdateThread,
 };
+use orbyn_core::Core;
+use orbyn_core::conversation::search::{SearchCursor, SearchScope};
 use serde::Deserialize;
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
+/// How many messages one page of a streamed search reads.
+const SEARCH_PAGE: usize = 200;
+const SEARCH_KEEP_ALIVE: Duration = Duration::from_secs(15);
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -23,6 +35,7 @@ pub fn routes() -> Router<AppState> {
             "/api/threads/{id}",
             get(get_thread).patch(update_thread).delete(delete_thread),
         )
+        .route("/api/threads/{id}/family", get(thread_family))
         .route("/api/threads/{id}/items", get(list_items))
         .route("/api/threads/{id}/messages", get(thread_messages))
         .route("/api/threads/{id}/items/{item}", get(get_item))
@@ -43,6 +56,7 @@ pub fn routes() -> Router<AppState> {
             post(retry_preparation),
         )
         .route("/api/search/messages", get(search_messages))
+        .route("/api/search/messages/events", get(search_messages_stream))
 }
 
 async fn move_thread(
@@ -94,6 +108,14 @@ async fn get_thread(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.store.thread(&id)?))
+}
+
+/// A thread's whole family: the topmost thread and everything below it.
+async fn thread_family(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.store.thread_family(&id)?))
 }
 
 async fn delete_thread(
@@ -218,17 +240,119 @@ struct MessageSearchQuery {
     archived: Option<bool>,
 }
 
+impl MessageSearchQuery {
+    fn scope(&self) -> SearchScope {
+        SearchScope {
+            project_id: self.project_id.clone(),
+            thread_id: self.thread_id.clone(),
+            archived: self.archived.unwrap_or(false),
+            limit: self.limit,
+        }
+    }
+}
+
 async fn search_messages(
     State(state): State<AppState>,
     Query(query): Query<MessageSearchQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    let scope = orbyn_core::conversation::search::SearchScope {
-        project_id: query.project_id,
-        thread_id: query.thread_id,
-        archived: query.archived.unwrap_or(false),
-        limit: query.limit,
+    Ok(Json(
+        state.core.store.search_messages(&query.q, &query.scope())?,
+    ))
+}
+
+/// The matches of one search, newest first, sent while the read runs: the same order
+/// and the same flags as `GET /api/search/messages`, but a client can draw them as
+/// they are found and stop reading early.
+struct SearchFrames {
+    core: Arc<Core>,
+    query: String,
+    scope: SearchScope,
+    cursor: SearchCursor,
+    pending: VecDeque<MessageSearchEvent>,
+    words: Vec<String>,
+    too_short: bool,
+    finished: bool,
+}
+
+impl SearchFrames {
+    /// The next frame: hits in read order, then one `done` (or a `failed` if the read
+    /// broke after some hits), then `None`.
+    fn next_frame(&mut self) -> Option<MessageSearchEvent> {
+        loop {
+            if let Some(frame) = self.pending.pop_front() {
+                return Some(frame);
+            }
+            if self.finished {
+                return None;
+            }
+            if self.cursor.done() {
+                self.finished = true;
+                return Some(MessageSearchEvent::Done {
+                    words: std::mem::take(&mut self.words),
+                    too_short: self.too_short,
+                    truncated: self.cursor.truncated(),
+                });
+            }
+            match self.core.store.search_messages_page(
+                &self.query,
+                &self.scope,
+                &mut self.cursor,
+                SEARCH_PAGE,
+            ) {
+                Ok(page) => {
+                    self.words = page.words;
+                    self.too_short = page.too_short;
+                    self.pending.extend(
+                        page.hits
+                            .into_iter()
+                            .map(|hit| MessageSearchEvent::Hit { hit }),
+                    );
+                }
+                Err(error) => {
+                    self.finished = true;
+                    return Some(MessageSearchEvent::Failed {
+                        code: error.code().to_owned(),
+                        message: error.public_message(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+async fn search_messages_stream(
+    State(state): State<AppState>,
+    Query(query): Query<MessageSearchQuery>,
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let scope = query.scope();
+    let mut cursor = SearchCursor::default();
+    // The first page is read here, so a query the whole read refuses is a `400` rather
+    // than a stream that opens and fails.
+    let first =
+        state
+            .core
+            .store
+            .search_messages_page(&query.q, &scope, &mut cursor, SEARCH_PAGE)?;
+    let frames = SearchFrames {
+        core: state.core.clone(),
+        query: query.q,
+        scope,
+        cursor,
+        pending: first
+            .hits
+            .into_iter()
+            .map(|hit| MessageSearchEvent::Hit { hit })
+            .collect(),
+        words: first.words,
+        too_short: first.too_short,
+        finished: false,
     };
-    Ok(Json(state.core.store.search_messages(&query.q, &scope)?))
+    let frames = stream::unfold(frames, |mut frames| async move {
+        let event = frames.next_frame()?;
+        let frame = Event::default().json_data(&event).ok()?;
+        Some((Ok::<_, Infallible>(frame), frames))
+    });
+    Ok(Sse::new(frames).keep_alive(KeepAlive::new().interval(SEARCH_KEEP_ALIVE)))
 }
 
 #[derive(Deserialize)]

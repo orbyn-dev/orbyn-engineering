@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use super::fake::{caps, model};
 use crate::agents::driver::{
     ApprovalSpec, EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe,
-    ModelCatalog, RunHandle, RunSpec,
+    ModelCatalog, RunHandle, RunSpec, SteerMessage,
 };
 use crate::app::Core;
 use crate::error::Result;
@@ -43,6 +43,9 @@ pub enum Turn {
     Steps(Vec<(&'static str, Value)>),
     /// Reports, then keeps its turn open until told, as a worker that goes on working would.
     Linger(Value, Arc<tokio::sync::Notify>),
+    /// Says something first, as a real engine does, then reports. A background crew's worker must be heard to answer; the other
+    /// turns above produce no assistant output at all.
+    Say(Value),
 }
 
 /// The worker's work: given the turn's number (from 0) and the checkout, do it and say what
@@ -165,7 +168,7 @@ impl EngineDriver for Fake {
                         kind: orbyn_contracts::ActionKind::Command,
                         target: "must-not-execute".into(),
                         summary: "forbidden".into(),
-                        detail: json!({}),
+                        detail: json!({ "command": "must-not-execute" }),
                         paths: vec![],
                         reply,
                     })
@@ -270,6 +273,25 @@ impl EngineDriver for Fake {
                         }
                         EngineOutcome::Completed
                     }
+                    Turn::Say(args) => {
+                        for event in [
+                            orbyn_contracts::AgUiEvent::TextMessageStart {
+                                message_id: "say".into(),
+                                role: "assistant".into(),
+                            },
+                            orbyn_contracts::AgUiEvent::TextMessageContent {
+                                message_id: "say".into(),
+                                delta: "Working on it.".into(),
+                            },
+                            orbyn_contracts::AgUiEvent::TextMessageEnd {
+                                message_id: "say".into(),
+                            },
+                        ] {
+                            let _ = events.send(event.into()).await;
+                        }
+                        send_report(&core, &spec, args, &answers).await;
+                        EngineOutcome::Completed
+                    }
                     Turn::Linger(args, release) => {
                         send_report(&core, &spec, args, &answers).await;
                         release.notified().await;
@@ -280,11 +302,11 @@ impl EngineDriver for Fake {
             let _ = events.send(EngineEvent::Finished(outcome)).await;
         });
         let input = self.steerable.then(|| {
-            let (send, mut receive) = mpsc::unbounded_channel::<String>();
+            let (send, mut receive) = mpsc::unbounded_channel::<SteerMessage>();
             let (steered, thread) = (self.steered.clone(), spec_thread);
             tokio::spawn(async move {
-                while let Some(text) = receive.recv().await {
-                    steered.lock().unwrap().push((thread.clone(), text));
+                while let Some(steer) = receive.recv().await {
+                    steered.lock().unwrap().push((thread.clone(), steer.prompt));
                 }
             });
             send

@@ -129,7 +129,80 @@ pub(crate) fn codex() {
                     state.tools_ready = true;
                 }
 
-                send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                let params = &message["params"];
+                // An MCP App's host reads one server by name; no name is the Tools page.
+                if let Some(server) = params["serverName"].as_str() {
+                    record_launch("codex-app-tools", &[params.to_string()]);
+                    if sibling_exists("mcp-app-tools-slow") {
+                        // A read that stays in flight long enough for concurrent ones to arrive.
+                        std::thread::sleep(std::time::Duration::from_millis(700));
+                    }
+                    if sibling_exists("mcp-app-ignores-server") {
+                        // An older engine that ignores `serverName`: it answers with a
+                        // different server only, whose tool carries the same name.
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            other_server_entry(),
+                        ] } }));
+                    } else if sibling_exists("mcp-app-multi") {
+                        // Every configured server, in a fixed order that puts the asked one
+                        // between two others: the exact name must pick it.
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            other_server_entry(),
+                            { "name": server, "authStatus": "unsupported", "runtimeStatus": "connected",
+                              "tools": { "show_widget": {
+                                  "name": "show_widget", "description": "Shows a widget",
+                                  "inputSchema": { "type": "object" } } } },
+                            { "name": "third", "authStatus": "unsupported", "runtimeStatus": "connected",
+                              "tools": { "show_widget": {
+                                  "name": "show_widget", "description": "THIRD SERVER",
+                                  "inputSchema": { "type": "object" } } } },
+                        ] } }));
+                    } else if sibling_exists("mcp-app-tools-absent") {
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            { "name": server, "authStatus": "unsupported", "runtimeStatus": "connected" },
+                        ] } }));
+                    } else if sibling_exists("mcp-app-tools-not-object") {
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
+                            { "name": server, "authStatus": "unsupported", "runtimeStatus": "connected",
+                              "tools": [{ "name": "show_widget" }] },
+                        ] } }));
+                    } else if sibling_exists("mcp-app-server-down") {
+                        send(
+                            &json!({ "id": id, "error": { "code": -32000, "message": "SECRET-MARKER server refused" } }),
+                        );
+                    } else if sibling_exists("mcp-app-server-unavailable") {
+                        send(&json!({ "id": id, "result": { "nextCursor": null, "data": [] } }));
+                    } else {
+                        let tools = if sibling_exists("mcp-app-tool-missing") {
+                            json!({ "other_tool": { "name": "other_tool", "inputSchema": { "type": "object" } } })
+                        } else {
+                            json!({ "show_widget": {
+                                "name": "show_widget", "description": "Shows a widget",
+                                "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] },
+                                "title": "Show widget", "outputSchema": { "type": "object" },
+                                "annotations": { "readOnlyHint": true, "secret": "SECRET-MARKER" },
+                                "icons": [{ "src": "https://evil.example/icon.png" }],
+                                "_meta": { "secret": "SECRET-MARKER" },
+                            } })
+                        };
+                        let mut entry = json!({
+                            "name": server, "tools": tools, "authStatus": "unsupported",
+                            "runtimeStatus": "connected",
+                            "serverInfo": { "name": server, "version": "1", "description": "SECRET-MARKER server" },
+                        });
+                        if sibling_exists("mcp-app-tools-error") {
+                            entry["toolsError"] = json!("SECRET-MARKER cannot list");
+                            entry["runtimeStatus"] = json!("failed");
+                        }
+                        if sibling_exists("mcp-app-auth") {
+                            entry["authStatus"] = json!("notLoggedIn");
+                        }
+                        send(
+                            &json!({ "id": id, "result": { "nextCursor": null, "data": [entry] } }),
+                        );
+                    }
+                } else {
+                    send(&json!({ "id": id, "result": { "nextCursor": null, "data": [
 
                     { "name": "orbyn_engineering", "tools": { "skill_search": {}, "skill_load": {} }, "authStatus": "unsupported" },
 
@@ -140,6 +213,7 @@ pub(crate) fn codex() {
                     { "name": "notion", "tools": {}, "toolsError": "needs login", "authStatus": "notLoggedIn" },
 
                 ] } }));
+                }
             }
 
             // As Codex 0.166.0 answered: a loaded thread is required, and the server's
@@ -439,4 +513,14 @@ pub(crate) fn codex() {
             }
         }
     }
+}
+
+/// A configured server that is not the one asked for, with a tool of the same name.
+fn other_server_entry() -> serde_json::Value {
+    json!({
+        "name": "other", "authStatus": "unsupported", "runtimeStatus": "connected",
+        "tools": { "show_widget": {
+            "name": "show_widget", "description": "OTHER SERVER",
+            "inputSchema": { "type": "object" } } },
+    })
 }

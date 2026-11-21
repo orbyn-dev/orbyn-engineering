@@ -590,6 +590,10 @@ export const FRAMES = {
     ],
   },
 
+  // Crew, the wide Map tree and the swim lanes (Crew Designs' crew-map and lanes-main; built from the map and message reads).
+  "crew-map": { route: "#/crew/map", scenario: "crew" },
+  "lanes-main": { route: "#/crew/lanes", scenario: "crew" },
+
   // Live stage-list adaptations of the approved consent/badge frames.
   "flow-offline": { route: "#/crew/flow", scenario: "crew-review-consent", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "security: Needs you")] },
   "lane-same-engine": { route: "#/crew/flow", scenario: "crew-review-same", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },
@@ -658,6 +662,11 @@ export const FRAMES = {
   "escape-confirmed": { route: "#/preview/crew/escape-confirmed?id=esc-session", scenario: "crew-escapes" },
   "escape-dismissed": { route: "#/preview/crew/escape-dismissed?id=esc-docs", scenario: "crew-escapes" },
   "escape-gap": { route: "#/preview/crew/escape-gap?id=esc-session", scenario: "crew-escapes", steps: [click("button", "Set the gap…")] },
+  /** Crew, the reviewer backtest (Crew Designs v23), on the real 4n routes over the mock's crew-backtest scenarios. A report
+   *  frame names its run in the hash, the way an escape detail names its escape. The estimate draws its dialog open. */
+  "backtest-estimate": { route: "#/preview/crew/backtest-estimate", scenario: "crew-backtest", wait: 2500 },
+  "backtest-report": { route: "#/preview/crew/backtest-report?id=run-4n", scenario: "crew-backtest-report" },
+  "backtest-stopped": { route: "#/preview/crew/backtest-stopped?id=run-stopped", scenario: "crew-backtest-stopped" },
   /** Crew, the escape check frames (Crew Designs v79): one escape's own page with its check in the state the mock leaves it. */
   "escape-check-proposed": { route: "#/preview/crew/escape-check-proposed?id=esc-proposed", scenario: "crew-escapes-checks" },
   "escape-check-writing": { route: "#/preview/crew/escape-check-writing?id=esc-writing", scenario: "crew-escapes-checks" },

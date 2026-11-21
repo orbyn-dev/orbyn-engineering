@@ -405,3 +405,271 @@ async fn an_app_note_rides_with_the_next_turn_once_and_the_timeline_says_so() {
     assert_eq!(put("refused".into()).await, 403);
     service.stop().await;
 }
+
+/// One app's tool descriptor as the trusted host reads it.
+async fn tool_info(service: &Service, thread: &str, render: &str) -> (u16, Value) {
+    let response = service
+        .get(&format!(
+            "/api/threads/{thread}/mcp-apps/{render}/tool-info"
+        ))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn an_app_tool_info_is_its_servers_advertisement_and_nothing_more() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    let turns_before = launches(&launch_file, "codex-turn").len();
+
+    // A payload that names another tool and claims other metadata changes nothing: the
+    // tool is the render's own, and every field comes from the server's answer.
+    let response = service
+        .get(&format!(
+            "/api/threads/{thread}/mcp-apps/{render}/tool-info?name=evil&description=spoofed&inputSchema={{\"type\":\"string\"}}"
+        ))
+        .header("content-type", "application/json")
+        .body(r#"{"name":"evil","description":"spoofed","inputSchema":{"type":"string"}}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let info: Value = response.json().await.unwrap();
+    assert_eq!(
+        info,
+        json!({
+            "name": "show_widget",
+            "description": "Shows a widget",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"],
+            },
+        }),
+        "only the server's own name, description and schema"
+    );
+    // Connection detail never leaves the service. The fake descriptor carries a marker
+    // in its other fields; the response carries none of them, nor the service token.
+    let text = info.to_string();
+    assert!(!text.contains("SECRET-MARKER"), "{text}");
+    assert!(!text.contains(&service.token), "{text}");
+
+    // The read asks the app's own server, for its tool list only, and starts no model turn.
+    let reads = launches(&launch_file, "codex-app-tools");
+    assert_eq!(reads.len(), 1, "one read for the app's server");
+    let read: Value = serde_json::from_str(reads[0]["args"][0].as_str().unwrap()).unwrap();
+    assert_eq!(read["serverName"], "demo", "only the app's own server");
+    assert_eq!(read["detail"], "toolsAndAuthOnly");
+    assert_eq!(
+        launches(&launch_file, "codex-turn").len(),
+        turns_before,
+        "a metadata read starts no model turn"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn a_tool_info_read_that_names_nothing_is_a_plain_404() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+
+    let (status, body) = tool_info(&service, &thread, "01zzzzzzzzzzzzzzzzzzzzzzzz").await;
+    assert_eq!(status, 404, "an unknown render names no app: {body}");
+    assert_eq!(body["code"], "not_found");
+    assert_ne!(
+        body["message"], "No such route.",
+        "the route exists; the handler is what answered 404"
+    );
+
+    // A render this service published for an agent's own page has no app record.
+    let (status, body) = service
+        .send(
+            &format!("/api/threads/{thread}/renders"),
+            json!({ "html": "<p>agent page</p>" }),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    let agent_render = body["id"].as_str().unwrap();
+    let (status, body) = tool_info(&service, &thread, agent_render).await;
+    assert_eq!(
+        status, 404,
+        "a page that is not an app names no tool: {body}"
+    );
+
+    // The app's server answers but no longer advertises the tool the render recorded.
+    std::fs::write(dir.path().join("mcp-app-tool-missing"), b"").unwrap();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 404, "an unknown tool: {body}");
+    assert_eq!(body["code"], "not_found");
+    assert_ne!(body["message"], "No such route.");
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn an_app_tool_info_read_fails_closed_when_its_server_cannot_answer() {
+    // A server that refuses the list, one that lists with an error, one the engine no
+    // longer has and one that needs a sign-in: none may be reported as an empty or
+    // stale tool, and the server's own failure text never reaches the host.
+    for marker in [
+        "mcp-app-server-down",
+        "mcp-app-tools-error",
+        "mcp-app-server-unavailable",
+        "mcp-app-auth",
+    ] {
+        let dir = TempDir::new();
+        let launch_file = dir.path().join("launches.jsonl");
+        let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+        let render = app_render(&service, &thread).await;
+        std::fs::write(dir.path().join(marker), b"").unwrap();
+        let (status, body) = tool_info(&service, &thread, &render).await;
+        assert_eq!(status, 502, "{marker}: {body}");
+        assert_eq!(body["code"], "engine_unavailable", "{marker}: {body}");
+        assert!(
+            !body.to_string().contains("SECRET-MARKER"),
+            "{marker}: the server's own failure text stays in the service: {body}"
+        );
+        service.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn concurrent_identical_tool_info_reads_share_one_engine_session() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    std::fs::write(dir.path().join("mcp-app-tools-slow"), b"").unwrap();
+
+    // Six cards (or six mounts of one) ask at once: they share a single engine session.
+    let route = format!("/api/threads/{thread}/mcp-apps/{render}/tool-info");
+    let replies = futures_util::future::join_all((0..6).map(|_| service.get(&route).send())).await;
+    for reply in replies {
+        let reply = reply.unwrap();
+        assert_eq!(reply.status(), 200);
+        let info: Value = reply.json().await.unwrap();
+        assert_eq!(info["name"], "show_widget");
+        assert_eq!(info["description"], "Shows a widget");
+    }
+    assert_eq!(
+        launches(&launch_file, "codex-app-tools").len(),
+        1,
+        "one spawn for six identical concurrent reads"
+    );
+
+    // Single-flight is not a cache: a read after the flight ended asks the engine again.
+    let (status, _) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        launches(&launch_file, "codex-app-tools").len(),
+        2,
+        "nothing is kept once the flight completed"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn a_deny_rule_refuses_a_tool_info_read_before_any_server_starts() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    let info_rows = |rows: &[(i64, String, String)]| {
+        rows.iter()
+            .filter(|(_, _, target)| target == "mcp_app:demo:tool_info")
+            .map(|(_, action, _)| action.clone())
+            .collect::<Vec<_>>()
+    };
+
+    // The default is Ask, which never refuses a read that grants nothing; a success
+    // writes no audit row.
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(info_rows(&audit_targets(&service, &thread).await).is_empty());
+    assert_eq!(launches(&launch_file, "codex-app-tools").len(), 1);
+
+    // A deny rule on another server does not touch this app.
+    let (status, body) = service
+        .send(
+            "/api/policy/rules",
+            json!({ "effect": "deny", "kind": "tool", "pattern": "mcp_app:elsewhere:*" }),
+        )
+        .await;
+    assert!(status < 300, "{body}");
+    assert_eq!(tool_info(&service, &thread, &render).await.0, 200);
+    assert!(info_rows(&audit_targets(&service, &thread).await).is_empty());
+
+    // A deny rule on this app's server refuses the read before the engine is started.
+    let (status, body) = service
+        .send(
+            "/api/policy/rules",
+            json!({ "effect": "deny", "kind": "tool", "pattern": "mcp_app:demo:*" }),
+        )
+        .await;
+    assert!(status < 300, "{body}");
+    let spawned = launches(&launch_file, "codex-app-tools").len();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(
+        launches(&launch_file, "codex-app-tools").len(),
+        spawned,
+        "a refused read starts no server"
+    );
+    assert_eq!(
+        info_rows(&audit_targets(&service, &thread).await),
+        vec!["action.deny".to_owned()],
+        "one deny row, and no row for the successful reads"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn an_app_tool_info_read_with_no_tools_object_is_a_502_not_a_404() {
+    // The server answered but sent no tools object (or a non-object): its state is
+    // unknown, which is not the same as "not advertised".
+    for marker in ["mcp-app-tools-absent", "mcp-app-tools-not-object"] {
+        let dir = TempDir::new();
+        let launch_file = dir.path().join("launches.jsonl");
+        let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+        let render = app_render(&service, &thread).await;
+        std::fs::write(dir.path().join(marker), b"").unwrap();
+        let (status, body) = tool_info(&service, &thread, &render).await;
+        assert_eq!(status, 502, "{marker}: {body}");
+        assert_eq!(body["code"], "engine_unavailable", "{marker}: {body}");
+        service.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn an_app_tool_info_filters_a_multi_entry_reply_by_exact_server_name() {
+    // A reply that lists several servers, the asked one between two others that carry a
+    // tool of the same name: only the asked server's own descriptor comes back.
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    std::fs::write(dir.path().join("mcp-app-multi"), b"").unwrap();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["description"], "Shows a widget", "{body}");
+    assert!(!body.to_string().contains("SERVER"), "{body}");
+    service.stop().await;
+
+    // An engine that ignores serverName and answers with another server only cannot
+    // make that server's tool the app's: it is a 502, never the other descriptor.
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    std::fs::write(dir.path().join("mcp-app-ignores-server"), b"").unwrap();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 502, "{body}");
+    assert!(!body.to_string().contains("OTHER SERVER"), "{body}");
+    service.stop().await;
+}
