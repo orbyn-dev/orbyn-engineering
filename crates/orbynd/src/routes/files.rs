@@ -32,6 +32,9 @@ pub fn routes() -> Router<AppState> {
 struct PathQuery {
     #[serde(default)]
     path: String,
+    /// A multi-repository thread's repository; absent is the primary one.
+    #[serde(default)]
+    repo_id: Option<String>,
 }
 
 async fn file_tree(
@@ -62,7 +65,13 @@ async fn read_file(
     Path(id): Path<String>,
     Query(query): Query<PathQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.read_file(&id, &query.path).await?))
+    Ok(Json(
+        orbyn_core::in_repo(
+            query.repo_id.clone(),
+            state.core.read_file(&id, &query.path),
+        )
+        .await?,
+    ))
 }
 
 /// One checkout entry's metadata: no bytes, and a final link is described, not followed.
@@ -88,7 +97,10 @@ async fn write_file(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<WriteFile>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.write_file(&id, &body, LOCAL_USER).await?))
+    let repo = body.repo_id.clone();
+    Ok(Json(
+        orbyn_core::in_repo(repo, state.core.write_file(&id, &body, LOCAL_USER)).await?,
+    ))
 }
 
 /// A person's create, rename or delete in the thread's checkout: the R1 `mutate`.

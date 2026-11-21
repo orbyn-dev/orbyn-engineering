@@ -240,6 +240,28 @@ The web client for the project repository routes (`web/src/features/repos/`) use
 - Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `ThreadRepo`, `TaskFolder`, the thread Git actions.
   The mock (`web/mock/repos.ts`, hidden behind the preview flag) follows the generated shapes and the service's answers above.
 
+## As built: repo_id on Git and file calls
+
+Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
+an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
+
+- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`, and
+  `PUT .../files/content` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`). Query: `GET .../commits`, `GET .../diff`,
+  `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+- **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
+  returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
+  file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
+  file `revision` belongs to that repository's file. In Core the route sets the repository with `orbyn_core::in_repo(repo_id, work)`;
+  work spawned from inside does not inherit it.
+- **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
+  repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
+  working in a thread that already has its worktree.
+- **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
+  200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
+- **Not built.** Pull request routes (`.../pulls`, `.../pulls/{number}/merge`, `.../review`) do not take `repo_id` yet: a pull request is
+  linked to a thread by number, and two repositories can share a number, so they need their own change; they act on the primary
+  repository until then. Adding a repository to a thread (`POST /api/threads/{id}/repos`), `repo-threads`, the task folder.
+
 ## Not in the beta
 
 Per-repository settings, a thread that spans repositories of more than one project, committing across

@@ -1,0 +1,58 @@
+//! The repositories of a multi-repository thread (docs/multi-repo.md).
+
+use rusqlite::params;
+
+use super::Store;
+use crate::error::Result;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ThreadRepoRecord {
+    pub thread_id: String,
+    pub repo_id: String,
+    pub position: u32,
+    pub name: String,
+    pub branch: String,
+    pub worktree_path: String,
+}
+
+impl Store {
+    /// The thread's repositories, primary first. Empty for an ordinary thread.
+    pub(crate) fn thread_repos(&self, thread_id: &str) -> Result<Vec<ThreadRepoRecord>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT thread_id, repo_id, position, name, branch, worktree_path FROM thread_repos
+             WHERE thread_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map([thread_id], |row| {
+            Ok(ThreadRepoRecord {
+                thread_id: row.get(0)?,
+                repo_id: row.get(1)?,
+                position: u32::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                name: row.get(3)?,
+                branch: row.get(4)?,
+                worktree_path: row.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn thread_repo_insert(&self, record: &ThreadRepoRecord, now: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "INSERT INTO thread_repos (thread_id, repo_id, position, name, branch, worktree_path, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    record.thread_id,
+                    record.repo_id,
+                    record.position,
+                    record.name,
+                    record.branch,
+                    record.worktree_path,
+                    now
+                ],
+            )?;
+            Ok(())
+        })
+    }
+}

@@ -194,6 +194,7 @@
     ["GET","/api/threads/{id}/queue","local"],
     ["GET","/api/threads/{id}/renders/{render_id}","local"],
     ["GET","/api/threads/{id}/renders/{render_id}/{file}","local"],
+    ["GET","/api/threads/{id}/repos","local"],
     ["GET","/api/threads/{id}/runs/{run}/changes","local"],
     ["GET","/api/threads/{id}/runs/{run}/changes/file","local"],
     ["GET","/api/threads/{id}/scripts","local"],
