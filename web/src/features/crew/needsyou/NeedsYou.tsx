@@ -9,7 +9,7 @@ const UNDO_WORD = { easy: "Easy to undo", hard: "Hard to undo" } as const;
 
 /** What an item's action does, and why it cannot yet. With no `act`, every control is disabled with the one reason. */
 export interface NeedsActions {
-  act?(item: NeedsItem, action: NeedsAction): void;
+  act?(item: NeedsItem, action: NeedsAction, anchor: HTMLElement): void;
   /** Why this action is off right now, or null when it is on. */
   off?(item: NeedsItem, action: NeedsAction): string | null;
 }
@@ -22,7 +22,7 @@ function ActionButton({ item, action, handlers }: { item: NeedsItem; action: Nee
       small
       tone={action.primary ? "primary" : "quiet"}
       aria-label={`${action.label}: ${item.title}`}
-      onClick={() => handlers.act?.(item, action)}
+      onClick={(event) => handlers.act?.(item, action, event.currentTarget)}
       {...(!handlers.act ? unavailable : reason ? { title: reason, "aria-description": reason } : {})}
       disabled={off}
     >

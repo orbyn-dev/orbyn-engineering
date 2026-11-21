@@ -1,22 +1,38 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const initialize = vi.fn();
 const draw = vi.fn(async (id: unknown, _code?: unknown) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${String(id)}" data-diagram="yes"><g/></svg>` }));
 vi.mock("mermaid", () => ({ default: { initialize: (config: unknown) => initialize(config), render: draw } }));
 
-import { Mermaid } from "./Mermaid";
+import { DRAW_DEBOUNCE_MS, Mermaid } from "./Mermaid";
 import { MAX_DIAGRAM_CHARS, sanitizeSvg } from "./mermaidSafety";
 
 beforeEach(() => {
+  vi.useFakeTimers();
   initialize.mockClear();
   draw.mockClear();
 });
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/**
+ * Fires the debounce, then waits for the `import("mermaid")` the timer starts and for the draw chain behind it. Advancing the
+ * timers alone does not wait for the import, so without this a guard test could pass before the guard ever ran.
+ */
+const settled = () =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(DRAW_DEBOUNCE_MS);
+    await vi.dynamicImportSettled();
+    await vi.advanceTimersByTimeAsync(0);
+  });
 
 describe("Mermaid", () => {
   it("initialises Mermaid at its strict security level, and draws the SVG inline", async () => {
     const { container } = render(<Mermaid code="graph LR; A-->B;" />);
-    await waitFor(() => expect(screen.getByRole("img", { name: "Diagram" })).toBeInTheDocument());
+    await settled();
+    expect(screen.getByRole("img", { name: "Diagram" })).toBeInTheDocument();
     expect(initialize).toHaveBeenCalledWith(expect.objectContaining({ startOnLoad: false, securityLevel: "strict" }));
     // Strict keeps the SVG in the page. "sandbox" would wrap it in an iframe, which the question view's rule and the
     // end-to-end checks (".md-diagram svg", no iframe in the panel) do not allow.
@@ -26,7 +42,8 @@ describe("Mermaid", () => {
 
   it("initialises with the hardened config: SVG text labels, limits, and a locked key list", async () => {
     render(<Mermaid code="graph LR; A-->B;" />);
-    await waitFor(() => expect(initialize).toHaveBeenCalled());
+    await settled();
+    expect(initialize).toHaveBeenCalled();
     const config = initialize.mock.calls[0]![0] as Record<string, unknown>;
     expect(config).toMatchObject({
       startOnLoad: false,
@@ -43,7 +60,8 @@ describe("Mermaid", () => {
 
   it("locks the keys an init directive could use to weaken the config", async () => {
     render(<Mermaid code={'%%{init: {"securityLevel":"loose","htmlLabels":true}}%%\ngraph LR; A-->B;'} />);
-    await waitFor(() => expect(initialize).toHaveBeenCalled());
+    await settled();
+    expect(initialize).toHaveBeenCalled();
     const config = initialize.mock.calls[0]![0] as { secure: string[]; securityLevel: string };
     expect(config.securityLevel).toBe("strict");
     for (const key of ["securityLevel", "htmlLabels", "startOnLoad", "maxTextSize", "maxEdges", "theme", "themeCSS", "themeVariables", "suppressErrorRendering"]) {
@@ -63,7 +81,8 @@ describe("Mermaid", () => {
       svg: `<svg xmlns="http://www.w3.org/2000/svg" id="${String(id)}" onload="alert(1)"><script>alert(1)</script><foreignObject><div>x</div></foreignObject><a href="javascript:alert(1)"><text>t</text></a><text onclick="x()">ok</text></svg>`,
     }));
     const { container } = render(<Mermaid code="graph LR; A-->B;" />);
-    await waitFor(() => expect(container.querySelector(".md-diagram svg")).not.toBeNull());
+    await settled();
+    expect(container.querySelector(".md-diagram svg")).not.toBeNull();
     const html = container.querySelector(".md-diagram")!.innerHTML;
     expect(html).not.toMatch(/script|foreignObject|onload|onclick|javascript:/i);
     expect(html).toContain("ok");
@@ -71,7 +90,7 @@ describe("Mermaid", () => {
 
   it("keeps the source for an oversized diagram and never calls Mermaid", async () => {
     const { container } = render(<Mermaid code={"graph LR;\n" + "A-->B;".repeat(MAX_DIAGRAM_CHARS)} />);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await settled();
     expect(draw).not.toHaveBeenCalled();
     expect(container.querySelector(".md-diagram")).toBeNull();
   });
@@ -84,8 +103,9 @@ describe("Mermaid", () => {
       throw new Error("Parse error");
     });
     const { container } = render(<Mermaid code="graph LR; A--" />);
-    await waitFor(() => expect(draw).toHaveBeenCalled());
-    await waitFor(() => expect(document.querySelector('[id^="dmermaid"]')).toBeNull());
+    await settled();
+    expect(draw).toHaveBeenCalled();
+    expect(document.querySelector('[id^="dmermaid"]')).toBeNull();
     expect(container.querySelector(".md-diagram")).toBeNull();
     expect(container.textContent).toContain("A--");
   });
@@ -93,8 +113,8 @@ describe("Mermaid", () => {
   it("falls back to the source when the output is not one SVG document", async () => {
     draw.mockResolvedValueOnce({ svg: "<div>not svg</div>" });
     const { container } = render(<Mermaid code="graph LR; A-->B;" />);
-    await waitFor(() => expect(draw).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settled();
+    expect(draw).toHaveBeenCalled();
     expect(container.querySelector(".md-diagram")).toBeNull();
   });
 });
@@ -103,6 +123,15 @@ const SVG = (inner: string) => `<svg xmlns="http://www.w3.org/2000/svg" id="s">$
 const clean = (markup: string, id = "s") => sanitizeSvg(markup, id)?.outerHTML ?? "";
 
 describe("sanitizeSvg", () => {
+  it("removes every unsafe attribute and keeps every safe one on an element that holds many", () => {
+    // A live attribute list walked while removals reshape it would leave every other unsafe attribute behind.
+    const attrs = Array.from({ length: 200 }, (_, i) => (i % 2 ? `data-safe-${i}="v${i}"` : `onx${i}="bad()"`)).join(" ");
+    const out = sanitizeSvg(SVG(`<rect ${attrs}/>`), "s")!;
+    const rect = out.querySelector("rect")!;
+    expect(rect.getAttributeNames().filter((name) => name.startsWith("onx"))).toEqual([]);
+    expect(rect.getAttributeNames().filter((name) => name.startsWith("data-safe-"))).toHaveLength(100);
+  });
+
   it("keeps a label written with a non-breaking space entity", () => {
     expect(sanitizeSvg(SVG("<text>a&nbsp;b</text>"), "s")?.textContent).toBe("a\u00a0b");
   });
