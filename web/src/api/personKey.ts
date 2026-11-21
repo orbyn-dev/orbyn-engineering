@@ -164,7 +164,6 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
 ];
 
 /**
-<<<<<<< HEAD
  * Person routes of a service slice that is not merged (HostDriver slice 3, the Cursor thread contract: the one-turn override and
  * the engine notice's acknowledgement; and the multi-repository writes of docs/multi-repo.md). They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
