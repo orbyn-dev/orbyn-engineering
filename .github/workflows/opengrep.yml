@@ -4,7 +4,8 @@ name: Opengrep
 # never fails a pull request on findings: it reports them in the run summary and keeps the JSON as an artifact.
 # A failing rule test or a broken engine build does fail this workflow, so a broken rule cannot pass unnoticed.
 # It does not replace CodeQL: see .opengrep/README.md for what it covers and when it could.
-# The engine is LGPL-2.1 and is built here from the pinned commit; nothing from it is committed.
+# The engine is LGPL-2.1 and is built here from the pinned commit, inside an Alpine container as upstream builds its Linux release
+# (Ubuntu 24.04's libpcre2 is too old for it); nothing from it is committed.
 on:
   pull_request:
     paths:
@@ -36,6 +37,7 @@ env:
   # Release v2.0.0. Change it only through a reviewed upstream comparison, together with the library's pin file.
   OPENGREP_COMMIT: 526deafe6f0519c272bbee316fea8df26dd85dfa
   OPENGREP_OCAML: 5.5.1
+  # alpine:3.22, pinned by digest (a tag can move)
 
 jobs:
   scan:
@@ -54,32 +56,21 @@ jobs:
         with:
           path: ~/opengrep-bin
           key: opengrep-${{ runner.os }}-${{ runner.arch }}-${{ env.OPENGREP_COMMIT }}
-      - name: Libraries the engine links
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libpcre2-dev libgmp-dev libev-dev
-      - name: OCaml 5.5.1 in its own opam switch
-        if: steps.engine.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y opam
-          opam init --bare --no-setup --disable-sandboxing -y
-          opam switch create opengrep "$OPENGREP_OCAML"
-      - name: Build the engine from the pinned commit
+      - name: Build the engine from the pinned commit, in an Alpine container
         if: steps.engine.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
           git clone --no-checkout https://github.com/opengrep/opengrep "$RUNNER_TEMP/opengrep"
-          cd "$RUNNER_TEMP/opengrep"
-          git checkout --detach "$OPENGREP_COMMIT"
-          test "$(git rev-parse HEAD)" = "$OPENGREP_COMMIT"
-          git submodule update --init --recursive
-          eval "$(opam env --switch=opengrep --set-switch)"
-          opam install -y dune
-          make setup
-          make core
+          git -C "$RUNNER_TEMP/opengrep" checkout --detach "$OPENGREP_COMMIT"
+          test "$(git -C "$RUNNER_TEMP/opengrep" rev-parse HEAD)" = "$OPENGREP_COMMIT"
+          git -C "$RUNNER_TEMP/opengrep" submodule update --init --recursive
+          cp .opengrep/build-in-alpine.sh "$RUNNER_TEMP/opengrep/build-in-alpine.sh"
+          docker run --rm --volume "$RUNNER_TEMP/opengrep:/workspace" --workdir /workspace \
+            --env OCAML_VERSION="$OPENGREP_OCAML" \
+            alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f sh /workspace/build-in-alpine.sh
           mkdir -p ~/opengrep-bin
-          cp -L bin/opengrep ~/opengrep-bin/opengrep
+          cp "$RUNNER_TEMP/opengrep/artifacts/opengrep" ~/opengrep-bin/opengrep
       - name: Engine version
         run: ~/opengrep-bin/opengrep --version
       - name: Test the rules
