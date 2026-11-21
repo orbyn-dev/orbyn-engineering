@@ -169,7 +169,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
 
 /**
  * Person routes of service slices that are not merged: the Cursor thread contract (HostDriver slice 3: the one-turn override and the
- * engine notice's acknowledgement), the Issues routes (docs/issues.md) and the multi-repository writes of docs/multi-repo.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * engine notice's acknowledgement), the Issues routes (docs/issues.md), the multi-repository writes of docs/multi-repo.md and the device actions of docs/devices.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
@@ -195,6 +195,8 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"],
   ["POST", "/api/projects/{id}/repo-threads"],
   ["POST", "/api/threads/{id}/repos"],
+  // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
+  ["POST", "/api/devices/{id}/actions"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */

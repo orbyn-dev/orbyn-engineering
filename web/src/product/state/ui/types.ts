@@ -11,12 +11,12 @@ export interface ToastAction { label: string; run(): void }
 export type LayoutChoice = "console" | "ledger" | "reading";
 export const LAYOUT_CHOICES: readonly LayoutChoice[] = ["console", "ledger", "reading"];
 /** The panel's own surfaces. A file opened from the left bar is a tab too (`FileTabId`). */
-export type BuiltinTab = "diff" | "activity" | "browser" | "side" | "linked" | "tools" | "review";
+export type BuiltinTab = "diff" | "activity" | "browser" | "side" | "linked" | "tools" | "review" | "devices";
 /** A file tab's id: `file:` and an encoded target (see `features/panels/files/fileTab.ts`). */
 export type FileTabId = `file:${string}`;
 export type RightTab = BuiltinTab | FileTabId;
 /** The panel's surfaces in their default order, the launcher's order. Terminal is the header button and the drawer, never a tab. */
-export const RIGHT_TAB_IDS: readonly BuiltinTab[] = ["diff", "browser", "activity", "side", "tools", "linked", "review"];
+export const RIGHT_TAB_IDS: readonly BuiltinTab[] = ["diff", "browser", "activity", "side", "tools", "linked", "review", "devices"];
 
 export const isFileTab = (id: unknown): id is FileTabId => typeof id === "string" && id.length > 5 && id.startsWith("file:");
 export const isPanelTab = (id: unknown): id is RightTab => isFileTab(id) || RIGHT_TAB_IDS.includes(id as BuiltinTab);

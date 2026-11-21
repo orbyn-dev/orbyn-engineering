@@ -38,6 +38,9 @@ const markers = [
   // Repositories design preview (features/repos): the dev-only hash route and its mock.
   "preview/repos",
   "createReposMock",
+  // Devices design preview (features/devices): the dev-only hash route and its mock.
+  "preview/devices",
+  "createDevicesMock",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>
