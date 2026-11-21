@@ -70,6 +70,8 @@ interface UiState extends Prefs {
   closeAllPanelTabs(): void;
   /** Puts a closed surface back in the row, opens it and shows the panel. */
   reopenPanelTab(tab: RightTab): void;
+  /** Reopens the surface closed last, as the reopen shortcut does; false when none is closed. */
+  reopenLastClosedPanelTab(): boolean;
   /** Opens a file from the left bar as a tab, or shows the one already open. */
   openFileTab(target: FileTarget): void;
   /** Moves a tab to `index` in the row's order. */
@@ -268,6 +270,12 @@ export const useUi = create<UiState>((set, get) => {
         panelTab: tab,
       });
       savePrefs();
+    },
+    reopenLastClosedPanelTab() {
+      const last = get().panelTabsClosed.at(-1);
+      if (last === undefined) return false;
+      get().reopenPanelTab(last);
+      return true;
     },
     movePanelTab(tab, index) {
       const order = get().panelTabOrder.filter((id) => id !== tab);
