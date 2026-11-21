@@ -13,7 +13,7 @@ pub use custom::{
     MAX_CONTEXT_LINES, MAX_LINE_CHARS, MAX_NAME_CHARS, MAX_PATTERN_CHARS, MAX_PATTERNS,
     MAX_SAMPLE_CHARS, Problem, compile,
 };
-pub use redactor::{Custom, Redactor, Span};
+pub use redactor::{Custom, Redactor, Span, cut_safely};
 pub use settings::{Stored, StoredPattern, Surface};
 
 #[cfg(test)]

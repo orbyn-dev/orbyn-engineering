@@ -80,10 +80,11 @@ export interface HostCrash {
 
 /**
  * Where an engine's API key stands. `not_asked`, `saved`, `declined` and `rejected` are what the service reports;
+ * `opted_in_no_key` is the service's own status (opted in, no key saved: a key write failed after the opt-in, or the key was removed);
  * `saving`, `removing`, `locked`, `denied` and `remove_failed` are only ever reached by a click on this screen.
  * `rejected` is the engine reporting an auth error while using the saved key.
  */
-export type StorageChoice = "not_asked" | "saved" | "declined" | "rejected" | "saving" | "removing" | "locked" | "denied" | "remove_failed";
+export type StorageChoice = "not_asked" | "saved" | "declined" | "rejected" | "saving" | "removing" | "locked" | "denied" | "remove_failed" | "opted_in_no_key";
 
 /** One engine's API key row. It is a state and a date: the key itself is never a field, in either direction of a read. */
 export interface KeyStorage {
@@ -93,6 +94,8 @@ export interface KeyStorage {
   choice: StorageChoice;
   /** ISO time the key was saved. */
   saved_at?: string | null;
+  /** Only on the answer to `removeKey`: how many of the engine's running threads the service stopped with the key. */
+  stopped?: number | null;
 }
 
 /** A refused keychain write: the service answers with one of these codes and nothing else about why. */
@@ -124,6 +127,10 @@ export interface EngineHostApi {
    * echo the key in any reply or error text.
    */
   saveKey(engineId: string, key: string): Promise<KeyStorage>;
+  /** Turn the person's opt-in off without recording a decline: the row goes back to not asked. Person-class (ENFORCED). */
+  removeOptIn(engineId: string): Promise<KeyStorage>;
   /** Delete the key Orbyn saved; the engine's own sign-in is untouched and running threads keep going. The real route must be Person-class (ENFORCED). */
   removeKey(engineId: string): Promise<KeyStorage>;
+  /** Ask the keychain again after it was locked or refused. Changes nothing; answers the row as the service now has it. */
+  retryKeychain(engineId: string): Promise<KeyStorage>;
 }

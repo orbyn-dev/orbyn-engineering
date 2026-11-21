@@ -55,7 +55,7 @@ exists: 98, partial: 68, missing: 60, preview-only: 5.)
 | 5 | `connect-agent` | Getting started | Connect an agent | `features/onboarding/WelcomeWizard.tsx:52` | built | P1 | |
 | 6 | `add-project` | Getting started | Add a project | `features/workspace/palette/AddProjectPalette.tsx:392; product/ui/FolderBrowser.tsx` | built | P1 | |
 | 7 | `trust` | Getting started | Trust this folder | `features/onboarding/TrustFolder.tsx:12` | built | P1 | |
-| 8 | `no-projects` | Getting started | No projects yet | `features/onboarding/NoProjects.tsx:10` | built | P1 | |
+| 8 | `no-projects` | Getting started | No projects yet (the draft view's fallback; the empty home is the Welcome page) | `features/onboarding/NoProjects.tsx:10` | built | P1 | |
 | 9 | `new-thread` | Threads | New thread | `features/onboarding/DraftView/index.tsx` | built | P2 | |
 | 10 | `approval` | Threads | Approve a command | `features/thread/ApprovalCard.tsx:24` | built | P2 | |
 | 11 | `question` | Threads | The agent asks a question | `features/thread/QuestionCard.tsx:79` | built | P2 | |

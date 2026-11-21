@@ -26,12 +26,12 @@ export function repoFixtures(): RepoRow[] {
 export interface ReposMock extends ReposApi {
   /** Every write the screens made, in order: `add:<path>`, `clone:<source>`, `publish:<repo>:<name>:<visibility>`, `trust:<repo>`,
    * `git:<repo>`, `create:<name>`, `cancel-clone:<repo>`, `remove:<repo>`, `start:<repo>@<base>,...`, `thread-add:<thread>:<repo>`,
-   * `thread-git:<thread>:<repo>:<kind>`, `thread-remove:<thread>:<repo>`. */
+   * `thread-git:<thread>:<repo or primary>:<kind>`. */
   writes: string[];
   /** The engine, model, permission and first message each `start` write carried, in order. */
   starts: Pick<StartThreadInput, "engine" | "model" | "permission_mode" | "message">[];
   /** Make the next write of that kind fail. */
-  failNext(what: "add" | "create" | "cancel-clone" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | "thread-git" | "thread-remove" | null): void;
+  failNext(what: "add" | "create" | "cancel-clone" | "clone" | "publish" | "trust" | "git" | "remove" | "start" | "thread-add" | "thread-git" | null): void;
 }
 
 export function createReposMock(init: {
@@ -158,21 +158,18 @@ export function createReposMock(init: {
       return added;
     },
     threadGit: async (threadId, repoId, action) => {
-      writes.push(`thread-git:${threadId}:${repoId}:${action.kind}`);
+      writes.push(`thread-git:${threadId}:${repoId ?? "primary"}:${action.kind}`);
       await wait();
       take("thread-git");
-      const entry = (threads[threadId] ?? []).find((one) => one.repo_id === repoId);
+      const held = threads[threadId] ?? [];
+      // No repo_id is the primary repository: the thread's first.
+      const entry = repoId === null ? held[0] : held.find((one) => one.repo_id === repoId);
       if (!entry) throw new ApiFailure("not_found", "This thread does not work in that repository.", 404);
       if (!entry.trusted) throw new ApiFailure("repo_untrusted", `${entry.name} is not trusted.`, 409);
-      const next = action.kind === "pull_request" ? { ...entry, pull_request: { number: 143, url: `https://github.com/orbyn-dev/${entry.name}/pull/143` } } : entry;
-      threads[threadId] = (threads[threadId] ?? []).map((one) => (one.repo_id === repoId ? next : one));
-      return next;
-    },
-    removeThreadRepo: async (threadId, repoId) => {
-      writes.push(`thread-remove:${threadId}:${repoId}`);
-      await wait();
-      take("thread-remove");
-      threads[threadId] = (threads[threadId] ?? []).filter((one) => one.repo_id !== repoId);
+      if (action.kind === "pull_request") {
+        const next = { ...entry, pull_request: { number: 143, url: `https://github.com/orbyn-dev/${entry.name}/pull/143` } };
+        threads[threadId] = held.map((one) => (one.repo_id === entry.repo_id ? next : one));
+      }
     },
   };
 }

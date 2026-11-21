@@ -24,12 +24,22 @@ export function LimitBanner({ thread }: { thread: Thread }) {
   const putThread = useWorkspace((state) => state.putThread);
   const pushToast = useUi((state) => state.pushToast);
   const limit = thread.lifecycle?.limit;
+  // One write at a time: a second press while one is in flight sends nothing. The buttons are marked, not disabled, so focus stays on the one pressed.
+  const pending = useRef(false);
+  const [busy, setBusy] = useState(false);
   const resetsAt = limit?.resets_at ? Date.parse(limit.resets_at) : Number.NaN;
   // The clock ticks only while a wait is still ahead, and stops once it is over.
   const now = useNow(!Number.isNaN(resetsAt) && Date.now() < resetsAt + 1000);
   if (!limit || thread.active_run) return null;
   const failed = (error: unknown) => pushToast(`Couldn't do that. ${toFailure(error).message}`);
-  const patch = (body: UpdateThread) => api.patchThread(thread.id, body).then(putThread, failed);
+  const once = (write: () => Promise<unknown>) => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    void write().finally(() => { pending.current = false; setBusy(false); });
+  };
+  const patch = (body: UpdateThread) => once(() => api.patchThread(thread.id, body).then(putThread, failed));
+  const held = busy || undefined;
   const future = !Number.isNaN(resetsAt) && resetsAt > now;
   const over = !Number.isNaN(resetsAt) && !future;
   const snoozedUntilReset = future && thread.lifecycle?.snoozed_until != null &&
@@ -50,14 +60,13 @@ export function LimitBanner({ thread }: { thread: Thread }) {
         small
         tone="quiet"
         icon={<RotateCcw size={12} aria-hidden />}
-        onClick={() => {
-          api.startRun(thread.id, CONTINUE).then(() => void refreshThread(thread.id), failed);
-        }}
+        aria-disabled={held}
+        onClick={() => once(() => api.startRun(thread.id, CONTINUE).then(() => refreshThread(thread.id), failed))}
       >
         Resume
       </Button>
       {future ? (
-        <Button small tone="quiet" onClick={() => void patch({ resume_at_reset: limit.resume_at === null })}>
+        <Button small tone="quiet" aria-disabled={held} onClick={() => patch({ resume_at_reset: limit.resume_at === null })}>
           {limit.resume_at ? "Cancel auto-resume" : "Resume at reset"}
         </Button>
       ) : null}
@@ -66,7 +75,8 @@ export function LimitBanner({ thread }: { thread: Thread }) {
           small
           tone="quiet"
           icon={<Clock size={12} aria-hidden />}
-          onClick={() => void patch(snoozedUntilReset ? { wake: true } : { snoozed_until: limit.resets_at ?? undefined })}
+          aria-disabled={held}
+          onClick={() => patch(snoozedUntilReset ? { wake: true } : { snoozed_until: limit.resets_at ?? undefined })}
         >
           {snoozedUntilReset ? "Wake now" : "Snooze until reset"}
         </Button>

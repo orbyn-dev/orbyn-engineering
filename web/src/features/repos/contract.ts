@@ -3,8 +3,9 @@
  * until `orbyn-contracts` generates them. When the generated types land, replace these in the same commit. Field names follow the
  * T3 Code workspace folder schema (MIT, 9168ca73d, names only) in snake_case.
  *
- * Three things the screens use are NOT in that document and are marked below (`ThreadRepo.pull_request`, `threadGit`,
- * `removeThreadRepo`): the real client sends no request for them.
+ * One thing the screens use is NOT in that document and is marked below: `ThreadRepo.pull_request`. The thread Git actions send
+ * the existing thread routes with an optional `repo_id` ("Per-repository Git routes"). Removing a repository from a thread is not in
+ * the beta, so there is no call for it.
  *
  * Nothing here can carry a secret. Names, paths, URLs and branch names are text from the disk or a remote: untrusted. Render
  * them as text only, never as a link, a command or markup.
@@ -82,12 +83,17 @@ export interface ThreadRepo {
   pull_request?: { number: number; url: string } | null;
 }
 
-/** One Git action on ONE repository of a thread. There is no action that spans repositories. NOT IN docs/multi-repo.md: it says Git actions take a `repo_id` but defines no route, so the real client refuses these. */
+/**
+ * One Git action on ONE repository of a thread; no action spans repositories. Each is an existing thread route that takes an
+ * optional `repo_id` (docs/multi-repo.md, "Per-repository Git routes"): commit, push and pull request are `POST .../git/action`,
+ * merge and review are `POST .../pulls/{number}/merge` and `.../review`. There is no pull (fetch) action: the document defines none.
+ */
 export type ThreadGitAction =
   | { kind: "commit"; message: string }
   | { kind: "push" }
-  | { kind: "pull" }
-  | { kind: "pull_request"; title: string };
+  | { kind: "pull_request"; title: string }
+  | { kind: "merge"; number: number; method: "merge" | "squash" | "rebase" }
+  | { kind: "review"; number: number; event: "comment" | "approve" | "request_changes"; body: string };
 
 export type StartedThread = import("../../api/types").Thread;
 
@@ -116,8 +122,9 @@ export interface ReposApi {
   threadRepos(threadId: string, signal?: AbortSignal): Promise<ThreadRepo[] | null>;
   /** Adds one trusted repository of the project to the thread. */
   addThreadRepo(threadId: string, repoId: string): Promise<ThreadRepo>;
-  /** NOT IN docs/multi-repo.md. One Git action in one trusted repository of the thread. */
-  threadGit(threadId: string, repoId: string, action: ThreadGitAction): Promise<ThreadRepo>;
-  /** NOT IN docs/multi-repo.md. The thread stops working in this repository; the worktree's files stay. */
-  removeThreadRepo(threadId: string, repoId: string): Promise<void>;
+  /**
+   * One Git action in one repository of the thread. `repoId` is `null` for the project's primary repository: `repo_id` is then left
+   * out and the service uses the primary. A repository that is not the thread's is `404 not_found`; an untrusted one is `409 repo_untrusted`.
+   */
+  threadGit(threadId: string, repoId: string | null, action: ThreadGitAction): Promise<void>;
 }

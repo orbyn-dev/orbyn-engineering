@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiFailure, NETWORK_ERROR, request, setUnauthorizedHandler } from "./client";
+import { api, ApiFailure, NETWORK_ERROR, request, setUnauthorizedHandler } from "./client";
 
 const respond = (status: number, body?: unknown) =>
   vi.fn(async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
@@ -72,5 +72,16 @@ describe("api surface", () => {
     const { api } = await import("./client");
     expect(Object.keys(api)).not.toContain("restoreChanges");
     expect(Object.keys(api)).toContain("restoreWorkspace");
+  });
+});
+
+describe("commits", () => {
+  it("names the repository in the query only when one is chosen", async () => {
+    const fetchMock = respond(200, []);
+    vi.stubGlobal("fetch", fetchMock);
+    await api.commits("t/1");
+    await api.commits("t1", undefined, "r 2");
+    const urls = fetchMock.mock.calls.map((call) => (call as unknown as [string])[0].replace(/^.*?(?=\/api)/, ""));
+    expect(urls).toEqual(["/api/threads/t%2F1/commits", "/api/threads/t1/commits?repo_id=r%202"]);
   });
 });

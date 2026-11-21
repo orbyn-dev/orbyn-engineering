@@ -30,6 +30,7 @@ const CHIPS = new Map<string, Chip>(Object.entries({
   locked: { label: "Locked", tone: "err" },
   denied: { label: "Denied", tone: "err" },
   remove_failed: { label: "Saved", tone: "ok" },
+  opted_in_no_key: { label: "Opted in, no key", tone: "info" },
 }));
 
 /** A choice the service sent that this screen does not know is Unknown; it never looks like Saved. */
@@ -45,17 +46,19 @@ function line(name: string, choice: StorageChoice, variant: Variant): string {
     case "denied": return "Not saved. Orbyn stores nothing.";
     case "rejected": return `Saved in your keychain. ${name} rejected it.`;
     case "remove_failed": return "Still saved in your keychain";
+    case "opted_in_no_key": return "Opted in, no key saved. Orbyn stores nothing yet.";
     case "not_asked": return variant === "list" ? "Not asked yet. Orbyn stores nothing until you choose." : "Orbyn stores nothing until you choose.";
     default: return "";
   }
 }
 
-const bannerOf = (name: string, choice: StorageChoice): { text: string; retry: boolean } | null => {
+const bannerOf = (name: string, choice: StorageChoice): { text: string; retry: boolean; label?: string } | null => {
   switch (choice) {
     case "locked": return { text: "The keychain is locked. Unlock it, then try again.", retry: true };
     case "denied": return { text: "The system didn’t let Orbyn use the keychain. Allow it in the system’s keychain settings, then try again.", retry: true };
     case "rejected": return { text: `${name} didn’t accept the saved key. Replace it or remove it.`, retry: false };
     case "remove_failed": return { text: "Orbyn couldn’t remove the key from the keychain. Try again.", retry: true };
+    case "opted_in_no_key": return { text: "The key wasn’t saved. Retype it to try again, or remove the opt-in.", retry: true, label: "Retry" };
     default: return null;
   }
 };
@@ -111,8 +114,10 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
   const name = plain(row.name);
   const [step, setStep] = useState<Step | null>(null);
   const [busy, setBusy] = useState<"saving" | "removing" | "declining" | null>(null);
-  const [failed, setFailed] = useState<{ kind: "locked" | "denied"; intent: "save" | "decline"; replacing: boolean } | "remove_failed" | null>(null);
+  const [failed, setFailed] = useState<{ kind: "locked" | "denied"; intent: "save" | "decline"; replacing: boolean } | "remove_failed" | "optin_remove_failed" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the service said a removal stopped; it stays until the next click on this row.
+  const [stopped, setStopped] = useState<number | null>(null);
   // A second click while the first request is in flight is not a second write.
   const pending = useRef(false);
 
@@ -121,8 +126,11 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     pending.current = true;
     setBusy(phase);
     setError(null);
+    setStopped(null);
     try {
-      replace(await write());
+      const next = await write();
+      setStopped(phase === "removing" && typeof next.stopped === "number" ? next.stopped : null);
+      replace(next);
       setFailed(null);
       setStep(null);
     } catch (failure) {
@@ -133,6 +141,13 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     }
   };
 
+  // A refused save can leave the opt-in on with no key; ask the service, so the row says so without a reload. A read, never a write.
+  const refresh = async () => {
+    try {
+      const mine = (await engineHostApi().storage())?.find((entry) => entry.engine_id === row.engine_id);
+      if (mine) replace(mine);
+    } catch { /* the row keeps what it had */ }
+  };
   const holdsKey = row.choice === "saved" || row.choice === "rejected" || row.choice === "remove_failed";
   const replacing = holdsKey;
   const keychainFailure = (intent: "save" | "decline") => (failure: unknown) => {
@@ -144,17 +159,26 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     } else setError(reasonOf(failure));
   };
 
-  const save = (key: string) => guarded("saving", () => engineHostApi().saveKey(row.engine_id, key), keychainFailure("save"));
+  const save = (key: string) => guarded("saving", () => engineHostApi().saveKey(row.engine_id, key), async (failure) => {
+    await refresh();
+    keychainFailure("save")(failure);
+  });
   const decline = () => guarded("declining", () => engineHostApi().decline(row.engine_id), keychainFailure("decline"));
   const remove = () => guarded("removing", () => engineHostApi().removeKey(row.engine_id), () => { setFailed("remove_failed"); setStep(null); });
+
+  const removeOptIn = () => guarded("declining", () => engineHostApi().removeOptIn(row.engine_id), () => { setFailed("optin_remove_failed"); setStep(null); });
+  const keychain = typeof failed === "object" && failed ? failed : null;
 
   const choice: StorageChoice = busy === "removing" ? "removing"
     : busy === "saving" ? "saving"
     : failed === "remove_failed" ? "remove_failed"
-    : failed && !failed.replacing ? failed.kind : row.choice;
+    : keychain && !keychain.replacing ? keychain.kind : row.choice;
   const close = () => { if (!pending.current) { setStep(null); setError(null); } };
   const retry = () => {
+    // A lock the service itself reported (no click here caused it): ask the keychain again, which writes nothing and needs no key.
+    if (!failed && (row.choice === "locked" || row.choice === "denied")) { void guarded("declining", () => engineHostApi().retryKeychain(row.engine_id), keychainFailure("save")); return; }
     if (failed === "remove_failed") { void remove(); return; }
+    if (failed === "optin_remove_failed") { void removeOptIn(); return; }
     if (failed && failed.intent === "decline") { void decline(); return; }
     // The key was emptied when it was read, so a refused save asks for it again; no copy is kept to resend.
     setFailed(null);
@@ -187,6 +211,7 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
   const idle = busy === null;
   const actions = (variant: Variant): ReactNode => {
     if (!idle) return null;
+    if (row.choice === "opted_in_no_key") return <Button small tone="quiet" onClick={() => void removeOptIn()}>Remove opt-in</Button>;
     if (choice === "saved" || choice === "rejected" || choice === "remove_failed") {
       return <>
         <Button small tone="quiet" onClick={() => setStep("replace")}>Replace…</Button>
@@ -198,14 +223,15 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
     return null;
   };
   // A refused replace leaves the saved key where it was: the row stays Saved, the banner says so, and Remove… stays.
-  const banner = failed && failed !== "remove_failed" && failed.replacing
-    ? { text: "The new key wasn’t saved; the old key is still in your keychain.", retry: true }
+  const banner = failed === "optin_remove_failed" ? { text: "Orbyn couldn’t remove the opt-in. Try again.", retry: true }
+    : keychain && keychain.replacing ? { text: "The new key wasn’t saved; the old key is still in your keychain.", retry: true }
     : bannerOf(name, choice);
-  return { name, choice, actions, dialogs, banner, retry, busy: busy !== null };
+  const notice = stopped === null ? null : stopped === 0 ? "Removed. No running threads were stopped." : `Removed. Stopped: ${stopped} running ${stopped === 1 ? "thread" : "threads"}.`;
+  return { name, choice, actions, dialogs, banner, notice, retry, busy: busy !== null };
 }
 
-function Banner({ text, onRetry, busy }: { text: string; onRetry: (() => void) | null; busy: boolean }) {
-  return <SettingsBanner tone="err" actions={onRetry ? <Button small busy={busy} onClick={onRetry}>Try again</Button> : undefined}>{text}</SettingsBanner>;
+function Banner({ text, onRetry, busy, label = "Try again" }: { text: string; onRetry: (() => void) | null; busy: boolean; label?: string }) {
+  return <SettingsBanner tone="err" actions={onRetry ? <Button small busy={busy} onClick={onRetry}>{label}</Button> : undefined}>{text}</SettingsBanner>;
 }
 
 function GroupRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage): void }) {
@@ -218,7 +244,8 @@ function GroupRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage)
         <span role="cell" className="eh-chips"><StateChip chip={chipOf(entry.choice)} /></span>
         <span role="cell">{entry.actions("list")}</span>
       </div>
-      {entry.banner ? <div role="row" className="eh-row-error"><span role="cell"><Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} /></span></div> : null}
+      {entry.banner ? <div role="row" className="eh-row-error"><span role="cell"><Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} label={entry.banner.label} /></span></div> : null}
+      {entry.notice ? <div role="row" className="eh-row-error"><span role="cell"><p className="setting-line-desc" role="status">{entry.notice}</p></span></div> : null}
       {entry.dialogs}
     </>
   );
@@ -243,11 +270,12 @@ function DetailRow({ row, replace }: { row: KeyStorage; replace(next: KeyStorage
   const entry = useEntry(row, replace);
   return (
     <>
-      {entry.banner ? <Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} /> : null}
+      {entry.banner ? <Banner text={entry.banner.text} onRetry={entry.banner.retry ? entry.retry : null} busy={entry.busy} label={entry.banner.label} /> : null}
       <SettingRow title="API key" description={line(entry.name, entry.choice, "detail")}>
         <StateChip chip={chipOf(entry.choice)} />{entry.actions("detail")}
       </SettingRow>
-      <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on. Today Orbyn never stores a key.</p>
+      {entry.notice ? <p className="setting-line-desc" role="status">{entry.notice}</p> : null}
+      <p className="setting-line-desc eh-caption"><SetupPill /> Built behind a setting, off until you turn it on.</p>
       {entry.dialogs}
     </>
   );

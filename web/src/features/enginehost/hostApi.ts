@@ -1,24 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
+import { createCredentialsApi } from "./credentialsApi";
 import type { EngineHostApi, HostCrash, HostRow, KeyStorage } from "./contract";
 
 /**
- * The real client for the engine host routes. Those routes are not merged, so this one makes no request at all:
- * every read says the service reports nothing, and the screens draw nothing. Swap it for `request(...)` calls the
- * day the generated types and routes land; the screens do not change.
+ * The real client for the engine host and API key storage. The host routes are not merged, so `hosts`, `crashes`, `retry` and `stop`
+ * make no request at all: every read says the service reports nothing, and those screens draw nothing. Swap them for `request(...)`
+ * calls when the routes and generated types land. API key storage is real: `credentialsApi.ts` calls
+ * `/api/settings/engine-credentials/{engine}` (not yet run against a real service).
  */
-const unreported: EngineHostApi = {
+const credentials = createCredentialsApi();
+const real: EngineHostApi = {
   hosts: async () => null,
   crashes: async () => [],
-  storage: async () => null,
   retry: async () => { throw new Error("The engine host is not reported by this service."); },
   stop: async () => { throw new Error("The engine host is not reported by this service."); },
-  decline: async () => { throw new Error("API key storage is not offered by this service."); },
-  saveKey: async () => { throw new Error("API key storage is not offered by this service."); },
-  removeKey: async () => { throw new Error("API key storage is not offered by this service."); },
+  storage: (signal) => credentials.storage(signal),
+  decline: (id) => credentials.decline(id),
+  saveKey: (id, key) => credentials.saveKey(id, key),
+  removeOptIn: (id) => credentials.removeOptIn(id),
+  removeKey: (id) => credentials.removeKey(id),
+  retryKeychain: (id) => credentials.retryKeychain(id),
 };
 
-let current: EngineHostApi = unreported;
+let current: EngineHostApi = real;
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -30,9 +35,9 @@ if (__ORBYN_PREVIEWS__ && typeof location !== "undefined" && location.hash.start
 
 export const engineHostApi = (): EngineHostApi => current;
 
-/** Tests and the dev-only preview install the mock here; `null` puts the unreported client back. */
+/** Tests and the dev-only preview install the mock here; `null` puts the real client back. */
 export function setEngineHostApi(next: EngineHostApi | null): void {
-  current = next ?? unreported;
+  current = next ?? real;
   version += 1;
   for (const listener of listeners) listener();
 }

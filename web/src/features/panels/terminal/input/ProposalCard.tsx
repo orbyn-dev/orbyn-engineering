@@ -1,17 +1,11 @@
 import { Play, Pencil } from "lucide-react";
-import { useThreadLogs } from "../../../../product/state/threadLogs";
 import { maskSecrets } from "./history";
-import { proposedCommandIn, type Proposal } from "./proposal";
+import { proposalKey, useProposalSource, type Proposal } from "./proposal";
 
-/** The engine's latest answer to the run the editor started, read as a command proposal. The key changes with each new answer. */
+/** The typed proposal the service reported for the run the editor started. Nothing is read from model text; with no source, always null. */
 export function useProposal(threadId: string, runId: string | null): { key: string; proposal: Proposal } | null {
-  const message = useThreadLogs((state) => {
-    const items = state.logs[threadId]?.items;
-    return runId && items ? items.findLast((item) => item.kind === "message" && item.role === "assistant" && item.done && item.runId === runId) : undefined;
-  });
-  if (!message || message.kind !== "message") return null;
-  const proposal = proposedCommandIn(message.text);
-  return proposal ? { key: message.key, proposal } : null;
+  const proposal = useProposalSource((state) => (state.source === "service" && runId ? state.byRun[proposalKey(threadId, runId)] : undefined));
+  return proposal && runId ? { key: proposalKey(threadId, runId), proposal } : null;
 }
 
 /**

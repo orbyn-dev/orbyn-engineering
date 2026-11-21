@@ -13,6 +13,7 @@ it("finds a specific label regardless of word order and excludes desktop control
   expect(searchSettings("command line tool", false)).toEqual([]);
   expect(searchSettings("command line tool", true)).toHaveLength(1);
   expect(searchSettings("  ", true)).toEqual([]);
+  expect(searchSettings("browser profiles", false).map((item) => item.section)).toEqual(["browser"]);
   expect(searchSettings("Accessibility", true, new Set(["cli"]))).toEqual([]);
   expect(searchSettings("Accessibility", true, new Set(["accessibility"]))).toHaveLength(1);
   expect(searchSettings("App updates", true, new Set())).toEqual([]);

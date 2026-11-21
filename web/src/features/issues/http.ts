@@ -26,14 +26,26 @@ function target(issue: IssueTarget): URLSearchParams {
 /** The body the service reads for a link or a start: the three fields that name the issue, and nothing else of ours. */
 const named = (issue: IssueTarget) => ({ tracker: issue.tracker, scope: issue.scope, key: issue.key });
 
-function listQuery(query: IssueQuery): string {
+/** The most the `cursors` query value may hold once encoded (docs/issues.md, "Paging"). */
+export const CURSORS_LIMIT = 4096;
+
+/** `cursors` as the service reads it: the object as JSON, then URL-encoded. `null` when there is nothing to send; a value over the limit is refused here, not sent. */
+function cursorsValue(cursors: Record<string, string> | undefined): string | null {
+  if (!cursors || Object.keys(cursors).length === 0) return null;
+  const value = encodeURIComponent(JSON.stringify(cursors));
+  if (value.length > CURSORS_LIMIT) throw new Error("That is too many pages to ask for at once. Refresh the list instead.");
+  return value;
+}
+
+function listQuery(query: IssueQuery, cursors?: Record<string, string>): string {
   const params = new URLSearchParams();
   if (query.tracker !== null) params.set("tracker", query.tracker);
   params.set("state", query.state);
   for (const label of query.labels) params.append("label", label);
   if (query.assignee !== "any") params.set("assignee", query.assignee);
   if (query.text !== "") params.set("q", query.text);
-  return params.toString();
+  const paged = cursorsValue(cursors);
+  return paged === null ? params.toString() : `${params.toString()}&cursors=${paged}`;
 }
 
 export function createHttpIssuesApi(): IssuesApi {
@@ -48,8 +60,8 @@ export function createHttpIssuesApi(): IssuesApi {
         throw failure;
       }
     },
-    list: async (query, signal): Promise<IssueList> => {
-      const body = await request<Partial<IssueList>>("GET", `/api/issues?${listQuery(query)}`, undefined, signal);
+    list: async (query, signal, cursors): Promise<IssueList> => {
+      const body = await request<Partial<IssueList>>("GET", `/api/issues?${listQuery(query, cursors)}`, undefined, signal);
       return { issues: asArray(body?.issues), counts: body?.counts ?? null, failed: asArray(body?.failed), next_cursors: body?.next_cursors ?? {} };
     },
     get: async (issue, signal): Promise<IssueDetail> => {
@@ -67,6 +79,8 @@ export function createHttpIssuesApi(): IssuesApi {
     connect: (tracker: TrackerKind, input) => request<TrackerRow>("POST", `/api/issues/trackers/${segment(tracker)}/connect`, input),
     disconnect: (tracker: TrackerKind) => request<TrackerRow>("POST", `/api/issues/trackers/${segment(tracker)}/disconnect`),
     startThread: (issue, input) => request("POST", "/api/issues/start-thread", { ...named(issue), message: input.message, project_id: input.project_id }),
+    // Not in the beta (docs/issues.md): nothing is sent. When it lands it is Person-class, `POST /api/issues/item/state` with
+    // `{ tracker, scope, key, state }`; add it to `PENDING_PERSON_ROUTES` with the call, not before.
     setState: async () => { throw new Error("This service cannot change an issue's state from here."); },
   };
 }
