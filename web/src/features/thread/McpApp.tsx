@@ -14,6 +14,7 @@ import {
   type McpAppDisplayMode,
 } from "../../product/timeline/mcpAppBridge";
 import type { ToolItem } from "../../product/timeline/types";
+import type { McpAppToolInfo } from "../../generated/McpAppToolInfo";
 
 const parseArgs = (args: string): unknown => {
   try {
@@ -48,6 +49,8 @@ export function McpApp({ item, threadId }: { item: ToolItem; threadId: string | 
   const [ask, setAsk] = useState<Ask | null>(null);
   /** The note this page left for the next turn, while it is unsent as far as this card knows. */
   const [note, setNote] = useState<string | null>(null);
+  /** The app's own tool as its server advertises it; null until the service reads it. */
+  const [toolInfo, setToolInfo] = useState<McpAppToolInfo | null>(null);
   const app = item.app;
   const host = useRef<AppHost | null>(null);
 
@@ -59,6 +62,7 @@ export function McpApp({ item, threadId }: { item: ToolItem; threadId: string | 
       ? {
           theme,
           displayMode: display,
+          toolInfo: toolInfo ?? undefined,
           toolInput: parseArgs(item.args),
           toolResult: {
             content: [{ type: "text", text: item.result ?? "" }],
@@ -85,6 +89,22 @@ export function McpApp({ item, threadId }: { item: ToolItem; threadId: string | 
         }
       : null;
 
+  // The app's own tool, read from its MCP server by the service. The page names nothing
+  // here and cannot change the answer; while it is unread the page gets no descriptor
+  // rather than a guessed or empty one.
+  useEffect(() => {
+    setToolInfo(null);
+    if (!app || !threadId) return;
+    let live = true;
+    api.mcpAppToolInfo(threadId, app.renderId).then(
+      (info) => live && setToolInfo(info),
+      () => live && setToolInfo(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [app, threadId]);
+
   useEffect(() => {
     if (!app) return;
     const post = (message: Record<string, unknown>) =>
@@ -105,6 +125,15 @@ export function McpApp({ item, threadId }: { item: ToolItem; threadId: string | 
     window.addEventListener("message", listen);
     return () => window.removeEventListener("message", listen);
   }, [app]);
+
+  // A page that already initialized hears its tool's descriptor once the read finishes.
+  useEffect(() => {
+    if (!app || !toolInfo) return;
+    frame.current?.contentWindow?.postMessage(
+      { jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: { toolInfo: { tool: toolInfo } } },
+      "*",
+    );
+  }, [app, toolInfo]);
 
   // The page hears the mode it is shown in, whoever changed it.
   useEffect(() => {

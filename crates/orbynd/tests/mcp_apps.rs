@@ -405,3 +405,136 @@ async fn an_app_note_rides_with_the_next_turn_once_and_the_timeline_says_so() {
     assert_eq!(put("refused".into()).await, 403);
     service.stop().await;
 }
+
+/// One app's tool descriptor as the trusted host reads it.
+async fn tool_info(service: &Service, thread: &str, render: &str) -> (u16, Value) {
+    let response = service
+        .get(&format!(
+            "/api/threads/{thread}/mcp-apps/{render}/tool-info"
+        ))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn an_app_tool_info_is_its_servers_advertisement_and_nothing_more() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+    let turns_before = launches(&launch_file, "codex-turn").len();
+
+    // A payload that names another tool and claims other metadata changes nothing: the
+    // tool is the render's own, and every field comes from the server's answer.
+    let response = service
+        .get(&format!(
+            "/api/threads/{thread}/mcp-apps/{render}/tool-info?name=evil&description=spoofed&inputSchema={{\"type\":\"string\"}}"
+        ))
+        .header("content-type", "application/json")
+        .body(r#"{"name":"evil","description":"spoofed","inputSchema":{"type":"string"}}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let info: Value = response.json().await.unwrap();
+    assert_eq!(
+        info,
+        json!({
+            "name": "show_widget",
+            "description": "Shows a widget",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"],
+            },
+        }),
+        "only the server's own name, description and schema"
+    );
+    // Connection detail never leaves the service. The fake descriptor carries a marker
+    // in its other fields; the response carries none of them, nor the service token.
+    let text = info.to_string();
+    assert!(!text.contains("SECRET-MARKER"), "{text}");
+    assert!(!text.contains(&service.token), "{text}");
+
+    // The read asks the app's own server, for its tool list only, and starts no model turn.
+    let reads = launches(&launch_file, "codex-app-tools");
+    assert_eq!(reads.len(), 1, "one read for the app's server");
+    let read: Value = serde_json::from_str(reads[0]["args"][0].as_str().unwrap()).unwrap();
+    assert_eq!(read["serverName"], "demo", "only the app's own server");
+    assert_eq!(read["detail"], "toolsAndAuthOnly");
+    assert_eq!(
+        launches(&launch_file, "codex-turn").len(),
+        turns_before,
+        "a metadata read starts no model turn"
+    );
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn a_tool_info_read_that_names_nothing_is_a_plain_404() {
+    let dir = TempDir::new();
+    let launch_file = dir.path().join("launches.jsonl");
+    let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+    let render = app_render(&service, &thread).await;
+
+    let (status, body) = tool_info(&service, &thread, "01zzzzzzzzzzzzzzzzzzzzzzzz").await;
+    assert_eq!(status, 404, "an unknown render names no app: {body}");
+    assert_eq!(body["code"], "not_found");
+    assert_ne!(
+        body["message"], "No such route.",
+        "the route exists; the handler is what answered 404"
+    );
+
+    // A render this service published for an agent's own page has no app record.
+    let (status, body) = service
+        .send(
+            &format!("/api/threads/{thread}/renders"),
+            json!({ "html": "<p>agent page</p>" }),
+        )
+        .await;
+    assert_eq!(status, 201, "{body}");
+    let agent_render = body["id"].as_str().unwrap();
+    let (status, body) = tool_info(&service, &thread, agent_render).await;
+    assert_eq!(
+        status, 404,
+        "a page that is not an app names no tool: {body}"
+    );
+
+    // The app's server answers but no longer advertises the tool the render recorded.
+    std::fs::write(dir.path().join("mcp-app-tool-missing"), b"").unwrap();
+    let (status, body) = tool_info(&service, &thread, &render).await;
+    assert_eq!(status, 404, "an unknown tool: {body}");
+    assert_eq!(body["code"], "not_found");
+    assert_ne!(body["message"], "No such route.");
+    service.stop().await;
+}
+
+#[tokio::test]
+async fn an_app_tool_info_read_fails_closed_when_its_server_cannot_answer() {
+    // A server that refuses the list, one that lists with an error, one the engine no
+    // longer has and one that needs a sign-in: none may be reported as an empty or
+    // stale tool, and the server's own failure text never reaches the host.
+    for marker in [
+        "mcp-app-server-down",
+        "mcp-app-tools-error",
+        "mcp-app-server-unavailable",
+        "mcp-app-auth",
+    ] {
+        let dir = TempDir::new();
+        let launch_file = dir.path().join("launches.jsonl");
+        let (service, thread) = setup(&dir, options(&launch_file), "codex").await;
+        let render = app_render(&service, &thread).await;
+        std::fs::write(dir.path().join(marker), b"").unwrap();
+        let (status, body) = tool_info(&service, &thread, &render).await;
+        assert_eq!(status, 502, "{marker}: {body}");
+        assert_eq!(body["code"], "engine_unavailable", "{marker}: {body}");
+        assert!(
+            !body.to_string().contains("SECRET-MARKER"),
+            "{marker}: the server's own failure text stays in the service: {body}"
+        );
+        service.stop().await;
+    }
+}
