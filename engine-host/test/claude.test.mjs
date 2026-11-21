@@ -216,3 +216,26 @@ test("AskUserQuestion is a question frame; answers come back in updatedInput", a
   assert.deepEqual(toolResult.updatedInput.answers, { "Which?": "A" });
   assert.equal("updatedPermissions" in toolResult, false);
 });
+
+test("a leftover turn's result never ends the run; a held result waits for the follow-up turn", async () => {
+  const h = boot("claude_background_wake_before_queued_prompt");
+  await open(h, { cancelGraceMs: 20 });
+  const prompts = (await import("node:fs")).readFileSync(h.file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))
+    .filter((l) => l.frame?.type === "prompt.offer").map((l) => l.frame.message.message.content);
+  // Run 1: the first result is held (a background agent is still running); the follow-up turn's result ends it.
+  h.send({ id: 10, type: "send", sessionId: "s", message: prompts[0] });
+  const held = await h.next((f) => f.type === "log" && f.event.type === "holdingResult");
+  assert.equal(held.event.sendId, 10);
+  assert.equal((await h.next((f) => f.type === "runDone" && f.sendId === 10)).result.reason, "completed");
+  // Run 2 ends on its own result.
+  h.send({ id: 11, type: "send", sessionId: "s", message: prompts[1] });
+  assert.equal((await h.next((f) => f.type === "runDone" && f.sendId === 11)).result.reason, "completed");
+  // Run 3: a leftover turn's result arrives before our prompt's command starts and is ignored.
+  h.send({ id: 12, type: "send", sessionId: "s", message: prompts[2] });
+  const leftover = await h.next((f) => f.type === "log" && f.event.type === "leftoverResult");
+  assert.equal(leftover.event.sendId, 12);
+  await h.next((f) => f.type === "log" && f.event.type === "holdingResult" && f.event.sendId === 12);
+  h.send({ id: 13, type: "cancel", sendId: 12 });
+  assert.equal((await h.next((f) => f.type === "runDone" && f.sendId === 12)).result.reason, "cancelled");
+  assert.equal(h.replay.calls.error, undefined);
+});

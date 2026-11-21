@@ -27,6 +27,8 @@ export function replaySdk(file) {
           const next = lines[i];
           assert.equal(next?.frame?.type, "prompt.offer", `expected prompt.offer at line ${i}`);
           assert.deepEqual(message.message, next.frame.message.message, "prompt content");
+          const recorded = lines[i].frame.message.uuid;
+          const swap = (frame) => (recorded && message.uuid ? JSON.parse(JSON.stringify(frame).replaceAll(recorded, message.uuid)) : frame);
           i++;
           while (i < lines.length) {
             const l = lines[i];
@@ -38,9 +40,8 @@ export function replaySdk(file) {
               assert.equal(res.behavior, exp.frame.result.behavior, "permission behavior");
               i += 2;
             } else if (l.type === "emit_inbound") {
-              out.push(l.frame);
+              out.push(swap(l.frame));
               i++;
-              if (l.frame.type === "result") break;
             } else if (l.type === "expect_outbound" && l.frame.type === "query.interrupt") {
               await interrupted;
               i++;
