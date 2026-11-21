@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Button, Field } from "../../ui/controls";
 import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
 import { ActionDialog } from "./ActionDialog";
-import { checkCloneSource, plain } from "./model";
+import { checkCloneSource, isFolderName, plain } from "./model";
 import { reposApi } from "./api";
 import { canPickFolder, pickFolder } from "./folder";
 import type { RepoRow } from "./contract";
@@ -55,6 +55,36 @@ export function AddFolderDialog({ projectId, onClose, onDone }: { projectId: str
   );
 }
 
+/** A new folder under the clone directory with `git init`. The name is checked here by the service's rule and again there; the service picks the place. */
+export function CreateDialog({ projectId, projectName, directory, onClose, onDone }: { projectId: string; projectName: string; directory: string | null; onClose(): void; onDone: Done }) {
+  const [name, setName] = useState("");
+  const [touched, setTouched] = useState(false);
+  const ok = isFolderName(name);
+  return (
+    <ActionDialog title="Create a repository" confirmLabel="Create" disabled={!ok} onClose={onClose}
+      onConfirm={async () => { await reposApi().create(projectId, name); onDone(); }}>
+      <Field label="Folder name" error={touched && name !== "" && !ok ? "Use letters, digits, dash, underscore or dot, with no slash and no leading dot." : undefined}>
+        {(field) => <input {...field} data-dialog-focus className="dialog-field" value={name} placeholder="orbyn-docs" spellCheck={false}
+          onChange={(event) => setName(event.target.value)} onBlur={() => setTouched(true)} />}
+      </Field>
+      <p className="field-hint">
+        {directory ? <>A new folder is made in <Path path={directory} />, set up with Git, and joins the project <b>{plain(projectName)}</b>.</> : <>A new folder is made and set up with Git, and joins the project <b>{plain(projectName)}</b>.</>}
+        {" "}It is not trusted until you trust it.
+      </p>
+    </ActionDialog>
+  );
+}
+
+/** Stops a clone that is running; the service removes the partial folder. */
+export function CancelCloneDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
+  return (
+    <ActionDialog title={`Cancel cloning ${plain(repo.name)}?`} confirmLabel="Cancel clone" cancelLabel="Keep cloning" tone="danger" cancelFocus onClose={onClose}
+      onConfirm={async () => { await reposApi().cancelClone(projectId, repo.id); onDone(); }}>
+      <p>The clone stops and its partial folder is removed.</p>
+    </ActionDialog>
+  );
+}
+
 /** The clone dialog of Add a project, with one added line saying which project the clone joins. */
 export function CloneDialog({ projectId, projectName, directory, onClose, onDone }: { projectId: string; projectName: string; directory: string | null; onClose(): void; onDone: Done }) {
   const [text, setText] = useState("");
@@ -63,8 +93,8 @@ export function CloneDialog({ projectId, projectName, directory, onClose, onDone
   return (
     <ActionDialog title="Clone a repository" confirmLabel="Clone" disabled={!checked.ok} onClose={onClose}
       onConfirm={async () => { if (checked.ok) { await reposApi().clone(projectId, checked.source); onDone(); } }}>
-      <Field label="Git URL or owner/name" error={touched && !checked.ok && text.trim() !== "" ? checked.reason : undefined}>
-        {(field) => <input {...field} data-dialog-focus className="dialog-field" value={text} placeholder="orbyn-dev/orbyn-docs" spellCheck={false}
+      <Field label="Git URL" error={touched && !checked.ok && text.trim() !== "" ? checked.reason : undefined}>
+        {(field) => <input {...field} data-dialog-focus className="dialog-field" value={text} placeholder="https://github.com/orbyn-dev/orbyn-docs.git" spellCheck={false}
           onChange={(event) => setText(event.target.value)} onBlur={() => setTouched(true)} />}
       </Field>
       <p className="field-hint">

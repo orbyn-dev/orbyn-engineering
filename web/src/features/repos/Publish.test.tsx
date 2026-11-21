@@ -53,11 +53,9 @@ it("step 2 names the folder and the branch pushed, Back returns to the provider,
   await user.clear(field);
   await user.type(field, "orbyn-dev/planner");
   await user.click(within(dialog).getByRole("radio", { name: /Public/ }));
-  await user.click(within(dialog).getByText("Advanced"));
-  expect(within(dialog).getByRole("textbox", { name: "Remote" })).toHaveValue("origin");
-  await user.click(within(dialog).getByRole("radio", { name: "HTTPS" }));
+  expect(within(dialog).queryByText("Advanced")).toBeNull();
   await user.dblClick(within(dialog).getByRole("button", { name: "Publish" }));
-  await waitFor(() => expect(mock.writes).toEqual(["publish:orbyn-planner:orbyn-dev/planner:public:origin:https"]));
+  await waitFor(() => expect(mock.writes).toEqual(["publish:orbyn-planner:orbyn-dev/planner:public"]));
 });
 
 it("step 3 says the repository was published and links to it; Done closes", async () => {
@@ -74,15 +72,16 @@ it("step 3 says the repository was published and links to it; Done closes", asyn
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
-it("says Repository created, with the remote line, when nothing was pushed", async () => {
+it("sends the name and the visibility only, as docs/multi-repo.md defines PublishInput", async () => {
   const mock = createReposMock();
+  const seen: unknown[] = [];
   const publish = mock.publish;
-  mock.publish = async (...args) => ({ ...(await publish(...args)), pushed: false });
+  mock.publish = async (project, repo, input) => { seen.push(input); return publish(project, repo, input); };
   const { user, dialog } = await open(mock);
   await toStepTwo(user, dialog);
   await user.click(within(dialog).getByRole("button", { name: "Publish" }));
-  expect(await within(dialog).findByText("Repository created")).toBeVisible();
-  expect(within(dialog).getByText("Remote “origin” is set up. Make a commit and push it to share your code.")).toBeVisible();
+  await within(dialog).findByText("Repository published");
+  expect(seen).toEqual([{ name: "orbyn-dev/orbyn-planner", visibility: "private" }]);
 });
 
 it("a failure says Publish failed with the host's message on step 2, and Publish can be pressed again", async () => {

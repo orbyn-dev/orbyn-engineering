@@ -18,13 +18,13 @@ const cursor = { id: "cursor", name: "Cursor", installed: true, capabilities: { 
 const draw = (engine = claude, onModel = vi.fn(), onAccess = vi.fn(), access: "supervised" | "full_access" = "supervised") =>
   render(<RepoStart project={{ id: "p1", name: "orbyn" }} engines={[claude, cursor]} engine={engine} model="opus" access={access} onModel={onModel} onAccess={onAccess} />);
 
-it("draws nothing and makes no request while the service reports no repositories", async () => {
-  const fetching = vi.fn();
+it("draws nothing, and no error, when the service answers the repository list with 404", async () => {
+  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = draw();
+  await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
-  expect(fetching).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
 });
 
