@@ -14,7 +14,7 @@ import { canJoinThread, plain } from "./model";
 import "./repos.css";
 
 /** The task folder's path as text, with a button that copies it. Nothing here opens it, links it or runs it. */
-function TaskFolderLine({ root, branch }: { root: string; branch: string }) {
+function TaskFolderLine({ root, branch, count, max }: { root: string; branch: string; count: number; max: number }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -31,6 +31,7 @@ function TaskFolderLine({ root, branch }: { root: string; branch: string }) {
       <code className="repos-path" title={plain(root)}>{plain(root)}</code>
       <IconButton label={copied ? "Copied" : "Copy task folder path"} onClick={() => void copy()}>{copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}</IconButton>
       <span className="field-hint">One branch for every repository: <code className="repos-branch">{plain(branch)}</code></span>
+      <span className="field-hint">{count} of {max} repositories</span>
     </div>
   );
 }
@@ -38,7 +39,9 @@ function TaskFolderLine({ root, branch }: { root: string; branch: string }) {
 function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; reload(): void }) {
   const pushToast = useUi((state) => state.pushToast);
   const { view } = useRepos(thread.project_id);
-  const task = useTaskFolder(thread.id);
+  // The folder is read again after an add: its repository count is the service's.
+  const [added, setAdded] = useState(0);
+  const task = useTaskFolder(thread.id, added);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const limit = view?.max_per_thread ?? 8;
@@ -48,6 +51,7 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
     setBusy(true);
     try {
       await reposApi().addThreadRepo(thread.id, repoId);
+      setAdded((count) => count + 1);
       reload();
     } catch (failure) {
       pushToast(`Couldn't add it. ${toFailure(failure).message}`);
@@ -58,7 +62,7 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
   return (
     <div className="repos-pop">
       <div className="repos-pop-head">{repos.length === 1 ? "Working in 1 repository" : `Working in ${repos.length} repositories`}</div>
-      {task ? <TaskFolderLine root={task.root} branch={task.branch} /> : null}
+      {task ? <TaskFolderLine root={task.root} branch={task.branch} count={task.repos.length} max={task.max_per_thread} /> : null}
       <ul>
         {repos.map((entry) => (
           <li key={entry.repo_id} className="repos-pop-row">
