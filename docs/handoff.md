@@ -10,6 +10,13 @@ states, counts and machine-specific observations. `handoff.json` also pins an
 older product revision; neither grants authority for a new run. Trust the current
 repository and task instructions, and reconcile newer main before acting.
 
+## Usage limits reconciliation (#474)
+
+- The Limits view uses registry names, including OpenCode and Cursor; provider names in the narrow design are examples, not aliases. See [Limits](../web/src/features/usage/UsageLimits.tsx) and its [tests](../web/src/features/usage/UsagePage.test.tsx).
+- A missing or invalid reset omits reset text; percentage and near/reached status remain independent. The service exposes `checked_at` and unavailable reads in the [usage contract](../crates/orbyn-contracts/src/usage.rs).
+- The [preview catalog](../web/tools/pr-preview/catalog.mjs) already includes the 640px `usage-claude-windows-narrow` frame. The published failed-read frame shows no figure and offers Try again; it is not a dimmed stale bar.
+- This is a source and design comparison, not fresh real-engine, Windows, macOS or packaged-app qualification. The separate #475 fresh-account safety work is not assumed here.
+
 ## Goal
 
 > Superseded: "a working replica of T3 Code" is no longer the goal. The internal design set now defines the screens; see [design.md](design.md).

@@ -103,11 +103,23 @@ test("UI recording options sample static pages and opt in to actual click and ke
     const keys = page.getByRole("checkbox", { name: "Show navigation keys" });
     await expect(clicks).not.toBeChecked();
     await expect(keys).not.toBeChecked();
+    const box = await picture.boundingBox();
+    if (!box) throw new Error("Missing preview image geometry");
     const receipts: unknown[] = [];
     const folders = new Set<string>();
     for (const overlays of [false, true]) {
       await page.getByRole("combobox", { name: "Recording maximum FPS" }).selectOption(overlays ? "10" : "1");
-      if (overlays) { await clicks.check(); await keys.check(); }
+      if (overlays) {
+        await clicks.check();
+        await keys.check();
+      } else {
+        // The fixture focuses its button on load, and Chrome paints a focus ring along
+        // the page's top edge inside the mouse cue oracle window. A pointer click on
+        // the plain page background blurs it before the static sample, so that sample
+        // can only read recorded pixels. The overlay pass clicks the button, which
+        // refocuses it through pointer input and paints no ring.
+        await appliedInput(page, endpoint, "click", () => picture.click({ position: { x: box.width * 200 / 400, y: box.height * 100 / 200 } }));
+      }
       await page.getByRole("button", { name: "Start recording", exact: true }).click();
       await expect(page.getByRole("button", { name: "Stop recording", exact: true })).toBeEnabled();
       expect(await page.getByRole("combobox", { name: "Recording maximum FPS" }).count()).toBe(0);
@@ -117,8 +129,6 @@ test("UI recording options sample static pages and opt in to actual click and ke
       const path = join(artifacts, folder);
       await expect.poll(async () => (await readdir(path)).filter((name) => name.endsWith(".jpg")).length).toBeGreaterThan(0);
       if (overlays) {
-        const box = await picture.boundingBox();
-        if (!box) throw new Error("Missing preview image geometry");
         await appliedInput(page, endpoint, "click", () => picture.click({ position: { x: box.width * 50 / 400, y: box.height * 10 / 200 } }));
         await picture.focus();
         await appliedInput(page, endpoint, "key", () => picture.press("Enter"));

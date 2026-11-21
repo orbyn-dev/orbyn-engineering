@@ -80,6 +80,22 @@ describe("composer context", () => {
     expect(asChip({ kind: "thread", title: "No id" })).toBeNull();
   });
 
+  it("carries a picked pull request as a labelled block and refuses a half-known one", () => {
+    const pull = asChip({ kind: "pull", number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77" }, "pr")!;
+    expect(chipLabel(pull)).toBe("#77 Tidy the docs");
+    expect(chipPrompt(pull)).toBe("Pull request: [#77 Tidy the docs](https://github.com/o/r/pull/77)");
+    expect(promptWithChips("see", [pull])).toBe(
+      "Pull request: [#77 Tidy the docs](https://github.com/o/r/pull/77)\n\nsee",
+    );
+    expect(chipsFromClipboard({ json: chipsClipboard([pull])!.json, html: "" })?.[0]).toMatchObject({
+      kind: "pull", number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77",
+    });
+    expect(asChip({ kind: "pull", number: 77, title: "No url" })).toBeNull();
+    expect(asChip({ kind: "pull", title: "No number", url: "https://github.com/o/r/pull/77" })).toBeNull();
+    expect(asChip({ kind: "pull", number: 0, title: "No number", url: "https://github.com/o/r/pull/77" })).toBeNull();
+    expect(asChip({ kind: "pull", number: 77, title: "", url: "https://github.com/o/r/pull/77" })).toBeNull();
+  });
+
   it("puts chips before the typed draft and keeps a fence inside an excerpt from closing the block", () => {
     const fenced = chip({ kind: "file", excerpt: "```js\ninner\n```" });
     expect(promptWithChips("Please fix this", [fenced])).toBe(
