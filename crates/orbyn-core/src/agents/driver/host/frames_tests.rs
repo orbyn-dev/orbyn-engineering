@@ -83,6 +83,11 @@ fn permission_and_question_keep_the_engines_input_untouched() {
         (7, "p-31", "Edit")
     );
     assert_eq!(ask.input, json!({"path":"a.txt"}));
+    assert_eq!(
+        ask.options,
+        Some(json!([])),
+        "the engine's options are kept as sent"
+    );
     assert!(matches!(
         decode(
             r#"{"type":"question","sendId":1,"requestId":"q","tool":"AskUserQuestion","input":{}}"#

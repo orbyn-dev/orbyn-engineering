@@ -23,6 +23,7 @@ mod explorer;
 mod files;
 mod governance;
 mod interactions;
+mod issues;
 mod mcp_apps;
 mod media;
 mod preview;
@@ -89,6 +90,8 @@ mod crew_worker_provider_tests;
 #[cfg(test)]
 mod engine_credentials_tests;
 #[cfg(test)]
+mod engine_host_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
 mod tests;
@@ -118,6 +121,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(issues::routes())
         .merge(explorer::routes())
         .merge(files::routes())
         .merge(raw_files::routes())

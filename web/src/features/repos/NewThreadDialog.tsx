@@ -3,11 +3,12 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import { navigate } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
-import { Pill } from "../../ui/controls";
+import { Field, Pill } from "../../ui/controls";
 import { ActionDialog } from "./ActionDialog";
 import { reposApi, useRepos } from "./api";
 import type { RepoRow, StartThreadInput } from "./contract";
 import { canJoinThread, defaultTicks, plain, repoState, startLabel, STATE_LABEL } from "./model";
+import { checkBranchName } from "./scanModel";
 import "./repos.css";
 
 function Choice({ row, ticked, branch, disabled, limitReached, onTick, onBranch }: {
@@ -66,13 +67,19 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
   const ticked = useMemo(() => edit?.ticked ?? (view ? defaultTicks(view.repositories, limit) : []), [edit, view, limit]);
   const branches = edit?.branches ?? {};
   const baseOf = (row: RepoRow) => branches[row.id] ?? row.branch ?? row.branches[0] ?? "";
+  const [branchText, setBranchText] = useState("");
+  // A task folder (2 or more repositories) shares one branch name. Left empty, the service makes one name.
+  const taskFolder = ticked.length >= 2;
+  const branchCheck = branchText.trim() === "" ? null : checkBranchName(branchText);
+  const branchError = taskFolder && branchCheck && !branchCheck.ok ? branchCheck.reason : undefined;
+  const branchBad = branchError !== undefined;
   const refused = rows.filter((row) => !canJoinThread(row) && repoState(row) === "untrusted");
   const change = (next: Partial<{ ticked: string[]; branches: Record<string, string> }>) => setEdit({ ticked, branches, ...next });
   return (
-    <ActionDialog title={<>New thread in {plain(projectName)} <Pill tone="info">Beta</Pill></>} confirmLabel={startLabel(ticked.length)} disabled={ticked.length === 0 || !view}
+    <ActionDialog title={<>New thread in {plain(projectName)} <Pill tone="info">Beta</Pill></>} confirmLabel={startLabel(ticked.length)} disabled={ticked.length === 0 || !view || branchBad}
       onClose={onClose}
       onConfirm={async () => {
-        const thread = await reposApi().startThread(projectId, { repos: ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })), ...start })
+        const thread = await reposApi().startThread(projectId, { repos: ticked.map((repoId) => ({ repo_id: repoId, base_branch: baseOf(rows.find((row) => row.id === repoId)!) })), ...start, ...(taskFolder && branchCheck?.ok ? { branch_name: branchCheck.name } : {}) })
           .catch((failure: unknown) => {
             // The engine does not offer this permission mode: say so, and the dialog stays open for another choice.
             if (failure instanceof ApiFailure && failure.code === "permission_mode_unsupported") throw new ApiFailure(failure.code, `This engine does not offer that permission. ${failure.message} Pick another permission and start again.`, failure.status);
@@ -92,6 +99,11 @@ export function NewThreadDialog({ projectId, projectName, start, engineControl, 
           ))}
         </ul>
       ) : <p className="field-hint">Loading repositories…</p>}
+      {taskFolder ? (
+        <Field label="Branch name" hint="Optional. One new branch with this name is made in every chosen repository. Leave it empty and Orbyn picks one name for all." error={branchError}>
+          {(field) => <input {...field} className="dialog-field mono" value={branchText} placeholder="feat/login-fix" spellCheck={false} maxLength={200} onChange={(event) => setBranchText(event.target.value)} />}
+        </Field>
+      ) : null}
       <Row label="Engine">{engineControl}</Row>
       <Row label="Permission">{permissionControl}</Row>
       {note ? <p className="field-hint" role="note">{note}</p> : null}

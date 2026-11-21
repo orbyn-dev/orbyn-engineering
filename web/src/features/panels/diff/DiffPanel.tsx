@@ -183,6 +183,8 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   }, []);
   const wide = width >= WIDE;
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
+  // The project's own folder is the primary repository and its id is the project's: an edit there leaves `repo_id` out.
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
   const hunkActions = useHunkActions(threadId, cwd);
 
   const files = useMemo(() => {
@@ -301,6 +303,7 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       current={hit && hit.path === fileKey(selected) ? { row: hit.row, start: hit.start } : null}
       full={shownFully.has(fileKey(selected))}
       repoName={repoNameOf(selected)}
+      repoId={selected.repo_id !== undefined && selected.repo_id !== projectId ? selected.repo_id : undefined}
       split={wide}
       onShowAll={() => setShownFully(new Set(shownFully).add(fileKey(selected)))}
       canRender={source === "worktree" || source === "thread"}

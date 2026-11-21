@@ -1,0 +1,156 @@
+//! Issue trackers (docs/issues.md). Beta, behind `CoreConfig::issues`: with it off every route here answers 404.
+//! Reads are `Local`. Connecting, disconnecting, linking and starting a thread are `Person` routes.
+
+use axum::Json;
+use axum::Router;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::{get, post};
+use orbyn_contracts::{ConnectTracker, IssueKey, StartIssueThread, TrackerKind};
+use orbyn_core::CoreError;
+use orbyn_core::issues::IssueQuery;
+use serde::Deserialize;
+
+use crate::http::{ApiJson, ApiResult, AppState};
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/issues/trackers", get(trackers))
+        .route("/api/issues/trackers/{tracker}/connect", post(connect))
+        .route(
+            "/api/issues/trackers/{tracker}/disconnect",
+            post(disconnect),
+        )
+        .route("/api/issues", get(list))
+        .route("/api/issues/item", get(item))
+        .route("/api/issues/links", get(links))
+        .route("/api/issues/find", get(find))
+        .route("/api/issues/draft", get(draft))
+        .route("/api/issues/start-thread", post(start_thread))
+        .route("/api/threads/{id}/issue-links", post(link))
+        .route("/api/threads/{id}/issue-links/remove", post(unlink))
+}
+
+fn on(state: &AppState) -> Result<(), CoreError> {
+    if state.core.config.issues {
+        Ok(())
+    } else {
+        Err(CoreError::NotFound("issues".into()))
+    }
+}
+
+async fn trackers(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.issue_trackers().await?))
+}
+
+async fn connect(
+    State(state): State<AppState>,
+    Path(tracker): Path<TrackerKind>,
+    ApiJson(body): ApiJson<ConnectTracker>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.connect_issue_tracker(tracker, body).await?))
+}
+
+async fn disconnect(
+    State(state): State<AppState>,
+    Path(tracker): Path<TrackerKind>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.disconnect_issue_tracker(tracker).await?))
+}
+
+type Pairs = Result<Query<Vec<(String, String)>>, axum::extract::rejection::QueryRejection>;
+
+fn pairs(query: Pairs) -> Result<Vec<(String, String)>, CoreError> {
+    query
+        .map(|Query(p)| p)
+        .map_err(|_| CoreError::Invalid("the query is not valid".into()))
+}
+
+async fn list(State(state): State<AppState>, query: Pairs) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    let query = IssueQuery::from_pairs(&pairs(query)?)?;
+    Ok(Json(state.core.list_issues(&query).await?))
+}
+
+#[derive(Deserialize)]
+struct KeyQuery {
+    tracker: TrackerKind,
+    scope: String,
+    key: String,
+}
+
+impl From<KeyQuery> for IssueKey {
+    fn from(q: KeyQuery) -> Self {
+        Self {
+            tracker: q.tracker,
+            scope: q.scope,
+            key: q.key,
+        }
+    }
+}
+
+async fn item(
+    State(state): State<AppState>,
+    Query(q): Query<KeyQuery>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.issue(&q.into()).await?))
+}
+
+async fn links(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.issue_links()?))
+}
+
+#[derive(Deserialize)]
+struct FindQuery {
+    q: String,
+}
+
+async fn find(
+    State(state): State<AppState>,
+    Query(q): Query<FindQuery>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.find_issues(&q.q).await?))
+}
+
+async fn draft(
+    State(state): State<AppState>,
+    Query(q): Query<KeyQuery>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.issue_draft(&q.into()).await?))
+}
+
+async fn start_thread(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<StartIssueThread>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    Ok(Json(state.core.start_issue_thread(body).await?))
+}
+
+async fn link(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<IssueKey>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    state.core.link_issue(&id, &body).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unlink(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<IssueKey>,
+) -> ApiResult<impl IntoResponse> {
+    on(&state)?;
+    state.core.unlink_issue(&id, &body)?;
+    Ok(StatusCode::NO_CONTENT)
+}

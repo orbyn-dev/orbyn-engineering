@@ -8,6 +8,8 @@ fn status(state: HostState) -> HostStatus {
         host_version: Some("0.1.0".into()),
         restart_count: 2,
         last_crash: None,
+        threads: Vec::new(),
+        last_error: None,
     }
 }
 
@@ -124,4 +126,63 @@ fn the_status_json_has_no_environment_or_arguments() {
     for word in ["env", "args", "argv", "key", "token"] {
         assert!(!json.contains(word), "{word} in {json}");
     }
+}
+
+#[test]
+fn the_threads_working_and_the_last_error_kind_are_on_the_wire_and_absent_when_there_are_none() {
+    let quiet = contract(&status(HostState::Ready));
+    assert_eq!((quiet.threads, quiet.last_error_kind), (None, None));
+    let json = serde_json::to_value(contract(&status(HostState::Ready))).unwrap();
+    assert!(json.get("threads").is_none() && json.get("last_error_kind").is_none());
+
+    let mut busy = status(HostState::Ready);
+    busy.threads = vec!["t-1".into(), "t-2".into()];
+    busy.last_error = Some(crate::agents::driver::host::ErrorKind::SessionLost);
+    let wire = contract(&busy);
+    let threads = wire.threads.unwrap();
+    assert_eq!(threads.len(), 2);
+    assert_eq!(
+        (
+            threads[0].thread_id.as_str(),
+            threads[0].family.as_str(),
+            threads[0].state
+        ),
+        (
+            "t-1",
+            "claude",
+            orbyn_contracts::EngineHostThreadState::Running
+        )
+    );
+    assert_eq!(
+        serde_json::to_value(wire.last_error_kind).unwrap(),
+        serde_json::json!("session_lost")
+    );
+}
+
+#[test]
+fn every_protocol_error_kind_has_a_name_on_the_wire() {
+    use crate::agents::driver::host::ErrorKind as K;
+    let kinds = [
+        (K::Auth, "auth"),
+        (K::RateLimit, "rate_limit"),
+        (K::Network, "network"),
+        (K::InvalidRequest, "invalid_request"),
+        (K::Unsupported, "unsupported"),
+        (K::Cancelled, "cancelled"),
+        (K::Engine, "engine"),
+        (K::Host, "host"),
+        (K::SessionLost, "session_lost"),
+    ];
+    for (kind, name) in kinds {
+        let mut one = status(HostState::Ready);
+        one.last_error = Some(kind);
+        assert_eq!(
+            serde_json::to_value(contract(&one).last_error_kind).unwrap(),
+            serde_json::json!(name)
+        );
+    }
+    // A kind the host did not name is not shown.
+    let mut unknown = status(HostState::Ready);
+    unknown.last_error = Some(K::Unknown);
+    assert_eq!(contract(&unknown).last_error_kind, None);
 }

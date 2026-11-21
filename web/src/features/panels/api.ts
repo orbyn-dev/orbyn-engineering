@@ -100,11 +100,13 @@ export function stopThreadServer(threadId: string, pid: number) {
   return request<void>("POST", `${thread(threadId)}/servers/${pid}/stop`);
 }
 
-export function readThreadFile(threadId: string, path: string, signal?: AbortSignal) {
-  return request<FileContent>("GET", `${thread(threadId)}/files/content?path=${q(path)}`, undefined, signal);
+/** `repoId` names the repository of a multi-repository thread whose worktree holds the repo-relative `path`; left out, it is the primary repository (docs/multi-repo.md, "Per-repository Git routes"). */
+export function readThreadFile(threadId: string, path: string, signal?: AbortSignal, repoId?: string) {
+  return request<FileContent>("GET", `${thread(threadId)}/files/content?path=${q(path)}${repoId === undefined ? "" : `&repo_id=${q(repoId)}`}`, undefined, signal);
 }
 
-export function saveThreadFile(threadId: string, body: { path: string; content: string; base_revision: string | null }) {
+/** `repo_id` is in the body beside the repo-relative `path`, only for a file of a repository that is not the primary. */
+export function saveThreadFile(threadId: string, body: { path: string; content: string; base_revision: string | null; repo_id?: string }) {
   return request<FileContent>("PUT", `${thread(threadId)}/files/content`, body);
 }
 

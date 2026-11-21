@@ -1,51 +1,57 @@
 import { ChevronDown } from "lucide-react";
 import { useRef, useState } from "react";
+import { ApiFailure } from "../../api/client";
 import { useUi } from "../../product/state/ui";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { issuesApi } from "./api";
+import { issuesApi, markNotOffered, useStateRefused } from "./api";
 import type { IssueDetail, IssueState } from "./contract";
+import { routeAbsent } from "./edit";
 import { IssueGlyph } from "./IssueGlyph";
+import type { IssueWriter } from "./IssueEdit";
 import { choiceLabel, reasonOf, sameState, stateWord } from "./model";
 
 /**
- * The State row of an issue. A state change is NOT IN THE BETA: docs/issues.md lists it as Planned, so the real service sends no
- * `transitions`, the real client refuses `setState`, and in a production build this draws the state as text with a Planned note
- * and calls nothing. Only the dev-only preview (`__ORBYN_PREVIEWS__`, which is also on in tests) offers the mock's menu. When the
- * change lands it is a Person-class `POST /api/issues/item/state` with `{ tracker, scope, key, state }`; the route joins
- * `PENDING_PERSON_ROUTES` with that call, and this menu then reads the states the issue carries.
+ * The State row of an issue. The states it can move to are `issue.states` (docs/issues.md, "Issue writes and list controls"):
  *
- * In the preview, a tracker that offers states shows a button that lists them in the tracker's own words and order and marks the
- * current one. Choosing a state is one write, once: while it is in flight the button is off and a second choice is not a second
- * write. The state on screen changes only when the tracker answers.
+ * - absent, or refused as "no such route" on first use: the service does not offer a state change. The state is text with a Planned
+ *   note, and nothing is called.
+ * - `[]`: the service offers it, but this tracker has no other state. The state is text, with no note.
+ * - a list: a button that lists them in the tracker's own words and order and marks the current one. Choosing one is one write,
+ *   `POST /api/issues/item/state` with the state's name, through the page's write guard: while it is in flight the button is off and
+ *   a second choice is not a second write. The state on screen changes only when the tracker answers, with the issue it answers.
+ *   A failure says nothing changed and leaves the state as it was.
  */
-export function IssueStateButton({ issue, onChanged }: { issue: IssueDetail; onChanged(): Promise<unknown> | void }) {
+export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail; write: IssueWriter; writing: boolean }) {
   const pushToast = useUi((state) => state.pushToast);
+  const refused = useStateRefused();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [busy, setBusy] = useState(false);
-  // A second choice while the first write is in flight is not a second write.
-  const pending = useRef(false);
-  const choices = issue.transitions ?? [];
-  if (!__ORBYN_PREVIEWS__ || choices.length === 0) {
+  const busy = writing;
+  // What the issue is in right now, not when the menu was drawn: a click on an item that is still leaving the screen after the
+  // write landed is the state it is already in, and writes nothing.
+  const now = useRef(issue.state);
+  now.current = issue.state;
+  const choices = issue.states ?? [];
+  if (issue.states === undefined || refused) {
     return (
       <span className="iss-state">
         <IssueGlyph state={issue.state} />{stateWord(issue.state)}
-        {__ORBYN_PREVIEWS__ ? null : <span className="iss-quiet" title="Changing an issue's state is not available yet.">Planned</span>}
+        <span className="iss-quiet" title="Changing an issue's state is not available yet.">Planned</span>
       </span>
     );
   }
+  if (choices.length === 0) return <span className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span>;
   const choose = async (next: IssueState) => {
-    if (pending.current || sameState(next, issue.state)) return;
-    pending.current = true;
-    setBusy(true);
+    if (busy || sameState(next, now.current)) return;
     try {
-      await issuesApi().setState(issue, next);
-      await onChanged();
+      await write(() => issuesApi().setState(issue, next));
     } catch (failure) {
+      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+        markNotOffered("state");
+        pushToast("This service does not offer state changes yet. Nothing changed.");
+        return;
+      }
       pushToast(`Couldn't change the state. Nothing changed. ${reasonOf(failure)}`);
-    } finally {
-      pending.current = false;
-      setBusy(false);
     }
   };
   return (
