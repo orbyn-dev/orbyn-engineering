@@ -64,16 +64,17 @@ describe("one escape's own page", () => {
     expect(bodyOf(post(calls).init)).toEqual({ project: "p-app", seen: { state: "possible", gap: null } });
   });
 
-  it("a confirmed escape offers no decision, and Propose a check is Planned, never sent", async () => {
+  it("a confirmed escape offers no decision, and Propose a check opens its dialog and sends nothing by itself", async () => {
     const user = userEvent.setup();
     render(<LiveEscapes view="detail" id="esc-1" />);
     expect(await screen.findByText(/Set the gap…/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
     expect(screen.getByText(/The escape is confirmed and its gap is a test gap, or not set yet/)).toBeInTheDocument();
     const propose = screen.getByRole("button", { name: "Propose a check" });
-    expect(propose).toBeDisabled();
-    expect(propose).toHaveAttribute("aria-description", expect.stringContaining("create-check screen"));
-    await user.click(propose).catch(() => undefined);
+    expect(propose).toBeEnabled();
+    expect(propose.closest(".cx-t13row")?.querySelector(".cx-cwpv")).toBeNull();
+    await user.click(propose);
+    expect(await screen.findByRole("dialog", { name: "Propose a check from this escape" })).toBeInTheDocument();
     expect(posts(calls)).toHaveLength(0);
   });
 

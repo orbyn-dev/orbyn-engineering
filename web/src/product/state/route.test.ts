@@ -25,6 +25,7 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "areas" },
     { name: "settings", section: "crew", crewPage: "areas", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "thresholds", repo: "p-app" },
+    { name: "settings", section: "crew", crewPage: "capacity" },
   ])("round-trips %j", (route) => {
     expect(parseRoute(routeHref(route))).toEqual(route);
   });

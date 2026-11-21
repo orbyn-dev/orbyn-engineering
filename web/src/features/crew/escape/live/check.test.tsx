@@ -276,15 +276,15 @@ describe("the check frames of Crew Designs v79", () => {
     expect(bodyOf(post(calls).init)).toEqual({ project: "p-app", seen: { state: "confirmed", gap: "test_gap", check: "proposed" } });
   });
 
-  it("a withdrawn check is final for the check, and proposing again is Planned, never sent", async () => {
+  it("a withdrawn check is final for the check, and proposing again opens the dialog and sends nothing by itself", async () => {
     answers.detail = confirmed(checkRow({ state: "withdrawn" }));
     const user = userEvent.setup();
     render(<LiveEscapes view="detail" id="esc-1" />);
     expect(await screen.findByText(/The escape is still confirmed. A new proposal replaces this one./)).toBeInTheDocument();
     const again = screen.getByRole("button", { name: "Propose a check" });
-    expect(again).toBeDisabled();
-    expect(again).toHaveAttribute("aria-description", expect.stringContaining("create-check screen"));
-    await user.click(again).catch(() => undefined);
+    expect(again).toBeEnabled();
+    await user.click(again);
+    expect(await screen.findByRole("dialog", { name: "Propose a check from this escape" })).toBeInTheDocument();
     expect(posts(calls)).toHaveLength(0);
   });
 

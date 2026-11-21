@@ -6,6 +6,7 @@ import { Button } from "../../../../ui/controls";
 import { Dialog } from "../../../../ui/Dialog";
 import { Btn } from "../../shared/parts";
 import { checkStateLabel, WHY } from "./model";
+import { ProposeAction, type Proposal } from "./propose";
 
 /** The note the service writes when the proven check went into the merge queue (check.rs). */
 const QUEUED_NOTE = "Queued for merge like any change.";
@@ -345,7 +346,7 @@ function FailedCard({ row, check, busy, onRetry, onWithdraw }: { row: EscapeRow;
 }
 
 /** `escape-check-withdrawn`: final for the check, and a new proposal replaces this one. */
-function WithdrawnCard({ check }: { check: EscapeCheckRow }) {
+function WithdrawnCard({ row, check, busy, onPropose }: { row: EscapeRow; check: EscapeCheckRow; busy: boolean; onPropose(proposal: Proposal): Promise<string | null> }) {
   return (
     <div className="cx-fbx">
       <h6>The check</h6>
@@ -374,8 +375,7 @@ function WithdrawnCard({ check }: { check: EscapeCheckRow }) {
         ) : null}
       </div>
       <div className="cx-t13row" style={{ marginTop: "8px" }}>
-        <Planned why={WHY.check} />
-        <Btn className="cx-btn" reason={`Planned: ${WHY.check}`}>Propose a check</Btn>
+        <ProposeAction row={row} busy={busy} onPropose={onPropose} />
       </div>
       <p style={{ marginTop: "8px" }}>The escape is still confirmed. A new proposal replaces this one.</p>
     </div>
@@ -390,7 +390,7 @@ export type CheckAct = "accept" | "approve" | "retry" | "withdraw";
  * and the routes carry, and a Planned pill where a frame draws what the app does not have. `merged` keeps the detail
  * page’s own merged card (no frame of this slice draws it).
  */
-export function CheckCard({ row, check, busy, onAct }: { row: EscapeRow; check: EscapeCheckRow; busy: boolean; onAct(kind: CheckAct, done?: () => void): void }) {
+export function CheckCard({ row, check, busy, onAct, onPropose }: { row: EscapeRow; check: EscapeCheckRow; busy: boolean; onAct(kind: CheckAct, done?: () => void): void; onPropose(proposal: Proposal): Promise<string | null> }) {
   const [ask, setAsk] = useState<"retry" | "withdraw" | null>(null);
   /** The dialog stays open while the write is in flight and closes when it settles. */
   const confirming = (kind: CheckAct) => () => onAct(kind, () => setAsk(null));
@@ -407,7 +407,7 @@ export function CheckCard({ row, check, busy, onAct }: { row: EscapeRow; check: 
     );
   else if (check.state === "proven") card = <ProvenCard check={check} busy={busy} onWithdraw={() => setAsk("withdraw")} />;
   else if (check.state === "failed") card = <FailedCard row={row} check={check} busy={busy} onRetry={() => setAsk("retry")} onWithdraw={() => setAsk("withdraw")} />;
-  else if (check.state === "withdrawn") card = <WithdrawnCard check={check} />;
+  else if (check.state === "withdrawn") card = <WithdrawnCard row={row} check={check} busy={busy} onPropose={onPropose} />;
   if (!card) return null;
   return (
     <>

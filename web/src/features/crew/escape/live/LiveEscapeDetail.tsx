@@ -8,12 +8,13 @@ import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { Button } from "../../../../ui/controls";
 import { Dialog } from "../../../../ui/Dialog";
 import { Frame } from "../../shared/Frame";
-import { Btn, Ic } from "../../shared/parts";
+import { Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
 import { againstOf, checkStateLabel, eventMoment, gapLabel, gapText, nameOf, refusalOf, sourceLabel, stateLabel, WHY } from "./model";
 import { escapeApi } from "./api";
 import { CheckCard, CheckChip, Commit, short, type CheckAct } from "./check";
 import { StateChip } from "./parts";
+import { ProposeAction, type Proposal } from "./propose";
 import { useEscapeDetail, useEscapeLog } from "./useEscapes";
 
 const mono = { fontFamily: "var(--font-mono)", fontSize: "11px", wordBreak: "break-all", lineHeight: 1.5 } as const;
@@ -106,9 +107,9 @@ function EventRow({ event, row, latestGap }: { event: EscapeEventRow; row: Escap
  * The escape's check, read as it stands. Its own frames (`escape-check-*`) draw each state with its acts in ./check; the
  * merged state keeps this card, whose proof row carries what the read says. The person's acts on a check are theirs.
  */
-function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct, done?: () => void): void }) {
+function TheCheck({ row, check, busy, act, propose }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct, done?: () => void): void; propose(proposal: Proposal): Promise<string | null> }) {
   if (check) {
-    if (check.state !== "merged") return <CheckCard row={row} check={check} busy={busy} onAct={act} />;
+    if (check.state !== "merged") return <CheckCard row={row} check={check} busy={busy} onAct={act} onPropose={propose} />;
     return (
       <div className="cx-fbx">
         <h6>The check</h6>
@@ -155,16 +156,15 @@ function TheCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeChec
         <b>One new test file. Never a policy file or .orbyn/crew.json</b>
       </div>
       <div className="cx-t13row" style={{ marginTop: "8px" }}>
-        <Planned why={WHY.check} />
-        <Btn className="cx-btn" reason={`Planned: ${WHY.check}`}>Propose a check</Btn>
+        <ProposeAction row={row} busy={busy} onPropose={propose} />
       </div>
     </div>
   );
 }
 
 /** A tooling gap gets no proposal in v1: the box says why a test can’t help, and that the rule is yours to add. */
-function ToolingCheck({ row, check, busy, act }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct): void }) {
-  if (row.gap !== "tooling_gap") return <TheCheck row={row} check={check} busy={busy} act={act} />;
+function ToolingCheck({ row, check, busy, act, propose }: { row: EscapeRow; check: EscapeCheckRow | null; busy: boolean; act(kind: CheckAct): void; propose(proposal: Proposal): Promise<string | null> }) {
+  if (row.gap !== "tooling_gap") return <TheCheck row={row} check={check} busy={busy} act={act} propose={propose} />;
   return (
     <>
       <div className="cx-fbx">
@@ -271,7 +271,7 @@ function GapDialog({ row, busy, onClose, onSet }: { row: EscapeRow; busy: boolea
  * read, and the check frames (`escape-check-*`), which open the same page and draw the escape's check in whichever state
  * it is read. The escape's own reason or line names it: the merge's task title is not in any read, so none is invented.
  * The person's acts here are the two decisions on a possible escape, the gap, and the check's accept, approve, retry and
- * withdraw (./check); a proposal needs the create-check screen's form, which is still a drawn sample.
+ * withdraw (./check); a proposal is the create-check dialog (./propose), sent only from its own button.
  */
 export function LiveEscapeDetail({ id }: { id: string }) {
   if (!id) return <Frame sheet live><Empty title="No escape is named" /></Frame>;
@@ -357,6 +357,32 @@ function NamedEscape({ id }: { id: string }) {
         void read.reload();
       });
   };
+  /**
+   * A person's proposal of a check, one write with what they saw. It answers null when the service took it, or the service's own
+   * words when it refused, so the dialog can stay open with what was typed; a refusal reads the page again, as every act does.
+   */
+  const propose = (proposal: Proposal): Promise<string | null> => {
+    const one = read.status === "ready" ? read.data : null;
+    if (!row || !one || sending.current) return Promise.resolve("Wait for the page to finish its last act, then try again.");
+    sending.current = true;
+    setBusy(true);
+    setRefused(null);
+    const seen = { state: row.state, gap: row.gap, check: one.check?.state ?? null };
+    return escapeApi
+      .check(id, { project: row.project, seen, ...proposal })
+      .then(() => {
+        sending.current = false;
+        setBusy(false);
+        void read.reload();
+        return null;
+      })
+      .catch((error: unknown) => {
+        sending.current = false;
+        setBusy(false);
+        void read.reload();
+        return refusalOf(error);
+      });
+  };
   if (read.status === "loading") return <Frame sheet live><Loading label="Reading the escape" rows={3} /></Frame>;
   if (read.status === "error")
     return <Frame sheet live><ErrorState title="Can’t read the escape" failure={read.error} onRetry={() => void read.reload()} /></Frame>;
@@ -434,7 +460,7 @@ function NamedEscape({ id }: { id: string }) {
                   </div>
                 </>
               ) : (
-                <ToolingCheck row={escape} check={one.check ?? null} busy={busy} act={act} />
+                <ToolingCheck row={escape} check={one.check ?? null} busy={busy} act={act} propose={propose} />
               )}
               <CountedAgainst row={escape} />
               {escape.state !== "dismissed" ? (
