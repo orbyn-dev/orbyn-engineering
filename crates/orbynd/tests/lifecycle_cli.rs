@@ -182,7 +182,10 @@ async fn update_with_the_person_key_enforced_only_checks_and_points_at_the_deskt
         assert!(stdout.contains("Orbyn 99.0.0 is available"), "{stdout}");
         assert!(stdout.contains("desktop app"), "{stdout}");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!stderr.contains("403") && !stderr.contains("person"), "{stderr}");
+        assert!(
+            !stderr.contains("403") && !stderr.contains("person"),
+            "{stderr}"
+        );
     }
     let app = service.json("/api/updates").await["app"].clone();
     assert_eq!(app["phase"], "available");
