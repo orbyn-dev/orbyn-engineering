@@ -191,6 +191,33 @@ whatever the page checked.
    directory, and not be another project's repository. Paths, names, branch names and remote URLs are shown
    as text only, never as a link, command or markup.
 
+## As built: project repositories
+
+Behind `CoreConfig::multi_repo` (`ORBYN_MULTI_REPO=1`): with it off every route below answers `404`. Built: the repository list,
+`add-folder`, `create`, `clone`, `cancel`, `trust`, `setup-git`, `remove` and the folder scan with `.code-workspace` import. **Not built
+yet** (the next slice): `repo-threads`, the thread's repository routes, the task folder, `repo_id` on the Git and file routes, and `publish`
+(it checks the repository is trusted and then answers `422 unsupported`: "Publishing a repository arrives in a later update.").
+
+- **Storage.** Table `project_repos` (migration 64): id, project, name, path (unique), trusted, is_git, managed, clone state and message.
+  The project's own folder is not a row; it is the first row of the list (`primary`, `id` the project id), and `trust` and `setup-git` on it
+  go to the project's own trust and Git init. `remove` on it is `400`.
+- **Names.** A repository's `name` is a safe folder name (letters, digits, `-`, `_`, `.`; no leading dot; at most 64) taken from the
+  folder or source, unique within the project (`-2`, `-3` appended). It is what a task folder's worktree will be called.
+- **Trust.** `add-folder` and `clone` start untrusted; `create` starts trusted (Orbyn made an empty folder). `trust` is refused while a
+  clone is running. `setup-git` on an untrusted folder is `409 repo_untrusted`. A folder that is any project's folder or any project's
+  repository is `409 repo_exists`; one inside Orbyn's data, or the skills library, is `400`. A project holds at most 64 extra
+  repositories (`409 repo_limit`).
+- **Clone.** The source passes the rules in "Clone and path input" (`400 clone_refused`; the check runs before anything is stored). A clone
+  runs in the background into `<data>/repos/.incoming-<id>`, then is renamed to `<data>/repos/<name>`, with `GIT_ALLOW_PROTOCOL=https:ssh`,
+  `GIT_TERMINAL_PROMPT=0`, no helpers, no file protocol, no submodules, no template hooks and a 10 minute limit. The row answers
+  `clone.state: "cloning"` at once and ends as no `clone` (done) or `failed` with a message of at most 300 characters; a failed clone stays
+  listed until it is removed. `percent` is always `null`. `cancel` stops a running clone (`400` when none runs) and answers the row as
+  failed, "Cancelled."; a clone running when the core stops is marked failed at the next start. A repository that is cloned still has to
+  be trusted.
+- **Scan.** As the section above, `RepoScan` and `ScannedFolder` in `orbyn-contracts`; at most 200 entries looked at, 64 returned; a
+  workspace file over 256 KiB, not JSON (comments and trailing commas allowed) or without `folders` is `400`.
+- **Errors added:** `repo_exists`, `repo_untrusted`, `repo_limit` (409), `clone_refused` (400), `not_git` (409; for the thread slice).
+
 ## Not in the beta
 
 Per-repository settings, a thread that spans repositories of more than one project, committing across

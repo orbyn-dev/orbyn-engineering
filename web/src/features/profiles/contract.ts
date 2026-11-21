@@ -1,7 +1,7 @@
 /**
- * The execution profile contract of docs/execution-profiles-and-library.md, Part 1 (W8). Hand-written: no generated types exist for
- * these routes and no service answers them yet. Field names are the doc's. Anything the doc leaves open is marked "guess" and is
- * listed in the pull request.
+ * The execution profile contract of docs/execution-profiles-and-library.md, Part 1 (W8), as the service answers it (routes in
+ * crates/orbynd/src/routes/profiles.rs and crew.rs; the generated types in src/generated are the reference and are not edited).
+ * `GET /api/profiles` is a bare array; `ProfileList` is the client's own view of it with the fixed limit of 50.
  */
 
 export type ModelTier = "lead" | "builder" | "scout";
@@ -50,6 +50,7 @@ export interface ProfileDraft {
   autopilot_mode: AutopilotModeId;
 }
 
+/** What the client hands its screens: the bare array the service answers, and the constant limit of 50 (not in the answer). */
 export interface ProfileList {
   profiles: Profile[];
   limit: number;
@@ -70,10 +71,11 @@ export interface ApplyBody {
 }
 
 export interface ApplyAnswer {
-  applied: { engine?: string; model?: string; permission_mode?: PermissionModeId };
+  applied: { engine?: string; model?: string; permission_mode?: PermissionModeId; /** A crew apply only. */ autopilot_mode?: AutopilotModeId };
   /** Fields that do not apply to this target, such as `autopilot_mode` on a plain thread. */
   ignored: string[];
-  application: { profile_id: string; name: string; revision: number; customized: boolean; applied_at: string };
+  /** `null` when the chip was cleared (`profile_id: null`): the answer is `null` and carries no application row. */
+  application: null | { profile_id: string; name: string; revision: number; customized: boolean; applied_at: string };
 }
 
 export const NAME_MAX = 60;

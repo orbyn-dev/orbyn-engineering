@@ -16,6 +16,7 @@ pub mod operations;
 pub mod profiles;
 pub mod project;
 pub mod redaction;
+mod repos;
 pub mod settings;
 pub mod source_control;
 pub mod store;

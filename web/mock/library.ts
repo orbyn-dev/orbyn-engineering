@@ -6,7 +6,7 @@
  * are held in a private map that no read returns, as the real keychain does: `present` is the only thing a read says.
  */
 import { ApiFailure } from "../src/api/client.ts";
-import type { EnvSet, EnvSetDraft, LibraryApi, LibrarySummary, Param, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft } from "../src/features/library/contract.ts";
+import type { Copied, EnvSet, EnvSetDraft, LibraryApi, LibraryLimits, LibrarySummary, Param, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft } from "../src/features/library/contract.ts";
 
 const NOW = "2026-11-22T00:00:00Z";
 const stamp = { revision: 1, created_at: NOW, updated_at: NOW };
@@ -29,12 +29,15 @@ export function libraryFixtures(): { workflows: Workflow[]; prompts: Prompt[]; e
 
 export function suggestionFixtures(): Suggestions {
   return {
-    workflows: [{ index: 0, name: "Start dev server", description: "Starts the app on a port", command: "PORT={{port}} npm run dev", params: [{ name: "port", label: "Port", kind: "text", default: "5173", required: true }], env_set_ids: [] }],
-    prompts: [{ index: 0, name: "Review a diff for open redirects", description: "Asks the engine to check a change", body: "Review {{diff}} for open redirects.", params: [{ name: "diff", label: "Diff", kind: "choice", default: "this branch", required: true, choices: ["this branch", "working tree"] }] }],
-    env_sets: [{ index: 0, name: "staging", description: "", keys: ["API_URL", "DEPLOY_TOKEN"] }],
-    problems: [{ file: "workflows.json", index: 3, code: "invalid_entry" }],
+    workflows: [{ file: "workflows.json", index: 0, name: "Start dev server", description: "Starts the app on a port", command: "PORT={{port}} npm run dev", params: [{ name: "port", label: "Port", kind: "text", default: "5173", required: true }], env_set_ids: [] }],
+    prompts: [{ file: "prompts.json", index: 0, name: "Review a diff for open redirects", description: "Asks the engine to check a change", body: "Review {{diff}} for open redirects.", params: [{ name: "diff", label: "Diff", kind: "choice", default: "this branch", required: true, choices: ["this branch", "working tree"] }] }],
+    env_sets: [{ file: "env-sets.json", index: 0, name: "staging", description: "", keys: ["API_URL", "DEPLOY_TOKEN"] }],
+    problems: [{ file: "workflows.json", index: 3, code: "invalid_input" }],
   };
 }
+
+/** The numbers of "Limits" in the doc, under the doc's keys. */
+export const PINNED_LIMITS: LibraryLimits = { workflows: 200, prompts: 200, env_sets: 50, env_keys_per_set: 64, env_sets_per_workflow: 4, params_per_item: 16, workflow_command_bytes: 4000, prompt_body_bytes: 32768, env_value_bytes: 8192, suggestions_file_bytes: 65536, import_bytes: 2097152 };
 
 export interface LibraryMock extends LibraryApi {
   /** Every write the screens made, in order. Values are never recorded: a key write is `key:<set>:<KEY>`. */
@@ -61,7 +64,7 @@ const STATUS: Record<string, [number, string]> = {
   not_found: [404, "That item is not in the library any more."],
 };
 
-export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFixtures> | null; suggestions?: Suggestions | "untrusted"; platform?: "stored" | "planned"; delayMs?: number; limits?: { workflows?: number; prompts?: number; env_sets?: number } } = {}): LibraryMock {
+export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFixtures> | null; suggestions?: Suggestions | "untrusted"; platform?: "stored" | "planned"; delayMs?: number; limits?: Partial<LibraryLimits> } = {}): LibraryMock {
   const missing = init.fixtures === null;
   const seed = init.fixtures ?? libraryFixtures();
   const workflows = new Map(seed.workflows.map((one) => [one.id, one] as const));
@@ -93,7 +96,7 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
   };
   const presentOf = (set: EnvSet): EnvSet => ({ ...set, status: init.platform ?? set.status, keychain: init.platform === "planned" ? "unavailable" : set.keychain, keys: set.keys.map((key) => ({ name: key.name, present: init.platform === "planned" ? false : vault.has(`${set.id}/${key.name}`) || (set.keys.find((k) => k.name === key.name)?.present ?? false) })) });
   const bump = <T extends { revision: number }>(one: T): T => ({ ...one, revision: one.revision + 1, updated_at: NOW });
-  const summary = (): LibrarySummary => ({ workflows: workflows.size, prompts: prompts.size, env_sets: sets.size, keychain: init.platform === "planned" ? "unavailable" : "ok", limits: { workflows: init.limits?.workflows ?? 200, prompts: init.limits?.prompts ?? 200, env_sets: init.limits?.env_sets ?? 50, env_keys: 64 } });
+  const summary = (): LibrarySummary => ({ workflows: workflows.size, prompts: prompts.size, env_sets: sets.size, keychain: init.platform === "planned" ? "unavailable" : "ok", limits: { ...PINNED_LIMITS, ...init.limits } });
   return {
     writes, vault,
     lastKeyBody: () => lastBody,
@@ -108,7 +111,7 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
     async createWorkflow(draft: WorkflowDraft) {
       await wait(); preflight();
       if (taken(workflows, draft.name, null)) refuse("name_taken");
-      limit(workflows, init.limits?.workflows ?? 200);
+      limit(workflows, init.limits?.workflows ?? PINNED_LIMITS.workflows);
       const one: Workflow = { ...draft, name: draft.name.trim(), id: nextId("01jwn"), ...stamp };
       workflows.set(one.id, one); writes.push(`workflow.create:${one.name}`); return one;
     },
@@ -131,7 +134,7 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
     async createPrompt(draft: PromptDraft) {
       await wait(); preflight();
       if (taken(prompts, draft.name, null)) refuse("name_taken");
-      limit(prompts, init.limits?.prompts ?? 200);
+      limit(prompts, init.limits?.prompts ?? PINNED_LIMITS.prompts);
       const one: Prompt = { ...draft, name: draft.name.trim(), id: nextId("01jpn"), ...stamp };
       prompts.set(one.id, one); writes.push(`prompt.create:${one.name}`); return one;
     },
@@ -147,7 +150,7 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
     async createEnvSet(draft: EnvSetDraft) {
       await wait(); preflight();
       if (taken(sets, draft.name, null)) refuse("name_taken");
-      limit(sets, init.limits?.env_sets ?? 50);
+      limit(sets, init.limits?.env_sets ?? PINNED_LIMITS.env_sets);
       const one: EnvSet = { id: nextId("01jen"), name: draft.name.trim(), description: draft.description, keys: draft.keys.map((name) => ({ name, present: false })), keychain: "ok", status: init.platform ?? "stored", ...stamp };
       sets.set(one.id, one); writes.push(`env_set.create:${one.name}`); return presentOf(one);
     },
@@ -185,12 +188,14 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       if (init.suggestions === "untrusted") return refuse("folder_untrusted");
       return init.suggestions ?? suggestionFixtures();
     },
-    async copySuggestion(_projectId, file, index) {
+    async copySuggestion(_projectId, file, index): Promise<Copied> {
       await wait(); preflight();
       const found = init.suggestions && init.suggestions !== "untrusted" ? init.suggestions : suggestionFixtures();
-      if (file === "workflows.json") { const one = found.workflows.find((entry) => entry.index === index) ?? refuse("not_found"); await this.createWorkflow({ name: one.name, description: one.description, command: one.command, params: one.params, env_set_ids: [] }); }
-      else if (file === "prompts.json") { const one = found.prompts.find((entry) => entry.index === index) ?? refuse("not_found"); await this.createPrompt({ name: one.name, description: one.description, body: one.body, params: one.params }); }
-      else { const one = found.env_sets.find((entry) => entry.index === index) ?? refuse("not_found"); await this.createEnvSet({ name: one.name, description: one.description, keys: one.keys }); }
+      // The entry's own file and index name it; an index counts dropped entries too, so it is not a position in the served array.
+      if (file === "workflows.json") { const one = found.workflows.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found"); return { kind: "workflow", entry: await this.createWorkflow({ name: one.name, description: one.description, command: one.command, params: one.params, env_set_ids: [] }) }; }
+      if (file === "prompts.json") { const one = found.prompts.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found"); return { kind: "prompt", entry: await this.createPrompt({ name: one.name, description: one.description, body: one.body, params: one.params }) }; }
+      const one = found.env_sets.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found");
+      return { kind: "env_set", entry: await this.createEnvSet({ name: one.name, description: one.description, keys: one.keys }) };
     },
   };
 }
