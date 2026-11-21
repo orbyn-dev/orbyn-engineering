@@ -2,7 +2,15 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../../api/client";
-import type { QueuedMessage, Run, SlashCommand, Thread, WireThreadEvent } from "../../../api/types";
+import { pullsApi } from "../../../api/pulls";
+import type {
+  PullRequest,
+  QueuedMessage,
+  Run,
+  SlashCommand,
+  Thread,
+  WireThreadEvent,
+} from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { emptyLog } from "../../../product/timeline/projection";
@@ -258,7 +266,9 @@ describe("Composer", () => {
     const queue = vi.spyOn(api, "queue").mockResolvedValue([
       { id: "q1", thread_id: "t1", prompt: "also check tests", attachment_ids: [], held: false, created_at: "" },
     ]);
-    const steer = vi.spyOn(api, "steer").mockResolvedValue({ state: "delivered" });
+    const steer = vi
+      .spyOn(api, "steer")
+      .mockResolvedValue({ message_id: "steer-message", state: "delivered" });
     const remove = vi.spyOn(api, "removeQueued").mockResolvedValue();
     setup({ active_run: { ...run, state: "running" } as Run });
     await userEvent.click(await screen.findByRole("button", { name: /^Add to the running turn/ }));
@@ -369,6 +379,40 @@ describe("Composer", () => {
     );
     expect(useComposerChips.getState().chips.t1).toHaveLength(0);
     mentions.mockRestore();
+    start.mockRestore();
+  });
+
+  it("picks a pull request from # as a labelled chip, removes it, and sends its block with the draft", async () => {
+    const pulls = vi.spyOn(pullsApi, "projectPulls").mockResolvedValue([
+      { number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77" } as PullRequest,
+    ]);
+    const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
+    setup();
+    await userEvent.type(box(), "see #7");
+    await screen.findByRole("option", { name: /#77/ });
+    await userEvent.keyboard("{Enter}");
+    expect(box()).toHaveValue("see ");
+    expect(useComposerChips.getState().chips.t1?.[0]).toMatchObject({
+      kind: "pull", number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77",
+    });
+    expect(screen.getByTitle("#77 Tidy the docs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy pull chip" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove pull chip" }));
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    expect(box()).toHaveValue("see ");
+    await userEvent.type(box(), "#7");
+    await screen.findByRole("option", { name: /#77/ });
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        "t1",
+        "Pull request: [#77 Tidy the docs](https://github.com/o/r/pull/77)\n\nsee",
+        [],
+      ),
+    );
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    pulls.mockRestore();
     start.mockRestore();
   });
 

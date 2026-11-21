@@ -202,6 +202,22 @@ pub struct PullFile {
 }
 
 wire! {
+/// Counts by change kind over one pull request's changed files. A kind the forge
+/// names that is none of the four below counts only in `files`.
+pub struct PullChangeBreakdown {
+    pub files: u64,
+    pub added: u64,
+    pub modified: u64,
+    pub deleted: u64,
+    pub renamed: u64,
+    /// Lines added over every file.
+    pub additions: u64,
+    /// Lines deleted over every file.
+    pub deletions: u64,
+}
+}
+
+wire! {
 /// One commit of a pull request, oldest first.
 pub struct PullRevision {
     pub sha: String,
@@ -550,5 +566,41 @@ pub struct LinkPull {
 wire! {
 pub struct RepositoryStarStatus {
     pub starred: bool,
+}
+}
+
+wire! {
+/// The person's starred GitHub repositories, read through their own `gh` CLI. One
+/// bounded page is read; `unavailable` says why none was, and an empty list there is
+/// never reported as "you starred nothing".
+pub struct StarredRepositories {
+    /// As the forge lists them, at most one page of 100.
+    pub repositories: Vec<StarredRepository>,
+    /// The forge holds more than the one page read.
+    pub truncated: bool,
+    /// Why no list could be read, in the person's words; `None` when one was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unavailable: Option<String>,
+}
+}
+
+wire! {
+/// One repository from the person's starred list. The app stores none of it.
+pub struct StarredRepository {
+    /// The owner's login, from `full_name`.
+    pub owner: String,
+    /// The repository's name, from `full_name`.
+    pub name: String,
+    /// `owner/name` as the forge spells it.
+    pub full_name: String,
+    pub url: String,
+    pub description: Option<String>,
+    pub private: bool,
+    pub archived: bool,
+    pub default_branch: Option<String>,
+    pub language: Option<String>,
+    /// Stars the forge reports.
+    pub stars: u32,
 }
 }

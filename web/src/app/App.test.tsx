@@ -288,6 +288,7 @@ describe("App against the mock API", () => {
     });
 
     it("checks from Settings without applying anything", async () => {
+      mock.patchUpdates({ app: { ...mock.updates.app, latest: null, phase: "idle", can_apply: false } });
       const user = userEvent.setup();
       go("#/settings/maintenance");
       render(<App />);

@@ -436,8 +436,8 @@ impl RunManager {
                                 break outcome;
                             }
                         }
-                        EngineEvent::SteerFailed(prompt) => {
-                            self.requeue_steer(scope, &prompt);
+                        EngineEvent::SteerFailed(steer) => {
+                            self.requeue_steer(scope, &steer);
                         }
                         EngineEvent::Limited { resets_at } => {
                             self.limit_signals().insert(scope.run_id.clone(), resets_at);

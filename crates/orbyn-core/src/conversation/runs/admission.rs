@@ -1,5 +1,24 @@
 use super::*;
 
+/// Longest client id a steer may carry for its message.
+const MAX_STEER_MESSAGE_ID_CHARS: usize = 200;
+
+/// The client's id for a steer, checked, or the service's own when it gave none.
+fn steer_message_id(run_id: &str, given: Option<&str>) -> Result<String> {
+    let Some(id) = given else {
+        return Ok(format!("{run_id}:{}:prompt", new_id()));
+    };
+    if id.is_empty()
+        || id.chars().count() > MAX_STEER_MESSAGE_ID_CHARS
+        || id.chars().any(char::is_control)
+    {
+        return Err(CoreError::Invalid(
+            "A message id must be 1 to 200 printable characters.".into(),
+        ));
+    }
+    Ok(id.to_owned())
+}
+
 impl RunManager {
     /// Admits a run and starts it. The `202` reply and the first events can
     /// reach a client in either order; both are consistent with the log.
@@ -403,8 +422,14 @@ impl RunManager {
         Ok(())
     }
 
-    /// Adds text to the running turn, for engines that accept it.
-    pub fn steer(self: &Arc<Self>, thread_id: &str, prompt: &str) -> Result<SteerState> {
+    /// Adds text to the running turn, for engines that accept it. `message_id` is the
+    /// client's own id when it gave one; the result always carries the id used.
+    pub fn steer(
+        self: &Arc<Self>,
+        thread_id: &str,
+        message_id: Option<&str>,
+        prompt: &str,
+    ) -> Result<SteerResult> {
         check_prompt(prompt)?;
         let run = self
             .store
@@ -414,16 +439,42 @@ impl RunManager {
         if matches!(run.state, RunState::Admitted | RunState::Starting) {
             return Err(CoreError::Invalid("This run is still starting.".into()));
         }
+        let message_id = steer_message_id(&run.id, message_id)?;
         let input = self
             .lock()
             .get(&run.id)
             .and_then(|active| active.input.clone());
         let Some(input) = input else {
-            self.enqueue(thread_id, prompt, &[])?;
-            return Ok(SteerState::Queued);
+            let queued = self.enqueue(thread_id, prompt, &[])?;
+            // The message is queued: a failed mark must not fail the request, or a retry
+            // would queue it twice.
+            if let Err(error) = self
+                .store
+                .append_thread_event(thread_id, &steer_state(&message_id, SteerDelivery::Queued))
+            {
+                tracing::warn!(%error, "could not mark a queued steer");
+            }
+            return Ok(SteerResult {
+                message_id,
+                state: SteerState::Queued,
+                queued_message_id: Some(queued.id),
+            });
         };
-        self.send_steer(&run.id, &input, prompt, "user")?;
-        Ok(SteerState::Delivered)
+        self.send_steer(
+            thread_id,
+            &run.id,
+            &input,
+            &SteerMessage {
+                message_id: message_id.clone(),
+                prompt: prompt.to_owned(),
+            },
+            "user",
+        )?;
+        Ok(SteerResult {
+            message_id,
+            state: SteerState::Delivered,
+            queued_message_id: None,
+        })
     }
 
     /// Hands `prompt` to the running turn's input and to nothing else: no queue, no new turn.
@@ -444,33 +495,52 @@ impl RunManager {
         let Some(input) = input else {
             return Ok(false);
         };
-        Ok(self.send_steer(&run.id, &input, prompt, role).is_ok())
+        let steer = SteerMessage {
+            message_id: steer_message_id(&run.id, None)?,
+            prompt: prompt.to_owned(),
+        };
+        Ok(self
+            .send_steer(thread_id, &run.id, &input, &steer, role)
+            .is_ok())
     }
 
     fn send_steer(
         &self,
+        thread_id: &str,
         run_id: &str,
-        input: &tokio::sync::mpsc::UnboundedSender<String>,
-        prompt: &str,
+        input: &tokio::sync::mpsc::UnboundedSender<SteerMessage>,
+        steer: &SteerMessage,
         role: &str,
     ) -> Result<()> {
-        let message_id = format!("{run_id}:{}:prompt", new_id());
         for event in [
             AgUiEvent::TextMessageStart {
-                message_id: message_id.clone(),
+                message_id: steer.message_id.clone(),
                 role: role.into(),
             },
             AgUiEvent::TextMessageContent {
-                message_id: message_id.clone(),
-                delta: prompt.to_owned(),
+                message_id: steer.message_id.clone(),
+                delta: steer.prompt.clone(),
             },
-            AgUiEvent::TextMessageEnd { message_id },
+            AgUiEvent::TextMessageEnd {
+                message_id: steer.message_id.clone(),
+            },
         ] {
             self.store.append_run_event(run_id, &event)?;
         }
+        // Marked only once the engine took it, so a refusal or a closed run leaves it
+        // plain. The mark belongs to the thread: a run that ends right here cannot reject it.
         input
-            .send(prompt.to_owned())
-            .map_err(|_| CoreError::RunClosed)
+            .send(steer.clone())
+            .map_err(|_| CoreError::RunClosed)?;
+        // The engine has the message: a failed mark must not fail the request, or a
+        // retry would send it twice.
+        if let Err(error) = self.store.append_thread_event(
+            thread_id,
+            &steer_state(&steer.message_id, SteerDelivery::Delivered),
+        ) {
+            tracing::warn!(%error, "could not mark a delivered steer");
+        }
+        Ok(())
     }
 
     /// Asks the running engine to stop the workflow one of its tool calls launched.
