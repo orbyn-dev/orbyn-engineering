@@ -372,7 +372,11 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
 - **Writes stay a person's.** Every act is a person's click carrying `seen`; a stale answer shows the service's own words and
   reloads, and drawing a screen never writes. Settings save stays Planned (the thresholds read is bound; no write).
 - **Derived, not invented.** The log's limit banner draws only when the unfiltered read's total reaches the store's own 5,000 cap
-  (`ESCAPES_PER_PROJECT_MAX`, `store/crew_escapes.rs`), and the log's heading names the count the read returns; the narrow panel
+  (`ESCAPES_PER_PROJECT_MAX`, `store/crew_escapes.rs`). It follows retention (#757), not a refusal: "This project holds 5,000 escapes,
+  the limit. To make room for a new escape, the oldest dismissed escapes, then the oldest possible ones, are removed. Confirmed
+  escapes and escapes with a check are kept. If every escape is kept, a new one is refused. How many are kept now: Not measured."
+  The log read carries the total but no kept count and no retention result, so that figure reads Not measured with a Planned pill.
+  The 20,000-event limit is not on the read, so the banner does not name it. The log's heading names the count the read returns; the narrow panel
   draws the frame's first four cards, the narrow window the page's rows. Rate, gap and check counts read Not measured while the
   report route does not exist.
 - **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because

@@ -63,7 +63,7 @@ const LIVE_PROOF: Record<(typeof ESCAPE_LIVE_FRAMES)[number], (page: Page) => Re
   "escape-check-retry": (page) => page.getByText("Retry this check?"),
   "escape-check-withdraw": (page) => page.getByText("Withdraw this check?"),
   "escape-check-withdrawn": (page) => page.getByText(/A new proposal replaces this one/),
-  "escape-limit": (page) => page.getByText(/escape limit\. A new escape is not recorded/),
+  "escape-limit": (page) => page.getByText(/This project holds 5,000 escapes, the limit\./),
   "escape-settings": (page) => page.getByText("60 days · default"),
 };
 
