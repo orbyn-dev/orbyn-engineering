@@ -309,6 +309,16 @@ p.settings-scope {
 .setting-line:last-child {
   border-bottom: 1px solid var(--color-border);
 }
+/* A segmented control cannot shrink: when the page next to the Settings list is narrow (even in a wide window), it drops under the text instead of sitting on it. */
+.setting-line:has(.segmented) {
+  flex-wrap: wrap;
+}
+.setting-line:has(.segmented) > .setting-line-text {
+  flex: 1 1 180px;
+}
+.setting-line:has(.segmented) > .setting-line-control {
+  max-width: 100%;
+}
 .setting-line-stacked {
   flex-direction: column;
   align-items: stretch;
