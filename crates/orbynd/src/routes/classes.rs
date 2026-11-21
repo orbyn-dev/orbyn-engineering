@@ -285,7 +285,8 @@ pub async fn require_person(
         access.audit_person_refusal(
             request.method().as_str(),
             &route,
-            access.caller_class(&request),
+            None,
+            access.caller_class(request.headers()),
         );
         return Err(refusal);
     }
@@ -1341,9 +1342,39 @@ mod tests {
     async fn the_memory_of_refusals_stays_bounded() {
         let (_, rows, _, access) = audited(Some("the-key"), false).await;
         for n in 0..5000 {
-            access.audit_person_refusal("POST", &format!("/r/{n}"), CallerClass::ServiceToken);
+            access.audit_person_refusal(
+                "POST",
+                &format!("/r/{n}"),
+                None,
+                CallerClass::ServiceToken,
+            );
         }
         assert!(rows.lock().unwrap().len() <= 1024);
+    }
+
+    #[tokio::test]
+    async fn a_handler_level_refusal_is_audited_by_field_and_a_failed_write_still_refuses() {
+        let headers = axum::http::HeaderMap::new();
+        let (_, rows, offset, access) = audited(Some("the-key"), false).await;
+        for _ in 0..3 {
+            let refused = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
+            assert!(refused.is_err());
+        }
+        let _ = access.person_check_field(&headers, "POST", "/r/{id}", "worktree");
+        access.audit_person_refusal("POST", "/r/{id}", None, CallerClass::ServiceToken);
+        {
+            let rows = rows.lock().unwrap();
+            let fields: Vec<_> = rows.iter().map(|row| row.field).collect();
+            assert_eq!(fields, [Some("resume"), Some("worktree"), None]);
+        }
+        offset.store(REFUSAL_WINDOW.as_secs() + 1, Ordering::SeqCst);
+        let _ = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
+        assert_eq!(rows.lock().unwrap().len(), 4);
+
+        let (_, rows, _, failing) = audited(Some("the-key"), true).await;
+        let refused = failing.person_check_field(&headers, "POST", "/r/{id}", "resume");
+        assert!(refused.is_err(), "a failed audit write still refuses");
+        assert!(rows.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

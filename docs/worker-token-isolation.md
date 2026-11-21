@@ -210,7 +210,10 @@ token, id or query. A repeat of the same route and class inside a minute writes 
 no count). The map behind that holds at most 1024 pairs; a full map drops new pairs until a minute passes. A failed write is
 logged and the call is still refused. Caller classes: `service_token` (token, no browser origin) and `browser` (a session
 cookie or an `Origin` header). A worker that read `service.json` is `service_token`: there is no per-worker class until
-per-worker tokens exist. Calls refused by a handler's field-level check (`FIELD_LEVEL`) are not audited.
+per-worker tokens exist. A refusal made inside a handler for part of the request (`FIELD_LEVEL`: the run's `permission_mode`, the
+AG-UI `resume[]`, the pull checkout's `worktree: false`) is audited the same way, through the same helper
+(`Access::person_check_field`), with the field's name added to the target, as `POST /api/threads/{id}/runs [permission_mode]`.
+The name is a fixed label; the row never holds the field's value. The window is shared per route, field and caller class.
 
 ### What browser mode and the CLI lose now
 

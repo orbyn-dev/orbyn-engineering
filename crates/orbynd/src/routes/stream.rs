@@ -6,7 +6,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path, State};
+use axum::extract::{MatchedPath, Path, State};
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -364,6 +364,7 @@ fn apply_resume(core: &Core, thread_id: &str, resume: &[Value]) -> Result<i64, S
 /// process holding only the service token could approve its own request here.
 pub async fn agui_run(
     State(state): State<AppState>,
+    matched: MatchedPath,
     Path(id): Path<String>,
     headers: HeaderMap,
     ApiJson(input): ApiJson<Value>,
@@ -374,7 +375,9 @@ pub async fn agui_run(
         .and_then(Value::as_array)
         .is_some_and(|resume| !resume.is_empty())
     {
-        state.access.person_check(&headers)?;
+        state
+            .access
+            .person_check_field(&headers, "POST", matched.as_str(), "resume")?;
     }
     core.store.thread(&id)?;
     if input.get("threadId").and_then(Value::as_str) != Some(id.as_str()) {
