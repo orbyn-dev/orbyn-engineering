@@ -47,8 +47,12 @@ pub(super) fn local_day_and_reset(offset_minutes: i32, now: i64) -> Option<(Stri
 
 impl Core {
     /// One engine turn of a background run ended, whatever the turn did: it counts live on the run (one more turn, the wall
-    /// minutes so far) and, when the crew has a daily budget, on the engine's day. A failure here never changes how the run
-    /// ended. Called once per turn from `crew_worker_run_ended`.
+    /// minutes so far) and, when the crew has a daily budget, on the engine's day. While the run is still running, a turn that
+    /// cannot be counted on a crew with a daily budget (or whose crew cannot be read) is an `Err` the caller answers by stopping
+    /// the run `budget`: the cap check that follows would otherwise read a ledger without the turn. A late turn (the run has
+    /// ended) is counted best effort: a failure is logged and never changes the run or its task. A read failure of the run
+    /// itself is logged and answered `Ok`: it cannot be told from a task that belongs to no background run, and the cap check
+    /// reads the run again and fails closed. Called once per turn from `crew_worker_run_ended`.
     pub(super) fn crew_background_turn_ended(
         &self,
         task: &CrewTask,
@@ -61,12 +65,15 @@ impl Core {
             Ok(None) => return Ok(()),
             Err(error) => {
                 tracing::warn!(%error, task = %task.id, "could not read a background run to count its turn");
-                return Err(UNCOUNTED);
+                return Ok(());
             }
         };
+        // Only a run still running is stopped for an uncounted turn; for an ended run the day count is best effort.
+        let live = run.state == "running";
+        let uncounted = || if live { Err(UNCOUNTED) } else { Ok(()) };
         // A turn that ends after its run did (a run cancelled at the cap while the engine was mid-turn) still happened: it counts
         // for the engine's day, though no longer for the run.
-        if run.state == "running" {
+        if live {
             let minutes = crate::util::parse_time(&run.started_at).map_or(0, |at| {
                 u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
             });
@@ -79,32 +86,33 @@ impl Core {
             Ok(None) => return Ok(()),
             Err(error) => {
                 tracing::warn!(%error, run = %run.id, "could not read a background crew to count its daily turn");
-                return Err(UNCOUNTED);
+                return uncounted();
             }
         };
         // A crew from before the daily budget has none: nothing is counted for it.
         if crew.daily_runs == 0 && crew.daily_turns == 0 {
             return Ok(());
         }
-        // From here the crew has a daily budget: a turn that cannot be counted stops the run, because the check that follows
-        // would read a ledger without it and could let the run go on over the cap.
+        // From here the crew has a daily budget: a turn that cannot be counted stops a running run, because the check that
+        // follows would read a ledger without it and could let the run go on over the cap.
         let engine = match self.store.thread(worker) {
             Ok(thread) => thread.engine,
             Err(error) => {
                 tracing::warn!(%error, run = %run.id, "could not read a background worker's engine to count its daily turn");
-                return Err(UNCOUNTED);
+                return uncounted();
             }
         };
         let Some((day, _)) = local_day_and_reset(crew.utc_offset_minutes, crate::util::unix_now())
         else {
-            return Err(UNCOUNTED);
+            tracing::warn!(run = %run.id, "a background crew's clock is out of range, so its daily turn was not counted");
+            return uncounted();
         };
         if let Err(error) = self
             .store
             .add_background_daily_turn(&crew.id, &run.id, &day, &engine)
         {
             tracing::warn!(%error, run = %run.id, "could not count a background run's daily turn");
-            return Err(UNCOUNTED);
+            return uncounted();
         }
         Ok(())
     }

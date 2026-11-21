@@ -22,7 +22,7 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (
 
 - One owned future, `run_crew_background_listeners`, behind the Preview flag and an interval (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60s to 24h). **No interval means no pass**, not even at startup. With one, a pass runs at startup and then once per interval.
 - Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: turned on later, it sees the branch head and the current schedule bucket as new events. The start's own refusal stays as the second guard.
-- Claims (table `crew_background_events`, migration 58, first write wins; the claim is the dedupe and the refusal is never retried):
+- Claims (table `crew_background_events`, migration 59, first write wins; the claim is the dedupe and the refusal is never retried):
 
 | Event | Claim identity | `PausedTrigger` key |
 | --- | --- | --- |

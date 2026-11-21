@@ -1,4 +1,4 @@
--- Migration 58: additive. Numbered after the daily budget's 57, which merges first. One row per background event
+-- Migration 59: additive. Numbered after the escape retention's 58. One row per background event
 -- that has fired, keyed by the event's identity
 -- (crew, and the head commit with the failing check's name for a CI failure, or the schedule bucket). The row is the
 -- dedupe: a repeat of the same event starts nothing new, and a firing that was refused keeps its row, so nothing is

@@ -384,6 +384,45 @@ async fn a_turn_that_cannot_be_counted_stops_the_run_instead_of_letting_it_go_on
 }
 
 #[tokio::test]
+async fn a_late_turn_that_cannot_be_counted_leaves_the_ended_run_and_its_task_alone() {
+    let w = world(true, good()).await;
+    let id = crew_daily(&w, "Late and uncountable", 5, 100);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    let task = w
+        .core
+        .store
+        .crew_tasks_in_crew(&run.id)
+        .unwrap()
+        .remove(0)
+        .0;
+    let worker = w
+        .core
+        .store
+        .crew_run(&task.id)
+        .unwrap()
+        .unwrap()
+        .worker_thread_id
+        .unwrap();
+    let results = |w: &World| w.core.store.crew_results(&task.id).unwrap().len();
+    let before = (w.task(&task.id).state, results(&w), run_of(&w, &id));
+    w.core
+        .store
+        .reader()
+        .execute_batch(
+            "CREATE TRIGGER refuse_daily_count BEFORE INSERT ON audit_events
+             WHEN NEW.action = 'crew.background.daily.spend' BEGIN SELECT RAISE(ABORT, 'locked'); END;",
+        )
+        .unwrap();
+    // The count fails, but the run is over: best effort, nothing stops and nothing changes.
+    assert!(w.core.crew_background_turn_ended(&task, &worker).is_ok());
+    assert_eq!(
+        (w.task(&task.id).state, results(&w), run_of(&w, &id)),
+        before
+    );
+}
+
+#[tokio::test]
 async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
     let w = world(true, good()).await;
     let id = crew_daily(&w, "Late turn", 5, 100);

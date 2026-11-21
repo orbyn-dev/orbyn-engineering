@@ -236,13 +236,13 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
 }
 
 #[test]
-fn migration_58_follows_57_and_adds_the_event_claim_table() {
+fn migration_59_follows_58_and_adds_the_event_claim_table() {
     let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
-    assert!(versions.contains(&58));
-    // PR 2's daily budget owns 57 and merges first, so this fixture stops at whatever migration comes before 58.
+    assert!(versions.contains(&59));
+    // the escape retention owns 58, so this fixture stops at the migration before 59.
     let before = *versions
         .iter()
-        .filter(|version| **version < 58)
+        .filter(|version| **version < 59)
         .max()
         .unwrap();
 
@@ -250,7 +250,7 @@ fn migration_58_follows_57_and_adds_the_event_claim_table() {
     let path = dir.path().join("old.db");
     let conn = Connection::open(&path).unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
-    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 58) {
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 59) {
         conn.execute_batch(sql).unwrap();
         conn.execute(
             "INSERT INTO schema_migrations VALUES (?1,'fixture')",
@@ -269,7 +269,7 @@ fn migration_58_follows_57_and_adds_the_event_claim_table() {
     drop(conn);
     let store = Store::open(&path, "event-upgrade").unwrap();
     let upgrade = store.upgrade().expect("an upgrade");
-    assert_eq!((upgrade.from, upgrade.to), (before, 58));
+    assert_eq!((upgrade.from, upgrade.to), (before, 59));
     assert_eq!(
         store.background_crew("crew-1").unwrap().unwrap().name,
         "Hourly"

@@ -1089,7 +1089,7 @@ limits: removing a project leaves its crews (a later trigger must refuse a crew 
 template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`); any other
 template is refused.
 
-**As built (slice 4h, listeners, migration 58):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
+**As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
 a `schedule` crew once per `every_hours` bucket, and a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),

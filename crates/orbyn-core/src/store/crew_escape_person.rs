@@ -10,8 +10,8 @@
 //! - **Race safety.** The state is read and compared to what the person saw (`seen`) inside the immediate transaction, and the
 //!   `UPDATE` repeats the old state in its `WHERE`; a change that landed in between is `stale`, never a double write.
 //! - **Isolation.** Every act names a project; an escape or merge of another project is `not found`.
-//! - **Bounds.** A mark that would pass 5,000 escapes, or any act that would pass 20,000 events, for the project is refused: pruning is
-//!   not built yet, and a silent drop of a `confirmed` row is never allowed.
+//! - **Bounds.** Capacity pressure clears eligible dismissed/possible history through `crew_escape_retention`; confirmed/check history
+//!   is protected. Gap changes reserve the last visible event slot of a possible escape for its decision.
 
 use orbyn_contracts::{
     EscapeActor, EscapeEventKind, EscapeGap, EscapeSeen, EscapeSource, EscapeState,
@@ -20,7 +20,8 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::json;
 
 use super::Store;
-use super::crew_escapes::{ESCAPES_PER_PROJECT_MAX, EscapeRecord, SELECT, escape_row, unreadable};
+use super::crew_escape_retention::room;
+use super::crew_escapes::{EVENTS_PER_ESCAPE_MAX, EscapeRecord, SELECT, escape_row, unreadable};
 use super::{AuditRecord, insert_audit};
 use crate::error::{CoreError, Result};
 
@@ -75,27 +76,6 @@ pub(super) fn stale(record: &EscapeRecord, seen: &EscapeSeen) -> Result<()> {
     }
 }
 
-pub(super) fn room(tx: &Transaction<'_>, project: &str, escapes: u32, events: u32) -> Result<()> {
-    let count = |sql: &str| -> Result<u32> {
-        tx.query_row(sql, [project], |row| row.get(0))
-            .map_err(unreadable)
-    };
-    let held_events = count("SELECT COUNT(*) FROM crew_escape_events WHERE project_id = ?1")?;
-    let held_escapes = if escapes > 0 {
-        count("SELECT COUNT(*) FROM crew_escapes WHERE project_id = ?1")?
-    } else {
-        0
-    };
-    if held_events + events > EVENTS_PER_PROJECT_MAX
-        || held_escapes + escapes > ESCAPES_PER_PROJECT_MAX
-    {
-        return Err(CoreError::Invalid(
-            "This project's escape log is full. Nothing more can be added until old entries are cleared.".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn audit(
     tx: &Transaction<'_>,
     action: &str,
@@ -147,7 +127,7 @@ fn decide(
     note: Option<&str>,
     at: i64,
 ) -> Result<()> {
-    room(tx, &record.project_id, 0, 1)?;
+    room(tx, &record.project_id, 0, 1, Some(&record.id), at)?;
     let audit_id = audit(
         tx,
         action,
@@ -269,12 +249,19 @@ impl Store {
                 decide(tx, &record, EscapeState::Confirmed, "crew.escape.mark", note, at)?;
                 return load(tx, project, &record.id);
             }
+            let dismissed: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM crew_escape_tombstones WHERE merge_task_id=?1 AND state='dismissed')",
+                [merge_task_id], |row| row.get(0),
+            )?;
+            if dismissed {
+                return Err(CoreError::Invalid("This escape was dismissed, so the merge cannot be marked now.".into()));
+            }
             if seen.is_some() {
                 return Err(CoreError::Stale(
                     "This escape changed since you looked. Reload it and choose again.".into(),
                 ));
             }
-            room(tx, project, 1, 2)?;
+            room(tx, project, 1, 2, None, at)?;
             let audit_id = audit(
                 tx,
                 "crew.escape.mark",
@@ -324,16 +311,19 @@ impl Store {
     ) -> Result<EscapeRecord> {
         self.commit(|tx, _| {
             let record = load(tx, project, id)?;
+            if record.state == EscapeState::Dismissed {
+                return Err(CoreError::Invalid("This escape was dismissed, so its gap cannot be set.".into()));
+            }
             if record.gap == Some(gap) && record.gap_by == Some(EscapeActor::Person) {
                 return Ok(record);
             }
             stale(&record, seen)?;
-            if record.state == EscapeState::Dismissed {
-                return Err(CoreError::Invalid(
-                    "This escape was dismissed, so its gap cannot be set.".into(),
-                ));
+            let events: u32 = tx.query_row("SELECT COUNT(*) FROM crew_escape_events WHERE escape_id=?1", [id], |row| row.get(0))?;
+            let limit = EVENTS_PER_ESCAPE_MAX - u32::from(record.state == EscapeState::Possible);
+            if events >= limit {
+                return Err(CoreError::Invalid("This escape's visible event history is full. Further gap changes are refused; a possible escape keeps its last slot for confirm or dismiss.".into()));
             }
-            room(tx, project, 0, 1)?;
+            room(tx, project, 0, 1, Some(id), at)?;
             let word = serde_json::to_value(gap)?;
             let was: Option<String> = record
                 .gap
