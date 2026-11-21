@@ -190,7 +190,8 @@ async fn an_unknown_family_and_a_family_off_the_host_are_refused_in_fixed_words(
     // The attempt is audited before it is tried, so a refusal leaves its row too.
     let rows = app.core.store.list_audit(None, 50).unwrap();
     assert!(
-        rows.iter().all(|row| row.action.starts_with("engine_host.")),
+        rows.iter()
+            .all(|row| row.action.starts_with("engine_host.")),
         "{rows:?}"
     );
 }
