@@ -553,6 +553,7 @@ async fn actual_merge_mismatch_is_durable_with_the_review_record() {
             s.w.core
                 .crew_review_queue(NOW + 1)
                 .unwrap()
+                .merges
                 .iter()
                 .any(|item| item.task_id == s.task && item.needs_person.is_some())
         );

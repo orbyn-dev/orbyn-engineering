@@ -289,6 +289,7 @@
     ["POST","/api/crew/background/{id}/delete","person"],
     ["POST","/api/crew/background/{id}/disable","person"],
     ["POST","/api/crew/background/{id}/enable","person"],
+    ["POST","/api/crew/background/{id}/run-now","person"],
     ["POST","/api/crew/background/{id}/update","person"],
     ["POST","/api/crew/backtest/start","person"],
     ["POST","/api/crew/backtest/{id}/stop","person"],

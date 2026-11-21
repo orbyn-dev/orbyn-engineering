@@ -1086,17 +1086,24 @@ background crew is per device and is not shared through git. A repository's own 
   disable, and the stop it causes, are logged with the person as actor and source; a run's start, spend and other ends as `crew`.
 - **Routes**, all under `/api/crew/background`, behind the Preview flag like every Crew route (404 with it off, 401 without the token, writes
   refused for a remote viewer and listed in `crew::changes` so N1 refuses an agent's request): reads `GET /` (`project`, `limit`, `offset`),
-  `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
-  There is no route that starts a run, spends, merges or reverts.
+  `GET /{id}`, `GET /{id}/runs`; writes, local only (a Person route: a remote viewer gets 403 `local_only`, an agent is refused by N1),
+  `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`, and `/{id}/run-now`, which starts one run of an enabled
+  crew by hand (the `manual` event: `crew_background_run_now`, one run and its lead thread, as a Low Crew-started task that the daily
+  budget and review capacity may refuse; a refusal stores no run). There is no route that spends, merges or reverts.
+- **In the Review queue.** A run that stops without a merge waits on its own run row (`needs_review`, or `stopped` for the budget or a
+  failure), and `GET /api/crew/autopilot/review` lists it beside the merges as `background_runs`, oldest first, in the same `limit`/`offset`
+  window as the merges, with `background_total` counting all of them (`next_offset` is set while either list has more): the run's state,
+  stop reason, plain reason, spend and budget. It carries no merge, commit or risk, because it has none, and it is not listed while running or
+  when the person's own switch stopped it. **The person's answer to one is not built:** no route settles or dismisses a waiting background
+  review, so that row is read-only.
 
-What is not built: **no route starts a run**. A run starts when the core's `crew_background_run_now` is called (the `manual` event of
-[the engine start](crew/background-engine-start.md), PR 1; no route calls it yet, tests do), when a listener fires (next paragraph) or when a test calls the run functions. A start creates one Crew
-worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
-lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
-review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
-limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a
-template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`); any other
-template is refused.
+What is not built: **a run starts** when a person presses Run now (`POST /api/crew/background/{id}/run-now`, the `manual` event of
+[the engine start](crew/background-engine-start.md)), when a listener fires (next paragraph) or when a test calls the run functions. A start creates one Crew
+worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. The person's
+answer to a waiting run, and a background crew with merge authority, wait for later work (every merge of a background run waits for a
+person). Known limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per
+device; a template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`);
+any other template is refused.
 
 **As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at

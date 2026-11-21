@@ -88,6 +88,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
+    ("POST", "/api/crew/background/{id}/run-now"),
     ("POST", "/api/crew/background/{id}/update"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
@@ -530,6 +531,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/background/{id}/enable",
         "Crew write behind local_only: enables a background worker",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/run-now",
+        "Crew write behind local_only: the person starts one run of a background worker",
     ),
     (
         "POST",

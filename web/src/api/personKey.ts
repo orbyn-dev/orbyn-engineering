@@ -62,6 +62,7 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/crew/background/{id}/delete"],
   ["POST", "/api/crew/background/{id}/disable"],
   ["POST", "/api/crew/background/{id}/enable"],
+  ["POST", "/api/crew/background/{id}/run-now"],
   ["POST", "/api/crew/background/{id}/update"],
   ["POST", "/api/crew/guard/targets/add"],
   ["POST", "/api/crew/guard/targets/{id}/remove"],
