@@ -113,6 +113,8 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
   ends first, the host resolves the pending SDK callback with a refusal and forgets the id; a late
   `respond` for an unknown id is ignored and counted in `log`, and the core drops its open approval for
   that `requestId`.
+  In the real Claude SDK, cancelling a run while a `permission` or `question` is open ends it as `runDone`
+  `ok:false` with kind `engine`; the core that sent the cancel does not record that as a failure.
 - The core answers a `permission` through `ApprovalGate` and a `question` through `QuestionDesk`; the person, a rule, plan mode, the write scope and Autopilot decide, never the host. Orbyn's own MCP tools (`mcp__orbyn_engineering__*`) govern themselves and are allowed without asking, as on the CLI path. A `question` with nothing to show is answered `deny` and never asked. Only one answer is ever sent for a request id: an answer that comes after the run ended, was cancelled or lost its host is dropped, and so is every ask still open when the host crashes.
 - `permission.tool` and `permission.input` are the engine's own, passed through untouched: the host
   adds no field to them and drops none (`requestId` and `sendId` live on the frame, outside `input`),
