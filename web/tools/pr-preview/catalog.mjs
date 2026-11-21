@@ -590,6 +590,10 @@ export const FRAMES = {
     ],
   },
 
+  // Crew, the wide Map tree and the swim lanes (Crew Designs' crew-map and lanes-main; built from the map and message reads).
+  "crew-map": { route: "#/crew/map", scenario: "crew" },
+  "lanes-main": { route: "#/crew/lanes", scenario: "crew" },
+
   // Live stage-list adaptations of the approved consent/badge frames.
   "flow-offline": { route: "#/crew/flow", scenario: "crew-review-consent", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "security: Needs you")] },
   "lane-same-engine": { route: "#/crew/flow", scenario: "crew-review-same", steps: [click("button", "Use next in the auth redirect", { prefix: true })] },

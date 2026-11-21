@@ -71,6 +71,7 @@ It offers Sign in and Dismiss and grants no action.
 ## Add a screen
 
 Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`.
+The wide Map tree and the swim lanes, built from the map and message reads: `crew-map`, `lanes-main`.
 Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`. Crew, Settings › Worker provider (Crew Designs v75): `settings-crew-worker-provider`, `settings-crew-worker-provider-any`, `settings-crew-worker-provider-narrow`.
 These retain the beta stage list; the planned graph and PR cards are not drawn.
 
