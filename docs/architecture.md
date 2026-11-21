@@ -1408,7 +1408,10 @@ subfolders inside that worktree. Concurrent thread creation after this check rem
 an existing unfenced boundary; no concurrent thread-creation guarantee is claimed.
 
 Schema 20 is a semantic writer fence with no row conversion or deletion. The app's
-data-directory owner lock excludes another running service; once it releases,
+data-directory owner lock excludes another running service. Its owning guard is
+released last when the core drops, explicitly unlocking before closing the file:
+a child between fork and exec cannot retain a cleanly released owner's lock.
+Once it releases,
 schema 19 refuses version 20 before WAL setup or migration rather than ignoring
 project Off. Current version 20 writers retain the existing scoped transaction and
 revision checks. Recovery uses the current writer or a pre-upgrade backup; never

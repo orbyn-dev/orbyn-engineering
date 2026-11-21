@@ -176,7 +176,7 @@ pub struct Core {
     pub(crate) crew_merges: tokio::sync::Mutex<()>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
-    _lock: File,
+    _lock: OwnerLock,
 }
 
 impl Core {
@@ -582,10 +582,21 @@ impl Core {
     }
 }
 
+/// Releases ownership even while a child between fork and exec holds a duplicate.
+struct OwnerLock(File);
+
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.unlock() {
+            tracing::warn!(%error, "could not release the data-directory owner lock");
+        }
+    }
+}
+
 /// One live owner per data directory: a second process must not fence the first.
-fn take_owner_lock(data_dir: &Path) -> Result<File> {
+fn take_owner_lock(data_dir: &Path) -> Result<OwnerLock> {
     let path = data_dir.join("orbynd.lock");
-    let mut file = File::options()
+    let file = File::options()
         .create(true)
         .truncate(false)
         .read(true)
@@ -605,9 +616,13 @@ fn take_owner_lock(data_dir: &Path) -> Result<File> {
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
     }
-    file.set_len(0)?;
-    file.write_all(std::process::id().to_string().as_bytes())?;
-    Ok(file)
+    // Own the unlock before either fallible PID write, including startup failures.
+    let mut owner = OwnerLock(file);
+    owner.0.set_len(0)?;
+    owner
+        .0
+        .write_all(std::process::id().to_string().as_bytes())?;
+    Ok(owner)
 }
 
 /// How long a lock whose owner has died may stay held. A child caught between fork and
@@ -641,10 +656,46 @@ fn clean_stale_run_dirs(runs_dir: &Path) {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_data_directory_has_one_owner_until_its_guard_is_dropped() {
+        let dir = crate::testing::TempDir::new();
+        let owner = take_owner_lock(dir.path()).unwrap();
+        assert!(matches!(
+            take_owner_lock(dir.path()),
+            Err(CoreError::DataDirLocked)
+        ));
+        drop(owner);
+        assert!(take_owner_lock(dir.path()).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn releasing_the_owner_unlocks_a_file_description_inherited_by_a_child() {
+        let dir = crate::testing::TempDir::new();
+        let owner = take_owner_lock(dir.path()).unwrap();
+        // dup shares the open file description, just as fork does before exec.
+        let inherited = owner.0.try_clone().unwrap();
+        assert!(matches!(
+            take_owner_lock(dir.path()),
+            Err(CoreError::DataDirLocked)
+        ));
+        drop(owner);
+        let next = take_owner_lock(dir.path()).unwrap();
+        // Closing the old child's copy must not unlock the new owner's file.
+        drop(inherited);
+        assert!(matches!(
+            take_owner_lock(dir.path()),
+            Err(CoreError::DataDirLocked)
+        ));
+        drop(next);
+        assert!(take_owner_lock(dir.path()).is_ok());
+    }
+
+    #[cfg(unix)]
     #[test]
     fn a_lock_left_by_a_dead_owner_clears_and_a_live_owner_refuses_at_once() {
         let dir = crate::testing::TempDir::new();
