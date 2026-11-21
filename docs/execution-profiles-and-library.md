@@ -73,13 +73,16 @@ is a Person action and shows **one confirm** that lists what it grants (for exam
 without asking. Autopilot Full: merges when checks pass"). Rules:
 
 - The apply body carries `ack_grants`, the list of grant codes the person saw (`full_access`, `autopilot_full`). The
-  server computes the grants the apply would add. If `ack_grants` does not cover them it answers
+  server computes the grants the profile being applied carries (`full_access` for `permission_mode`, `autopilot_full` for
+  `autopilot_mode`). If `ack_grants` does not cover them it answers
   `409 confirm_required` with the grants, and applies nothing. This is one request with a checked field, not a two-step
   token flow: it is the simplest option, and the client shows the confirm on the first `409` or before the request when it
   already knows the profile.
 - The confirm is per apply. Nothing is remembered, so the next apply of the same profile asks again.
-- A profile that grants nothing beyond what the target already has needs no `ack_grants`.
-- The audit row for `profile.applied` records the acknowledged grant codes.
+- Ask only when the profile being applied grants full access or Autopilot full. Careful, Fast, Cheap and any other profile that
+  grants neither apply directly: no `ack_grants`, no confirm, and the route never answers `409 confirm_required`.
+- The audit row for `profile.applied` is written on every apply and records the acknowledged grant codes; for a profile that
+  grants neither, the grant list is empty.
 
 ### Precedence with per-thread settings
 
@@ -193,7 +196,7 @@ the person sees what they are about to apply.
 
 Errors for the family: `400 invalid_input` (field named, value never echoed), `404 not_found` (profile, thread or crew),
 `403 desktop_required` (browser mode or CLI on a Person route), `403 builtin_profile`, `409 revision_conflict`,
-`409 confirm_required` (grants not acknowledged; the answer lists them), `409 profile_limit` (50 saved), `409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
+`409 confirm_required` (only for a grant-raising profile whose grants are not acknowledged; the answer lists them), `409 profile_limit` (50 saved), `409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
 `409 run_active` when a thread's engine would change during a run (the model and mode alone change from the next turn).
 
 Audit: each Person write adds a row before the effect, with ids and names only (`profile.created`, `profile.changed`,
