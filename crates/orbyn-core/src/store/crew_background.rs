@@ -6,7 +6,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 
-use super::{AuditRecord, Store, insert_audit};
+use super::{AuditRecord, CrewTask, Store, insert_audit};
 use crate::error::{CoreError, Result};
 use crate::util::{new_id, now};
 
@@ -165,6 +165,62 @@ fn name_taken(
     Ok(names
         .iter()
         .any(|(id, other)| Some(id.as_str()) != except && other.to_lowercase() == folded))
+}
+
+/// What `Store::unwind_background_run` did.
+#[derive(Debug, Default)]
+pub struct Unwound {
+    /// The run and its lead thread were taken back: no task existed.
+    pub discarded: bool,
+    /// Every task of the retained run that now waits for a person: the ones moved here and the ones already waiting (as they stood
+    /// before the move). The caller releases their leases and gives each a result if it has none.
+    pub held: Vec<CrewTask>,
+    deleted_threads: Vec<String>,
+}
+
+/// Deletes a run's lead thread, in the caller's transaction. Returns the deleted thread ids; the caller
+/// removes them from the hub after the commit.
+fn discard_lead_in(tx: &Transaction<'_>, thread_id: &str) -> Result<Vec<String>> {
+    let present: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?1)",
+        [thread_id],
+        |row| row.get(0),
+    )?;
+    if present {
+        super::delete_thread_in(tx, thread_id, "crew")
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+/// Holds every task of the run's crew for a person and ends the run `needs_review` with `why`, inside the caller's transaction.
+/// `None` when the crew has no task at all (nothing was held and the run is untouched). Shared by every path that must retain a
+/// run whose start did not finish: the task hold and the run end commit together or not at all.
+pub(crate) fn hold_tasks_and_end_run(
+    tx: &Transaction<'_>,
+    run: &BackgroundRunRow,
+    why: &str,
+) -> Result<Option<Vec<CrewTask>>> {
+    let tasks = {
+        let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
+        statement
+            .query_map([&run.id], super::crew::task_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if tasks.is_empty() {
+        return Ok(None);
+    }
+    let mut held = Vec::new();
+    for task in tasks {
+        if crate::crew::lifecycle::allowed(&task.state, "needs_person") {
+            super::crew_runs::step(tx, &task, "needs_person", None, &[])?;
+            held.push(task);
+        } else if task.state == "needs_person" {
+            held.push(task);
+        }
+    }
+    end_run(tx, run, RunEnd::NeedsReview(why), Some(why), "crew")?;
+    Ok(Some(held))
 }
 
 /// Ends a run in the transaction, with the audit row first. The caller has checked that it is running. When this stop ends a spend, the
@@ -361,6 +417,16 @@ impl Store {
             if running_in(tx, id)?.is_some() {
                 return Err(CoreError::RunsActive);
             }
+            // A run that ended while its task still runs (the crew was turned off) is not gone: the worker is still spending.
+            let live: u32 = tx.query_row(
+                "SELECT COUNT(*) FROM crew_tasks WHERE state NOT IN ('passed', 'stopped', 'cancelled')
+                   AND crew_id IN (SELECT id FROM crew_background_runs WHERE background_id = ?1)",
+                [id],
+                |row| row.get(0),
+            )?;
+            if live > 0 {
+                return Err(CoreError::RunsActive);
+            }
             let (runs, waiting): (u32, u32) = tx.query_row(
                 "SELECT COUNT(*), COALESCE(SUM(review_waiting), 0) FROM crew_background_runs WHERE background_id = ?1",
                 [id],
@@ -458,7 +524,18 @@ impl Store {
     /// Opens a run for an enabled crew, with the crew's budget. A crew that is off, or already running, is refused. The trigger
     /// that calls this is slice 4h.
     pub fn start_background_run(&self, crew: &str) -> Result<BackgroundRunRow> {
-        let id = new_id();
+        self.start_background_run_as(crew, &new_id(), "crew")
+    }
+
+    /// `start_background_run` with the run's id given. A run that has a lead thread of its own takes that thread's id, so the run, the
+    /// thread and the Crew tasks of the thread (whose crew id is the thread's id) find each other with no extra column.
+    pub fn start_background_run_as(
+        &self,
+        crew: &str,
+        id: &str,
+        actor: &str,
+    ) -> Result<BackgroundRunRow> {
+        let id = id.to_owned();
         self.commit(|tx, _| {
             let current = crew_in(tx, crew)?;
             if !current.enabled {
@@ -471,7 +548,7 @@ impl Store {
             }
             audit(
                 tx,
-                "crew",
+                actor,
                 "crew.background.run.start",
                 crew,
                 json!({
@@ -558,8 +635,127 @@ impl Store {
         })
     }
 
+    /// One run by id.
+    pub fn background_run(&self, id: &str) -> Result<Option<BackgroundRunRow>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT * FROM crew_background_runs WHERE id = ?1",
+                [id],
+                run_row,
+            )
+            .optional()?)
+    }
+
+    /// Whether `thread_id` is the worker of a task whose lead thread is a background run's (a run's id is its lead thread's id).
+    pub fn is_background_worker(&self, thread_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS(SELECT 1 FROM crew_runs r JOIN crew_background_runs b ON b.id = r.lead_thread_id
+             WHERE r.worker_thread_id = ?1)",
+            [thread_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// How many turns a task's worker has had: the runs of its worker thread. A task with no worker has had none.
+    pub fn crew_worker_turns(&self, task_id: &str) -> Result<u32> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM runs WHERE thread_id = (SELECT worker_thread_id FROM crew_runs WHERE task_id = ?1)",
+                [task_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    /// Settles a refused start in one commit. With no task yet, the run and its lead thread are all taken
+    /// back, so a crash leaves nothing half done. Once a task exists the run is retained for review instead: the tasks are held for
+    /// a person and the run ends `needs_review` (`hold_tasks_and_end_run`). The refusal audit is in the same commit either way.
+    /// Repeating this is harmless: a missing or already ended run changes nothing.
+    pub fn unwind_background_run(&self, run: &str, why: &str) -> Result<Unwound> {
+        let unwound = self.commit(|tx, _| {
+            let Some(current) = tx
+                .query_row(
+                    "SELECT * FROM crew_background_runs WHERE id = ?1",
+                    [run],
+                    run_row,
+                )
+                .optional()?
+            else {
+                return Ok(Unwound::default());
+            };
+            if current.state != "running" {
+                return Ok(Unwound::default());
+            }
+            audit(
+                tx,
+                "crew",
+                "crew.background.run.refused",
+                &current.background_id,
+                json!({ "run": run, "why": why }),
+            )?;
+            if let Some(held) = hold_tasks_and_end_run(tx, &current, why)? {
+                return Ok(Unwound {
+                    discarded: false,
+                    held,
+                    deleted_threads: Vec::new(),
+                });
+            }
+            tx.execute("DELETE FROM crew_background_runs WHERE id = ?1", [run])?;
+            let deleted_threads = discard_lead_in(tx, run)?;
+            Ok(Unwound {
+                discarded: true,
+                held: Vec::new(),
+                deleted_threads,
+            })
+        })?;
+        for id in &unwound.deleted_threads {
+            self.hub.remove(id);
+        }
+        Ok(unwound)
+    }
+
+    /// Takes back the lead thread of a start that failed before its run row existed, in one commit. A thread that has a
+    /// run or a task is left alone, and so is one that is already gone, so repeating this is harmless.
+    pub fn discard_unopened_background_lead(&self, thread_id: &str) -> Result<()> {
+        let deleted = self.commit(|tx, _| {
+            let used: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM crew_background_runs WHERE id = ?1)
+                    OR EXISTS(SELECT 1 FROM crew_tasks WHERE crew_id = ?1)",
+                [thread_id],
+                |row| row.get(0),
+            )?;
+            let present: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?1)",
+                [thread_id],
+                |row| row.get(0),
+            )?;
+            if used || !present {
+                return Ok(Vec::new());
+            }
+            discard_lead_in(tx, thread_id)
+        })?;
+        for id in &deleted {
+            self.hub.remove(id);
+        }
+        Ok(())
+    }
+
     /// Ends a running run: stopped for a reason, or finished with work for review. Audited in the same transaction.
     pub fn end_background_run(&self, run: &str, end: RunEnd<'_>) -> Result<BackgroundRunRow> {
+        self.end_background_run_spent(run, end, None)
+    }
+
+    /// `end_background_run`, recording what the run spent in the same write: `(turns, minutes)` replace the totals. Unlike
+    /// `add_background_spend` it never stops the run by itself, so a run that passed on its last turn is not recorded as over budget.
+    pub fn end_background_run_spent(
+        &self,
+        run: &str,
+        end: RunEnd<'_>,
+        spent: Option<(u32, u32)>,
+    ) -> Result<BackgroundRunRow> {
         self.commit(|tx, _| {
             let current = tx
                 .query_row(
@@ -572,6 +768,14 @@ impl Store {
             if current.state != "running" {
                 return Err(CoreError::RunClosed);
             }
+            let current = match spent {
+                Some((turns_spent, minutes_spent)) => BackgroundRunRow {
+                    turns_spent,
+                    minutes_spent,
+                    ..current
+                },
+                None => current,
+            };
             let review = match end {
                 RunEnd::NeedsReview(reason) => Some(reason),
                 // A run that stopped for its budget always waits for the person, whoever ended it.

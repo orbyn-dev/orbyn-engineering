@@ -369,6 +369,65 @@ async fn the_ledger_shown_masks_the_persons_patterns_and_the_stored_rows_are_unc
 }
 
 #[tokio::test]
+async fn the_ledger_shown_masks_person_patterns_in_json_keys_and_keeps_the_keys_the_screen_reads() {
+    use orbyn_contracts::{PatternKind, PatternScope, RedactionPatternInput};
+    let (w, id) = running().await;
+    // A synthetic canary, never a real secret: a JSON key the person asked to hide.
+    let canary = format!("{}-{}", "zebra", "keys");
+    let mut guard = serde_json::Map::new();
+    guard.insert(canary.clone(), serde_json::json!("a value the person hid"));
+    guard.insert("category".into(), serde_json::json!("database"));
+    let body = serde_json::json!({
+        "guard": serde_json::Value::Object(guard),
+        "hold": "h1",
+    });
+    w.core
+        .store
+        .add_crew_autopilot_event(&id, &w.task(&id).crew_id, "allowed", &body)
+        .unwrap();
+    w.core
+        .save_redaction_pattern(
+            "local",
+            None,
+            &RedactionPatternInput {
+                name: "Canary key".into(),
+                pattern: canary.clone(),
+                kind: PatternKind::Text,
+                applies_to: PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let log = w
+        .core
+        .autopilot_log(
+            Some(&id),
+            None,
+            crate::crew::Page {
+                limit: 50,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    let shown = serde_json::to_string(&log.rows).unwrap();
+    assert!(
+        !shown.contains(&canary),
+        "a JSON key escaped the person's patterns"
+    );
+    assert!(
+        shown.contains("[hidden: Canary key]"),
+        "the key was not masked by name"
+    );
+    // Control: the keys the ledger screen reads stay readable.
+    for key in ["guard", "category", "hold"] {
+        assert!(
+            shown.contains(&format!("\"{key}\"")),
+            "the key {key} was over-masked"
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_approval_without_a_reason_is_a_denial() {
     let (w, id) = running().await;
     let lead = Scripted::new("alpha", "alpha", |_| Answer {

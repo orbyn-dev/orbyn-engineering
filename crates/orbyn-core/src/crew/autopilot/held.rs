@@ -8,8 +8,11 @@
 //!
 //! The holds live in memory only, as the account's confirmations do: a restart ends the worker's turn and drops them, and the
 //! raw command (which may hold a secret) is never written to disk. What is written is the ledger row of each decision, with the
-//! redacted command and a hash of the exact one. Each hold is decided once, under one lock, so a racing approve and deny have
-//! exactly one winner.
+//! redacted command and a binding of the request. A hold is bound to every field of the request except a short list of the engine's own
+//! bookkeeping (item and call ids, titles, reasons), which change on every request, and for an ACP request also to the option kinds
+//! it offers; the
+//! binding is an HMAC keyed with a value this process draws at start, so a reader of the ledger cannot test a guess at a short
+//! redacted command. Each hold is decided once, under one lock, so a racing approve and deny have exactly one winner.
 //!
 //! Approving is the only answer that needs proof that a person is present: a grant the desktop app records after the person
 //! clicks Approve in its own native dialog (see [`presence`](super::presence) and docs/crew.md, "Approving once: local presence").
@@ -31,7 +34,7 @@ use crate::error::{CoreError, Result};
 use crate::governance::approvals::ActionAsk;
 use crate::host::presence::PresenceFor;
 use crate::store::{CrewRun, CrewTask};
-use crate::util::{new_id, sha256_hex, unix_now};
+use crate::util::{new_id, unix_now};
 
 /// How long a hold waits for the person, in seconds.
 pub const HELD_LIFETIME_SECS: i64 = 10 * 60;
@@ -143,6 +146,8 @@ pub(super) enum Added {
     Denied,
     /// This task has too many open holds.
     Full,
+    /// This process could not draw the key its bindings are made with, so nothing is held.
+    Unavailable,
 }
 
 #[derive(Default)]
@@ -150,35 +155,153 @@ pub struct HeldBook {
     items: Vec<Held>,
 }
 
-/// The hash a hold and its retry are matched by: the task, the worker's thread, the kind, the whole command text, every path and
-/// the details, in a form that does not depend on key order.
-pub(super) fn bind(task_id: &str, thread_id: &str, ask: &ActionAsk) -> String {
+/// The flags that change what a command does, not how the engine names it. They are shown (the whole request is bound); the list
+/// is the fields the engines this app runs put on a command request.
+const EFFECT_FLAGS: &[(&str, &str)] = &[
+    ("run_in_background", "runs in the background"),
+    ("dangerouslyDisableSandbox", "runs with its sandbox off"),
+    ("networkApprovalContext", "with network access"),
+];
+
+/// Where an engine's request keeps the fields that decide what runs, from the shapes this app receives: Claude's permission
+/// prompt and any MCP tool call (`{tool, input}`), an ACP tool call (`{toolCall: {rawInput}}`), or Codex's own params.
+fn params(detail: &Value) -> &Value {
+    detail
+        .get("input")
+        .filter(|value| value.is_object())
+        .or_else(|| {
+            detail
+                .pointer("/toolCall/rawInput")
+                .filter(|value| value.is_object())
+        })
+        .unwrap_or(detail)
+}
+
+/// Whether an effect flag is on: present and neither `null` nor `false`.
+fn is_on(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| !value.is_null() && value != &Value::Bool(false))
+}
+
+/// The engine's own bookkeeping: ids, titles, words and time limits that change from one request to the next. Everything else in
+/// the request is bound, so a field this list does not name (a new one an engine adds, a Codex `kind` or `environmentId`, an ACP
+/// tool's own key) changes what the person approved and misses the approval. The list is the only place a field is left out.
+const BOOKKEEPING: &[&str] = &[
+    "itemId",
+    "turnId",
+    "threadId",
+    "startedAtMs",
+    "approvalId",
+    "reason",
+    "description",
+    "title",
+    "toolCallId",
+    "sessionId",
+    "commandActions",
+    "timeout",
+    "callId",
+    "conversationId",
+    "parsedCmd",
+];
+
+/// The request fields a hold is bound to: every field of the request's parameters except the bookkeeping above. `command` is bound
+/// as the engine sent it, a string or an array that is never joined, so two argv arrays that read alike once joined (`["a b"]`
+/// and `["a", "b"]`) are different. `serde_json`'s map is ordered, so the document is stable.
+fn chosen(detail: &Value) -> Value {
+    match params(detail) {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| !BOOKKEEPING.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// The kinds of choice an ACP request offers the engine to answer with, sorted. An ACP verdict of allow picks `allow_once` and
+/// falls back to `allow_always`, so a hold whose request offers no `allow_once` is never approved once, and the retry must offer
+/// the same kinds.
+fn option_kinds(detail: &Value) -> Option<Vec<&str>> {
+    let options = detail.get("options")?.as_array()?;
+    let mut kinds: Vec<&str> = options
+        .iter()
+        .filter_map(|option| option.get("kind").and_then(Value::as_str))
+        .collect();
+    kinds.sort_unstable();
+    Some(kinds)
+}
+
+/// Whether an approve-once could not leave a lasting allow behind: a request that offers choices offers `allow_once` among them.
+fn grants_only_once(detail: &Value) -> bool {
+    option_kinds(detail).is_none_or(|kinds| kinds.contains(&"allow_once"))
+}
+
+/// What the row says about the command beyond the words themselves, in the person's words: the working directory, the argument
+/// list, the names (never the values) of the environment overrides, and each effect flag that is on. Empty when the request names
+/// nothing that changes what runs.
+fn shown_flags(detail: &Value) -> String {
+    let params = params(detail);
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(cwd) = params.get("cwd").and_then(Value::as_str) {
+        parts.push(format!("cwd: {cwd}"));
+    }
+    if let Some(args) = params.get("args").filter(|args| !args.is_null()) {
+        parts.push(format!("args: {args}"));
+    }
+    for (key, words) in EFFECT_FLAGS {
+        if is_on(params.get(key)) {
+            parts.push((*words).to_owned());
+        }
+    }
+    match params.get("env") {
+        Some(Value::Object(env)) if !env.is_empty() => {
+            let names: Vec<&str> = env.keys().map(String::as_str).collect();
+            parts.push(format!("env: {}", names.join(", ")));
+        }
+        Some(Value::Null | Value::Object(_)) | None => {}
+        Some(_) => parts.push("with environment overrides".to_owned()),
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", parts.join("; "))
+    }
+}
+
+/// Whether the request itself names `target` as the command it would run, so a person can check what they approve. The engines
+/// fall back to words they wrote (Codex's reason, an ACP title, an MCP Bash call with no `command`) when they have no command;
+/// such a hold is kept for a deny or a dismiss, but it is never approved once. An argv array is named only when its words join
+/// without doubt: one with an empty word or a word that holds a space reads the same as another argv, so it cannot be checked.
+fn command_named(detail: &Value, target: &str) -> bool {
+    match params(detail).get("command") {
+        Some(Value::String(command)) => command == target,
+        Some(Value::Array(parts)) => {
+            let words: Option<Vec<&str>> = parts.iter().map(Value::as_str).collect();
+            words.is_some_and(|words| {
+                words
+                    .iter()
+                    .all(|word| !word.is_empty() && !word.chars().any(char::is_whitespace))
+                    && words.join(" ") == target
+            })
+        }
+        _ => false,
+    }
+}
+
+/// The key a hold and its retry are matched by: the task, the worker's thread, the kind, the command text, every path and the
+/// chosen fields of the request ([`chosen`]). It is an HMAC keyed with a value this process draws at start, so a reader of the
+/// ledger (a remote viewer, a worker) cannot test a guess at a short redacted command against the row.
+pub(super) fn bind(task_id: &str, thread_id: &str, ask: &ActionAsk) -> Option<String> {
     let document = json!([
         task_id,
         thread_id,
         wire_name(&ask.kind),
         ask.target,
         ask.paths,
-        canonical(&ask.detail)
+        chosen(&ask.detail),
+        option_kinds(&ask.detail)
     ]);
-    sha256_hex(document.to_string().as_bytes())
-}
-
-fn canonical(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut pairs: Vec<_> = map.iter().collect();
-            pairs.sort_by(|a, b| a.0.cmp(b.0));
-            Value::Array(
-                pairs
-                    .into_iter()
-                    .map(|(key, item)| json!([key, canonical(item)]))
-                    .collect(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
-        other => other.clone(),
-    }
+    crate::util::binding_hmac(&document.to_string())
 }
 
 impl HeldBook {
@@ -201,7 +324,9 @@ impl HeldBook {
     }
 
     pub(super) fn add(&mut self, new: NewHold, now: i64) -> Added {
-        let bound = bind(&new.task_id, &new.thread_id, &new.ask);
+        let Some(bound) = bind(&new.task_id, &new.thread_id, &new.ask) else {
+            return Added::Unavailable;
+        };
         for item in &self.items {
             if item.bound == bound && item.deadline > now {
                 match item.stage {
@@ -388,6 +513,23 @@ impl Core {
         lock(&self.crew_autopilot.held)
     }
 
+    /// Records a presence grant for a hold the way the shell would, without the describe step that an unreadable hold refuses, so a
+    /// test can reach the checks that come after the grant.
+    #[cfg(test)]
+    pub(crate) fn held_grant_for_test(&self, id: &str, nonce: &str, now: i64) {
+        let held = self.held_book().get(id).cloned().expect("a hold");
+        self.presence.put(
+            PresenceFor::CrewApproveOnce {
+                hold: id.to_owned(),
+                thread: held.thread_id,
+                task: held.task_id,
+                command_sha256: held.bound,
+            },
+            nonce.to_owned(),
+            now,
+        );
+    }
+
     pub(super) fn held_needles(&self, task_id: &str) -> Vec<String> {
         self.store
             .crew_answer_key(task_id)
@@ -409,7 +551,7 @@ impl Core {
                 "denied_by_person" | "dismissed_by_person" => "local_caller",
                 _ => "person",
             },
-            "bound": format!("sha256:{}", held.bound),
+            "bound": format!("hmac-sha256:{}", held.bound),
             "action": { "kind": held.kind, "target": held.shown, "paths": [] },
         });
         // `user` is the person, confirmed in the desktop app; `local_caller` is a local API caller of the service, with no proof of who.
@@ -474,13 +616,26 @@ impl Core {
         if ask.kind != ActionKind::Command {
             return None;
         }
-        let redacted = crate::crew::withhold(&crate::crew::redact(&ask.target), needles);
-        let readable = redacted.chars().count() <= SHOWN_MAX;
-        let mut shown: String = redacted.chars().take(SHOWN_MAX).collect();
+        // The row says what runs, not only how the engine named it: the redacted command, the working directory and the flags that
+        // change its effect. A newline or an invisible character becomes a visible mark, so the row cannot draw a line of its own or
+        // reorder what a person reads.
+        let mut text = crate::crew::withhold(&crate::crew::redact(&ask.target), needles);
+        text.push_str(&crate::crew::withhold(
+            &crate::crew::redact(&shown_flags(&ask.detail)),
+            needles,
+        ));
+        let text = super::presence::plain(&text);
+        // A hold is approved once only when the person can read all of what would run and the engine's own request names it: a
+        // target that fell back to a reason or a title, or one too long to show whole, is held for a deny or a dismiss and nothing
+        // else.
+        let readable_by_length = text.chars().count() <= SHOWN_MAX;
+        let mut shown: String = text.chars().take(SHOWN_MAX).collect();
         // The same last check as a ledger row: what is shown holds no secret and no key text, or nothing is shown and nothing can
         // be approved.
         let shown_value = json!(shown);
-        let readable = readable
+        let readable = readable_by_length
+            && command_named(&ask.detail, &ask.target)
+            && grants_only_once(&ask.detail)
             && crate::crew::refuse_secret(&shown_value).is_ok()
             && crate::crew::refuse_leak(&shown_value, needles).is_ok();
         if !readable && !shown.is_empty() && crate::crew::refuse_secret(&shown_value).is_err() {
@@ -493,7 +648,7 @@ impl Core {
             ask: ask.clone(),
             shown,
             readable,
-            reason: ledger::shown(reason, needles),
+            reason: super::presence::plain(&ledger::shown(reason, needles)),
             guard: guard.cloned(),
         };
         let (added, ended) = {
@@ -513,7 +668,7 @@ impl Core {
                 Some(id)
             }
             Added::Existing(id) => Some(id),
-            Added::Denied | Added::Full => None,
+            Added::Denied | Added::Full | Added::Unavailable => None,
         }
     }
 
@@ -527,7 +682,7 @@ impl Core {
         current: &[String],
         now: i64,
     ) -> Option<Taken> {
-        let bound = bind(&task.id, thread_id, ask);
+        let bound = bind(&task.id, thread_id, ask)?;
         let (taken, ended) = {
             let mut book = self.held_book();
             let ended = book.sweep(now);
@@ -672,7 +827,7 @@ impl Core {
         };
         if !held.readable {
             return Err(CoreError::Invalid(
-                "This command is too long to read whole, so it cannot be approved once.".into(),
+                "This command cannot be shown whole, so it cannot be approved once.".into(),
             ));
         }
         if let Some(refusal) = self.refuse_now(&task, &run, &held).await? {
@@ -795,6 +950,11 @@ mod tests {
 
     use super::*;
 
+    /// The key a hold is bound with. The key is drawn from the OS at the first call; a test process has one.
+    fn bound(task: &str, thread: &str, ask: &ActionAsk) -> String {
+        bind(task, thread, ask).expect("this process draws its binding key")
+    }
+
     fn ask(command: &str) -> ActionAsk {
         ActionAsk {
             kind: ActionKind::Command,
@@ -826,30 +986,114 @@ mod tests {
     }
 
     #[test]
-    fn the_hash_binds_command_arguments_thread_and_task_and_ignores_key_order() {
-        let base = bind("t-1", "w-1", &ask("make deploy"));
-        assert_eq!(base, bind("t-1", "w-1", &ask("make deploy")));
-        assert_ne!(base, bind("t-1", "w-1", &ask("make deploy ")));
-        assert_ne!(base, bind("t-1", "w-2", &ask("make deploy")));
-        assert_ne!(base, bind("t-2", "w-1", &ask("make deploy")));
+    fn the_binding_covers_the_command_its_arguments_and_its_working_directory() {
+        let base = bound("t-1", "w-1", &ask("make deploy"));
+        assert_eq!(base, bound("t-1", "w-1", &ask("make deploy")));
+        assert_ne!(base, bound("t-1", "w-1", &ask("make deploy ")));
+        assert_ne!(base, bound("t-1", "w-2", &ask("make deploy")));
+        assert_ne!(base, bound("t-2", "w-1", &ask("make deploy")));
         let mut other_args = ask("make deploy");
         other_args.detail = json!({ "cwd": "/w", "args": ["b"] });
-        assert_ne!(base, bind("t-1", "w-1", &other_args));
+        assert_ne!(base, bound("t-1", "w-1", &other_args));
         let mut reordered = ask("make deploy");
         reordered.detail = json!({ "args": ["a"], "cwd": "/w" });
-        assert_eq!(base, bind("t-1", "w-1", &reordered));
+        assert_eq!(base, bound("t-1", "w-1", &reordered));
+        let mut other_cwd = ask("make deploy");
+        other_cwd.detail = json!({ "cwd": "/elsewhere", "args": ["a"] });
+        assert_ne!(base, bound("t-1", "w-1", &other_cwd));
         let mut with_path = ask("make deploy");
         with_path.paths = vec!["x".into()];
-        assert_ne!(base, bind("t-1", "w-1", &with_path));
+        assert_ne!(base, bound("t-1", "w-1", &with_path));
+    }
+
+    /// A real retry repeats the command and its effect, not the engine's own item id, turn id, title or description: those change
+    /// on every request, so binding them makes an approval that never matches.
+    #[test]
+    fn the_binding_ignores_the_engine_s_item_id_turn_title_and_description() {
+        let mut first = ask("make deploy");
+        first.detail = json!({
+            "itemId": "cmd-1", "threadId": "th-1", "turnId": "turn-1", "startedAtMs": 3,
+            "command": "make deploy", "cwd": "/w", "reason": "deploy the app",
+        });
+        let mut retry = ask("make deploy");
+        retry.detail = json!({
+            "itemId": "cmd-2", "threadId": "th-1", "turnId": "turn-2", "startedAtMs": 9,
+            "command": "make deploy", "cwd": "/w", "reason": "deploy the app, again",
+        });
+        assert_eq!(bound("t-1", "w-1", &first), bound("t-1", "w-1", &retry));
+        let mcp = |description: &str| {
+            let mut one = ask("make deploy");
+            one.detail = json!({ "tool": "Bash", "input": { "command": "make deploy", "cwd": "/w", "description": description } });
+            one
+        };
+        assert_eq!(
+            bound("t-1", "w-1", &mcp("one")),
+            bound("t-1", "w-1", &mcp("two"))
+        );
+        let acp = |tool_call: &str| {
+            let mut one = ask("make deploy");
+            one.detail = json!({ "sessionId": "s-1", "toolCall": { "toolCallId": tool_call, "title": "Run make", "kind": "execute", "rawInput": { "command": "make deploy", "cwd": "/w" } } });
+            one
+        };
+        assert_eq!(
+            bound("t-1", "w-1", &acp("c1")),
+            bound("t-1", "w-1", &acp("c2"))
+        );
+    }
+
+    /// A ledger reader knows every field a hold is bound to. What they must not get is the digest itself: it is keyed with a
+    /// secret this process draws at start, so a guess at a short redacted command cannot be tested against the row.
+    #[test]
+    fn the_ledger_binding_is_keyed_so_a_reader_cannot_test_a_guess() {
+        // The unkeyed document of these same fields, which is what a reader can build before the change.
+        let guess = json!([
+            "t-1",
+            "w-1",
+            "command",
+            "make deploy",
+            [],
+            [["args", ["a"]], ["cwd", "/w"]]
+        ]);
+        let guess = crate::util::sha256_hex(guess.to_string().as_bytes());
+        let key = bound("t-1", "w-1", &ask("make deploy"));
+        assert_eq!(
+            key,
+            bound("t-1", "w-1", &ask("make deploy")),
+            "stable in this process"
+        );
+        assert_ne!(key, guess, "a reader's unkeyed guess does not match");
+        assert_eq!(key.chars().count(), 64);
+    }
+
+    /// Both landing orders: whichever decision arrives first is the one decision, and the loser is told the hold is decided.
+    #[test]
+    fn an_approve_and_a_deny_landing_in_either_order_have_one_winner() {
+        let mut book = HeldBook::default();
+        let id = held(&mut book, "first-approve");
+        book.decide(&id, 101, Stage::Approved).unwrap();
+        assert_eq!(
+            book.decide(&id, 102, Stage::Denied).unwrap_err(),
+            Failure::Decided(Stage::Approved)
+        );
+        assert_eq!(book.get(&id).unwrap().stage, Stage::Approved);
+
+        let mut book = HeldBook::default();
+        let id = held(&mut book, "first-deny");
+        book.decide(&id, 101, Stage::Denied).unwrap();
+        assert_eq!(
+            book.decide(&id, 102, Stage::Approved).unwrap_err(),
+            Failure::Decided(Stage::Denied)
+        );
+        assert_eq!(book.get(&id).unwrap().stage, Stage::Denied);
     }
 
     #[test]
     fn an_approval_is_used_once_and_only_by_the_same_request() {
         let mut book = HeldBook::default();
         let id = held(&mut book, "make deploy");
-        let bound = bind("t-1", "w-1", &ask("make deploy"));
+        let key = bound("t-1", "w-1", &ask("make deploy"));
         assert!(
-            book.take("t-1", "w-1", &bound, 101).is_none(),
+            book.take("t-1", "w-1", &key, 101).is_none(),
             "not approved yet"
         );
         book.decide(&id, 110, Stage::Approved).unwrap();
@@ -857,18 +1101,15 @@ mod tests {
             book.get(&id).unwrap().ask.is_none(),
             "the raw request is dropped"
         );
-        let other = bind("t-1", "w-1", &ask("make deploy now"));
+        let other = bound("t-1", "w-1", &ask("make deploy now"));
         assert!(book.take("t-1", "w-1", &other, 111).is_none());
         assert!(
-            book.take("t-1", "w-2", &bound, 111).is_none(),
+            book.take("t-1", "w-2", &key, 111).is_none(),
             "another thread"
         );
-        assert!(
-            book.take("t-2", "w-1", &bound, 111).is_none(),
-            "another task"
-        );
-        assert_eq!(book.take("t-1", "w-1", &bound, 112).unwrap().id, id);
-        assert!(book.take("t-1", "w-1", &bound, 113).is_none(), "used up");
+        assert!(book.take("t-2", "w-1", &key, 111).is_none(), "another task");
+        assert_eq!(book.take("t-1", "w-1", &key, 112).unwrap().id, id);
+        assert!(book.take("t-1", "w-1", &key, 113).is_none(), "used up");
         assert_eq!(book.get(&id).unwrap().stage, Stage::Used);
     }
 
@@ -885,9 +1126,9 @@ mod tests {
         );
         let id = held(&mut book, "b");
         book.decide(&id, 200, Stage::Approved).unwrap();
-        let bound = bind("t-1", "w-1", &ask("b"));
+        let key = bound("t-1", "w-1", &ask("b"));
         assert!(
-            book.take("t-1", "w-1", &bound, 200 + APPROVAL_LIFETIME_SECS)
+            book.take("t-1", "w-1", &key, 200 + APPROVAL_LIFETIME_SECS)
                 .is_none()
         );
     }

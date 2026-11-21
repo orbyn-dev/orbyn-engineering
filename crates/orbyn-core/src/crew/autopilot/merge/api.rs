@@ -160,6 +160,25 @@ fn strings(value: &Value) -> Vec<String> {
         .collect()
 }
 
+/// What a display mask touches. A row's read fields keep their keys; what is shown masks both,
+/// because a value can sit in an object's key.
+#[derive(Clone, Copy)]
+enum Masked {
+    Keys,
+    Values,
+    KeysAndValues,
+}
+
+impl Masked {
+    fn keys(self) -> bool {
+        matches!(self, Self::Keys | Self::KeysAndValues)
+    }
+
+    fn values(self) -> bool {
+        matches!(self, Self::Values | Self::KeysAndValues)
+    }
+}
+
 /// Cleans text and stored JSON for one task: redacted, the task's key withheld, and scanned.
 ///
 /// The person's own patterns (Settings › Secrets) mask what is shown, here and nowhere else: the stored rows are never
@@ -178,17 +197,43 @@ impl Scrub {
         items.iter().map(|t| self.text(t)).collect()
     }
 
+    /// The row as shown: its JSON keys are masked too, because a value can sit in a key.
     fn json(&self, value: &Value) -> Value {
-        self.mask(ledger::safe(value, &self.needles))
+        self.mask(ledger::safe(value, &self.needles), Masked::KeysAndValues)
     }
 
-    fn mask(&self, value: Value) -> Value {
+    /// The row's fields: values masked, keys readable, so the row can read its own fields.
+    fn fields(&self, value: &Value) -> Value {
+        self.mask(ledger::safe(value, &self.needles), Masked::Values)
+    }
+
+    /// The row's keys as shown, its values as they are (already masked by fields).
+    fn mask_keys(&self, value: Value) -> Value {
+        self.mask(value, Masked::Keys)
+    }
+
+    fn mask(&self, value: Value, masked: Masked) -> Value {
         match value {
-            Value::String(text) => Value::String(self.person.labelled(&text)),
-            Value::Array(items) => Value::Array(items.into_iter().map(|v| self.mask(v)).collect()),
-            Value::Object(map) => {
-                Value::Object(map.into_iter().map(|(k, v)| (k, self.mask(v))).collect())
+            Value::String(text) => Value::String(if masked.values() {
+                self.person.labelled(&text)
+            } else {
+                text
+            }),
+            Value::Array(items) => {
+                Value::Array(items.into_iter().map(|v| self.mask(v, masked)).collect())
             }
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| {
+                        let k = if masked.keys() {
+                            self.person.labelled(&k)
+                        } else {
+                            k
+                        };
+                        (k, self.mask(v, masked))
+                    })
+                    .collect(),
+            ),
             other => other,
         }
     }
@@ -249,7 +294,8 @@ fn answer_of(value: &Value) -> Option<wire::AutopilotAnswer> {
 }
 
 fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
-    let body = scrub.json(&event.body);
+    // The row reads its fields from the values-masked body; only what is shown gets its keys masked.
+    let body = scrub.fields(&event.body);
     let action = body.get("action").cloned().unwrap_or(Value::Null);
     let second = body.get("second").and_then(|s| {
         let answer = answer_of(s.get("answer")?)?;
@@ -283,7 +329,7 @@ fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
         lead: body.get("lead").and_then(answer_of),
         second,
         needs_second_engine: body["needs_second_engine"].as_bool() == Some(true),
-        body,
+        body: scrub.mask_keys(body),
     }
 }
 
@@ -330,6 +376,13 @@ impl Core {
             .into_iter()
             .filter_map(|(scope, mode, updated_at)| {
                 let mode = mode_wire(Mode::parse(&mode)?);
+                // A background crew's mode is always off (the code's rule), so a stored row for it is not a setting to show.
+                if scope
+                    .strip_prefix("crew:")
+                    .is_some_and(|id| self.crew_background_lead(id))
+                {
+                    return None;
+                }
                 let (scope, id) = match scope.split_once(':') {
                     Some(("repo", id)) => (wire::AutopilotScopeKind::Repo, Some(id.to_owned())),
                     Some(("crew", id)) => (wire::AutopilotScopeKind::Crew, Some(id.to_owned())),
@@ -370,6 +423,11 @@ impl Core {
                 valid_id(id)?;
                 if self.store.crew_tasks_in_crew(id)?.is_empty() {
                     return Err(CoreError::NotFound("crew".into()));
+                }
+                if self.crew_background_lead(id) {
+                    return Err(CoreError::PolicyDenied(
+                        "A background crew's merges always wait for a person; its mode cannot be changed.".into(),
+                    ));
                 }
                 ModeScope::Crew(id.to_owned())
             }

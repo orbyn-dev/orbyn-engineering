@@ -9,13 +9,15 @@
 
 use std::time::Duration;
 
-use orbyn_contracts::{ActionKind, PolicyEffect, QueuedMessage};
+use orbyn_contracts::{ActionKind, McpAppToolInfo, PolicyEffect, QueuedMessage};
 use serde_json::{Value, json};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::governance::policy;
 use crate::store::AuditRecord;
+
+use super::flight::TOOL_INFO_READS;
 
 /// The resource scheme MCP Apps use for their pages.
 pub const RESOURCE_SCHEME: &str = "ui://";
@@ -34,6 +36,10 @@ const MAX_ARGUMENTS_BYTES: usize = 64 * 1024;
 const MAX_RESULT_BYTES: usize = 256 * 1024;
 const MAX_MESSAGE_CHARS: usize = 16_000;
 const MAX_NOTE_CHARS: usize = 8_000;
+/// The longest tool description a page is shown, in characters.
+const MAX_DESCRIPTION_CHARS: usize = 16_000;
+/// The largest tool argument schema a page is shown, as serialized JSON.
+const MAX_SCHEMA_BYTES: usize = 64 * 1024;
 
 /// The latest model context an app's page left, sent with the thread's next turn.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +60,58 @@ impl AppNote {
             self.server.replace('"', "")
         )
     }
+}
+
+/// The server and the tool an app render's own record names. Only a render stored from
+/// an MCP App has them, and both are bounded like the marker they came from.
+fn recorded_app_parts(app: &Value) -> Option<(&str, &str)> {
+    let server = app.get("server")?.as_str()?.trim();
+    let tool = app.get("tool")?.as_str()?.trim();
+    (!server.is_empty()
+        && server.len() <= MAX_NAME_BYTES
+        && !tool.is_empty()
+        && tool.len() <= MAX_NAME_BYTES)
+        .then_some((server, tool))
+}
+
+/// The three advertised fields a page may see, from the server's descriptor of the tool.
+/// A descriptor for another tool, or one without an object argument schema, is refused
+/// rather than passed on, and so is one over the host's size limits; no other field of
+/// the descriptor crosses.
+fn advertised_tool_info(descriptor: &Value, tool: &str) -> Result<McpAppToolInfo> {
+    let engine = |why: &str| CoreError::EngineUnavailable(why.to_owned());
+    let name = descriptor
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| *name == tool)
+        .ok_or_else(|| engine("The app's server did not advertise the app's tool."))?;
+    let description = match descriptor.get("description") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) if text.chars().count() <= MAX_DESCRIPTION_CHARS => {
+            Some(text.clone())
+        }
+        Some(Value::String(_)) => {
+            return Err(engine(
+                "The app's tool description is over the host's limit.",
+            ));
+        }
+        Some(_) => return Err(engine("The app's tool description is not text.")),
+    };
+    let input_schema = descriptor
+        .get("inputSchema")
+        .filter(|schema| schema.is_object())
+        .cloned()
+        .ok_or_else(|| engine("The app's tool does not advertise an argument schema object."))?;
+    if input_schema.to_string().len() > MAX_SCHEMA_BYTES {
+        return Err(engine(
+            "The app's tool argument schema is over the host's limit.",
+        ));
+    }
+    Ok(McpAppToolInfo {
+        name: name.to_owned(),
+        description,
+        input_schema,
+    })
 }
 
 /// One app page, read while the run's engine was still alive.
@@ -260,6 +318,68 @@ impl Core {
         Ok(result)
     }
 
+    /// A deny rule on `mcp_app:<server>:tool_info` refuses the read, as one on the
+    /// other app targets refuses theirs. The rules are only evaluated: the default
+    /// `ask` and an allow rule both pass, because the read grants nothing and executes
+    /// nothing. Only a refusal is audited, and it is written before anything starts.
+    fn tool_info_gate(&self, thread_id: &str, server: &str, actor: &str) -> Result<()> {
+        let target = app_target(server, "tool_info");
+        let rules = self.store.list_rules()?;
+        let decision = policy::evaluate(&rules, ActionKind::Tool, &target, "direct");
+        if decision.effect != PolicyEffect::Deny {
+            return Ok(());
+        }
+        self.store.append_audit(&AuditRecord {
+            actor: actor.to_owned(),
+            action: "action.deny".into(),
+            target,
+            decision: Some(PolicyEffect::Deny),
+            source: decision.source,
+            thread_id: Some(thread_id.to_owned()),
+            run_id: None,
+            detail: json!({ "reason": decision.reason, "kind": ActionKind::Tool }),
+        })?;
+        Err(CoreError::PolicyDenied(
+            "A rule denies reading this app's tool.".into(),
+        ))
+    }
+
+    /// The app's own tool as its server advertises it: name, description and input
+    /// schema only. The page and the request name nothing: the tool is the render's own
+    /// recorded one and every field comes from the server's answer. A server that
+    /// cannot be asked is an error, never empty or stale metadata. Reads are bounded:
+    /// at most a few engine sessions at once for the whole service, and identical
+    /// concurrent reads of one render share one session (see `flight`).
+    pub async fn mcp_app_tool_info(
+        &self,
+        thread_id: &str,
+        render_id: &str,
+        actor: &str,
+    ) -> Result<McpAppToolInfo> {
+        let (thread, scope) = self.file_scope(thread_id)?;
+        let app = self.render_app(thread_id, render_id)?;
+        let (server, tool) =
+            recorded_app_parts(&app).ok_or_else(|| CoreError::NotFound("app".into()))?;
+        self.tool_info_gate(thread_id, server, actor)?;
+        let driver = self.engines.driver(&thread.engine)?;
+        let (checkout, server_name, tool_name) =
+            (scope.checkout.clone(), server.to_owned(), tool.to_owned());
+        let read = async move {
+            let read = driver.mcp_app_tool_info(&checkout, &server_name, &tool_name);
+            match tokio::time::timeout(APP_CALL_BUDGET, read).await {
+                Ok(read) => read,
+                Err(_) => Err(CoreError::EngineUnavailable(
+                    "The app's server took too long to list its tools.".into(),
+                )),
+            }
+        };
+        let key = (thread_id.to_owned(), render_id.to_owned());
+        let Some(descriptor) = TOOL_INFO_READS.run(key, read).await? else {
+            return Err(CoreError::NotFound("tool".into()));
+        };
+        advertised_tool_info(&descriptor, tool)
+    }
+
     /// Keeps the page's latest note for the thread's next turn, replacing any earlier
     /// one; empty text clears it. A deny rule on `mcp_app:<server>:context` refuses.
     pub fn mcp_app_context(
@@ -435,5 +555,86 @@ mod tests {
         let big =
             item(json!({ "result": { "structuredContent": { "text": "x".repeat(40_000) } } }));
         assert_eq!(structured_output(&big), None);
+    }
+
+    fn descriptor(extra: Value) -> Value {
+        let mut tool = json!({
+            "name": "show_widget",
+            "description": "Shows a widget",
+            "inputSchema": { "type": "object" },
+        });
+        tool.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        tool
+    }
+
+    #[test]
+    fn tool_info_keeps_the_three_advertised_fields_and_nothing_else() {
+        let info = advertised_tool_info(
+            &descriptor(json!({
+                "title": "Show widget",
+                "outputSchema": { "type": "object" },
+                "annotations": { "readOnlyHint": true },
+                "icons": [{ "src": "https://evil.example/icon.png" }],
+                "_meta": { "secret": "SECRET-MARKER", "ui": { "resourceUri": "ui://demo/w.html" } },
+            })),
+            "show_widget",
+        )
+        .unwrap();
+        assert_eq!(
+            info,
+            McpAppToolInfo {
+                name: "show_widget".into(),
+                description: Some("Shows a widget".into()),
+                input_schema: json!({ "type": "object" }),
+            }
+        );
+        assert!(!format!("{info:?}").contains("SECRET-MARKER"));
+    }
+
+    #[test]
+    fn tool_info_refuses_a_wrong_tool_or_a_descriptor_without_a_schema() {
+        for (name, extra) in [
+            ("another tool", json!({ "name": "another_tool" })),
+            ("no name", json!({ "name": null })),
+            ("no schema", json!({ "inputSchema": null })),
+            ("schema not an object", json!({ "inputSchema": "{}" })),
+            (
+                "schema too large",
+                json!({ "inputSchema": { "pad": "x".repeat(70_000) } }),
+            ),
+            ("description not text", json!({ "description": 7 })),
+            (
+                "description too long",
+                json!({ "description": "x".repeat(16_001) }),
+            ),
+        ] {
+            assert!(
+                advertised_tool_info(&descriptor(extra.clone()), "show_widget").is_err(),
+                "{name}: {extra}"
+            );
+        }
+        let mut bare = descriptor(json!({}));
+        bare.as_object_mut().unwrap().remove("description");
+        let info = advertised_tool_info(&bare, "show_widget").unwrap();
+        assert_eq!(info.description, None, "a tool with no description is fine");
+    }
+
+    #[test]
+    fn an_app_record_names_a_bounded_server_and_tool() {
+        assert_eq!(
+            recorded_app_parts(&json!({ "server": "demo", "tool": "show_widget" })),
+            Some(("demo", "show_widget"))
+        );
+        for bad in [
+            json!({}),
+            json!({ "server": "", "tool": "show_widget" }),
+            json!({ "server": "demo", "tool": " " }),
+            json!({ "server": "s".repeat(257), "tool": "show_widget" }),
+            json!({ "server": 1, "tool": "show_widget" }),
+        ] {
+            assert!(recorded_app_parts(&bad).is_none(), "{bad}");
+        }
     }
 }

@@ -58,7 +58,7 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 | --- | --- | --- | --- |
 | F3 | open | Multi-account host picker: account per host, host off |  |
 | F12 | partial | Add existing folder: picker with filesystem browse | the row records service completion without client evidence |
-| F16 | partial | Initialize Git: vcs init from project | the row records service completion without client evidence |
+| F16 | partial | Initialize Git: vcs init from project | Orbyn runs `git init` only when it creates a new project folder; nothing initialises Git inside an already-added project that is not a Git repository |
 | F18 | partial | AI commit and PR text: generated messages, titles, descriptions | generation supports the guarded Claude one-shot path only; Codex and unproven drivers are refused because a strict tool-free boundary is unproven, with manual text retained; qualification uses… |
 | F19 | partial | Writing style: repo conventions or custom, follows templates | uses F18's guarded-provider subset; scoped settings, history/custom instructions and base-tree templates have offline fixture qualification, no live model quality or packaged macOS writing observation |
 | F25 | partial | Branch naming: static, semantic or custom | semantic and custom branch naming are missing |
@@ -224,7 +224,7 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 
 ## Appendix B: designed screens not yet built
 
-From [design-inventory.md](../design-inventory.md) on main: 160 screens missing, partial or preview-only in code.
+The list below is a 2026-11-11 snapshot. [design-inventory.md](../design-inventory.md) was recounted on 2026-11-20 and finds 44 of its 231 Phase 0 screens still unimplemented (38 missing, 4 preview-only, 2 unverified), so this appendix over-counts: check the row there before starting.
 
 ### Tool calls, every state (35)
 

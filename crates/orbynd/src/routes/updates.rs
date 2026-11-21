@@ -8,6 +8,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use serde::Deserialize;
 
 use crate::http::{ApiResult, AppState, LOCAL_USER, to_the_end};
 
@@ -16,6 +17,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/updates", get(updates))
         .route("/api/updates/check", post(check_updates))
         .route("/api/updates/app/apply", post(apply_app_update))
+        .route("/api/updates/app/download", post(download_app_update))
         .route("/api/updates/apply-all", post(apply_all_updates))
 }
 
@@ -33,8 +35,22 @@ async fn check_updates(State(state): State<AppState>) -> Json<orbyn_contracts::U
     Json(state.core.updates.check().await)
 }
 
-async fn apply_app_update(State(state): State<AppState>) -> ApiResult<StatusCode> {
-    state.core.updates.apply_app(LOCAL_USER).await?;
+#[derive(Deserialize)]
+struct AppApplyQuery {
+    #[serde(default)]
+    complete: bool,
+}
+
+async fn apply_app_update(
+    State(state): State<AppState>,
+    Query(query): Query<AppApplyQuery>,
+    Json(request): Json<orbyn_contracts::AppUpdateRequest>,
+) -> ApiResult<StatusCode> {
+    if query.complete {
+        state.core.updates.complete_app(LOCAL_USER, request).await?;
+    } else {
+        state.core.updates.install_app(LOCAL_USER, request).await?;
+    }
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -43,4 +59,12 @@ async fn apply_all_updates(State(state): State<AppState>) -> ApiResult<impl Into
     Ok(Json(
         to_the_end(async move { updates.apply_all(LOCAL_USER).await }).await?,
     ))
+}
+
+async fn download_app_update(
+    State(state): State<AppState>,
+    Json(request): Json<orbyn_contracts::AppUpdateRequest>,
+) -> ApiResult<StatusCode> {
+    state.core.updates.download_app(LOCAL_USER, request).await?;
+    Ok(StatusCode::ACCEPTED)
 }

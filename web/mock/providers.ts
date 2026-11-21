@@ -39,6 +39,8 @@ export function providerList(engines: EngineStatus[]): ProviderList {
       ...rows,
       ...(full ? [{ id: "antigravity", name: "Antigravity", group: "cant_start", labels: ["cant_start"], registered: false, openable: false,
         note: "Antigravity.app is installed, but it has no ACP server Orbyn can start." } satisfies ProviderEntry] : []),
+      ...(full && !engines.some((engine) => engine.id === "grok") ? [{ id: "grok", name: "Grok Build", group: "not_found", labels: ["not_found"], registered: false, openable: false,
+        note: "Found a program named grok at /usr/local/bin/grok, but it is not xAI’s Grok CLI. Orbyn does not use it. Get xAI’s own Grok Build from xAI’s official page." } satisfies ProviderEntry] : []),
       planned("pi", "Pi", "Pi speaks its own protocol, not ACP. Orbyn has no driver for it yet."),
       planned("muse", "Muse Code", "Muse Code speaks its own protocol, not ACP. Orbyn has no driver for it yet."),
       planned("zcode", "ZCode", "Uses a private protocol. Not built."),

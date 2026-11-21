@@ -1,7 +1,10 @@
 # Crew escape flywheel: backend design
 
-Design note for the escape backend (beta item 4k, U2); no code. The screens exist as display-only Preview frames (`escape-*`,
-Crew Designs v20, [crew.md](../crew.md) "slice 4f, UI part C"). Reverts are counted today (4j); escapes are not: `escapes` is `null`.
+Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built and the screen part of PR 5 (5a-5c), as the
+as-built sections below record. Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts
+frames stay drawn), the Review queue that would open `escape-report`'s mark dialog, the create-check form, pruning, and the scan
+from the merge and revert paths. The screens are Crew Designs v79 on the real reads (`escape-*`, [crew.md](../crew.md) "slice 4f, UI
+part C"), six still drawn: four redrawn at v79 and the two `escape-create-check*` at v20.
 
 ## What an escape is
 
@@ -297,6 +300,35 @@ run, fix_commit, task_id, state, proof, note, attempts, diff_commit, diff_hash, 
   feed no breaker or router.
 - **Limits.** The proof lays one file over a commit, so a test that needs the worker's source changes to compile fails on both and is refused. The test environment's fake worker works in the project's own checkout, so the
   tests reset it between attempts; a real worker has its own worktree. Off macOS there is no confinement: the approval is the control.
+
+## As built: PR 5, web screens
+
+Three web PRs (5a, 5b, 5c): no migration, no route, no read field and no new write. The web binds the reads and person acts
+PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/escape/names.ts` are live, and six stay drawn.
+
+- **Live (real reads).** `escape-log`, `-empty`, `-low-sample` and `-error` (5a) and `escape-limit` (5b) on `GET /escapes`;
+  `escape-possible` (5a) on `GET /escapes/possible`; `escape-detail`, `-detail-tooling`, `-confirmed`, `-dismissed` and
+  `-gap` (5a), and the eight `escape-check-*` frames (5b), on `GET /escapes/{id}`. A check's accept, approve, retry and
+  withdraw send the person's own check routes, and its retry, withdraw and approve are that page with its dialog opened by a
+  click. `escape-settings` (5c) reads `GET /escapes/thresholds` (read only); `escape-narrow-window` and `-narrow-panel`
+  (5c) are the same log read in the design's 640 px window and its 320 px side panel.
+- **Still drawn samples, six.** `escape-report` (the Review item's mark dialog: the beta has no Review queue to open it from,
+  and its how-found and the fix fields are Planned), `escape-dashboard` and `escape-route-counts` / `-shifted` (the report
+  and per-area counts routes are not built; every figure is Not measured, never a zero), and `escape-create-check*` (the
+  create form is a later batch). They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
+- **Where it lives.** `web/src/features/crew/escape/live/screens.tsx` maps each live frame to its read, and
+  `LiveEscapeLog.tsx`, `LiveEscapePossible.tsx`, `LiveEscapeDetail.tsx`, `live/check.tsx` and `LiveEscapeSettings.tsx`
+  draw them over `live/api.ts` and `live/useEscapes.ts`; `screens.ts` splits live from drawn and `names.ts` lists every
+  frame. The drawn frames are `report.tsx`, `dashboard.tsx`, `route-counts.tsx`, `route-shifted.tsx`, `create-check.tsx`
+  and `create-check-tooling.tsx`. Tests: `live/*.test.tsx`, `frames.test.ts` and `web/e2e/crew-designs.spec.ts`.
+- **Writes stay a person's.** Every act is a person's click carrying `seen`; a stale answer shows the service's own words and
+  reloads, and drawing a screen never writes. Settings save stays Planned (the thresholds read is bound; no write).
+- **Derived, not invented.** The log's limit banner draws only when the unfiltered read's total reaches the store's own 5,000 cap
+  (`ESCAPES_PER_PROJECT_MAX`, `store/crew_escapes.rs`), and the log's heading names the count the read returns; the narrow panel
+  draws the frame's first four cards, the narrow window the page's rows. Rate, gap and check counts read Not measured while the
+  report route does not exist.
+- **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
+  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the create-check form is a drawn sample.
 
 ## Decisions (owner)
 
