@@ -1,6 +1,6 @@
 import type { Diagnostics } from "../../../api/types";
 import { type HostCrash, errorKindLine, exitLine, plain } from "../../enginehost";
-import { CrashDetails, DetailsToggle } from "./HostParts";
+import { CrashDetails, DetailsToggle, hasCrashDetails } from "./HostParts";
 import "./engineHost.css";
 
 /** A Recent problems row: an ordinary service event, or a host crash that can open its details. */
@@ -35,8 +35,8 @@ export function CrashProblem({ crash, time, open, onToggle }: { crash: HostCrash
     <div role="row" className="set-tr eh-problem">
       <span role="cell" className="set-time">{time}</span>
       <span role="cell">{plain(crash.message, 200)}</span>
-      <span role="cell"><DetailsToggle open={open} onToggle={onToggle} /></span>
-      {open ? (
+      <span role="cell">{hasCrashDetails(crash) ? <DetailsToggle open={open} onToggle={onToggle} /> : null}</span>
+      {open && hasCrashDetails(crash) ? (
         <div role="cell" className="eh-problem-detail">
           <CrashDetails crash={crash} />
         </div>

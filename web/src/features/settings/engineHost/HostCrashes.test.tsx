@@ -86,3 +86,21 @@ it("lists the engine hosts under Processes, above the ordinary ones, and leaves 
   expect(within(list).getByText("Claude Code engine host")).toBeVisible();
   expect(within(list).getByRole("button", { name: "Stop Claude Code engine host" })).toBeVisible();
 });
+
+it("shows how it ended alone for a crash that left no words, a signal as Stopped by signal N, and no Show details for one with neither", async () => {
+  const base = { ...crashFixtures()[0]!, at: minutes(5) };
+  const killed = { ...base, id: "cursor:killed", family: "cursor", at: minutes(6), message: "The Cursor engine host stopped.", exit_code: undefined, signal: 9, error_kind: "stalled" as const, stderr_tail: "" };
+  const bare = { ...base, id: "opencode:bare", family: "opencode", at: minutes(7), message: "The OpenCode engine host stopped.", exit_code: undefined, signal: undefined, error_kind: undefined as never, stderr_tail: "" };
+  setEngineHostApi(createEngineHostMock({ crashes: [killed, bare] }));
+  const user = userEvent.setup();
+  render(<MaintenanceSection />);
+  await user.click(await screen.findByRole("button", { name: "Show" }));
+  const table = screen.getByRole("table", { name: "Recent problems" });
+  // One toggle: the host that carried neither a way it ended nor words has nothing to open.
+  expect(screen.getAllByRole("button", { name: "Show details" })).toHaveLength(1);
+  const row = within(table).getByText("The Cursor engine host stopped.").closest("[role=row]") as HTMLElement;
+  await user.click(within(row).getByRole("button", { name: "Show details" }));
+  expect(screen.getByText("Stopped by signal 9 · The host stopped answering")).toBeVisible();
+  expect(screen.queryByText("Last words from the host")).toBeNull();
+  expect(within(table).getByText("The OpenCode engine host stopped.").closest("[role=row]")!.querySelector("button")).toBeNull();
+});
