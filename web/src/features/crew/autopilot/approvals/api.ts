@@ -6,6 +6,8 @@ import type { BackgroundCrewCreate } from "../../../../generated/BackgroundCrewC
 import type { BackgroundCrewList } from "../../../../generated/BackgroundCrewList";
 import type { BackgroundCrewUpdate } from "../../../../generated/BackgroundCrewUpdate";
 import type { BackgroundRunList } from "../../../../generated/BackgroundRunList";
+import type { AutopilotDigestSchedule } from "../../../../generated/AutopilotDigestSchedule";
+import type { AutopilotDigestScheduleInput } from "../../../../generated/AutopilotDigestScheduleInput";
 import type { AutopilotHeld } from "../../../../generated/AutopilotHeld";
 import type { AutopilotHeldList } from "../../../../generated/AutopilotHeldList";
 import type { AutopilotAreaFollowBody } from "../../../../generated/AutopilotAreaFollowBody";
@@ -42,6 +44,10 @@ export const crewApi = {
   /** A Person write: the client sends the person key on it. */
   setWorkerProvider: (project: string, worker_provider: CrewWorkerProvider) => request<CrewWorkerProviderView>("POST", `/api/crew/projects/${encodeURIComponent(project)}/worker-provider/set`, { worker_provider }),
   preview: (signal?: AbortSignal) => request<CrewPreviewState>("GET", "/api/crew/preview", undefined, signal),
+  /** The stored daily digest send time; the offset is null until a person first saves. */
+  digestSchedule: (signal?: AbortSignal) => request<AutopilotDigestSchedule>("GET", "/api/crew/autopilot/digest/schedule", undefined, signal),
+  /** A Person write: the time and the page's own UTC offset (`-new Date().getTimezoneOffset()`). */
+  setDigestSchedule: (body: AutopilotDigestScheduleInput) => request<AutopilotDigestSchedule>("POST", "/api/crew/autopilot/digest/schedule/set", body),
   secondEngineNotices: (before: number | null, signal?: AbortSignal) => {
     const query = new URLSearchParams({ limit: "200" });
     if (before !== null) query.set("before", String(before));

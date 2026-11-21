@@ -847,3 +847,106 @@ async fn a_check_proven_on_another_commit_cannot_merge_on_the_forge() {
 
 /// Which pull read of the second pass the withdraw follows: the receipt read comes first, then (after the re-check) the fresh one.
 pub(super) const WITHDRAW_AT: usize = 2;
+
+// ---- Issue #806: the daily digest's stored send time -------------------------------------------
+
+/// A merge of the setup task at `at`, waiting for review: the digest counts it as something to say.
+fn digest_merge(s: &Setup, at: i64) {
+    let mut record = crate::crew::fixtures::merge_record(
+        &s.task,
+        &s.w.repo.to_string_lossy(),
+        "fake-main",
+        "daily digest fixture",
+    );
+    record.merged_unix = at;
+    s.w.core.store.add_crew_merge(&record).unwrap();
+}
+
+/// How many daily-digest messages reached the lead's thread.
+fn digests(s: &Setup) -> usize {
+    s.w.core
+        .store
+        .events_after(&s.w.lead, 0, 10_000)
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.event,
+                orbyn_contracts::AgUiEvent::TextMessageContent { delta, .. }
+                    if delta.contains("Crew daily digest")
+            )
+        })
+        .count()
+}
+
+/// Saves `{time, utc_offset_minutes}` the way the Person route does; `None` resets it to the default.
+fn save_digest(s: &Setup, value: serde_json::Value) {
+    let mut values = std::collections::BTreeMap::new();
+    values.insert("crew_digest".to_owned(), value);
+    s.w.core.set_preferences(None, &values).unwrap();
+}
+
+#[tokio::test]
+async fn the_daily_digest_fires_once_a_local_day_at_the_saved_time() {
+    let s = setup().await;
+    digest_merge(&s, NOW);
+    save_digest(&s, json!({ "time": "17:00", "utc_offset_minutes": 0 }));
+    // NOW is 2027-01-15T08:00:00Z, so 17:00 UTC has not come round yet.
+    s.w.core.crew_deliver_merge_notices(NOW + 8 * 3600).unwrap();
+    assert_eq!(digests(&s), 0, "nothing is sent before the stored time");
+    s.w.core.crew_deliver_merge_notices(NOW + 9 * 3600).unwrap();
+    assert_eq!(digests(&s), 1, "the digest is due at the stored time");
+    // A later tick is the same local day, as is a restart that calls the rule again: the stored receipt
+    // carries the local day, so the day's digest is never sent twice.
+    s.w.core
+        .crew_deliver_merge_notices(NOW + 10 * 3600)
+        .unwrap();
+    s.w.core.crew_deliver_merge_notices(NOW + 9 * 3600).unwrap();
+    assert_eq!(
+        digests(&s),
+        1,
+        "one digest a local day, also across a restart"
+    );
+    s.w.core
+        .crew_deliver_merge_notices(NOW + 9 * 3600 + 86_400)
+        .unwrap();
+    assert_eq!(digests(&s), 2, "the next local day has its own digest");
+}
+
+#[tokio::test]
+async fn the_digest_local_day_follows_the_saved_offset_not_utc() {
+    let s = setup().await;
+    digest_merge(&s, NOW - 3600);
+    // UTC+11: 08:00 UTC is 19:00 local, so 17:00 local has passed though 17:00 UTC has not.
+    save_digest(&s, json!({ "time": "17:00", "utc_offset_minutes": 660 }));
+    s.w.core.crew_deliver_merge_notices(NOW).unwrap();
+    assert_eq!(digests(&s), 1, "the stored offset resolves the local time");
+    // The same instant with offset 0 is 08:00 local, before 17:00, so a fresh setup stores nothing.
+    let utc = setup().await;
+    digest_merge(&utc, NOW - 3600);
+    save_digest(&utc, json!({ "time": "17:00", "utc_offset_minutes": 0 }));
+    utc.w.core.crew_deliver_merge_notices(NOW).unwrap();
+    assert_eq!(digests(&utc), 0);
+}
+
+#[tokio::test]
+async fn a_digest_with_no_saved_offset_sends_nothing_rather_than_early() {
+    let s = setup().await;
+    digest_merge(&s, NOW);
+    // The default is 17:00 with no offset. A UTC or service-time-zone guess could send early, so nothing is sent.
+    s.w.core
+        .crew_deliver_merge_notices(NOW + 10 * 3600)
+        .unwrap();
+    assert_eq!(digests(&s), 0, "no offset knows no local time");
+    save_digest(&s, json!({ "time": "17:00", "utc_offset_minutes": 0 }));
+    s.w.core
+        .crew_deliver_merge_notices(NOW + 10 * 3600)
+        .unwrap();
+    assert_eq!(digests(&s), 1, "a saved offset starts the digest");
+    // A reset goes back to the default, which sends nothing again.
+    save_digest(&s, serde_json::Value::Null);
+    s.w.core
+        .crew_deliver_merge_notices(NOW + 10 * 3600 + 86_400)
+        .unwrap();
+    assert_eq!(digests(&s), 1, "a reset sends nothing until saved again");
+}
