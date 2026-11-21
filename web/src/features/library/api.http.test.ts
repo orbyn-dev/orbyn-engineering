@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { sendsPersonKey } from "../../api/personKey";
+import { PINNED_LIMITS } from "../../../mock/library";
 import { libraryApi, setLibraryApi } from "./api";
 
 afterEach(() => { setLibraryApi(null); });
@@ -49,17 +50,35 @@ it("renders with only the values in the body, and runs with a thread id", async 
 });
 
 it("reads the suggestions defensively and copies one by file and index", async () => {
-  let fetching = answer(200, { workflows: [{ index: 0, name: "W" }], prompts: "no", problems: [{ file: "x", index: 1, code: "c" }] });
+  let fetching = answer(200, { workflows: [{ file: "workflows.json", index: 0, name: "W" }], prompts: "no", problems: [{ file: "x", index: 1, code: "c" }] });
   vi.stubGlobal("fetch", fetching);
   const found = await libraryApi().suggestions("p 1");
   expect(sent(fetching).url).toContain("/api/projects/p%201/library/suggestions");
   expect(found.workflows).toHaveLength(1);
   expect(found.prompts).toEqual([]);
   expect(found.env_sets).toEqual([]);
-  fetching = answer(204, null);
+  expect(found.workflows[0]).toMatchObject({ file: "workflows.json", index: 0 });
+  expect(found.problems).toEqual([{ file: "x", index: 1, code: "c" }]);
+  const entry = { id: "01je", name: "staging", description: "", keys: [{ name: "API_URL", present: false }], keychain: "ok", status: "stored", revision: 1, created_at: "t", updated_at: "t" };
+  fetching = answer(201, { kind: "env_set", entry });
   vi.stubGlobal("fetch", fetching);
-  await libraryApi().copySuggestion("p1", "env-sets.json", 2);
+  const copied = await libraryApi().copySuggestion("p1", "env-sets.json", 2);
   expect(sent(fetching)).toMatchObject({ method: "POST", body: { file: "env-sets.json", index: 2 } });
+  expect(copied).toEqual({ kind: "env_set", entry });
+});
+
+it("reads the flat limits of the summary under the doc's keys", async () => {
+  vi.stubGlobal("fetch", answer(200, { workflows: 1, prompts: 0, env_sets: 0, keychain: "ok", limits: PINNED_LIMITS }));
+  const summary = await libraryApi().summary();
+  expect(Object.keys(summary!.limits).sort()).toEqual(["env_keys_per_set", "env_sets", "env_sets_per_workflow", "env_value_bytes", "import_bytes", "params_per_item", "prompt_body_bytes", "prompts", "suggestions_file_bytes", "workflow_command_bytes", "workflows"]);
+  expect(summary!.limits).toMatchObject({ workflows: 200, prompts: 200, env_sets: 50, env_keys_per_set: 64, env_sets_per_workflow: 4, params_per_item: 16, workflow_command_bytes: 4000, prompt_body_bytes: 32768, env_value_bytes: 8192, suggestions_file_bytes: 65536, import_bytes: 2097152 });
+  expect(summary!.limits).not.toHaveProperty("env_keys");
+  expect(summary!.limits).not.toHaveProperty("entry_bytes");
+});
+
+it("reads the run answer as a terminal id and a 409 confirm_required with its grants", async () => {
+  vi.stubGlobal("fetch", answer(409, { code: "confirm_required", message: "Confirm.", detail: { grants: ["full_access"] } }));
+  await expect(libraryApi().runWorkflow("w1", {}, { project_id: "p" })).rejects.toMatchObject({ code: "confirm_required", status: 409, detail: { grants: ["full_access"] } });
 });
 
 it("treats every library write as Person-class and the reads and renders as not", () => {
