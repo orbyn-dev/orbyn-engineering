@@ -137,7 +137,7 @@ export function LinkIssueDialog({ thread, onClose }: { thread: Thread; onClose()
                   else if (event.key === "ArrowUp") move(event, -1);
                 }}
               >
-                <span className="iss-dlg-line"><IssueGlyph state={option.state} /><span className="iss-key">{option.display_key}</span><b title={option.title}>{option.title}</b>{option.comment_count ? <span className="iss-quiet" aria-label={`${option.comment_count} comments`}>{option.comment_count}</span> : null}</span>
+                <span className="iss-dlg-line"><IssueGlyph state={option.state} /><span className="iss-key">{option.display_key}</span><b title={option.title}>{option.title}</b></span>
                 <span className="iss-quiet iss-dlg-sub">{trackerName(option.tracker)} · {option.scope}{option.state.category === "closed" ? ` · ${stateWord(option.state)}` : ""}</span>
               </li>
             );

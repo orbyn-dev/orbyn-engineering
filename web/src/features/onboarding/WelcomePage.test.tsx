@@ -23,6 +23,8 @@ vi.mock("../../api/client", async (original) => {
         writes.push(body);
         return { catalog: { version: "v2" }, rows: [] };
       }
+      // The Issues flag is off: the real client reads this 404 as "this service reports no issues".
+      if (path === "/api/issues/trackers") throw new actual.ApiFailure("not_found", "Not found.", 404);
       return [];
     }),
   };
@@ -151,10 +153,10 @@ describe("agents", () => {
 });
 
 describe("Issue trackers section", () => {
-  it("is not drawn while the service reports no trackers", async () => {
+  it("is not drawn while the service answers 404 to the trackers", async () => {
     load([engine({})]);
     render(<WelcomePage />);
-    await act(async () => undefined);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(screen.queryByRole("heading", { name: /Issue trackers/ })).toBeNull();
     expect(screen.getByText(/pick the engine/)).not.toHaveTextContent(/tracker/);
   });
@@ -162,11 +164,11 @@ describe("Issue trackers section", () => {
   it("lists the five trackers with their states; Add token and Replace go to Settings with no field and no write", async () => {
     setIssuesApi(createIssuesMock({
       trackers: [
-        { tracker: "github", connected: true, status: "signed_in", account: "sam-arden" },
-        { tracker: "gitlab", connected: true, status: "saved", address: "gitlab.com" },
-        { tracker: "azure_devops", connected: false, status: "rejected", address: "dev.azure.com/orbyn" },
-        { tracker: "forgejo", connected: false, status: "not_connected" },
-        { tracker: "linear", connected: true, status: "saved", scope: "Orbyn team" },
+        { tracker: "github", connected: true },
+        { tracker: "gitlab", connected: true, host: "https://gitlab.com" },
+        { tracker: "azure_devops", connected: false, host: "https://dev.azure.com/orbyn", detail: "Azure DevOps did not accept the token." },
+        { tracker: "forgejo", connected: false },
+        { tracker: "linear", connected: true, scope: "Orbyn team" },
       ],
     }));
     load([engine({})]);
@@ -175,11 +177,11 @@ describe("Issue trackers section", () => {
     const list = await screen.findByRole("list", { name: "Issue trackers" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows.map((row) => row.querySelector("b")?.textContent)).toEqual(["GitHub", "GitLab", "Azure DevOps", "Forgejo", "Linear"]);
-    expect(rows[0]).toHaveTextContent("Uses the gh sign-in on this computer · sam-arden");
+    expect(rows[0]).toHaveTextContent("Uses the gh sign-in on this computer");
     expect(rows[0]).toHaveTextContent("Signed in");
-    expect(rows[1]).toHaveTextContent("Saved in your keychain · gitlab.com");
-    expect(rows[2]).toHaveTextContent("Rejected");
-    expect(screen.getByRole("alert")).toHaveTextContent("Azure DevOps didn’t accept the saved token. Replace it or remove it in Settings › Source control.");
+    expect(rows[1]).toHaveTextContent("Saved in your keychain · https://gitlab.com");
+    expect(rows[2]).toHaveTextContent("Needs attention");
+    expect(screen.getByRole("alert")).toHaveTextContent("Azure DevOps needs attention: Azure DevOps did not accept the token. Replace the token or remove it in Settings › Source control.");
     expect(rows[3]).toHaveTextContent("Not connected");
     expect(screen.getByText("Issues appear in the left bar once a tracker is connected.")).toBeVisible();
     expect(document.querySelector("input[type=password]")).toBeNull();

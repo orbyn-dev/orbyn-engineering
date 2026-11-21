@@ -1,43 +1,45 @@
 /**
- * The issues the tracker screens read and the one write they make, as the screens need them.
+ * The issues the tracker screens read and the writes they make, as docs/issues.md defines them (Eng 4, PR #922).
  *
- * GUESSED CONTRACT. No issues route, Rust type or generated type is on main: Eng 4 is building them (docs/issues.md).
- * Nothing here is generated, and the only implementation of `IssuesApi` besides the "reports nothing" client in
- * api.ts is the mock in web/mock/issues.ts. Field NAMES follow the T3 Code issue schema (MIT, 9168ca73d, names only,
- * no code copied) in snake_case; the shapes and every route in api.ts are guesses for Eng 4 to correct. When the
- * routes land, replace these hand-written types with the generated ones in the same commit that adds the real client.
+ * Hand-written from that doc: the Rust types in `orbyn-contracts` and the generated types are not on main yet. When they land,
+ * replace these types with the generated ones in the same commit that checks the client against the service. Field names follow
+ * the T3 Code issue schema (MIT, 9168ca73d, names only, no code copied) in snake_case.
  *
- * Nothing here can carry a secret. A tracker token lives in the keychain behind the service; the UI never sees one.
- * Titles, bodies, labels and names are the tracker's text and are untrusted: render them as text only.
+ * Nothing here can carry a secret on the way in except `TrackerConnectInput.token`, which goes outward once, in the JSON body of
+ * the connect route. No shape has a field for a token on the way out. Titles, bodies, labels and names are the tracker's text and
+ * are untrusted: render them as text only.
  */
 
 export const TRACKER_KINDS = ["github", "gitlab", "azure_devops", "forgejo", "linear"] as const;
 export type TrackerKind = (typeof TRACKER_KINDS)[number];
 
 /**
- * Where a tracker's credential stands. `signed_in` is GitHub through the person's own `gh` sign-in; `saved` is an API token in
- * the keychain; `rejected` is a saved token the tracker did not accept; `unreachable` is a saved token whose address did not answer.
+ * Where a tracker stands, worked out from its row alone (`trackerStatus` in model.ts): `signed_in` is GitHub through the person's
+ * own `gh` sign-in, `saved` is a connection with its token in the keychain, `attention` is a stored connection that is not working
+ * (the row says why in `detail`), `not_connected` is the rest. The service sends none of these words.
  */
-export type TrackerStatus = "signed_in" | "saved" | "rejected" | "unreachable" | "not_connected";
+export type TrackerStatus = "signed_in" | "saved" | "attention" | "not_connected";
 
 /** One tracker as the picker lists it. A tracker the service does not know of is simply not in the list. */
 export interface TrackerRow {
   tracker: TrackerKind;
   connected: boolean;
-  /** What it is connected to: a repository, a team, a server. Absent when not connected. */
+  /** What it is connected to: a repository, a project, a team. */
   scope?: string | null;
-  /** Guessed. Absent reads as `signed_in` for GitHub and `saved` for the rest when connected, `not_connected` when not. */
-  status?: TrackerStatus;
-  /** The GitLab or Forgejo host, or the Azure DevOps organisation URL, as the person gave it. Never a token. */
-  address?: string | null;
-  /** GitHub only: the account the `gh` sign-in names. */
-  account?: string | null;
+  /** The host the connection uses: the GitLab or Forgejo address, or the Azure DevOps organisation URL. Not secret; never a token. */
+  host?: string | null;
+  /** Why it is not connected, in the service's words ("gh is not installed"). */
+  detail?: string | null;
 }
 
-/** What goes out when a token is saved: the address where the tracker needs one, and the token, once. Nothing answers with either. */
-export interface TrackerTokenInput {
-  address?: string;
-  token: string;
+/**
+ * The body of the connect route: the host where the tracker needs one (`https://` only: the service refuses anything else), a scope
+ * when the person names one, and the token, once. `token` is absent for GitHub. Nothing answers with any token.
+ */
+export interface TrackerConnectInput {
+  host?: string;
+  scope?: string;
+  token?: string;
 }
 
 /** `open` or `closed`, plus the tracker's own word, and how it closed when the tracker says so (`not_planned`). */
@@ -64,6 +66,7 @@ export interface IssueSummary {
   state: IssueState;
   created_at: string;
   updated_at: string;
+  closed_at?: string | null;
   assignees: IssueActor[];
   labels: IssueLabel[];
   comment_count: number;
@@ -76,12 +79,29 @@ export interface IssueComment {
   created_at: string;
 }
 
+/** A pull request the tracker reports against an issue, of its own accord. Read only. */
+export interface LinkedPullRequest {
+  repository: string;
+  number: number;
+  title: string;
+  url: string;
+  state: "open" | "closed" | "merged";
+  is_draft: boolean;
+  closes_issue: boolean;
+}
+
 export interface IssueDetail extends IssueSummary {
   body: string;
+  /** The first 50, oldest first; never more in the beta. */
   comments: IssueComment[];
+  /** What the tracker reports of its own accord; `[]` for a tracker that does not report them. */
+  linked_pull_requests: LinkedPullRequest[];
+  /** The ids of the threads that link this issue. */
+  linked_threads: string[];
   /**
-   * Guessed. The states this issue can be moved to, in the tracker's own words and order, the current one included.
-   * Absent or empty: this tracker cannot change state from here, and the state shows as text.
+   * NOT IN THE BETA CONTRACT (docs/issues.md, "What T3 has that this does not": moving an issue to another state is Planned). Only
+   * the mock sends it, so the State menu can be seen in the preview; the real client drops it, so the menu never draws against a
+   * real service. Delete it with `setState` when the doc names a state-change route.
    */
   transitions?: IssueState[];
 }
@@ -95,9 +115,10 @@ export interface IssueRef {
   title: string;
   state: IssueState;
   labels: IssueLabel[];
-  /** Guessed. Shown in the Link an issue list when the service sends it. */
-  comment_count?: number;
 }
+
+/** The three fields that name one issue: a key is unique only within a tracker's scope. */
+export type IssueTarget = Pick<IssueRef, "tracker" | "scope" | "key">;
 
 /** The filters are state, label, assignee and search, and nothing else. */
 export interface IssueQuery {
@@ -115,6 +136,8 @@ export interface IssueList {
   counts: { open: number; closed: number } | null;
   /** A tracker that did not answer while others did: its name and the service's own message. */
   failed: { tracker: TrackerKind; message: string }[];
+  /** Where each tracker and scope left off, to ask for the next page. The beta screens do not page, so they ignore it. */
+  next_cursors: Record<string, string>;
 }
 
 export interface StartThreadInput {
@@ -126,34 +149,43 @@ export interface StartThreadInput {
 /** The thread the service created and linked; the same `Thread` the rest of the app holds. */
 export type StartedThread = import("../../api/types").Thread;
 
+/** What the draft route answers: the framed first message, for the person to read and edit before it is sent. */
+export interface ThreadDraft { message: string }
+
+/**
+ * Every call is a route in docs/issues.md. Every write is Person-class: its route is in `PENDING_PERSON_ROUTES` in
+ * `web/src/api/personKey.ts` until the service lists it, so the key goes with it.
+ */
 export interface IssuesApi {
-  /** `null` is "this service does not report issues": the screens hide and no other call is made. */
+  /** `null` is "this service does not report issues" (the Issues flag is off, a 404): the screens hide and no other call is made. */
   trackers(signal?: AbortSignal): Promise<TrackerRow[] | null>;
   list(query: IssueQuery, signal?: AbortSignal): Promise<IssueList>;
-  get(tracker: TrackerKind, key: string, signal?: AbortSignal): Promise<IssueDetail>;
+  get(issue: IssueTarget, signal?: AbortSignal): Promise<IssueDetail>;
   /** Every thread's linked issues, by thread id, oldest link first. One read for the chip, the rows and the detail card. */
   links(signal?: AbortSignal): Promise<Record<string, IssueRef[]>>;
   /** A number, words or a pasted issue link, searched over the connected trackers. Empty when nothing matches; empty input lists the latest. */
   find(input: string, signal?: AbortSignal): Promise<IssueRef[]>;
-  /** One write per call: adds the link. A number the tracker does not have is a 404. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
-  link(threadId: string, issue: Pick<IssueRef, "tracker" | "scope" | "key">): Promise<void>;
-  /** One write per call: removes the link from this thread only. The issue is untouched. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
-  unlink(threadId: string, issue: Pick<IssueRef, "tracker" | "scope" | "key">): Promise<void>;
-  /** One write per call: moves the issue to one of its `transitions`. A state the tracker does not offer is a 400. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
-  setState(tracker: TrackerKind, key: string, state: IssueState): Promise<void>;
+  /** The first message for a thread started from this issue, framed so the issue's text is data. The person sees and edits it; nothing is written. */
+  draft(issue: IssueTarget, signal?: AbortSignal): Promise<ThreadDraft>;
+  /** One write per call: adds the link. An issue the tracker does not have is a 404 `not_found`. */
+  link(threadId: string, issue: IssueTarget): Promise<void>;
+  /** One write per call: removes the link from this thread only. The issue is untouched. */
+  unlink(threadId: string, issue: IssueTarget): Promise<void>;
   /**
-   * WRITE-ONLY. One write per call: keeps the token in the keychain behind the service and answers with the tracker's row, which
-   * has no token in it. No call reads a token back. GitHub takes none (it uses `gh`). This is the one place a secret crosses the
-   * contract, and only outward: the argument is passed once, never stored, echoed, logged or read back.
-   * The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`), carry
-   * the token in the JSON body and never in the path or query, and must not
-   * echo the token in any reply or error text. The service must refuse plain http for a typed address.
+   * WRITE-ONLY. One write per call: connects the tracker (the service keeps the token in the keychain) and answers with its row, which
+   * has no token in it. No call reads a token back. GitHub takes none. This is the one place a secret crosses the contract, and only
+   * outward, in the JSON body and never in the path or query: the argument is passed once, never stored, echoed, logged or read back.
    */
-  saveToken(tracker: TrackerKind, input: TrackerTokenInput): Promise<TrackerRow>;
-  /** One write per call: deletes the saved token and answers with the tracker's row. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
-  removeToken(tracker: TrackerKind): Promise<TrackerRow>;
-  /** One write per call: creates the thread, links it to the issue and answers with it. The real route must be Person-class (ENFORCED in `web/src/api/personKey.ts` and the route class table in `crates/orbynd`). */
-  startThread(issue: Pick<IssueRef, "tracker" | "scope" | "key">, input: StartThreadInput): Promise<StartedThread>;
+  connect(tracker: TrackerKind, input: TrackerConnectInput): Promise<TrackerRow>;
+  /** One write per call: removes the host, scopes and keychain token, and answers with the tracker's row. */
+  disconnect(tracker: TrackerKind): Promise<TrackerRow>;
+  /** One write per call: creates the thread, links it to the issue and queues `message`, and answers with the thread. */
+  startThread(issue: IssueTarget, input: StartThreadInput): Promise<StartedThread>;
+  /**
+   * NOT IN THE BETA CONTRACT: the mock only (see `IssueDetail.transitions`). The real client refuses it, and never draws a menu that
+   * calls it, because the real service sends no transitions.
+   */
+  setState(issue: IssueTarget, state: IssueState): Promise<void>;
 }
 
 export const TRACKER_NAMES: Record<TrackerKind, string> = {
@@ -164,7 +196,7 @@ export const TRACKER_NAMES: Record<TrackerKind, string> = {
   linear: "Linear",
 };
 
-/** What a tracker's address field is asked for, and the placeholder, by tracker. GitHub and Linear have none. */
+/** What a tracker's host field is asked for, and the placeholder, by tracker. GitHub and Linear have none (Linear's host is fixed). The service takes `https://` hosts only; a bare name is sent with `https://` in front. */
 export const TRACKER_ADDRESS: Partial<Record<TrackerKind, { label: string; initial: string; hint: string; title: string }>> = {
   gitlab: { label: "GitLab address", initial: "gitlab.com", hint: "Leave gitlab.com, or enter your own server, for example gitlab.example.com.", title: "GitLab API token" },
   forgejo: { label: "Forgejo address", initial: "", hint: "Your own Forgejo server, or codeberg.org.", title: "Forgejo address and token" },

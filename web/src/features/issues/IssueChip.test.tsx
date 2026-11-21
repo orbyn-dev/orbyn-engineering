@@ -40,7 +40,7 @@ it("says the key, and the shape says the state, then lists the issue with its st
   expect(within(row).getByText("GitHub")).toBeVisible();
   expect(within(row).getByText("bug")).toBeVisible();
   await user.click(row);
-  expect(window.location.hash).toBe("#/issues/github/412");
+  expect(window.location.hash).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
 });
 
 it("reads Issues 3 with several, in the order they were linked, across trackers, closed ones kept", async () => {

@@ -30,7 +30,7 @@ it("opens a row on the detail route", async () => {
   setIssuesApi(createIssuesMock());
   render(<IssuesPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Login sends people back to /home" }));
-  expect(window.location.hash).toBe("#/issues/github/412");
+  expect(window.location.hash).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
 });
 
 it("shows the closed tab with the closed word and the not planned word", async () => {

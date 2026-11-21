@@ -132,7 +132,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
         ) : (
           <>
             <IssuesHead />
-            <IssueRows issues={issues} onOpen={(issue: IssueSummary) => navigate({ name: "issues", tracker: issue.tracker, key: issue.key })} />
+            <IssueRows issues={issues} onOpen={(issue: IssueSummary) => navigate({ name: "issues", tracker: issue.tracker, scope: issue.scope, key: issue.key })} />
           </>
         )}
       </div>
@@ -143,7 +143,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
 export function IssuesPage() {
   const route = useRoute();
   const { rows, settled } = useTrackers();
-  const detail = route.name === "issues" && route.tracker !== undefined && route.key !== undefined ? { tracker: route.tracker, key: route.key } : null;
+  const detail = route.name === "issues" && route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? { tracker: route.tracker, scope: route.scope, key: route.key } : null;
   const body = !settled ? null : rows === null ? (
     <>
       <PageBar><h1 tabIndex={-1} data-page-title>Issues</h1></PageBar>
@@ -155,7 +155,7 @@ export function IssuesPage() {
       <NotConnected rows={rows} />
     </>
   ) : detail ? (
-    <IssueDetail key={`${detail.tracker}:${detail.key}`} tracker={detail.tracker} issueKey={detail.key} />
+    <IssueDetail key={`${detail.tracker}:${detail.scope}:${detail.key}`} tracker={detail.tracker} scope={detail.scope} issueKey={detail.key} />
   ) : (
     <IssuesList trackers={rows} />
   );

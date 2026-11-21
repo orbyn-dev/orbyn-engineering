@@ -72,7 +72,7 @@ export function IssuesRow({ thread, onOpened }: { thread: Thread; onOpened?(): v
               first={at === 0}
               icon={icon}
               onUnlinked={reload}
-              onOpen={() => { openFileTab({ kind: "issue", tracker: issue.tracker, key: issue.key }); onOpened?.(); }}
+              onOpen={() => { openFileTab({ kind: "issue", tracker: issue.tracker, scope: issue.scope, key: issue.key }); onOpened?.(); }}
             />
           ))}
           {issues.length > 1 ? <div className="iss-dlinkrow"><span className="dlinks">{link}</span></div> : null}

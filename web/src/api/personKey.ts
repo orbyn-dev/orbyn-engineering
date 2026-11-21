@@ -164,14 +164,22 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
 ];
 
 /**
- * Person routes of a service slice that is not merged (HostDriver slice 3, the Cursor thread contract: the one-turn override and
- * the engine notice's acknowledgement; and the multi-repository writes of docs/multi-repo.md). They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
+ * Person routes of service slices that are not merged: the Cursor thread contract (HostDriver slice 3: the one-turn override and the
+ * engine notice's acknowledgement), the Issues routes (docs/issues.md) and the multi-repository writes of docs/multi-repo.md. They are not in `routes.json` yet, so they cannot be in `PERSON_ROUTES`, which the test
  * holds to that table exactly. They send the key all the same, so the day the service enforces them the page already does.
  * `personKey.test.ts` fails once `routes.json` lists one: move that line into `PERSON_ROUTES` then.
  */
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
   ["POST", "/api/threads/{id}/send-without-approvals"],
   ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+  // Issues (docs/issues.md, "Routes"): the four writes of Orbyn's own. Connect and disconnect are the tracker's credential, link and
+  // unlink are the thread's, start-thread creates a thread and its link in one write. The routes are not merged: when they land in
+  // `routes.json` the test below fails, and each line moves into `PERSON_ROUTES`. Reads are not Person-class and are not listed.
+  ["POST", "/api/issues/trackers/{tracker}/connect"],
+  ["POST", "/api/issues/trackers/{tracker}/disconnect"],
+  ["POST", "/api/threads/{id}/issue-links"],
+  ["POST", "/api/threads/{id}/issue-links/remove"],
+  ["POST", "/api/issues/start-thread"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
   ["POST", "/api/projects/{id}/repos/add-folder"],
   ["POST", "/api/projects/{id}/repos/create"],

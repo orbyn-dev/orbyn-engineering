@@ -100,25 +100,45 @@ export function choiceLabel(state: IssueState): string {
 export const sameState = (a: IssueState, b: IssueState): boolean =>
   a.category === b.category && a.name === b.name && (a.close_reason ?? null) === (b.close_reason ?? null);
 
-/** Where a tracker's credential stands, from the row alone. */
+/**
+ * Where a tracker stands, from the row alone. A connection that is stored (a host or a scope) but not connected, with the service's
+ * reason in `detail`, is `attention`: the token may be rejected or the host may not answer, and the service's words say which.
+ */
 export function trackerStatus(row: TrackerRow): TrackerStatus {
-  if (row.status) return row.status;
-  if (!row.connected) return "not_connected";
-  return row.tracker === "github" ? "signed_in" : "saved";
+  if (row.connected) return row.tracker === "github" ? "signed_in" : "saved";
+  if (row.tracker !== "github" && row.detail && (row.host || row.scope)) return "attention";
+  return "not_connected";
 }
+
+const capped = (text: string, length: number): string => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
+
+/** The service's reason a tracker is not working, as text, capped. Empty when it gave none. */
+export const trackerDetail = (row: TrackerRow): string => (row.detail ? capped(row.detail, 200) : "");
 
 /** The one line under a tracker's name in Settings and on the Welcome page. Service text is capped; it is drawn as text. */
 export function trackerLine(row: TrackerRow): string {
-  const where = row.address || row.scope || null;
-  const capped = where && where.length > 80 ? `${where.slice(0, 79)}…` : where;
+  const where = row.host || row.scope || null;
+  const at = where ? ` · ${capped(where, 80)}` : "";
   switch (trackerStatus(row)) {
-    case "signed_in": return `Uses the gh sign-in on this computer${row.account ? ` · ${row.account.slice(0, 60)}` : ""}`;
-    case "saved": return `Saved in your keychain${capped ? ` · ${capped}` : ""}`;
-    case "rejected": return `Saved in your keychain${capped ? ` · ${capped}` : ""}. ${trackerName(row.tracker)} rejected the token.`;
-    case "unreachable": return `Saved in your keychain${capped ? ` · ${capped}` : ""}. No answer from that address.`;
-    default: return row.tracker === "github" ? "Uses the gh sign-in on this computer" : row.tracker === "linear" ? "API token, kept in your keychain" : "Address and API token, kept in your keychain";
+    case "signed_in": return `Uses the gh sign-in on this computer${row.scope ? ` · ${capped(row.scope, 80)}` : ""}`;
+    case "saved": return `Saved in your keychain${at}`;
+    case "attention": return `Saved in your keychain${at}`;
+    default: {
+      const why = trackerDetail(row);
+      if (why) return why;
+      return row.tracker === "github" ? "Uses the gh sign-in on this computer" : row.tracker === "linear" ? "API token, kept in your keychain" : "Host and API token, kept in your keychain";
+    }
   }
 }
+
+/**
+ * The host the service wants for what the person typed: `https://` in front of a bare name. Anything that already has a scheme is
+ * sent as it is, so the service refuses an `http://` one with its own words.
+ */
+export const hostFor = (typed: string): string => {
+  const text = typed.trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+};
 
 /** What replaces a failure's words when they carry the token the person typed, in any form. */
 export const TOKEN_REFUSED = "The tracker refused the token.";
