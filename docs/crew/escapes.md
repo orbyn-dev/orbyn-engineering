@@ -1,10 +1,18 @@
 # Crew escape flywheel: backend design
 
-Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built and the screen part of PR 5 (5a-5c), as the
-as-built sections below record. Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts
-frames stay drawn), the Review queue that would open `escape-report`'s mark dialog, the create-check form, pruning, and the scan
-from the merge and revert paths. The screens are Crew Designs v79 on the real reads (`escape-*`, [crew.md](../crew.md) "slice 4f, UI
-part C"), six still drawn: four redrawn at v79 and the two `escape-create-check*` at v20.
+Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built, the web screens of PR 5 (5a-5c) are built, and
+capacity-pressure retention (issue #686, built in #757, migration 58) is built, as the as-built sections below record.
+Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts frames stay drawn), the Review
+queue that would open `escape-report`'s mark dialog and the scan from the merge and revert paths. Retention
+is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
+(`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
+the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
+previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row ("Open Escapes", no value
+chip) that opens the live log at `#/settings/crew/escapes`; a row of the log opens that escape's page at `#/settings/crew/escapes/detail?id=`;
+the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants).
+Not reached: the possible list (`escape-possible`) and the thresholds page (`escape-settings`) have no drawn entry, the Review-tab
+Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the "Back to" controls are the
+Designer's follow-up; browser Back works. See "Propose a check" below for the act wired inside the detail page.
 
 ## What an escape is
 
@@ -54,10 +62,15 @@ counts, checks added, being written and failed, and a per-week series, grouped b
 (`risk::area_of`) and **lane**. A group under 10 merges returns `rate: null`, `low_sample: true`; a rate uses confirmed escapes only. An escape counts
 against the engine, model and area copied from the merge **when logged**. A hard-deleted lead thread drops out, as for 4j.
 
-## Screens to wire
+## Screens and the reads they need
 
-All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, on literal sample data with every button disabled;
-`web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs` (path in `docs/match-kit.md`).
+All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, reachable only in a build with the dev-only previews flag
+(`__ORBYN_PREVIEWS__`); the log and an escape's page are also reached from Settings › Crew (see above), the other frames are not. Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
+service. The table keeps the read each frame needs; `web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs`
+(path in `docs/match-kit.md`).
+
+Still drawn on sample data, every button disabled: `escape-report`, `escape-dashboard`, `escape-route-counts`, `-route-shifted`,
+`escape-create-check` and `-tooling`.
 
 | Frame | Needs |
 | --- | --- |
@@ -208,13 +221,13 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 - **Bounds.** Per scan: 50 merges, 200 later commits per merge, 300 git calls, 60 seconds. Each git call is cut at the scan's deadline and its output is capped (1 MiB for the log, name lists and blame, 256 KiB for a diff). A capped `diff-tree`, `diff` or `blame` skips only that fix or file; a capped `log`, name list or `rev-list`, or an unreadable repository, skips the merge: it is counted as skipped, never half read. stdout and stderr are read together, so a chatty stderr cannot stall a call. The log is NUL-separated and every parsed commit id is checked against `rev-list <merge>..refs/heads/<branch>`, so a commit message cannot forge an entry; paths are literal pathspecs; the branch is read as `refs/heads/<branch>` (a tag of the same name cannot stand in).
   **Rotation.** A merge with no signal never gets a row, so the scan keeps a cursor (the merge time and id of the last merge passed over) in `settings` under `crew_escape_scan_cursor`, device config like the thresholds; a damaged value reads as none and is overwritten. The next scan resumes after it and wraps to the newest at the end, so every merge in the window is reached over successive scans. The cursor is written after the escape rows. A batch the writer refuses (it would pass 5,000 escapes or 20,000 events) is treated like a project that was full before git ran: counted as `refused`, passed over, and retried when the scan wraps. A merge that alone cannot be read inside the scan's time (or whose log is always over its cap) is counted as skipped and passed over, so no one merge pins the scan. A merge skipped this way is not scanned for its signals until it can be read.
   A project at 5,000 escapes or 20,000 events is refused whole before any git runs, and a batch that would pass either limit is refused whole by the writer: nothing is
-  partly written, the scan reports `refused` and logs a plain sentence. Pruning is still not built.
+  partly written, the scan reports `refused` and logs a plain sentence. Pruning came later: see "Capacity pressure and writer migration (#686)".
 - **Choices where the note is silent:** the order of signals when several fire, the bisect and re-land filters, blame (not a line-number overlap) as the meaning of "overlapping
   hunk", the 60-day candidate window, the own-tick runner instead of merge hooks, and `post_merge_check`'s cause being the merge commit.
 - **Known limit.** The schema's revert trigger records a crew revert only for a merge with no escape row. If the scan already logged a `follow_up_fix` or `post_merge_check` for a merge, a later crew revert of it does not add a `revert` source or event to that escape (one escape per merge); the merge row still says `reverted`, and a person decides the escape as usual.
 - **Not built.** A scan from the merge and revert paths; per-merge model and lane; any trigger from a route (a person's "scan now" is not in the route plan).
 
-## Capacity pressure and writer migration (#686)
+## Capacity pressure and writer migration (#686, #757)
 
 Migration **58** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
 escape stops gap changes at 99 events, reserving event 100 for confirm or dismiss. An identical gap on a non-dismissed escape remains an idempotent
@@ -249,7 +262,7 @@ admission limit; they are not silently dropped to manufacture a hard cap.
 Current `Store` connections register escape writer protocol 57 before migrating. New triggers reject affected escape/event/check writes from an
 already-open older connection that lacks that protocol function; older services also reject schema 58 on reopen through the existing schema-version
 check. No deployed old process is assumed stopped by these source tests: normal Core startup still owns the data-directory lock. Migration is
-forward-only and tested on a populated schema-57 database. After an error, reopen with a compatible current service and retry; do not remove the
+forward-only and tested on a populated schema-56 database (the test applies migrations up to 56, then opens it with the current store, which applies 57 and 58). After an error, reopen with a compatible current service and retry; do not remove the
 fence or restart an older writer against migrated data. Direct database tools must use the current writer protocol rather than bypass triggers.
 
 ## As built: PR 4, create a check
@@ -348,14 +361,23 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
 
 - **Live (real reads).** `escape-log`, `-empty`, `-low-sample` and `-error` (5a) and `escape-limit` (5b) on `GET /escapes`;
   `escape-possible` (5a) on `GET /escapes/possible`; `escape-detail`, `-detail-tooling`, `-confirmed`, `-dismissed` and
-  `-gap` (5a), and the eight `escape-check-*` frames (5b), on `GET /escapes/{id}`. A check's accept, approve, retry and
+  `-gap` (5a), and the eight `escape-check-*` frames (5b), on `GET /escapes/{id}`. A check's propose, accept, approve, retry and
   withdraw send the person's own check routes, and its retry, withdraw and approve are that page with its dialog opened by a
-  click. `escape-settings` (5c) reads `GET /escapes/thresholds` (read only); `escape-narrow-window` and `-narrow-panel`
+  click. **Propose a check** (`live/propose.tsx`) is the design's `escape-create-check` dialog on the real `POST /escapes/{id}/check`:
+  the button on a confirmed escape with no check (or whose check was withdrawn, and whose gap is not a tooling gap) opens a dialog
+  on `web/src/ui/Dialog.tsx` with the escape's name, merge, what it counts against and its gap (read only), and the person's own
+  new test file, what it asserts, how it runs and an optional commit it must pass on (left out of the body when empty, so the
+  service uses the revert or fix it recorded). Nothing is sent before "Propose the check"; the body carries `project` and `seen`
+  (the escape's state and gap and the check's state); the dialog is busy while the write is in flight, one press sends one write,
+  and a refusal (`stale`, a path the rules refuse, a tooling gap) shows the service's own words with what was typed kept. A proposal only
+  writes a row: accepting stays the only act that starts a worker. The path rules are the service's, so the form checks none.
+  The Planned pill on the button is gone; the model row and the tooling-gap proposal keep theirs. `escape-settings` (5c) reads `GET /escapes/thresholds` (read only); `escape-narrow-window` and `-narrow-panel`
   (5c) are the same log read in the design's 640 px window and its 320 px side panel.
 - **Still drawn samples, six.** `escape-report` (the Review item's mark dialog: the beta has no Review queue to open it from,
   and its how-found and the fix fields are Planned), `escape-dashboard` and `escape-route-counts` / `-shifted` (the report
   and per-area counts routes are not built; every figure is Not measured, never a zero), and `escape-create-check*` (the
-  create form is a later batch). They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
+  v20 sample with the Review queue behind it; its dialog is built on the escape's own page, see Propose a check above).
+  They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
 - **Where it lives.** `web/src/features/crew/escape/live/screens.tsx` maps each live frame to its read, and
   `LiveEscapeLog.tsx`, `LiveEscapePossible.tsx`, `LiveEscapeDetail.tsx`, `live/check.tsx` and `LiveEscapeSettings.tsx`
   draw them over `live/api.ts` and `live/useEscapes.ts`; `screens.ts` splits live from drawn and `names.ts` lists every
@@ -364,11 +386,15 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
 - **Writes stay a person's.** Every act is a person's click carrying `seen`; a stale answer shows the service's own words and
   reloads, and drawing a screen never writes. Settings save stays Planned (the thresholds read is bound; no write).
 - **Derived, not invented.** The log's limit banner draws only when the unfiltered read's total reaches the store's own 5,000 cap
-  (`ESCAPES_PER_PROJECT_MAX`, `store/crew_escapes.rs`), and the log's heading names the count the read returns; the narrow panel
+  (`ESCAPES_PER_PROJECT_MAX`, `store/crew_escapes.rs`). It follows retention (#757), not a refusal: "This project holds 5,000 escapes,
+  the limit. To make room for a new escape, the oldest dismissed escapes, then the oldest possible ones, are removed. Confirmed
+  escapes and escapes with a check are kept. If every escape is kept, a new one is refused. How many are kept now: Not measured."
+  The log read carries the total but no kept count and no retention result, so that figure reads Not measured with a Planned pill.
+  The 20,000-event limit is not on the read, so the banner does not name it. The log's heading names the count the read returns; the narrow panel
   draws the frame's first four cards, the narrow window the page's rows. Rate, gap and check counts read Not measured while the
   report route does not exist.
 - **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
-  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the create-check form is a drawn sample.
+  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the Review queue item that would open Propose a check is not in the beta, so the dialog opens from the escape's own page.
 
 ## Decisions (owner)
 

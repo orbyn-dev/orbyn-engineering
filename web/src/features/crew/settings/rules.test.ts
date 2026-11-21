@@ -2,16 +2,18 @@ import { describe, expect, it } from "vitest";
 import { openFrame } from "../shared/test-support";
 
 describe("Settings › Crew rows (Crew Designs v23)", () => {
-  it("Review capacity and Reviewer backtest are rows that start unset, and each says what it opens", async () => {
+  it("draws the four entry rows of Crew Designs v87, each with its Open button and no stored value", async () => {
     const { container } = await openFrame("settings-crew");
     const rows = [...container.querySelectorAll(".cx-setrow")].map((row) => row.textContent ?? "");
-    const capacity = rows.find((row) => row.startsWith("Review capacity"));
-    const backtest = rows.find((row) => row.startsWith("Reviewer backtest"));
-    expect(capacity).toContain("Open Review capacity.");
-    expect(capacity?.endsWith("Not set")).toBe(true);
-    expect(backtest).toContain("Open Reviewer backtest.");
-    expect(backtest).toContain("Needs a run budget for each engine.");
-    expect(backtest?.endsWith("Budget not set")).toBe(true);
+    const row = (title: string) => rows.find((text) => text.startsWith(title)) ?? "";
+    expect(row("Review capacity").endsWith("Open Review capacity")).toBe(true);
+    expect(row("Escapes").endsWith("Open Escapes")).toBe(true);
+    expect(row("Escapes")).not.toContain("Defaults");
+    expect(row("Independent oracle")).toContain("Planned");
+    expect(row("Independent oracle")).not.toContain("Another engine · gate on");
+    expect(row("Reviewer backtest")).toContain("The live runner is not approved, so a backtest can’t start yet.");
+    expect(row("Reviewer backtest")).not.toContain("Budget not set");
+    expect(row("Reviewer backtest").endsWith("Open Reviewer backtest")).toBe(true);
   });
 
   it("the default budget is per engine, each in its own unit", async () => {

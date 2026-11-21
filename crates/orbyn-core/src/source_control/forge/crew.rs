@@ -298,6 +298,90 @@ pub async fn crew_base(context: &CrewRepository, cwd: &Path, target: &str) -> Re
     }
 }
 
+/// Every check reported at one commit: GitHub's check runs and the commit's statuses, GitLab's pipelines for that sha
+/// and their jobs. The background CI watch reads this to find a failed check at a branch head (a pull's own receipt
+/// keeps its own read). A check's name is data the caller keeps out of every prompt; the output of a check is never
+/// read here.
+pub async fn crew_head_checks(
+    context: &CrewRepository,
+    cwd: &Path,
+    head: &str,
+) -> Result<Vec<CrewCheckReceipt>> {
+    let forge = context.forge;
+    match forge {
+        Forge::GitHub => {
+            let path = format!(
+                "{}/commits/{head}/check-runs?per_page=100",
+                context.api_root()
+            );
+            let pages = context.pages(cwd, &path).await?;
+            let mut checks = Vec::new();
+            for page in pages {
+                let rows = page["check_runs"]
+                    .as_array()
+                    .ok_or_else(|| invalid("check runs"))?;
+                for row in rows {
+                    checks.push(CrewCheckReceipt {
+                        name: string(row, "name")?.to_owned(),
+                        head: commit(row, "head_sha")?,
+                        state: CrewCheckState::github_run(&row["status"], &row["conclusion"]),
+                    });
+                }
+            }
+            let path = format!("{}/commits/{head}/status?per_page=100", context.api_root());
+            let status = context.read(cwd, &path).await?;
+            let status_head = commit(&status, "sha")?;
+            let rows = status["statuses"]
+                .as_array()
+                .ok_or_else(|| invalid("statuses"))?;
+            // Refuse truncated legacy status results rather than overlook a failure on another page.
+            if status["total_count"].as_u64() != Some(rows.len() as u64) {
+                return Err(invalid("incomplete statuses"));
+            }
+            for row in rows {
+                checks.push(CrewCheckReceipt {
+                    name: string(row, "context")?.to_owned(),
+                    head: status_head.clone(),
+                    state: CrewCheckState::github_status(&row["state"]),
+                });
+            }
+            Ok(checks)
+        }
+        Forge::GitLab => {
+            let path = format!(
+                "{}/pipelines?sha={}&per_page=100",
+                context.api_root(),
+                operand(head)
+            );
+            let rows = context.pages(cwd, &path).await?;
+            let mut checks = Vec::new();
+            for row in rows {
+                let id = row["id"]
+                    .as_u64()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| invalid("pipeline id"))?;
+                let pipeline_head = commit(&row, "sha")?;
+                checks.push(CrewCheckReceipt {
+                    name: "pipeline".into(),
+                    head: pipeline_head.clone(),
+                    state: CrewCheckState::gitlab(&row["status"]),
+                });
+                let path = format!("{}/pipelines/{id}/jobs?per_page=100", context.api_root());
+                let jobs = context.pages(cwd, &path).await?;
+                for job in jobs {
+                    checks.push(CrewCheckReceipt {
+                        name: string(&job, "name")?.to_owned(),
+                        head: pipeline_head.clone(),
+                        state: CrewCheckState::gitlab(&job["status"]),
+                    });
+                }
+            }
+            Ok(checks)
+        }
+        _ => Err(invalid("unsupported forge")),
+    }
+}
+
 /// Every receipt names its commit. An error, empty check set or unknown state cannot become green.
 pub async fn crew_pull(
     context: &CrewRepository,
@@ -381,42 +465,7 @@ pub async fn crew_pull(
     let checks = if state == "merged" {
         Vec::new()
     } else if forge == Forge::GitHub {
-        let path = format!(
-            "{}/commits/{head}/check-runs?per_page=100",
-            context.api_root()
-        );
-        let pages = context.pages(cwd, &path).await?;
-        let mut checks = Vec::new();
-        for page in pages {
-            let rows = page["check_runs"]
-                .as_array()
-                .ok_or_else(|| invalid("check runs"))?;
-            for row in rows {
-                checks.push(CrewCheckReceipt {
-                    name: string(row, "name")?.to_owned(),
-                    head: commit(row, "head_sha")?,
-                    state: CrewCheckState::github_run(&row["status"], &row["conclusion"]),
-                });
-            }
-        }
-        let path = format!("{}/commits/{head}/status?per_page=100", context.api_root());
-        let status = context.read(cwd, &path).await?;
-        let status_head = commit(&status, "sha")?;
-        let rows = status["statuses"]
-            .as_array()
-            .ok_or_else(|| invalid("statuses"))?;
-        // Refuse truncated legacy status results rather than overlook a failure on another page.
-        if status["total_count"].as_u64() != Some(rows.len() as u64) {
-            return Err(invalid("incomplete statuses"));
-        }
-        for row in rows {
-            checks.push(CrewCheckReceipt {
-                name: string(row, "context")?.to_owned(),
-                head: status_head.clone(),
-                state: CrewCheckState::github_status(&row["state"]),
-            });
-        }
-        checks
+        crew_head_checks(context, cwd, &head).await?
     } else {
         let pipeline = &raw["head_pipeline"];
         let id = pipeline["id"]

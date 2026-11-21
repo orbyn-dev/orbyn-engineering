@@ -97,3 +97,20 @@ for (const override of [
     assert.match(result.stderr, /frontendDist.*relative directory/);
   });
 }
+
+test("native build hook requires the staged engine host file for the target", () => {
+  const f = fixture();
+  const triple = "aarch64-apple-darwin";
+  const run = () => spawnSync(repositoryConfig.build.beforeBuildCommand, {
+    cwd: f.desktop,
+    shell: true,
+    encoding: "utf8",
+    env: { ...process.env, TAURI_CONFIG: "{}", TAURI_ENV_PLATFORM: "darwin", TAURI_ENV_TARGET_TRIPLE: triple },
+  });
+  const missing = run();
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Missing engine host file/);
+  mkdirSync(join(f.tauri, "binaries"), { recursive: true });
+  writeFileSync(join(f.tauri, "binaries", `orbyn-engine-host-${triple}`), "");
+  assert.equal(run().status, 0);
+});

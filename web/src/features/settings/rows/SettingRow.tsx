@@ -13,7 +13,7 @@ export function SettingRow({
 }: {
   title: string;
   settingId?: string;
-  description?: string;
+  description?: ReactNode;
   actions?: ReactNode;
   /** Puts the control under the label, for one that needs the full width. */
   stacked?: boolean;

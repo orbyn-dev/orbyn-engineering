@@ -7,6 +7,7 @@ import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
 import { useNarrow } from "../../board/useWidth";
 import { Frame } from "../../shared/Frame";
 import { Ic } from "../../shared/parts";
+import { CoverageLink } from "./CoverageLink";
 import { capacityApi } from "./api";
 import { changes, notSampled } from "./model";
 import { useCapacityState } from "./useCapacity";
@@ -223,7 +224,10 @@ function Body({ state, project, apply }: { state: CapacityState; project: string
             <b>Review coverage</b>
             <small>When Crew merges it records which lines an agent wrote as a git note on the merge commit. The map counts the lines no person has reviewed.</small>
           </div>
-          <span className="cx-sv cx-ro">Recorded at merge</span>
+          <span style={{ display: "flex", gap: "14px", alignItems: "center", flexWrap: "wrap" }}>
+            <span className="cx-sv cx-ro">Recorded at merge</span>
+            <CoverageLink project={project} />
+          </span>
         </div>
       </div>
       {draft ? (

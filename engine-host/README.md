@@ -1,0 +1,202 @@
+# orbyn-engine-host
+
+The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, later Codex, ACP, Pi) for the Rust
+core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
+change that document in the same PR as any frame change.
+
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode` and `muse` are the real ones. Not part of the Rust
+workspace or the web lint scope; it has its own `package.json`.
+
+```bash
+cd engine-host && npm test
+node src/main.mjs fake
+```
+
+Layout: `src/frame.mjs` (encode, decode, error shape), `src/host.mjs` (handshake and dispatch),
+`src/families/` (one file per family), `test/` (protocol tests against the fake family).
+
+## Adding a family
+
+A family is one file in `src/families/` that exports `{ name, sdk: {name, version}, capabilities, create(ctx) }`
+(see `fake.mjs` for the smallest, `opencode.mjs` and `muse.mjs` for a served process, `claude.mjs` for an in-process SDK).
+
+1. `create(ctx)` gets `ctx.send(frame)` (write any host frame) and `ctx.log(event)` (a `log` frame, never put prompt text or
+   tokens in it). It returns `{ handle(request), close() }`; `handle` returns the response `result` or throws.
+2. Implement `open`, `send`, `cancel`, `respond`, `closeSession` (`steer`, `fork`, `models`, `usage`, `stopTask`, `background`,
+   `rollback`, `probe` only if the engine can) and list the optional ones in `capabilities`. `send` answers `{runId}` when
+   the turn is accepted, then streams `delta` frames (the engine's own events, untouched) and ends with exactly one `runDone`.
+3. Policy stays in Rust: every engine permission or question becomes a `permission` or `question` frame, answered by `respond`.
+   An allow reaches the engine in its once-only form; there is no host timeout on a pending one; cancel, run end and a crash
+   refuse it. Never add an always-allow.
+4. Errors use `serializeError` (`src/frame.mjs`) with a `kind` from the closed set in the protocol doc.
+5. Apply `open.confinement` (argv prefix, env allowlist) to every process the family starts; a family that cannot must
+   fail `open` with `kind: "unsupported"`. Log env keys you add before the engine starts.
+6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
+   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`).
+7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
+   `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
+   and write each test so it fails before the code. State in the PR what has not run against the real engine.
+
+## Single executable (SEA)
+
+```bash
+npm i && npm run build:sea     # writes dist/orbyn-engine-host (about 110 MB, unsigned beyond ad hoc)
+```
+
+`scripts/build-sea.mjs` bundles with esbuild, builds a Node 22 SEA blob and injects it with postject.
+Checked on macOS arm64 with Node 22.16: the binary answers the handshake and a fake turn, and runs
+ad hoc signed with the hardened runtime and `entitlements.plist` (allow-jit, allow-unsigned-executable-memory,
+disable-library-validation, the set T3 ships). Decision (owner): ad hoc signing only, for the host and the app,
+as `release.yml` does without the `APPLE_*` secrets. Developer ID signing and notarization: Planned.
+Not checked: launching the ad hoc signed host from inside the ad hoc signed app bundle (`externalBin`), Windows,
+Linux, Intel macOS (T3 found SEA crashes there, so Intel keeps the Rust drivers).
+The Tauri `externalBin` wiring and `scripts/check-desktop-assets.mjs` entry come with the first real family.
+
+## Claude family (behind a flag)
+
+`src/families/claude.mjs` runs `query()` from `@anthropic-ai/claude-agent-sdk` over the person's own
+`claude` (`options.claudePath`). It starts only with `ORBYN_ENGINE_HOST_CLAUDE=1`, and the Rust side keeps
+the CLI driver as the default for subscription sign-in until Anthropic approves the SDK path in writing.
+The SDK is **not bundled** (esbuild `external`, no dependency in `package.json`): in development it loads from
+`node_modules`, in the single executable it is absent and the family fails with a plain message.
+
+Done and tested against replayed transcripts (T3 Code, MIT, `test/fixtures/NOTICE`): multi-turn session on
+one query, permission frames with once-only allow and deny, cancel through `interrupt()`, session and turn
+ids, background task frames, a run held open by a background agent or workflow, confinement through
+`spawnClaudeCodeProcess` (argv prefix and env allowlist).
+
+Not done, so Planned: the leftover-turn echo rule, models and usage requests, `rollback`, `stopTask`,
+`background` request, `AskUserQuestion` as a `question` frame, subagent transcripts, and any run against the real SDK
+or a real `claude`.
+
+`AskUserQuestion` is a `question` frame answered with `answers`.
+
+Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
+`usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
+
+Run-end rules: the prompt goes in with a `uuid`; a `result` that arrives after a `command_lifecycle` `queued` for it but
+before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
+background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
+transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`
+for the prompt's uuid before the result. A leftover turn has not been seen on a real run.
+
+Not done, so Planned: `rollback`, subagent
+transcripts, and any run against a real `claude` with a valid login.
+
+## Cursor family (behind a flag)
+
+`src/families/cursor.mjs` runs the public surface of `@cursor/sdk` (`Agent.create`/`Agent.resume`, `agent.send` with `onDelta`,
+`run.wait`/`steer`/`cancel`, `agent.close`). It starts only with `ORBYN_ENGINE_HOST_CURSOR=1`; without it `cursor` is an unknown
+family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is **not bundled and not a
+dependency** (not even optional): esbuild `external`, loaded with a dynamic import that fails with "The Cursor SDK is not
+available in this build." (`kind: "unsupported"`). In the single executable it is therefore absent.
+
+- **Pooled.** One host process serves every Cursor session (T3's single worker, keyed by `sessionId`). A pooled host cannot take a
+  per-run argv prefix, so `open` with `confinement.argvPrefix` fails with `kind: "unsupported"` and starts nothing; the core
+  starts the whole host under the prefix instead. `confinement.env` is not applied per session either (the host's own environment is
+  the SDK's); its keys are logged as `confinementEnvNotApplied`, never the values.
+- **Credentials.** The host reads no keychain or token store. The key, if any, is `CURSOR_API_KEY` in the environment the core passes
+  at spawn, handed to `Agent.create`/`resume` as `apiKey`; it is redacted out of every error and is never in a frame or log. A key in
+  a request (`options.apiKey`) is refused as `invalid_request`.
+- **No approvals.** The Cursor SDK raises no interactive approval or question (T3's adapter declares none), so this family never sends
+  a `permission` or `question` frame and `respond` only logs. Sessions default to the SDK's own sandbox on (`local.sandboxOptions.enabled`);
+  the core's `options.local` wins. Policy for Cursor is therefore the sandbox and the core's confinement of the host, not `ApprovalGate`.
+- Requests: `open` (create, resume; `fork` is `unsupported`), `send`, `steer` (`complete_delivered` is `accepted`, anything else
+  `rejected` so the core sends a follow-up), `cancel`, `respond`, `closeSession`, `close`. `runDone` exactly once from
+  `run.wait()`: `finished` is `completed`, `cancelled` is `cancelled`, `error` is `failed` with an error `kind` (`auth`, `rate_limit`
+  and `network` with a `retry` hint, `invalid_request`, `session_lost` on a resume that is not found, `engine`). Deltas are the
+  SDK's `interaction.update` payload, untouched.
+
+Tested against replayed T3 Code transcripts (MIT, `test/fixtures/NOTICE`) of the SDK's public calls, not an internal worker
+protocol: simple, multi-turn, close then resume, steering, cancel mid tool, a read-only tool call. `test/replayCursor.mjs` plays a
+transcript as a fake SDK (it asserts each recorded outbound call, then delivers the recorded updates and result). Errors, pooling,
+confinement, the key and the flag use a hand-written fake SDK.
+
+Not done, so Planned: any run against the real `@cursor/sdk` (the transcripts were recorded by T3, and the error class names,
+the `session_lost` message match and the `CURSOR_API_KEY` handoff are unverified); loading the SDK from disk in the single executable
+(its webpack chunks and native binaries; T3 loads it with `createRequire`); background shells as `background` frames (T3 reads an
+SDK-internal hook, no transcript covers it) and `stopTask`; `usage`, `models`, `readHistory`, `rollback`, `fork`; attachments;
+subagent, todo and plan transcripts (`proposed_plan` was not copied: it holds a personal path); per-session confinement; Windows.
+
+## OpenCode family
+
+`src/families/opencode.mjs` runs the promise client of `@opencode/client` (2.3.2, MIT, pinned and bundled into the
+single executable) over `opencode serve` of the person's own `opencode` binary (never bundled; `options.opencodePath`
+or `opencode` on PATH). Start it with `orbyn-engine-host opencode`; no flag. One server per distinct confinement, started
+with `--hostname=127.0.0.1 --port=0` and a generated `OPENCODE_PASSWORD` (logged as an added key, never sent in a frame).
+`confinement.argvPrefix` prefixes the server command and `confinement.env` is its whole environment; a malformed prefix is
+`invalid_request`, and `options.serverUrl` (attach to a running server) is refused as `unsupported`.
+
+Done and tested against replayed T3 Code transcripts of OpenCode 2.0.18 (MIT, `test/fixtures/NOTICE`): open (create, resume,
+fork), multi-turn, every ask as a `permission` frame answered by `respond` (allow is `once` only, deny is `reject` with the
+message, never `always`), cancel through `session.interrupt`, steer through `delivery: "steer"`, `fork` at a turn, `runDone`
+exactly once from `session.execution.*`, error kinds. Sessions are created asking for everything; the core decides. Also replayed:
+- **Question frames** (`question` transcript): an OpenCode form raised by the question tool becomes a `question` frame
+  (`tool: "question"`, `input` is the tool call's own input); `respond` `{answers: {"<question text>": "<answer>"}}` becomes
+  `session.form.reply` keyed by the form's field keys (a multi-select is split on commas); `{behavior: "deny"}` is `session.form.cancel`.
+  A missing required answer is refused (`invalid_request`) and the question stays open. A form that is not a question is cancelled and logged.
+- **Background frames** (`background`, `nested_background`, `subagent` transcripts): each subagent session (`session.created` with a
+  parent) and each shell the sessions start is a `background` `started`/`ended` event with its `toolCallId` (`kind: "agent"` also has
+  `description` and `background`; `kind: "shell"` has `command`). A task is announced when OpenCode names its tool call, so a shell
+  with no tool call is announced when it ends. A successful result while a subagent (any depth) still runs **holds the run**
+  (rule 1 of the run-end contract); the hold ends on the parent's wake turn, or after 3 s with no wake turn, on cancel (which also
+  interrupts the subagents), after 30 minutes, or when the server stops. A failed or cancelled result is never held. Shells are
+  reported, never held. The subagent events themselves also arrive as `delta` frames (their `sessionID` tells them apart), and a
+  subagent's permission or question reaches the run and is answered on the subagent's own session.
+- **`models`** (host-wide; optional `cwd`, `confinement`, `opencodePath`): `model.list` plus `model.default` as a list of
+  `{id, providerID, name, efforts, capabilities, limit, status, enabled, family?, default}`; `efforts` are the model's variant ids.
+  Settings, headers, body and package are never forwarded (they can hold provider keys). A server started only for the list is stopped after it.
+- **`usage`**: the session's cumulative `{input, output, reasoning, cache, costUsd, model}` from `session.get` and
+  `context: {usedTokens, maxTokens}` (the last step's tokens against the model's `limit.input ?? limit.context`; `null` if unknown).
+- **`readHistory`**: `message.list`, oldest first, all pages, the engine's messages untouched; over about 6 MiB it fails with
+  `kind: "host"` instead of cutting.
+- **`stopTask`**: a shell through `shell.remove`, a subagent through `session.interrupt` on its session (`stopped` is the server's `interrupted`).
+- **`background`**: `session.background` on the run's session; its effect is not documented (see below).
+
+Real runs (macOS arm64, `opencode` 2.2.5, free model `opencode/beam-free`, empty temp folder, cost 0): a one-word reply completed with usage;
+a file write raised one `permission` frame (tool `edit`), allowed once, the file was written and the run completed. `models`
+through the bundled binary against a real `opencode serve` returned 245 models in the shape above, with a default and efforts, and
+stopped the server it had started.
+
+Not done, so Planned: cancel, steer, fork, question, background frames, hold, `usage`, `readHistory`, `stopTask` and `background`
+against a live `opencode` (replays and fake clients only; no `-free` model was asked to run a subagent, a question or a shell);
+what `session.background` does and whether `backgrounded` should be true (the SDK documents only `sessionID` and returns nothing,
+no transcript calls it, so the host sends it and reports `true` on success); `rollback` (`session.revert.*` has a transcript
+but no mapping to a turn id yet), `session.compact`; the v1 SDK (`@opencode-ai/sdk`, not added: no transcript covers it);
+workflows; a user-started shell shown before it ends; attachments; per-send model; a silent-stream watchdog; Windows.
+
+## Muse family
+
+`src/families/muse.mjs` runs `@muse-code/sdk` (1.4.6, MIT, pinned and bundled into the single executable) over `muse serve`
+of the person's own `muse` binary (never bundled; `options.musePath` or `muse` on PATH). Start it with
+`orbyn-engine-host muse`; no flag. One `muse serve` per open session. `confinement.argvPrefix` prefixes the command and
+`confinement.env` is its whole environment (without `confinement` the host's environment is used minus `META_API_KEY`);
+`MUSE_NO_AUTO_UPDATE=1` is added and logged. A malformed prefix is `invalid_request`; `fork` and `options.serverUrl` are
+`unsupported`. `options.disableSandbox` adds `--disable-sandbox` (Muse's own sandbox, for use under the core's confinement).
+
+Done and tested against replayed T3 Code transcripts of Muse 1.4.3 to 1.4.6 (MIT, `test/fixtures/NOTICE`) under the real SDK
+`Connection`: open (create, resume), multi-turn, every approval as a `permission` frame answered by `respond` (allow is
+`allow_once` only, deny is the once-scope reject, never a policy amendment or session grant; if only a wider allow is
+offered, allow is answered as a refusal), subagent approvals, cancel through `turn/interrupt`, steer through `turn/steer`,
+`runDone` exactly once, workflows as `background` frames that hold the run until the follow-up turn ends it, error kinds.
+Sessions always start asking (`promptUnmatched`, `:ask-me`); T3 recorded two of the four full-access.
+
+Checked by hand: the bundled binary opened and closed a session against a stand-in `muse serve` script over real stdio
+(no `muse` is installed here). Not done, so Planned: any run against a real `muse` or model turn; `question` frames
+(`userInput/*`, from T3's adapter, no transcript); resume against a real server; subagents as `background` frames (their item
+never ends in the recordings); `stopTask`, `models`, `usage`, `readHistory`, `rollback`, fork; attachments; the denial message
+(Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; Windows launchers
+(`.cmd`), verbatim paths and the Linux `env` trampoline.
+
+## In the app bundle (macOS arm64)
+
+`scripts/prepare-bundle.mjs` builds the host and stages it as `binaries/orbyn-engine-host-<triple>`; every other target
+stages an empty placeholder (Tauri needs each `externalBin` file), and Intel Macs keep the Rust drivers.
+`tauri.conf.json` lists it in `externalBin` and sets `bundle.macOS.entitlements` to `entitlements.plist`, which Tauri
+applies when it signs each sidecar and the app. The desktop shell sets `ORBYN_ENGINE_HOST` to the binary's path for
+`orbynd` when the file is non-empty; with none, the service keeps the Rust drivers.
+
+Checked by hand on macOS arm64: a stand-in app bundle signed ad hoc in Tauri's order (sidecars, then the bundle,
+hardened runtime) verifies, and the host launched from inside it answers the handshake. With the same signing but
+without the entitlements the host crashes (SIGTRAP), so the entitlements are required. Not checked: a full `tauri build`
+(the app was not built), notarization, other platforms. The entitlements apply to the whole app, not only the host.

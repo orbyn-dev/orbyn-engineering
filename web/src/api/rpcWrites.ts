@@ -19,10 +19,10 @@ export const rpcWritesApi = {
   /** Local. The checkout's branch, tracking ref and working-tree counts, read now. */
   refreshVcsStatus: (threadId: string) =>
     request<VcsStatus>("POST", `/api/threads/${q(threadId)}/vcs/refresh-status`),
-  /** Local. Creates a branch at an optional start and leaves the checkout where it is. */
+  /** Person. Creates a branch at an optional start and leaves the checkout where it is. */
   createRef: (threadId: string, name: string, start?: string) =>
     request<void>("POST", `/api/threads/${q(threadId)}/vcs/refs`, { name, ...(start === undefined ? {} : { start }) } satisfies CreateBranch),
-  /** Local. Moves the checkout to an existing ref. */
+  /** Person. Moves the checkout to an existing ref. */
   switchRef: (threadId: string, name: string) =>
     request<void>("POST", `/api/threads/${q(threadId)}/vcs/refs/switch`, { name } satisfies SwitchBranch),
 };

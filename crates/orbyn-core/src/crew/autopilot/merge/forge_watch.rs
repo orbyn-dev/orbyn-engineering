@@ -266,9 +266,15 @@ impl Core {
 
     /// Daily digest, one overdue notice per due window and one break notice per merge.
     /// Notice text is code-authored and contains no check commands or answer keys.
+    ///
+    /// The digest is due at most once per local day, at or after the stored send time
+    /// (`merge::digest`). Its dedupe receipt carries that local day in the stored identity, so a
+    /// restart the same day sends nothing again, and a day with nothing to say sends nothing at all.
+    /// With no offset stored yet the digest sends nothing: the local time cannot be resolved.
     pub fn crew_deliver_merge_notices(&self, now: i64) -> Result<()> {
         self.crew_preview_only()?;
         let digest = self.autopilot_digest(now, Some(24))?;
+        let digest_day = self.crew_digest_due_day(now)?;
         for record in self.store.crew_all_merges()? {
             let run = self
                 .store
@@ -286,9 +292,11 @@ impl Core {
                 )?;
                 Ok(())
             };
-            if !digest.quiet {
+            if !digest.quiet
+                && let Some(day) = digest_day
+            {
                 deliver(
-                    format!("digest:{}:{}", run.lead_thread_id, now.div_euclid(86400)),
+                    format!("digest:{}:{day}", run.lead_thread_id),
                     format!(
                         "Crew daily digest: {} merged in the last day; {} waiting for review; {} overdue; {} need a person.",
                         digest.merged_count,

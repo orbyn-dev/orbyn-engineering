@@ -7,6 +7,8 @@ import { useNarrow } from "../../board/useWidth";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
+import { CoverageLink } from "../../capacity/live/CoverageLink";
+import { useCrewHref } from "../../shared/nav";
 import { asOf, count, dayMoment, ESCAPES_LIMIT, merges, nameOf, sourceLabel, WHY } from "./model";
 import { EscapeTable, GapChip, ProjectChip, StateChip } from "./parts";
 import { useEscapeLog } from "./useEscapes";
@@ -193,17 +195,20 @@ function EscapeCards({ rows, onOpen }: { rows: readonly EscapeRow[]; onOpen(id: 
   );
 }
 
-/** The limit banner the writer's own refusal draws when a project holds its 5,000 escapes, at every width. */
+/** The limit banner, drawn when the log's total is at the core's 5,000 cap. Retention clears the oldest dismissed, then the
+ * oldest possible escapes to admit a new one; confirmed escapes, escapes with a check and unclassifiable history are kept, and
+ * a log of only kept history refuses. The read carries no kept count and no retention result, so those read Not measured. */
 function LimitBanner() {
   return (
     <div className="cx-cwbn cx-amber" role="status">
       <Ic n="alert" sm />
       <span>
-        This project has reached the {count(ESCAPES_LIMIT)}-escape limit. A new escape is not recorded, and Mark as an
-        escape is refused, until room is made. The same holds at 20,000 audit events. Confirmed escapes are never dropped.
+        This project holds {count(ESCAPES_LIMIT)} escapes, the limit. To make room for a new escape, the oldest dismissed
+        escapes, then the oldest possible ones, are removed. Confirmed escapes and escapes with a check are kept. If every
+        escape is kept, a new one is refused. How many are kept now: Not measured.
       </span>
       <span className="cx-acts">
-        <Planned why={WHY.pruning} />
+        <Planned why={WHY.retention} />
       </span>
     </div>
   );
@@ -258,8 +263,8 @@ function WhatCounts({ log }: { log: EscapeLog }) {
 }
 
 /**
- * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, and `escape-limit` (the banner the
- * writer's own refusal draws when a project holds its 5,000 escapes), on the real escape log read. `escape-narrow-window`
+ * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, and `escape-limit` (the banner drawn
+ * when a project holds its 5,000 escapes), on the real escape log read. `escape-narrow-window`
  * is the same page below 640 px, measured (not chosen by frame id) (two tiles, one card per escape) and `escape-narrow-panel` the 320 px side panel (one counts
  * card, one card per escape), as the design's narrow frames draw. The limit is the core's own cap and the read carries
  * the count, so the page says it is reached only when the count does. Counts are shown apart and never added; there is
@@ -285,10 +290,13 @@ export function LiveEscapeLog({
   const variant: LogVariant = panel ? "panel" : narrow ? "window" : "full";
   const read = useEscapeLog(project);
   const log = read.status === "ready" ? read.data : null;
+  const href = useCrewHref();
   const open = (id: string) => {
-    window.location.hash = `#/preview/crew/escape-detail?id=${encodeURIComponent(id)}`;
+    window.location.hash = href({ page: "escape", id });
   };
   const chip = <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />;
+  // The Coverage link sits before the project chip, so it never moves when the window picker changes.
+  const coverage = <CoverageLink project={project} />;
   return (
     <Frame live panel={panel}>
       {panel ? (
@@ -296,7 +304,7 @@ export function LiveEscapeLog({
           <b>Crew</b>
           <span className="cx-cwpv">Preview</span>
           <span className="cx-pha">
-            <button type="button" className="cx-ghost" style={{ height: "24px", fontSize: "12px", padding: "0 9px" }} onClick={() => { window.location.hash = "#/preview/crew/escape-log"; }}>Open in Crew</button>
+            <button type="button" className="cx-ghost" style={{ height: "24px", fontSize: "12px", padding: "0 9px" }} onClick={() => { window.location.hash = href({ page: "escapes" }); }}>Open in Crew</button>
           </span>
         </div>
       ) : null}
@@ -314,13 +322,16 @@ export function LiveEscapeLog({
             <span className="cx-rtag cx-lo">This device only</span>
             {variant === "full" ? (
               <span className="cx-t10sp">
+                {coverage}
                 {chip}
                 {log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null}
               </span>
             ) : null}
           </div>
+          {variant === "panel" ? <div style={{ display: "flex" }}>{coverage}</div> : null}
           {variant === "window" ? (
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+              {coverage}
               {chip}
               {log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null}
             </div>

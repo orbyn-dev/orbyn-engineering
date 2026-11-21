@@ -672,6 +672,65 @@ impl Store {
         })
     }
 
+    /// The background crews of one trigger kind, by name. The listeners' observation set; a kind nothing can start
+    /// (issue labels, dependency updates) has no listener and is never listed by one.
+    pub fn background_crews_of_kind(&self, kind: &str) -> Result<Vec<BackgroundRow>> {
+        let conn = self.reader();
+        let mut statement =
+            conn.prepare("SELECT * FROM crew_background WHERE trigger_kind = ?1 ORDER BY name COLLATE NOCASE, id")?;
+        let rows = statement
+            .query_map([kind], row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// First-write-wins claim of one background event: true when this firing is new, false when the same event has
+    /// already fired. The row is never removed, so a repeat of the same event starts nothing new, and a firing that
+    /// was refused keeps its row: nothing is retried on a timer (docs/crew/background-engine-start.md, section 2).
+    pub fn claim_background_event(&self, identity: &str) -> Result<bool> {
+        self.commit(|tx, _| {
+            let n = tx.execute(
+                "INSERT OR IGNORE INTO crew_background_events (identity, claimed_unix) VALUES (?1, ?2)",
+                params![identity, now()],
+            )?;
+            Ok(n == 1)
+        })
+    }
+
+    /// The newest schedule bucket this crew has fired (claimed), or none. A bucket at or before it never fires again, so a clock
+    /// that moves back cannot re-fire a bucket the crew already had, and a bucket that was only claimed counts as fired.
+    pub fn latest_schedule_bucket(&self, crew: &str) -> Result<Option<i64>> {
+        let low = format!("schedule:{crew}:");
+        // ':' is followed by ';' in byte order, so this range is every identity that starts with `low`.
+        let high = format!("schedule:{crew};");
+        let conn = self.reader();
+        Ok(conn.query_row(
+            "SELECT MAX(CAST(substr(identity, ?3) AS INTEGER)) FROM crew_background_events WHERE identity >= ?1 AND identity < ?2",
+            params![low, high, low.chars().count() as i64 + 1],
+            |row| row.get::<_, Option<i64>>(0),
+        )?)
+    }
+
+    /// A listener firing the start refused, as one audit row beside the refusal: which listener fired and a fixed category of the
+    /// refusal, never the refusal's text and never any event text. `kind` is `schedule` or `ci`, and `reason` is one of the
+    /// listener's own words.
+    pub fn audit_background_listener_refusal(
+        &self,
+        crew: &str,
+        kind: &str,
+        reason: &str,
+    ) -> Result<()> {
+        self.commit(|tx, _| {
+            audit(
+                tx,
+                "crew",
+                "crew.background.listener.refused",
+                crew,
+                json!({ "listener": kind, "reason": reason }),
+            )
+        })
+    }
+
     /// One run by id.
     pub fn background_run(&self, id: &str) -> Result<Option<BackgroundRunRow>> {
         Ok(self

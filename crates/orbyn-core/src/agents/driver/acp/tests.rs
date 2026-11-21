@@ -1,6 +1,6 @@
 use super::events::UpdateMapper;
 use super::models::{parse_models, parse_session_options, require_offered};
-use super::permissions::{classify, permission_outcome};
+use super::permissions::{classify, gate_paths, permission_outcome};
 use super::sign_in::{MAX_SIGN_IN_ARGS, SignInSlot, known_sign_in, terminal_sign_in};
 use super::*;
 use crate::governance::approvals::Verdict;
@@ -340,4 +340,35 @@ fn a_launch_names_the_other_cli_it_refuses() {
             .as_custom(),
     );
     assert!(own.refusal(&other).is_none());
+
+#[test]
+fn a_move_is_checked_at_every_location() {
+    let params = json!({ "toolCall": { "title": "Move file", "kind": "move", "locations": [
+        { "path": "src/a" }, { "path": "/Users/x/.ssh/config" },
+    ]}});
+    let (kind, _, _) = classify(&params);
+    assert_eq!(kind, ActionKind::FileChange);
+    assert_eq!(gate_paths(&params, kind), ["src/a", "/Users/x/.ssh/config"]);
+}
+
+#[test]
+fn a_file_change_with_no_location_is_never_taken_for_a_path_in_the_checkout() {
+    for kind in ["edit", "delete", "move"] {
+        for locations in [json!([]), json!(null), json!([{ "line": 3 }])] {
+            let params = json!({ "toolCall": { "title": "Move file", "kind": kind, "locations": locations }});
+            let (action, target, _) = classify(&params);
+            assert_eq!(action, ActionKind::FileChange);
+            assert!(
+                gate_paths(&params, action).is_empty(),
+                "{kind} with no location must be declined, not gated as {target:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reads_and_fetches_keep_their_gate_paths() {
+    let read = json!({ "toolCall": { "title": "Read", "kind": "read", "locations": [{ "path": "/etc/hosts" }] }});
+    let (kind, _, _) = classify(&read);
+    assert!(gate_paths(&read, kind).is_empty());
 }
