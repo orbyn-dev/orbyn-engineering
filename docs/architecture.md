@@ -2746,7 +2746,7 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
-a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; no Settings control yet, so it is set only through the settings API) refuses a new task once its crew
+a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
 has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
