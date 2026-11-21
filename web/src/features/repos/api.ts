@@ -134,14 +134,16 @@ export function useRepos(projectId: string): { view: ReposView | null; settled: 
 }
 
 /** The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the service reports none. */
-export function useThreadRepos(threadId: string, refreshKey = 0): { repos: ThreadRepo[] | null; reload(): void } {
+export function useThreadRepos(threadId: string, refreshKey = 0, enabled = true): { repos: ThreadRepo[] | null; reload(): void } {
   const version = useApiVersion();
   const [repos, setRepos] = useState<ThreadRepo[] | null>(null);
   const read = useCallback(() => {
+    // Off: nothing is asked (a panel that needs the names only while a repository's file is open).
+    if (!enabled) return () => undefined;
     const abort = new AbortController();
     reposApi().threadRepos(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setRepos(next); }, () => { if (!abort.signal.aborted) setRepos(null); });
     return () => abort.abort();
-  }, [threadId, version, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId, version, refreshKey, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => read(), [read]);
   return { repos, reload: read };
 }

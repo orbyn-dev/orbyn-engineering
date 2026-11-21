@@ -84,16 +84,24 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const turns = checkpoints.data ?? [];
   const [pickedRun, setPickedRun] = useState<string | null>(null);
   const latestRun = (pickedRun && turns.some((turn) => turn.run_id === pickedRun) ? pickedRun : turns.at(-1)?.run_id) ?? null;
-  // What each turn changed, for the turn picker's rows. A turn whose diff can't be read shows no totals.
-  const totals = useAsync(`turn-totals:${threadId}:${version}:${turns.map((turn) => turn.run_id).join(",")}`, (signal) =>
-    source === "turn" && turns.length > 0
-      ? Promise.all(turns.map((turn): Promise<TurnTotals | null> =>
-          api.diff(threadId, signal, `turn&run=${encodeURIComponent(turn.run_id)}`).then(
-            (files) => ({ added: files.reduce((sum, file) => sum + file.additions, 0), removed: files.reduce((sum, file) => sum + file.deletions, 0), files: files.length }),
-            () => null,
-          )))
-      : Promise.resolve([]),
-  );
+  // What each turn changed, for the turn picker's rows. A turn whose diff can't be read shows no totals. A thread in several
+  // repositories sums the turn's diff of each trusted repository (the service answers one repository per read); an untrusted
+  // repository adds nothing and a repository whose read fails is left out, and the row says how many were not counted.
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
+  const totalsRepos = threadRepos.repos;
+  const totals = useAsync(`turn-totals:${threadId}:${version}:${turns.map((turn) => turn.run_id).join(",")}:${totalsRepos ? totalsRepos.map((repo) => `${repo.repo_id}${repo.trusted ? "" : "!"}`).join(",") : ""}`, (signal) => {
+    if (source !== "turn" || turns.length === 0) return Promise.resolve([]);
+    const sumOf = (files: FileDiff[]) => ({ added: files.reduce((sum, file) => sum + file.additions, 0), removed: files.reduce((sum, file) => sum + file.deletions, 0), files: files.length });
+    return Promise.all(turns.map(async (turn): Promise<TurnTotals | null> => {
+      const scope = `turn&run=${encodeURIComponent(turn.run_id)}`;
+      if (!totalsRepos || totalsRepos.length === 0) return api.diff(threadId, signal, scope).then(sumOf, () => null);
+      const reads = await Promise.all(totalsRepos.filter((repo) => repo.trusted).map((repo) =>
+        api.diff(threadId, signal, scope, repo.repo_id === projectId ? undefined : repo.repo_id).then(sumOf, () => null)));
+      const counted = reads.filter((one): one is NonNullable<typeof one> => one !== null);
+      if (counted.length === 0) return null;
+      return { added: counted.reduce((sum, one) => sum + one.added, 0), removed: counted.reduce((sum, one) => sum + one.removed, 0), files: counted.reduce((sum, one) => sum + one.files, 0), skipped: totalsRepos.length - counted.length };
+    }));
+  });
   // Where the turn or commit picker is open, under the header.
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const thread = useWorkspace((state) => state.threads[threadId]);
@@ -151,7 +159,6 @@ export function DiffPanel({ threadId }: { threadId: string }) {
         : source === "commit" ? `diff:commit:${sha ?? ""}`
           : `diff:${source}`;
   // The project's own folder is the primary repository and its id is the project's: its reads and writes leave `repo_id` out.
-  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
   // The service answers one repository's files per read (`?repo_id=`), and a file carries no repository of its own. So a thread in
   // several repositories reads once per repository and marks each file with the repository it came from; any other thread reads once.
   const repoList = threadRepos.repos;

@@ -16,11 +16,15 @@ export const RIGHT_TABS: { id: BuiltinTab; label: string; icon: typeof FileDiff 
   { id: "library", label: "Library", icon: Library },
 ];
 
-export function tabOf(id: RightTab): { id: RightTab; label: string; icon: typeof FileDiff } {
+/** `repoName` names the repository of a file tab that has one, so two files of the same name in two repositories are told apart; without a name the tab is its file's name alone. */
+export function tabOf(id: RightTab, repoName?: (repoId: string) => string | undefined): { id: RightTab; label: string; icon: typeof FileDiff } {
   const file = parseFileTab(id);
   if (file?.kind === "issue") return { id, label: issueTabLabel(file.key), icon: CircleDot };
   if (file?.kind === "worktree") return { id, label: "Worktree", icon: GitBranch };
-  if (file) return { id, label: fileName(file.path), icon: FileIcon };
+  if (file) {
+    const where = file.kind === "thread" && file.repoId !== undefined ? repoName?.(file.repoId) : undefined;
+    return { id, label: where ? `${fileName(file.path)} (${where})` : fileName(file.path), icon: FileIcon };
+  }
   return RIGHT_TABS.find((tab) => tab.id === id) ?? RIGHT_TABS[0]!;
 }
 
