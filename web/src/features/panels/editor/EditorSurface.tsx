@@ -225,7 +225,7 @@ export function EditorSurface({
               ...(standing === "unsaved" ? { commentBlocked: "Save to comment" } : {}),
               onComment: (line: number, extend: boolean) => setSelection((now) => ({ anchor: extend && now ? now.anchor : line, end: line })),
               selected: selection ? { from: Math.min(selection.anchor, selection.end), to: Math.max(selection.anchor, selection.end) } : null,
-              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && chip.line ? [chip.line] : [])),
+              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && !chip.stale && chip.line ? [chip.line] : [])),
             }
           : {})}
         onChange={(next) => onChange?.(next)}

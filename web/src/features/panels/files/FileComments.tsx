@@ -59,7 +59,7 @@ export function CommentList({ threadId, cwd, path, revision }: Where) {
     && chip.sourceRevision === revision && chip.sourceCwd === cwd);
   return comments.length ? <ul className="file-comment-list" aria-label="File comments">
     {comments.map((chip) => <li key={chip.id}>
-      <strong>{chipLabel(chip)}</strong><p>{chip.kind === "review" ? chip.comment : ""}</p>
+      <strong>{chipLabel(chip)}</strong>{chip.kind === "review" && chip.stale ? <em> Out of date: the file was edited</em> : null}<p>{chip.kind === "review" ? chip.comment : ""}</p>
       <Button small tone="quiet" onClick={() => useComposerChips.getState().remove(threadId, chip.id)}>Remove comment</Button>
     </li>)}
   </ul> : null;
