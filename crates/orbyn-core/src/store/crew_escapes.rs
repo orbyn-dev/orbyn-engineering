@@ -4,7 +4,7 @@
 //! nothing and no caller can forget it. Ids, commit ids, enums, areas, engine and model names and one short reason of at most 200
 //! characters are stored; never a diff, a test body, command output, a prompt or a secret.
 //!
-//! Capacity-pressure retention is owned by `crew_escape_retention` (schema 57): confirmed/check history is protected and every
+//! Capacity-pressure retention is owned by `crew_escape_retention` (schema 58): confirmed/check history is protected and every
 //! eligible eviction leaves a permanent suppression receipt and audit. Unclassified orphan events remain immutable.
 //!
 //! **Unreadable fails closed.** Every read maps any storage error, an unknown enum word or a damaged `areas` value to

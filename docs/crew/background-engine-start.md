@@ -1,6 +1,6 @@
 # Engine start for background crews (4h)
 
-Design note. Status: PR 1 (the `manual` event, Run now through the core, with no route yet) built; the budget, the listeners and the Review join remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
+Design note. Status: PR 1 (the `manual` event, Run now through the core) and PR 2 (the budget: turn and minute counting from engine events, and the daily per-engine budget) built; the listeners and the Review join remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
 
 ## 1. What exists today
 
@@ -21,9 +21,10 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core, with no
 ## 3. Budget
 
 - Per run: `turns` and `minutes`, set by the person, never defaulted, never money. Already stored.
-- Per day, per engine: runs and turns each engine may spend for this crew in a day. Not available today; the build adds it at creation, fixed like the run budget.
-- Spending: each engine turn adds one turn to the engine that ran it, minutes are wall time. No engine takes a hard limit, so the run is cancelled at the cap and the overshoot is shown.
-- Run budget spent: stopped `budget`, waits for review (exists). Daily budget spent: new events are refused with an audit row "daily budget spent: <engine>" and not queued.
+- Per day, per engine: runs and turns each engine may spend for this crew in a day, added at creation (PR 2: `daily` of the create body, migration 57), fixed like the run budget, never defaulted, never money. The day is the person's (`utc_offset_minutes`, the same clock the scheduled tasks take), so it resets at their midnight.
+- Spending: each engine turn adds one turn to the engine that ran it, counted from the engine event itself (`crew_worker_run_ended`, one call per turn), minutes are wall time. No engine takes a hard limit, so a run already started is cancelled at the cap (stopped `budget`, waiting for the person) and what the engine spent is shown, never clamped. A crew made before PR 2 has no daily budget: nothing is counted for it and nothing is refused. A daily budget that cannot be read is never taken as unspent: the start is refused, or the run stopped. The offset is fixed at creation, so a daylight-saving change moves the reset an hour off the wall clock.
+- Not built yet: review lanes, review fixes and merge-comment fixes are not reachable for a background task, so the Review join PR must gate them with the daily budget. Their turns would be counted but never stopped, because the run is no longer running by then.
+- Run budget spent: stopped `budget`, waits for review (exists). Daily budget spent: new events are refused before anything is stored — never held, never queued — with an audit row "daily budget spent: <engine>" (action `crew.background.daily.refused`) and a sentence that shows when the day turns.
 
 ## 4. Where the run lands in Review
 
@@ -45,7 +46,7 @@ All behind `CoreConfig::crew_preview`, tests first with fake engines.
 
 ## 7. Decisions (conservative defaults, the owner can change them)
 
-1. The daily budget resets at local midnight. A refusal shows the reset time.
+1. The daily budget resets at local midnight. A refusal shows the reset time. (Built in PR 2: the person's clock comes with the create body as `utc_offset_minutes`, the automations' own pattern, because the service cannot read the host's zone portably.)
 2. v1: every background merge waits for a person. No Autopilot auto-landing for background runs until escape data exists.
 3. Run now (`manual`) is part of 4h and is the first PR.
 4. `issue_label` and `dependency_update` are refused when turned on, with a plain reason (no listener).

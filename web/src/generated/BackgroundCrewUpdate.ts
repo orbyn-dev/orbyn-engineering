@@ -2,6 +2,7 @@
 import type { BackgroundTrigger } from "./BackgroundTrigger";
 
 /**
- * The body that changes a background crew: its name and its trigger. The repository, template and budget are fixed at creation.
+ * The body that changes a background crew: its name and its trigger. The repository, template, budget and daily budget are fixed at
+ * creation.
  */
 export type BackgroundCrewUpdate = { name?: string | null, trigger?: BackgroundTrigger | null, };

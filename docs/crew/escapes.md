@@ -77,7 +77,7 @@ migration PR to merge takes the next free number and any other renumbers at its 
 - `crew_escapes(id PK, project_id, merge_task_id UNIQUE REFERENCES crew_merges(task_id), source, state, gap, gap_by, engine,
   model, areas, lane, reason, found_unix, decided_unix, decided_by)`. `state`: `possible`, `confirmed`, `dismissed`.
   `source` and `gap` are checked enums. `reason` is at most 200 characters, redacted by the same scrub the ledger uses.
-- `crew_escape_events` (append-only outside migration 57's audited retention path; UPDATE always refused): `detected`, `confirmed`,
+- `crew_escape_events` (append-only outside migration 58's audited retention path; UPDATE always refused): `detected`, `confirmed`,
   `dismissed`, `reclassified`, `check_proposed`, `check_failed`, `check_proven`, `check_merged`, `check_withdrawn`;
   unique `(escape_id, kind, cause)`. The audit row is written in the same transaction as the state change (rule 6).
 - `crew_escape_checks(escape_id PK, path, task_id, state, proof)`; `proof` is JSON: commit ids and two booleans.
@@ -133,7 +133,7 @@ Migration **51** (`store/crew_escapes.sql`), numbered when it opened; a later me
 - **Thresholds** are one JSON document in the existing `settings` table under `crew_escape_thresholds` (not a `pref:` key, so the account sync never
   carries it): `report_days` 60, `follow_up_days` 14, `min_merges` 10, `rate_multiple` 2; `stored` says whether a person's values are in force.
   Absent means defaults; present but unparsable, unknown-field or out of range is `unreadable`, never the defaults.
-- **Retention.** Migration 57 adds the guarded clearing path below. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
+- **Retention.** Migration 58 adds the guarded clearing path below. `crew_merges.areas` is `CHECK(json_valid)`, so the revert trigger cannot see invalid JSON; valid JSON that is not a list of strings makes reads of that row `unreadable`.
 - **Display only.** Nothing reads the log for a decision: the breaker, the Router and every gate ignore it (decision 2). Test-covered for the breaker.
 
 ## As built: PR 2, person acts
@@ -216,7 +216,7 @@ No migration (the PR 1 tables already hold `post_merge_check` and `follow_up_fix
 
 ## Capacity pressure and writer migration (#686)
 
-Migration **57** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
+Migration **58** preserves all existing rows and trails. A changed gap is refused before it would exceed the 100-event detail limit; a possible
 escape stops gap changes at 99 events, reserving event 100 for confirm or dismiss. An identical gap on a non-dismissed escape remains an idempotent
 retry, including at capacity. A dismissed escape refuses every gap write, including an identical gap. Existing oversized trails are retained and get no more gap changes. The reserved final visible slot applies to new trails that have not already exceeded the cap.
 Detail reads retrieve the newest 101 events, use the extra event only to set `truncated`, and return the latest 100 in ascending append order, so a legacy trail's
@@ -247,9 +247,9 @@ unreadable/store/audit errors propagate. Existing core-owned check finish/merge 
 admission limit; they are not silently dropped to manufacture a hard cap.
 
 Current `Store` connections register escape writer protocol 57 before migrating. New triggers reject affected escape/event/check writes from an
-already-open older connection that lacks that protocol function; older services also reject schema 57 on reopen through the existing schema-version
+already-open older connection that lacks that protocol function; older services also reject schema 58 on reopen through the existing schema-version
 check. No deployed old process is assumed stopped by these source tests: normal Core startup still owns the data-directory lock. Migration is
-forward-only and tested on a populated schema-56 database. After an error, reopen with a compatible current service and retry; do not remove the
+forward-only and tested on a populated schema-57 database. After an error, reopen with a compatible current service and retry; do not remove the
 fence or restart an older writer against migrated data. Direct database tools must use the current writer protocol rather than bypass triggers.
 
 ## As built: PR 4, create a check

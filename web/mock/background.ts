@@ -11,8 +11,9 @@ import type { BackgroundRun } from "../src/generated/BackgroundRun.ts";
 import type { MockResponse } from "./api.ts";
 
 const budget = { turns: 40, minutes: 60 };
+const daily = { runs: 2, turns: 80 };
 const crew = (id: string, name: string, template: BackgroundCrew["template"], trigger: BackgroundCrew["trigger"], enabled: boolean, state: BackgroundCrew["state"], reviews: number): BackgroundCrew => ({
-  id, project_id: "p-app", name, template, trigger, budget, enabled, state, reviews_waiting: reviews, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-07T14:00:00Z",
+  id, project_id: "p-app", name, template, trigger, budget, daily, enabled, state, reviews_waiting: reviews, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-07T14:00:00Z",
 });
 const run = (id: string, crewId: string, state: BackgroundRun["state"], started: string, ended: string | null, extra: Partial<BackgroundRun> = {}): BackgroundRun => ({
   id, crew_id: crewId, state, turns_spent: 12, minutes_spent: 6, budget, review_waiting: state === "needs_review", started_at: started, updated_at: ended ?? started, ended_at: ended, ...extra,
@@ -56,6 +57,9 @@ function refusal(body: BackgroundCrewCreate): MockResponse | null {
   if (trigger.kind === "schedule" && trigger.every_hours == null) return invalid("a schedule trigger needs every_hours");
   if (!(budget.turns >= 1 && budget.turns <= 1000)) return invalid("the budget is 1 to 1000 turns");
   if (!(budget.minutes >= 1 && budget.minutes <= 1440)) return invalid("the budget is 1 to 1440 minutes");
+  if (!(body.daily.runs >= 1 && body.daily.runs <= 1000)) return invalid("the daily budget is 1 to 1000 runs");
+  if (!(body.daily.turns >= 1 && body.daily.turns <= 10000)) return invalid("the daily budget is 1 to 10000 turns");
+  if (!(body.utc_offset_minutes >= -840 && body.utc_offset_minutes <= 840)) return invalid("utc_offset_minutes is -840 to 840");
   return null;
 }
 const fail = (status: number, code: string, message: string): MockResponse => ({ status, body: { code, message } });
@@ -82,7 +86,7 @@ export function createBackgroundMock() {
         if (refused) return refused;
         if (state.crews.some((one) => one.name.toLowerCase() === wanted.name.trim().toLowerCase())) return invalid("this project already has a background crew with that name");
         ids += 1;
-        const made: BackgroundCrew = { ...crew(`bg-new-${ids}`, wanted.name.trim(), wanted.template, wanted.trigger, false, "idle", 0), project_id: wanted.project_id, budget: wanted.budget };
+        const made: BackgroundCrew = { ...crew(`bg-new-${ids}`, wanted.name.trim(), wanted.template, wanted.trigger, false, "idle", 0), project_id: wanted.project_id, budget: wanted.budget, daily: wanted.daily };
         state.crews = [made, ...state.crews];
         return { status: 200, body: made };
       }

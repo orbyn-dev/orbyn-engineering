@@ -1,4 +1,4 @@
--- Migration 57: guarded retention and permanent suppression receipts. Existing rows and events are unchanged.
+-- Migration 58 (escape writer protocol 57): guarded retention and permanent suppression receipts. Existing rows and events are unchanged.
 CREATE TABLE crew_escape_tombstones (
     merge_task_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,

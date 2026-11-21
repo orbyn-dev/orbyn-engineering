@@ -1,4 +1,4 @@
-//! The possible-escape scan at rest (slice 4k, PR 3; docs/crew/escapes.md). Reads and one write; migration 57 adds retention tombstones.
+//! The possible-escape scan at rest (slice 4k, PR 3; docs/crew/escapes.md). Reads and one write; migration 58 adds retention tombstones.
 //!
 //! - [`Store::crew_escape_scan_candidates`]: merges that reached a branch, in a project, with **no escape row yet**, newest first. A
 //!   merge with a row of any state (a dismissed one included) is never a candidate, so a dismissed escape is not offered again.

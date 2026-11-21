@@ -319,6 +319,11 @@ impl Core {
             &thread.project_id,
         )?;
         self.refuse_lease_conflict(&brief, &member, now)?;
+        // The commit the worker starts from is read once, before anything is stored, and the repository's data classes are
+        // read at it: the classes and the worker's base are one commit, and an edit made after this has no effect on the
+        // task. They are read before the task exists so a refusal that needs the router's answer (the daily budget) sees
+        // exactly the route the task would get.
+        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let trigger = links.crew_started.then(|| {
             links.trigger.clone().unwrap_or_else(|| {
                 tracing::warn!(
@@ -330,6 +335,32 @@ impl Core {
                 }
             })
         });
+        // Before anything is stored: a background crew's start is refused when the engine the router would give the run has
+        // spent the crew's daily budget (PR 2). It comes before the capacity pause, which would hold the event: a daily
+        // refusal is never queued.
+        if links
+            .trigger
+            .as_ref()
+            .is_some_and(|trigger| trigger.kind == PausedKind::Background)
+        {
+            self.refuse_background_daily(
+                &RouteInput {
+                    brief: &brief,
+                    run_id: run_id.clone(),
+                    created_at: created_at.clone(),
+                    role,
+                    lane: lane.clone(),
+                    lane_keeps_lead,
+                    author_engine: author_engine.clone(),
+                    lead_engine: CrewToken::new(thread.engine.clone()).ok(),
+                    default_engine: machine.default_engine.clone(),
+                    classes: Some(&classes),
+                },
+                &machine.views,
+                &thread.project_id,
+                &thread.id,
+            )?;
+        }
         self.capacity_start_check(
             &thread.project_id,
             links.crew_started.then_some((Priority::Low, true)),
@@ -380,9 +411,6 @@ impl Core {
             .set_crew_index_flags(&task.id, &text)
             .map_err(internal)?;
 
-        // The commit the worker starts from is read once, before routing, and the repository's data classes are read at it: the
-        // classes and the worker's base are one commit, and an edit made after this has no effect on the task.
-        let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
         let input = RouteInput {
             brief: &brief,
             run_id: run_id.clone(),

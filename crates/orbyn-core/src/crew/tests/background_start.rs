@@ -28,7 +28,8 @@ fn project(w: &World) -> String {
 fn crew_with(w: &World, name: &str, trigger: Value, turns: u32, minutes: u32, on: bool) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(w), "name": name, "template": "fix_failing_ci",
-        "trigger": trigger, "budget": { "turns": turns, "minutes": minutes }
+        "trigger": trigger, "budget": { "turns": turns, "minutes": minutes },
+        "daily": { "runs": 100, "turns": 1000 }, "utc_offset_minutes": 600
     }))
     .unwrap();
     let crew = w.core.background_create(&body).unwrap();
