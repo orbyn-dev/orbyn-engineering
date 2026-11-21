@@ -62,6 +62,17 @@ export function isBenignSdkRejection(reason) {
     args.some((a) => typeof a === "string" && /dump_zsh_state|dump_bash_state|__CURSOR_SANDBOX_ENV_RESTORE/.test(a));
 }
 
+const USAGE_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "reasoningTokens"];
+
+/** Adds one turn-ended usage to the run's total (T3 sums them); undefined when nothing was reported. */
+function addUsage(total, usage) {
+  if (typeof usage !== "object" || usage === null) return total;
+  const out = { ...(total ?? {}) };
+  for (const key of USAGE_KEYS) if (typeof usage[key] === "number") out[key] = (out[key] ?? 0) + usage[key];
+  out.totalTokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].reduce((n, k) => n + (out[k] ?? 0), 0);
+  return out;
+}
+
 function protocolError(name, message, kind) {
   return Object.assign(new Error(message), { name, kind });
 }
@@ -116,6 +127,8 @@ export function cursorFamily({ loadSdk, env = process.env }) {
 
       const settle = (session, run, result) => {
         const status = result?.status;
+        // The SDK's own result usage wins; without it (a cancel, the no-progress error) the turn-ended totals stand in.
+        result = { ...result, usage: result?.usage ?? run.usage };
         if (status === "finished") {
           return finish(session, run, { ok: true, result: { reason: "completed", threadDisposition: "reusable", usage: result.usage } });
         }
@@ -134,13 +147,13 @@ export function cursorFamily({ loadSdk, env = process.env }) {
         const clean = sanitize(cause);
         const kind = clean.kind;
         if (kind === "cancelled") {
-          return finish(session, run, { ok: true, result: { reason: "cancelled", threadDisposition: "reusable" } });
+          return finish(session, run, { ok: true, result: { reason: "cancelled", threadDisposition: "reusable", ...(run.usage ? { usage: run.usage } : {}) } });
         }
         const retry = kind === "rate_limit" || kind === "network" ? { retry: { why: kind } } : {};
         finish(session, run, {
           ok: false,
           error: { method: "send", cause: { name: clean.name, message: clean.message, kind, ...(clean.code ? { code: clean.code } : {}), ...(clean.status ? { status: clean.status } : {}) } },
-          result: { reason: "failed", threadDisposition: kind === "session_lost" ? "broken" : "reusable", ...retry },
+          result: { reason: "failed", threadDisposition: kind === "session_lost" ? "broken" : "reusable", ...(run.usage ? { usage: run.usage } : {}), ...retry },
         });
       };
 
@@ -205,7 +218,7 @@ export function cursorFamily({ loadSdk, env = process.env }) {
               if (typeof text !== "string" || text.trim() === "") throw protocolError("InvalidRequest", "send needs message text", "invalid_request");
               const { apiKey: _ignored, onDelta: _ignoredDelta, ...sendOptions } = request.options ?? {};
               const sendId = request.id;
-              const run = { sendId, done: false, ready: false, pending: [], handle: null, turnEnded: false };
+              const run = { sendId, done: false, ready: false, pending: [], handle: null, turnEnded: false, usage: undefined };
               const emit = (update) => ctx.send({ type: "delta", sendId, update });
               session.run = run;
               runs.set(sendId, session);
@@ -215,7 +228,10 @@ export function cursorFamily({ loadSdk, env = process.env }) {
                   ...sendOptions,
                   onDelta: async ({ update }) => {
                     if (run.done) return;
-                    if (update?.type === "turn-ended") run.turnEnded = true;
+                    if (update?.type === "turn-ended") {
+                      run.turnEnded = true;
+                      run.usage = addUsage(run.usage, update.usage);
+                    }
                     if (run.ready) emit(update);
                     else run.pending.push(update);
                   },

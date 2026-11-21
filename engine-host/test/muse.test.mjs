@@ -4,7 +4,7 @@ import { PassThrough } from "node:stream";
 import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { museFamily, SDK_VERSION } from "../src/families/muse.mjs";
+import { museFamily, museLaunch, SDK_VERSION, verbatimPath } from "../src/families/muse.mjs";
 import { runHost } from "../src/host.mjs";
 import { replayMuse } from "./replayMuse.mjs";
 
@@ -483,3 +483,19 @@ test("requests the family does not implement are UnsupportedRequest", async () =
 });
 
 void frameOf;
+
+test("Windows launcher: PATH and PATHEXT resolve muse, a .cmd runs under cmd.exe, other platforms are unchanged", () => {
+  const env = { Path: "C:\\bin;C:\\npm", PathExt: ".EXE;.CMD", comspec: "C:\\Windows\\System32\\cmd.exe" };
+  const only = (hit) => ({ platform: "win32", exists: (p) => p === hit });
+  assert.deepEqual(museLaunch("muse", env, only("C:\\npm\\muse.CMD")), { command: "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/c", "C:\\npm\\muse.CMD"] });
+  assert.deepEqual(museLaunch("muse", env, only("C:\\bin\\muse.EXE")), { command: "C:\\bin\\muse.EXE", args: [] });
+  assert.deepEqual(museLaunch("C:\\Program Files\\m\\muse.cmd", env, only("C:\\Program Files\\m\\muse.cmd")).args, ["/d", "/c", "@", "C:\\Program Files\\m\\muse.cmd"]);
+  assert.deepEqual(museLaunch("muse", env, only("nothing")), { command: "muse", args: [] }, "unresolved: let the spawn report it");
+  assert.deepEqual(museLaunch("muse", env, { platform: "darwin" }), { command: "muse", args: [] });
+});
+
+test("verbatim paths for Windows turn roots", () => {
+  assert.equal(verbatimPath("C:\\work\\p"), "\\\\?\\C:\\work\\p");
+  assert.equal(verbatimPath("\\\\srv\\share\\p"), "\\\\?\\UNC\\srv\\share\\p");
+  assert.equal(verbatimPath("\\\\?\\C:\\p"), "\\\\?\\C:\\p");
+});
