@@ -24,6 +24,7 @@
     ["DELETE","/api/threads/{id}/previews/{tab}/recording","local"],
     ["DELETE","/api/threads/{id}/pulls/{number}","local"],
     ["DELETE","/api/threads/{id}/pulls/{number}/watch","local"],
+    ["DELETE","/api/threads/{id}/repos/{repo_id}","person"],
     ["DELETE","/api/threads/{id}/terminals/{terminal}","local"],
     ["DELETE","/api/threads/{id}/terminals/{terminal}/scrollback","local"],
     ["GET","/api/account","local"],
