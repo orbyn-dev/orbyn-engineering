@@ -54,7 +54,6 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
   const sending = useRef(false);
   const undoing = useRef(false);
   const retrying = useRef(false);
-  const ranProposal = useRef<string | null>(null);
   const thread = useWorkspace((state) => state.threads[threadId]);
   const projectThreads = useWorkspace((state) => state.threads);
   const pushToast = useUi((state) => state.pushToast);
@@ -184,17 +183,8 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
     }
   };
 
-  const runProposal = () => {
-    if (!offered || offered.proposal.secret || ranProposal.current === offered.key) return;
-    const controls = controlsOf(keyOf);
-    if (!controls) return void pushToast("This terminal isn't open, so nothing was run.");
-    ranProposal.current = offered.key;
-    controls.write(`${offered.proposal.command}\r`);
-    recordCommand(keyOf, offered.proposal.command);
-    setDismissedProposal(offered.key);
-  };
-  const editProposal = () => {
-    if (!offered || offered.proposal.secret) return;
+  const acceptProposal = () => {
+    if (!offered || offered.proposal.secret || offered.key === dismissedProposal) return;
     setDismissedProposal(offered.key);
     edit(offered.proposal.command);
     field.current?.focus();
@@ -356,7 +346,7 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
         </div>
       ) : null}
       {offered && offered.key !== dismissedProposal ? (
-        <ProposalCard engine={engine.name} proposal={offered.proposal} busy={ranProposal.current === offered.key} onRun={runProposal} onEdit={editProposal} onCancel={() => setDismissedProposal(offered.key)} />
+        <ProposalCard engine={engine.name} proposal={offered.proposal} onAccept={acceptProposal} onDismiss={() => setDismissedProposal(offered.key)} />
       ) : null}
       <p className="term-input-note" role="status" aria-live="polite">
         {route.note}
