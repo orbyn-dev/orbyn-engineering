@@ -3,6 +3,7 @@ import { steerWithMark } from "../../../product/state/steerMarks";
 import { composerMarkup } from "./composerMarkup";
 import { MentionMenu, type Suggestion } from "./MentionMenu";
 import { AttachmentStrip } from "./AttachmentStrip";
+import { useComposerDrop } from "./useComposerDrop";
 import { CodeBar } from "./CodeBar";
 import { ComposerContext } from "./ComposerContext";
 import { controlsMenuItems } from "./controlsMenu";
@@ -39,7 +40,6 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
-  type DragEvent,
   type KeyboardEvent,
 } from "react";
 import { api } from "../api";
@@ -62,7 +62,7 @@ import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../product/state/modelStore";
 import { QueuedMessages } from "../QueuedMessages";
 import { openSideChat } from "../sideChat";
-import { FILE_MENTION_TYPE, triggerAt } from "../../../product/composer/skillMention";
+import { triggerAt } from "../../../product/composer/skillMention";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
@@ -101,8 +101,11 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
-  const { attachments, setAttachments, filePicker, uploading, startUpload, upload } = useAttachments(thread, setError);
-  const [dragging, setDragging] = useState(false);
+  const { attachments, setAttachments, filePicker, uploading, startUpload, upload, cancel } = useAttachments(thread, setError);
+  const { transcripts, boxProps, layer } = useComposerDrop(thread, upload, (mentioned) => {
+    setDraft(thread.id, `${draft.trimEnd()}${draft.trim() ? " " : ""}@${mentioned} `);
+    field.current?.focus();
+  });
   const [recall, setRecall] = useState<RecallPosition | null>(null);
   const [limitsOpen, setLimitsOpen] = useState(false);
   const shiftPaste = useRef(false);
@@ -158,7 +161,7 @@ export function Composer({
   // The draft is kept while the Orbyn service does not answer, and sending waits for it.
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
-  const ready = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
+  const ready = outbound !== "" && !sending && !uploading && !transcripts.reading && overBy === 0 && !serviceDown && !compacting;
   const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine);
   const canSend = ready && !gate.noticeOpen && !gate.refused && !hostLine.sendBlocked;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
@@ -261,7 +264,7 @@ export function Composer({
         return true;
       }
       await Promise.all(pendingHere.map((approval) => api.decideApproval(approval.id, false, false)));
-      const ids = attachments.flatMap((file) => file.id ?? []);
+      const ids = [...attachments.flatMap((file) => file.id ?? []), ...transcripts.ids];
       const start = () => withoutApprovals ? cursorThreadApi().sendWithoutApprovals(thread.id, { prompt: prompt.trim(), attachment_ids: ids }).then(overrideRun) : api.startRun(thread.id, prompt.trim(), ids);
       const run = busy ? null : await start();
       if (steering) {
@@ -269,6 +272,7 @@ export function Composer({
         if (steered.state === "queued") useUi.getState().pushToast("This engine reads it on its next turn");
       } else if (busy) await api.enqueue(thread.id, prompt.trim(), ids);
       setAttachments([]);
+      transcripts.consume();
       consumeChips(thread.id, chips);
       setRecall(null);
       // Text typed after pressing Send stays; only what was sent is removed.
@@ -326,15 +330,6 @@ export function Composer({
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) =>
     handleComposerPaste(event, { thread, shiftPaste, addChips, upload });
 
-  const onDrop = (event: DragEvent) => {
-    event.preventDefault();
-    setDragging(false);
-    const mentioned = event.dataTransfer.getData(FILE_MENTION_TYPE);
-    if (mentioned) {
-      setDraft(thread.id, `${draft.trimEnd()}${draft.trim() ? " " : ""}@${mentioned} `);
-      field.current?.focus();
-    } else if (event.dataTransfer.files.length > 0) upload([...event.dataTransfer.files]);
-  };
 
   const droppedHere = useDraftStore((state) => state.dropped[thread.id]);
   useEffect(() => {
@@ -466,13 +461,7 @@ export function Composer({
       ) : null}
       <div
         className="composer-box"
-        data-dragging={dragging || undefined}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
+        {...boxProps}
       >
         <Presence>
           {menuOpen ? (
@@ -502,9 +491,10 @@ export function Composer({
             )
           }
         />
+        {layer}
         {fence ? <CodeBar thread={thread} draft={draft} fence={fence} setDraft={setDraft} /> : null}
         {attachments.length > 0 ? (
-          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} />
+          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} cancel={cancel} />
         ) : null}
         {overBy > 0 ? (
           <p className="composer-over" role="alert">
