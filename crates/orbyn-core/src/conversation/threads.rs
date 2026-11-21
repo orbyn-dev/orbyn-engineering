@@ -112,6 +112,10 @@ impl Core {
             }
             if let Err(error) = self.runs.admit(&id, LIMIT_CONTINUATION, "system:limit") {
                 tracing::debug!(%error, "a limit continuation did not start");
+                // It never ran, so it does not count: it stays scheduled for the next pass.
+                if let Err(error) = self.store.refund_resume_try(&id) {
+                    tracing::warn!(%error, "could not give back a limit continuation");
+                }
             }
         }
     }

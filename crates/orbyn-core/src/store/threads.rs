@@ -437,6 +437,19 @@ impl Store {
         })
     }
 
+    /// Gives back a try that never started a run, so a refused start (an engine update, a
+    /// workspace that is busy) does not use up the thread's automatic continuations.
+    pub fn refund_resume_try(&self, id: &str) -> Result<()> {
+        self.commit(|tx, _| {
+            tx.execute(
+                "UPDATE threads SET resume_tries = resume_tries - 1
+                 WHERE id = ?1 AND resume_tries > 0",
+                [id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Ends automatic continuation for a limit that used up its tries: nothing stays
     /// scheduled, the limit and its reset stay on the thread, and the timeline says the
     /// continuation stopped, so the thread waits for you.
