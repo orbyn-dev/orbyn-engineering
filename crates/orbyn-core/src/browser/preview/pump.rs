@@ -12,6 +12,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+/// How long one periodic read may take. A read sent as the page swaps documents can
+/// go unanswered, and the tab's session is held for the whole wait, so a lost reply
+/// skips this look instead of stalling the pump until the command timeout.
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub(super) fn decode_base64(text: &str) -> Vec<u8> {
     let value = |byte: u8| match byte {
         b'A'..=b'Z' => Some(byte - b'A'),
@@ -74,15 +79,14 @@ pub(super) async fn pump(tab: Arc<Tab>) {
             last.clear();
         }
         let view_due = viewers > 0 && last_view.elapsed() >= FRAME_EVERY;
-        if !view_due && !record_due {
-            continue;
-        }
+        // The title and icon are the tab's own state, shown in its tab strip, so they are
+        // refreshed even while nobody watches frames.
         if since_history.elapsed() >= FRAME_EVERY * HISTORY_TICKS {
             since_history = Instant::now();
             let mut session = tab.session.lock().await;
-            let history = session.history().await;
-            let title = session.title().await;
-            let icon = session.read(FAVICON).await;
+            let history = session.history_within(READ_TIMEOUT).await;
+            let title = session.title_within(READ_TIMEOUT).await;
+            let icon = session.read_within(FAVICON, READ_TIMEOUT).await;
             if let Ok(history) = history {
                 tab.note_history(&history);
             }
@@ -93,6 +97,9 @@ pub(super) async fn pump(tab: Arc<Tab>) {
                 let mut info = lock(&tab.info);
                 info.favicon_url = favicon_url(&icon, &info.url);
             }
+        }
+        if !view_due && !record_due {
+            continue;
         }
         // The screenshot and its input cue snapshot share the page-session owner.
         let (frame, captured) = {

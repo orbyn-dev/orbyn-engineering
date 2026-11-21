@@ -1,7 +1,8 @@
 /**
- * The escape frame ids built here, each opening at its Preview hash. The log with its states, the possible list, the
- * escape pages and the check frames are Crew Designs v79 on the real routes (./live/screens); the rest are still the
- * v20 drawn frames.
+ * The escape frame ids built here, each opening at its Preview hash. The log with its states and narrow variants, the
+ * possible list, the escape pages, the check frames and the settings sheet are Crew Designs v79 on the real routes
+ * (./live/screens). The rest are drawn frames with no read behind them: the mark dialog, the dashboard and the counts
+ * cards are v79, the create-check proposal form is v20.
  */
 export const ESCAPE_FRAMES = [
   "escape-log",

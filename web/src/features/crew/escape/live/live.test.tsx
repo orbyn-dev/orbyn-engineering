@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { LiveEscapes } from "./LiveEscapes";
 import { log, posts, project, row, stubFetch, type Answer, type Call } from "./support";
@@ -100,6 +100,102 @@ describe("the escape log on the real routes", () => {
   it("sends no write to draw: only the reads ran", async () => {
     render(<LiveEscapes view="log" />);
     await screen.findByText("Escapes");
+    expect(posts(calls)).toHaveLength(0);
+  });
+});
+
+/** Six escapes, as the design's sample page holds: enough for the panel's four-card limit to show. */
+const sixRows = () =>
+  Array.from({ length: 6 }, (_, index) =>
+    row({
+      id: `esc-${index}`,
+      state: index < 3 ? "confirmed" : "possible",
+      reason: `Escape number ${index}`,
+      decided_unix: index < 3 ? 1_762_501_000 : null,
+      decided_by: index < 3 ? "person" : null,
+    }),
+  );
+
+/** A ResizeObserver that reports one width as soon as an element is watched, as a laid-out browser does. */
+function stubWidth(width: number) {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: (entries: unknown[]) => void) {}
+      observe() {
+        this.callback([{ contentRect: { width } }]);
+      }
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("the narrow log (Crew Designs v79 escape-narrow-window and escape-narrow-panel)", () => {
+  it("draws the 640 px window as two tiles and a card per escape, never the table", async () => {
+    stubWidth(600);
+    render(<LiveEscapes view="log" />);
+    expect(await screen.findByText("Escapes")).toBeInTheDocument();
+    expect(screen.getByText("Rate")).toBeInTheDocument();
+    expect(screen.getByText("Not measured")).toBeInTheDocument();
+    expect(screen.getByText(/None in v1/)).toBeInTheDocument();
+    expect(screen.getByText(/2 possible · 1 dismissed, apart/)).toBeInTheDocument();
+    expect(screen.getByText(/Of 38 merges · last 60 days/)).toBeInTheDocument();
+    expect(screen.getByText("orbyn-engineering")).toBeInTheDocument();
+    expect(screen.queryByText("When found")).toBeNull();
+    expect(screen.getByText("Old returnTo links stopped redirecting")).toBeInTheDocument();
+    expect(screen.getByText(/Showing 3 of 6 · newest found first/)).toBeInTheDocument();
+  });
+
+  it("draws the 320 px panel as one counts card and the first four escapes, cards only", async () => {
+    answers.log = { status: 200, body: log({ rows: sixRows() }) };
+    render(<LiveEscapes view="log" panel />);
+    expect(await screen.findByText("3 confirmed")).toBeInTheDocument();
+    expect(screen.getByText(/2 possible · 1 dismissed, counted apart/)).toBeInTheDocument();
+    expect(screen.getByText(/No rate: Not measured/)).toBeInTheDocument();
+    expect(screen.getByText("Escape number 3")).toBeInTheDocument();
+    expect(screen.queryByText("Escape number 4")).toBeNull();
+    expect(screen.getByText(/Showing 4 of 6. The table, the timeline of an escape and its check are behind Open in Crew./)).toBeInTheDocument();
+    expect(screen.queryByText("Escapes")).toBeNull();
+    expect(screen.queryByText("When found")).toBeNull();
+    expect(screen.queryByText("orbyn-engineering")).toBeNull();
+  });
+
+  it("goes narrow by its own measured width, and stays the full page at 640 px or more", async () => {
+    stubWidth(640);
+    render(<LiveEscapes view="log" />);
+    expect(await screen.findByText("When found")).toBeInTheDocument();
+    expect(screen.queryByText("Rate")).toBeNull();
+  });
+
+  it("draws Open in Crew on the panel only, and it only navigates", async () => {
+    render(<LiveEscapes view="log" panel />);
+    await screen.findByText("3 confirmed");
+    await userEvent.click(screen.getByRole("button", { name: "Open in Crew" }));
+    expect(window.location.hash).toBe("#/preview/crew/escape-log");
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("keeps a narrow unreadable log to one dash card, never four tiles", async () => {
+    stubWidth(600);
+    answers.log = { status: 500, body: { code: "unreadable", message: "The escape log on this device can’t be read." } };
+    render(<LiveEscapes view="log" />);
+    expect(await screen.findByText(/Can’t read escapes/)).toBeInTheDocument();
+    expect(screen.getAllByText("—")).toHaveLength(1);
+    expect(screen.getAllByText(/Not shown while the log can’t be read/)).toHaveLength(1);
+  });
+
+  it("reads the log once and sends no write, at either narrow width", async () => {
+    stubWidth(600);
+    render(<LiveEscapes view="log" panel />);
+    await screen.findByText("3 confirmed");
+    render(<LiveEscapes view="log" />);
+    await screen.findByText("Rate");
+    expect(calls.filter(({ url }) => url.startsWith("/api/crew/escapes?"))).toHaveLength(2);
     expect(posts(calls)).toHaveLength(0);
   });
 });

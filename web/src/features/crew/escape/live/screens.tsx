@@ -1,15 +1,19 @@
 import type { ComponentType } from "react";
 import { LiveEscapes } from "./LiveEscapes";
+import { LiveEscapeSettings } from "./LiveEscapeSettings";
 
 /**
  * The escape frames of Crew Designs v79, built on the real escape routes. Each opens at '#/preview/crew/<id>'; a detail
  * frame names its escape in the hash's query ('?id=<escape id>'), so the same frame draws whichever escape it is asked
  * for. A check frame opens the escape's own page too: the check is drawn in whichever state the read carries, and the
  * retry and withdraw frames are that page with their dialog opened by a click. The log's empty, low-sample, unreadable
- * and at-limit states are the log read's own answers, not separate screens.
+ * and at-limit states are the log read's own answers, not separate screens, and its narrow variants (a 640 px window and
+ * the 320 px side panel) are the same read drawn with cards instead of the table.
  */
 export const ESCAPE_LIVE_FRAMES = [
   "escape-log",
+  "escape-narrow-window",
+  "escape-narrow-panel",
   "escape-empty",
   "escape-low-sample",
   "escape-error",
@@ -28,6 +32,7 @@ export const ESCAPE_LIVE_FRAMES = [
   "escape-check-withdraw",
   "escape-check-withdrawn",
   "escape-limit",
+  "escape-settings",
 ] as const;
 
 export type EscapeLiveFrameId = (typeof ESCAPE_LIVE_FRAMES)[number];
@@ -37,6 +42,13 @@ export const escapeIdOfHash = (): string => new URLSearchParams(window.location.
 
 export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-log": () => <LiveEscapes view="log" />,
+  // The design's window is 640 px; the page goes narrow below 640 px by its own measure, so this frame is held just under it.
+  "escape-narrow-window": () => (
+    <div style={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
+      <LiveEscapes view="log" />
+    </div>
+  ),
+  "escape-narrow-panel": () => <LiveEscapes view="log" panel />,
   "escape-empty": () => <LiveEscapes view="log" />,
   "escape-low-sample": () => <LiveEscapes view="log" />,
   "escape-error": () => <LiveEscapes view="log" />,
@@ -55,4 +67,5 @@ export const ESCAPE_LIVE_SCREENS: Record<EscapeLiveFrameId, ComponentType> = {
   "escape-check-withdraw": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-check-withdrawn": () => <LiveEscapes view="detail" id={escapeIdOfHash()} />,
   "escape-limit": () => <LiveEscapes view="log" />,
+  "escape-settings": () => <LiveEscapeSettings />,
 };

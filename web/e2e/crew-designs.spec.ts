@@ -44,6 +44,8 @@ for (const frame of [...ESCAPE_DRAWN_FRAMES, ...CAPACITY_FRAMES, ...ORACLE_FRAME
 /** What each live escape frame must show once it has read the mock: text only a read can fill, never sample copy. */
 const LIVE_PROOF: Record<(typeof ESCAPE_LIVE_FRAMES)[number], (page: Page) => ReturnType<Page["getByText"]>> = {
   "escape-log": (page) => page.getByText(/^As of /),
+  "escape-narrow-window": (page) => page.getByText(/^Showing \d+ of \d+ · newest found first$/),
+  "escape-narrow-panel": (page) => page.getByText(/^Showing \d+ of \d+\. The table, the timeline/),
   "escape-empty": (page) => page.getByText("No escapes in the last 60 days"),
   "escape-low-sample": (page) => page.getByText(/Fewer than 10 merges in the last 60 days \(6\)/),
   "escape-error": (page) => page.getByText(/Can’t read escapes/),
@@ -62,6 +64,7 @@ const LIVE_PROOF: Record<(typeof ESCAPE_LIVE_FRAMES)[number], (page: Page) => Re
   "escape-check-withdraw": (page) => page.getByText("Withdraw this check?"),
   "escape-check-withdrawn": (page) => page.getByText(/A new proposal replaces this one/),
   "escape-limit": (page) => page.getByText(/escape limit\. A new escape is not recorded/),
+  "escape-settings": (page) => page.getByText("60 days · default"),
 };
 
 for (const frame of ESCAPE_LIVE_FRAMES) {
