@@ -183,6 +183,10 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         known_engine_ids: known_engine_ids(std::env::var_os("ORBYN_KNOWN_ENGINE_IDS").as_deref())?,
         cache_dir: None,
         approval_timeout: defaults.approval_timeout,
+        engine_host: orbyn_core::agents::driver::host::HostConfig::from_env(
+            std::env::var_os("ORBYN_ENGINE_HOST"),
+            std::env::var("ORBYN_ENGINE_HOST_CLAUDE").ok().as_deref(),
+        ),
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds

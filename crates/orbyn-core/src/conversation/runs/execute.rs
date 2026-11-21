@@ -90,7 +90,8 @@ impl RunManager {
         let (state, message) = match outcome {
             EngineOutcome::Completed => (RunState::Completed, None),
             EngineOutcome::Cancelled => (RunState::Cancelled, None),
-            EngineOutcome::Failed(message) => {
+            EngineOutcome::Failed(message)
+            | EngineOutcome::FailedWith(crate::agents::driver::Failure { message, .. }) => {
                 let sign_in = self.engines.driver(&scope.engine).ok();
                 let sign_in = sign_in.as_ref().and_then(|driver| driver.sign_in_command());
                 let sign_in = sign_in.as_deref();
