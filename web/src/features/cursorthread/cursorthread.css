@@ -1,0 +1,50 @@
+/* The Cursor thread cards (Engineer frames cursor-thread-*). Tokens only; the frame's metrics: 12px radius, 13px text. */
+.ct-notice,
+.ct-refused {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-xl);
+  font-size: var(--text-small);
+}
+.ct-notice {
+  align-items: flex-start;
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.ct-notice > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.ct-notice-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.ct-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ct-refused {
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--color-dangerSoft);
+  color: var(--color-danger);
+}
+.ct-refused > svg {
+  flex: none;
+}
+.ct-refused > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ct-role {
+  color: var(--color-muted);
+}

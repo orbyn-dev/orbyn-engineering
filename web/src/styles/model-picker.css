@@ -355,6 +355,17 @@
   color: var(--color-muted);
   font-size: var(--text-meta);
 }
+/* A mode the engine refuses at run start: dimmed, still reachable by keyboard so the reason can be heard, and never picked. */
+.access-segment button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.access-refused {
+  margin-top: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  line-height: 1.4;
+}
 @container (width < 480px) {
   .composer-access span {
     position: absolute;

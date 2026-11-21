@@ -24,6 +24,7 @@ import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
+import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
 import { useThreadSettings } from "./useThreadSettings";
 import { useStash } from "./useStash";
@@ -146,6 +147,7 @@ export function Composer({
       (state.projects.data?.find((project) => project.id === thread.project_id)?.is_git ?? false),
   );
   const busy = thread.active_run !== null;
+  const gate = useEngineGate(thread, engine, setError);
   const outbound = useMemo(() => promptWithChips(draft, chips), [draft, chips]);
   const overBy = charactersOver(outbound);
   const styled = useMemo(() => (draft && draft.length <= STYLED_CHARS ? composerMarkup(draft) : null), [draft]);
@@ -153,7 +155,9 @@ export function Composer({
   // The draft is kept while the Orbyn service does not answer, and sending waits for it.
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
-  const canSend = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
+  const ready = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
+  // The first-run notice holds Send until it is answered; Continue sends the message itself once it has been.
+  const canSend = ready && !gate.noticeOpen;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -214,8 +218,8 @@ export function Composer({
     return true;
   };
 
-  const send = async (followUp: "default" | "opposite" = "default") => {
-    if (!canSend) return false;
+  const send = async (followUp: "default" | "opposite" = "default", noticeAnswered = false) => {
+    if (!(noticeAnswered ? ready : canSend)) return false;
     const typed = draft;
     const prompt = promptWithChips(draft, chips);
     const serviceCommand = /^\/(compact|goal)(?:\s|$)/.exec(typed.trim());
@@ -242,6 +246,7 @@ export function Composer({
     const steering = busy && (followUp === "default" ? !queued : queued);
     setSending(true);
     setError(null);
+    gate.clear();
     try {
       await beforeSend?.();
       // Claude hears a typed reply as the reason it was declined, so nothing is queued.
@@ -272,6 +277,7 @@ export function Composer({
       return true;
     } catch (failure) {
       onSendFailed?.();
+      if (gate.onSendFailure(failure)) return false;
       const known = toFailure(failure);
       if (known.code === "folder_untrusted") {
         navigate({ name: "trust", projectId: thread.project_id, threadId: thread.id });
@@ -413,6 +419,7 @@ export function Composer({
     extras: thread.options ?? {},
     access: unmanaged ? null : access,
     modes: offeredModes(engine),
+    refused: gate.refused.modes.length > 0 ? gate.refused : undefined,
     onEffort: (value) => void setEffort(value),
     onOption: (option, value) => {
       setError(null);
@@ -446,6 +453,7 @@ export function Composer({
         onEdit={(prompt) => setDraft(thread.id, draft.trim() ? `${draft}\n\n${prompt}` : prompt)}
       />
       <QuestionCard threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
+      {gate.cards(() => void send("default", true))}
       <ComposerBanners engine={engine} />
       <CompactOffer threadId={thread.id} engine={thread.engine} active={busy} items={log?.items ?? []} />
       {runId !== null && runId === stoppedRun ? <StopNotice threadId={thread.id} runId={runId} /> : null}
