@@ -308,6 +308,18 @@ impl EngineDriver for CodexDriver {
             .await
     }
 
+    /// One tool's descriptor from an MCP App's own server, through a short-lived
+    /// app-server in the thread's checkout. It answers `mcpServerStatus/list` for that
+    /// one server; no thread is started and nothing is sent to a model.
+    async fn mcp_app_tool_info(
+        &self,
+        cwd: &std::path::Path,
+        server: &str,
+        tool: &str,
+    ) -> Result<Option<Value>> {
+        self.app_tool_info(cwd, server, tool).await
+    }
+
     async fn tools(
         &self,
         cwd: &std::path::Path,

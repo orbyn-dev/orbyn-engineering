@@ -164,7 +164,7 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     (
         "POST",
         "/api/crew/background/{id}/disable",
-        "core background_set_enabled: stops a run in progress with the reason disabled, audited in the same transaction; local only",
+        "core background_turn_off: stops a run in progress with the reason disabled and cancels its worker's task, audited in the same transaction; local only",
     ),
     (
         "POST",
@@ -744,7 +744,7 @@ async fn merge_queue(
     State(state): State<AppState>,
     query: QueryMap,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.autopilot_merge_queue(page(&query)?)?))
+    Ok(Json(state.core.autopilot_merge_queue(page(&query)?).await?))
 }
 
 async fn watch(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
@@ -887,7 +887,7 @@ async fn background_disable(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.background_set_enabled(&id, false)?))
+    Ok(Json(state.core.background_turn_off(&id).await?))
 }
 
 async fn background_delete(

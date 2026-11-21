@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use orbyn_contracts::{
     AgUiEvent, Attachment, EngineTier, ForcedStop, ModelSelection, PermissionMode, QueuedMessage,
-    Run, RunState, SteerState, Thread, ThreadGoal,
+    Run, RunState, SteerDelivery, SteerResult, SteerState, SteerStateEvent, Thread, ThreadGoal,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use crate::agents::driver::diagnostics;
 use crate::agents::driver::{
     EngineDriver, EngineEvent, EngineOutcome, GoalAction, PermissionRequest, RunControl, RunHandle,
-    RunKind, RunSpec,
+    RunKind, RunSpec, SteerMessage,
 };
 use crate::agents::engines::EngineManager;
 use crate::agents::selection;
@@ -319,8 +319,17 @@ struct Stops {
 struct ActiveRun {
     stops: Stops,
     task: Option<JoinHandle<()>>,
-    input: Option<mpsc::UnboundedSender<String>>,
+    input: Option<mpsc::UnboundedSender<SteerMessage>>,
     control: Option<mpsc::UnboundedSender<RunControl>>,
+}
+
+/// The `CUSTOM steer.state` marker for one steer, as the timeline reads it.
+fn steer_state(message_id: &str, state: SteerDelivery) -> AgUiEvent {
+    SteerStateEvent {
+        message_id: message_id.to_owned(),
+        state,
+    }
+    .into_event()
 }
 
 async fn sleep_until_due(due: Option<tokio::time::Instant>) {

@@ -87,29 +87,81 @@ impl Core {
                     return Err(CoreError::FolderUntrusted);
                 }
                 let guard = Guard::with_library(&target.path, &data_dir, workspace.root().ok())?;
-                // Inspect all live threads, including other trusted project
-                // registrations over this checkout. Admission uses this same fence.
-                // A thread counts when a run is going or its engine console is open: a
-                // console runs an agent without a run record. A person's own terminal does
-                // not. Folders are compared by the name the project was registered under
-                // and by the real one, so another spelling cannot slip past the fence.
                 let roots = [target.path.clone(), guard.root().to_path_buf()];
-                if store.list_threads(None, false)?.iter().any(|thread| {
-                    let cwd = plain(Path::new(&thread.cwd));
-                    let real = crate::util::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
-                    let inside = roots.iter().any(|root| {
-                        [&cwd, &real]
-                            .iter()
-                            .any(|cwd| cwd.starts_with(root) || root.starts_with(cwd))
-                    });
-                    inside
-                        && (thread.active_run.is_some()
-                            || crate::agents::console::console_alive(&terminals, &thread.id))
-                }) {
-                    return Err(CoreError::PolicyDenied(
-                        "This worktree has an active session.".into(),
-                    ));
+                refuse_active_sessions(&store, &terminals, &roots)?;
+                apply(&guard, &action)
+            });
+            if result.is_ok() {
+                explorer.changed(&project_id);
+            }
+            finish(&store, audit, result)
+        })
+        .await
+        .map_err(|_| CoreError::Internal("The file action ended unexpectedly.".into()))?
+    }
+
+    /// A person's create, rename (move) or nonrecursive delete in a thread's checkout:
+    /// the R1 `mutate`. It uses the same guard, fresh-authority fence and effect path
+    /// as the explorer's actions, addressed by thread instead of a worktree id.
+    pub async fn mutate_thread_files(
+        &self,
+        thread_id: &str,
+        action: &ExplorerFileAction,
+        actor: &str,
+    ) -> Result<()> {
+        let _writer = self.explorer.writer.clone().lock_owned().await;
+        let audit = AuditRecord {
+            actor: actor.to_owned(),
+            action: "file.mutate".into(),
+            target: thread_id.to_owned(),
+            decision: None,
+            source: "user".into(),
+            thread_id: Some(thread_id.to_owned()),
+            run_id: None,
+            detail: json!({"action": kind(action)}),
+        };
+        // A durable attempt is required before any filesystem effect. No contents or
+        // arbitrary client paths are copied to the audit record.
+        self.store.append_audit(&audit)?;
+        let prepared = async {
+            let thread = self.store.thread(thread_id)?;
+            let project = self.store.project(&thread.project_id)?;
+            if !project.trusted {
+                return Err(CoreError::FolderUntrusted);
+            }
+            if !Path::new(&thread.cwd).is_dir() {
+                return Err(CoreError::NotFound("thread checkout".into()));
+            }
+            let guard = Guard::with_library(
+                Path::new(&thread.cwd),
+                &self.config.data_dir,
+                self.workspace.root().ok(),
+            )?;
+            Ok((project, guard))
+        }
+        .await;
+        let (project, guard) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return finish(&self.store, audit, Err(error)),
+        };
+        let (store, workspace, explorer) = (
+            self.store.clone(),
+            self.workspace.clone(),
+            self.explorer.clone(),
+        );
+        let terminals = self.terminals.clone();
+        let (project_id, action) = (project.id, action.clone());
+        let roots = vec![guard.root().to_path_buf()];
+        // Move the serialization permit into the blocking task: dropping an HTTP
+        // future cannot let a second action race a still-running filesystem call.
+        let permit = _writer;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let result = workspace.admit_with(|| {
+                if !store.project(&project_id)?.trusted {
+                    return Err(CoreError::FolderUntrusted);
                 }
+                refuse_active_sessions(&store, &terminals, &roots)?;
                 apply(&guard, &action)
             });
             if result.is_ok() {
@@ -122,7 +174,40 @@ impl Core {
     }
 }
 
-fn finish(store: &crate::store::Store, audit: AuditRecord, result: Result<()>) -> Result<()> {
+/// Refuses when a run is going or an engine console is open in a folder that overlaps
+/// `roots`. No thread id exempts a run; a person's own terminal does not count.
+/// Folders are compared by the name the project was registered under and by the real
+/// one, so another spelling cannot slip past the fence.
+pub(super) fn refuse_active_sessions(
+    store: &crate::store::Store,
+    terminals: &crate::host::terminal::TerminalManager,
+    roots: &[PathBuf],
+) -> Result<()> {
+    let busy = store.list_threads(None, false)?.iter().any(|thread| {
+        let cwd = plain(Path::new(&thread.cwd));
+        let real = crate::util::canonicalize(&cwd).unwrap_or_else(|_| cwd.clone());
+        let inside = roots.iter().any(|root| {
+            [&cwd, &real]
+                .iter()
+                .any(|cwd| cwd.starts_with(root) || root.starts_with(cwd))
+        });
+        inside
+            && (thread.active_run.is_some()
+                || crate::agents::console::console_alive(terminals, &thread.id))
+    });
+    if busy {
+        return Err(CoreError::PolicyDenied(
+            "This worktree has an active session.".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn finish(
+    store: &crate::store::Store,
+    audit: AuditRecord,
+    result: Result<()>,
+) -> Result<()> {
     let mut detail = audit.detail.clone();
     detail["error"] = json!(result.as_ref().err().map(CoreError::code));
     store.append_audit(&AuditRecord {

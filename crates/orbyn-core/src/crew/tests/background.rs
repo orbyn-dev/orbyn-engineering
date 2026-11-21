@@ -411,8 +411,8 @@ fn reaching_the_budget_stops_the_run_and_queues_a_review() {
     assert!(f.core.crew_background_spend(&fifth.id, 0, 1441).is_err());
 }
 
-#[test]
-fn a_budget_stop_adds_no_merge_authority() {
+#[tokio::test]
+async fn a_budget_stop_adds_no_merge_authority() {
     let f = fixture(true);
     let crew = f
         .core
@@ -421,7 +421,7 @@ fn a_budget_stop_adds_no_merge_authority() {
     f.core.background_set_enabled(&crew.id, true).unwrap();
     let run = f.core.crew_background_start_run(&crew.id).unwrap();
     f.core.crew_background_spend(&run.id, 10, 0).unwrap();
-    let queue = f.core.autopilot_merge_queue(page()).unwrap();
+    let queue = f.core.autopilot_merge_queue(page()).await.unwrap();
     assert!(queue.entries.is_empty(), "nothing was queued to merge");
     assert!(
         f.core

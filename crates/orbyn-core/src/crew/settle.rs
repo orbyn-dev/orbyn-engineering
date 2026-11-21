@@ -105,6 +105,7 @@ impl Core {
         let minutes = crate::util::parse_time(&task.created_at).map_or(0, |at| {
             u64::try_from((created - at).max(0) / 60).unwrap_or(0)
         });
+        let turns = self.store.crew_turns_spent(&task.id).ok();
         let mut not_verified: Vec<CrewShortText> = judged
             .map(|j| j.not_verified.iter().map(|s| short(s)).collect())
             .unwrap_or_default();
@@ -133,7 +134,7 @@ impl Core {
             not_verified,
             attempts: u64::from(run.attempts),
             usage: ResultUsage {
-                turns: None,
+                turns,
                 minutes: Some(minutes),
                 tokens_in: None,
                 tokens_out: None,
@@ -153,6 +154,10 @@ impl Core {
     /// Tells the lead, through its queue, that the run ended or needs a person.
     pub(crate) fn tell_lead(&self, run: &CrewRun, result: &CrewResult) {
         if !result.r#final && result.state != ResultState::NeedsPerson {
+            return;
+        }
+        // A background run's lead thread runs no engine: telling it would start one.
+        if self.crew_background_lead(&run.lead_thread_id) {
             return;
         }
         // Held messages for the lead ride along, capped. They are recorded as sent only once the
@@ -209,6 +214,8 @@ impl Core {
             }
             Err(error) => tracing::warn!(%error, "could not write a crew task's result"),
         }
+        // The run of a background crew that this task belongs to ends with it.
+        self.crew_background_task_ended(task, state, stop);
         // A fix that ends without passing may be the last one a deferred rerun of the lanes was waiting for.
         if state != ResultState::Passed {
             self.spawn_review_unpassed(&task.id);
@@ -232,6 +239,8 @@ impl Core {
     /// answering the lead in the same call passes false.
     pub(super) fn crew_needs_person(self: &Arc<Self>, task_id: &str, why: &str, tell: bool) {
         if let Some(task) = self.step_crew_task(task_id, "needs_person", None) {
+            // A background run waits for a person instead of running on with nobody at it.
+            self.crew_background_task_waits(&task, why);
             let run = self.store.crew_run(task_id).ok().flatten();
             match self.record_result(&task, ResultState::NeedsPerson, None, why, None) {
                 Ok(result) => {
@@ -294,13 +303,13 @@ impl Core {
         judged: Option<&Judgement>,
     ) {
         let reason: String = reason.chars().take(REASON_CHARS).collect();
-        if self.over_budget(task) {
+        if let Some(spent) = self.spent_budget(task) {
             if let Some(task) = self.step_crew_task(&task.id, "stopped", Some("budget")) {
                 self.end_crew_task(
                     &task,
                     ResultState::Stopped,
                     Some(StopReason::Budget),
-                    "The task ran past its time budget.",
+                    spent,
                     judged,
                 );
             }
@@ -355,12 +364,29 @@ impl Core {
         }
     }
 
-    fn over_budget(&self, task: &CrewTask) -> bool {
+    /// What a task has run past, when anything: its brief's minutes or its turns, in the plain
+    /// sentence its result carries. The minutes are read first, so a task over both keeps the
+    /// words the minute budget already used.
+    fn spent_budget(&self, task: &CrewTask) -> Option<&'static str> {
         let Ok(Some(brief)) = self.store.crew_brief(&task.id) else {
-            return false;
+            return None;
         };
-        crate::util::parse_time(&task.created_at)
-            .is_some_and(|at| crate::util::unix_now() - at > i64::from(brief.budget.minutes) * 60)
+        let over_time = crate::util::parse_time(&task.created_at)
+            .is_some_and(|at| crate::util::unix_now() - at > i64::from(brief.budget.minutes) * 60);
+        if over_time {
+            return Some("The task ran past its time budget.");
+        }
+        let spent = match self.store.crew_turns_spent(&task.id) {
+            Ok(spent) => spent,
+            Err(error) => {
+                tracing::warn!(%error, task = %task.id, "could not count a task's turns; not stopping it for them");
+                return None;
+            }
+        };
+        // A background run keeps its own count of the turns a worker has had: either one running out stops the task.
+        (spent >= u64::from(brief.budget.turns)
+            || self.crew_background_out_of_turns(task, brief.budget.turns))
+        .then_some("The task ran past its turn budget.")
     }
 
     /// Queues `text` on the worker's thread. It is checked for the key's text and for secrets

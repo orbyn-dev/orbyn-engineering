@@ -19,6 +19,9 @@ pub enum CoreError {
     ConsoleOpen,
     #[error("trust this folder before starting an engine in it")]
     FolderUntrusted,
+    /// A route that writes into a folder needs the person's trust in that folder, with its own words.
+    #[error("Trust this folder before initialising Git in it.")]
+    FolderUntrustedInit,
     #[error("this approval was already decided")]
     AlreadyDecided(Box<Approval>),
     #[error("This folder is already a project.")]
@@ -165,7 +168,7 @@ impl CoreError {
             Self::SettingsScopeUnavailable => "settings_scope_unavailable",
             Self::ThreadBusy => "thread_busy",
             Self::ConsoleOpen => "console_open",
-            Self::FolderUntrusted => "folder_untrusted",
+            Self::FolderUntrusted | Self::FolderUntrustedInit => "folder_untrusted",
             Self::AlreadyDecided(_) | Self::QuestionClosed(_) => "already_decided",
             Self::EngineBusy(_) => "engine_busy",
             Self::EngineUnavailable(_) => "engine_unavailable",
@@ -223,6 +226,7 @@ impl CoreError {
             Self::Invalid(_) => 400,
             Self::FileTooLarge { .. } => 413,
             Self::FolderUntrusted
+            | Self::FolderUntrustedInit
             | Self::PolicyDenied(_)
             | Self::WorkspaceRefused(_)
             | Self::AccountDisabled
@@ -295,6 +299,7 @@ impl CoreError {
             Self::CrewTaskBusy(s) => Self::CrewTaskBusy(s.clone()),
             Self::ConsoleOpen => Self::ConsoleOpen,
             Self::FolderUntrusted => Self::FolderUntrusted,
+            Self::FolderUntrustedInit => Self::FolderUntrustedInit,
             Self::AlreadyDecided(a) => Self::AlreadyDecided(a.clone()),
             Self::ProjectExists(p) => Self::ProjectExists(p.clone()),
             Self::QuestionClosed(q) => Self::QuestionClosed(q.clone()),

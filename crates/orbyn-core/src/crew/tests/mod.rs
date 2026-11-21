@@ -5,8 +5,10 @@
 
 mod autopilot;
 mod autopilot_areas;
+mod autopilot_bisect;
 mod autopilot_enforce;
 mod autopilot_engines;
+mod autopilot_forecast;
 mod autopilot_guard;
 mod autopilot_held;
 mod autopilot_merge;
@@ -15,6 +17,7 @@ mod autopilot_rules;
 mod autopilot_support;
 mod autopilot_watch;
 mod background;
+mod background_start;
 mod backtest_api;
 mod backtest_escapes;
 mod bus;
