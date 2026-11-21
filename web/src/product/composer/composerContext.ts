@@ -52,6 +52,8 @@ export interface ReviewChip extends ChipBase {
   /** File annotations belong to the displayed source snapshot, not a later read. */
   sourceRevision?: string;
   sourceCwd?: string;
+  /** The file was edited and the text this comment pointed at is gone or changed: line and excerpt are as first captured. */
+  stale?: boolean;
   comment: string;
   excerpt: string | null;
 }
@@ -180,7 +182,7 @@ export function chipPrompt(chip: ComposerChip): string {
       return `${terminalLabel(chip)}${command ? `\n${command}` : ""}\n\`\`\`\n${fenceSafe(excerptOf(chip.output))}\n\`\`\``;
     }
     case "review": {
-      const where = `Review on \`${chipLabel(chip)}\``;
+      const where = `Review on \`${chipLabel(chip)}\`${chip.stale ? " (the file was edited afterwards: this text may have changed or moved)" : ""}`;
       const excerpt = chip.excerpt?.trim()
         ? `\n\`\`\`\n${fenceSafe(excerptOf(chip.excerpt))}\n\`\`\``
         : "";
@@ -303,6 +305,7 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
         ...(endLine === null ? {} : { endLine }),
         ...(typeof chip.sourceRevision === "string" ? { sourceRevision: text(chip.sourceRevision, 256) ?? undefined } : {}),
         ...(typeof chip.sourceCwd === "string" ? { sourceCwd: text(chip.sourceCwd, 4096) ?? undefined } : {}),
+        ...(chip.stale === true ? { stale: true } : {}),
       };
     }
     case "annotation": {
