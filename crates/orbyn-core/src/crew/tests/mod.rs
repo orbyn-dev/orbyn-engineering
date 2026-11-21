@@ -55,6 +55,7 @@ mod hardening;
 mod harness;
 mod lifecycle;
 mod merging_recovery;
+mod model_ids;
 mod overrides;
 mod protect;
 mod provider_facts;

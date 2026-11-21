@@ -246,6 +246,8 @@ the gap Crew fills. openbot is non-commercial: no code or text from it, only the
 **Models and effort per role.** These come from the repository's harness (`harness.py resolve`: library defaults, then
 the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium for every role and never higher.
 
+The default Codex tier words were checked against a [sanitized Windows Codex 0.160.0 model list](../crates/orbyn-core/src/crew/tests/codex-0.160.0-windows-models.json): the observed list contains Sol, Terra and Luna; Astra is not assigned a tier. This is one catalog, not a guarantee for every account or later CLI. The existing real Claude discovery receipt does not record model ids or labels, so its tier words remain unqualified until a provenance-backed sanitized catalog is supplied (#433).
+
 | Role | Claude | Codex | Notes |
 | --- | --- | --- | --- |
 | Lead (briefs, approves in Autopilot, merges) | Opus | Sol | The engine the person picks for the lead thread |
