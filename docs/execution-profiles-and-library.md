@@ -5,7 +5,7 @@ prompts and environment sets. Both are local and on this device. Neither needs a
 
 This file is the contract. The stores and routes are built against it, and so is the web UI (the profile picker, the
 Settings pages and the library panel). Change it by pull request, and say so to whoever builds on the part you change.
-Status: **contract decided by the lead, nothing built.** No route, table or keychain item below exists yet.
+Status: **contract decided by the lead.** No route, table or keychain item below exists yet. The web side is built hidden against mocks and shows only once the service answers: Part 1 (profiles) in `web/src/features/profiles` on `GET /api/profiles`, and Part 2 (the library) in `web/src/features/library` on `GET /api/library`.
 
 Owner rulings this file carries:
 

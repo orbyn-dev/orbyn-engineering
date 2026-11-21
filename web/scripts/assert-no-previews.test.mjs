@@ -23,6 +23,14 @@ describe("assert-no-previews", () => {
     expect(run({ "term.js": `.cb-block{display:flex}.cb-head{position:sticky}"Commands Orbyn runs appear here as blocks"` }).status).toBe(0);
   });
 
+  it("passes the real profile screens, which ship hidden behind a client that answers 404", () => {
+    expect(run({ "prf.js": `.prf-row{display:grid}"Execution profiles";"/api/profiles"` }).status).toBe(0);
+  });
+
+  it("passes the real library panel, which ships hidden behind a client that answers 404", () => {
+    expect(run({ "lib.js": `.lib-row{display:flex}"Search the Library";"/api/library"` }).status).toBe(0);
+  });
+
   it("passes the real Crew screens, which ship behind the service's own flag", () => {
     const real = `"Crew is not connected to this app yet";"/api/crew/preview";.ap-chip{display:inline-flex};"/api/crew/trust";.cx-dash{display:flex}`;
     expect(run({ "crew.js": real }).status).toBe(0);
@@ -53,6 +61,10 @@ describe("assert-no-previews", () => {
     ["the command blocks preview route as a regex source", `const r=/^#\\/preview\\/command-blocks$/;`],
     ["the command blocks mock", `module.createCommandBlocksMock({delayMs:250})`],
     ["the command blocks preview page", `.cbp-drawer{display:flex}`],
+    ["the profiles preview route", `location.hash.startsWith("#/preview/profiles")`],
+    ["the profiles mock", `module.createProfilesMock({delayMs:300})`],
+    ["the library preview route", `location.hash.startsWith("#/preview/library")`],
+    ["the library mock", `module.createLibraryMock({delayMs:300})`],
   ])("fails a production bundle holding %s", (_name, text) => {
     const result = run({ "chunk.js": text });
     expect(result.status).toBe(1);

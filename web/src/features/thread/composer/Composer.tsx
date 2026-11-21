@@ -550,6 +550,7 @@ export function Composer({
           openOverflow={openOverflow}
           pickModel={pickModel}
           stop={stop}
+          setError={setError}
         />
       </div>
       <ComposerContext

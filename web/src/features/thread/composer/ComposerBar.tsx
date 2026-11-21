@@ -3,6 +3,7 @@ import type { RefObject } from "react";
 import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../api/types";
 import type { StashedPrompt } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
+import { ProfilePicker } from "../../profiles";
 import { ContextMeter } from "./ComposerExtras";
 import { ACCESS, EffortTrigger, type AccessView, type useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
@@ -36,6 +37,7 @@ export function ComposerBar({
   openOverflow,
   pickModel,
   stop,
+  setError,
 }: {
   bar: RefObject<HTMLDivElement | null>;
   filePicker: RefObject<HTMLInputElement | null>;
@@ -64,6 +66,7 @@ export function ComposerBar({
   openOverflow(element: HTMLElement): void;
   pickModel(next: { engine: string; model: string | null }): Promise<void>;
   stop(): Promise<void>;
+  setError(message: string | null): void;
 }) {
   const AccessIcon = ACCESS[access].icon;
   return (
@@ -101,6 +104,7 @@ export function ComposerBar({
         </IconButton>
       ) : null}
       <span className="composer-controls" data-folded={narrowBar || undefined}>
+      {unmanaged ? null : <ProfilePicker thread={thread} disabled={busy} onError={setError} />}
       {engine ? (
         <ModelPickerTrigger
           engines={installed}
