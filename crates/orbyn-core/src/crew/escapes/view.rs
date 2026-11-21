@@ -125,7 +125,7 @@ impl Core {
         })
     }
 
-    /// One escape and its audit trail, oldest first.
+    /// One escape and its latest 100 events in ascending append order. A longer trail is explicitly truncated, never deleted.
     pub fn crew_escape_detail(&self, id: &str) -> Result<wire::EscapeDetail> {
         self.crew_preview_only()?;
         valid_id(id)?;
@@ -133,11 +133,10 @@ impl Core {
             .store
             .crew_escape(id)?
             .ok_or_else(|| CoreError::NotFound("escape".into()))?;
-        let mut events = self
-            .store
-            .crew_escape_events(id, EVENTS_PER_ESCAPE_MAX + 1)?;
+        let mut events = self.store.crew_escape_recent_events(id)?;
         let truncated = events.len() > EVENTS_PER_ESCAPE_MAX as usize;
         events.truncate(EVENTS_PER_ESCAPE_MAX as usize);
+        events.reverse();
         Ok(wire::EscapeDetail {
             escape: row_wire(&record),
             events: events.iter().map(event_wire).collect(),

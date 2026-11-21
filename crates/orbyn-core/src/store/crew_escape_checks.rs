@@ -26,7 +26,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::Store;
-use super::crew_escape_person::{audit, load, room, state_word};
+use super::crew_escape_person::{audit, load, state_word};
+use super::crew_escape_retention::room;
 use super::crew_escapes::{EscapeRecord, unreadable};
 use crate::error::{CoreError, Result};
 
@@ -343,7 +344,7 @@ impl Store {
                     check_word(check.state)
                 )));
             }
-            room(tx, project, 0, 1)?;
+            room(tx, project, 0, 1, Some(id), at)?;
             let audit_id = audit(
                 tx,
                 "crew.escape.check.propose",
@@ -409,7 +410,7 @@ impl Store {
                     "This proposal changed since the brief was written. Reload it and accept again.".into(),
                 ));
             }
-            room(tx, project, 0, 3)?;
+            room(tx, project, 0, 3, Some(id), at)?;
             audit(
                 tx,
                 "crew.escape.check.accept",
@@ -485,7 +486,7 @@ impl Store {
             if check.state != EscapeCheckState::Failed {
                 return Err(refuse_state(&check, "retried"));
             }
-            room(tx, project, 0, 1)?;
+            room(tx, project, 0, 1, Some(id), at)?;
             let audit_id = audit(
                 tx,
                 "crew.escape.check.retry",
@@ -556,7 +557,7 @@ impl Store {
                     ));
                 }
             }
-            room(tx, project, 0, 1)?;
+            room(tx, project, 0, 1, Some(id), at)?;
             let audit_id = audit(
                 tx,
                 "crew.escape.check.withdraw",
@@ -755,7 +756,7 @@ impl Store {
                     "The change differs from the one you saw. Reload it and approve again.".into(),
                 ));
             }
-            room(tx, project, 0, 1)?;
+            room(tx, project, 0, 1, Some(id), at)?;
             audit(
                 tx,
                 "crew.escape.check.approve",
