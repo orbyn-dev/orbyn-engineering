@@ -1644,8 +1644,8 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 | # | Feature | What you get | Built as |
 | --- | --- | --- | --- |
 | W1 | Command blocks | Terminal output grouped per command with exit status and duration. Copy, rerun, filter, find, collapse, and "Send to agent" (as a context chip) or "Ask Crew to fix" (as a brief) | Terminal drawer upgrade; uses shell integration marks |
-| W2 | Smart terminal input | A real multi-line editor with cursor, selection and syntax colour; history search; completions for commands, flags and paths | Completions from Fig's MIT completion specs (check licence and attribution before use); no Warp code |
-| W3 | Plain English in the terminal | Type a sentence and it goes to the thread's engine as a prompt instead of the shell, with a visible toggle and undo | A local classifier, always shown, never silent |
+| W2 | Smart terminal input | A real multi-line editor with cursor, selection and syntax colour; history search; completions for commands, flags and paths | Built (web, partial): the editor, history search and completions from a small command and flag table of our own, the person's history and the explorer's file listing. Fig's MIT completion specs are not used yet: check the licence text in the repository and keep its notice before adding any. No Warp code |
+| W3 | Plain English in the terminal | Type a sentence and it goes to the thread's engine as a prompt instead of the shell, with a visible toggle and undo | Built (web, partial): a local classifier that is always shown and never silent. Unclear lines go to the shell, a secret-looking line is never sent, Undo is offered for 10 seconds. The engine's command proposal card is not built |
 | W4 | Secret redaction | Secrets are masked in terminal blocks and in context sent to agents (not applied yet: those consumers are not built). Matches known key formats and the person's own patterns, set in Settings › Secrets. Crew keeps its own fixed rule: its scan, ledger, evidence and every Crew object use every built-in format and read no setting, so nothing on that page can put a secret into them. The person's patterns mask ledger text and its JSON keys, and evidence text, only when it is shown (read routes), never in what is stored | Feeds Crew's hard rule "no secrets in any object" |
 | W5 | Code editor tab | Files opened from the explorer get an editor: syntax colour, find, go to line, line comments (same comment threads as Changes), save. Language-server diagnostics come after the beta | New panel tab type |
 | W6 | Changes: revert hunk, edit inline, attach to agent | Revert one hunk, edit a line in place, or send a selection to the engine | Extends the shell's Changes view |
@@ -1694,7 +1694,7 @@ reason.
 **In the Crew beta (Preview):**
 
 - Phase 1 wiring: optional Orbyn account on staging, with personal settings syncing across devices
-- Warp features W1, W4, W5, W6, W7, W8, W9, W11 and W12 (above); W2, W3 and W10 are After the beta or Planned in the designs
+- Warp features W1, W4, W5, W6, W7, W8, W9, W11 and W12 (above); W2 and W3 are Beta (partial, see [parity.md](parity.md) G15 and G16); W10 is After the beta or Planned in the designs
 - Slice 0: protocol v0 spec and schemas (not yet published)
 - Slices 1 to 4: contracts, router v0 on defaults, runs, verifier, bus, leases
 - 4b: review stages
