@@ -348,3 +348,30 @@ calls with their 4 KiB previews, and a call's full result is fetched on its own.
 
 Each step is its own pull request with its tests. The web UI (approval card with the script, run log) is built
 by the web side against the shapes here.
+
+## As built: web UI
+
+The web side is in `web/src/features/codemode/`, built from the Engineer frames `codemode-*`. Nothing in the service exists yet, so
+it reads through a small client (`api.ts`) served only by the dev and test mock (`web/mock/codemode.ts`, scenario `codemode`). In a
+production build the client sends nothing: the switch is shown off and cannot be pressed, and every screen draws from the engine's
+own reply. Swap the client for the generated types and routes when the backend merges, and delete the mock.
+
+- **Setting.** Settings › Providers › an engine has a Code Mode group with one switch, off by default, read when the page opens and
+  written once per click. It carries the Planned pill until Code Mode ships.
+- **Run card.** An `orbyn_code_run` call in the thread is drawn from its run: running, paused, completed, and the five error kinds, with the
+  script excerpt (5 lines, opened a 400-line page at a time), calls (3 and a "Show all" line past 8, at most 200), logs (newest 500),
+  and the result (first 64 KiB). The run record is read every two seconds while the run is not over; without it only the engine's reply
+  is drawn, and there is no call list. A resumed run is one record shown on each call that names it.
+- **Approval.** An approval with `via` shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
+  the answered and expired forms, and what Always allow covers. `via` is read only to draw: the buttons, the decision and the
+  rules never read it.
+- **Search and describe.** Drawn as rows in the thread, from the reply read leniently (the exact reply shapes are not in this document).
+- **Untrusted text.** The script, logs, results and call previews are React text, never markup or links, never logged, never opened.
+- **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
+  the Orbyn group when an engine reports them.
+- **When the real route lands.** `PUT /api/engines/:id/code-mode` changes what an engine may call, so it is a Person-class write
+  (`web/src/api/personKey.ts` and the route class table in `crates/orbynd`); add it there with the route, not after.
+- **Model-chosen text.** Run ids, tool names and statuses come from a model: records are kept in maps, an unknown status is shown as
+  unknown, the tool in "Always allow covers X" comes from the approval's own tool field and never from its summary, and arguments
+  are summarised (lists, objects, cut text with an ellipsis, "N more fields") so a card never looks complete when it is not.
+  Every call of a run keeps its Allow and Deny; only the first shows the script.
