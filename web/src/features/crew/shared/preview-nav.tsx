@@ -6,6 +6,8 @@ const q = (id: string) => `?id=${encodeURIComponent(id)}`;
 /** The frame a place opens in the Preview route. Only the Preview chunk imports this file, so no frame hash ships in the app. */
 function previewHref(place: CrewPlace): string {
   switch (place.page) {
+    case "crew":
+      return "#/settings/crew";
     case "coverage":
       return "#/preview/crew/capacity-live-coverage";
     case "capacity":
