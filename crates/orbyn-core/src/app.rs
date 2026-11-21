@@ -206,8 +206,11 @@ impl Core {
             tracing::info!(?recovery, "recovered runs from a previous process");
         }
         let background_starts = store.recover_background_starts()?;
-        if background_starts > 0 {
-            tracing::info!(background_starts, "recovered interrupted background starts");
+        if background_starts.runs > 0 {
+            tracing::info!(
+                background_starts = background_starts.runs,
+                "recovered interrupted background starts"
+            );
         }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
@@ -336,6 +339,9 @@ impl Core {
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
         core.crew_backtest_recover();
+        for (task, why) in background_starts.held {
+            core.settle_held_background_task(task, why);
+        }
         core.apply_login_preference()?;
         core.wire_changes();
         Ok(core)

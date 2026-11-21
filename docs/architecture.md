@@ -107,13 +107,15 @@ admitted -> starting -> running <-> awaiting_approval
 While holding the data-directory owner lock, core startup settles each `running`
 background run before any starter or listener can run, in one transaction with an
 audit. A run whose task has a worker in `running`, `verifying` or `changed_approach`
-is left to Crew task recovery. Every other run ends `needs_review`: with no task,
-with a `briefed`, `routed` or worker-less `running` task, which moves to
-`needs_person` first, or with a task that already ended. A `needs_person` or `failed`
-task stays as it is, nothing is brought back, no engine starts and no start is
-retried. The lead thread and recorded budget and spend are kept;
-terminal runs stay unchanged. If this transaction keeps failing, startup fails
-rather than run on.
+is left to Crew task recovery (with Crew off at startup it stays `running`). Every
+other run ends `needs_review`: with no task, with a `briefed`, `routed` or
+worker-less `running` or `verifying` task, which moves to `needs_person` first, or
+with a task that already ended. A worker-less `changed_approach` task, and a
+`needs_person` or `failed` one, stay as they are; nothing is brought back, no engine
+starts and no start is retried. Once the core exists, each held task gives up its
+leases and gets one `NeedsPerson` result with the reason, unless it has one. The
+lead thread and recorded budget and spend are kept; terminal runs stay unchanged. If
+this transaction keeps failing, startup fails rather than run on.
 
 A refused background start removes its run and lead thread
 only while no Crew task exists, and does so in one transaction with the refusal

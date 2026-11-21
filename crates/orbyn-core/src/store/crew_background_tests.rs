@@ -291,6 +291,30 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             run_ends: false,
         },
         Case {
+            state: "verifying",
+            worker: false,
+            task_after: "needs_person",
+            run_ends: true,
+        },
+        Case {
+            state: "verifying",
+            worker: true,
+            task_after: "verifying",
+            run_ends: false,
+        },
+        Case {
+            state: "changed_approach",
+            worker: true,
+            task_after: "changed_approach",
+            run_ends: false,
+        },
+        Case {
+            state: "changed_approach",
+            worker: false,
+            task_after: "changed_approach",
+            run_ends: true,
+        },
+        Case {
             state: "needs_person",
             worker: false,
             task_after: "needs_person",
@@ -321,7 +345,7 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             run_ends: true,
         },
     ];
-    let (crew_id, interrupted, lead, runs) = {
+    let (crew_id, interrupted, lead, runs, mixed) = {
         let store = store(&dir);
         let crew = store
             .create_background_crew(&new_crew("Interrupted", &settings), "user")
@@ -414,14 +438,58 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             ).unwrap();
             runs.push((ended, store.crew_task(&task).unwrap().unwrap()));
         }
-        (crew.id, interrupted, lead, runs)
+        // One run with a task in flight with a worker beside a task already waiting: the live task keeps the whole run.
+        let mixed = {
+            let crew = store
+                .create_background_crew(&new_crew("Mixed", &settings), "user")
+                .unwrap();
+            store
+                .set_background_enabled(&crew.id, true, "user")
+                .unwrap();
+            let run = store.start_background_run(&crew.id).unwrap();
+            let live = format!("sha256:{:064x}", 200);
+            let waiting = format!("sha256:{:064x}", 201);
+            for (task, state, n) in [(&live, "running", "a"), (&waiting, "needs_person", "b")] {
+                store.writer().execute(
+                    "INSERT INTO crew_tasks (id, crew_id, run_id, state, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'now', 'now')",
+                    params![task, run.id, format!("mixed-{n}"), state],
+                ).unwrap();
+                store.add_crew_run(task, &run.id, "worker").unwrap();
+            }
+            let worker = store
+                .create_thread(NewThread {
+                    project_id: project.id.clone(),
+                    title: "Mixed worker".into(),
+                    engine: "alpha".into(),
+                    model: None,
+                    cwd: dir.path().to_string_lossy().into_owned(),
+                    worktree: None,
+                    skill_profile: None,
+                    parent_thread_id: None,
+                    relation: None,
+                    scratch: false,
+                })
+                .unwrap();
+            store
+                .set_crew_worker(&live, &worker.id, "worktree", None)
+                .unwrap();
+            (run, live, waiting)
+        };
+        (crew.id, interrupted, lead, runs, mixed)
     };
-    let snapshot = |core: &Core| -> Vec<(String, String, String, Option<String>)> {
+    let snapshot = |core: &Core| -> Vec<(String, String, String, Option<String>, usize)> {
         let mut all = Vec::new();
         for (run, task) in &runs {
             let run = core.store.background_run(&run.id).unwrap().unwrap();
             let task = core.store.crew_task(&task.id).unwrap().unwrap();
-            all.push((run.state, task.state, run.updated_at, run.review_reason));
+            let results = core.store.crew_results(&task.id).unwrap().len();
+            all.push((
+                run.state,
+                task.state,
+                run.updated_at,
+                run.review_reason,
+                results,
+            ));
         }
         all
     };
@@ -467,7 +535,7 @@ fn core_startup_recovers_interrupted_background_starts_once() {
                 assert_eq!(now.state, "needs_review", "{label}");
                 assert!(now.review_waiting && now.ended_at.is_some(), "{label}");
                 let reason = now.review_reason.as_deref().unwrap();
-                let held = matches!(case.state, "briefed" | "routed" | "running");
+                let held = matches!(case.state, "briefed" | "routed" | "running" | "verifying");
                 assert_eq!(
                     reason.contains("Its task waits for a person"),
                     held,
@@ -479,6 +547,11 @@ fn core_startup_recovers_interrupted_background_starts_once() {
                     "{label}: {reason}"
                 );
                 assert_eq!(
+                    reason.contains("left as it was"),
+                    matches!(case.state, "needs_person" | "failed" | "changed_approach"),
+                    "{label}: {reason}"
+                );
+                assert_eq!(
                     (now.turns_spent, now.minutes_spent, now.budget_turns),
                     (run.turns_spent, run.minutes_spent, run.budget_turns),
                     "{label}"
@@ -486,7 +559,29 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             } else {
                 assert_eq!(&now, run, "{label}: left to Crew task recovery");
             }
+            // A task held for a person shows why: exactly one NeedsPerson result, and no other task gets one.
+            let results = core.store.crew_results(&task.id).unwrap();
+            if case.run_ends && case.task_after == "needs_person" {
+                assert_eq!(results.len(), 1, "{label}: {results:?}");
+                assert_eq!(results[0].state, orbyn_contracts::ResultState::NeedsPerson);
+            } else {
+                assert!(results.is_empty(), "{label}: {results:?}");
+            }
         }
+        // A task in flight with a worker keeps its whole run, whatever else the run holds.
+        assert_eq!(
+            core.store.background_run(&mixed.0.id).unwrap().unwrap(),
+            mixed.0
+        );
+        assert_eq!(
+            core.store.crew_task(&mixed.1).unwrap().unwrap().state,
+            "running"
+        );
+        assert_eq!(
+            core.store.crew_task(&mixed.2).unwrap().unwrap().state,
+            "needs_person"
+        );
+        assert!(core.store.crew_results(&mixed.2).unwrap().is_empty());
         // Terminal runs, and their tasks, are unchanged.
         for (run, task) in &runs[cases.len()..] {
             assert_eq!(
@@ -498,9 +593,12 @@ fn core_startup_recovers_interrupted_background_starts_once() {
         // Recovery starts no new run and no engine work.
         assert_eq!(
             count(&core, "SELECT COUNT(*) FROM crew_background_runs"),
-            13
+            i64::try_from(cases.len()).unwrap() + 4
         );
-        assert_eq!(count(&core, "SELECT COUNT(*) FROM crew_tasks"), 12);
+        assert_eq!(
+            count(&core, "SELECT COUNT(*) FROM crew_tasks"),
+            i64::try_from(cases.len()).unwrap() + 4
+        );
         assert_eq!(count(&core, "SELECT COUNT(*) FROM runs"), 0);
         let audit: i64 = core.store.reader().query_row(
             "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.recover' AND json_extract(detail, '$.run') = ?1 AND json_extract(detail, '$.why') IS NOT NULL",
@@ -528,7 +626,7 @@ fn core_startup_recovers_interrupted_background_starts_once() {
             &core,
             "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.background.run.recover'"
         ),
-        1 + 9
+        1 + i64::try_from(cases.iter().filter(|case| case.run_ends).count()).unwrap()
     );
     assert!(
         core.store.start_background_run(&crew_id).is_ok(),

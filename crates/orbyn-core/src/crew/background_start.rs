@@ -353,31 +353,36 @@ impl Core {
             return Err(refusal);
         }
         for task in unwound.held {
-            if let Err(error) = self.release_crew_leases(&task.id) {
-                tracing::warn!(%error, task = %task.id, "could not release a held background task's leases");
-            }
-            let has_result = self
-                .store
-                .crew_results(&task.id)
-                .map_or(true, |results| !results.is_empty());
-            if has_result {
-                continue;
-            }
-            let task = self
-                .store
-                .crew_task(&task.id)
-                .ok()
-                .flatten()
-                .unwrap_or(task);
-            if let Err(error) =
-                self.record_result(&task, ResultState::NeedsPerson, None, &why, None)
-            {
-                tracing::warn!(%error, task = %task.id, "could not write a held background task's result");
-            }
+            self.settle_held_background_task(task, &why);
         }
         match self.store.background_run(thread_id)? {
             Some(run) => run_wire(run),
             None => Err(refusal),
+        }
+    }
+
+    /// What follows the commit that held a background run's task for a person, best effort and only logged: the task gives up its
+    /// leases (a run that ended `needs_review` leaves none showing as granted, as `end_crew_task` does) and gets a `NeedsPerson`
+    /// result with the reason unless it already has one. Used by a refused start and by startup recovery.
+    pub(crate) fn settle_held_background_task(&self, task: CrewTask, why: &str) {
+        if let Err(error) = self.release_crew_leases(&task.id) {
+            tracing::warn!(%error, task = %task.id, "could not release a held background task's leases");
+        }
+        let has_result = self
+            .store
+            .crew_results(&task.id)
+            .map_or(true, |results| !results.is_empty());
+        if has_result {
+            return;
+        }
+        let task = self
+            .store
+            .crew_task(&task.id)
+            .ok()
+            .flatten()
+            .unwrap_or(task);
+        if let Err(error) = self.record_result(&task, ResultState::NeedsPerson, None, why, None) {
+            tracing::warn!(%error, task = %task.id, "could not write a held background task's result");
         }
     }
 
