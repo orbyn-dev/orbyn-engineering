@@ -13,10 +13,7 @@ export function controlsMenuItems({
   busy,
   unmanaged,
   access,
-  planControls,
-  planMode,
   traits,
-  setPlanMode,
 }: {
   thread: Thread;
   model: ModelInfo | null;
@@ -26,10 +23,7 @@ export function controlsMenuItems({
   busy: boolean;
   unmanaged: boolean;
   access: PermissionMode;
-  planControls: boolean;
-  planMode: boolean;
   traits: Pick<ReturnType<typeof useTraitsMenu>, "openAt">;
-  setPlanMode(on: boolean): Promise<void>;
 }): MenuItem[] {
   return [
     {
@@ -59,8 +53,5 @@ export function controlsMenuItems({
             },
           },
         ]),
-    ...(planControls
-      ? [{ label: "Plan", selected: planMode, disabled: busy, onSelect: () => void setPlanMode(!planMode) }]
-      : []),
   ];
 }

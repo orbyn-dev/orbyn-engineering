@@ -131,7 +131,7 @@
     ["GET","/api/search/messages/events","local"],
     ["GET","/api/settings","local"],
     ["GET","/api/settings/secrets","local"],
-    ["GET","/api/settings/secrets/patterns/{id}","local"],
+    ["GET","/api/settings/secrets/patterns/{id}","person"],
     ["GET","/api/shell","local"],
     ["GET","/api/shell/events","local"],
     ["GET","/api/skills","local"],

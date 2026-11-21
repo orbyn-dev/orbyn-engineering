@@ -29,6 +29,12 @@ const markers = [
   // Engine host design preview (features/settings/engineHost): the dev-only hash route and its mock.
   "preview/engine-host",
   "createEngineHostMock",
+  // Issues design preview (features/issues): the dev-only hash route and its mock.
+  "preview/issues",
+  "createIssuesMock",
+  // Cursor thread design preview (features/cursorthread): the dev-only hash route and its mock.
+  "preview/cursor-thread",
+  "createCursorThreadMock",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

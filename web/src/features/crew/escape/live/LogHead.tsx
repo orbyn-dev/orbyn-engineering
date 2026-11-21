@@ -28,6 +28,26 @@ function HeaderLink({ href, children }: { href: string; children: ReactNode }) {
 }
 
 /**
+ * The way back above the title where the page has no breadcrumb (the 640 px window and the 320 px panel; Crew Designs v371).
+ * Review is Planned, so until the Review tab exists it returns to Settings › Crew, the page the log is opened from. It only navigates.
+ */
+function BackToReview() {
+  const href = useCrewHref();
+  return (
+    <div style={{ display: "flex" }}>
+      <a
+        className="cx-t10r"
+        href={href({ page: "crew" })}
+        style={{ marginLeft: "0", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "2px", color: "inherit" }}
+      >
+        <Ic n="left" sm />
+        <span style={{ textDecoration: "underline", textUnderlineOffset: "2px" }}>Back to Review</span>
+      </a>
+    </div>
+  );
+}
+
+/**
  * The count on the Possible tab, from the same read as the log's Possible tile: the number in full with its thousands separator,
  * an ellipsis read out as a status while the log is read, and a dash read out as "can’t read" when it can’t be. A count that was
  * never measured is never drawn as 0, and it is never added to the confirmed count.
@@ -121,6 +141,7 @@ export function LogHead({
   const windowSeg = log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null;
   return (
     <>
+      {variant === "full" ? null : <BackToReview />}
       <div className="cx-t10hd">
         <b style={variant === "panel" ? { fontSize: "13px" } : undefined}>Escape log</b>
         <span className="cx-rtag cx-lo">This device only</span>

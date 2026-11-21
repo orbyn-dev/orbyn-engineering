@@ -16,6 +16,9 @@ Possible count (`GET /escapes`), an ellipsis read out as "reading" while it load
 not measured. With none waiting the list says "Nothing waits for you" (`entry-crew-possible-empty`) and draws no confirmed table. The coverage map
 shows "Back to escapes" or "Back to Review capacity" at its top left only when its address says where it was opened from (`?from=escapes` or
 `?from=capacity`, set by the two Coverage links); with no origin, or one it does not know, there is no control, and history is never read. The
+escape thresholds page shows "Back to escapes" above its title (the log, `#/settings/crew/escapes`), and the log and the possible list show
+"Back to Review" above the title in a 640 px window and in the 320 px panel (not at the full width, which keeps its crumb; Crew Designs v371).
+Review is Planned, so "Back to Review" returns to Settings › Crew (`#/settings/crew`) until a Review tab exists. The
 Review-tab Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the log keeps its existing
 "Dashboard › Escape log" crumb, which no beta page backs. Browser Back works. See "Propose a check" below for the act wired inside the detail page.
 

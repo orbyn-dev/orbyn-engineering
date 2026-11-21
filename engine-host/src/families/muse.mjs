@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
+import { win32 } from "node:path";
 
 // Muse Code on the host: the stdio client of @muse-code/sdk (MIT, bundled) over `muse serve` of the
 // person's own `muse` binary (never bundled). One `muse serve` per open session, started under the core's
@@ -8,6 +10,48 @@ import { realpath } from "node:fs/promises";
 // 2026 T3 Tools Inc.); see test/fixtures/NOTICE. Nothing here has run against a real model turn yet; see the README.
 
 export const SDK_VERSION = "1.4.6"; // keep equal to package.json (a test checks it)
+
+/** Muse validates turn roots on Windows in verbatim form (T3: museVerbatimPath). */
+export function verbatimPath(path) {
+  if (path.startsWith("\\\\?\\")) return path;
+  return path.startsWith("\\\\") ? `\\\\?\\UNC\\${path.slice(2)}` : `\\\\?\\${path}`;
+}
+
+const envValue = (env, name) => {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
+  return key === undefined ? undefined : env[key];
+};
+
+/**
+ * Windows launchers: resolve `muse` with PATH and PATHEXT, and run a .cmd or .bat under cmd.exe, because the
+ * SDK spawns without a shell (T3: museLaunch). Elsewhere, and for a real executable, the command is unchanged.
+ */
+export function museLaunch(binary, env = process.env, { platform = process.platform, exists = existsSync } = {}) {
+  if (platform !== "win32") return { command: binary, args: [] };
+  const exts = (envValue(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const hasDir = /[\\/]/.test(binary);
+  const dirs = hasDir ? [""] : (envValue(env, "PATH") ?? "").split(";").filter(Boolean);
+  const names = win32.extname(binary) ? [binary, ...exts.map((e) => binary + e)] : exts.map((e) => binary + e);
+  let resolved;
+  for (const dir of dirs) {
+    for (const name of names) {
+      const candidate = dir === "" ? name : win32.join(dir, name);
+      if (exists(candidate)) {
+        resolved = candidate;
+        break;
+      }
+    }
+    if (resolved) break;
+  }
+  resolved ??= binary;
+  if (!/\.(?:cmd|bat)$/i.test(resolved)) return { command: resolved, args: [] };
+  const systemRoot = envValue(env, "SystemRoot");
+  return {
+    command: envValue(env, "ComSpec") ?? (systemRoot ? `${systemRoot}\\System32\\cmd.exe` : "cmd.exe"),
+    // /d skips AutoRun; a bare @ keeps a quoted path with spaces intact under /c.
+    args: ["/d", "/c", ...(/\s/.test(resolved) ? ["@", resolved] : [resolved.replace(/[()&<>@^|]/g, "^$&")])],
+  };
+}
 
 const START_TIMEOUT_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -68,17 +112,77 @@ const usageOf = (u) =>
     ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens, cachedInputTokens: u.cacheReadTokens ?? u.cachedTokens, reasoningTokens: u.reasoningTokens }
     : undefined;
 
+const LATEST_DATE_MS = 8.64e15;
+const finite = (n) => typeof n === "number" && Number.isFinite(n);
+const dateMs = (n) => finite(n) && n > 0 && n <= LATEST_DATE_MS;
+const clampPercent = (n) => Math.min(100, Math.max(0, n));
+
+/** The account-wide `usage/changed` report (T3 MuseSubscriptionUsage); anything malformed is dropped. */
+export function museSubscription(params) {
+  const { observedAtMs, tier, window: w, weekly } = params ?? {};
+  if (!dateMs(observedAtMs) || typeof tier !== "string") return undefined;
+  if (!(finite(w?.usedPercent) && w.usedPercent >= 0 && finite(w.windowDurationMins) && w.windowDurationMins > 0 && dateMs(w.resetsAtMs))) return undefined;
+  if (!(finite(weekly?.usedPercent) && weekly.usedPercent >= 0 && dateMs(weekly.resetsAtMs))) return undefined;
+  return { observedAtMs, tier, window: { usedPercent: w.usedPercent, windowDurationMins: w.windowDurationMins, resetsAtMs: w.resetsAtMs }, weekly: { usedPercent: weekly.usedPercent, resetsAtMs: weekly.resetsAtMs } };
+}
+
+/** The report as limit windows, its tier as the plan label (T3 usageLimits.ts). */
+export function museLimits(usage) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const tier = usage.tier.trim();
+  return {
+    checkedAt: iso(usage.observedAtMs),
+    windows: [
+      { id: "session", kind: "session", label: "Session", usedPercent: clampPercent(usage.window.usedPercent), resetsAt: iso(usage.window.resetsAtMs), windowDurationMins: usage.window.windowDurationMins },
+      { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: clampPercent(usage.weekly.usedPercent), resetsAt: iso(usage.weekly.resetsAtMs), windowDurationMins: 7 * 24 * 60 },
+    ],
+    ...(tier ? { authLabel: tier } : {}),
+  };
+}
+
+const EFFORT_LABELS = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra High", max: "Max", ultra: "Ultra" };
+const FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
+/** T3 modelCatalog.ts: efforts the model reports (known ones only); without a report, the fallback list defaulting to high. */
+export function museModels(catalog) {
+  if (catalog?.providerId !== "meta" || !Array.isArray(catalog.models)) throw hostError("MuseCatalog", "Muse returned a catalog for another provider.", "engine");
+  const seen = new Set();
+  const out = [];
+  for (const model of catalog.models) {
+    if (!model || typeof model.modelId !== "string" || model.modelId === "" || model.providerId !== "meta" || seen.has(model.modelId)) continue;
+    seen.add(model.modelId);
+    const reported = Array.isArray(model.variants);
+    const efforts = (reported ? model.variants : FALLBACK_EFFORTS).filter((e) => Object.hasOwn(EFFORT_LABELS, e));
+    const preferred = reported ? model.defaultReasoningEffort : "high";
+    const defaultEffort = efforts.find((e) => e === preferred) ?? efforts[0];
+    const label = typeof model.displayLabel === "string" ? model.displayLabel.trim() : "";
+    const name = !label ? model.modelId : label === model.modelId && label.startsWith("muse-") ? label.replaceAll("-", " ").replace(/\b[a-z]/g, (c) => c.toUpperCase()) : label;
+    out.push({
+      id: model.modelId,
+      name,
+      isDefault: model.isDefault === true,
+      efforts: efforts.map((id) => {
+        const description = model.reasoningEffortVariants?.find?.((v) => v?.tier === id)?.description;
+        return { id, label: EFFORT_LABELS[id], ...(id === defaultEffort ? { isDefault: true } : {}), ...(typeof description === "string" && description ? { description } : {}) };
+      }),
+      ...(defaultEffort ? { defaultEffort } : {}),
+    });
+  }
+  return { models: out };
+}
+
 const requirementKey = (approval) => JSON.stringify(approval?.currentRequirementId ?? null);
 
 export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS, wakeGraceMs = WAKE_GRACE_MS }) {
   return {
     name: "muse",
     sdk: { name: "@muse-code/sdk", version: SDK_VERSION },
-    capabilities: ["steer"],
+    capabilities: ["steer", "models", "usage"],
     create(ctx) {
       const sessions = new Map(); // host sessionId -> session
       const pending = new Map(); // requestId -> {session, kind, native}
       let counter = 0;
+      let subscription; // latest account-wide `usage/changed`, shared by every session's process
       let sdkPromise;
       const sdk = () => (sdkPromise ??= loadSdk());
 
@@ -101,6 +205,7 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
         run.done = true;
         clearTimeout(run.grace);
         session.run = null;
+        if (frame.result?.usage) session.lastUsage = frame.result.usage;
         forget(session, { keepChildren: true });
         emit(run, { type: "runDone", sendId: run.sendId, ...frame });
         run.ended?.();
@@ -245,6 +350,12 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
 
       // Notifications that arrive before turn/start has answered cannot be matched to the run's turn yet.
       const onNotification = (session, notification) => {
+        // usage/changed is account-wide and carries no session id: keep the latest, never forward it.
+        if (notification.method === "usage/changed") {
+          const report = museSubscription(notification.params);
+          if (report) subscription = report;
+          return;
+        }
         const run = session.run;
         if (run && run.turnId === undefined && !run.done) return void run.early.push(notification);
         handleNotification(session, notification);
@@ -285,7 +396,9 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
           ctx.log({ type: "envAdded", keys: ["MUSE_NO_AUTO_UPDATE"] });
         }
         const serve = ["serve", "--trust-workspace", ...(options.disableSandbox === true ? ["--disable-sandbox"] : [])];
-        const [command, ...args] = [...(prefix ?? []), options.musePath ?? "muse", ...serve];
+        // Under a confinement prefix the prefix is the program; the Windows launcher applies to a bare muse.
+        const launch = prefix === undefined ? museLaunch(options.musePath ?? "muse", env) : { command: options.musePath ?? "muse", args: [] };
+        const [command, ...args] = [...(prefix ?? []), launch.command, ...launch.args, ...serve];
         const handshake = spawn({
           command,
           args,
@@ -368,7 +481,7 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
               const effort = request.options?.effort ?? session.options.effort;
               let accepted;
               try {
-                accepted = await call(session, "turn/start", { input: [{ type: "text", text }], workspaceRoots: [session.root], ifBusy: "queue", ...(effort ? { reasoningEffort: effort } : {}) }, { maxAttempts: 3 });
+                accepted = await call(session, "turn/start", { input: [{ type: "text", text }], workspaceRoots: [process.platform === "win32" ? verbatimPath(session.root) : session.root], ifBusy: "queue", ...(effort ? { reasoningEffort: effort } : {}) }, { maxAttempts: 3 });
               } catch (cause) {
                 if (session.run === run) session.run = null;
                 throw museError(cause);
@@ -456,6 +569,24 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
                 throw museError(cause);
               }
               return null;
+            }
+            case "models": {
+              // A throwaway `muse serve` with no session: it lists the catalog and is closed.
+              const { spawnMspConnection } = await sdk();
+              const host = await startProcess({ cwd: request.cwd ?? process.cwd(), options: { musePath: request.musePath }, confinement: request.confinement }, spawnMspConnection);
+              try {
+                const catalog = await withTimeout(host.connection.request("model/list", {}), requestTimeoutMs, () => hostError("MuseTimeout", "Muse model/list timed out; its process was stopped.", "network"));
+                return museModels(catalog);
+              } catch (cause) {
+                throw museError(cause);
+              } finally {
+                await Promise.resolve(host.close()).catch(() => {});
+              }
+            }
+            case "usage": {
+              // Limits are the latest account-wide report (none until Muse sends one); tokens are the named session's last run.
+              const session = request.sessionId === undefined ? undefined : sessionOf(request.sessionId);
+              return { usage: session?.lastUsage ?? null, limits: subscription ? museLimits(subscription) : null };
             }
             case "closeSession": {
               const session = sessions.get(request.sessionId);

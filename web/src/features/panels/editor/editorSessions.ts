@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { toFailure } from "../../../lib/useAsync";
 import { saveThreadFile } from "../api";
+import { useComposerChips } from "../../../product/state/composerChipStore";
+import { remapReviewChips } from "../../../product/composer/annotationRemap";
 import { saveFailureReason, withEol, type Eol } from "./editorModel";
 
 /**
@@ -109,7 +111,15 @@ export async function saveSession(key: string, against?: string | null, endingsO
   const sent = current.text;
   try {
     const written = await saveThreadFile(current.threadId, { path: current.path, content: withEol(sent, current.eol), base_revision: against === undefined ? current.revision : against });
+    const before = current.saved;
     patch(key, { saved: sent, revision: written.revision, saving: false, mixed: false });
+    // Comments on this file follow their text to the new revision, or are marked out of date when it is gone.
+    if (current.revision && written.revision !== current.revision) {
+      const { chips, update } = useComposerChips.getState();
+      const where = { cwd: current.cwd, path: current.path, fromRevision: current.revision, toRevision: written.revision, before, after: sent };
+      const mine = chips[current.threadId] ?? [];
+      remapReviewChips(mine, where).forEach((chip, at) => { if (chip !== mine[at]) update(current.threadId, chip); });
+    }
     return true;
   } catch (failure) {
     const known = toFailure(failure);

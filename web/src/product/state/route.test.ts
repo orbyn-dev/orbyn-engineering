@@ -11,6 +11,8 @@ describe("routes", () => {
     { name: "skills", skill: "a/b x?#" },
     { name: "pulls" },
     { name: "pulls", project: "p/1 x", number: 42 },
+    { name: "issues" },
+    { name: "issues", tracker: "github", key: "ORB 87/#1" },
     { name: "thread", id: "t/1 x" },
     { name: "new", projectId: null },
     { name: "new", projectId: "p1" },
@@ -70,6 +72,11 @@ describe("routes", () => {
   it("falls back to the list for a pull request link without a number", () => {
     expect(parseRoute("#/pulls/p1")).toEqual({ name: "pulls" });
     expect(parseRoute("#/pulls/p1/abc")).toEqual({ name: "pulls" });
+  });
+
+  it("falls back to the issue list for an issue link without a key", () => {
+    expect(parseRoute("#/issues/github")).toEqual({ name: "issues" });
+    expect(parseRoute("#/issues/github/412")).toEqual({ name: "issues", tracker: "github", key: "412" });
   });
 
   it("refuses malformed or action-bearing Crew task locators", () => {

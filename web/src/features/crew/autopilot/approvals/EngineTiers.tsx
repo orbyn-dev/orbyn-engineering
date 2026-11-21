@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RouteTier } from "../../../../generated/RouteTier";
 import { useAsync } from "../../../../lib/useAsync";
+import { useWorkspace } from "../../../../product/state/workspace";
+import { CrewRoleNote, type CrewRoleFields } from "../../../cursorthread";
 import { useConnection } from "../../../../product/state/connection";
 import { deferNavigation, registerNavigationGuard, type NavigationResume, type NavigationGuardOwner } from "../../../../product/state/navigationGuard";
 import { goToHash } from "../../../../product/state/route";
@@ -18,6 +20,7 @@ export function EngineTiers() {
   const read = useAsync(`crew-engine-tiers:${scope}`, (signal) => reviewControlApi.tiers(signal));
   const editor = useTierEditors((s) => s.editors[scope]);
   const remote = useConnection((s) => s.remote);
+  const statuses = useWorkspace((s) => s.engines.data);
   const [departure, setDeparture] = useState<NavigationResume | null>(null);
   const editButton = useRef<HTMLButtonElement>(null), lastField = useRef<HTMLElement | null>(null);
   const disposeGuard = useRef<NavigationGuardOwner | null>(null), focusEngine = useRef<string | null>(null);
@@ -102,7 +105,7 @@ export function EngineTiers() {
       const current = engine?.defaults.length === 1 ? engine.defaults[0] : null;
       const available = engine?.available && !engine.native && !!current;
       return <div className="et-row" key={id}>
-        <div><b>{engine?.name ?? id}</b>{engine?.native ? <small>Uses its model-family tiers</small> : <><small>Connects over ACP</small><code>{id}</code><small>Saved model: <code>{saved?.model ?? "Not mapped"}</code></small><small>Current default: <code>{current ?? (engine?.defaults.length ? "More than one default" : "No available default")}</code></small>{chosen ? <small>Mapped by you · {tierName(chosen.tier)} · <code>{chosen.model}</code></small> : null}</>}
+        <div><b>{engine?.name ?? id}</b><CrewRoleNote engine={statuses?.find((status) => status.id === id) as CrewRoleFields | undefined} />{engine?.native ? <small>Uses its model-family tiers</small> : <><small>Connects over ACP</small><code>{id}</code><small>Saved model: <code>{saved?.model ?? "Not mapped"}</code></small><small>Current default: <code>{current ?? (engine?.defaults.length ? "More than one default" : "No available default")}</code></small>{chosen ? <small>Mapped by you · {tierName(chosen.tier)} · <code>{chosen.model}</code></small> : null}</>}
           {engine?.unavailable_reason ? <small>{engine.unavailable_reason}</small> : null}
           {editor.previous && ownTier(editor.previous, id) ? <small>Previous choice: {tierName(ownTier(editor.previous, id)!.tier)} · <code>{ownTier(editor.previous, id)!.model}</code></small> : null}
           {editor.editing && saved && !draft ? <small>Uses Builder until you map it.</small> : null}

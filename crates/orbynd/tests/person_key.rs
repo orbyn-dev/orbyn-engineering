@@ -404,8 +404,10 @@ async fn every_person_route_refuses_a_token_only_engine_and_takes_the_key() {
     }
 
     // The sockets are GET routes: without an upgrade they are refused the same way, and the key as a subprotocol opens one.
-    let sockets: Vec<&(String, String, String)> =
-        routes.iter().filter(|(m, _, _)| m == "GET").collect();
+    let sockets: Vec<&(String, String, String)> = routes
+        .iter()
+        .filter(|(m, p, _)| m == "GET" && p.contains("/terminal"))
+        .collect();
     assert_eq!(sockets.len(), 2, "the two terminal sockets");
     for (_, path, _) in &sockets {
         let refused = f.service.get(path).send().await.unwrap();

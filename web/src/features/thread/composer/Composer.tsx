@@ -24,6 +24,7 @@ import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
+import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
 import { useThreadSettings } from "./useThreadSettings";
 import { useStash } from "./useStash";
@@ -124,7 +125,6 @@ export function Composer({
   const sendShortcut = useUi((state) => state.sendShortcut);
   const persistentContext = useUi((state) => state.persistentComposerContext);
   const skillsInSlash = useUi((state) => state.skillsInSlashMenu);
-  const planControls = useUi((state) => state.planControls);
   const contextMeter = useUi((state) => state.contextMeter);
   const stashes = useUi((state) => state.stashes[thread.id] ?? NO_STASHES);
   const chips = useComposerChips((state) => state.chips[thread.id] ?? NO_CHIPS);
@@ -147,6 +147,7 @@ export function Composer({
       (state.projects.data?.find((project) => project.id === thread.project_id)?.is_git ?? false),
   );
   const busy = thread.active_run !== null;
+  const gate = useEngineGate(thread, engine, setError);
   const outbound = useMemo(() => promptWithChips(draft, chips), [draft, chips]);
   const overBy = charactersOver(outbound);
   const styled = useMemo(() => (draft && draft.length <= STYLED_CHARS ? composerMarkup(draft) : null), [draft]);
@@ -154,7 +155,9 @@ export function Composer({
   // The draft is kept while the Orbyn service does not answer, and sending waits for it.
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
-  const canSend = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
+  const ready = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
+  // The first-run notice holds Send until it is answered; Continue sends the message itself once it has been.
+  const canSend = ready && !gate.noticeOpen;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -164,7 +167,7 @@ export function Composer({
   const trigger = menuDismissed ? null : triggerAt(draft, caret);
   const lookupKey = trigger ? `${thread.id}:${trigger.char}:${trigger.query}` : `${thread.id}:idle`;
   const lookup = useAsync<Suggestion[]>(lookupKey, (signal) =>
-    loadSuggestions(trigger, thread, planControls, skillsInSlash, signal),
+    loadSuggestions(trigger, thread, skillsInSlash, signal),
   );
   const matches = useMemo(() => (trigger ? (lookup.data ?? []).slice(0, MENU_ROWS) : []), [trigger, lookup.data]);
   const menuOpen = matches.length > 0;
@@ -195,7 +198,7 @@ export function Composer({
     caretAfterEdit.current = picked.caret;
   };
 
-  const { putThread, setPlanMode, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
+  const { putThread, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
 
   /** A terminal selection is evidence, not a command; it is never consumed by one. */
   const hasTerminalContext = chips.some((chip) => chip.kind === "terminal");
@@ -211,14 +214,12 @@ export function Composer({
       return true;
     }
     setDraft(thread.id, "");
-    if (command === "plan") void setPlanMode(true);
-    if (command === "default") void setPlanMode(false);
     if (command === "usage-limits") setLimitsOpen(true);
     return true;
   };
 
-  const send = async (followUp: "default" | "opposite" = "default") => {
-    if (!canSend) return false;
+  const send = async (followUp: "default" | "opposite" = "default", noticeAnswered = false) => {
+    if (!(noticeAnswered ? ready : canSend)) return false;
     const typed = draft;
     const prompt = promptWithChips(draft, chips);
     const serviceCommand = /^\/(compact|goal)(?:\s|$)/.exec(typed.trim());
@@ -245,6 +246,7 @@ export function Composer({
     const steering = busy && (followUp === "default" ? !queued : queued);
     setSending(true);
     setError(null);
+    gate.clear();
     try {
       await beforeSend?.();
       // Claude hears a typed reply as the reason it was declined, so nothing is queued.
@@ -275,6 +277,7 @@ export function Composer({
       return true;
     } catch (failure) {
       onSendFailed?.();
+      if (gate.onSendFailure(failure)) return false;
       const known = toFailure(failure);
       if (known.code === "folder_untrusted") {
         navigate({ name: "trust", projectId: thread.project_id, threadId: thread.id });
@@ -303,8 +306,6 @@ export function Composer({
       active,
       history,
       recall,
-      planControls,
-      planMode,
       busy,
       sendShortcut,
       shiftPaste,
@@ -315,7 +316,6 @@ export function Composer({
       setRecall,
       setDraft,
       pick,
-      setPlanMode,
       send,
     });
 
@@ -374,7 +374,6 @@ export function Composer({
   );
 
   const unmanaged = engine !== null && !engine.capabilities.managed;
-  const planMode = thread.lifecycle?.plan_mode ?? false;
   // A saved mode this engine does not offer runs Supervised, so it shows that way.
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
@@ -420,6 +419,7 @@ export function Composer({
     extras: thread.options ?? {},
     access: unmanaged ? null : access,
     modes: offeredModes(engine),
+    refused: gate.refused.modes.length > 0 ? gate.refused : undefined,
     onEffort: (value) => void setEffort(value),
     onOption: (option, value) => {
       setError(null);
@@ -453,6 +453,7 @@ export function Composer({
         onEdit={(prompt) => setDraft(thread.id, draft.trim() ? `${draft}\n\n${prompt}` : prompt)}
       />
       <QuestionCard threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
+      {gate.cards(() => void send("default", true))}
       <ComposerBanners engine={engine} />
       <CompactOffer threadId={thread.id} engine={thread.engine} active={busy} items={log?.items ?? []} />
       {runId !== null && runId === stoppedRun ? <StopNotice threadId={thread.id} runId={runId} /> : null}
@@ -539,8 +540,6 @@ export function Composer({
           draft={draft}
           stashes={stashes}
           stashOpen={stashOpen}
-          planControls={planControls}
-          planMode={planMode}
           narrowBar={narrowBar}
           contextMeter={contextMeter}
           showContext={showContext}
@@ -554,7 +553,6 @@ export function Composer({
           traits={traits}
           upload={upload}
           setStashOpen={setStashOpen}
-          setPlanMode={setPlanMode}
           openOverflow={openOverflow}
           pickModel={pickModel}
           stop={stop}
@@ -586,10 +584,7 @@ export function Composer({
             busy,
             unmanaged,
             access,
-            planControls,
-            planMode,
             traits,
-            setPlanMode,
           })}
         />
       ) : null}</Presence>

@@ -93,3 +93,13 @@ describe("the escape constants on the real thresholds read", () => {
     expect(calls.some(({ url }) => url.includes("/api/crew/escapes"))).toBe(false);
   });
 });
+
+describe("the way back from the escape settings (Crew Designs v371)", () => {
+  it("draws Back to escapes above the title, returning to the escape log, and sends nothing", async () => {
+    render(<LiveEscapeSettings />);
+    const back = await screen.findByRole("link", { name: "Back to escapes" });
+    expect(back).toHaveAttribute("href", "#/settings/crew/escapes");
+    expect(back.compareDocumentPosition(screen.getByRole("heading", { name: /Crew › Escapes/ }))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(posts(calls)).toEqual([]);
+  });
+});

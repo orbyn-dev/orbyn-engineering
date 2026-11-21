@@ -69,7 +69,6 @@ export const SETTINGS: readonly SettingSearchItem[] = [
   {"id": "source-control-automatic-pull", "title": "Automatically pull", "section": "source-control"},
   {"id": "source-control-writing-style", "title": "Writing style", "section": "source-control"},
   {"id": "labs-multiline-rows", "title": "Multiline rows", "section": "labs"},
-  {"id": "labs-plan-mode", "title": "Plan mode", "section": "labs"},
   {"id": "labs-context-window-indicator", "title": "Context window indicator", "section": "labs"},
   {"id": "tasks-skip-near-limit", "title": "Skip a run when a limit is near", "section": "tasks"},
   {"id": "tasks-notify-runs", "title": "Notify when a run finishes or fails", "section": "tasks"},

@@ -76,8 +76,8 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
 | `fork` | `sessionId`, `atTurn?` | `{engineSessionId}` |
 | `readHistory` | `sessionId` | list of messages (family-shaped, mapped by the core) |
-| `usage` | `sessionId` | context and cost counters |
-| `models` | none (host-wide) | model list with efforts and capabilities |
+| `usage` | `sessionId` (optional for the Cursor and Muse families, which also answer account-wide) | context and cost counters. Cursor and Muse: `{usage, limits}`, see below |
+| `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process) | model list with efforts and capabilities. Cursor and Muse: `{models, account?}`, see below |
 | `closeSession` | `sessionId` | `null` |
 | `probe` | `sessionId`, `kind` (`confinement`) | `{refused: [...], allowed: [...]}`: the host runs a scripted attempt to write outside the roots and read a forbidden path through the engine and reports which were refused; the Crew probe per family and the Codex confinement probe use it |
 | `ping` | none | `null` (liveness; see crash and recovery) |
@@ -130,11 +130,23 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
   `threadDisposition: "reusable" | "broken"`, and on a failure may add
   `retry: {"afterMs"?, "why": "rate_limit"|"network"|"overloaded", "resetsAt"?}`; `resetsAt` (unix seconds,
   inside `retry`, only for `rate_limit`) lets the core emit its `Limited { resets_at }` event.
+- `runDone` `result.usage` may also be present on a `cancelled` or `failed` result (the tokens spent before the end); the core treats it as optional on every `reason`.
 - `background` frames report shells, subagents and workflows the engine started, so rule 1 of the
   run-end contract can hold or report them. The host keeps the run open per the family's rule
   (see [engine-run-contract.md](engine-run-contract.md)) and sends `runDone` only when the hold ends.
 - `log` is for protocol-level events the core stores as run diagnostics (T3's `protocolLog`). Never
   put prompt text or tokens in `log`; the host redacts before sending.
+
+## Account, limits and catalog results (Cursor and Muse)
+
+Read-only, family-shaped results of `models` and `usage`, all optional and ignorable (no protocol bump; a core that ignores them loses only the display):
+
+- `models` result `{models: [...], account?}`. Cursor: `models[]` is the public catalog item (`id`, `displayName`, `description?`, `aliases?`, `parameters?`, `variants?`);
+  `account?` is `{apiKeyName?, createdAt?, userId?, email?, firstName?, lastName?}` and is absent when the team blocks it. Muse: `models[]` is
+  `{id, name, isDefault, efforts: [{id, label, isDefault?, description?}], defaultEffort?}`. Cursor needs `CURSOR_API_KEY` at host start, else `kind: "auth"`.
+- `usage` result `{usage, limits}`: `usage` is the named session's last finished run total (or `null`); `limits` is `{checkedAt, windows: [{id, kind, label, usedPercent (0 to 100), resetsAt?, windowDurationMins?}], authLabel?, unavailable?, message?}` or, for Muse before any report, `null`. `unavailable` is
+  `"unsupported"` or `"probeFailed"` with empty `windows`; a limits failure is never a request error.
+- No credential, token, key or response body appears in a result or `log`; the host redacts and failures carry fixed text.
 
 ## Errors
 

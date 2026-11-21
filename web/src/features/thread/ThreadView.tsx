@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api";
 import { toFailure } from "../../lib/useAsync";
-import { runHandlers, useCommand } from "../../product/shell/shortcuts";
+import { useCommand } from "../../product/shell/shortcuts";
 import type { Project, RunState, Thread } from "../../api/types";
 import { relativeTime } from "../../lib/format";
 import { runStateLabels } from "../../product/runs/stateLabels";
@@ -38,10 +38,10 @@ import { Composer } from "./composer/Composer";
 import { DetailsPopover } from "./details/DetailsPopover";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
+import { IssueChip } from "../issues";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "../../product/timeline/timeline";
-import { implementPrompt, planTitle, proposedPlanIn } from "./proposedPlan";
 import { SideChatPanel } from "./SideChatPanel";
 import { SubagentBar } from "./SubagentBar";
 import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
@@ -100,13 +100,13 @@ function TopBar({
           ) : null}
           {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
-        {narrow ? <PullChip thread={thread} /> : null}
+        {narrow ? <><IssueChip thread={thread} /><PullChip thread={thread} /></> : null}
       </div>
       <RelatedThreads thread={thread} />
       <GitActions thread={thread} />
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
-        {narrow ? null : <PullChip thread={thread} />}
+        {narrow ? null : <><IssueChip thread={thread} /><PullChip thread={thread} /></>}
         <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup="dialog" icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>
@@ -214,38 +214,6 @@ function RunStatusLine({ thread }: { thread: Thread }) {
       {tools.length > 0 ? (
         <span className="run-status-detail">{tools.map((tool) => tool.name).join(", ")}</span>
       ) : null}
-    </div>
-  );
-}
-
-/** Once a turn has proposed a plan, offers to act on it. */
-function PlanBanner({ thread }: { thread: Thread }) {
-  const log = useThreadLogs((store) => store.logs[thread.id]);
-  const addPrompt = useThreadLogs((store) => store.addPrompt);
-  const putThread = useWorkspace((store) => store.putThread);
-  const last = log?.items.at(-1);
-  const plan = last?.kind === "message" && last.role !== "user" && last.done ? proposedPlanIn(last.text) : null;
-  if (!plan || thread.active_run) return null;
-  const implement = async () => {
-    if (thread.lifecycle?.plan_mode) putThread(await api.patchThread(thread.id, { plan_mode: false }));
-    const prompt = implementPrompt(plan);
-    const run = await api.startRun(thread.id, prompt);
-    addPrompt(thread.id, { runId: run.id, text: prompt });
-  };
-  return (
-    <div className="plan-banner" role="status">
-      <strong>Plan ready</strong>
-      <span>{planTitle(plan)}</span>
-      <Button
-        small
-        tone="quiet"
-        onClick={() => runHandlers("composer.focus")}
-      >
-        Suggest changes
-      </Button>
-      <Button small onClick={() => void implement()}>
-        Approve and start
-      </Button>
     </div>
   );
 }
@@ -502,7 +470,6 @@ export function ThreadView({ id }: { id: string }) {
             <div ref={mover} className="composer-group">
               <div className="composer-stack">
                 {hero ? <DraftHero project={project} /> : null}
-                <PlanBanner thread={thread} />
                 <div ref={anchor}>
                   {thread.lifecycle?.relation === "subagent" ? (
                     <SubagentBar thread={thread} />

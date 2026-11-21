@@ -7,7 +7,8 @@
 //! The rule for `Person`: the route decides or grants something only the person may (an approval, a trust or policy
 //! grant, redaction), acts on the person's files or shell, moves a checkout (initialises git, creates or switches a branch or
 //! ref: ruling F3, so a service-token agent cannot move the checkout under the person), replaces the app, or writes account or Crew state behind
-//! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`.
+//! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`. The exception is a read that returns a secret itself: `GET /api/settings/secrets/patterns/{id}` returns a
+//! pattern's text, which can be the secret spelled out, so a service-token agent must not read it.
 //!
 //! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push). Two routes are `Local` as a whole but check the key
 //! in their handler for part of the request, listed in [`FIELD_LEVEL`]: `POST /api/projects/{id}/pulls/{number}/checkout` when its
@@ -131,6 +132,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("PUT", "/api/settings/preferences"),
     ("PUT", "/api/settings/secrets/formats/{id}"),
     ("POST", "/api/settings/secrets/patterns"),
+    ("GET", "/api/settings/secrets/patterns/{id}"),
     ("DELETE", "/api/settings/secrets/patterns/{id}"),
     ("PUT", "/api/settings/secrets/patterns/{id}"),
     ("PUT", "/api/settings/secrets/projects/{id}"),
@@ -748,6 +750,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/settings/secrets/patterns",
         "adds a redaction pattern",
+    ),
+    (
+        "GET",
+        "/api/settings/secrets/patterns/{id}",
+        "reads a redaction pattern's text, which can be a secret spelled out",
     ),
     (
         "DELETE",

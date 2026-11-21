@@ -108,14 +108,17 @@ available in this build." (`kind: "unsupported"`). In the single executable it i
   SDK's `interaction.update` payload, untouched.
 
 Tested against replayed T3 Code transcripts (MIT, `test/fixtures/NOTICE`) of the SDK's public calls, not an internal worker
-protocol: simple, multi-turn, close then resume, steering, cancel mid tool, a read-only tool call. `test/replayCursor.mjs` plays a
+protocol: simple, multi-turn, close then resume, steering, cancel mid tool, a read-only tool call, a plan-mode turn, a queued second turn, a skill
+invocation, subagents and a todo list. A run's usage is the SDK result's `usage`, else the sum of the `turn-ended` usages (T3's rule), also on a cancel or a failure. `test/replayCursor.mjs` plays a
 transcript as a fake SDK (it asserts each recorded outbound call, then delivers the recorded updates and result). Errors, pooling,
 confinement, the key and the flag use a hand-written fake SDK.
+
+Read-only readers (`models`, `usage`; fake `fetch` tests only): see the T3 comparison below.
 
 Not done, so Planned: any run against the real `@cursor/sdk` (the transcripts were recorded by T3, and the error class names,
 the `session_lost` message match and the `CURSOR_API_KEY` handoff are unverified); loading the SDK from disk in the single executable
 (its webpack chunks and native binaries; T3 loads it with `createRequire`); background shells as `background` frames (T3 reads an
-SDK-internal hook, no transcript covers it) and `stopTask`; `usage`, `models`, `readHistory`, `rollback`, `fork`; attachments;
+SDK-internal hook, no transcript covers it) and `stopTask`; `readHistory`, `rollback`, `fork`; attachments;
 subagent, todo and plan transcripts (`proposed_plan` was not copied: it holds a personal path); per-session confinement; Windows.
 
 ## OpenCode family
@@ -184,9 +187,34 @@ Sessions always start asking (`promptUnmatched`, `:ask-me`); T3 recorded two of 
 Checked by hand: the bundled binary opened and closed a session against a stand-in `muse serve` script over real stdio
 (no `muse` is installed here). Not done, so Planned: any run against a real `muse` or model turn; `question` frames
 (`userInput/*`, from T3's adapter, no transcript); resume against a real server; subagents as `background` frames (their item
-never ends in the recordings); `stopTask`, `models`, `usage`, `readHistory`, `rollback`, fork; attachments; the denial message
-(Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; Windows launchers
-(`.cmd`), verbatim paths and the Linux `env` trampoline.
+never ends in the recordings); `stopTask`, `readHistory`, `rollback`, fork; attachments; the denial message
+(Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; the Linux `env`
+trampoline. Windows launchers (`.cmd` and `.bat` under cmd.exe, PATH and PATHEXT) and verbatim turn roots follow T3 and are unit tested
+with injected platform and file checks only; no Windows run.
+
+## Differences from T3 Code on purpose (Muse and Cursor)
+
+Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`) and `packages/provider-cursor` (`CursorAgentSdk.ts`,
+`CursorAgentSdkWorker.ts`, `adapter.ts`), commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking
+(`promptUnmatched`, `:ask-me`) where T3 maps full access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability
+(no session MCP yet); Cursor has no approvals; the pooled Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind
+`ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only `CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key.
+
+Readers added (read-only, through the existing `models` and `usage` requests, capabilities `models` and `usage` on both families; not a
+protocol bump). Cursor, from `provider-cursor` `CursorSdkCatalog.ts` (`/v1/me`, `/v1/models`, 30 minute cache, account label dropped when a team
+blocks it) and `usageLimits.ts` + `apiKey.ts` (`GetCurrentPeriodUsage` through the key exchange): `models` returns `{models, account?}`, `usage`
+returns `{usage, limits}` (`src/families/cursorReaders.mjs`). Muse, from `provider-muse` `modelCatalog.ts` (`model/list` from a throwaway
+`muse serve`), `protocol.ts` (`MuseSubscriptionUsage`) and `usageLimits.ts` (`museUsageToLimits`): `models` returns `{models}` with efforts, and
+`usage` returns `{usage, limits}` from the latest account-wide `usage/changed` (`limits` is `null` until Muse sends one). The key, access token
+and any response body never appear in a result or log; failures carry fixed text. All of it is tested with a fake `fetch` and a fake
+connection only: nothing ran against the real Cursor service, `@cursor/sdk` or `muse`, and the endpoint paths and field names follow T3,
+unverified here.
+
+T3 has more that is not added: Cursor `accountUsage.ts`, `CursorUsageAccounts.ts`, `accountCache.ts` and `CursorAccountReader.ts` (billed-event
+history, team lookups and an on-disk cache for T3's cost screens; this host keeps no files, and the core owns cost history); `credentialStore.ts`
+and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (scan `session.jsonl` transcripts under Muse's home for token history,
+a file reader the host does not need); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
+retry, and Muse's quota reset already rides `retry.resetsAt`).
 
 ## In the app bundle (macOS arm64)
 
