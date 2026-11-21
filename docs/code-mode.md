@@ -115,14 +115,15 @@ behind a small trait, so a different engine (`wasmtime` plus QuickJS, or `deno_c
 ```rust
 #[async_trait]
 pub trait CodeExecutor: Send + Sync {
-    /// Parses `source` (TypeScript already stripped) and prepares a run. Runs nothing.
-    fn prepare(&self, source: &str, limits: &Limits, seed: &RunSeed) -> Result<Box<dyn Run>, SyntaxError>;
+    /// Parses `source` (TypeScript types stripped) and prepares a run. Runs nothing.
+    async fn prepare(&self, source: &str, limits: Limits, seed: RunSeed, host: Arc<dyn ToolHost>)
+        -> Result<Box<dyn Run>, RunError>;
 }
 
 #[async_trait]
 pub trait Run: Send {
-    /// Drives the script until it finishes, fails, or `until` passes. A host call is awaited through `host`.
-    async fn drive(&mut self, host: &dyn ToolHost, until: Instant) -> Step;
+    /// Drives the script until it finishes, fails, or `until` passes (`Step::Yielded`).
+    async fn drive(&mut self, until: Instant) -> Step;
 }
 
 #[async_trait]
@@ -130,7 +131,7 @@ pub trait ToolHost: Send + Sync {
     async fn call(&self, name: &str, args: Value) -> Result<Value, ToolFailure>;
 }
 
-pub enum Step { Done { result: Value, logs: Vec<String> }, Failed { error: RunError, logs: Vec<String> }, Yielded }
+pub enum Step { Done { result, logs, truncated }, Failed { error, logs, truncated }, Yielded }
 ```
 
 The sandbox crate knows nothing about the gate, audit or Crew. `ToolHost` is the whole interface to Orbyn.
@@ -263,6 +264,8 @@ The callable set for a run is computed per call, from the binding:
   was not shown.
 - **Not in a script, ever:** `approve`, the three Code Mode tools, and anything that reads or answers the
   approval queue as the person.
+- **Not in a script in v1 (a v2 item):** `crew_*`, `computer_*` and `skill_load`. Each needs its own gate
+  path first.
 
 A tool added later is refused to a worker by default, as today, and reaches a script only through the same
 table `tools/list` reads. There is no second list to forget.
@@ -294,6 +297,19 @@ declare function orbyn_thread_send(args: {
 
 A test checks that every tool in `tools/list` has a declaration and that a declaration's required arguments
 match its `inputSchema`, so the two cannot drift.
+
+## Error texts
+
+`error.message` is shown to the person as is. Limits: "The script used more than its CPU time.", "The script
+used more than its memory limit (heap).", "The script used more than its stack limit.", "A script may make 200
+calls.", "The run took longer than its time limit.", "The script is over 65536 bytes." `denied` is the gate's
+own reason, verbatim (a timed-out approval is a refusal with the gate's timeout reason). `lost`: "This run
+was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.", and
+for a failed replay "The script changed or is not repeatable, so the recorded calls can't be replayed." or "A
+call that may have changed something was running when Orbyn restarted, so the run can't continue." There is
+no cancel in v1: a person ends a paused run by denying its pending approval. The list view of runs shows
+run id, status, start and end, call count and the first 120 characters of the script; the detail view adds the
+calls with their 4 KiB previews, and a call's full result is fetched on its own.
 
 ## Switches and what is not here yet
 
@@ -332,3 +348,30 @@ match its `inputSchema`, so the two cannot drift.
 
 Each step is its own pull request with its tests. The web UI (approval card with the script, run log) is built
 by the web side against the shapes here.
+
+## As built: web UI
+
+The web side is in `web/src/features/codemode/`, built from the Engineer frames `codemode-*`. Nothing in the service exists yet, so
+it reads through a small client (`api.ts`) served only by the dev and test mock (`web/mock/codemode.ts`, scenario `codemode`). In a
+production build the client sends nothing: the switch is shown off and cannot be pressed, and every screen draws from the engine's
+own reply. Swap the client for the generated types and routes when the backend merges, and delete the mock.
+
+- **Setting.** Settings › Providers › an engine has a Code Mode group with one switch, off by default, read when the page opens and
+  written once per click. It carries the Planned pill until Code Mode ships.
+- **Run card.** An `orbyn_code_run` call in the thread is drawn from its run: running, paused, completed, and the five error kinds, with the
+  script excerpt (5 lines, opened a 400-line page at a time), calls (3 and a "Show all" line past 8, at most 200), logs (newest 500),
+  and the result (first 64 KiB). The run record is read every two seconds while the run is not over; without it only the engine's reply
+  is drawn, and there is no call list. A resumed run is one record shown on each call that names it.
+- **Approval.** An approval with `via` shows the call, the script and the calls so far, "1 of N" with the next ones held to one line,
+  the answered and expired forms, and what Always allow covers. `via` is read only to draw: the buttons, the decision and the
+  rules never read it.
+- **Search and describe.** Drawn as rows in the thread, from the reply read leniently (the exact reply shapes are not in this document).
+- **Untrusted text.** The script, logs, results and call previews are React text, never markup or links, never logged, never opened.
+- **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
+  the Orbyn group when an engine reports them.
+- **When the real route lands.** `PUT /api/engines/:id/code-mode` changes what an engine may call, so it is a Person-class write
+  (`web/src/api/personKey.ts` and the route class table in `crates/orbynd`); add it there with the route, not after.
+- **Model-chosen text.** Run ids, tool names and statuses come from a model: records are kept in maps, an unknown status is shown as
+  unknown, the tool in "Always allow covers X" comes from the approval's own tool field and never from its summary, and arguments
+  are summarised (lists, objects, cut text with an ellipsis, "N more fields") so a card never looks complete when it is not.
+  Every call of a run keeps its Allow and Deny; only the first shows the script.

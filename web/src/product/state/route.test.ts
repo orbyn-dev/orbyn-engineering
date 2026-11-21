@@ -25,8 +25,28 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "areas" },
     { name: "settings", section: "crew", crewPage: "areas", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "thresholds", repo: "p-app" },
+    { name: "settings", section: "crew", crewPage: "capacity" },
+    { name: "settings", section: "crew", crewPage: "coverage" },
+    { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "escapes" },
+    { name: "settings", section: "crew", crewPage: "escape", id: "esc/1" },
+    { name: "settings", section: "crew", crewPage: "backtest" },
+    { name: "settings", section: "crew", crewPage: "estimate" },
+    { name: "settings", section: "crew", crewPage: "report", id: "run-4n" },
   ])("round-trips %j", (route) => {
     expect(parseRoute(routeHref(route))).toEqual(route);
+  });
+
+  it("keeps the Crew entry pages at their own addresses and an unknown sub-page at its parent", () => {
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "escapes" })).toBe("#/settings/crew/escapes");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "coverage" })).toBe("#/settings/crew/capacity/coverage");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "escape", id: "a b" })).toBe("#/settings/crew/escapes/detail?id=a+b");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "backtest" })).toBe("#/settings/crew/backtest");
+    expect(parseRoute("#/settings/crew/areas/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "areas" });
+    expect(parseRoute("#/settings/crew/capacity/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "capacity" });
+    expect(parseRoute("#/settings/crew/nope")).toEqual({ name: "settings", section: "crew" });
+    // An id belongs only to the pages that name one.
+    expect(parseRoute("#/settings/crew/escapes?id=x")).toEqual({ name: "settings", section: "crew", crewPage: "escapes" });
   });
 
   it("falls back to the list for a pull request link without a number", () => {

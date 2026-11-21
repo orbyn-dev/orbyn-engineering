@@ -1,0 +1,19 @@
+[package]
+name = "orbyn-code-sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+deno_ast = { version = "0.53", default-features = false, features = ["type_strip"] }
+rquickjs = { version = "0.14", default-features = false, features = ["futures", "parallel"] }
+serde_json.workspace = true
+thiserror.workspace = true
+url = "2"
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

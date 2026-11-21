@@ -534,6 +534,7 @@ impl Core {
                     "frame_token": render.frame_token,
                     "title": render_title(args),
                     "images": render.images,
+                    "notes": render.notes,
                     "bytes": render.bytes,
                     "height": render_height(args),
                 })

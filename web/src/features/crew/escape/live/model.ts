@@ -11,7 +11,6 @@ export const WHY = {
   model: "the merge does not record a model or a lane yet, so a row names the engine and the area only",
   counts: "GET /api/crew/escapes/counts (per engine for a task’s area) is not built",
   queue: "the Review queue is not in the beta, so there is no button to open it",
-  check: "the create-check screen (the form for the path, what it asserts and the run command) is still a drawn sample, so no live screen collects a proposal yet",
   tooling: "a created check only adds test files in v1; a tooling gap is logged with no proposal",
   retention: "the log read does not say how many escapes are kept or whether room was made",
   openItself: "a choice to open the check task by itself is not built",

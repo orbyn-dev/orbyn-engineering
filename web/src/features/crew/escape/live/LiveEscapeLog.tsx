@@ -7,6 +7,8 @@ import { useNarrow } from "../../board/useWidth";
 import { Frame } from "../../shared/Frame";
 import { Btn, Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
+import { CoverageLink } from "../../capacity/live/CoverageLink";
+import { useCrewHref } from "../../shared/nav";
 import { asOf, count, dayMoment, ESCAPES_LIMIT, merges, nameOf, sourceLabel, WHY } from "./model";
 import { EscapeTable, GapChip, ProjectChip, StateChip } from "./parts";
 import { useEscapeLog } from "./useEscapes";
@@ -288,10 +290,13 @@ export function LiveEscapeLog({
   const variant: LogVariant = panel ? "panel" : narrow ? "window" : "full";
   const read = useEscapeLog(project);
   const log = read.status === "ready" ? read.data : null;
+  const href = useCrewHref();
   const open = (id: string) => {
-    window.location.hash = `#/preview/crew/escape-detail?id=${encodeURIComponent(id)}`;
+    window.location.hash = href({ page: "escape", id });
   };
   const chip = <ProjectChip name={name} projects={projects} current={project} onPick={onPick} />;
+  // The Coverage link sits before the project chip, so it never moves when the window picker changes.
+  const coverage = <CoverageLink project={project} />;
   return (
     <Frame live panel={panel}>
       {panel ? (
@@ -299,7 +304,7 @@ export function LiveEscapeLog({
           <b>Crew</b>
           <span className="cx-cwpv">Preview</span>
           <span className="cx-pha">
-            <button type="button" className="cx-ghost" style={{ height: "24px", fontSize: "12px", padding: "0 9px" }} onClick={() => { window.location.hash = "#/preview/crew/escape-log"; }}>Open in Crew</button>
+            <button type="button" className="cx-ghost" style={{ height: "24px", fontSize: "12px", padding: "0 9px" }} onClick={() => { window.location.hash = href({ page: "escapes" }); }}>Open in Crew</button>
           </span>
         </div>
       ) : null}
@@ -317,13 +322,16 @@ export function LiveEscapeLog({
             <span className="cx-rtag cx-lo">This device only</span>
             {variant === "full" ? (
               <span className="cx-t10sp">
+                {coverage}
                 {chip}
                 {log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null}
               </span>
             ) : null}
           </div>
+          {variant === "panel" ? <div style={{ display: "flex" }}>{coverage}</div> : null}
           {variant === "window" ? (
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+              {coverage}
               {chip}
               {log ? <span className="cx-cwseg"><span className="cx-on">Last {log.window_days} days</span></span> : null}
             </div>

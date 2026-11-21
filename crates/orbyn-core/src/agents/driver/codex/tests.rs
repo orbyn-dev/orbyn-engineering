@@ -745,6 +745,44 @@ fn a_list_codex_did_not_answer_leaves_its_group_out() {
 }
 
 #[test]
+fn a_file_change_with_no_known_path_is_never_taken_for_one_in_the_checkout() {
+    let mut mapper = mapper();
+    // A sub-agent's item is never recorded, and Codex sends no grantRoot with it.
+    let unknown = json!({ "itemId": "sub-agent-item", "threadId": "other" });
+    let request = classify_request("item/fileChange/requestApproval", &unknown, &mapper).unwrap();
+    assert!(request.has_no_known_path());
+    let rooted = json!({ "itemId": "sub-agent-item", "grantRoot": "/work/repo" });
+    let request = classify_request("item/fileChange/requestApproval", &rooted, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+    // The legacy request names its paths, or none.
+    let empty = json!({ "callId": "c", "fileChanges": {} });
+    let request = classify_request("applyPatchApproval", &empty, &mapper).unwrap();
+    assert!(request.has_no_known_path());
+    let named = json!({ "callId": "c", "fileChanges": { "src/a.rs": {} } });
+    let request = classify_request("applyPatchApproval", &named, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+    // It is declined for both request shapes, never accepted.
+    for method in ["item/fileChange/requestApproval", "applyPatchApproval"] {
+        let denied = approval_response(method, &unknown, &Verdict::Deny("no".into()));
+        assert!(
+            denied["decision"] == "decline" || denied["decision"] == "denied",
+            "{method}"
+        );
+    }
+    // Other kinds carry no paths by design and are not affected.
+    let command = json!({ "command": "ls" });
+    let request =
+        classify_request("item/commandExecution/requestApproval", &command, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+    mapper
+        .file_paths
+        .insert("known".into(), vec!["src/b.rs".into()]);
+    let known = json!({ "itemId": "known" });
+    let request = classify_request("item/fileChange/requestApproval", &known, &mapper).unwrap();
+    assert!(!request.has_no_known_path());
+}
+
+#[test]
 fn unknown_requests_are_not_classified() {
     let mapper = mapper();
     for method in [
