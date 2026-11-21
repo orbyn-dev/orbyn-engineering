@@ -18,6 +18,7 @@ import { useAsync } from "../../lib/useAsync";
 import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
+import { crewViewsItem } from "./strip/launcher";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
 import { repoLabel, useThreadRepos } from "../repos";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
@@ -308,6 +309,8 @@ export function PanelHost({
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
     }),
+    // Crew views is drawn in the launcher as Planned: its submenu lists the open thread's crew views, and nothing reads a thread's crew yet.
+    crewViewsItem(),
     { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
