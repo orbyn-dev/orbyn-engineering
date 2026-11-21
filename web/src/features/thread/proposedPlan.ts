@@ -20,4 +20,3 @@ export function stripPlanTitle(plan: string): string {
 
 export const planFilename = (plan: string) => `${slugify(planTitle(plan) ?? "plan") || "plan"}.md`;
 
-export const implementPrompt = (plan: string) => `PLEASE IMPLEMENT THIS PLAN:\n${plan.trim()}`;

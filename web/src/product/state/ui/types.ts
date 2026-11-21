@@ -130,8 +130,6 @@ export interface Prefs {
   persistentComposerContext: boolean;
   /** Lists skills in the `/` menu as well as under `$`. */
   skillsInSlashMenu: boolean;
-  /** Offers Plan with its button, commands and Shift+Tab. */
-  planControls: boolean;
   /** The circle in the composer showing how full the context is. */
   contextMeter: boolean;
   /** Saved prompts by thread, newest first. */

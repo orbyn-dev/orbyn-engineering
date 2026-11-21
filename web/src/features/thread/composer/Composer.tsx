@@ -124,7 +124,6 @@ export function Composer({
   const sendShortcut = useUi((state) => state.sendShortcut);
   const persistentContext = useUi((state) => state.persistentComposerContext);
   const skillsInSlash = useUi((state) => state.skillsInSlashMenu);
-  const planControls = useUi((state) => state.planControls);
   const contextMeter = useUi((state) => state.contextMeter);
   const stashes = useUi((state) => state.stashes[thread.id] ?? NO_STASHES);
   const chips = useComposerChips((state) => state.chips[thread.id] ?? NO_CHIPS);
@@ -164,7 +163,7 @@ export function Composer({
   const trigger = menuDismissed ? null : triggerAt(draft, caret);
   const lookupKey = trigger ? `${thread.id}:${trigger.char}:${trigger.query}` : `${thread.id}:idle`;
   const lookup = useAsync<Suggestion[]>(lookupKey, (signal) =>
-    loadSuggestions(trigger, thread, planControls, skillsInSlash, signal),
+    loadSuggestions(trigger, thread, skillsInSlash, signal),
   );
   const matches = useMemo(() => (trigger ? (lookup.data ?? []).slice(0, MENU_ROWS) : []), [trigger, lookup.data]);
   const menuOpen = matches.length > 0;
@@ -195,7 +194,7 @@ export function Composer({
     caretAfterEdit.current = picked.caret;
   };
 
-  const { putThread, setPlanMode, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
+  const { putThread, setAccess, setEffort, pickModel } = useThreadSettings(thread, setError);
 
   /** A terminal selection is evidence, not a command; it is never consumed by one. */
   const hasTerminalContext = chips.some((chip) => chip.kind === "terminal");
@@ -211,8 +210,6 @@ export function Composer({
       return true;
     }
     setDraft(thread.id, "");
-    if (command === "plan") void setPlanMode(true);
-    if (command === "default") void setPlanMode(false);
     if (command === "usage-limits") setLimitsOpen(true);
     return true;
   };
@@ -303,8 +300,6 @@ export function Composer({
       active,
       history,
       recall,
-      planControls,
-      planMode,
       busy,
       sendShortcut,
       shiftPaste,
@@ -315,7 +310,6 @@ export function Composer({
       setRecall,
       setDraft,
       pick,
-      setPlanMode,
       send,
     });
 
@@ -374,7 +368,6 @@ export function Composer({
   );
 
   const unmanaged = engine !== null && !engine.capabilities.managed;
-  const planMode = thread.lifecycle?.plan_mode ?? false;
   // A saved mode this engine does not offer runs Supervised, so it shows that way.
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
@@ -539,8 +532,6 @@ export function Composer({
           draft={draft}
           stashes={stashes}
           stashOpen={stashOpen}
-          planControls={planControls}
-          planMode={planMode}
           narrowBar={narrowBar}
           contextMeter={contextMeter}
           showContext={showContext}
@@ -554,7 +545,6 @@ export function Composer({
           traits={traits}
           upload={upload}
           setStashOpen={setStashOpen}
-          setPlanMode={setPlanMode}
           openOverflow={openOverflow}
           pickModel={pickModel}
           stop={stop}
@@ -586,10 +576,7 @@ export function Composer({
             busy,
             unmanaged,
             access,
-            planControls,
-            planMode,
             traits,
-            setPlanMode,
           })}
         />
       ) : null}</Presence>

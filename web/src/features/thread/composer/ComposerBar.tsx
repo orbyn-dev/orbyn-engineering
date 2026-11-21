@@ -1,4 +1,4 @@
-import { ArrowUp, Archive, ListChecks, Paperclip, SlidersHorizontal, Square } from "lucide-react";
+import { ArrowUp, Archive, Paperclip, SlidersHorizontal, Square } from "lucide-react";
 import type { RefObject } from "react";
 import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../api/types";
 import type { StashedPrompt } from "../../../product/state/ui";
@@ -7,7 +7,7 @@ import { ContextMeter } from "./ComposerExtras";
 import { ACCESS, EffortTrigger, type useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
 
-/** The row under the field: attach, stash, plan, model, effort, access and send or stop. */
+/** The row under the field: attach, stash, model, effort, access and send or stop. */
 export function ComposerBar({
   bar,
   filePicker,
@@ -19,8 +19,6 @@ export function ComposerBar({
   draft,
   stashes,
   stashOpen,
-  planControls,
-  planMode,
   narrowBar,
   contextMeter,
   showContext,
@@ -34,7 +32,6 @@ export function ComposerBar({
   traits,
   upload,
   setStashOpen,
-  setPlanMode,
   openOverflow,
   pickModel,
   stop,
@@ -49,8 +46,6 @@ export function ComposerBar({
   draft: string;
   stashes: StashedPrompt[];
   stashOpen: boolean;
-  planControls: boolean;
-  planMode: boolean;
   narrowBar: boolean;
   contextMeter: boolean;
   showContext: boolean;
@@ -64,7 +59,6 @@ export function ComposerBar({
   traits: Pick<ReturnType<typeof useTraitsMenu>, "openAt">;
   upload(files: FileList | File[] | null): void;
   setStashOpen(open: boolean): void;
-  setPlanMode(on: boolean): Promise<void>;
   openOverflow(element: HTMLElement): void;
   pickModel(next: { engine: string; model: string | null }): Promise<void>;
   stop(): Promise<void>;
@@ -95,19 +89,6 @@ export function ComposerBar({
         >
           <Archive size={14} aria-hidden />
           <span>{stashes.length}</span>
-        </button>
-      ) : null}
-      {(planControls || planMode) && !narrowBar ? (
-        <button
-          type="button"
-          className="composer-control"
-          aria-pressed={planMode}
-          data-on={planMode || undefined}
-          disabled={busy || !thread.lifecycle}
-          onClick={() => void setPlanMode(!planMode)}
-        >
-          <ListChecks size={14} aria-hidden />
-          <span>Plan</span>
         </button>
       ) : null}
       <span className="composer-spacer" />

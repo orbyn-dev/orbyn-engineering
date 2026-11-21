@@ -194,9 +194,9 @@ test("a proposed plan shows as a card and can be implemented or saved", async ({
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
 
-  await expect(page.getByRole("status").filter({ hasText: "Plan ready" })).toBeVisible();
-  await page.getByRole("button", { name: "Approve and start" }).click();
-  await expect(page.getByText("PLEASE IMPLEMENT THIS PLAN:", { exact: false }).first()).toBeVisible();
+  // The proposed plan is a card in the timeline only: no follow-up banner offers to act on it (B66).
+  await expect(page.getByRole("status").filter({ hasText: "Plan ready" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Approve and start" })).toHaveCount(0);
   await settled(service, id);
 });
 

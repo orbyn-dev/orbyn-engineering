@@ -64,7 +64,6 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   fontSmoothing: state.fontSmoothing,
   persistentComposerContext: state.persistentComposerContext,
   skillsInSlashMenu: state.skillsInSlashMenu,
-  planControls: state.planControls,
   contextMeter: state.contextMeter,
   stashes: state.stashes,
   threadNotifications: state.threadNotifications,

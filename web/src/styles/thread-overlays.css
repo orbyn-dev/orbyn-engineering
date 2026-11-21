@@ -25,28 +25,6 @@
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black 70%, transparent);
 }
-.plan-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-warnBorder);
-  border-radius: var(--radius-lg);
-  background: var(--color-warnSoft);
-  font-size: var(--text-nav);
-}
-.plan-banner strong {
-  color: var(--color-warnText);
-  font-weight: 500;
-}
-.plan-banner span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .minimap-zone {
   position: absolute;
   /* Clear of the transcript's own scrollbar at the window edge. */

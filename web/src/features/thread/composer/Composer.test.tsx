@@ -111,7 +111,7 @@ describe("Composer", () => {
     start.mockRestore(); enqueue.mockRestore(); steer.mockRestore();
   });
 
-  it.each(["/plan", "/compact", "/goal resume", "/side explain"])("keeps review context when %s cannot carry it", async (command) => {
+  it.each(["/compact", "/goal resume", "/side explain"])("keeps review context when %s cannot carry it", async (command) => {
     const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
     useComposerChips.setState({ chips: { t1: [reviewChip] } });
     setup();
@@ -149,7 +149,7 @@ describe("Composer", () => {
     start.mockRestore();
   });
 
-  it.each(["/plan", "/compact", "/goal resume"])('refuses %s while a terminal selection is attached', async (command) => {
+  it.each(["/compact", "/goal resume"])('refuses %s while a terminal selection is attached', async (command) => {
     const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
     const patch = vi.spyOn(api, "patchThread").mockResolvedValue(thread);
     withTerminalChip();

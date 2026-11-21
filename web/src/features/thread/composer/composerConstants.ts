@@ -9,13 +9,10 @@ export const NO_STASHES: StashedPrompt[] = [];
 export const NO_CHIPS: ComposerChip[] = [];
 export const effortButton = () => document.querySelector<HTMLElement>("[data-effort-trigger]");
 export const LOCAL_COMMANDS: Suggestion[] = [
-  { value: "plan", detail: "Switch to Plan" },
-  { value: "default", detail: "Switch back to Build" },
   { value: "usage-limits", detail: "Show usage limits" },
   { value: "side", detail: "Ask in a side chat" },
   { value: "btw", detail: "Ask in a side chat" },
 ];
-export const PLAN_COMMANDS = new Set(["plan", "default"]);
 /** Below this the footer's controls fold into one menu. */
 export const NARROW_BAR = 440;
 export const WIDE = 1000;
