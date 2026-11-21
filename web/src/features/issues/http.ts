@@ -99,7 +99,7 @@ export function createHttpIssuesApi(): IssuesApi {
       for (const name of ["title", "body", "labels", "assignees"] as const) if (input[name] !== undefined) fields[name] = input[name];
       return readDetail(await request<IssueDetail>("POST", "/api/issues/item/update", { ...named(issue), ...fields }));
     },
-    setState: async (issue, state) => readDetail(await request<IssueDetail>("POST", "/api/issues/item/state", { ...named(issue), state: state.name })),
+    setState: async (issue, state) => readDetail(await request<IssueDetail>("POST", "/api/issues/item/state", { ...named(issue), state: state.name, ...(state.close_reason ? { close_reason: state.close_reason } : {}) })),
   };
 }
 
