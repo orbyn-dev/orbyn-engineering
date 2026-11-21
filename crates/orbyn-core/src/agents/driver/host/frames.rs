@@ -174,6 +174,8 @@ pub struct AskFrame {
     pub request_id: String,
     pub tool: String,
     pub input: Value,
+    /// The engine's own choices (ACP option kinds), exactly as received; `None` when it sent none.
+    pub options: Option<Value>,
 }
 
 /// Why a run ended, by `runDone.result.reason`.
@@ -278,6 +280,10 @@ fn ask(object: &Map<String, Value>) -> Result<AskFrame, FrameError> {
             .unwrap_or_default()
             .to_owned(),
         input: object.get("input").cloned().unwrap_or(Value::Null),
+        options: object
+            .get("options")
+            .filter(|value| !value.is_null())
+            .cloned(),
     })
 }
 

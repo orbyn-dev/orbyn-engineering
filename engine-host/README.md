@@ -74,7 +74,7 @@ or a real `claude`.
 Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
 `usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
 
-Run-end rules: the prompt goes in with a `uuid`; a `result` that arrives after a `command_lifecycle` `queued` for it but
+Run-end rules: the prompt goes in with a `uuid` (the core's `messageId` from `send`, or one the host makes; the accepted answer returns it so the core can tell the prompt's own turn from a leftover one in `command_lifecycle` frames); a `result` that arrives after a `command_lifecycle` `queued` for it but
 before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
 background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
 transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`

@@ -139,12 +139,13 @@ describe("the multi-repository writes of docs/multi-repo.md", () => {
   const writes = [
     "/api/projects/p1/repos/add-folder", "/api/projects/p1/repos/create", "/api/projects/p1/repos/clone", "/api/projects/p1/repos/r1/publish",
     "/api/projects/p1/repos/r1/trust", "/api/projects/p1/repos/r1/setup-git", "/api/projects/p1/repos/r1/remove", "/api/projects/p1/repos/r1/clone/cancel",
-    "/api/projects/p1/repo-threads", "/api/threads/t1/repos",
+    "/api/projects/p1/repo-threads", "/api/threads/t1/repos", "/api/projects/p1/repos/scan",
   ];
   it("send the key on every write and on no read", () => {
     for (const path of writes) expect(sendsPersonKey("POST", path), path).toBe(true);
     expect(sendsPersonKey("GET", "/api/projects/p1/repos")).toBe(false);
     expect(sendsPersonKey("GET", "/api/threads/t1/repos")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/task-folder")).toBe(false);
     expect(sendsPersonKey("POST", "/api/projects/p1/repos")).toBe(false);
     expect(sendsPersonKey("POST", "/api/projects/p1/repos/r1")).toBe(false);
   });

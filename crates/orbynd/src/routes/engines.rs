@@ -9,11 +9,15 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use orbyn_contracts::{AcpNativeSessionsQuery, DeleteAcpNativeSession, ImportAcpNativeSession};
-use orbyn_contracts::{CustomEngine, EngineFeedbackRequest, InstallAcpAgent};
+use orbyn_contracts::{
+    CustomEngine, EngineFeedbackRequest, EngineHostControl, EngineHostStatus, InstallAcpAgent,
+};
 use orbyn_core::CoreError;
+use orbyn_core::agents::driver::host::{ControlError, Refusal};
+use orbyn_core::agents::engines::host_status::HostControlFailure;
 use serde::Deserialize;
 
-use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER, to_the_end};
+use crate::http::{ApiFailure, ApiJson, ApiResult, AppState, LOCAL_USER, to_the_end};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -46,6 +50,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/history/import", post(import_history_session))
         .route("/api/engines", get(list_engines))
         .route("/api/engine-host", get(engine_host))
+        .route("/api/engine-host/{family}/stop", post(stop_engine_host))
+        .route(
+            "/api/engine-host/{family}/restart",
+            post(restart_engine_host),
+        )
         .route("/api/providers", get(list_providers))
         .route("/api/engines/refresh", post(refresh_engines))
         .route("/api/engines/probe-binary", post(probe_engine_binary))
@@ -204,6 +213,86 @@ async fn list_engines(State(state): State<AppState>) -> ApiResult<impl IntoRespo
 /// Each family's engine host: state, version, restarts and the last crash. A plain read.
 async fn engine_host(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.core.engines.host_status().await)
+}
+
+/// Every host-derived string of a status, through the same redaction the engine key routes use, so a key
+/// the host printed into its last words or a message never leaves.
+pub(super) fn redacted(state: &AppState, mut status: EngineHostStatus) -> EngineHostStatus {
+    use super::engine_credentials::redact_message;
+    let core = &state.core;
+    status.detail = status.detail.map(|text| redact_message(core, &text));
+    if let Some(crash) = status.last_crash.as_mut() {
+        crash.message = redact_message(core, &crash.message);
+        crash.stderr_tail = redact_message(core, &crash.stderr_tail);
+    }
+    status
+}
+
+/// A refusal in fixed words: nothing the host said is in it.
+pub(super) fn host_refusal(failure: HostControlFailure) -> ApiFailure {
+    match failure {
+        HostControlFailure::Control(ControlError::UnknownFamily) => ApiFailure::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "No engine host is named that.",
+        ),
+        HostControlFailure::Control(ControlError::Refused(Refusal::NotUsed)) => ApiFailure::new(
+            StatusCode::CONFLICT,
+            "not_used",
+            "This engine does not use the engine host.",
+        ),
+        HostControlFailure::Control(ControlError::Refused(Refusal::VersionMismatch)) => {
+            ApiFailure::new(
+                StatusCode::CONFLICT,
+                "version_mismatch",
+                "The engine host does not match this app version. Update Orbyn.",
+            )
+        }
+        HostControlFailure::Control(ControlError::Refused(Refusal::BackgroundOpen(open))) => {
+            ApiFailure::new(
+                StatusCode::CONFLICT,
+                "background_open",
+                &format!(
+                    "{open} background task{} still running. Stopping the host ends {}.",
+                    if open == 1 { " is" } else { "s are" },
+                    if open == 1 { "it" } else { "them" },
+                ),
+            )
+        }
+        HostControlFailure::Audit(error) => error.into(),
+    }
+}
+
+/// The person stops a family's engine host. Open runs on it end as cancelled. A host with a background
+/// task open is left running unless the body says `stop_background`.
+async fn stop_engine_host(
+    State(state): State<AppState>,
+    Path(family): Path<String>,
+    ApiJson(control): ApiJson<EngineHostControl>,
+) -> ApiResult<impl IntoResponse> {
+    let status = state
+        .core
+        .engines
+        .host_control(&family, false, control.stop_background, LOCAL_USER)
+        .await
+        .map_err(host_refusal)?;
+    Ok(Json(redacted(&state, status)))
+}
+
+/// The person restarts a family's engine host: the same stop, then a fresh start, with every crash and
+/// backoff forgotten (a `cant_start` family is tried again).
+async fn restart_engine_host(
+    State(state): State<AppState>,
+    Path(family): Path<String>,
+    ApiJson(control): ApiJson<EngineHostControl>,
+) -> ApiResult<impl IntoResponse> {
+    let status = state
+        .core
+        .engines
+        .host_control(&family, true, control.stop_background, LOCAL_USER)
+        .await
+        .map_err(host_refusal)?;
+    Ok(Json(redacted(&state, status)))
 }
 
 /// The grouped Providers list, with the labels the crew router's filters give the same engines.

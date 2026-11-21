@@ -3,7 +3,7 @@
 // family does not (a late hello, another protocol, a second runDone, an oversized frame, a stall).
 // Behaviour comes from environment variables (the host's spawn environment) and from tags in the
 // prompt. Every request it receives is appended to $STANDIN_LOG as one JSON line.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const env = process.env;
@@ -14,9 +14,16 @@ const capabilities = (env.STANDIN_CAPS ?? "steer,stopTask,background").split(","
 const hello = () =>
   write({ type: "hello", protocol: Number(env.STANDIN_PROTOCOL ?? 1), host: "9.9.9", family: env.STANDIN_FAMILY ?? "fake", sdk: { name: "standin", version: "0" }, capabilities });
 
-if (env.STANDIN_EXIT_BEFORE_HELLO) {
+// What the spawn environment and argv held, as booleans: the key's value is never written down.
+const key = env.CURSOR_API_KEY ?? "";
+log({ type: "spawn", keyInEnv: key !== "", keyInArgv: key !== "" && process.argv.some((arg) => arg.includes(key)) });
+if (env.STANDIN_LEAK_KEY) process.stderr.write(`standin: sign-in failed for ${key}\n`);
+
+// STANDIN_NEEDS_FILE: the host cannot start until that file exists (a fault that is fixed later).
+const broken = env.STANDIN_NEEDS_FILE && !existsSync(env.STANDIN_NEEDS_FILE);
+if (env.STANDIN_EXIT_BEFORE_HELLO || broken) {
   process.stderr.write("standin: exiting before hello\nANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnop\n");
-  process.exit(Number(env.STANDIN_EXIT_BEFORE_HELLO));
+  process.exit(Number(env.STANDIN_EXIT_BEFORE_HELLO ?? 1));
 }
 setTimeout(hello, Number(env.STANDIN_HELLO_DELAY_MS ?? 0));
 
@@ -61,15 +68,35 @@ async function play(sendId, text) {
     write({ type: "delta", sendId, update: { text: "started a task" } });
     return done(sendId);
   }
-  if (text.includes("[perm]")) {
-    write({ type: "permission", sendId, requestId: `p-${sendId}`, tool: "Edit", input: { path: "a.txt" } });
-    pending.set(`p-${sendId}`, { sendId });
+  if (text.includes("[perm")) {
+    // [perm]: an edit inside the work folder. [perm-opts]: with ACP-style options. [perm-own]: an Orbyn tool.
+    // [perm-crash]: the host dies with the ask open.
+    const tool = text.includes("[perm-own]") ? "mcp__orbyn_engineering__orbyn_thread_list" : "Edit";
+    const frame = { type: "permission", sendId, requestId: `p-${sendId}`, tool, input: { file_path: "/workspace/repo/app/a.txt", old_string: "x", new_string: "y" } };
+    if (text.includes("[perm-opts]")) frame.options = [{ kind: "allow_once", name: "Allow once" }, { kind: "reject_once", name: "Reject" }];
+    write(frame);
+    pending.set(frame.requestId, { sendId });
+    if (text.includes("[perm-crash]")) setTimeout(() => process.exit(3), 100);
     return;
   }
-  if (text.includes("[question]")) {
-    write({ type: "question", sendId, requestId: `q-${sendId}`, tool: "AskUserQuestion", input: { questions: [] } });
+  if (text.includes("[question")) {
+    // [question]: nothing to show. [question-1]: one multi-select question.
+    const questions = text.includes("[question-1]")
+      ? [{ question: "Which parts?", header: "Parts", multiSelect: true, options: [{ label: "A", description: "first" }, { label: "B", description: "second" }] }]
+      : [];
+    write({ type: "question", sendId, requestId: `q-${sendId}`, tool: "AskUserQuestion", input: { questions } });
     pending.set(`q-${sendId}`, { sendId });
     return;
+  }
+  if (text.includes("[leftover")) {
+    // The engine ran a turn for its own leftovers first: the prompt is queued, the old turn speaks, then the prompt starts.
+    const uuid = runs.get(sendId).uuid;
+    const lifecycle = (state) => write({ type: "delta", sendId, update: { type: "command_lifecycle", command_uuid: uuid, state } });
+    lifecycle("queued");
+    write({ type: "delta", sendId, update: { text: "the old agent finished" } });
+    lifecycle("started");
+    if (text.includes("[leftover-answer]")) write({ type: "delta", sendId, update: { text: "here is your answer" } });
+    return done(sendId);
   }
   if (text.includes("[limit]")) {
     return write({
@@ -97,12 +124,12 @@ const handlers = {
     return { engineSessionId: r.engineSessionId ?? `eng-${r.sessionId}` };
   },
   send: (r) => {
-    runs.set(r.id, { cancelled: false, session: r.sessionId });
+    runs.set(r.id, { cancelled: false, text: String(r.message), session: r.sessionId, uuid: r.messageId });
     setImmediate(() => {
       write({ type: "session", sendId: r.id, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}` });
       void play(r.id, String(r.message));
     });
-    return { runId: `run-${r.id}`, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}` };
+    return { runId: `run-${r.id}`, engineSessionId: `eng-${r.sessionId}`, turnId: `turn-${r.id}`, messageId: r.messageId };
   },
   respond: (r) => {
     const held = pending.get(r.requestId);
@@ -118,6 +145,11 @@ const handlers = {
   cancel: (r) => {
     const run = runs.get(r.sendId);
     if (!run) return { cancelled: false };
+    // [failcancel]: like the Claude SDK's interrupt, which ends the turn as a failure.
+    if (run.text.includes("[failcancel]")) {
+      write({ type: "runDone", sendId: r.sendId, ok: false, error: { method: "send", cause: { name: "E", message: "interrupted", kind: "engine" } }, result: { reason: "failed", threadDisposition: "reusable" } });
+      return { cancelled: true };
+    }
     done(r.sendId, { reason: "cancelled", threadDisposition: "reusable" });
     return { cancelled: true };
   },
@@ -132,6 +164,7 @@ const handlers = {
 };
 
 createInterface({ input: process.stdin }).on("line", (line) => {
+  if (env.STANDIN_LOG) appendFileSync(`${env.STANDIN_LOG}.raw`, `${line}\n`);
   if (stalled) return;
   let request;
   try {
@@ -139,7 +172,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } catch {
     return;
   }
-  log({ type: request.type, requestId: request.requestId, decision: request.decision, sendId: request.sendId, taskId: request.taskId, text: request.text, confinement: Boolean(request.confinement) });
+  log({ type: request.type, requestId: request.requestId, decision: request.decision, sendId: request.sendId, taskId: request.taskId, text: request.text, messageId: request.messageId, confinement: Boolean(request.confinement) });
   const handler = handlers[request.type];
   try {
     if (!handler) throw Object.assign(new Error(`unsupported ${request.type}`), { name: "UnsupportedRequest" });

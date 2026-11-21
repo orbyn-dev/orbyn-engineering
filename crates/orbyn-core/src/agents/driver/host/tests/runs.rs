@@ -242,22 +242,6 @@ async fn a_crash_mid_run_fails_the_run_and_the_host_restarts_with_backoff() {
 }
 
 #[tokio::test]
-async fn a_permission_or_question_with_no_handler_is_refused() {
-    let Some(rig) = standin(&[], fast()) else {
-        return;
-    };
-    let driver = rig.driver();
-    for prompt in ["[perm]", "[question]"] {
-        let (events, outcome) = start(&driver, spec(prompt)).await.unwrap().outcome().await;
-        assert_eq!(outcome, EngineOutcome::Completed);
-        let said = texts(&events);
-        assert!(said.contains(r#""behavior":"deny""#), "{prompt}: {said}");
-        assert!(!said.contains("allow"));
-    }
-    rig.pool.shutdown().await;
-}
-
-#[tokio::test]
 async fn a_rate_limit_reports_its_reset_and_a_turn_limit_says_so_plainly() {
     let Some(rig) = standin(&[], fast()) else {
         return;
@@ -305,5 +289,84 @@ async fn the_hosts_background_task_maps_a_stop_request() {
     });
     let (_, outcome) = started.outcome().await;
     assert_eq!(outcome, EngineOutcome::Completed);
+    rig.pool.shutdown().await;
+}
+
+fn leftover_texts(events: &[EngineEvent]) -> String {
+    use orbyn_contracts::AgUiEvent;
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Leftover(inner) => match &**inner {
+                EngineEvent::Agui(AgUiEvent::TextMessageContent { delta, .. }) => {
+                    Some(delta.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn what_a_leftover_turn_says_is_shown_but_a_silent_prompt_has_no_words_of_its_own() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let (events, outcome) = start(&rig.driver(), spec("[leftover]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    // Shown, marked as not the prompt's...
+    assert_eq!(leftover_texts(&events), "the old agent finished");
+    // ...and nothing the core would count as the engine answering.
+    assert_eq!(texts(&events), "", "{events:?}");
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_prompts_own_words_after_a_leftover_turn_are_not_marked() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let (events, _) = start(&rig.driver(), spec("[leftover-answer]"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    assert_eq!(leftover_texts(&events), "the old agent finished");
+    assert_eq!(texts(&events), "here is your answer");
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_prompt_goes_to_the_host_under_an_id_the_engines_frames_can_name() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let (events, _) = start(&rig.driver(), spec("hi"))
+        .await
+        .unwrap()
+        .outcome()
+        .await;
+    // An engine that says nothing about the prompt has nothing marked.
+    assert_eq!(texts(&events), "echo: hi");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Leftover(_)))
+    );
+    let sent = rig
+        .log()
+        .into_iter()
+        .find(|line| line["type"] == "send")
+        .unwrap();
+    let id = sent["messageId"]
+        .as_str()
+        .expect("send carries a messageId");
+    assert_eq!(id.len(), 36);
+    assert_eq!(id.matches('-').count(), 4);
     rig.pool.shutdown().await;
 }
