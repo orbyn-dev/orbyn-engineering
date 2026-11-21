@@ -374,6 +374,7 @@ mod tests {
             [
                 "allow-crew-presence",
                 "allow-person-key",
+                "allow-pick-folder",
                 "allow-quit-core",
                 "allow-restart-core",
                 "allow-show-core-log"
@@ -383,6 +384,25 @@ mod tests {
         assert!(
             !include_str!("../capabilities/main.json").contains("dialog:"),
             "no page may call the dialog plugin"
+        );
+        // `pick_folder` is the only handler added for the folder dialog: the handler list is exact.
+        let main = include_str!("main.rs");
+        let list = main
+            .split("generate_handler![")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .unwrap();
+        let handlers: Vec<_> = list.split(',').map(str::trim).collect();
+        assert_eq!(
+            handlers,
+            [
+                "restart_core",
+                "show_core_log",
+                "quit_core",
+                "presence::crew_presence",
+                "person_key::person_key",
+                "folder_picker::pick_folder"
+            ]
         );
         // Dragging and zooming by the unified title bar is granted on macOS alone, where the system bar is gone.
         let macos: serde_json::Value =
@@ -434,7 +454,14 @@ mod tests {
         // The commands are listed in the build script, so no other capability file or
         // plugin default can grant them silently.
         let build = include_str!("../build.rs");
-        for command in ["restart_core", "show_core_log", "quit_core"] {
+        for command in [
+            "restart_core",
+            "show_core_log",
+            "quit_core",
+            "crew_presence",
+            "person_key",
+            "pick_folder",
+        ] {
             assert!(build.contains(&format!("\"{command}\"")), "{command}");
         }
     }

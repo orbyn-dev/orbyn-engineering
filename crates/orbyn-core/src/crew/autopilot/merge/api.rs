@@ -164,25 +164,6 @@ fn strings(value: &Value) -> Vec<String> {
         .collect()
 }
 
-/// What a display mask touches. A row's read fields keep their keys; what is shown masks both,
-/// because a value can sit in an object's key.
-#[derive(Clone, Copy)]
-enum Masked {
-    Keys,
-    Values,
-    KeysAndValues,
-}
-
-impl Masked {
-    fn keys(self) -> bool {
-        matches!(self, Self::Keys | Self::KeysAndValues)
-    }
-
-    fn values(self) -> bool {
-        matches!(self, Self::Values | Self::KeysAndValues)
-    }
-}
-
 /// Cleans text and stored JSON for one task: redacted, the task's key withheld, and scanned.
 ///
 /// The person's own patterns (Settings › Secrets) mask what is shown, here and nowhere else: the stored rows are never
@@ -194,7 +175,7 @@ struct Scrub {
 
 impl Scrub {
     fn text(&self, text: &str) -> String {
-        self.person.labelled(&ledger::shown(text, &self.needles))
+        ledger::shown_masked(text, &self.needles, &self.person)
     }
 
     fn texts(&self, items: &[String]) -> Vec<String> {
@@ -203,39 +184,23 @@ impl Scrub {
 
     /// The row as shown: its JSON keys are masked too, because a value can sit in a key.
     fn json(&self, value: &Value) -> Value {
-        self.mask(ledger::safe(value, &self.needles), Masked::KeysAndValues)
+        self.mask_keys(ledger::safe_masked(value, &self.needles, &self.person))
     }
 
     /// The row's fields: values masked, keys readable, so the row can read its own fields.
     fn fields(&self, value: &Value) -> Value {
-        self.mask(ledger::safe(value, &self.needles), Masked::Values)
+        ledger::safe_masked(value, &self.needles, &self.person)
     }
 
-    /// The row's keys as shown, its values as they are (already masked by fields).
+    /// The row's keys as shown, its values as they are (already masked by `fields`).
     fn mask_keys(&self, value: Value) -> Value {
-        self.mask(value, Masked::Keys)
-    }
-
-    fn mask(&self, value: Value, masked: Masked) -> Value {
         match value {
-            Value::String(text) => Value::String(if masked.values() {
-                self.person.labelled(&text)
-            } else {
-                text
-            }),
             Value::Array(items) => {
-                Value::Array(items.into_iter().map(|v| self.mask(v, masked)).collect())
+                Value::Array(items.into_iter().map(|v| self.mask_keys(v)).collect())
             }
             Value::Object(map) => Value::Object(
                 map.into_iter()
-                    .map(|(k, v)| {
-                        let k = if masked.keys() {
-                            self.person.labelled(&k)
-                        } else {
-                            k
-                        };
-                        (k, self.mask(v, masked))
-                    })
+                    .map(|(k, v)| (self.person.labelled(&k), self.mask_keys(v)))
                     .collect(),
             ),
             other => other,
