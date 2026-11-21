@@ -183,7 +183,7 @@ export function Viewer({ threadId, tabId, path, line, locked: worktreeLocked = f
         >
           <Paperclip size={14} aria-hidden />
         </IconButton>
-        <a className="icon-btn" aria-label="Save file" title="Save file" href={rawUrl(threadId, path, true)} download>
+        <a className="icon-btn" aria-label="Save file" title="Save file" href={rawUrl(threadId, path, true)} download onClick={() => pushToast("Download started")}>
           <Download size={14} aria-hidden />
         </a>
         {/\.x?html?$/i.test(path) ? (

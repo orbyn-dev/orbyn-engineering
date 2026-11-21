@@ -197,6 +197,8 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/threads/{id}/repos"],
   // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
   ["POST", "/api/devices/{id}/actions"],
+  // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.
+  ["POST", "/api/threads/{id}/transcripts"],
 ];
 
 /** The service's route pattern as a matcher: each `{name}` is one non-empty path segment. */
