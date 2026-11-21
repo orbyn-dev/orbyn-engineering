@@ -119,6 +119,9 @@ pub enum PermissionMode {
     Auto,
     /// Accepts everything policy does not refuse. Writes stay in the checkout.
     FullAccess,
+    /// The one mode of an engine that never asks before acting (Cursor). It is not in `ALL`: an
+    /// engine offers it only by naming it in its `permission_modes`.
+    NoApprovals,
 }
 }
 
@@ -131,9 +134,15 @@ impl PermissionMode {
         PermissionMode::FullAccess,
     ];
 
-    /// Whether `self` accepts more than `other` without asking.
+    /// Whether `self` accepts more than `other` without asking. No approvals accepts everything an
+    /// engine can do, so it is the loosest.
     pub fn looser_than(self, other: PermissionMode) -> bool {
-        let rank = |mode| Self::ALL.iter().position(|one| *one == mode);
+        let rank = |mode| {
+            Self::ALL
+                .iter()
+                .position(|one| *one == mode)
+                .unwrap_or(Self::ALL.len())
+        };
         rank(self) > rank(other)
     }
 }

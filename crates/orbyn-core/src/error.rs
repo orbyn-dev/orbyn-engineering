@@ -162,6 +162,14 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// A run start an engine's own rules refuse, with the fields a screen acts on (docs/cursor-thread-contract.md): `code` is
+    /// `engine_mode_refused` or `engine_notice_required`, and `fields` are sent beside `code` and `message`.
+    #[error("{message}")]
+    EngineRefused {
+        code: &'static str,
+        message: String,
+        fields: serde_json::Value,
+    },
     /// An action that only a person at the desktop app may give: the service has no desktop shell (it was started without one, or
     /// as a remote service), so nothing can be approved.
     #[error("Approving a command needs the Orbyn desktop app on this computer.")]
@@ -257,6 +265,7 @@ impl CoreError {
             Self::TaskEnded => "task_ended",
             Self::Account { code, .. }
             | Self::PatternRefused { code, .. }
+            | Self::EngineRefused { code, .. }
             | Self::Refused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
@@ -327,6 +336,7 @@ impl CoreError {
             | Self::RunClosed
             | Self::TaskEnded
             | Self::Stale(_)
+            | Self::EngineRefused { .. }
             | Self::InvalidTransition { .. } => 409,
             Self::Gone(_) => 410,
             Self::Refused { status, .. } => *status,
@@ -440,6 +450,15 @@ impl CoreError {
                 code,
                 message: message.clone(),
                 detail: detail.clone(),
+            },
+            Self::EngineRefused {
+                code,
+                message,
+                fields,
+            } => Self::EngineRefused {
+                code,
+                message: message.clone(),
+                fields: fields.clone(),
             },
             Self::Refused {
                 status,

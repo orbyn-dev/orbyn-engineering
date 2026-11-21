@@ -65,6 +65,7 @@ async fn serve(name: &str, flag_on: bool) -> Option<Served> {
     config.engines.engine_host = Some(HostConfig {
         program: launcher,
         claude: flag_on,
+        cursor: false,
         timings: Timings::default(),
     });
     let core = Arc::new(Core::open(config).unwrap());
