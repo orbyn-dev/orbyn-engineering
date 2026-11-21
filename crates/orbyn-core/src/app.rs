@@ -84,6 +84,8 @@ pub struct CoreConfig {
     pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
+    /// Whether the Code Mode tools (`orbyn_code_search`, `orbyn_code_describe`, `orbyn_code_run`) exist. Ships `false`.
+    pub code_mode: bool,
     /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
     /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
     pub crew_tiers: Option<crate::crew::RouterConfig>,
@@ -117,6 +119,7 @@ impl CoreConfig {
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
+            code_mode: false,
             crew_tiers: None,
             crew_merge_required_checks: Vec::new(),
             crew_merge_watch_interval: None,
@@ -174,6 +177,8 @@ pub struct Core {
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
     /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
     pub(crate) crew_bus: crate::crew::Bus,
+    /// Code Mode: the live and finished script runs (`tools::mcp::code`).
+    pub(crate) code_runs: crate::tools::mcp::code::CodeRuns,
     /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
@@ -182,6 +187,8 @@ pub struct Core {
     pub(crate) crew_bisect: std::sync::Mutex<Option<orbyn_contracts::AutopilotBisect>>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
+    /// Engine API keys, kept in the OS keychain only (`credentials`).
+    pub(crate) credentials: crate::credentials::Credentials,
     _lock: OwnerLock,
 }
 
@@ -330,10 +337,12 @@ impl Core {
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
+            code_runs: crate::tools::mcp::code::CodeRuns::new(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
             crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
+            credentials: Self::system_credentials(),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
