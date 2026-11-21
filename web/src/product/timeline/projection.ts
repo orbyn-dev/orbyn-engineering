@@ -70,7 +70,17 @@ export function approvalFromContent(
     decided_by: str("decided_by"),
     decided_at: str("decided_at"),
     created_at: str("created_at") ?? ts,
+    via: viaFrom(body.via),
   };
+}
+
+/** The Code Mode origin of an approval, read loosely: it is only drawn, never decided on. */
+function viaFrom(value: unknown): Approval["via"] {
+  if (typeof value !== "object" || value === null) return null;
+  const { code_run: run, call, script_sha256: sha } = value as Record<string, unknown>;
+  return typeof run === "string" && typeof call === "number" && typeof sha === "string"
+    ? { code_run: run, call, script_sha256: sha }
+    : null;
 }
 
 function planSteps(content: JsonValue): PlanStep[] {

@@ -61,7 +61,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 /** The approval's `via`, or null. Display only: nothing that decides an approval reads it. */
 export function viaOf(approval: Approval): ApprovalVia | null {
-  const via = (approval as Approval & { via?: unknown }).via;
+  const via = approval.via;
   if (!isRecord(via)) return null;
   const { code_run: run, call, script_sha256: sha } = via;
   if (typeof run !== "string" || run === "" || typeof call !== "number" || !Number.isInteger(call)) return null;

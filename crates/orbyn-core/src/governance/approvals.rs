@@ -6,7 +6,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use orbyn_contracts::{ActionKind, Approval, ApprovalState, PermissionMode, PolicyEffect};
+use orbyn_contracts::{
+    ActionKind, Approval, ApprovalState, ApprovalVia, PermissionMode, PolicyEffect,
+};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
@@ -14,6 +16,21 @@ use crate::error::Result;
 use crate::governance::policy;
 use crate::store::{AuditRecord, NewApproval, Store};
 use crate::util::new_id;
+
+tokio::task_local! {
+    /// The Code Mode call running on this task. The gate copies it onto an approval it creates, so the card
+    /// can show where the ask came from. It is never read for a decision.
+    static VIA: ApprovalVia;
+}
+
+/// Runs `work` so an approval it creates names `via` as its origin.
+pub async fn with_via<F: std::future::Future>(via: ApprovalVia, work: F) -> F::Output {
+    VIA.scope(via, work).await
+}
+
+fn current_via() -> Option<ApprovalVia> {
+    VIA.try_with(Clone::clone).ok()
+}
 
 /// Where a run may write.
 #[derive(Clone, Debug)]
@@ -319,6 +336,7 @@ impl ApprovalGate {
             summary: ask.summary,
             detail: ask.detail,
             decision,
+            via: current_via(),
         })?;
         let outcome = tokio::time::timeout(self.timeout, receiver).await;
         pending.settled = true;
@@ -803,5 +821,76 @@ mod tests {
             assert!(!codex.permits("escape/a.txt"));
             assert!(!claude.permits(checkout.join("escape/a.txt").to_str().unwrap()));
         }
+    }
+
+    /// What an approval asked by a script carries, and that it changes nothing about the decision.
+    async fn asked_and_allowed(f: &Fixture, via: Option<ApprovalVia>) -> Approval {
+        let gate = Arc::new(ApprovalGate::new(f.store.clone(), Duration::from_secs(30)));
+        let scope = f.scope.clone();
+        let asking = gate.clone();
+        let waiting = tokio::spawn(async move {
+            match via {
+                Some(via) => with_via(via, asking.request(&scope, ask())).await,
+                None => asking.request(&scope, ask()).await,
+            }
+        });
+        let id = loop {
+            if let Some(found) = f
+                .store
+                .list_approvals(Some(ApprovalState::Pending))
+                .unwrap()
+                .pop()
+            {
+                break found.id;
+            }
+            tokio::task::yield_now().await;
+        };
+        let stored = f
+            .store
+            .list_approvals(Some(ApprovalState::Pending))
+            .unwrap()
+            .remove(0);
+        gate.decide(&id, true, false, "test").unwrap();
+        assert_eq!(waiting.await.unwrap(), Verdict::Allow);
+        stored
+    }
+
+    #[tokio::test]
+    async fn an_approval_asked_by_a_script_names_the_run_and_call_and_others_do_not() {
+        let f = fixture();
+        let via = ApprovalVia {
+            code_run: "run_1".into(),
+            call: 3,
+            script_sha256: "ab".repeat(32),
+        };
+        let from_script = asked_and_allowed(&f, Some(via.clone())).await;
+        assert_eq!(from_script.via, Some(via.clone()));
+        let direct = asked_and_allowed(&f, None).await;
+        assert_eq!(direct.via, None);
+        let stored = f.store.approval(&from_script.id).unwrap();
+        assert_eq!(stored.via, Some(via), "it survives a reload");
+    }
+
+    #[tokio::test]
+    async fn a_rule_and_a_decision_never_read_via() {
+        let f = fixture();
+        rule(&f.store, PolicyEffect::Deny);
+        let gate = ApprovalGate::new(f.store.clone(), Duration::from_secs(30));
+        let via = ApprovalVia {
+            code_run: "run_1".into(),
+            call: 1,
+            script_sha256: "00".repeat(32),
+        };
+        let verdict = with_via(via, gate.request(&f.scope, ask())).await;
+        assert!(
+            matches!(verdict, Verdict::Deny(_)),
+            "a deny rule still denies"
+        );
+        assert!(
+            f.store
+                .list_approvals(Some(ApprovalState::Pending))
+                .unwrap()
+                .is_empty()
+        );
     }
 }
