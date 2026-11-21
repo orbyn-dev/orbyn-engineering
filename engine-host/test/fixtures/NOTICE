@@ -1,5 +1,6 @@
-The claude/*.ndjson transcripts are adapted from T3 Code (https://github.com/pingdotgg/t3code, commit
-9168ca73d02003557725430b515b44e1551544af, apps/server/src/orchestration-v2/testkit/fixtures/*/claude_transcript.ndjson),
+The claude/*.ndjson and opencode/*.ndjson transcripts are adapted from T3 Code (https://github.com/pingdotgg/t3code, commit
+9168ca73d02003557725430b515b44e1551544af, apps/server/src/orchestration-v2/testkit/fixtures/*/claude_transcript.ndjson and
+opencode2_{permission,interrupt,inbox,fork}/opencode_transcript.ndjson; the latter are recorded OpenCode 2.0.18 HTTP/SSE sessions),
 MIT License, Copyright (c) 2026 T3 Tools Inc. Unmodified copies.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
