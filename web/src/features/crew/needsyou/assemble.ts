@@ -130,24 +130,48 @@ export function mainItems(queue: AutopilotReviewItem[]): NeedsItem[] {
     }));
 }
 
+/**
+ * A daily-cap stop, told apart from the lifetime budget stop by the core's own sentence: only the daily stops (the cap, or a daily
+ * budget that could not be read) say "daily budget". The read has no flag for it, so the sentence is the evidence.
+ */
+const DAILY_STOP = /daily budget/i;
+/** The reset time the core's sentence ends with ("The budget resets at 2026-11-20T00:00:00+11:00."), as read; null when the sentence has none. */
+const RESET_AT = /resets at (\S+?)\.?$/;
+
 /** Background runs that wait for the person's review, with the crew each belongs to. */
 export function backgroundItems(runs: { crew: BackgroundCrew; runs: BackgroundRun[] }[]): NeedsItem[] {
   return runs.flatMap(({ crew, runs: list }) =>
     list
       .filter((run) => run.review_waiting)
-      .map((run) => ({
-        id: `background:${run.id}`,
-        kind: "background" as const,
-        // A run that spent its budget is paused; any other run waiting on the person needs approval.
-        title: run.stop_reason === "budget" ? "Paused: budget reached" : "Needs approval",
-        risk: null,
-        undo: null,
-        from: `Background crew · ${crew.name}`,
-        cost: run.stop_reason === "budget" ? "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget." : (run.review_reason?.trim() || "A command is held for your approval before the run can go on."),
-        since: time(run.ended_at ?? run.updated_at),
-        actions: [{ key: "open" as const, label: "Open", primary: true }],
-        ref: crew.id,
-      })),
+      .map((run) => {
+        const reason = run.review_reason?.trim() ?? "";
+        const daily = run.stop_reason === "budget" && DAILY_STOP.test(reason);
+        const reset = daily ? RESET_AT.exec(reason)?.[1] : undefined;
+        return {
+          id: `background:${run.id}`,
+          kind: "background" as const,
+          // A run that spent its budget is paused; any other run waiting on the person needs approval.
+          title: run.stop_reason === "budget" ? "Paused: budget reached" : "Needs approval",
+          risk: null,
+          undo: null,
+          from: `Background crew · ${crew.name}`,
+          // A daily stop shows the core's sentence as read; the lifetime budget stop keeps the line for a budget that cannot be raised.
+          cost: daily
+            ? reason
+            : run.stop_reason === "budget"
+              ? "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget."
+              : (reason || "A command is held for your approval before the run can go on."),
+          // The next step of a daily stop is to wait; the time is the one the sentence carries, never one made up here.
+          hint: daily
+            ? reset
+              ? `Wait for the daily reset: ${reset}. The budget is fixed at creation; nothing needs changing.`
+              : "Wait for the daily reset: Not measured. This stop carries no reset time."
+            : undefined,
+          since: time(run.ended_at ?? run.updated_at),
+          actions: [{ key: "open" as const, label: "Open", primary: true }],
+          ref: crew.id,
+        };
+      }),
   );
 }
 
