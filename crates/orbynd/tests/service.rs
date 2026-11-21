@@ -1076,8 +1076,25 @@ async fn terminal_needs_a_trusted_folder() {
         service.url.replacen("http", "ws", 1),
         service.token
     );
-    let refused = tokio_tungstenite::connect_async(url).await;
-    assert!(refused.is_err());
+    let refused = tokio_tungstenite::connect_async(url.clone()).await;
+    match refused {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status(), 403, "{response:?}");
+            let body: Value = serde_json::from_slice(response.body().as_deref().unwrap_or(b"null"))
+                .expect("the refusal body is JSON");
+            assert_eq!(body["code"], "folder_untrusted", "{body}");
+        }
+        other => panic!("expected an HTTP 403 refusal, got {other:?}"),
+    }
+    let (status, body) = service
+        .send(&format!("/api/projects/{project}/trust"), json!({}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (mut socket, response) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("a trusted folder opens the terminal socket");
+    assert_eq!(response.status(), 101);
+    let _ = socket.close(None).await;
 }
 
 #[tokio::test]

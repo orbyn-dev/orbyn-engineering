@@ -484,11 +484,29 @@ impl EngineManager {
     /// facts the crew router reads.
     pub async fn provider_list(&self) -> Result<orbyn_contracts::ProviderList> {
         let statuses = self.statuses(false).await?;
-        Ok(crate::agents::provider_list::list(
-            &statuses,
-            &crate::agents::provider_list::installed_apps(),
-            &crate::agents::provider_list::refused_programs(),
-        ))
+        Self::provider_list_with_discovery(statuses, || {
+            (
+                crate::agents::provider_list::installed_apps(),
+                crate::agents::provider_list::refused_programs(),
+            )
+        })
+        .await
+    }
+
+    async fn provider_list_with_discovery(
+        statuses: Vec<EngineStatus>,
+        discover: impl FnOnce() -> (
+            Vec<&'static str>,
+            Vec<crate::agents::provider_list::Refused>,
+        ) + Send
+        + 'static,
+    ) -> Result<orbyn_contracts::ProviderList> {
+        tokio::task::spawn_blocking(move || {
+            let (apps, refused) = discover();
+            crate::agents::provider_list::list(&statuses, &apps, &refused)
+        })
+        .await
+        .map_err(|error| CoreError::Internal(error.to_string()))
     }
 
     /// Drops the cached list so the next read sees a changed engine set.
@@ -665,7 +683,22 @@ impl EngineManager {
 
     async fn status_of(&self, driver: &dyn EngineDriver) -> EngineStatus {
         let descriptor = driver.descriptor();
-        let probe = driver.probe().await;
+        let instance = self
+            .instances()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|instance| instance.id == descriptor.id);
+        let family = instance
+            .as_ref()
+            .map_or_else(|| driver.family(), |one| one.driver.clone());
+        let mut probe = driver.probe().await;
+        if family == "opencode"
+            && let Some(path) = &probe.path
+        {
+            probe.version = probe::probe_cli(&path.to_string_lossy(), &["--version"])
+                .await
+                .version;
+        }
         let plan = driver.update_plan(&probe).await;
         let installed = probe.path.is_some();
         let installer = plan
@@ -678,13 +711,13 @@ impl EngineManager {
             }
             _ => None,
         };
-        let family = driver.family();
-        let support = if descriptor.tier == EngineTier::Native {
+        let has_manifest = descriptor.tier == EngineTier::Native || family == "opencode";
+        let support = if has_manifest {
             self.manifest.support(&family, probe.version.as_deref())
         } else {
             VersionSupport::Unknown
         };
-        let compatibility = if descriptor.tier == EngineTier::Native {
+        let compatibility = if has_manifest {
             probe.version.as_deref().and_then(|installed| {
                 compatibility(&self.manifest, &family, installed, plan.as_ref())
             })
@@ -698,11 +731,6 @@ impl EngineManager {
         };
         let (inherited_credentials, endpoint_origin) =
             crate::host::child_env::inherited_login(&family);
-        let instance = self
-            .instances()
-            .unwrap_or_default()
-            .into_iter()
-            .find(|instance| instance.id == descriptor.id);
         EngineStatus {
             instance_of: instance.as_ref().map(|one| one.driver.clone()),
             accent: instance.and_then(|one| one.accent),

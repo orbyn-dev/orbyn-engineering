@@ -494,14 +494,34 @@ export function MaintenanceSection() {
   const offline = useConnection((state) => state.offline);
   const failure = error ?? updates?.error ?? null;
   const app = updates?.app;
-  // The shell reports bytes while it downloads; the update is ready once all of them are in.
-  const hasProgress = !!app?.latest && app.downloaded !== undefined && app.total !== undefined && Number(app.total) > 0;
-  const percent = hasProgress ? Math.min(100, Math.floor((Number(app?.downloaded) / Number(app?.total)) * 100)) : 0;
-  const downloading = hasProgress && percent < 100;
-  const ready = hasProgress && !downloading && !!app?.can_apply;
-  const restart = async () => {
-    try { await api.applyAppUpdate(); } catch (problem) { setError(toFailure(problem).message); }
+  const [updating, setUpdating] = useState(false);
+  const actionPending = useRef(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const phase = app?.phase ?? "idle";
+  const downloading = phase === "downloading";
+  const preparing = phase === "preparing";
+  const installing = phase === "installing";
+  const ready = phase === "ready";
+  const available = phase === "available" && !!app?.latest;
+  const knownTotal = app?.total !== undefined && app.total !== null && Number(app.total) > 0;
+  const percent = knownTotal ? Math.min(100, Math.floor((Number(app?.downloaded ?? 0) / Number(app?.total)) * 100)) : 0;
+  const activeRuns = app?.blocked_reason === "Finish or stop active runs first.";
+  const act = async (install: boolean) => {
+    if (actionPending.current || !app?.release_id || !app.can_apply || (!install && offline)) return;
+    actionPending.current = true;
+    setUpdating(true);
+    setActionError(null);
+    try {
+      const request = { release_id: app.release_id, operation: app.operation ?? 0 };
+      if (install) await api.applyAppUpdate(request);
+      else await api.downloadAppUpdate(request);
+    } catch (problem) { setActionError(toFailure(problem).message); }
+    finally { actionPending.current = false; setUpdating(false); }
   };
+  const versionDescription = ready || installing ? `${app?.current} · ${installing ? `Installing ${app?.latest}…` : `${app?.latest} is downloaded`}`
+    : available ? `${app?.current} · ${app?.latest}${offline && updates?.checked_at ? ` was available at ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : " is available"}`
+    : downloading || preparing ? app?.current
+    : `${app?.current ?? "Unknown"}${checking ? "" : ` · ${updates?.checked_at ? (app?.latest ? `checked ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "up to date") : "not checked yet"}`}`;
 
   const check = async () => {
     setChecking(true);
@@ -530,18 +550,27 @@ export function MaintenanceSection() {
         {unsupported || updates?.app.unconfigured ? (
           <SettingRow title="App updates" description="Updates aren't set up for this build." />
         ) : null}
-        {offline ? <SettingsBanner>You’re offline. Updates are checked when you’re back.</SettingsBanner> : null}
+        {offline && !available ? <SettingsBanner>You’re offline. Updates are checked when you’re back.</SettingsBanner> : null}
         {failure ? <SettingsBanner tone="err" actions={<Button small icon={<RefreshCw size={14} aria-hidden />} disabled={checking} onClick={() => void check()}>Retry</Button>}>
           Couldn’t check for updates. {failure}
         </SettingsBanner> : null}
-        <SettingRow title="Version" settingId="maintenance-check-for-updates"
-          description={ready && updates?.app.latest ? `${updates.app.current} · ${updates.app.latest} is downloaded`
-            : `${updates?.app.current ?? "Unknown"}${checking ? "" : ` · ${updates?.checked_at ? (app?.latest ? `checked ${new Date(updates.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}` : "up to date") : "not checked yet"}`}`}>
-          {checking ? <span className="set-checking" role="status"><i className="spin" aria-hidden />Checking…</span>
-            : downloading ? <span className="set-checking" role="status">Downloading {app?.latest}…
+        {available && offline ? <SettingsBanner>You’re offline. Connect to download the update.</SettingsBanner> : null}
+        {activeRuns && (available || ready) ? <SettingsBanner>Wait for active runs to finish before updating.</SettingsBanner> : null}
+        {app?.update_error ? <SettingsBanner tone="err">
+          {!app.failed_phase ? app.update_error : app.failed_phase === "installing" ? `Couldn’t install ${app.failed_version ?? app.latest}. Try again.` : `Couldn’t download ${app.failed_version ?? app.latest}. Try again.`}
+        </SettingsBanner> : null}
+        {actionError ? <SettingsBanner tone="err">{actionError}</SettingsBanner> : null}
+        <SettingRow title="Version" settingId="maintenance-check-for-updates" description={versionDescription}>
+          {downloading || preparing ? <span className="set-checking" role="status">
+            {preparing ? `Preparing ${app?.latest}…` : `Downloading ${app?.latest}…`}
+            {downloading && knownTotal ? <>
               <span className="set-prog" role="progressbar" aria-label="Download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
-              <span className="set-pct">{percent}%</span></span>
-            : ready ? <Button tone="primary" small onClick={() => void restart()}>Restart to update</Button>
+              <span className="set-pct">{percent}%</span>
+            </> : <i className="set-update-spinner spin" aria-hidden />}
+          </span>
+            : ready || installing ? <><span className="sr-only" role="status">{installing ? `Installing ${app?.latest}…` : "Update downloaded"}</span>{installing ? <i className="set-update-spinner spin" aria-hidden /> : null}<Button tone="primary" small disabled={updating || installing || !app?.can_apply} onClick={() => void act(true)}>Restart to update</Button></>
+            : available ? <Button small disabled={updating || offline || !app?.can_apply} onClick={() => void act(false)}>{app?.failed_phase === "downloading" ? "Retry download" : "Download update"}</Button>
+            : checking ? <span className="set-checking" role="status"><i className="set-update-spinner spin" aria-hidden />Checking…</span>
             : <Button small disabled={offline} onClick={() => void check()}>Check for updates</Button>}
         </SettingRow>
         <UpdateTrack />

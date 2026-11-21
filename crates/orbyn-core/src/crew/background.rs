@@ -11,6 +11,7 @@
 use orbyn_contracts as wire;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 use super::{Page, redact, valid_id, wire_name};
 use crate::app::Core;
@@ -154,7 +155,7 @@ fn budget_wire(turns: u32, minutes: u32) -> wire::BackgroundBudget {
     wire::BackgroundBudget { turns, minutes }
 }
 
-fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
+pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     Ok(wire::BackgroundRun {
         state: parse_wire(&run.state)?,
         stop_reason: run.stop_reason.as_deref().map(parse_wire).transpose()?,
@@ -213,7 +214,7 @@ impl Core {
         })
     }
 
-    fn background_row(&self, id: &str) -> Result<BackgroundRow> {
+    pub(super) fn background_row(&self, id: &str) -> Result<BackgroundRow> {
         valid_id(id)?;
         self.store
             .background_crew(id)?
@@ -313,11 +314,27 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Turns a crew on or off. Turning it off stops a run in progress with the reason `disabled`, logged as the person.
+    /// Turns a crew on or off, as the record only: turning it off ends a run in progress with the reason `disabled`, logged as the
+    /// person, and touches nothing else. A person's turn-off goes through `background_turn_off`, which also stops the run's worker.
     pub fn background_set_enabled(&self, id: &str, enabled: bool) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
         let row = self.store.set_background_enabled(id, enabled, "user")?;
+        self.background_wire(row)
+    }
+
+    /// A person turns a crew off: the run in progress ends `disabled`, and every task of it that has not ended is cancelled, so the
+    /// worker stops spending with the record. Cancelling after the record is safe: a task's end finds its run no longer running.
+    pub async fn background_turn_off(self: &Arc<Self>, id: &str) -> Result<wire::BackgroundCrew> {
+        self.crew_preview_only()?;
+        self.background_row(id)?;
+        // The newest run whatever its state: a turn-off whose cancel failed leaves a `disabled` run with a live task, and pressing Off
+        // again must try that cancel again.
+        let running = self.store.background_standing(id)?.0.map(|run| run.id);
+        let row = self.store.set_background_enabled(id, false, "user")?;
+        if let Some(run) = running {
+            self.cancel_background_tasks(&run).await;
+        }
         self.background_wire(row)
     }
 

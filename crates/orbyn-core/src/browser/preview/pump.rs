@@ -12,6 +12,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+/// How long one periodic read may take. A read sent as the page swaps documents can
+/// go unanswered, and the tab's session is held for the whole wait, so a lost reply
+/// skips this look instead of stalling the pump until the command timeout.
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub(super) fn decode_base64(text: &str) -> Vec<u8> {
     let value = |byte: u8| match byte {
         b'A'..=b'Z' => Some(byte - b'A'),
@@ -37,9 +42,9 @@ pub(super) fn decode_base64(text: &str) -> Vec<u8> {
 
 async fn refresh_metadata(tab: &Tab) {
     let mut session = tab.session.lock().await;
-    let history = session.history().await;
-    let title = session.title().await;
-    let icon = session.read(FAVICON).await;
+    let history = session.history_within(READ_TIMEOUT).await;
+    let title = session.title_within(READ_TIMEOUT).await;
+    let icon = session.read_within(FAVICON, READ_TIMEOUT).await;
     if let Ok(history) = history {
         tab.note_history(&history);
     }
@@ -91,9 +96,8 @@ pub(super) async fn pump(tab: Arc<Tab>) {
             last.clear();
         }
         let view_due = viewers > 0 && last_view.elapsed() >= FRAME_EVERY;
-        if !view_due && !record_due {
-            continue;
-        }
+        // The title and icon are the tab's own state, shown in its tab strip, so they are
+        // refreshed even while nobody watches frames.
         if since_history.elapsed() >= FRAME_EVERY * HISTORY_TICKS {
             since_history = Instant::now();
             tokio::select! {
@@ -102,6 +106,9 @@ pub(super) async fn pump(tab: Arc<Tab>) {
                 () = refresh_metadata(&tab) => {}
             }
         }
+        if !view_due && !record_due {
+            continue;
+        }
         // Capture owns its reply slot, so metadata and input can use the session
         // while the browser renders. Close cancels that slot before releasing Tab.
         let prepare = async {
@@ -109,7 +116,7 @@ pub(super) async fn pump(tab: Arc<Tab>) {
             let request = if record_due && let Some(recording) = &recording {
                 let safe = !recording.keys_enabled()
                     || session
-                        .isolated_read(RECORDING_SAFE_FOCUS)
+                        .isolated_read_within(RECORDING_SAFE_FOCUS, READ_TIMEOUT)
                         .await
                         .is_ok_and(|value| value == json!(true));
                 Some(recording.begin_capture(session.document_generation(), safe))
@@ -153,7 +160,7 @@ pub(super) async fn pump(tab: Arc<Tab>) {
                     .is_some_and(|recording| recording.keys_enabled())
                 {
                     session
-                        .isolated_read(RECORDING_SAFE_FOCUS)
+                        .isolated_read_within(RECORDING_SAFE_FOCUS, READ_TIMEOUT)
                         .await
                         .is_ok_and(|value| value == json!(true))
                 } else {

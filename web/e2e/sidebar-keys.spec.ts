@@ -21,8 +21,13 @@ test.beforeEach(async ({ page }) => {
 test.describe("tree keys", () => {
   test("ArrowDown and ArrowUp move focus between rows and stop at both ends", async ({ page }) => {
     const second = row(page, "Add approval timeout handling");
-    const third = row(page, "Keep the checks running");
     await second.focus();
+    // The next stop is whatever is drawn right after it; the default scenario's thread order is not pinned here.
+    const all = rows(page);
+    const secondAt = (await all.evaluateAll((nodes) => nodes.map((node) => node === document.activeElement))).indexOf(true);
+    expect(secondAt).toBeGreaterThanOrEqual(0);
+    expect(await all.count()).toBeGreaterThan(secondAt + 1);
+    const third = all.nth(secondAt + 1);
     await page.keyboard.press("ArrowDown");
     await expect(third).toBeFocused();
     await page.keyboard.press("ArrowUp");
