@@ -97,36 +97,79 @@ describe("the first-run notice", () => {
   });
 });
 
+const refusedCard = () => screen.getByRole("group", { name: "Cursor can’t start in Supervised mode" });
+const supervisedThread = { ...thread, lifecycle: { permission_mode: "supervised" } } as unknown as Thread;
+const refuseFirst = (mode = "supervised") => {
+  const saved = { ...thread, lifecycle: { permission_mode: mode } } as unknown as Thread;
+  return render(<Composer thread={saved} engine={cursor} showContext />);
+};
+
 describe("a refused mode", () => {
-  it("draws the service's sentence as plain text above the composer, with Dismiss, and keeps the message", async () => {
+  it("draws the card with the frame's words and both actions, dims Send, keeps the message and shows the saved mode dimmed", async () => {
     vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", "<img src=x onerror=alert(1)> Not here."));
-    setup();
+    render(<Composer thread={supervisedThread} engine={cursor} showContext />);
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    const line = await screen.findByRole("alert");
-    expect(line).toHaveTextContent("<img src=x onerror=alert(1)> Not here.");
-    expect(line.querySelector("img")).toBeNull();
+    const card = await screen.findByRole("group", { name: "Cursor can’t start in Supervised mode" });
+    expect(card).toHaveTextContent("Cursor does not ask before acting, so it can’t run where approvals are required.");
+    expect(card).toHaveTextContent("Running without approvals applies to this thread only. Orbyn does not remember it.");
+    expect(card.querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run this thread without approvals" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Choose another engine" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(field()).toHaveValue("Run the tests.");
-    await userEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Permissions: Supervised" })).toBeDisabled();
   });
 
-  it("uses the app's own sentence when the service sent none, and never draws the notice for it", async () => {
+  it("names Auto edits the way the frame does", async () => {
     vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", ""));
-    setup();
+    refuseFirst("auto_edits");
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Cursor does not ask before acting, so Supervised and Auto-accept edits are not available here.");
-    expect(screen.queryByRole("group", { name: "Before the first Cursor run" })).toBeNull();
+    expect(await screen.findByRole("group", { name: "Cursor can’t start in Auto edits mode" })).toBeVisible();
   });
 
-  it("a press on a dimmed row changes nothing: no thread write, the same sentence above the composer", async () => {
+  it("Run this thread without approvals is one write for one turn, even pressed twice, and never touches the saved mode", async () => {
+    const start = vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", "x"));
     const patch = vi.spyOn(api, "patchThread");
-    setup();
-    await userEvent.click(screen.getByRole("button", { name: "Permissions: Auto" }));
-    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Supervised" }));
+    const mock = createCursorThreadMock({ delayMs: 20 });
+    const send = vi.spyOn(mock, "sendWithoutApprovals");
+    setCursorThreadApi(mock);
+    render(<Composer thread={supervisedThread} engine={cursor} showContext />);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    const go = await screen.findByRole("button", { name: "Run this thread without approvals" });
+    fireEvent.click(go);
+    fireEvent.click(go);
+    await waitFor(() => expect(field()).toHaveValue(""));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("t1", { prompt: "Run the tests.", attachment_ids: [] });
+    expect(mock.writes.override).toEqual(["t1"]);
+    expect(start).toHaveBeenCalledTimes(1);
     expect(patch).not.toHaveBeenCalled();
-    const line = await screen.findByRole("alert");
-    expect(line).toHaveTextContent("Cursor does not ask before acting, so Supervised and Auto-accept edits are not available here.");
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeNull();
+  });
+
+  it("keeps the card and the message when the one-turn write fails, and says so", async () => {
+    vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", "x"));
+    setCursorThreadApi(null);
+    render(<Composer thread={supervisedThread} engine={cursor} showContext />);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Run this thread without approvals" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't start the run.");
+    expect(refusedCard()).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run this thread without approvals" })).toBeEnabled();
+    expect(field()).toHaveValue("Run the tests.");
+  });
+
+  it("Choose another engine opens the picker, the card steps aside and returns if it closes with Cursor still chosen", async () => {
+    vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", "x"));
+    const user = userEvent.setup();
+    render(<Composer thread={supervisedThread} engine={cursor} showContext />);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(await screen.findByRole("button", { name: "Choose another engine" }));
+    expect(await screen.findByRole("dialog", { name: "Choose a model" })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeNull());
+    await user.keyboard("{Escape}");
+    expect(await screen.findByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeVisible();
+    expect(field()).toHaveValue("Run the tests.");
   });
 
   it("another 409 or any other failure keeps the composer's own error line", async () => {
@@ -134,7 +177,18 @@ describe("a refused mode", () => {
     setup();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("A run started first.");
-    expect(screen.queryByRole("button", { name: "Dismiss error" })).toBeNull();
+    expect(screen.queryByRole("group", { name: /can’t start/ })).toBeNull();
+  });
+});
+
+describe("the one mode", () => {
+  it("reads No approvals (Cursor), cannot be opened, and says why", async () => {
+    setup();
+    const pick = screen.getByRole("button", { name: "Permissions: No approvals (Cursor)" });
+    expect(pick).toBeDisabled();
+    expect(pick).toHaveAttribute("title", "Cursor does not ask before acting, so this thread has one mode.");
+    await userEvent.click(pick);
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
 

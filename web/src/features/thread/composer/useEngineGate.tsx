@@ -1,37 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import type { EngineStatus, Thread } from "../../../api/types";
-import { refusalSentence, refusedModes } from "../../../product/composer/access";
+import { refusalModeName } from "../../../product/composer/access";
 import { toFailure } from "../../../lib/useAsync";
-import { cursorThreadApi, displayText, NoticeCard, RefusedLine, runRefusal } from "../../cursorthread";
+import { cursorThreadApi, displayText, ModeRefusedCard, NoticeCard, runRefusal } from "../../cursorthread";
 
 /**
  * What a thread on an engine that never asks before acting adds to the composer, all read from the service's answers:
- * the first-run notice card (409 `engine_notice_required`) and the refused-mode line (409 `engine_mode_refused`, or a press on a
- * dimmed access row). Nothing here names an engine.
+ * the first-run notice card (409 `engine_notice_required`) and the refused-mode card (409 `engine_mode_refused`). Nothing here names an engine.
  */
 export function useEngineGate(thread: Thread, engine: EngineStatus | null, setError: (message: string | null) => void) {
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refused, setRefused] = useState(false);
+  const [overriding, setOverriding] = useState(false);
   const writing = useRef(false);
   const engineName = engine?.name ?? thread.engine;
-  const modes = refusedModes(engine);
-  const sentence = refusalSentence(engineName, modes);
+  const savedMode = thread.lifecycle?.permission_mode ?? "supervised";
 
   // A different engine ends the path: nothing is owed for the engine the thread left.
   useEffect(() => {
     setNoticeOpen(false);
     setChoosing(false);
-    setRefusal(null);
+    setRefused(false);
   }, [thread.engine]);
 
   /** A failed run start that this gate owns: true when it drew a card or a line, false when the composer's own error applies. */
   const onSendFailure = (failure: unknown): boolean => {
-    const refused = runRefusal(failure);
-    if (!refused) return false;
-    if (refused.kind === "notice") setNoticeOpen(true);
-    else setRefusal(refused.message ?? sentence);
+    const found = runRefusal(failure);
+    if (!found) return false;
+    if (found.kind === "notice") setNoticeOpen(true);
+    else setRefused(true);
     return true;
   };
 
@@ -53,6 +52,22 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
     }
   };
 
+  /**
+   * One click, one write: the one-turn override. `run` sends this message with no approvals and stores nothing, so the thread's
+   * saved mode stays. It is never remembered; a second click while it runs does nothing.
+   */
+  const override = async (run: () => Promise<boolean>) => {
+    if (writing.current) return;
+    writing.current = true;
+    setOverriding(true);
+    try {
+      if (await run()) setRefused(false);
+    } finally {
+      writing.current = false;
+      setOverriding(false);
+    }
+  };
+
   /** Opens the existing model picker; the card steps aside while it is open and returns if it closes with the engine still chosen. */
   const choose = (from: HTMLElement) => {
     const trigger = from.closest("form")?.querySelector<HTMLButtonElement>("[data-model-trigger]");
@@ -71,9 +86,11 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
     trigger.click();
   };
 
-  const cards = (resend: () => void) => (
+  const cards = (resend: () => void, runWithout: () => Promise<boolean>) => (
     <>
-      {refusal ? <RefusedLine text={refusal} onDismiss={() => setRefusal(null)} /> : null}
+      {refused && !choosing && !noticeOpen ? (
+        <ModeRefusedCard engineName={engineName} modeName={refusalModeName(savedMode)} busy={overriding} onRun={() => void override(runWithout)} onChoose={choose} />
+      ) : null}
       {noticeOpen && !choosing ? (
         <NoticeCard engineName={engineName} busy={acknowledging} onContinue={() => void acknowledge(resend)} onChoose={choose} />
       ) : null}
@@ -85,8 +102,8 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
     noticeOpen,
     onSendFailure,
     cards,
-    clear: () => setRefusal(null),
-    /** A press on a dimmed access row: nothing changes, and the line says why. */
-    refused: { modes, sentence, onPick: () => setRefusal(sentence) },
+    /** A refusal card is waiting: Send stays dimmed and the message stays in the box. */
+    refused,
+    clear: () => setRefused(false),
   };
 }
