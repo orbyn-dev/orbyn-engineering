@@ -90,6 +90,8 @@ mod crew_worker_provider_tests;
 #[cfg(test)]
 mod engine_credentials_tests;
 #[cfg(test)]
+mod json_refusal_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
 mod tests;
