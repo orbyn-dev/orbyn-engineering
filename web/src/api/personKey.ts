@@ -179,6 +179,16 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["DELETE", "/api/profiles/{id}"],
   ["PUT", "/api/threads/{id}/profile"],
   ["POST", "/api/crew/profile/apply"],
+  // Multi-repository projects (docs/multi-repo.md): the project repository writes. The thread ones are still pending below.
+  ["POST", "/api/projects/{id}/repos/add-folder"],
+  ["POST", "/api/projects/{id}/repos/create"],
+  ["POST", "/api/projects/{id}/repos/clone"],
+  ["POST", "/api/projects/{id}/repos/scan"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/publish"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/trust"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/setup-git"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/remove"],
+  ["POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"],
   // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
   ["PUT", "/api/engines/{id}/code-mode"],
 ];
@@ -198,16 +208,7 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/issues/item/update"],
   ["POST", "/api/issues/item/state"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
-  ["POST", "/api/projects/{id}/repos/add-folder"],
-  ["POST", "/api/projects/{id}/repos/create"],
-  ["POST", "/api/projects/{id}/repos/clone"],
   // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
-  ["POST", "/api/projects/{id}/repos/scan"],
-  ["POST", "/api/projects/{id}/repos/{repo_id}/publish"],
-  ["POST", "/api/projects/{id}/repos/{repo_id}/trust"],
-  ["POST", "/api/projects/{id}/repos/{repo_id}/setup-git"],
-  ["POST", "/api/projects/{id}/repos/{repo_id}/remove"],
-  ["POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"],
   ["POST", "/api/projects/{id}/repo-threads"],
   ["POST", "/api/threads/{id}/repos"],
   // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
