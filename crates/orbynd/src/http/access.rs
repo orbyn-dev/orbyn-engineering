@@ -24,6 +24,51 @@ const SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 /// so the middleware asks rather than reads.
 pub type FrameCheck = Arc<dyn Fn(&str, &str, &str) -> bool + Send + Sync>;
 
+/// Who made a refused `Person` call, as far as the credential tells. A process that holds the service token (the CLI, or an engine
+/// that read `service.json`) is not told apart from another: there is no per-worker token yet
+/// (`docs/worker-token-isolation.md`, rollout 4), so a worker shows up here as `service_token`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CallerClass {
+    /// The per-launch service token with no browser origin.
+    ServiceToken,
+    /// A remote session cookie, or a request that carries a browser `Origin`.
+    Browser,
+}
+
+impl CallerClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ServiceToken => "service_token",
+            Self::Browser => "browser",
+        }
+    }
+}
+
+/// One refused `Person` call, for the audit log. Only the method, the matched route pattern (never the URL, so no ids or
+/// queries), the caller class and the answer's code: no body, header or token.
+#[derive(Clone, Debug)]
+pub struct PersonRefusal {
+    pub method: String,
+    pub route: String,
+    pub caller: CallerClass,
+    pub code: &'static str,
+}
+
+/// Writes one refusal to the audit log. An error is logged by the caller and never changes the refusal.
+pub type RefusalSink = Arc<dyn Fn(&PersonRefusal) -> Result<(), String> + Send + Sync>;
+
+/// A repeat of the same route by the same class inside this window writes no second row.
+pub const REFUSAL_WINDOW: Duration = Duration::from_secs(60);
+/// Most `(route, caller)` pairs remembered. Routes come from the matched-pattern table, so the real count is far below
+/// this; the bound keeps the map small whatever a caller sends.
+const REFUSAL_KEYS: usize = 1024;
+
+struct Refusals {
+    sink: RefusalSink,
+    clock: Arc<dyn Fn() -> Instant + Send + Sync>,
+    seen: Mutex<HashMap<(String, CallerClass), Instant>>,
+}
+
 pub struct Access {
     token_sha256: String,
     allowed_hosts: Vec<String>,
@@ -35,6 +80,8 @@ pub struct Access {
     /// SHA-256 of this launch's person key. `None` unless a desktop shell owns the service, and then no
     /// request can present a valid key. The key itself is never stored here.
     person_key_sha256: Option<String>,
+    /// Where a refused `Person` call is audited. `None` until the service hands core's writer in.
+    refusals: Option<Refusals>,
     /// Development builds only: a `Person` route needs no key (`ORBYN_DEV_DISABLE_PERSON_KEY`).
     #[cfg(debug_assertions)]
     dev_person_open: bool,
@@ -94,8 +141,84 @@ impl Access {
             }),
             frames: None,
             person_key_sha256: None,
+            refusals: None,
             #[cfg(debug_assertions)]
             dev_person_open: false,
+        }
+    }
+
+    /// Audits each refused `Person` call through `sink`, once per route and caller class a minute.
+    pub fn with_refusal_audit(self, sink: RefusalSink) -> Self {
+        self.with_refusal_audit_clock(sink, Arc::new(Instant::now))
+    }
+
+    /// As [`Self::with_refusal_audit`] with the clock the window reads, so a test needs no minute of waiting.
+    pub fn with_refusal_audit_clock(
+        mut self,
+        sink: RefusalSink,
+        clock: Arc<dyn Fn() -> Instant + Send + Sync>,
+    ) -> Self {
+        self.refusals = Some(Refusals {
+            sink,
+            clock,
+            seen: Mutex::new(HashMap::new()),
+        });
+        self
+    }
+
+    /// The answer's code, which `person_check` gives for a refusal: a service with no shell has no key.
+    fn refusal_code(&self) -> &'static str {
+        if self.person_key_sha256.is_some() {
+            "person_required"
+        } else {
+            "desktop_required"
+        }
+    }
+
+    /// Who is calling, from the credential and the origin. `require_auth` has already passed.
+    pub fn caller_class(&self, request: &Request<Body>) -> CallerClass {
+        if self.cookie_valid(request.headers()) || request.headers().contains_key(header::ORIGIN) {
+            CallerClass::Browser
+        } else {
+            CallerClass::ServiceToken
+        }
+    }
+
+    /// Writes one audit row for a refused `Person` call unless the same route and class already wrote one this minute.
+    /// A failed write is logged and nothing more: the caller still gets its refusal.
+    pub fn audit_person_refusal(&self, method: &str, route: &str, caller: CallerClass) {
+        let Some(refusals) = &self.refusals else {
+            return;
+        };
+        let now = (refusals.clock)();
+        {
+            let mut seen = refusals
+                .seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let key = (format!("{method} {route}"), caller);
+            if seen
+                .get(&key)
+                .is_some_and(|last| now.saturating_duration_since(*last) < REFUSAL_WINDOW)
+            {
+                return;
+            }
+            if seen.len() >= REFUSAL_KEYS {
+                seen.retain(|_, last| now.saturating_duration_since(*last) < REFUSAL_WINDOW);
+                if seen.len() >= REFUSAL_KEYS {
+                    return;
+                }
+            }
+            seen.insert(key, now);
+        }
+        let refusal = PersonRefusal {
+            method: method.to_owned(),
+            route: route.to_owned(),
+            caller,
+            code: self.refusal_code(),
+        };
+        if let Err(error) = (refusals.sink)(&refusal) {
+            tracing::warn!(%error, "could not audit a refused person route");
         }
     }
 

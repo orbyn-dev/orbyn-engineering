@@ -408,6 +408,33 @@ impl Core {
         })
     }
 
+    /// Records a refused request to a person-only route. The row names the route pattern and the caller class, and holds
+    /// no body, header or token. `thread_id` is empty: a refusal belongs to no thread.
+    pub fn record_person_route_refusal(
+        &self,
+        method: &str,
+        route: &str,
+        caller: &str,
+        code: &str,
+    ) -> Result<i64> {
+        self.store.append_audit(&crate::store::AuditRecord {
+            actor: caller.to_owned(),
+            action: "person_route.refused".to_owned(),
+            target: format!("{method} {route}"),
+            decision: Some(orbyn_contracts::PolicyEffect::Deny),
+            source: "access".to_owned(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "route": route,
+                "method": method,
+                "caller": caller,
+                "code": code,
+                "note": "A person-only route was refused. Repeats inside a minute write no new row.",
+            }),
+        })
+    }
+
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo
     /// hooks, so it needs a trusted folder like an engine does.
     pub async fn create_thread(&self, request: orbyn_contracts::CreateThread) -> Result<Thread> {

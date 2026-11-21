@@ -406,6 +406,19 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let access = Arc::new(
         access
             .with_desktop(args.parent_stdin)
+            .with_refusal_audit({
+                let core = core.clone();
+                Arc::new(move |refusal: &http::access::PersonRefusal| {
+                    core.record_person_route_refusal(
+                        &refusal.method,
+                        &refusal.route,
+                        refusal.caller.as_str(),
+                        refusal.code,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+                })
+            })
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
             .with_frames({
