@@ -8,6 +8,7 @@ mod auth;
 mod automations;
 mod checkpoints;
 mod classes;
+mod code_mode;
 mod composer;
 mod crew;
 mod crew_areas;
@@ -121,6 +122,7 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(code_mode::routes())
         .merge(issues::routes())
         .merge(explorer::routes())
         .merge(files::routes())

@@ -8,11 +8,12 @@ use serde_json::{Value, json};
 const HEADROOM: usize = 1024;
 const PREVIEW_BYTES: usize = 64 * 1024;
 
-fn error_json(error: &RunError) -> Value {
+pub(super) fn error_json(error: &RunError) -> Value {
     let kind = match error.kind {
         ErrorKind::Syntax => "syntax",
         ErrorKind::Limit => "limit",
         ErrorKind::Runtime if error.code.as_deref() == Some("denied") => "denied",
+        ErrorKind::Runtime if error.code.as_deref() == Some("lost") => "lost",
         ErrorKind::Runtime => "runtime",
     };
     let mut out = json!({ "kind": kind, "message": error.message });

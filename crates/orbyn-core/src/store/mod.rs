@@ -48,6 +48,7 @@ mod crew_guard;
 mod crew_merge_corrections;
 mod crew_merge_forge;
 pub(crate) use crew_merge_corrections::ForgeCorrection;
+pub(crate) mod code_runs;
 mod crew_merges;
 mod crew_paused_starts;
 #[cfg(test)]
