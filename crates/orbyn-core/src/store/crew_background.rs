@@ -178,6 +178,15 @@ pub struct Unwound {
     deleted_threads: Vec<String>,
 }
 
+/// What `Store::recover_background_starts` did.
+#[derive(Debug, Default)]
+pub(crate) struct Recovered {
+    /// How many runs were ended.
+    pub runs: usize,
+    /// The tasks of those runs that now wait for a person, each with the reason the run was ended for.
+    pub held: Vec<(CrewTask, &'static str)>,
+}
+
 /// Deletes a run's lead thread, in the caller's transaction. Returns the deleted thread ids; the caller
 /// removes them from the hub after the commit.
 fn discard_lead_in(tx: &Transaction<'_>, thread_id: &str) -> Result<Vec<String>> {
@@ -195,11 +204,13 @@ fn discard_lead_in(tx: &Transaction<'_>, thread_id: &str) -> Result<Vec<String>>
 
 /// Holds every task of the run's crew for a person and ends the run `needs_review` with `why`, inside the caller's transaction.
 /// `None` when the crew has no task at all (nothing was held and the run is untouched). Shared by every path that must retain a
-/// run whose start did not finish: the task hold and the run end commit together or not at all.
+/// run whose start did not finish: the task hold and the run end commit together or not at all. `actor` is written on the run's end
+/// audit. Returns the tasks that now wait for a person: the ones moved here and the ones already waiting.
 pub(crate) fn hold_tasks_and_end_run(
     tx: &Transaction<'_>,
     run: &BackgroundRunRow,
     why: &str,
+    actor: &str,
 ) -> Result<Option<Vec<CrewTask>>> {
     let tasks = {
         let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
@@ -219,7 +230,7 @@ pub(crate) fn hold_tasks_and_end_run(
             held.push(task);
         }
     }
-    end_run(tx, run, RunEnd::NeedsReview(why), Some(why), "crew")?;
+    end_run(tx, run, RunEnd::NeedsReview(why), Some(why), actor)?;
     Ok(Some(held))
 }
 
@@ -647,6 +658,81 @@ impl Store {
             .optional()?)
     }
 
+    /// Settles the background runs a crash left `running`. Call it only from `Core::open`, after the data-directory owner lock is
+    /// taken and before any starter or listener exists, so no live starter can still be working. A run whose task has a worker in
+    /// `running`, `verifying` or `changed_approach` is left to Crew task recovery, which ends it through the task's own end (with
+    /// Crew off at startup such a run stays `running`). Every other running run is ended `needs_review` in one transaction with its
+    /// audit: a run with no task; a run whose task is held for a person (`briefed`, `routed`, and worker-less `running` or
+    /// `verifying` move to `needs_person`, compare-and-set, no engine; a worker-less `changed_approach`, `failed` or
+    /// already waiting task stays as it is); and a run whose task already ended. Nothing is brought back and no engine work starts.
+    /// Terminal runs never change and a repeat finds nothing. The held tasks come back with the reason, for the caller to release
+    /// their leases and give each a result once a `Core` exists. A failing transaction fails `Core::open`: startup is fail-closed,
+    /// as `Store::recover` is.
+    pub(crate) fn recover_background_starts(&self) -> Result<Recovered> {
+        const NO_TASK: &str = "The background run was interrupted before its task was created. Start another run when you are ready.";
+        const HELD: &str =
+            "The app stopped before this run's worker started. Its task waits for a person.";
+        const ENDED: &str = "The run's task ended, but the app stopped before the run was closed.";
+        const LEFT: &str =
+            "The app stopped before this run was closed. Its task is left as it was.";
+        self.commit(|tx, _| {
+            let mut held_all = Vec::new();
+            let runs = {
+                let mut statement = tx.prepare(
+                    "SELECT * FROM crew_background_runs b WHERE b.state = 'running'
+                     AND NOT EXISTS (SELECT 1 FROM crew_tasks t JOIN crew_runs r ON r.task_id = t.id
+                                     WHERE t.crew_id = b.id AND t.state IN ('running', 'verifying', 'changed_approach')
+                                     AND r.worker_thread_id IS NOT NULL)",
+                )?;
+                statement
+                    .query_map([], run_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for run in &runs {
+                let tasks = {
+                    let mut statement = tx.prepare("SELECT * FROM crew_tasks WHERE crew_id = ?1")?;
+                    statement
+                        .query_map([&run.id], super::crew::task_row)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                let why = if tasks.is_empty() {
+                    NO_TASK
+                } else if tasks
+                    .iter()
+                    .any(|task| crate::crew::lifecycle::allowed(&task.state, "needs_person"))
+                {
+                    HELD
+                } else if tasks
+                    .iter()
+                    .all(|task| crate::crew::lifecycle::is_final(&task.state))
+                {
+                    ENDED
+                } else {
+                    LEFT
+                };
+                audit(
+                    tx,
+                    "core",
+                    "crew.background.run.recover",
+                    &run.background_id,
+                    json!({
+                        "run": run.id,
+                        "why": why,
+                        "tasks": tasks.iter().map(|task| json!({ "id": task.id, "state": task.state })).collect::<Vec<_>>(),
+                    }),
+                )?;
+                match hold_tasks_and_end_run(tx, run, why, "core")? {
+                    Some(held) => held_all.extend(held.into_iter().map(|task| (task, why))),
+                    None => end_run(tx, run, RunEnd::NeedsReview(why), Some(why), "core")?,
+                }
+            }
+            Ok(Recovered {
+                runs: runs.len(),
+                held: held_all,
+            })
+        })
+    }
+
     /// Whether `thread_id` is the worker of a task whose lead thread is a background run's (a run's id is its lead thread's id).
     pub fn is_background_worker(&self, thread_id: &str) -> Result<bool> {
         Ok(self.reader().query_row(
@@ -696,7 +782,7 @@ impl Store {
                 &current.background_id,
                 json!({ "run": run, "why": why }),
             )?;
-            if let Some(held) = hold_tasks_and_end_run(tx, &current, why)? {
+            if let Some(held) = hold_tasks_and_end_run(tx, &current, why, "crew")? {
                 return Ok(Unwound {
                     discarded: false,
                     held,
