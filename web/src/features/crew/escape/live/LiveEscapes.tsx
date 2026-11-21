@@ -19,14 +19,15 @@ function Card({ children }: { children: ReactNode }) {
  * a person chooses another from the page's project chip. The detail names its escape in the hash (`?id=`), so it needs
  * no project of its own: the escape says which project it belongs to. The log also draws narrow: below 640 px it measures its own width
  * (`escape-narrow-window`: two tiles and a card per escape), and `panel` is the 320 px side panel (`escape-narrow-panel`,
- * one counts card, a card per escape and an Open in Crew button that only navigates).
+ * one counts card, a card per escape and an Open in Crew button that only navigates). `initial` is the project the address names (the
+ * links of the log and the coverage map carry it), falling back to the first one listed when it is not visible.
  */
-export function LiveEscapes({ view, id, panel = false }: { view: "log" | "possible" | "detail"; id?: string; panel?: boolean }) {
+export function LiveEscapes({ view, id, panel = false, initial }: { view: "log" | "possible" | "detail"; id?: string; panel?: boolean; initial?: string }) {
   const on = useCrewPreview();
   const projects = useVisibleProjects();
   const failure = useWorkspace((state) => state.projects.error);
   const refresh = useWorkspace((state) => state.refreshProjects);
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(initial ?? null);
   useEffect(() => {
     if (on) void refresh();
   }, [on, refresh]);
@@ -36,6 +37,6 @@ export function LiveEscapes({ view, id, panel = false }: { view: "log" | "possib
   const project = projects.find((entry) => entry.id === chosen) ?? projects[0];
   if (!project) return <Card><Empty title="No project to show" /></Card>;
   if (view === "log") return <LiveEscapeLog key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} panel={panel} />;
-  if (view === "possible") return <LiveEscapePossible key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} />;
+  if (view === "possible") return <LiveEscapePossible key={project.id} project={project.id} name={project.name} projects={projects} onPick={setChosen} panel={panel} />;
   return <LiveEscapeDetail id={id ?? ""} />;
 }

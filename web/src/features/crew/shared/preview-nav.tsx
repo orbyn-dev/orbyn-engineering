@@ -8,8 +8,14 @@ function previewHref(place: CrewPlace): string {
   switch (place.page) {
     case "coverage":
       return "#/preview/crew/capacity-live-coverage";
+    case "capacity":
+      return "#/preview/crew/capacity-live-settings";
     case "escapes":
       return "#/preview/crew/escape-log";
+    case "possible":
+      return "#/preview/crew/escape-possible";
+    case "escape-settings":
+      return "#/preview/crew/escape-settings";
     case "escape":
       return `#/preview/crew/escape-detail${q(place.id)}`;
     case "backtest":

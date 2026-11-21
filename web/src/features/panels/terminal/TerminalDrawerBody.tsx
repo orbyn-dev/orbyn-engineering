@@ -1,5 +1,5 @@
 import { useCommand } from "../../../product/shell/shortcuts";
-import { Check, ChevronDown, ChevronUp, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Search, Square, SquareTerminal, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Columns2, Eye, Maximize2, Minimize2, MessageSquare, Play, Plus, RotateCw, Rows2, Search, Square, SquareTerminal, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { closeTerminal, listTerminals, listThreadScripts, startConsole, startTerminal } from "../api";
 import type { TerminalInfo } from "../../../api/types";
@@ -21,6 +21,9 @@ import { runProjectAction } from "../../../product/composer/runProjectAction";
 import { ProjectActionIcon } from "../../../product/ui/ProjectActionIcon";
 
 const MAIN = "main";
+/** Panes one tab holds; each is a shell of its own. */
+export const MAX_PANES = 4;
+type SplitDirection = "horizontal" | "vertical";
 
 export function groupTerminals(terminals: readonly TerminalInfo[]): TerminalInfo[][] {
   const groups = new Map<string, TerminalInfo[]>();
@@ -175,7 +178,7 @@ export function TerminalDrawerBody({
   );
   const [active, setActive] = useState(MAIN);
   // A terminal opened here takes focus when it loads; one that was already there does not.
-  const [focusGroup, setFocusGroup] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [mainHidden, setMainHidden] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [watching, setWatching] = useState(false);
@@ -209,18 +212,49 @@ export function TerminalDrawerBody({
     try {
       const made = await startTerminal(threadId, body);
       setActive(made.group);
-      setFocusGroup(made.group);
+      setFocusId(made.id);
       reload();
     } catch (failure) {
       fail(failure);
     }
+  };
+  /** One split at a time: a second press while the first shell is still opening does nothing. */
+  const [splitting, setSplitting] = useState(false);
+  const splitBusy = useRef(false);
+  /** Why the shown tab cannot take a split in `direction`, or null when it can. A split group keeps the direction it has. */
+  const splitBlock = (direction: SplitDirection): string | null => {
+    const target = shown?.at(-1);
+    if (!target) return "Terminal is not open yet";
+    if (shown && shown.length >= MAX_PANES) return `A tab holds ${MAX_PANES} panes`;
+    const has = shown?.[1]?.direction;
+    if (has && has !== direction) return `This tab is split ${has === "vertical" ? "down" : "right"}`;
+    return null;
+  };
+  /** Opens a new shell in the shown tab's group, beside or below the last pane, and puts focus in it. Only a press or a shortcut gets here. */
+  const split = async (direction: SplitDirection) => {
+    const target = shown?.at(-1);
+    if (!target || splitBusy.current || splitBlock(direction) !== null) return false;
+    splitBusy.current = true;
+    setSplitting(true);
+    try {
+      const made = await startTerminal(threadId, { split_of: target.id, direction });
+      setActive(made.group);
+      setFocusId(made.id);
+      reload();
+    } catch (failure) {
+      fail(failure);
+    } finally {
+      splitBusy.current = false;
+      setSplitting(false);
+    }
+    return true;
   };
   /** The engine's own CLI resumed on this thread's session; the service says when it can't. */
   const openConsole = async () => {
     try {
       const made = await startConsole(threadId);
       setActive(made.group);
-      setFocusGroup(made.group);
+      setFocusId(made.id);
       reload();
     } catch (failure) {
       fail(failure);
@@ -271,6 +305,14 @@ export function TerminalDrawerBody({
     }
   };
   useCommand("terminal.new", () => void open({}));
+  const canSplit = (direction: SplitDirection) => !splitting && splitBlock(direction) === null;
+  const splitFromKey = (direction: SplitDirection) => {
+    if (!canSplit(direction)) return false;
+    void split(direction);
+    return true;
+  };
+  useCommand("terminal.split", () => splitFromKey("horizontal"), () => canSplit("horizontal"));
+  useCommand("terminal.splitVertical", () => splitFromKey("vertical"), () => canSplit("vertical"));
   useCommand("terminal.close", () => {
     const first = shown?.[0];
     if (first && first.id !== MAIN) end(first);
@@ -311,9 +353,13 @@ export function TerminalDrawerBody({
   const menuFor = (group: TerminalInfo[]): MenuItem[] => {
     const first = group[0];
     const there = registered(group);
+    const here = group[0]?.group === shown?.[0]?.group;
+    const canSplitHere = (direction: SplitDirection) => here && canSplit(direction);
     return [
+      { label: "Split right", icon: <Columns2 size={14} aria-hidden />, disabled: !canSplitHere("horizontal"), onSelect: () => void split("horizontal") },
+      { label: "Split down", icon: <Rows2 size={14} aria-hidden />, disabled: !canSplitHere("vertical"), onSelect: () => void split("vertical") },
       ...(mainHidden ? [{ label: "Show Terminal", onSelect: () => { setMainHidden(false); setActive(MAIN); } }] : []),
-      { label: "Clear output", disabled: !there, ...(mainHidden ? { separatorBefore: true } : {}), onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
+      { label: "Clear output", disabled: !there, separatorBefore: true, onSelect: () => keysOf(group).forEach((key) => controlsOf(key)?.clear()) },
       { label: "Copy all output", disabled: !there, onSelect: () => copyAll(group) },
       { label: "Watch only", selected: watching, onSelect: () => setWatching(!watching) },
       ...(first && first.id !== MAIN && first.alive
@@ -416,6 +462,9 @@ export function TerminalDrawerBody({
             <Play size={14} aria-hidden />
           </IconButton>
         ) : null}
+        <IconButton label="Split pane" disabled={!canSplit("horizontal")} onClick={() => void split("horizontal")}>
+          <Columns2 size={14} aria-hidden />
+        </IconButton>
         <IconButton label={maximized ? "Restore" : "Maximise terminal"} onClick={onToggleMaximize}>
           {maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
         </IconButton>
@@ -445,12 +494,17 @@ export function TerminalDrawerBody({
                   <div className="term-view-title">
                     {terminal.alive && terminal.script ? <i className="spin" aria-label="Working" /> : null}
                     <span>{terminal.id === MAIN ? "Terminal" : terminal.title}</span>
+                    {terminal.id === MAIN ? null : (
+                      <IconButton className="term-view-close" label={`Close pane ${terminal.title}`} onClick={() => end(terminal)}>
+                        <X size={11} aria-hidden />
+                      </IconButton>
+                    )}
                   </div>
                 ) : null}
                 <TerminalPanel
                   threadId={threadId}
                   observe={watching}
-                  autoFocus={terminal.group === focusGroup}
+                  autoFocus={terminal.id === focusId}
                   {...(terminal.id === MAIN ? {} : { terminalId: terminal.id })}
                 />
               </div>

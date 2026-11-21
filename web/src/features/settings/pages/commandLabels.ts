@@ -34,6 +34,7 @@ export const COMMAND_LABELS: Record<string, string> = {
   "projectSearch.toggle": "Search projects",
   "pullRequest.copyNumber": "Copy pull request number",
   "rightPanel.close": "Close right panel tab",
+  "rightPanel.maximize": "Maximise right panel",
   "rightPanel.new": "New right panel tab",
   "rightPanel.toggle": "Toggle right panel",
   "sidebar.toggle": "Toggle sidebar",

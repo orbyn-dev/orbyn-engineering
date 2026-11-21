@@ -1,10 +1,14 @@
 import { createContext, useContext } from "react";
-import { routeHref, type Route } from "../../../product/state/route";
+import { routeHref, type CrewOrigin, type Route } from "../../../product/state/route";
 
 /** A place the Crew entry pages send a person to. `project` is the project the page was showing, so the next page opens on it. */
 export type CrewPlace =
-  | { page: "coverage"; project?: string }
-  | { page: "escapes" }
+  | { page: "capacity"; project?: string }
+  /** `from` is the page whose link opens the map, so the map can offer the way back to it. */
+  | { page: "coverage"; project?: string; from?: CrewOrigin }
+  | { page: "escapes"; project?: string }
+  | { page: "possible"; project?: string }
+  | { page: "escape-settings" }
   | { page: "escape"; id: string }
   | { page: "backtest" }
   | { page: "estimate" }
@@ -13,7 +17,8 @@ export type CrewPlace =
 /** Where a place lives in the app: a Settings › Crew page, so the browser's Back returns to the page the person came from. */
 export function appHref(place: CrewPlace): string {
   const route: Route = { name: "settings", section: "crew", crewPage: place.page };
-  if (place.page === "coverage" && place.project !== undefined) return routeHref({ ...route, repo: place.project });
+  if (place.page === "coverage") return routeHref({ ...route, ...(place.project !== undefined ? { repo: place.project } : {}), ...(place.from ? { from: place.from } : {}) });
+  if ((place.page === "capacity" || place.page === "escapes" || place.page === "possible") && place.project !== undefined) return routeHref({ ...route, repo: place.project });
   if (place.page === "escape" || place.page === "report") return routeHref({ ...route, id: place.id });
   return routeHref(route);
 }

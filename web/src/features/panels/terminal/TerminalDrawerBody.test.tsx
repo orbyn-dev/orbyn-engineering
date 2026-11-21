@@ -7,6 +7,7 @@ import { useConnection } from "../../../product/state/connection";
 import { useUi } from "../../../product/state/ui";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { TerminalBar, TerminalDrawerBody } from "./TerminalDrawerBody";
+import { runHandlers } from "../../../product/shell/shortcuts";
 import { registerTerminal, terminalKey } from "./terminalControls";
 
 vi.mock("./TerminalPanel", () => ({ TerminalPanel: ({ terminalId, autoFocus }: { terminalId?: string; autoFocus?: boolean }) => <div data-autofocus={autoFocus ? "yes" : "no"}>Output of {terminalId ?? "main"}<textarea className="xterm-helper-textarea" aria-label="xterm" /></div> }));
@@ -95,10 +96,10 @@ describe("terminal drawer", () => {
     await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t2"));
   });
 
-  it("offers Clear, Copy and Watch from a tab's right-click menu, and End process only while it runs; splits are not offered", async () => {
+  it("offers Clear, Copy and Watch from a tab's right-click menu, and End process only while it runs, after the split choices", async () => {
     const user = await show([terminal({})]);
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: /npm test/ }) });
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Clear output", "Copy all output", "Watch only", "End process"]);
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Split right", "Split down", "Clear output", "Copy all output", "Watch only", "End process"]);
   });
 
   it("disables Clear and Copy for a tab that is not showing, and never says Output copied when nothing was copied", async () => {
@@ -380,5 +381,147 @@ describe("closed terminal bar", () => {
     render(<TerminalBar threadId="th" onOpen={() => undefined} />);
     await waitFor(() => expect(mock).toHaveBeenCalled());
     expect(screen.queryByRole("group", { name: "Terminal" })).not.toBeInTheDocument();
+  });
+});
+
+describe("terminal split and vertical split", () => {
+  let list: TerminalInfo[] = [];
+  let posts: unknown[] = [];
+  let release: (() => void) | null = null;
+  /** A service that adds a pane to the group of `split_of`, as the real one does. */
+  function serveSplits(initial: TerminalInfo[], { hold = false, fail = false } = {}) {
+    list = initial;
+    posts = [];
+    mock.mockImplementation((method: string, path: string, body?: unknown) => {
+      if (method === "POST" && path.endsWith("/terminals")) {
+        posts.push(body);
+        if (fail) return Promise.reject(new Error("no pty")) as never;
+        const { split_of, direction } = body as { split_of: string; direction: string };
+        const made = terminal({ id: `n${posts.length}`, title: `zsh ${posts.length}`, group: list.find((one) => one.id === split_of)!.group, direction, script: null, alive: true });
+        const add = () => { list = [...list, made]; return made; };
+        return (hold ? new Promise((resolve) => { release = () => resolve(add()); }) : Promise.resolve(add())) as never;
+      }
+      if (method === "DELETE") {
+        const id = path.split("/").pop();
+        list = list.filter((one) => one.id !== id);
+        return Promise.resolve(undefined) as never;
+      }
+      if (method === "GET" && path.endsWith("/terminals")) return Promise.resolve(list) as never;
+      return Promise.resolve({ scripts: [] }) as never;
+    });
+  }
+  const shell = (over: Partial<TerminalInfo> = {}) => terminal({ id: "t2", group: "g2", title: "dev", script: null, ...over });
+  const mountSplits = async () => {
+    const user = userEvent.setup();
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await user.click(await screen.findByRole("tab", { name: /^dev/ }));
+    return user;
+  };
+
+  it("splits the shown terminal to the right from the header, each pane with its own terminal", async () => {
+    serveSplits([shell()]);
+    const user = await mountSplits();
+    await user.click(screen.getByRole("button", { name: "Split pane" }));
+    await screen.findByText("Output of n1");
+    expect(posts).toEqual([{ split_of: "t2", direction: "horizontal" }]);
+    expect(screen.getByText("Output of t2")).toBeInTheDocument();
+    expect(document.querySelector(".terminal-splits")).toHaveAttribute("data-direction", "horizontal");
+    expect(screen.getByText("Output of n1").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "yes");
+    expect(screen.getByText("Output of t2").closest("[data-autofocus]")).toHaveAttribute("data-autofocus", "no");
+  });
+
+  it("splits right or down from the tab menu", async () => {
+    serveSplits([shell(), shell({ id: "t3", group: "g3", title: "lint" })]);
+    const user = await mountSplits();
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "dev" }) });
+    await user.click(screen.getByRole("menuitem", { name: "Split down" }));
+    await screen.findByText("Output of n1");
+    expect(posts).toEqual([{ split_of: "t2", direction: "vertical" }]);
+    expect(document.querySelector(".terminal-splits")).toHaveAttribute("data-direction", "vertical");
+  });
+
+  it("splits from the shortcuts", async () => {
+    serveSplits([shell()]);
+    await mountSplits();
+    act(() => void runHandlers("terminal.split"));
+    await screen.findByText("Output of n1");
+    expect(posts).toEqual([{ split_of: "t2", direction: "horizontal" }]);
+  });
+
+  it("splits vertically from its shortcut", async () => {
+    serveSplits([shell()]);
+    await mountSplits();
+    act(() => void runHandlers("terminal.splitVertical"));
+    await screen.findByText("Output of n1");
+    expect(posts).toEqual([{ split_of: "t2", direction: "vertical" }]);
+  });
+
+  it("opens one terminal for a press that arrives while the first is still opening, and writes nothing by itself", async () => {
+    serveSplits([shell()], { hold: true });
+    const user = await mountSplits();
+    expect(posts).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Split pane" }));
+    act(() => void runHandlers("terminal.split"));
+    await user.click(screen.getByRole("button", { name: "Split pane" }));
+    expect(posts).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Split pane" })).toBeDisabled();
+    await act(async () => release?.());
+    await screen.findByText("Output of n1");
+    expect(screen.getByRole("button", { name: "Split pane" })).toBeEnabled();
+  });
+
+  it("keeps the direction of a group that is split already and stops at four panes", async () => {
+    serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal" })]);
+    const user = await mountSplits();
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "dev (2)" }) });
+    expect(screen.getByRole("menuitem", { name: "Split right" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "Split down" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    act(() => void runHandlers("terminal.splitVertical"));
+    expect(posts).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Split pane" }));
+    await screen.findByText("Output of n1");
+    await user.click(screen.getByRole("button", { name: "Split pane" }));
+    await screen.findByText("Output of n2");
+    expect(posts).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Split pane" })).toBeDisabled();
+    act(() => void runHandlers("terminal.split"));
+    expect(posts).toHaveLength(2);
+  });
+
+  it("closes one pane's terminal from its own button and leaves the others", async () => {
+    serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal", alive: false, exit_code: 0 })]);
+    const user = await mountSplits();
+    await user.click(screen.getByRole("button", { name: "Close pane two" }));
+    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+    await waitFor(() => expect(screen.queryByText("Output of t3")).not.toBeInTheDocument());
+    expect(screen.getByText("Output of t2")).toBeInTheDocument();
+  });
+
+  it("asks before it ends a pane whose shell is alive, as it does for a tab", async () => {
+    serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal" })]);
+    const user = await mountSplits();
+    await user.click(screen.getByRole("button", { name: "Close pane two" }));
+    expect(mock).not.toHaveBeenCalledWith("DELETE", expect.anything());
+    await user.click(within(await screen.findByRole("dialog", { name: "End this terminal?" })).getByRole("button", { name: "End" }));
+    await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
+  });
+
+  it("offers no pane close for the main shell, and no split before the service lists it", async () => {
+    serveSplits([]);
+    render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);
+    await screen.findByRole("tab", { name: "Terminal" });
+    expect(screen.getByRole("button", { name: "Split pane" })).toBeDisabled();
+    act(() => void runHandlers("terminal.split"));
+    expect(posts).toEqual([]);
+  });
+
+  it("says when the split could not be made and adds no pane", async () => {
+    serveSplits([shell()], { fail: true });
+    const user = await mountSplits();
+    await user.click(screen.getByRole("button", { name: "Split pane" }));
+    await waitFor(() => expect(useUi.getState().toasts.map((toast) => toast.text).join()).toContain("Couldn't do that"));
+    expect(screen.queryByText("Output of n1")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Split pane" })).toBeEnabled();
   });
 });
