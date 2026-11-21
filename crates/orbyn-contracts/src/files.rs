@@ -80,6 +80,10 @@ pub struct WriteFile {
     pub content: String,
     /// The revision this edit started from; `None` means the file must not exist.
     pub base_revision: Option<String>,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 

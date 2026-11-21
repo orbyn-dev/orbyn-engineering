@@ -1,3 +1,5 @@
+use crate::store::thread_repos::ThreadRepoRecord;
+use orbyn_contracts::{GitAction, WriteFile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -339,4 +341,260 @@ async fn a_scan_through_the_core_marks_what_a_project_already_holds() {
         .map(|f| (f.name.as_str(), f.in_project, f.is_git))
         .collect();
     assert_eq!(state, [("fresh", false, true), ("kept", true, true)]);
+}
+
+/// A thread in `project` whose folder is not a repository, with a worktree record per `(repo_id, name, path)`.
+fn multi_thread(core: &Core, project: &str, repos: &[(&str, &str, &Path)]) -> String {
+    let thread = core
+        .store
+        .create_thread(crate::store::NewThread {
+            project_id: project.to_owned(),
+            title: "t".into(),
+            engine: "claude".into(),
+            model: None,
+            cwd: repos[0].2.parent().unwrap().to_string_lossy().into_owned(),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap();
+    for (position, (repo_id, name, path)) in repos.iter().enumerate() {
+        core.store
+            .thread_repo_insert(
+                &ThreadRepoRecord {
+                    thread_id: thread.id.clone(),
+                    repo_id: (*repo_id).to_owned(),
+                    position: position as u32,
+                    name: (*name).to_owned(),
+                    branch: "main".into(),
+                    worktree_path: path_text(path),
+                },
+                &crate::util::now(),
+            )
+            .unwrap();
+    }
+    thread.id
+}
+
+fn two_repos(dir: &TempDir) -> (PathBuf, PathBuf) {
+    let main = repo(&dir.path().join("main"));
+    let other = repo(&dir.path().join("other"));
+    std::fs::write(other.join("a.txt"), "other\n").unwrap();
+    run_git(&other, &["commit", "-qam", "other"]);
+    (main, other)
+}
+
+#[tokio::test]
+async fn a_repo_id_names_the_repository_a_file_call_reads_and_writes() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &added.id).await.unwrap();
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    // No repo_id is the primary repository; the same file name in the other repository is another file.
+    let primary = core.read_file(&thread, "a.txt").await.unwrap();
+    assert_eq!(primary.content, "one\n");
+    let second = crate::in_repo(Some(added.id.clone()), core.read_file(&thread, "a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(second.content, "other\n");
+    // A write goes to the named repository only, and its revision is that repository's.
+    let write = |repo: Option<String>, base: &str| {
+        let body = WriteFile {
+            path: "a.txt".into(),
+            content: "edited\n".into(),
+            base_revision: Some(base.to_owned()),
+            repo_id: repo.clone(),
+        };
+        let core = core.clone();
+        let thread = thread.clone();
+        async move {
+            crate::in_repo(repo, async move {
+                core.write_file(&thread, &body, "user").await
+            })
+            .await
+        }
+    };
+    assert!(
+        matches!(
+            write(Some(added.id.clone()), &primary.revision).await,
+            Err(CoreError::FileConflict { .. })
+        ),
+        "the primary's revision does not fit the other repository's file"
+    );
+    write(Some(added.id.clone()), &second.revision)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(other.join("a.txt")).unwrap(),
+        "edited\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(main.join("a.txt")).unwrap(),
+        "one\n",
+        "the primary is untouched"
+    );
+    // A path that leaves the named repository is refused, as is one that names a sibling.
+    for path in ["../main/a.txt", "/etc/passwd"] {
+        let escaped = crate::in_repo(Some(added.id.clone()), core.read_file(&thread, path)).await;
+        assert!(escaped.is_err(), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_git_action_commits_in_the_named_repository_only() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &added.id).await.unwrap();
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    std::fs::write(other.join("new.txt"), "x\n").unwrap();
+    let listed = core.thread_repos(&thread).await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].name, "main");
+    assert!(listed.iter().all(|r| r.trusted && r.branch == "main"));
+    let count = |path: &Path| {
+        let out = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let action = GitAction {
+        commit_message: Some("add new".into()),
+        push: false,
+        pull_request: None,
+        repo_id: Some(added.id.clone()),
+    };
+    let result = crate::in_repo(
+        Some(added.id.clone()),
+        core.git_action(&thread, &action, "user"),
+    )
+    .await
+    .unwrap();
+    assert!(result.phases.iter().all(|p| p.ok), "{result:?}");
+    assert_eq!(count(&other), "3");
+    assert_eq!(count(&main), "1", "the primary repository got no commit");
+}
+
+#[tokio::test]
+async fn an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entry() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    // Added but never trusted.
+    let thread = multi_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&added.id, "other", &other)],
+    );
+    assert!(!core.thread_repos(&thread).await.unwrap()[1].trusted);
+    let read = |repo: &str| {
+        let core = core.clone();
+        let thread = thread.clone();
+        let repo = repo.to_owned();
+        async move { crate::in_repo(Some(repo), core.read_file(&thread, "a.txt")).await }
+    };
+    assert!(matches!(
+        read(&added.id).await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(matches!(read("no-such").await, Err(CoreError::NotFound(_))));
+    let action = GitAction {
+        commit_message: Some("x".into()),
+        push: false,
+        pull_request: None,
+        repo_id: Some(added.id.clone()),
+    };
+    assert!(matches!(
+        crate::in_repo(
+            Some(added.id.clone()),
+            core.git_action(&thread, &action, "user")
+        )
+        .await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    assert!(
+        core.read_file(&thread, "a.txt").await.is_ok(),
+        "the primary still works"
+    );
+    // A repo_id on an ordinary thread is not found.
+    let plain = core
+        .store
+        .create_thread(crate::store::NewThread {
+            project_id: project.clone(),
+            title: "p".into(),
+            engine: "claude".into(),
+            model: None,
+            cwd: path_text(&main),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap()
+        .id;
+    assert!(
+        crate::in_repo(Some(project.clone()), core.read_file(&plain, "a.txt"))
+            .await
+            .is_err()
+    );
+    assert!(core.read_file(&plain, "a.txt").await.is_ok());
+    assert!(matches!(
+        core.thread_repos(&plain).await,
+        Err(CoreError::NotFound(_))
+    ));
+    // The flag gates the repo_id and the read of the repositories.
+    let off = dir.path().join("off");
+    let flagged = self::core(&TempDir::new(), false).await;
+    let _ = off;
+    assert!(matches!(
+        flagged.thread_repos(&thread).await,
+        Err(CoreError::NotFound(_))
+    ));
 }

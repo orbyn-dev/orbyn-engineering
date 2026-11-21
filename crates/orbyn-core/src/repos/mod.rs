@@ -2,7 +2,10 @@
 //! the person adds in place, creates or clones under app data. Trust is per repository.
 
 mod scan;
+mod scope;
 mod source;
+
+pub use scope::in_repo;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};

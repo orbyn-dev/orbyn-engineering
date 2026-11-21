@@ -15,6 +15,7 @@ use crate::http::{ApiJson, ApiResult, AppState};
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/projects/{id}/repos", get(list))
+        .route("/api/threads/{id}/repos", get(thread_repos))
         .route("/api/projects/{id}/repos/add-folder", post(add_folder))
         .route("/api/projects/{id}/repos/create", post(create))
         .route("/api/projects/{id}/repos/clone", post(clone))
@@ -105,4 +106,11 @@ async fn cancel_clone(
     Path((id, repo_id)): Path<(String, String)>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.cancel_repo_clone(&id, &repo_id)?))
+}
+
+async fn thread_repos(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.thread_repos(&id).await?))
 }
