@@ -1,4 +1,4 @@
-import type { IssueQuery, IssueRef, IssueState, IssueSummary, TrackerKind } from "./contract";
+import type { IssueQuery, IssueRef, IssueState, IssueSummary, TrackerKind, TrackerRow, TrackerStatus } from "./contract";
 import { TRACKER_KINDS, TRACKER_NAMES } from "./contract";
 
 /** The word the state shows: Open, Closed, or Closed as not planned when the tracker says so. Never colour alone. */
@@ -90,4 +90,83 @@ export function threadMarker(issues: readonly IssueRef[]): { count: number; clos
   const closed = issues.every((issue) => issue.state.category === "closed");
   const names = issues.map((issue) => issue.display_key).join(", ");
   return { count: issues.length, closed, label: issues.length === 1 ? `Issue ${names}, ${closed ? "closed" : "open"}` : `${issues.length} issues: ${names}` };
+}
+
+/** The word a state choice shows: the tracker's own name for a workflow state (In review, Done), the plain words otherwise. */
+export function choiceLabel(state: IssueState): string {
+  return state.name && state.name !== "Open" && state.name !== "Closed" ? state.name : stateWord(state);
+}
+
+export const sameState = (a: IssueState, b: IssueState): boolean =>
+  a.category === b.category && a.name === b.name && (a.close_reason ?? null) === (b.close_reason ?? null);
+
+/** Where a tracker's credential stands, from the row alone. */
+export function trackerStatus(row: TrackerRow): TrackerStatus {
+  if (row.status) return row.status;
+  if (!row.connected) return "not_connected";
+  return row.tracker === "github" ? "signed_in" : "saved";
+}
+
+/** The one line under a tracker's name in Settings and on the Welcome page. Service text is capped; it is drawn as text. */
+export function trackerLine(row: TrackerRow): string {
+  const where = row.address || row.scope || null;
+  const capped = where && where.length > 80 ? `${where.slice(0, 79)}…` : where;
+  switch (trackerStatus(row)) {
+    case "signed_in": return `Uses the gh sign-in on this computer${row.account ? ` · ${row.account.slice(0, 60)}` : ""}`;
+    case "saved": return `Saved in your keychain${capped ? ` · ${capped}` : ""}`;
+    case "rejected": return `Saved in your keychain${capped ? ` · ${capped}` : ""}. ${trackerName(row.tracker)} rejected the token.`;
+    case "unreachable": return `Saved in your keychain${capped ? ` · ${capped}` : ""}. No answer from that address.`;
+    default: return row.tracker === "github" ? "Uses the gh sign-in on this computer" : row.tracker === "linear" ? "API token, kept in your keychain" : "Address and API token, kept in your keychain";
+  }
+}
+
+/** What replaces a failure's words when they carry the token the person typed, in any form. */
+export const TOKEN_REFUSED = "The tracker refused the token.";
+
+const b64 = (text: string): string[] => {
+  try {
+    const plain = btoa(unescape(encodeURIComponent(text)));
+    return [plain, plain.replace(/=+$/, ""), plain.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")];
+  } catch { return []; }
+};
+
+/** Every form a typed token can come back in: as typed, trimmed, URL-encoded, JSON-escaped and base64 (alone and as Basic `:token`). */
+function tokenForms(token: string): string[] {
+  const trimmed = token.trim();
+  const forms = new Set<string>();
+  for (const one of [token, trimmed]) {
+    if (!one) continue;
+    forms.add(one);
+    forms.add(encodeURIComponent(one));
+    forms.add(JSON.stringify(one).slice(1, -1));
+    for (const form of [...b64(one), ...b64(`:${one}`)]) forms.add(form);
+  }
+  return [...forms].filter((form) => form.length > 0).map((form) => form.toLowerCase());
+}
+
+/**
+ * The words for a failed write: the service's own message, capped at 300. When a `secret` (the token just typed) turns up in them
+ * in any form, the whole message is replaced: the match is made on the whole message BEFORE it is cut, never on the cut one.
+ * Never anything the person typed.
+ */
+export const reasonOf = (failure: unknown, secret?: string): string => {
+  const text = failure instanceof Error && failure.message ? failure.message : "Something went wrong.";
+  if (secret) {
+    const lower = text.toLowerCase();
+    if (tokenForms(secret).some((form) => lower.includes(form))) return TOKEN_REFUSED;
+  }
+  return text.length > 300 ? `${text.slice(0, 299)}…` : text;
+};
+
+/** A key the service gave in a URL or a link must be one plain segment before it is asked for: letters, digits and `. _ : # -`. */
+export const isIssueKey = (key: string): boolean => /^[\w.:#-]{1,64}$/.test(key);
+
+const MARKS = new Map<string, string>([["github", "GH"], ["gitlab", "GL"], ["azure_devops", "AZ"], ["forgejo", "FJ"], ["linear", "LN"]]);
+/** The two letters on a tracker's mark. */
+export const trackerMark = (tracker: TrackerKind): string => MARKS.get(tracker) ?? "";
+
+/** The rows this screen knows how to draw, in the order the design lists them; a tracker the service adds later is not drawn. */
+export function knownTrackers(rows: readonly TrackerRow[]): TrackerRow[] {
+  const byKind = new Map(rows.filter((row) => isTracker(row.tracker)).map((row) => [row.tracker, row] as const));
+  return TRACKER_KINDS.flatMap((kind) => { const row = byKind.get(kind); return row ? [row] : []; });
 }

@@ -6,3 +6,7 @@ export { IssuesPage } from "./IssuesPage";
 export { useTrackers } from "./api";
 export { TRACKER_NAMES } from "./contract";
 export type { TrackerKind, TrackerRow } from "./contract";
+export { IssueTrackersSettings } from "./TrackerTokens";
+export { WelcomeTrackers } from "./WelcomeTrackers";
+export { IssuePanel } from "./IssuePanel";
+export { IssuesRow } from "./ThreadIssues";

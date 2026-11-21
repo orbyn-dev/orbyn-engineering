@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { IssuesApi, TrackerKind, TrackerRow } from "./contract";
 import { useAsync } from "../../lib/useAsync";
 
@@ -6,6 +6,9 @@ import { useAsync } from "../../lib/useAsync";
  * The real client for the issues routes. Those routes are not merged, so this one makes no request at all: the
  * service "reports nothing", the Issues entry stays out of the sidebar, no chip draws and no row has a marker.
  * Swap it for `request(...)` calls the day the generated types and routes land; the screens do not change.
+ * For Eng 3/4: the real client must URL-encode every key as ONE path segment, send a token only in a JSON body, and the service
+ * must refuse plain http for a typed tracker address. Password managers are told to leave the token field alone, which is
+ * best effort: a manager may still offer to save it.
  */
 const unreported: IssuesApi = {
   trackers: async () => null,
@@ -15,6 +18,9 @@ const unreported: IssuesApi = {
   find: async () => [],
   link: async () => { throw new Error("Issues are not reported by this service."); },
   unlink: async () => { throw new Error("Issues are not reported by this service."); },
+  setState: async () => { throw new Error("Issues are not reported by this service."); },
+  saveToken: async () => { throw new Error("Issues are not reported by this service."); },
+  removeToken: async () => { throw new Error("Issues are not reported by this service."); },
   startThread: async () => { throw new Error("Issues are not reported by this service."); },
 };
 
@@ -50,10 +56,21 @@ export function useApiVersion(): number {
 }
 
 /** The trackers the service reports; `rows` is `null` while loading and when the service reports none at all. */
-export function useTrackers(): { rows: TrackerRow[] | null; settled: boolean; reload(): void } {
+export function useTrackers(): { rows: TrackerRow[] | null; settled: boolean; reload(): void; refresh(): void; replace(next: TrackerRow): void } {
   const seen = useApiVersion();
   const read = useAsync(`issues:trackers:${seen}`, (signal) => issuesApi().trackers(signal));
-  return { rows: read.status === "ready" ? read.data : null, settled: read.status !== "loading", reload: read.reload };
+  const rows = read.status === "ready" ? read.data : null;
+  // A write answers with the tracker's own row: it is put in place where it stands, and the others are left as they are.
+  // Every answer is applied to the rows as they are when it lands, not as they were at the click.
+  const latest = useRef<TrackerRow[] | null>(rows);
+  latest.current = rows;
+  const { setData } = read;
+  const replace = (next: TrackerRow) => {
+    const updated = (latest.current ?? []).map((row) => (row.tracker === next.tracker ? next : row));
+    latest.current = updated;
+    setData(updated);
+  };
+  return { rows, settled: read.status !== "loading", reload: read.reload, refresh: () => void read.refreshQuietly(), replace };
 }
 
 export type { TrackerKind };

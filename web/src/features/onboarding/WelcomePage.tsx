@@ -1,4 +1,4 @@
-import { Check, Download, Folder, GitPullRequest, RefreshCw, TriangleAlert } from "lucide-react";
+import { Check, Download, Folder, RefreshCw, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import type { EngineStatus } from "../../api/types";
 import { relativeTime } from "../../lib/format";
@@ -8,49 +8,10 @@ import { useUi } from "../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../product/state/workspace";
 import { ProjectBadge } from "../../product/ui/badges";
 import { Button } from "../../ui/controls";
-import { Menu, type MenuItem } from "../../ui/Menu";
-import { Presence } from "../../ui/Presence";
-import { TRACKER_NAMES, useTrackers, type TrackerRow } from "../issues";
+import { useTrackers, WelcomeTrackers } from "../issues";
 import { useDefaultEngine } from "./useDefaultEngine";
 import { agentRow, listedAgents, noEngineReady, recentProjects, type AgentRow } from "./welcomeModel";
 import "./onboarding.css";
-
-const MARK: Record<string, string> = { github: "GH", gitlab: "GL", azure_devops: "AZ", forgejo: "FJ", linear: "LN" };
-
-/** Trackers: a token lives in the keychain behind the service and the page never sees one, so Connect goes to Settings. */
-function TrackerAction({ rows }: { rows: readonly TrackerRow[] }) {
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const items: MenuItem[] = rows.map((row) => ({
-    label: TRACKER_NAMES[row.tracker],
-    content: (
-      <span className="welcome-tracker">
-        <span className="welcome-mark" aria-hidden>{MARK[row.tracker]}</span>
-        <span>{TRACKER_NAMES[row.tracker]}{row.connected && row.scope ? <small> {"·"} {row.scope}</small> : null}</span>
-        <small className="welcome-tracker-act">{row.connected ? "Connected" : "Connect"}</small>
-      </span>
-    ),
-    onSelect: () => navigate({ name: "settings", section: "source-control" }),
-  }));
-  return (
-    <>
-      <button
-        type="button"
-        className="welcome-card"
-        aria-haspopup="menu"
-        aria-expanded={menu !== null}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setMenu(menu ? null : { x: rect.left, y: rect.bottom + 4 });
-        }}
-      >
-        <GitPullRequest size={18} aria-hidden />
-        <b>Connect a tracker</b>
-        <span>GitHub, GitLab, Azure DevOps, Forgejo, Linear</span>
-      </button>
-      <Presence>{menu ? <Menu x={menu.x} y={menu.y} label="Connect a tracker" items={items} onClose={() => setMenu(null)} /> : null}</Presence>
-    </>
-  );
-}
 
 function AgentRowView({ row, chosen, canChoose, onUse }: { row: AgentRow; chosen: boolean; canChoose: boolean; onUse(engine: EngineStatus): Promise<void> }) {
   const [busy, setBusy] = useState(false);
@@ -139,7 +100,6 @@ export function WelcomePage() {
           <b>Clone a repository</b>
           <span>Git URL, or owner/name on GitHub</span>
         </button>
-        {trackers.rows !== null ? <TrackerAction rows={trackers.rows} /> : null}
       </div>
       <section aria-labelledby="welcome-agents">
         <h2 id="welcome-agents">Engine for new threads</h2>
@@ -153,6 +113,7 @@ export function WelcomePage() {
           </ul>
         )}
       </section>
+      <WelcomeTrackers />
       <section aria-labelledby="welcome-projects">
         <h2 id="welcome-projects">Recent projects</h2>
         {recent.length === 0 ? (
