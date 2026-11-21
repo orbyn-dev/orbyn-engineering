@@ -64,7 +64,8 @@ describe("the first-run notice", () => {
     fireEvent.click(go);
     fireEvent.click(go);
     await waitFor(() => expect(start).toHaveBeenCalledTimes(2));
-    expect(mock.writes.acknowledge).toEqual(["cursor"]);
+    // The notice is once per project: the thread's project id goes with it.
+    expect(mock.writes.acknowledge).toEqual([{ project_id: "p", engine: "cursor" }]);
     expect(screen.queryByRole("group", { name: "Before the first Cursor run" })).toBeNull();
     expect(start.mock.calls[1]?.[1]).toBe("Run the tests.");
   });
@@ -169,6 +170,23 @@ describe("a refused mode", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeNull());
     await user.keyboard("{Escape}");
     expect(await screen.findByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeVisible();
+    expect(field()).toHaveValue("Run the tests.");
+  });
+
+  it("when the one-turn run also needs the notice, the notice card comes first and the refusal card returns after Continue", async () => {
+    const start = vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_mode_refused", "x"));
+    const mock = createCursorThreadMock();
+    vi.spyOn(mock, "sendWithoutApprovals").mockRejectedValueOnce(refusal("engine_notice_required"));
+    setCursorThreadApi(mock);
+    render(<Composer thread={supervisedThread} engine={cursor} showContext />);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Run this thread without approvals" }));
+    expect(await screen.findByRole("group", { name: "Before the first Cursor run" })).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("group", { name: "Cursor can’t start in Supervised mode" })).toBeVisible();
+    expect(mock.writes.acknowledge).toEqual([{ project_id: "p", engine: "cursor" }]);
+    expect(start).toHaveBeenCalledTimes(2);
     expect(field()).toHaveValue("Run the tests.");
   });
 
