@@ -56,6 +56,53 @@ pub enum EngineHostErrorKind {
 }
 }
 
+wire_enum! {
+/// What a family's host last failed a run with, from the closed set of the protocol's error kinds, so a
+/// screen can word it ("Sign in again") without reading a message. Separate from how the host process failed.
+pub enum EngineHostRunError {
+    Auth,
+    RateLimit,
+    Network,
+    InvalidRequest,
+    Unsupported,
+    Cancelled,
+    Engine,
+    Host,
+    /// The engine no longer holds the conversation.
+    SessionLost,
+}
+}
+
+wire_enum! {
+/// Where one thread's work on a host is.
+pub enum EngineHostThreadState {
+    Starting,
+    Running,
+    Restarting,
+    Unavailable,
+}
+}
+
+wire! {
+/// A thread the host serves.
+pub struct EngineHostThread {
+    pub thread_id: String,
+    pub family: String,
+    pub state: EngineHostThreadState,
+}
+}
+
+wire! {
+/// The body of the person's stop or restart of a family's host (`POST /api/engine-host/{family}/stop` and
+/// `/restart`). A host that still has a background task open (a shell, a subagent, a workflow) is left
+/// running unless `stop_background` is true, because stopping it ends that work.
+pub struct EngineHostControl {
+    #[serde(default)]
+    #[ts(optional, as = "Option<bool>")]
+    pub stop_background: bool,
+}
+}
+
 wire! {
 /// The last time a family's host failed.
 pub struct EngineHostCrash {
@@ -106,5 +153,13 @@ pub struct EngineHostStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub action: Option<String>,
+    /// The threads with a run open on the host now, so a screen can say which are working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub threads: Option<Vec<EngineHostThread>>,
+    /// What the family's latest finished run failed with; absent after a run that completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_error_kind: Option<EngineHostRunError>,
 }
 }

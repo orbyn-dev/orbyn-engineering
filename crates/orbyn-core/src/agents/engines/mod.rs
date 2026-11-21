@@ -509,9 +509,11 @@ impl EngineManager {
     pub async fn statuses(&self, refresh: bool) -> Result<Vec<EngineStatus>> {
         let mut cached = self.statuses.lock().await;
         if refresh || cached.is_none() {
+            // With provider checks off, only an asked-for refresh looks up the latest version.
+            let lookup = refresh || self.provider_checks_on();
             let mut statuses = Vec::new();
             for driver in self.all_drivers()? {
-                statuses.push(self.status_of(driver.as_ref()).await);
+                statuses.push(self.status_of(driver.as_ref(), lookup).await);
             }
             *cached = Some(statuses);
         }
@@ -731,10 +733,18 @@ impl EngineManager {
 
     pub async fn status(&self, id: &str) -> Result<EngineStatus> {
         let driver = self.driver(id)?;
-        Ok(self.status_of(driver.as_ref()).await)
+        Ok(self
+            .status_of(driver.as_ref(), self.provider_checks_on())
+            .await)
     }
 
-    async fn status_of(&self, driver: &dyn EngineDriver) -> EngineStatus {
+    /// `lookup_latest_version` is whether the latest version may be asked for over the
+    /// network; the installed version is always read locally.
+    async fn status_of(
+        &self,
+        driver: &dyn EngineDriver,
+        lookup_latest_version: bool,
+    ) -> EngineStatus {
         let descriptor = driver.descriptor();
         let instance = self
             .instances()
@@ -757,12 +767,16 @@ impl EngineManager {
         let installer = plan
             .as_ref()
             .map_or(InstallerKind::Unknown, |plan| plan.installer);
-        let latest = match (driver.latest_version().await, driver.npm_package()) {
-            (Some(latest), _) => Some(latest),
-            (None, Some(package)) if self.config.lookup_latest && installed => {
-                self.latest_version(package).await
+        let latest = if lookup_latest_version {
+            match (driver.latest_version().await, driver.npm_package()) {
+                (Some(latest), _) => Some(latest),
+                (None, Some(package)) if self.config.lookup_latest && installed => {
+                    self.latest_version(package).await
+                }
+                _ => None,
             }
-            _ => None,
+        } else {
+            None
         };
         let has_manifest = descriptor.tier == EngineTier::Native || family == "opencode";
         let support = if has_manifest {

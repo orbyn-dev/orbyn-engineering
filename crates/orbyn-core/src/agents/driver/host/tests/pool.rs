@@ -171,7 +171,7 @@ async fn a_failure_keeps_the_hosts_cause_chain() {
         .await
         .unwrap();
     let send_id = connection.next_id();
-    let mut route = connection.register(send_id, "s").unwrap();
+    let mut route = connection.register(send_id, "s", "thread-s").unwrap();
     connection
         .request_as(
             send_id,
