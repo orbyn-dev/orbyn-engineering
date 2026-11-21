@@ -181,3 +181,28 @@ describe("the possible list when nothing waits", () => {
     expect(posts(calls)).toHaveLength(1);
   });
 });
+
+describe("the way back above the title (Crew Designs v371)", () => {
+  it("draws Back to Review above the title in a 640 px window and in the 320 px panel, on the log and the possible list, and not at the full width", async () => {
+    const backs: Array<[string, () => void, "log" | "possible", boolean]> = [
+      ["window log", () => stubWidth(600), "log", false],
+      ["window possible", () => stubWidth(600), "possible", false],
+      ["panel log", () => undefined, "log", true],
+      ["panel possible", () => undefined, "possible", true],
+    ];
+    for (const [, draw, view, panel] of backs) {
+      draw();
+      const mounted = render(<LiveEscapes view={view} panel={panel} />);
+      const back = await screen.findByRole("link", { name: "Back to Review" });
+      // Review is Planned: until the Review tab exists the link returns to Settings › Crew, and it sends nothing.
+      expect(back).toHaveAttribute("href", "#/settings/crew");
+      expect(back.compareDocumentPosition(screen.getByText("Escape log"))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      mounted.unmount();
+    }
+    expect(posts(calls)).toEqual([]);
+    stubWidth(1200);
+    render(<LiveEscapes view="log" />);
+    await screen.findByRole("tablist", { name: "Escape log views" });
+    expect(screen.queryByRole("link", { name: "Back to Review" })).toBeNull();
+  });
+});
