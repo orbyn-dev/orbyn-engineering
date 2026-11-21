@@ -6,14 +6,14 @@ import { routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { controlsOf } from "../terminalControls";
-import { completeAt, applyCompletion } from "./completions";
+import { completeAt, applyCompletion, resolveDir } from "./completions";
 import { HistoryPop, type HistoryScope } from "./HistoryPop";
 import { historyAcross, historyOf, recordCommand, suggestion } from "./history";
 import { tokenize } from "./highlight";
 import { ProposalCard, useProposal } from "./ProposalCard";
 import { routeLine, type Mode } from "./route";
 import { sendPrompt, takeBack, type Sent } from "./sendPrompt";
-import { readEngineTarget, useEngineTarget, usePathListing } from "./useInputContext";
+import { readEngineTarget, useEngineTarget, usePathListing, useShellDir } from "./useInputContext";
 
 const HOLD_LINES = 4;
 const HOLD_CHARS = 2000;
@@ -67,11 +67,13 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
   const tokens = useMemo(() => (route.target === "engine" ? [] : tokenize(line)), [route.target, line]);
 
   const word = useMemo(() => line.slice(0, cursor).split(/\s/).pop() ?? "", [line, cursor]);
-  const wantDir = word.includes("/") ? word.slice(0, word.lastIndexOf("/") + 1).replace(/^\.\//, "") : "";
+  // Relative paths start from the folder the shell is in, when it has said (OSC 7) and it is inside the worktree.
+  const cwd = useShellDir(threadId, keyOf);
+  const wantDir = resolveDir(cwd, word.includes("/") ? word.slice(0, word.lastIndexOf("/") + 1) : "");
   const { listDir, state: listing } = usePathListing(threadId, wantDir);
   const completion = useMemo(
-    () => (held !== null || searching !== null || dismissed || route.target === "engine" ? null : completeAt(line, cursor, { history: history.map((entry) => entry.command), listDir }, explicit)),
-    [line, cursor, held, searching, dismissed, route.target, history, listDir, explicit],
+    () => (held !== null || searching !== null || dismissed || route.target === "engine" ? null : completeAt(line, cursor, { history: history.map((entry) => entry.command), listDir, cwd }, explicit)),
+    [line, cursor, held, searching, dismissed, route.target, history, listDir, cwd, explicit],
   );
   const ghost = mode !== "engine" && cursor === line.length && held === null ? suggestion(history, line) : "";
   const projectIds = useMemo(() => {

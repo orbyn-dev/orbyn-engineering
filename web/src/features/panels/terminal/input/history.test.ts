@@ -55,4 +55,26 @@ describe("history row time", () => {
     expect(rowWhen({ command: "x", ok: false, at: 0 }, 4 * 60_000)).toBe("failed · 4 min ago");
     expect(rowWhen({ command: "x", ok: true, at: 0 }, 4 * 60_000)).toBe("ok · 4 min ago");
   });
+  it("shows a multi-line command as one row with a visible separator, and returns the real text", () => {
+    const command = "for f in a b; do\n  echo $f\ndone";
+    const [row] = searchHistory([at(command)], "");
+    expect(row?.shown).toBe("for f in a b; do ⏎ echo $f ⏎ done");
+    expect(row?.shown).not.toContain("\n");
+    expect(row?.entry.command).toBe(command);
+  });
+  it("matches across the separator and masks a secret-looking word on any line", () => {
+    const [row] = searchHistory([at("echo one\nexport API_KEY=hunter2hunter2\necho two")], "one");
+    expect(row?.shown).toBe("echo one ⏎ export API_KEY=•••••• ⏎ echo two");
+    expect(row?.match).toEqual([5, 8]);
+    expect(searchHistory([at("echo one\nexport API_KEY=hunter2hunter2")], "hunter")).toEqual([]);
+  });
+  it("collapses blank lines and runs of whitespace around a break once", () => {
+    expect(searchHistory([at("a\n\n  b\t\nc")], "")[0]?.shown).toBe("a ⏎ b ⏎ c");
+  });
+  it("keeps a recorded multi-line command whole and suggests only single lines", () => {
+    recordCommand("m", "echo a\necho b");
+    expect(historyOf("m").map((e) => e.command)).toEqual(["echo a\necho b"]);
+    expect(suggestion(historyOf("m"), "echo a")).toBe("");
+    expect(suggestion([at("echo a\necho b"), at("echo apple")], "echo a")).toBe("pple");
+  });
 });

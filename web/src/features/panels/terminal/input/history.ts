@@ -17,6 +17,7 @@ export interface HistoryMatch {
 }
 
 const MASK = "••••••";
+const BREAK = " ⏎ ";
 const KEPT = 500;
 
 /** A command as it may be put on screen: every word that looks like a credential, or its value, is masked. */
@@ -28,14 +29,18 @@ export function maskSecrets(text: string): string {
   });
 }
 
+/** A command on one row: the secret-looking words are already masked, each line break becomes a visible separator. */
+const oneRow = (text: string): string => text.replace(/\s*\n\s*/g, BREAK);
+
 const STORE_KEY = "orbyn.terminal.history.v1";
 const MAX_KEYS = 50;
 const MAX_BYTES = 1_000_000;
 const MAX_COMMAND = 4096;
 const MAX_KEY = 256;
-// Control characters other than tab; a stored line with one is not a command this editor wrote.
+// Control characters other than tab and a line feed (a multi-line command keeps its newlines); a carriage return and the
+// rest are refused, since a stored line with one is not a command this editor wrote.
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u0008\u000a-\u001f\u007f]/;
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
 
 const history = new Map<string, HistoryEntry[]>();
 let loaded = false;
@@ -147,7 +152,8 @@ export function searchHistory(entries: readonly HistoryEntry[], query: string, l
     const entry = entries[at];
     if (!entry || seen.has(entry.command)) continue;
     seen.add(entry.command);
-    const shown = maskSecrets(entry.command);
+    // The whole entry is masked first, so a secret on any line is hidden before the lines are joined.
+    const shown = oneRow(maskSecrets(entry.command));
     const found = needle === "" ? -1 : shown.toLowerCase().indexOf(needle);
     if (needle !== "" && found < 0) continue;
     out.push({ entry, shown, match: found < 0 ? null : [found, found + needle.length] });
@@ -160,7 +166,8 @@ export function suggestion(entries: readonly HistoryEntry[], line: string): stri
   if (line.trim() === "" || line.includes("\n")) return "";
   for (let at = entries.length - 1; at >= 0; at -= 1) {
     const command = entries[at]?.command ?? "";
-    if (command.length > line.length && command.startsWith(line)) return command.slice(line.length);
+    // A grey suggestion is one line; a multi-line command is found through search instead.
+    if (!command.includes("\n") && command.length > line.length && command.startsWith(line)) return command.slice(line.length);
   }
   return "";
 }
