@@ -62,6 +62,101 @@ pub struct ServiceEvent {
 }
 
 wire! {
+/// This machine's memory and load, read now; nothing is stored.
+pub struct HostResources {
+    #[ts(type = "number")]
+    pub total_memory_bytes: u64,
+    #[ts(type = "number")]
+    pub used_memory_bytes: u64,
+    #[ts(type = "number")]
+    pub available_memory_bytes: u64,
+    #[ts(type = "number")]
+    pub total_swap_bytes: u64,
+    #[ts(type = "number")]
+    pub used_swap_bytes: u64,
+    pub cpu_count: usize,
+    /// Load averages over 1, 5 and 15 minutes; absent on Windows, which has no such measure.
+    pub load_one: Option<f64>,
+    pub load_five: Option<f64>,
+    pub load_fifteen: Option<f64>,
+    #[ts(type = "number")]
+    pub uptime_seconds: u64,
+}
+}
+
+wire! {
+pub struct ProcessResourceSample {
+    pub at: String,
+    #[ts(type = "number")]
+    pub memory_bytes: u64,
+}
+}
+
+wire! {
+/// One process this service started, with the samples taken while it ran.
+pub struct ProcessResourceSeries {
+    pub pid: u32,
+    pub name: String,
+    /// Oldest first, one sample a minute, in memory.
+    pub samples: Vec<ProcessResourceSample>,
+}
+}
+
+wire! {
+pub struct ProcessResourceHistory {
+    /// Only processes still running; a process that ended drops out.
+    pub processes: Vec<ProcessResourceSeries>,
+}
+}
+
+wire! {
+/// One attempt to send a batch to the person's own collector.
+pub struct TelemetryExportAttempt {
+    pub at: String,
+    /// `logs` or `metrics`.
+    pub signal: String,
+    pub accepted: bool,
+    /// Log records in the batch; one for a metrics sample.
+    pub records: usize,
+}
+}
+
+wire! {
+pub struct ResourceTelemetryHistory {
+    /// An exporter is running: an endpoint was saved when the service started.
+    pub active: bool,
+    /// Newest first, in memory since the service started.
+    pub attempts: Vec<TelemetryExportAttempt>,
+}
+}
+
+wire! {
+pub struct TraceSpanSummary {
+    pub name: String,
+    pub count: usize,
+    pub per_minute: Option<f64>,
+    pub p50_ms: f64,
+    pub p90_ms: f64,
+    pub max_ms: f64,
+    pub interrupted: usize,
+    pub failed: usize,
+}
+}
+
+wire! {
+/// Timings of this service's own operations, summarised from its local trace files.
+pub struct TraceDiagnostics {
+    pub span_count: usize,
+    pub skipped_lines: usize,
+    #[ts(type = "number | null")]
+    pub first_end_ms: Option<u64>,
+    #[ts(type = "number | null")]
+    pub last_end_ms: Option<u64>,
+    pub spans: Vec<TraceSpanSummary>,
+}
+}
+
+wire! {
 pub struct OtlpCheck {
     pub url: String,
 }

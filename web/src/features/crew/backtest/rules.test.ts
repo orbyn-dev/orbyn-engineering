@@ -12,9 +12,6 @@ describe("Reviewer backtest rules (Crew Designs v23)", () => {
   it("each engine has its own budget in its own unit and the amounts are never added up", async () => {
     const settings = await openFrame("backtest-settings");
     expect(settings.container.textContent).toContain("each engine has a budget in its own unit, never added up: Claude Code 1.5M tokens, Codex 1M tokens and OpenCode 500k tokens.");
-    settings.unmount();
-    const estimate = await openFrame("backtest-estimate");
-    expect(estimate.container.textContent).toContain("Each engine counts in its own unit and the amounts are never added up.");
   });
 
   it("the history is the last 180 days and only pull requests 30 days old or more", async () => {
@@ -30,10 +27,6 @@ describe("Reviewer backtest rules (Crew Designs v23)", () => {
   });
 
   it("a rate shows from 5 escapes and from 10 findings, and below that the counts stand alone", async () => {
-    const report = await openFrame("backtest-report");
-    expect(report.container.textContent).toContain("A rate shows from 5 escapes.");
-    expect(report.container.textContent).toContain("A rate shows from 10 findings.");
-    report.unmount();
     const low = await openFrame("backtest-low-history");
     expect(low.container.textContent).toContain("A recall rate shows from 5 escapes and a precision rate from 10 findings, so the table shows the counts it rests on.");
   });

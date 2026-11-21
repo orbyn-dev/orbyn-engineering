@@ -32,6 +32,17 @@ async fn read(service: &Service, thread: &str, path: &str) -> (u16, Value) {
     (status, response.json().await.unwrap_or(Value::Null))
 }
 
+async fn metadata(service: &Service, thread: &str, path: &str) -> (u16, Value) {
+    let response = service
+        .get(&format!("/api/threads/{thread}/files/metadata"))
+        .query(&[("path", path)])
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
 #[tokio::test]
 async fn items_keep_raw_engine_data_and_usage_is_reported() {
     let dir = TempDir::new();
@@ -232,6 +243,179 @@ async fn tree_marks_ignored_and_search_finds_names_and_lines() {
         ))
         .await;
     assert!(none.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn metadata_describes_a_file_a_folder_and_the_root_without_their_bytes() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let root = checkout(&service, &thread).await;
+    std::fs::write(root.join("notes.txt"), "hello").unwrap();
+    std::fs::create_dir_all(root.join("nested")).unwrap();
+
+    let (code, file) = metadata(&service, &thread, "notes.txt").await;
+    assert_eq!(code, 200, "{file}");
+    assert_eq!(file["path"], "notes.txt");
+    assert_eq!(file["exists"], true);
+    assert_eq!(file["kind"], "file");
+    assert_eq!(file["size"], 5);
+    assert_eq!(file["inside"], true);
+    let modified = file["modified"].as_str().unwrap();
+    assert!(modified.ends_with('Z'), "{modified}");
+
+    let (code, folder) = metadata(&service, &thread, "nested").await;
+    assert_eq!(code, 200, "{folder}");
+    assert_eq!(folder["exists"], true);
+    assert_eq!(folder["kind"], "directory");
+    assert_eq!(folder["inside"], true);
+
+    // The empty path is the checkout's root, as it is for the folder listing.
+    let (code, at_root) = metadata(&service, &thread, "").await;
+    assert_eq!(code, 200, "{at_root}");
+    assert_eq!(at_root["kind"], "directory");
+    assert_eq!(at_root["inside"], true);
+}
+
+#[tokio::test]
+async fn metadata_answers_a_missing_path_and_refuses_one_outside_the_checkout() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let outside = dir.path().join("outside.txt");
+    std::fs::write(&outside, "secret").unwrap();
+
+    // Nothing there is an answer the file browser can draw, not an error.
+    for path in ["missing.txt", "missing/folder.txt"] {
+        let (code, body) = metadata(&service, &thread, path).await;
+        assert_eq!(code, 200, "{path}: {body}");
+        assert_eq!(body["exists"], false, "{path}");
+        assert_eq!(body["inside"], true, "{path}");
+        assert!(body["kind"].is_null(), "{path}");
+        assert_eq!(body["size"], 0, "{path}");
+    }
+
+    // The same boundary as any other file read: no dot-dot, no full path, no Git's folder.
+    let absolute = outside.to_string_lossy().into_owned();
+    for path in [
+        "../outside.txt",
+        "../../outside.txt",
+        ".git/config",
+        ".GIT/config",
+        "nested/.git/config",
+        "missing/../two.txt",
+        absolute.as_str(),
+    ] {
+        let (code, body) = metadata(&service, &thread, path).await;
+        assert_eq!(code, 400, "{path}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn metadata_needs_a_trusted_folder() {
+    let dir = TempDir::new();
+    let service = Service::start(&dir.path().join("data"), Options::default());
+    let folder = dir.path().join("project");
+    std::fs::create_dir_all(&folder).unwrap();
+    let project = service.project(&folder, false).await;
+    let thread = service.thread(&project, "codex").await;
+    let (code, _) = metadata(&service, &thread, "a.txt").await;
+    assert_eq!(code, 403);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn metadata_reports_permission_bits_and_a_link_as_itself() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let root = checkout(&service, &thread).await;
+    let elsewhere = dir.path().join("elsewhere.txt");
+    assert!(
+        !elsewhere.starts_with(&root),
+        "the fixture needs a file outside the checkout"
+    );
+
+    let script = root.join("run.sh");
+    std::fs::write(&script, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let (code, body) = metadata(&service, &thread, "run.sh").await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["mode"].as_u64(), Some(0o640));
+    assert_eq!(body["read_only"], false);
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let (_, body) = metadata(&service, &thread, "run.sh").await;
+    assert_eq!(body["read_only"], true);
+
+    // A link to a file inside is reported as a link, never as what it points at.
+    symlink("run.sh", root.join("inside-link")).unwrap();
+    let (code, body) = metadata(&service, &thread, "inside-link").await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["kind"], "symlink");
+    assert_eq!(body["size"].as_u64(), Some("run.sh".len() as u64));
+    assert_eq!(body["inside"], true);
+
+    // A link out of the checkout answers as the link with inside false, and its size is
+    // the link's own text: nothing about the target, its size or its contents.
+    std::fs::write(&elsewhere, "very secret bytes").unwrap();
+    let target = elsewhere.to_string_lossy().into_owned();
+    symlink(&elsewhere, root.join("outside-link")).unwrap();
+    let (code, body) = metadata(&service, &thread, "outside-link").await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["kind"], "symlink");
+    assert_eq!(body["exists"], true);
+    assert_eq!(body["inside"], false);
+    assert_eq!(body["size"].as_u64(), Some(target.len() as u64));
+    assert!(
+        body.get("target").is_none(),
+        "never where a link points: {body}"
+    );
+    assert!(body.get("content").is_none(), "never any bytes: {body}");
+
+    // A link into Git's folder is described the same way, and its target is not reached.
+    symlink(".git/config", root.join("git-link")).unwrap();
+    let (code, body) = metadata(&service, &thread, "git-link").await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["kind"], "symlink");
+    assert_eq!(body["inside"], false);
+
+    // A link walked through as a folder cannot lead a read out of the checkout.
+    let escape = dir.path().join("escape");
+    std::fs::create_dir_all(&escape).unwrap();
+    std::fs::write(escape.join("hidden.txt"), "hidden").unwrap();
+    symlink(&escape, root.join("escape-link")).unwrap();
+    let (code, body) = metadata(&service, &thread, "escape-link/hidden.txt").await;
+    assert_eq!(code, 400, "{body}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn metadata_answers_a_pipe_without_opening_it() {
+    let dir = TempDir::new();
+    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let root = checkout(&service, &thread).await;
+    let pipe = root.join("pipe");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .unwrap();
+    assert!(made.success());
+
+    // Opening a pipe for reading blocks until someone writes; metadata reads no bytes,
+    // so the answer must come back on its own.
+    let answer = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        metadata(&service, &thread, "pipe"),
+    )
+    .await
+    .expect("a metadata read never opens the file, so a pipe cannot block it");
+    assert_eq!(answer.0, 200, "{}", answer.1);
+    assert_eq!(answer.1["exists"], true);
+    assert_eq!(answer.1["inside"], true);
+    assert!(
+        answer.1["kind"].is_null(),
+        "a pipe is not a file, folder or link: {}",
+        answer.1
+    );
 }
 
 #[cfg(unix)]

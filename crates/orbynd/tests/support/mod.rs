@@ -295,6 +295,46 @@ impl Service {
         }
     }
 
+    /// Opens an SSE response, for a test that reads frames as they arrive.
+    pub async fn sse(&self, path: &str) -> SseReader {
+        let response = self
+            .get(path)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+        SseReader {
+            response,
+            parser: orbyn_core::agents::sse::SseParser::default(),
+            pending: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Reads SSE frames from `path` until `stop` matches one, and returns them.
+    pub async fn sse_until(&self, path: &str, stop: impl Fn(&Value) -> bool) -> Vec<Value> {
+        let mut reader = self.sse(path).await;
+        let mut frames = Vec::new();
+        while let Some(value) = reader.next().await {
+            let done = stop(&value);
+            frames.push(value);
+            if done {
+                return frames;
+            }
+        }
+        panic!("the stream ended before its last frame");
+    }
+
+    /// Reads SSE frames from `path` until the service closes the stream.
+    pub async fn sse_to_end(&self, path: &str) -> Vec<Value> {
+        let mut reader = self.sse(path).await;
+        let mut frames = Vec::new();
+        while let Some(value) = reader.next().await {
+            frames.push(value);
+        }
+        frames
+    }
+
     pub async fn all_events(&self, thread: &str) -> Vec<Value> {
         self.events_until(thread, None, |event| {
             matches!(
@@ -331,6 +371,32 @@ impl Service {
     pub fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// An open SSE response, read frame by frame.
+pub struct SseReader {
+    response: reqwest::Response,
+    parser: orbyn_core::agents::sse::SseParser,
+    pending: std::collections::VecDeque<Value>,
+}
+
+impl SseReader {
+    /// The next frame, or `None` when the service closed the stream.
+    pub async fn next(&mut self) -> Option<Value> {
+        loop {
+            if let Some(value) = self.pending.pop_front() {
+                return Some(value);
+            }
+            let chunk = tokio::time::timeout(Duration::from_secs(45), self.response.chunk())
+                .await
+                .expect("stream stalled")
+                .unwrap_or(None)?;
+            for frame in self.parser.push(&chunk) {
+                self.pending
+                    .push_back(serde_json::from_str(&frame).unwrap());
+            }
+        }
     }
 }
 

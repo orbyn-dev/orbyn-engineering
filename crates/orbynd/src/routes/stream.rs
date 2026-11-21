@@ -177,6 +177,9 @@ struct Projection {
     log: Follower,
     run_id: String,
     outgoing: VecDeque<Value>,
+    /// Text messages that are not the agent's own words, so their content and end
+    /// stay out too: the run's prompt echo, a steer and anything an engine echoes.
+    own_words: std::collections::HashSet<String>,
     finished: bool,
 }
 
@@ -184,10 +187,16 @@ impl Projection {
     fn project(&mut self, event: &ThreadEvent) {
         match &event.event {
             AgUiEvent::RunStarted { .. } => {}
-            AgUiEvent::TextMessageStart { message_id, .. }
-            | AgUiEvent::TextMessageContent { message_id, .. }
+            AgUiEvent::TextMessageStart { message_id, role } => {
+                if role.as_str() == "assistant" {
+                    self.forward(&event.event);
+                } else {
+                    self.own_words.insert(message_id.clone());
+                }
+            }
+            AgUiEvent::TextMessageContent { message_id, .. }
             | AgUiEvent::TextMessageEnd { message_id }
-                if message_id.ends_with(":prompt") => {}
+                if message_id.ends_with(":prompt") || self.own_words.contains(message_id) => {}
             AgUiEvent::RunFinished { outcome, .. } => {
                 self.finish(json!({
                     "type": "RUN_FINISHED",
@@ -220,6 +229,9 @@ impl Projection {
                     }));
                 }
             }
+            // They carry the person's typed prompt text, which an external run never sees.
+            // They carry the person's typed prompt text, which an external run never sees.
+            AgUiEvent::Custom { name, .. } if name == "steer.failed" || name == "steer.state" => {}
             other => self.forward(other),
         }
     }
@@ -397,6 +409,7 @@ pub async fn agui_run(
         },
         run_id,
         outgoing: VecDeque::from([started]),
+        own_words: std::collections::HashSet::new(),
         finished: false,
     };
     let frames = stream::unfold(projection, |mut projection| async move {
@@ -439,5 +452,48 @@ mod tests {
         ]});
         assert_eq!(prompt_of(&input).as_deref(), Some("second"));
         assert_eq!(prompt_of(&json!({ "messages": [] })), None);
+    }
+
+    #[tokio::test]
+    async fn steer_markers_stay_out_of_an_external_run() {
+        let dir = std::env::temp_dir().join(format!(
+            "orbynd-stream-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let core = Arc::new(
+            Core::open(orbyn_core::CoreConfig::new(
+                dir.join("data"),
+                "http://127.0.0.1:1".into(),
+            ))
+            .unwrap(),
+        );
+        let mut projection = Projection {
+            log: follower(&core, "t", 0),
+            run_id: "r".into(),
+            outgoing: VecDeque::new(),
+            own_words: std::collections::HashSet::new(),
+            finished: false,
+        };
+        let custom = |name: &str| ThreadEvent {
+            seq: 1,
+            thread_id: "t".into(),
+            run_id: None,
+            ts: String::new(),
+            event: AgUiEvent::Custom {
+                name: name.into(),
+                value: json!({ "message_id": "m", "prompt": "typed text" }),
+            },
+        };
+        for name in ["steer.failed", "steer.state"] {
+            projection.project(&custom(name));
+        }
+        assert!(projection.outgoing.is_empty(), "{:?}", projection.outgoing);
+        projection.project(&custom("other.marker"));
+        assert_eq!(projection.outgoing.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
