@@ -3,6 +3,7 @@ import { ErrorState, Empty, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useRefresh } from "../flow/live/useFlow";
+import { useNarrow } from "../board/useWidth";
 import { CrewPick } from "./CrewPick";
 import { MessageLines } from "./MapView";
 import { clock, memberFilterable, memberName, modelWord, ordered, swimLayout } from "./model";
@@ -28,6 +29,7 @@ export function LanesView() {
 }
 
 function CrewLanes({ crew }: { crew: string }) {
+  const [measure, narrow] = useNarrow();
   const map = useCrewMap(crew);
   const [member, setMember] = useState<string | null>(null);
   const messages = useCrewMessages(crew, member);
@@ -39,9 +41,18 @@ function CrewLanes({ crew }: { crew: string }) {
   if (map.status === "loading") return <Loading label="Reading the lanes" rows={4} />;
   if (map.status === "error" && !map.data) return <ErrorState title="Can’t read the lanes" failure={map.error} onRetry={() => void map.reload()} />;
   const nodes = ordered(map.data!.nodes);
-  const swim = swimLayout(nodes, messages.rows);
+  const swim = narrow ? null : swimLayout(nodes, messages.rows);
   return (
-    <div className="mp-body">
+    <div className="mp-body" ref={measure}>
+      {swim === null ? (
+        <ul className="mp-lanes" aria-label="Lanes">
+          {nodes.map((node) => (
+            <li key={node.member}>
+              <b>{memberName(node)}</b> <span className="mp-sub">{[node.engine, modelWord(node)].filter(Boolean).join(" · ")}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="mp-split">
         <div className="mp-col">
           <div className="mp-tool">
@@ -58,60 +69,62 @@ function CrewLanes({ crew }: { crew: string }) {
             </label>
             {messages.first.data ? <span className="mp-count">{messages.rows.length} of {messages.total} shown</span> : null}
           </div>
-          <section className="mp-swim" role="group" aria-label="Swim lanes">
-            <div className="mp-ltl" style={{ width: swim.width, height: swim.height }}>
-              <svg className="mp-lsv" width={swim.width} height={swim.height} aria-hidden="true">
-                {swim.rows.map((row, at) => (
-                  <path key={"lane-" + at} className="mp-ln" d={"M140," + (row.y + 22) + " H" + swim.width} />
-                ))}
+          {swim ? (
+            <section className="mp-swim" role="group" aria-label="Swim lanes">
+              <div className="mp-ltl" style={{ width: swim.width, height: swim.height }}>
+                <svg className="mp-lsv" width={swim.width} height={swim.height} aria-hidden="true">
+                  {swim.rows.map((row, at) => (
+                    <path key={"lane-" + at} className="mp-ln" d={"M140," + (row.y + 22) + " H" + swim.width} />
+                  ))}
+                  {swim.ticks.map((tick, at) => (
+                    <path key={"grid-" + at} className="mp-ngth" d={"M" + tick.x + ",20 V" + (swim.height - 10)} strokeDasharray="2 5" />
+                  ))}
+                  {swim.arrows.map((arrow, at) => (
+                    <path key={"arrow-" + at} className={"mp-arrow" + (arrow.delivery === "live" ? " mp-arrow-live" : "")} d={arrow.d} />
+                  ))}
+                  {swim.arrows.map((arrow, at) => (
+                    <path key={"head-" + at} className={"mp-arrowhead" + (arrow.delivery === "live" ? " mp-arrowhead-live" : "")} d={arrow.head} />
+                  ))}
+                </svg>
+                <ul className="mp-lrows" aria-label="Lanes">
+                  {swim.rows.map((row) => (
+                    <li key={row.node.member} className="mp-lrow" style={{ top: row.y }}>
+                      <b>{memberName(row.node)}</b>
+                      <small>{[row.node.engine, modelWord(row.node)].filter(Boolean).join(" · ")}</small>
+                    </li>
+                  ))}
+                </ul>
                 {swim.ticks.map((tick, at) => (
-                  <path key={"grid-" + at} className="mp-ngth" d={"M" + tick.x + ",20 V" + (swim.height - 10)} strokeDasharray="2 5" />
-                ))}
-                {swim.arrows.map((arrow, at) => (
-                  <path key={"arrow-" + at} className={"mp-arrow" + (arrow.delivery === "live" ? " mp-arrow-live" : "")} d={arrow.d} />
-                ))}
-                {swim.arrows.map((arrow, at) => (
-                  <path key={"head-" + at} className={"mp-arrowhead" + (arrow.delivery === "live" ? " mp-arrowhead-live" : "")} d={arrow.head} />
-                ))}
-              </svg>
-              <ul className="mp-lrows" aria-label="Lanes">
-                {swim.rows.map((row) => (
-                  <li key={row.node.member} className="mp-lrow" style={{ top: row.y }}>
-                    <b>{memberName(row.node)}</b>
-                    <small>{[row.node.engine, modelWord(row.node)].filter(Boolean).join(" · ")}</small>
-                  </li>
-                ))}
-              </ul>
-              {swim.ticks.map((tick, at) => (
-                <span key={"tick-" + at} className="mp-tick" style={{ left: tick.x, top: 4 }}>
-                  {tick.label}
-                </span>
-              ))}
-              {swim.bars.map((bar, at) => (
-                <div key={"bar-" + at} className="mp-lbar" style={{ left: bar.x, width: bar.w, top: bar.y }}>
-                  {bar.text}
-                </div>
-              ))}
-              {swim.arrows.map((arrow, at) =>
-                arrow.label === "" ? null : (
-                  <span key={"label-" + at} className={"mp-lmk" + (arrow.delivery === "live" ? " mp-lmk-live" : "")} style={{ left: arrow.x, top: arrow.y }} title={arrow.title}>
-                    {arrow.delivery ? <b>{arrow.delivery}</b> : null}
-                    {arrow.delivery ? " · " : ""}
-                    {arrow.kind}
+                  <span key={"tick-" + at} className="mp-tick" style={{ left: tick.x, top: 4 }}>
+                    {tick.label}
                   </span>
-                ),
-              )}
-              <span className="mp-swim-pl">
-                <span className="mp-pl crew-pv" title="Planned: no route reports a lane’s level">
-                  Planned
+                ))}
+                {swim.bars.map((bar, at) => (
+                  <div key={"bar-" + at} className="mp-lbar" style={{ left: bar.x, width: bar.w, top: bar.y }}>
+                    {bar.text}
+                  </div>
+                ))}
+                {swim.arrows.map((arrow, at) =>
+                  arrow.label === "" ? null : (
+                    <span key={"label-" + at} className={"mp-lmk" + (arrow.delivery === "live" ? " mp-lmk-live" : "")} style={{ left: arrow.x, top: arrow.y }} title={arrow.title}>
+                      {arrow.delivery ? <b>{arrow.delivery}</b> : null}
+                      {arrow.delivery ? " · " : ""}
+                      {arrow.kind}
+                    </span>
+                  ),
+                )}
+                <span className="mp-swim-pl">
+                  <span className="mp-pl crew-pv" title="Planned: no route reports a lane’s level">
+                    Planned
+                  </span>
+                  <span>A lane’s level needs a read that reports it.</span>
                 </span>
-                <span>A lane’s level needs a read that reports it.</span>
-              </span>
-            </div>
-            <div className="mp-legend">
-              <span>“live” means handed to a turn in progress (never for an engine that can’t be steered mid-turn); “next turn” means queued, or sent with the next prompt; “tool result” means a held message returned in the receiver’s next Crew tool result; “held” means no running turn took it, so it waits for the next prompt or tool call; “failed” means delivery failed; no delivery is shown when there is no delivery row or the receivers disagree</span>
-            </div>
-          </section>
+              </div>
+              <div className="mp-legend">
+                <span>“live” means handed to a turn in progress (never for an engine that can’t be steered mid-turn); “next turn” means queued, or sent with the next prompt; “tool result” means a held message returned in the receiver’s next Crew tool result; “held” means no running turn took it, so it waits for the next prompt or tool call; “failed” means delivery failed; no delivery is shown when there is no delivery row or the receivers disagree</span>
+              </div>
+            </section>
+          ) : null}
           {messages.first.status === "loading" ? <Loading label="Reading messages" rows={3} /> : null}
           {messages.first.status === "error" && !messages.first.data ? <ErrorState title="Can’t read messages" failure={messages.first.error} onRetry={() => void messages.first.reload()} /> : null}
           {messages.first.data && messages.total === 0 ? (

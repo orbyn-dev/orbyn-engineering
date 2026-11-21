@@ -3,7 +3,7 @@ import type { FlowFact } from "../../../generated/FlowFact";
 import type { FlowMessage } from "../../../generated/FlowMessage";
 import type { FlowNode } from "../../../generated/FlowNode";
 import type { FlowEdge } from "../../../generated/FlowEdge";
-import { checkWord, clock, deliveryWord, engineProblem, engineStatusWord, findingStatusWord, kindLabel, laneFacts, leaseWord, modelWord, ordered, quietWord, stateWord, subagentsWord, swimLayout, treeLayout } from "./model";
+import { checkWord, clock, deliveryWord, elapsedWord, engineProblem, engineStatusWord, findingStatusWord, kindLabel, laneFacts, leaseWord, modelWord, ordered, quietWord, stateWord, subagentsWord, swimLayout, treeLayout } from "./model";
 
 describe("the node's words", () => {
   it("words a task's state, with Needs you the only amber, Failed red and the lead plain", () => {
@@ -215,3 +215,23 @@ describe("the swim lanes' layout", () => {
   });
 });
 
+
+describe("how long a worker has been going", () => {
+  const start = "2026-11-07T14:00:00Z";
+  const later = Date.parse("2026-11-10T14:00:00Z");
+  it("runs a live worker's time to now", () => {
+    expect(elapsedWord({ state: "running", created_at: start, updated_at: "2026-11-07T14:05:00Z" }, later)).toBe("3d");
+  });
+  it("ends a finished worker's time at its last update, however long ago", () => {
+    for (const state of ["passed", "failed", "stopped", "cancelled"]) {
+      expect(elapsedWord({ state, created_at: start, updated_at: "2026-11-07T14:28:30Z" }, later)).toBe("28m 30s");
+    }
+  });
+  it("gives a finished worker with no readable last update no time, never a growing one", () => {
+    expect(elapsedWord({ state: "passed", created_at: start, updated_at: null }, later)).toBeNull();
+    expect(elapsedWord({ state: "failed", created_at: start, updated_at: "garbage" }, later)).toBeNull();
+  });
+  it("gives the lead, which has no task state, a running clock", () => {
+    expect(elapsedWord({ state: null, created_at: start, updated_at: null }, Date.parse("2026-11-07T14:10:00Z"))).toBe("10m");
+  });
+});

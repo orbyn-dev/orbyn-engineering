@@ -7,16 +7,22 @@ import { Button } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { useBoardFocus } from "../board/focus";
+import { useNarrow } from "../board/useWidth";
 import { ago } from "../board/model";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useRefresh } from "../flow/live/useFlow";
 import { CrewPick } from "./CrewPick";
-import { clock, deliveryWord, engineProblem, engineStatusWord, kindLabel, leaseWord, modelWord, ordered, quietWord, since, stateWord, subagentsWord, treeLayout } from "./model";
+import { clock, deliveryWord, engineProblem, engineStatusWord, kindLabel, leaseWord, modelWord, elapsedWord, ordered, quietWord, stateWord, subagentsWord, treeLayout } from "./model";
 import { useCrewMap, useCrewMessages } from "./useMap";
 import "./map.css";
 
+/** Past this many workers the drawn tree is a list (crew-map-many). */
+const MANY = 8;
+
 /**
- * The Map tab of the Crew view, on the map route: the crew as the wide tree of Crew Designs' crew-map, at every width. The lead
+ * The Map tab of the Crew view, on the map route. Wide, with up to eight workers, it is the drawn tree of Crew Designs' crew-map;
+ * in a narrow panel or window (below 640 px) or with more than eight workers it is the nested list of the narrow frames (the lead,
+ * then each worker under it), never the drawn tree. In the tree the lead
  * sits first, each worker that says the lead started it hangs under the lead with a solid line, each message between members is a
  * dashed line with its own label and delivery, and each worker's subagent report sits beside it. Nothing is drawn while Crew
  * Preview is off (a service with it off answers 404, and so does one with no Crew routes: both read as off). Reads only. The
@@ -34,6 +40,7 @@ export function MapView() {
 }
 
 function CrewMap({ crew }: { crew: string }) {
+  const [measure, narrow] = useNarrow();
   const read = useCrewMap(crew);
   const [member, setMember] = useState<string | null>(null);
   useRefresh(read.reload, read.status !== "ready");
@@ -47,9 +54,11 @@ function CrewMap({ crew }: { crew: string }) {
     const line = engineProblem(row.engine, row.status);
     return line ? [{ engine: row.engine, line }] : [];
   });
-  const tree = treeLayout(nodes, map.edges);
+  const nested = narrow || workers.length > MANY;
+  const tree = nested ? null : treeLayout(nodes, map.edges);
+  const pick = (id: string) => setMember(id === member ? null : id);
   return (
-    <div className="mp-body">
+    <div className="mp-body" ref={measure}>
       {map.truncated ? (
         <p className="mp-note" role="note">
           A list was cut at its cap; the newest are shown.
@@ -71,6 +80,13 @@ function CrewMap({ crew }: { crew: string }) {
         <Empty title="No workers yet">The lead hands tasks to other engines, and each worker appears here as it starts, with its subagents. Ask the lead in its thread, or start from a template.</Empty>
       ) : null}
       <div className="mp-split">
+        {tree === null ? (
+          <ul className="mp-nest" aria-label="Crew">
+            {nodes.map((node) => (
+              <Row key={node.member} node={node} selected={node.member === member} onPick={() => pick(node.member)} />
+            ))}
+          </ul>
+        ) : (
         <div className="mp-canvas">
           <div className="mp-map" style={{ width: tree.width, height: tree.height }}>
             <svg className="mp-ed" width={tree.width} height={tree.height} aria-hidden="true">
@@ -84,7 +100,7 @@ function CrewMap({ crew }: { crew: string }) {
             <ul className="mp-tree" aria-label="Crew">
               {tree.cards.map((card) => (
                 <li key={card.node.member} className="mp-node" data-worker={card.node.role !== "lead" || undefined} style={{ left: card.x, top: card.y, width: card.w }}>
-                  <Card node={card.node} selected={card.node.member === member} onPick={() => setMember(card.node.member === member ? null : card.node.member)} />
+                  <Card node={card.node} selected={card.node.member === member} onPick={() => pick(card.node.member)} />
                 </li>
               ))}
             </ul>
@@ -121,9 +137,37 @@ function CrewMap({ crew }: { crew: string }) {
             <span>“live” means handed to a turn in progress (never for an engine that can’t be steered mid-turn); “next turn” means queued, or sent with the next prompt</span>
           </div>
         </div>
+        )}
         {selected ? <Detail crew={crew} node={selected} onClose={() => setMember(null)} /> : null}
       </div>
     </div>
+  );
+}
+
+/** One row of the nested list of the narrow frames and of a crew past eight workers. */
+function Row({ node, selected, onPick }: { node: FlowNode; selected: boolean; onPick(): void }) {
+  const state = stateWord(node);
+  const quiet = quietWord(node.quiet);
+  const subs = subagentsWord(node.subagents);
+  const model = modelWord(node);
+  return (
+    <li className="mp-nli" data-worker={node.role !== "lead" || undefined}>
+      <button type="button" className="mp-row" aria-pressed={selected} onClick={onPick}>
+        <span className="mp-main">
+          <b>{node.engine}</b>
+          {model ? <span className="mp-sub">{model}</span> : null}
+        </span>
+        <span className={`mp-st mp-${state.tone}`}>{state.text}</span>
+        {quiet ? <span className={`mp-st mp-${quiet.tone}`}>{quiet.text}</span> : null}
+        {node.engine_status !== "ready" ? <span className="mp-st mp-neutral">{engineStatusWord(node.engine_status)}</span> : null}
+        {node.outcome ? <span className="mp-outcome">{node.outcome}</span> : null}
+        <span className="mp-meta">
+          {node.unread > 0 ? <span>{node.unread} unread</span> : null}
+          {subs ? <span>{subs}</span> : null}
+          {node.updated_at ? <span>updated {ago(node.updated_at)}</span> : null}
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -132,7 +176,7 @@ function Card({ node, selected, onPick }: { node: FlowNode; selected: boolean; o
   const state = stateWord(node);
   const quiet = quietWord(node.quiet);
   const model = modelWord(node);
-  const elapsed = since(node.created_at);
+  const elapsed = elapsedWord(node);
   const line = [model, elapsed].filter(Boolean).join(" · ");
   const className = "mp-card" + (state.tone === "warn" ? " mp-card-needs" : state.tone === "err" ? " mp-card-fail" : "");
   return (

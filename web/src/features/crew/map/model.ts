@@ -154,6 +154,19 @@ export function since(iso: string | null | undefined, now: number = Date.now()):
   return hours % 24 ? days + "d " + (hours % 24) + "h" : days + "d";
 }
 
+/** A task state that has ended: nothing more happens to it, so its clock stops. */
+export const endedState = (state: string | null | undefined): boolean => state === "passed" || state === "failed" || state === "stopped" || state === "cancelled";
+
+/**
+ * How long a worker has been going: from its start to now while it runs, and from its start to its last update once its task has
+ * ended, so a finished worker's time stops growing. An ended worker with no readable last update has no time, never a running one.
+ */
+export function elapsedWord(node: Pick<FlowNode, "state" | "created_at" | "updated_at">, now: number = Date.now()): string | null {
+  if (!endedState(node.state)) return since(node.created_at, now);
+  const end = Date.parse(node.updated_at ?? "");
+  return Number.isNaN(end) ? null : since(node.created_at, end);
+}
+
 /** The name a lane or a tree card calls a member: the lead is "Lead"; every other member is its own name. */
 export const memberName = (node: Pick<FlowNode, "role" | "member">): string => (node.role === "lead" ? "Lead" : node.member);
 

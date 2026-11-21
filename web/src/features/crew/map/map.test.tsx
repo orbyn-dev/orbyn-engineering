@@ -494,3 +494,105 @@ describe("Open on Board", () => {
     expect(window.location.hash).toBe("");
   });
 });
+
+/** A panel or window narrower than 640 px: the board's own width hook reads this from the element's observed size. */
+function narrowPanel() {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe() {
+        this.callback([{ contentRect: { width: 500, height: 600 } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+}
+
+describe("the Map as the nested list, never the drawn tree, in a narrow panel and past eight workers", () => {
+  it("draws the lead, then each worker under it, with the outcome, state, unread and the subagents word, when the panel is narrow", async () => {
+    narrowPanel();
+    try {
+      await openMap();
+      const rows = tree().getAllByRole("listitem");
+      expect(rows).toHaveLength(4);
+      expect(rows[0]).toHaveTextContent("claude");
+      expect(rows[0]).toHaveTextContent("Opus 5.5 · Medium");
+      expect(rows[0]).toHaveTextContent("Lead");
+      expect(rows[1]).toHaveTextContent("Use next in the auth redirect when it points inside the app");
+      expect(rows[1]).toHaveTextContent("Running");
+      expect(rows[1]).toHaveTextContent("1 unread");
+      expect(rows[1]).not.toHaveTextContent("Subagents not reported");
+      expect(rows[2]).toHaveTextContent("Verifying");
+      expect(rows[2]).toHaveTextContent("Subagents not reported");
+      expect(rows[3]).toHaveTextContent("Subagents not reported");
+      expect(rows.map((one) => one.hasAttribute("data-worker"))).toEqual([false, true, true, true]);
+      expect(document.querySelector(".mp-map, .mp-ed, .mp-subcard, .mp-card")).toBeNull();
+      expect(document.body.textContent).not.toMatch(/tokens|Blocked|\bL[0-2]\b|Open thread[^A]/);
+      expect(nonGets()).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("still opens a member's details from the list", async () => {
+    narrowPanel();
+    try {
+      const user = await openMap();
+      await user.click(row(/Add tests for the redirect/));
+      expect(await screen.findByRole("complementary", { name: /^codex, details/ })).toBeVisible();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("is a list past eight workers even in a wide panel (crew-map-many)", async () => {
+    await openMap("crew-map-many");
+    expect(tree().getAllByRole("listitem")).toHaveLength(13);
+    expect(document.querySelector(".mp-map, .mp-ed, .mp-subcard, .mp-card")).toBeNull();
+    expect(row(/Task 2/)).toHaveTextContent("updated");
+  });
+
+  it("is the drawn tree in a wide panel with a few workers", async () => {
+    await openMap();
+    expect(document.querySelector(".mp-map")).not.toBeNull();
+    expect(document.querySelector(".mp-nest")).toBeNull();
+  });
+
+  it("draws the lanes as the list of members, with no swim lanes, when the panel is narrow", async () => {
+    narrowPanel();
+    try {
+      mock.reset("crew");
+      render(<LanesView />);
+      const lanes = await screen.findByRole("list", { name: "Lanes" });
+      expect(within(lanes).getAllByRole("listitem")).toHaveLength(4);
+      expect(within(lanes).getAllByRole("listitem")[0]).toHaveTextContent("Lead");
+      expect(screen.queryByRole("group", { name: "Swim lanes" })).toBeNull();
+      expect(document.querySelector(".mp-swim, .mp-ltl")).toBeNull();
+      // The messages and the shared board still read.
+      expect(await screen.findByRole("list", { name: "Messages" })).toBeVisible();
+      expect(await screen.findByRole("list", { name: "Facts" })).toBeVisible();
+      expect(nonGets()).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("draws the swim lanes and not the list when the panel is wide", async () => {
+    await openLanes();
+    expect(document.querySelector(".mp-lanes")).toBeNull();
+    expect(document.querySelector(".mp-swim")).not.toBeNull();
+  });
+});
+
+describe("how long a worker has been going", () => {
+  it("stops a finished worker's time at its last update, while a running one keeps going", async () => {
+    await openMap("crew-map-problems");
+    // The failed worker ran 30 min to 2 min ago: 28m, however long ago that was. A running worker's time is to now.
+    const failed = [...document.querySelectorAll<HTMLElement>(".mp-card")].find((card) => card.textContent?.includes("Typecheck failed twice"))!;
+    expect(failed).toHaveTextContent("Sonnet 5.5 · Medium · 28m");
+    const running = [...document.querySelectorAll<HTMLElement>(".mp-card")].find((card) => card.textContent?.includes("Add tests for the redirect"))!;
+    expect(running.textContent).not.toContain("28m");
+  });
+});

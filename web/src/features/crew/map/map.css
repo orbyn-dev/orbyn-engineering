@@ -5,7 +5,8 @@
 .mp-crew select, .mp-tool select { height: 26px; max-width: 360px; border: 0; border-radius: 8px; background: var(--color-sunken); color: var(--color-text); font: inherit; font-size: 12px; padding: 0 10px; }
 .mp-note { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--color-sunken); color: var(--color-text); font-size: 12px; }
 .mp-banner { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--color-sunken); box-shadow: inset 0 0 0 1px var(--color-borderStrong); color: var(--color-text); font-size: 12.5px; }
-.mp-engines { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--color-muted); font-size: 12px; }
+.mp-engines, .mp-lanes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--color-muted); font-size: 12px; }
+.mp-lanes b { font-weight: 500; color: var(--color-text); }
 .mp-split { display: flex; gap: 16px; align-items: flex-start; min-width: 0; }
 .mp-canvas, .mp-col { flex: 1 1 0; min-width: 0; }
 /* The shared board sits in the design's 330 px column beside the lanes. */
@@ -17,6 +18,16 @@
 .mp-start { stroke: var(--color-faint); }
 .mp-talk { stroke: var(--color-muted); stroke-dasharray: 4 4; }
 .mp-tree { list-style: none; margin: 0; padding: 0; }
+/* The nested list of the narrow frames and of a crew past eight workers: the lead, then each worker one level under it. */
+.mp-nest { flex: 1 1 0; min-width: 0; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mp-nli[data-worker] { margin-left: 18px; }
+.mp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; width: 100%; text-align: left; padding: 9px 10px; border: 0; border-radius: var(--radius-11); background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); color: inherit; font: inherit; cursor: pointer; }
+.mp-row[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--color-text); }
+.mp-row:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.mp-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 140px; }
+.mp-main b { font-weight: 500; color: var(--color-text); }
+.mp-outcome { flex-basis: 100%; color: var(--color-text); font-size: 12.5px; line-height: 1.35; }
+.mp-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--color-muted); font-size: 11.5px; }
 .mp-node { position: absolute; margin: 0; }
 .mp-card { display: flex; flex-direction: column; gap: 4px; width: 100%; height: 130px; min-width: 0; overflow: hidden; padding: 10px 12px; border: 0; border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); color: var(--color-textSoft); font: inherit; font-size: var(--text-meta); text-align: left; cursor: pointer; }
 .mp-node:not([data-worker]) .mp-card { box-shadow: 0 0 0 1px var(--color-borderHover); }
@@ -86,7 +97,7 @@
 /* Below 640 px: one column; the details open under the list as a sheet. */
 @container (max-width: 640px) {
   .mp-split { flex-direction: column; }
-  .mp-canvas, .mp-col, .mp-board, .mp-detail { width: 100%; flex: none; }
+  .mp-canvas, .mp-nest, .mp-col, .mp-board, .mp-detail { width: 100%; flex: none; }
 }
 .mp-neutral { color: var(--color-textSoft); }
 .mp-ok { background: var(--color-greenSoft); color: var(--color-green); box-shadow: none; }
