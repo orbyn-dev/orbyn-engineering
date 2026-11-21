@@ -108,7 +108,8 @@ available in this build." (`kind: "unsupported"`). In the single executable it i
   SDK's `interaction.update` payload, untouched.
 
 Tested against replayed T3 Code transcripts (MIT, `test/fixtures/NOTICE`) of the SDK's public calls, not an internal worker
-protocol: simple, multi-turn, close then resume, steering, cancel mid tool, a read-only tool call. `test/replayCursor.mjs` plays a
+protocol: simple, multi-turn, close then resume, steering, cancel mid tool, a read-only tool call, a plan-mode turn, a queued second turn, a skill
+invocation, subagents and a todo list. A run's usage is the SDK result's `usage`, else the sum of the `turn-ended` usages (T3's rule), also on a cancel or a failure. `test/replayCursor.mjs` plays a
 transcript as a fake SDK (it asserts each recorded outbound call, then delivers the recorded updates and result). Errors, pooling,
 confinement, the key and the flag use a hand-written fake SDK.
 
@@ -185,8 +186,18 @@ Checked by hand: the bundled binary opened and closed a session against a stand-
 (no `muse` is installed here). Not done, so Planned: any run against a real `muse` or model turn; `question` frames
 (`userInput/*`, from T3's adapter, no transcript); resume against a real server; subagents as `background` frames (their item
 never ends in the recordings); `stopTask`, `models`, `usage`, `readHistory`, `rollback`, fork; attachments; the denial message
-(Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; Windows launchers
-(`.cmd`), verbatim paths and the Linux `env` trampoline.
+(Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; the Linux `env`
+trampoline. Windows launchers (`.cmd` and `.bat` under cmd.exe, PATH and PATHEXT) and verbatim turn roots follow T3 and are unit tested
+with injected platform and file checks only; no Windows run.
+
+## Differences from T3 Code on purpose (Muse and Cursor)
+
+Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`) and `packages/provider-cursor` (`CursorAgentSdk.ts`,
+`CursorAgentSdkWorker.ts`, `adapter.ts`), commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking
+(`promptUnmatched`, `:ask-me`) where T3 maps full access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability
+(no session MCP yet); Cursor has no approvals; the pooled Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind
+`ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only `CURSOR_API_KEY` at spawn and is redacted; no keychain, account, usage-limit or model
+catalog readers (T3's `accountUsage`, `CursorSdkCatalog`, `modelCatalog`).
 
 ## In the app bundle (macOS arm64)
 

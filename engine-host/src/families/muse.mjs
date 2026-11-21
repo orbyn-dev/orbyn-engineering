@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
+import { win32 } from "node:path";
 
 // Muse Code on the host: the stdio client of @muse-code/sdk (MIT, bundled) over `muse serve` of the
 // person's own `muse` binary (never bundled). One `muse serve` per open session, started under the core's
@@ -8,6 +10,48 @@ import { realpath } from "node:fs/promises";
 // 2026 T3 Tools Inc.); see test/fixtures/NOTICE. Nothing here has run against a real model turn yet; see the README.
 
 export const SDK_VERSION = "1.4.6"; // keep equal to package.json (a test checks it)
+
+/** Muse validates turn roots on Windows in verbatim form (T3: museVerbatimPath). */
+export function verbatimPath(path) {
+  if (path.startsWith("\\\\?\\")) return path;
+  return path.startsWith("\\\\") ? `\\\\?\\UNC\\${path.slice(2)}` : `\\\\?\\${path}`;
+}
+
+const envValue = (env, name) => {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
+  return key === undefined ? undefined : env[key];
+};
+
+/**
+ * Windows launchers: resolve `muse` with PATH and PATHEXT, and run a .cmd or .bat under cmd.exe, because the
+ * SDK spawns without a shell (T3: museLaunch). Elsewhere, and for a real executable, the command is unchanged.
+ */
+export function museLaunch(binary, env = process.env, { platform = process.platform, exists = existsSync } = {}) {
+  if (platform !== "win32") return { command: binary, args: [] };
+  const exts = (envValue(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const hasDir = /[\\/]/.test(binary);
+  const dirs = hasDir ? [""] : (envValue(env, "PATH") ?? "").split(";").filter(Boolean);
+  const names = win32.extname(binary) ? [binary, ...exts.map((e) => binary + e)] : exts.map((e) => binary + e);
+  let resolved;
+  for (const dir of dirs) {
+    for (const name of names) {
+      const candidate = dir === "" ? name : win32.join(dir, name);
+      if (exists(candidate)) {
+        resolved = candidate;
+        break;
+      }
+    }
+    if (resolved) break;
+  }
+  resolved ??= binary;
+  if (!/\.(?:cmd|bat)$/i.test(resolved)) return { command: resolved, args: [] };
+  const systemRoot = envValue(env, "SystemRoot");
+  return {
+    command: envValue(env, "ComSpec") ?? (systemRoot ? `${systemRoot}\\System32\\cmd.exe` : "cmd.exe"),
+    // /d skips AutoRun; a bare @ keeps a quoted path with spaces intact under /c.
+    args: ["/d", "/c", ...(/\s/.test(resolved) ? ["@", resolved] : [resolved.replace(/[()&<>@^|]/g, "^$&")])],
+  };
+}
 
 const START_TIMEOUT_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -285,7 +329,9 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
           ctx.log({ type: "envAdded", keys: ["MUSE_NO_AUTO_UPDATE"] });
         }
         const serve = ["serve", "--trust-workspace", ...(options.disableSandbox === true ? ["--disable-sandbox"] : [])];
-        const [command, ...args] = [...(prefix ?? []), options.musePath ?? "muse", ...serve];
+        // Under a confinement prefix the prefix is the program; the Windows launcher applies to a bare muse.
+        const launch = prefix === undefined ? museLaunch(options.musePath ?? "muse", env) : { command: options.musePath ?? "muse", args: [] };
+        const [command, ...args] = [...(prefix ?? []), launch.command, ...launch.args, ...serve];
         const handshake = spawn({
           command,
           args,
@@ -368,7 +414,7 @@ export function museFamily({ loadSdk, startTimeoutMs = START_TIMEOUT_MS, request
               const effort = request.options?.effort ?? session.options.effort;
               let accepted;
               try {
-                accepted = await call(session, "turn/start", { input: [{ type: "text", text }], workspaceRoots: [session.root], ifBusy: "queue", ...(effort ? { reasoningEffort: effort } : {}) }, { maxAttempts: 3 });
+                accepted = await call(session, "turn/start", { input: [{ type: "text", text }], workspaceRoots: [process.platform === "win32" ? verbatimPath(session.root) : session.root], ifBusy: "queue", ...(effort ? { reasoningEffort: effort } : {}) }, { maxAttempts: 3 });
               } catch (cause) {
                 if (session.run === run) session.run = null;
                 throw museError(cause);

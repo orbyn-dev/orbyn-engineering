@@ -169,6 +169,30 @@ test("cancel calls run.cancel and the run ends once as cancelled", async () => {
   assert.equal(h.all.filter((f) => f.type === "runDone").length, 1);
 });
 
+// More T3 recordings, replayed whole: every outbound SDK call is asserted by the replay, every recorded
+// update comes back as a delta in order, and each send ends with exactly one runDone.
+for (const name of ["proposed_plan", "queued_turn", "skill_invocation", "subagent", "todo_list"]) {
+  test(`${name}: the recorded transcript replays to completion`, async () => {
+    const replay = replayCursorSdk(fixture(name));
+    const h = boot(replay.sdk);
+    await openSession(h, name);
+    const sends = transcript(name).filter((l) => l.frame?.type === "run.start").map((l) => l.frame);
+    const recorded = transcript(name).filter((l) => l.frame?.type === "interaction.update").map((l) => l.frame.update);
+    let done;
+    for (const f of sends) {
+      const { id, response } = await h.call("send", { sessionId: "s", message: f.message, options: { model: f.options.model, mode: f.options.mode } });
+      assert.equal(response.ok, true, JSON.stringify(response));
+      done = await h.next((x) => x.type === "runDone" && x.sendId === id);
+      assert.equal(done.result.reason, "completed");
+      assert.equal(done.result.usage.totalTokens > 0, true);
+    }
+    assert.deepEqual(h.all.filter((x) => x.type === "delta").map((x) => x.update), recorded);
+    assert.equal(h.all.filter((x) => x.type === "runDone").length, sends.length);
+    assert.equal(h.all.some((x) => x.type === "permission" || x.type === "question"), false);
+    await h.call("closeSession", { sessionId: "s" });
+  });
+}
+
 // A hand-written fake for the cases no transcript covers (errors, pooling, confinement, the key).
 function fakeSdk(behaviour = {}) {
   const calls = { creates: [], resumes: [], sends: [], closes: 0 };
@@ -486,4 +510,38 @@ test("package.json does not depend on @cursor/sdk, even optionally", () => {
   }
   const build = readFileSync(new URL("../scripts/build-sea.mjs", import.meta.url), "utf8");
   assert.match(build, /external:\s*\[[^\]]*"@cursor\/sdk"/);
+});
+
+test("without result usage, the summed turn-ended usage is reported (cancel and the no-progress completion)", async () => {
+  const usage = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 5, cacheWriteTokens: 1 };
+  const f = fakeSdk({
+    onRun: (r) => setImmediate(async () => {
+      await r.emit({ type: "turn-ended", usage });
+      await r.emit({ type: "turn-ended", usage });
+      r.finish({ status: "error", error: named("Error", "Agent turn stopped after repeated resume attempts made no progress") });
+    }),
+  });
+  const h = boot(f.sdk);
+  await h.ready;
+  await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  const sent = await h.call("send", { sessionId: "a", message: "hi" });
+  const done = await h.next((x) => x.type === "runDone" && x.sendId === sent.id);
+  assert.equal(done.result.reason, "completed");
+  assert.deepEqual(done.result.usage, { inputTokens: 20, outputTokens: 4, cacheReadTokens: 10, cacheWriteTokens: 2, totalTokens: 36 });
+});
+
+test("the result's own usage wins over the summed turn-ended usage", async () => {
+  const own = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+  const f = fakeSdk({
+    onRun: (r) => setImmediate(async () => {
+      await r.emit({ type: "turn-ended", usage: { inputTokens: 9, outputTokens: 9 } });
+      r.finish({ status: "finished", usage: own });
+    }),
+  });
+  const h = boot(f.sdk);
+  await h.ready;
+  await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  const sent = await h.call("send", { sessionId: "a", message: "hi" });
+  const done = await h.next((x) => x.type === "runDone" && x.sendId === sent.id);
+  assert.deepEqual(done.result.usage, own);
 });
