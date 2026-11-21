@@ -641,13 +641,18 @@ invisible character is shown as a visible mark; a hold whose text is not the com
 be approved). The person answers from the app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny` and `/dismiss`.
 **No agent approves; a person may approve once.**
 
-- **One command, once.** An approval is bound to the command text, its paths, the worker's thread, the task, and the fields that decide what
-  runs as the engine's own request names them: the working directory, the argv array, any environment overrides and the flags that change the
-  effect (running in the background, its sandbox off, network access). It covers one retry of that same request from that same thread, within 10
-  minutes of approving (a hold waits 10 minutes for the person), and is used up by that retry. The engine's own item id, turn id, title,
-  description and time limits are not bound: they change from one request to the next, and binding them made a real retry never match. Another
-  command, other arguments, another working directory, an effect flag that differs, another thread, a second retry or a late one gets nothing.
-  A hold is decided once: a racing approve and deny have exactly one winner, in either order. A hold that expired, or whose task ended, answers
+- **One command, once.** An approval is bound to the command text, its paths, the worker's thread, the task and the engine's whole request:
+  every field of its parameters except the engine's own bookkeeping (`itemId`, `turnId`, `threadId`, `startedAtMs`, `approvalId`, `callId`,
+  `conversationId`, `reason`, `description`, `title`, `toolCallId`, `sessionId`, `commandActions`, `parsedCmd`, `timeout`), which changes from one
+  request to the next and made a real retry never match. A field that list does not name (the working directory, the arguments, the environment,
+  an effect flag, a Codex `kind` or `environmentId`, a key an agent adds) is bound, so a retry that changes, adds or drops one gets nothing. `command`
+  is bound as the engine sent it, an argv array is never joined (`["echo","a b"]` and `["echo","a","b"]` are different), and an array with a word
+  that is empty or holds a space is not approved once, because the text a person reads could stand for either. An ACP request is bound to the kinds
+  of choice it offers, and is not approved once unless one is `allow_once`, so an approval never ends in the agent's lasting allow. It covers one
+  retry of that same request from that same thread, within 10 minutes of approving (a hold waits 10 minutes for the person), and is used up by
+  that retry. Another thread, a second retry or a late one gets nothing. The row and the dialog show the working directory, the arguments, the
+  names (never the values) of the environment overrides and the effect flags, redacted like the command. A hold is decided once: a racing approve
+  and deny have exactly one winner, in either order. A hold that expired, or whose task ended, answers
   410 (`gone`); one already decided answers 409. A hold whose target is not the command the engine would run, or is too long to show whole,
   answers `unreadable` and can never be approved once.
 - **Never the always-denied list.** A command on the list (N1 to N10) is never held. The list is read again when the person approves and again when the

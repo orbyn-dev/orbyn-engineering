@@ -154,8 +154,8 @@ pub struct HeldBook {
     items: Vec<Held>,
 }
 
-/// The flags that change what a command does, not how the engine names it. They are bound and shown; the list is the fields the
-/// engines this app runs put on a command request.
+/// The flags that change what a command does, not how the engine names it. They are shown (the whole request is bound); the list
+/// is the fields the engines this app runs put on a command request.
 const EFFECT_FLAGS: &[(&str, &str)] = &[
     ("run_in_background", "runs in the background"),
     ("dangerouslyDisableSandbox", "runs with its sandbox off"),
@@ -181,44 +181,84 @@ fn is_on(value: Option<&Value>) -> bool {
     value.is_some_and(|value| !value.is_null() && value != &Value::Bool(false))
 }
 
-/// The request fields a hold is bound to: the working directory, the argv array when the request names one, any environment
-/// overrides, and the flags that change what runs. Everything else in the detail is the engine's own bookkeeping (item ids, turn
-/// ids, titles, descriptions, time limits), which changes from one request to the next; binding it would make every real retry
-/// miss the approval. Keys come out in one fixed order, and `serde_json`'s map is ordered, so the document is stable.
+/// The engine's own bookkeeping: ids, titles, words and time limits that change from one request to the next. Everything else in
+/// the request is bound, so a field this list does not name (a new one an engine adds, a Codex `kind` or `environmentId`, an ACP
+/// tool's own key) changes what the person approved and misses the approval. The list is the only place a field is left out.
+const BOOKKEEPING: &[&str] = &[
+    "itemId",
+    "turnId",
+    "threadId",
+    "startedAtMs",
+    "approvalId",
+    "reason",
+    "description",
+    "title",
+    "toolCallId",
+    "sessionId",
+    "commandActions",
+    "timeout",
+    "callId",
+    "conversationId",
+    "parsedCmd",
+];
+
+/// The request fields a hold is bound to: every field of the request's parameters except the bookkeeping above. `command` is bound
+/// as the engine sent it, a string or an array that is never joined, so two argv arrays that read alike once joined (`["a b"]`
+/// and `["a", "b"]`) are different. `serde_json`'s map is ordered, so the document is stable.
 fn chosen(detail: &Value) -> Value {
-    let params = params(detail);
-    let mut chosen = serde_json::Map::new();
-    for key in ["cwd", "args", "env"] {
-        if let Some(value) = params.get(key) {
-            chosen.insert(key.to_owned(), value.clone());
-        }
+    match params(detail) {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, _)| !BOOKKEEPING.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ),
+        other => other.clone(),
     }
-    let effects: Vec<&str> = EFFECT_FLAGS
-        .iter()
-        .filter(|(key, _)| is_on(params.get(key)))
-        .map(|(_, words)| *words)
-        .collect();
-    if !effects.is_empty() {
-        chosen.insert("effects".to_owned(), json!(effects));
-    }
-    Value::Object(chosen)
 }
 
-/// What the row says about the command beyond the words themselves, in the person's words: the working directory and each effect
-/// flag that is on. Empty when the request names nothing that changes what runs.
+/// The kinds of choice an ACP request offers the engine to answer with, sorted. An ACP verdict of allow picks `allow_once` and
+/// falls back to `allow_always`, so a hold whose request offers no `allow_once` is never approved once, and the retry must offer
+/// the same kinds.
+fn option_kinds(detail: &Value) -> Option<Vec<&str>> {
+    let options = detail.get("options")?.as_array()?;
+    let mut kinds: Vec<&str> = options
+        .iter()
+        .filter_map(|option| option.get("kind").and_then(Value::as_str))
+        .collect();
+    kinds.sort_unstable();
+    Some(kinds)
+}
+
+/// Whether an approve-once could not leave a lasting allow behind: a request that offers choices offers `allow_once` among them.
+fn grants_only_once(detail: &Value) -> bool {
+    option_kinds(detail).is_none_or(|kinds| kinds.contains(&"allow_once"))
+}
+
+/// What the row says about the command beyond the words themselves, in the person's words: the working directory, the argument
+/// list, the names (never the values) of the environment overrides, and each effect flag that is on. Empty when the request names
+/// nothing that changes what runs.
 fn shown_flags(detail: &Value) -> String {
     let params = params(detail);
     let mut parts: Vec<String> = Vec::new();
     if let Some(cwd) = params.get("cwd").and_then(Value::as_str) {
         parts.push(format!("cwd: {cwd}"));
     }
+    if let Some(args) = params.get("args").filter(|args| !args.is_null()) {
+        parts.push(format!("args: {args}"));
+    }
     for (key, words) in EFFECT_FLAGS {
         if is_on(params.get(key)) {
             parts.push((*words).to_owned());
         }
     }
-    if params.get("env").is_some_and(|env| !env.is_null()) {
-        parts.push("with environment overrides".to_owned());
+    match params.get("env") {
+        Some(Value::Object(env)) if !env.is_empty() => {
+            let names: Vec<&str> = env.keys().map(String::as_str).collect();
+            parts.push(format!("env: {}", names.join(", ")));
+        }
+        Some(Value::Null | Value::Object(_)) | None => {}
+        Some(_) => parts.push("with environment overrides".to_owned()),
     }
     if parts.is_empty() {
         String::new()
@@ -229,17 +269,19 @@ fn shown_flags(detail: &Value) -> String {
 
 /// Whether the request itself names `target` as the command it would run, so a person can check what they approve. The engines
 /// fall back to words they wrote (Codex's reason, an ACP title, an MCP Bash call with no `command`) when they have no command;
-/// such a hold is kept for a deny or a dismiss, but it is never approved once.
+/// such a hold is kept for a deny or a dismiss, but it is never approved once. An argv array is named only when its words join
+/// without doubt: one with an empty word or a word that holds a space reads the same as another argv, so it cannot be checked.
 fn command_named(detail: &Value, target: &str) -> bool {
     match params(detail).get("command") {
         Some(Value::String(command)) => command == target,
         Some(Value::Array(parts)) => {
-            parts
-                .iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(" ")
-                == target
+            let words: Option<Vec<&str>> = parts.iter().map(Value::as_str).collect();
+            words.is_some_and(|words| {
+                words
+                    .iter()
+                    .all(|word| !word.is_empty() && !word.chars().any(char::is_whitespace))
+                    && words.join(" ") == target
+            })
         }
         _ => false,
     }
@@ -255,7 +297,8 @@ pub(super) fn bind(task_id: &str, thread_id: &str, ask: &ActionAsk) -> Option<St
         wire_name(&ask.kind),
         ask.target,
         ask.paths,
-        chosen(&ask.detail)
+        chosen(&ask.detail),
+        option_kinds(&ask.detail)
     ]);
     crate::util::binding_hmac(&document.to_string())
 }
@@ -469,6 +512,23 @@ impl Core {
         lock(&self.crew_autopilot.held)
     }
 
+    /// Records a presence grant for a hold the way the shell would, without the describe step that an unreadable hold refuses, so a
+    /// test can reach the checks that come after the grant.
+    #[cfg(test)]
+    pub(crate) fn held_grant_for_test(&self, id: &str, nonce: &str, now: i64) {
+        let held = self.held_book().get(id).cloned().expect("a hold");
+        self.presence.put(
+            PresenceFor::CrewApproveOnce {
+                hold: id.to_owned(),
+                thread: held.thread_id,
+                task: held.task_id,
+                command_sha256: held.bound,
+            },
+            nonce.to_owned(),
+            now,
+        );
+    }
+
     pub(super) fn held_needles(&self, task_id: &str) -> Vec<String> {
         self.store
             .crew_answer_key(task_id)
@@ -559,7 +619,10 @@ impl Core {
         // change its effect. A newline or an invisible character becomes a visible mark, so the row cannot draw a line of its own or
         // reorder what a person reads.
         let mut text = crate::crew::withhold(&crate::crew::redact(&ask.target), needles);
-        text.push_str(&shown_flags(&ask.detail));
+        text.push_str(&crate::crew::withhold(
+            &crate::crew::redact(&shown_flags(&ask.detail)),
+            needles,
+        ));
         let text = super::presence::plain(&text);
         // A hold is approved once only when the person can read all of what would run and the engine's own request names it: a
         // target that fell back to a reason or a title, or one too long to show whole, is held for a deny or a dismiss and nothing
@@ -571,6 +634,7 @@ impl Core {
         let shown_value = json!(shown);
         let readable = readable_by_length
             && command_named(&ask.detail, &ask.target)
+            && grants_only_once(&ask.detail)
             && crate::crew::refuse_secret(&shown_value).is_ok()
             && crate::crew::refuse_leak(&shown_value, needles).is_ok();
         if !readable && !shown.is_empty() && crate::crew::refuse_secret(&shown_value).is_err() {

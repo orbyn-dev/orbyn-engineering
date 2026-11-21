@@ -967,12 +967,12 @@ async fn a_fallback_target_is_held_and_never_approved_once() {
         );
         let described = describe(&w, &held.id, unix_now());
         assert_eq!(described["code"], "unreadable", "{target}");
-        let refused = w
-            .core
-            .autopilot_approve_once(&held.id, Some(&fresh_nonce()))
-            .await;
+        // A valid grant, so the refusal comes from the readability check and not from a missing grant.
+        let nonce = fresh_nonce();
+        w.core.held_grant_for_test(&held.id, &nonce, unix_now());
+        let refused = w.core.autopilot_approve_once(&held.id, Some(&nonce)).await;
         assert!(
-            matches!(refused, Err(CoreError::PresenceRequired)),
+            matches!(refused, Err(CoreError::Invalid(_))),
             "{target}: {refused:?}"
         );
         assert_eq!(state_of(&w, &held.id), State::Held);
@@ -1086,4 +1086,193 @@ async fn a_row_escapes_a_newline_bidi_or_zero_width_character() {
     }
     assert!(held.command.contains('\u{23CE}'), "{:?}", held.command);
     assert!(held.command.contains('\u{FFFD}'), "{:?}", held.command);
+}
+
+/// A request with the given detail and the target a person would read, held by the lead's no.
+async fn held_detail(w: &World, id: &str, target: &str, detail: Value) -> String {
+    let mut one = ask(ActionKind::Command, target, &[]);
+    one.detail = detail;
+    let refused = w.core.gate.request(&scope(w, id), one).await;
+    assert!(matches!(refused, Verdict::Deny(_)), "the lead said no");
+    open_hold(w, id).id
+}
+
+/// The worker's retry with `detail`, and what the gate said to it.
+async fn retry_with(w: &World, id: &str, target: &str, detail: Value) -> Verdict {
+    let mut one = ask(ActionKind::Command, target, &[]);
+    one.detail = detail;
+    w.core.gate.request(&scope(w, id), one).await
+}
+
+async fn approve(w: &World, hold: &str) {
+    let nonce = grant_for(w, hold);
+    w.core
+        .autopilot_approve_once(hold, Some(&nonce))
+        .await
+        .unwrap();
+}
+
+/// Codex's legacy approval puts argv in `command`; joined with spaces, `["make","deploy now"]` and `["make","deploy","now"]` read alike. The
+/// approval covers the array as sent.
+#[tokio::test]
+async fn an_argv_that_differs_only_by_splitting_is_not_the_approved_one() {
+    let (w, id) = held_world().await;
+    let hold = held_detail(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy", "now"], "cwd": "/repo" }),
+    )
+    .await;
+    approve(&w, &hold).await;
+    let merged = retry_with(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy now"], "cwd": "/repo" }),
+    )
+    .await;
+    assert!(matches!(merged, Verdict::Deny(_)), "{merged:?}");
+    assert_eq!(state_of(&w, &hold), State::Approved, "still unused");
+    let same = retry_with(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy", "now"], "cwd": "/repo" }),
+    )
+    .await;
+    assert_eq!(same, Verdict::Allow, "the array as approved");
+}
+
+/// An argv with a word that holds a space cannot be told from another argv by the text a person reads, so it cannot be approved.
+#[tokio::test]
+async fn an_argv_that_reads_two_ways_cannot_be_approved_once() {
+    let (w, id) = held_world().await;
+    held_detail(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy now"], "cwd": "/repo" }),
+    )
+    .await;
+    assert!(!open_hold(&w, &id).readable);
+}
+
+/// Every field of the request is bound but the engine's bookkeeping: a field an engine adds, Codex's `kind` and `environmentId`.
+#[tokio::test]
+async fn an_unknown_field_or_a_changed_kind_or_environment_is_not_the_approved_request() {
+    let base = json!({
+        "command": "make deploy", "cwd": "/repo", "kind": "command", "environmentId": "env-1",
+        "itemId": "i-1", "turnId": "u-1", "reason": "deploy", "callId": "c-1",
+    });
+    let mut dropped = base.clone();
+    dropped.as_object_mut().unwrap().remove("environmentId");
+    let mut kind = base.clone();
+    kind["kind"] = json!("writeStdin");
+    let mut environment = base.clone();
+    environment["environmentId"] = json!("env-2");
+    let mut added = base.clone();
+    added["somethingNew"] = json!(true);
+    // Each refusal is a task of its own: a run of refusals in a row stops the task and ends its holds.
+    for (name, changed) in [
+        ("kind", kind),
+        ("environmentId", environment),
+        ("an added field", added),
+        ("a dropped field", dropped),
+    ] {
+        let (w, id) = held_world().await;
+        let hold = held_detail(&w, &id, "make deploy", base.clone()).await;
+        approve(&w, &hold).await;
+        let verdict = retry_with(&w, &id, "make deploy", changed).await;
+        assert!(matches!(verdict, Verdict::Deny(_)), "{name}: {verdict:?}");
+        assert_eq!(state_of(&w, &hold), State::Approved, "{name}: still unused");
+    }
+    // Only the bookkeeping changes on a real retry.
+    let (w, id) = held_world().await;
+    let hold = held_detail(&w, &id, "make deploy", base.clone()).await;
+    approve(&w, &hold).await;
+    let mut retry = base;
+    retry["itemId"] = json!("i-2");
+    retry["turnId"] = json!("u-2");
+    retry["reason"] = json!("deploy again");
+    retry["callId"] = json!("c-2");
+    let verdict = retry_with(&w, &id, "make deploy", retry).await;
+    assert_eq!(verdict, Verdict::Allow, "the one retry");
+}
+
+fn acp(kinds: &[&str]) -> Value {
+    let options: Vec<Value> = kinds
+        .iter()
+        .map(|kind| json!({ "optionId": format!("o-{kind}"), "name": *kind, "kind": *kind }))
+        .collect();
+    json!({
+        "sessionId": "s-1", "options": options,
+        "toolCall": { "toolCallId": "c-1", "title": "Run", "kind": "execute", "rawInput": { "command": "make deploy" } },
+    })
+}
+
+/// An allow on an ACP request picks `allow_once` and falls back to `allow_always`, a lasting grant. An approve-once is only
+/// possible when the request offers `allow_once`, and the retry must offer the same kinds.
+#[tokio::test]
+async fn an_acp_request_with_only_allow_always_cannot_be_approved_once() {
+    let (w, id) = held_world().await;
+    held_detail(
+        &w,
+        &id,
+        "make deploy",
+        acp(&["allow_always", "reject_once"]),
+    )
+    .await;
+    let held = open_hold(&w, &id);
+    assert!(!held.readable, "no allow_once is offered");
+    let nonce = fresh_nonce();
+    w.core.held_grant_for_test(&held.id, &nonce, unix_now());
+    let refused = w.core.autopilot_approve_once(&held.id, Some(&nonce)).await;
+    assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+    assert_eq!(state_of(&w, &held.id), State::Held);
+
+    let (w, id) = held_world().await;
+    let hold = held_detail(&w, &id, "make deploy", acp(&["allow_once", "reject_once"])).await;
+    assert!(open_hold(&w, &id).readable);
+    approve(&w, &hold).await;
+    let lasting = retry_with(
+        &w,
+        &id,
+        "make deploy",
+        acp(&["allow_always", "reject_once"]),
+    )
+    .await;
+    assert!(matches!(lasting, Verdict::Deny(_)), "other option kinds");
+    let once = retry_with(&w, &id, "make deploy", acp(&["reject_once", "allow_once"])).await;
+    assert_eq!(once, Verdict::Allow);
+}
+
+/// The dialog and the row show the arguments and the names of the environment overrides, never their values.
+#[tokio::test]
+async fn the_row_shows_the_arguments_and_the_environment_names() {
+    let (w, id) = held_world().await;
+    let hold = held_detail(
+        &w,
+        &id,
+        "make",
+        json!({
+            "tool": "Bash",
+            "input": { "command": "make", "args": ["deploy", "--prod"], "env": { "DEPLOY_TARGET": "eu-west-9" } },
+        }),
+    )
+    .await;
+    let shown = describe(&w, &hold, unix_now())["command_shown"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(shown.contains(r#"args: ["deploy","--prod"]"#), "{shown:?}");
+    assert!(shown.contains("env: DEPLOY_TARGET"), "{shown:?}");
+    assert!(!shown.contains("eu-west-9"), "{shown:?}");
+    // The arguments and the environment are bound.
+    approve(&w, &hold).await;
+    let other = retry_with(&w, &id, "make",
+        json!({ "tool": "Bash", "input": { "command": "make", "args": ["deploy", "--prod", "--force"], "env": { "DEPLOY_TARGET": "eu-west-9" } } }),
+    )
+    .await;
+    assert!(matches!(other, Verdict::Deny(_)), "other arguments");
 }
