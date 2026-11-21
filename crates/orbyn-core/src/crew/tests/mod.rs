@@ -17,6 +17,7 @@ mod autopilot_rules;
 mod autopilot_support;
 mod autopilot_watch;
 mod background;
+mod background_daily;
 mod background_listeners;
 mod background_start;
 mod backtest_api;
