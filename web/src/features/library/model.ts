@@ -146,3 +146,39 @@ export function scrubValue(text: string, value: string): string {
   for (const form of [...forms].filter((one) => one !== "").sort((a, b) => b.length - a.length)) clean = clean.split(form).join("[hidden]");
   return clean;
 }
+
+const SOURCE_LABEL = new Map<string, string>([["import", "Imported"], ["repo", "From repo"], ["shared", "Shared"]]);
+/** The pill text for where an entry came from. `null` for a local entry and for a word this app does not know: the raw value is never shown. */
+export const sourceLabel = (source: unknown): string | null => (typeof source === "string" ? (SOURCE_LABEL.get(source) ?? null) : null);
+
+/** What a `409 confirm_required` on a run asks the person to confirm: the grant codes exactly as the service listed them, and env set names. */
+export interface RunConfirmation { grants: string[]; envSets: string[] }
+
+const MAX_GRANTS = 8;
+const MAX_SETS = 8;
+
+/**
+ * Reads the `detail` of a `409 confirm_required` defensively. `grants` keeps every code the service listed, once each (the ack must match
+ * exactly: no extra, none fewer), cut to a sane length; `env_sets` yields names only, whether the service sends names or `{ name, keys }`
+ * (key names are not shown here). `null` when no grant is named, so the caller never shows an empty sheet or sends an empty ack.
+ */
+export function confirmFromFailure(detail: unknown): RunConfirmation | null {
+  const body = typeof detail === "object" && detail !== null && !Array.isArray(detail) ? (detail as Record<string, unknown>) : {};
+  const listed = Array.isArray(body.grants) ? body.grants : [];
+  const grants = [...new Set(listed.filter((code): code is string => typeof code === "string" && code.length > 0 && code.length <= 40))].slice(0, MAX_GRANTS);
+  if (grants.length === 0) return null;
+  const sets = Array.isArray(body.env_sets) ? body.env_sets : [];
+  const names: string[] = [];
+  for (const one of sets) {
+    const name = typeof one === "string" ? one : typeof one === "object" && one !== null && typeof (one as { name?: unknown }).name === "string" ? (one as { name: string }).name : "";
+    if (name !== "" && !names.includes(name)) names.push(name);
+    if (names.length >= MAX_SETS) break;
+  }
+  return { grants, envSets: names };
+}
+
+const RUN_GRANT_TEXT = new Map<string, string>([
+  ["env_values", "The saved values of these env sets go into the command’s environment. Only their names are shown here; no value is."],
+  ["untrusted_source", "This command came from a file, a repository or a shared link, not from this device. Read it before it runs."],
+]);
+export const runGrantText = (code: string): string => RUN_GRANT_TEXT.get(code) ?? "Another permission this service asks for. Cancel unless you expect it.";

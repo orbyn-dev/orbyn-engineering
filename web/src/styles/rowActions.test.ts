@@ -19,7 +19,7 @@ it("floats the row actions over the row's right edge with a fade, out of the tit
 });
 
 it("shows them on hover, selection and keyboard focus, not by taking the status text's place", () => {
-  expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row:focus-visible \.row-actions,\s*\.thread-row:has\(:focus-visible\) \.row-actions \{\s*visibility: visible;\s*opacity: 1/);
+  expect(css).toMatch(/li:hover > \.thread-row \.row-actions,\s*li\[data-selected\] \.thread-row \.row-actions,\s*\.thread-row\[data-revealed\] \.row-actions,\s*\.thread-row:focus-visible \.row-actions,\s*\.thread-row:has\(:focus-visible\) \.row-actions \{\s*visibility: visible;\s*opacity: 1/);
   expect(css).not.toMatch(/\.row-rest \{\s*display: none/);
 });
 
@@ -50,4 +50,10 @@ it("hides nothing outside the sidebar: only a thread row's own strip is floating
   // Settings tables (Archive, the ACP registry) call their button cells row-actions as well.
   expect(rule(".row-actions")).toBe("");
   expect(rule(".thread-row .row-actions")).toMatch(/visibility:\s*hidden/);
+});
+
+it("shows the strip on a row a touch has swiped open, and lets a horizontal swipe reach the row", () => {
+  expect(css).toMatch(/\.thread-row\[data-revealed\] \.row-actions/);
+  // Without pan-y the browser takes a sideways move for itself and the swipe never arrives.
+  expect(rule(".thread-row")).toMatch(/touch-action:\s*pan-y/);
 });

@@ -3,8 +3,9 @@ import { ApiFailure } from "../../api/client";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { libraryApi } from "./api";
-import type { Param, Prompt, Workflow } from "./contract";
-import { capped, isOneLine, plain, startValues, valueProblems, valuesBody } from "./model";
+import type { Param, ProfileGrant, Prompt, Workflow } from "./contract";
+import { capped, confirmFromFailure, isOneLine, plain, startValues, valueProblems, valuesBody, type RunConfirmation } from "./model";
+import { RunConfirm } from "./RunConfirm";
 
 export type UseMode = "run" | "terminal" | "composer" | "copy";
 
@@ -48,6 +49,7 @@ export function UseDialog({ item, kind, mode, where, onRun, onInsert, onClose }:
   const pending = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<RunConfirmation | null>(null);
   const turn = useRef(0);
   const problems = valueProblems(params, values);
   const key = JSON.stringify(valuesBody(params, values));
@@ -76,14 +78,15 @@ export function UseDialog({ item, kind, mode, where, onRun, onInsert, onClose }:
   const blocked = mode === "terminal" && rendered !== null && !oneLine;
   const ready = rendered !== null && !blocked && problems.size === 0 && !busy && done === null;
 
-  const go = async () => {
+  // `ack` is only ever what the service named on the 409 just before, handed back by the sheet; it is never kept.
+  const go = async (ack: readonly string[] = []) => {
     if (pending.current || !ready || rendered === null) return;
     pending.current = true;
     setBusy(true);
     setFailure(null);
     try {
       if (mode === "run") {
-        const answer = await libraryApi().runWorkflow(item.id, valuesBody(params, values), where);
+        const answer = await libraryApi().runWorkflow(item.id, valuesBody(params, values), where, ack as ProfileGrant[]);
         onRun(plain(answer.terminal_id, 60));
         setDone("Started in a terminal. Its output is there.");
       } else {
@@ -92,7 +95,10 @@ export function UseDialog({ item, kind, mode, where, onRun, onInsert, onClose }:
         else onClose();
       }
     } catch (error) {
-      setFailure(error instanceof ApiFailure ? (FAILURE.get(error.code) ?? `Couldn’t finish. ${plain(error.message, 160)}`) : "Couldn’t finish. Something went wrong.");
+      const asked = mode === "run" && error instanceof ApiFailure && error.code === "confirm_required" ? confirmFromFailure(error.detail) : null;
+      if (asked) setConfirm(asked);
+      else if (mode === "run" && error instanceof ApiFailure && error.code === "confirm_required") setFailure("This run needs a confirmation this app can’t show, so nothing was started.");
+      else setFailure(error instanceof ApiFailure ? (FAILURE.get(error.code) ?? `Couldn’t finish. ${plain(error.message, 160)}`) : "Couldn’t finish. Something went wrong.");
     } finally {
       pending.current = false;
       setBusy(false);
@@ -136,6 +142,7 @@ export function UseDialog({ item, kind, mode, where, onRun, onInsert, onClose }:
         {failure ? <p className="field-error" role="alert">{failure}</p> : null}
         {done ? <p className="lib-done" role="status">{done}</p> : null}
       </form>
+      {confirm ? <RunConfirm name={item.name} confirmation={confirm} onRun={(grants) => { setConfirm(null); void go(grants); }} onClose={() => setConfirm(null)} /> : null}
     </Dialog>
   );
 }

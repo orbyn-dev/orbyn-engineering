@@ -246,7 +246,7 @@ the gap Crew fills. openbot is non-commercial: no code or text from it, only the
 **Models and effort per role.** These come from the repository's harness (`harness.py resolve`: library defaults, then
 the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium for every role and never higher.
 
-The default Codex tier words were checked against a [sanitized Windows Codex 0.160.0 model list](../crates/orbyn-core/src/crew/tests/codex-0.160.0-windows-models.json): the observed list contains Sol, Terra and Luna; Astra is not assigned a tier. This is one catalog, not a guarantee for every account or later CLI. The existing real Claude discovery receipt does not record model ids or labels, so its tier words remain unqualified until a provenance-backed sanitized catalog is supplied (#433).
+The default tier words were checked against a model list captured from each real install, sanitized to the ids and labels: a [Windows Claude Code 2.1.317 list](../crates/orbyn-core/src/crew/tests/claude-2.1.317-windows-models.json) and a [Windows Codex 0.160.0 list](../crates/orbyn-core/src/crew/tests/codex-0.160.0-windows-models.json). The Claude list has `opus`, `sonnet` and `haiku` entries and dated ids such as `claude-opus-5`; its own `default` entry names no tier, so the lead is the `opus` alias. The Codex list has Sol, Terra and Luna; Astra has no tier word. Both defaults already matched, so no word changed. A test in [model_ids.rs](../crates/orbyn-core/src/crew/tests/model_ids.rs) fails if a word stops matching an observed id or starts matching one it should not. Each list is one account's catalog on one day, not a guarantee for every account or later CLI (#433).
 
 | Role | Claude | Codex | Notes |
 | --- | --- | --- | --- |
@@ -356,8 +356,7 @@ retries with the reason. The same failure twice means one change of approach, an
     one still passes. With Autopilot engine approvers each approval reserves one of the brief's turns (`reserve_crew_approval`):
     with the default 30 turns a task gets about 14 two-key actions (two reservations each), and every later action is denied.
   - **A crew-wide turn budget** (owner ruling, 2026-11-20) is a device-local number of turns
-    (`crew_turn_budget`; unset or 0 is no crew budget). There is no Settings control yet: it can be set only through the
-    settings API for now. A crew's spend is the same per-task tally summed over its
+    (`crew_turn_budget`; unset or 0 is no crew budget), set in Settings › General (`Crew turn budget`). A crew's spend is the same per-task tally summed over its
     tasks, so the crew's budget and a task's own cannot disagree. Once the crew's turns are spent, a new task is
     refused with `not_authorized` and "The crew has spent its turn budget, so no new task can start."; nothing is
     stored, routed or sent. A task already running keeps its retries, approvals and verification, and may spend past

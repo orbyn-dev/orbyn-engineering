@@ -390,11 +390,24 @@ async fn a_compact_command_leaves_held_messages_for_the_next_ordinary_turn() {
         1,
         "a compact turn marked the held message delivered"
     );
+    // The scripted worker turn hangs until it is stopped, like the paused one above: a compact the engine finished by itself is
+    // stood in for by a stop, which pauses the task first so that it does not end it.
+    d.w.core
+        .store
+        .move_crew_task(&d.b, "needs_person", None)
+        .unwrap();
+    let compact = d.w.core.store.thread(&worker).unwrap().active_run.unwrap();
+    d.w.core.runs.cancel(&compact.id).unwrap();
     d.w.until("the compact turn ends", |w| {
         w.core.store.thread(&worker).unwrap().active_run.is_none()
     })
     .await;
 
+    // The person resumes the paused task before the next turn.
+    d.w.core
+        .store
+        .move_crew_task(&d.b, "running", None)
+        .unwrap();
     d.w.core
         .runs
         .enqueue(&worker, "Continue after the compact.", &[])

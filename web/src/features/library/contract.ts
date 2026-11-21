@@ -1,113 +1,44 @@
 /**
- * The personal library contract of docs/execution-profiles-and-library.md, Part 2 (W9). Hand-written to the shapes the doc pins:
- * no generated types exist for these routes and no service answers them yet (the routes are not built). Field names are the doc's.
+ * The personal library contract of docs/execution-profiles-and-library.md, Part 2 (W9), as the service answers it (routes in
+ * crates/orbynd/src/routes/library.rs; the generated types in src/generated are the reference and are not edited). Every list answer
+ * is a bare array. Nothing here repeats a generated type; only the client's own views are defined.
  */
 
-export type ParamKind = "text" | "choice" | "path";
+import type { EnvSet } from "../../generated/EnvSet";
+import type { EnvSetDraft } from "../../generated/EnvSetDraft";
+import type { ImportAnswer } from "../../generated/ImportAnswer";
+import type { LibraryDocument } from "../../generated/LibraryDocument";
+import type { LibrarySummary } from "../../generated/LibrarySummary";
+import type { Param } from "../../generated/Param";
+import type { ProfileGrant } from "../../generated/ProfileGrant";
+import type { Prompt } from "../../generated/Prompt";
+import type { PromptDraft } from "../../generated/PromptDraft";
+import type { SuggestedEnvSet } from "../../generated/SuggestedEnvSet";
+import type { SuggestedPrompt } from "../../generated/SuggestedPrompt";
+import type { SuggestedWorkflow } from "../../generated/SuggestedWorkflow";
+import type { Suggestions } from "../../generated/Suggestions";
+import type { Workflow } from "../../generated/Workflow";
+import type { WorkflowDraft } from "../../generated/WorkflowDraft";
 
-export interface Param {
-  /** `[a-z][a-z0-9_]{0,31}`, unique in the item, at most 16 per item. */
-  name: string;
-  label: string;
-  kind: ParamKind;
-  /** At most 500 characters. */
-  default?: string;
-  required: boolean;
-  /** 2 to 20 choices of at most 60 characters, for `choice`. */
-  choices?: string[];
-}
+export type { EnvKey } from "../../generated/EnvKey";
+export type { LibraryKind as Kind } from "../../generated/LibraryKind";
+export type { LibraryLimits } from "../../generated/LibraryLimits";
+export type { LibrarySource } from "../../generated/LibrarySource";
+export type { LibrarySummary } from "../../generated/LibrarySummary";
+export type { ParamKind } from "../../generated/ParamKind";
+export type { ImportAnswer, LibraryDocument, ProfileGrant };
+export type { EnvSet, EnvSetDraft, Param, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft };
 
-interface Stamped {
-  id: string;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-}
+/** `file` is a path under `.orbyn/` (`workflows.json`, `prompts.json` or `env-sets.json`); the service says it as a string. */
+export type SuggestionFile = string;
 
-export interface Workflow extends Stamped {
-  name: string;
-  description: string;
-  /** At most 4,000 bytes. Text: the page never runs it. */
-  command: string;
-  params: Param[];
-  /** At most 4 environment sets, by id; workflow runs only. */
-  env_set_ids: string[];
-}
+/** A repository entry carries its own `file` and `index` (its zero-based position in that file, counting dropped entries): they name one entry and are what copy takes. A workflow names its sets (`env_set_names`), never ids. */
+export type RepoWorkflow = SuggestedWorkflow;
+export type RepoPrompt = SuggestedPrompt;
+export type RepoEnvSet = SuggestedEnvSet;
+export type Problem = Suggestions["problems"][number];
 
-export interface Prompt extends Stamped {
-  name: string;
-  description: string;
-  /** At most 32 KiB. */
-  body: string;
-  params: Param[];
-}
-
-export interface EnvKey { name: string; present: boolean }
-
-export interface EnvSet extends Stamped {
-  name: string;
-  description: string;
-  /** Names and `present` only. A value is never in a read. */
-  keys: EnvKey[];
-  keychain: "ok" | "unavailable" | "blocked";
-  /** `planned`: Windows and Linux in the beta, names only. */
-  status: "stored" | "planned";
-}
-
-export type Kind = "workflow" | "prompt" | "env_set";
-
-/** The flat `limits` object of `GET /api/library`: exactly these keys, all integers. Byte limits are in bytes. */
-export interface LibraryLimits {
-  workflows: number;
-  prompts: number;
-  env_sets: number;
-  env_keys_per_set: number;
-  env_sets_per_workflow: number;
-  params_per_item: number;
-  workflow_command_bytes: number;
-  prompt_body_bytes: number;
-  env_value_bytes: number;
-  suggestions_file_bytes: number;
-  import_bytes: number;
-}
-
-/** `GET /api/library`: counts, the keychain state and the limits. */
-export interface LibrarySummary {
-  workflows: number;
-  prompts: number;
-  env_sets: number;
-  keychain: "ok" | "unavailable" | "blocked";
-  limits: LibraryLimits;
-}
-
-/** The writable part of each kind. */
-export interface WorkflowDraft { name: string; description: string; command: string; params: Param[]; env_set_ids: string[] }
-export interface PromptDraft { name: string; description: string; body: string; params: Param[] }
-export interface EnvSetDraft { name: string; description: string; keys: string[] }
-
-export type SuggestionFile = "workflows.json" | "prompts.json" | "env-sets.json";
-
-/**
- * A repository entry is the library shape without `id`, `revision` and timestamps, plus `file` (its path under `.orbyn/`) and `index`
- * (its zero-based position in that file's array, counting dropped entries). `(file, index)` names one entry and is what copy takes.
- */
-export interface RepoRef { file: SuggestionFile; index: number }
-export type RepoWorkflow = WorkflowDraft & RepoRef;
-export type RepoPrompt = PromptDraft & RepoRef;
-export type RepoEnvSet = { name: string; description: string; keys: string[] } & RepoRef;
-
-/** A whole-file problem has no entry to point at and uses `index: 0`. */
-export interface Problem { file: string; index: number; code: string }
-
-/** `GET /api/projects/{id}/library/suggestions`. */
-export interface Suggestions {
-  workflows: RepoWorkflow[];
-  prompts: RepoPrompt[];
-  env_sets: RepoEnvSet[];
-  problems: Problem[];
-}
-
-/** `POST .../suggestions/copy` answers `201` with the created device-library entry and its kind. */
+/** `POST .../suggestions/copy` answers `201` with the created entry beside its kind; the client narrows the entry by the kind. */
 export type Copied =
   | { kind: "workflow"; entry: Workflow }
   | { kind: "prompt"; entry: Prompt }
@@ -128,7 +59,11 @@ export interface LibraryApi {
   createWorkflow(draft: WorkflowDraft): Promise<Workflow>;
   updateWorkflow(id: string, draft: WorkflowDraft, seenRevision: number): Promise<Workflow>;
   deleteWorkflow(id: string): Promise<void>;
-  runWorkflow(id: string, values: Record<string, string>, where: { thread_id: string } | { project_id: string }): Promise<{ terminal_id: string }>;
+  /**
+   * `where` is one of a thread and a project (a project runs in its latest thread). `ackGrants` is exactly the list a `409 confirm_required`
+   * named, never a stored or guessed one; a first run sends none.
+   */
+  runWorkflow(id: string, values: Record<string, string>, where: { thread_id: string } | { project_id: string }, ackGrants?: readonly ProfileGrant[]): Promise<{ terminal_id: string }>;
   createPrompt(draft: PromptDraft): Promise<Prompt>;
   updatePrompt(id: string, draft: PromptDraft, seenRevision: number): Promise<Prompt>;
   deletePrompt(id: string): Promise<void>;
@@ -140,4 +75,6 @@ export interface LibraryApi {
   removeKey(setId: string, key: string): Promise<{ name: string; present: boolean }>;
   suggestions(projectId: string, signal?: AbortSignal): Promise<Suggestions>;
   copySuggestion(projectId: string, file: SuggestionFile, index: number): Promise<Copied>;
+  /** Person write. `dryRun` answers what would be created, renamed or refused and writes nothing. Over `import_bytes` is `400 invalid_input`. */
+  importLibrary(document: unknown, dryRun: boolean): Promise<ImportAnswer>;
 }

@@ -15,6 +15,9 @@
   flex-direction: column;
   padding: 0 28px 24px;
 }
+.pulls-bulk b {
+  font-weight: 500;
+}
 .pulls-bulk {
   display: flex;
   align-items: center;
@@ -335,32 +338,33 @@
 .pull-row-actions {
   position: absolute;
   top: 50%;
-  right: 4px;
+  /* Over the Comments cell, left of Updated, which stays readable. */
+  right: 66px;
   display: flex;
   justify-content: flex-end;
-  gap: 2px;
-  padding-left: 8px;
+  gap: 6px;
+  padding-left: 10px;
   border-radius: var(--radius-sm);
   transform: translateY(-50%);
 }
-/* The row paints its own hover colour; the cluster stays clear so no patch shows on it. */
+/* The cluster takes the row's own hover colour, so the cells under it do not show through. */
 .pull-rows > li:hover .pull-row-actions,
 .pull-rows > li:focus-within .pull-row-actions {
-  background: transparent;
+  background: linear-gradient(var(--color-rowHover), var(--color-rowHover)), var(--color-surface);
 }
 .pull-rows > li {
   position: relative;
 }
-.pull-row-actions .icon-btn {
+.pull-row-actions > * {
   opacity: 0;
 }
-.pull-rows > li:hover .pull-row-actions .icon-btn,
-.pull-rows > li:focus-within .pull-row-actions .icon-btn,
-.pull-row-actions .icon-btn:focus-visible {
+.pull-rows > li:hover .pull-row-actions > *,
+.pull-rows > li:focus-within .pull-row-actions > *,
+.pull-row-actions > *:focus-visible {
   opacity: 1;
 }
 @media (pointer: coarse) {
-  .pull-row-actions .icon-btn {
+  .pull-row-actions > * {
     opacity: 1;
   }
 }
@@ -889,29 +893,47 @@
    nothing, so the grid has no gap for it either). */
 .pulls-table[data-no-reviewers] {
   --c-rev: ;
+  --c-rev-n: ;
 }
 .pulls-table[data-no-review] {
   --c-yours: ;
+  --c-yours-n: ;
 }
 .pulls-table[data-no-reviewers] :is(.h-reviewers, .pull-reviewers-cell),
 .pulls-table[data-no-review] :is(.h-yours, .pull-yours-cell, .pull-skel-review) {
   display: none;
 }
 
-/* Narrow: columns go in the order Updated, Comments, Reviewers; then Checks keeps only its icon. */
+/* Narrow: columns go in the order Updated, Comments; then Checks keeps only its icon and Reviewers and Your review take
+   their narrow tracks (the list at 900 px, pr-list-narrow-900); then Reviewers goes. A container query styles what is
+   inside the container, never the container itself, so the tracks are set on the header and the rows, which are the grids. */
 .pulls-table {
   container: pulls / inline-size;
+  --c-rev-n: 96px;
+  --c-yours-n: 130px;
 }
-@container pulls (max-width: 859px) {
-  .pulls-table {
+.h-checks {
+  display: inline-flex;
+  align-items: center;
+}
+.h-checks-icon {
+  display: none;
+}
+@container pulls (max-width: 759px) {
+  .pulls-head,
+  .pull-rows > li {
     --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px;
   }
   .h-age {
     display: none;
   }
+  .pull-row-actions {
+    right: 4px;
+  }
 }
-@container pulls (max-width: 779px) {
-  .pulls-table {
+@container pulls (max-width: 699px) {
+  .pulls-head,
+  .pull-rows > li {
     --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours);
   }
   .h-comments,
@@ -919,18 +941,17 @@
     display: none;
   }
 }
-@container pulls (max-width: 699px) {
-  .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-yours);
+@container pulls (max-width: 639px) {
+  .pulls-head,
+  .pull-rows > li {
+    --pulls-cols: 24px minmax(0, 1fr) 36px var(--c-rev-n) var(--c-yours-n);
   }
-  .h-reviewers,
-  .pull-reviewers-cell {
+  .h-checks-word,
+  .pull-more:has(+ .pull-rword) {
     display: none;
   }
-}
-@container pulls (max-width: 559px) {
-  .pulls-table {
-    --pulls-cols: 24px minmax(0, 1fr) 28px var(--c-yours);
+  .h-checks-icon {
+    display: inline;
   }
   .pull-res-word {
     position: absolute;
@@ -939,6 +960,16 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+}
+@container pulls (max-width: 579px) {
+  .pulls-head,
+  .pull-rows > li {
+    --pulls-cols: 24px minmax(0, 1fr) 36px var(--c-yours-n);
+  }
+  .h-reviewers,
+  .pull-reviewers-cell {
+    display: none;
   }
 }
 

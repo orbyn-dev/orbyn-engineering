@@ -402,6 +402,7 @@ test("the pull requests page lists and filters", async ({ page }) => {
   await page.getByRole("menuitemradio", { name: /^(?!All projects)/ }).first().click();
   await page.getByLabel("Search pull requests").fill("label:nothing ");
   await expect(page.getByText(/^No pull requests in .+ match these filters\.$/)).toBeVisible();
+  await expect(page.getByText("No pull requests", { exact: true })).toBeVisible();
 });
 
 test("Reading folds the sidebar away on a wide window, but a narrow home is still the thread list", async ({ page }) => {

@@ -35,10 +35,10 @@ function DetailRowsButton() {
 }
 
 /** A whole number with its unit beside it, saved when the field loses focus. */
-function NumberWithUnit({ value, unit, label, save, disabled }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean }) {
+function NumberWithUnit({ value, unit, label, save, disabled, min = 1 }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean; min?: number }) {
   return (
     <span className="unit-field">
-      <input type="number" min={1} aria-label={label} disabled={disabled} defaultValue={typeof value === "number" ? value : ""}
+      <input type="number" min={min} aria-label={label} disabled={disabled} defaultValue={typeof value === "number" ? value : ""}
         onBlur={(event) => {
           const next = Number(event.target.value);
           if (Number.isFinite(next) && event.target.value !== "" && next !== value) save(next);
@@ -171,6 +171,8 @@ export function GeneralSection() {
       },
       unitRow("automatic_git_fetch_minutes", settingsLabel("general-git-fetch-interval-minutes"), "Background git fetch period"),
       unitRow("provider_health_refresh_minutes", settingsLabel("general-provider-health-interval-minutes"), "How often providers are checked"),
+      { key: "crew_turn_budget", title: settingsLabel("general-crew-turn-budget"), description: "Turns each crew may spend. Once spent, no new Crew task starts; running tasks finish. 0 is no budget.",
+        render: (value, save, control) => <NumberWithUnit value={value} unit="turns" min={0} label={settingsLabel("general-crew-turn-budget")} save={save} disabled={control.disabled} /> },
       { key: "enable_provider_update_checks", title: settingsLabel("general-check-providers-for-updates") },
       { key: "keep_awake_during_runs", title: settingsLabel("general-keep-the-computer-awake-during-runs"), description: "Desktop app. The display can still sleep." },
       { key: "add_project_base_directory", title: settingsLabel("general-base-directory"), description: "Where new projects are created",

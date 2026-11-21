@@ -7,7 +7,6 @@ import { plain, scrubValue } from "./model";
 
 /** What each refusal means, in this page's own words. The service's text is used only for a code this page does not know, and only after the value is taken out of it. */
 const OWN_TEXT = new Map<string, string>([
-  ["keychain_unavailable", "The keychain is not available, so the value can’t be saved on this computer."],
   ["keychain_blocked", "The keychain is locked or the prompt was cancelled. Unlock it, then try again."],
   ["keychain_failed", "The keychain could not finish. Try again."],
   ["key_refused", "That variable name is refused or is no longer in the set."],
@@ -26,7 +25,7 @@ const OWN_TEXT = new Map<string, string>([
  * - the answer is `{name, present}` and nothing about the value is shown back: no length, no first or last characters.
  * One click, one write: a second Enter or click while the write is in flight does nothing.
  */
-export function ValueForm({ setId, keyName, replacing, onDone, onCancel }: { setId: string; keyName: string; replacing: boolean; onDone(): void; onCancel(): void }) {
+export function ValueForm({ setId, keyName, replacing, onDone, onPlanned, onCancel }: { setId: string; keyName: string; replacing: boolean; onDone(): void; /** The service has no keychain here: the set is Planned, with the service’s message. Not an error. */ onPlanned(message: string): void; onCancel(): void }) {
   const field = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const [hasText, setHasText] = useState(false);
@@ -48,7 +47,9 @@ export function ValueForm({ setId, keyName, replacing, onDone, onCancel }: { set
       await libraryApi().setKey(setId, keyName, value);
       onDone();
     } catch (error) {
-      if (error instanceof ApiFailure) {
+      if (error instanceof ApiFailure && error.code === "keychain_unavailable") {
+        onPlanned(plain(scrubValue(error.message, value), 200) || "There is no usable keychain on this computer yet, so values cannot be saved.");
+      } else if (error instanceof ApiFailure) {
         const own = OWN_TEXT.get(error.code);
         setProblem(own ?? `Couldn’t save the value. ${plain(scrubValue(error.message, value), 160)}`);
       } else {

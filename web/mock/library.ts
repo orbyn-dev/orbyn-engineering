@@ -2,24 +2,25 @@
  * MOCK of the library routes of docs/execution-profiles-and-library.md, Part 2, for tests and the dev-only preview (`#/preview/library`),
  * which install it through `setLibraryApi`. The app's own client is the real HTTP one in src/features/library/api.ts. Fixtures follow
  * the Engineer frames `workflow-*`. It refuses what the doc says the service refuses: `name_taken`, `revision_conflict`,
- * `library_limit`, `key_refused`, `invalid_input`, `keychain_unavailable`, `keychain_blocked`, `folder_untrusted`. Environment values
+ * `library_limit`, `key_refused`, `invalid_input`, `keychain_unavailable`, `keychain_blocked`, `folder_untrusted`, and `409 confirm_required` on a run (grants `env_values` and `untrusted_source`, set names with key names; the ack is stored on the entry until its command or parameters change). Environment values
  * are held in a private map that no read returns, as the real keychain does: `present` is the only thing a read says.
  */
 import { ApiFailure } from "../src/api/client.ts";
-import type { Copied, EnvSet, EnvSetDraft, LibraryApi, LibraryLimits, LibrarySummary, Param, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft } from "../src/features/library/contract.ts";
+import type { Copied, EnvSet, EnvSetDraft, ImportAnswer, LibraryApi, LibraryLimits, LibrarySummary, Param, ProfileGrant, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft } from "../src/features/library/contract.ts";
 
 const NOW = "2026-11-22T00:00:00Z";
 const stamp = { revision: 1, created_at: NOW, updated_at: NOW };
+const local = { source: "local", needs_ack: false } as const;
 
 export function libraryFixtures(): { workflows: Workflow[]; prompts: Prompt[]; envSets: EnvSet[] } {
   const pkg: Param = { name: "package", label: "Package", kind: "choice", default: "auth", required: true, choices: ["auth", "web", "docs"] };
   return {
     workflows: [
-      { id: "01jw0000000000000000000001", name: "Test one package", description: "Runs the tests for one package", command: "npm test -- {{package}}", params: [pkg], env_set_ids: [], ...stamp },
-      { id: "01jw0000000000000000000002", name: "Prune merged branches", description: "Deletes local branches that are already merged", command: "git branch --merged | grep -v main | xargs git branch -d", params: [], env_set_ids: [], ...stamp },
+      { id: "01jw0000000000000000000001", name: "Test one package", description: "Runs the tests for one package", command: "npm test -- {{package}}", params: [pkg], env_set_ids: [], ...local, ...stamp },
+      { id: "01jw0000000000000000000002", name: "Prune merged branches", description: "Deletes local branches that are already merged", command: "git branch --merged | grep -v main | xargs git branch -d", params: [], env_set_ids: [], ...local, ...stamp },
     ],
     prompts: [
-      { id: "01jp0000000000000000000001", name: "Standup summary", description: "Summarises yesterday’s commits", body: "Summarise the commits since {{since}} in three lines.", params: [{ name: "since", label: "Since", kind: "text", default: "yesterday", required: true }], ...stamp },
+      { id: "01jp0000000000000000000001", name: "Standup summary", description: "Summarises yesterday’s commits", body: "Summarise the commits since {{since}} in three lines.", params: [{ name: "since", label: "Since", kind: "text", default: "yesterday", required: true }], source: "local", ...stamp },
     ],
     envSets: [
       { id: "01je0000000000000000000001", name: "work-laptop", description: "", keys: [{ name: "API_BASE", present: true }, { name: "API_TOKEN", present: false }], keychain: "ok", status: "stored", ...stamp },
@@ -29,7 +30,7 @@ export function libraryFixtures(): { workflows: Workflow[]; prompts: Prompt[]; e
 
 export function suggestionFixtures(): Suggestions {
   return {
-    workflows: [{ file: "workflows.json", index: 0, name: "Start dev server", description: "Starts the app on a port", command: "PORT={{port}} npm run dev", params: [{ name: "port", label: "Port", kind: "text", default: "5173", required: true }], env_set_ids: [] }],
+    workflows: [{ file: "workflows.json", index: 0, name: "Start dev server", description: "Starts the app on a port", command: "PORT={{port}} npm run dev", params: [{ name: "port", label: "Port", kind: "text", default: "5173", required: true }], env_set_names: [] }],
     prompts: [{ file: "prompts.json", index: 0, name: "Review a diff for open redirects", description: "Asks the engine to check a change", body: "Review {{diff}} for open redirects.", params: [{ name: "diff", label: "Diff", kind: "choice", default: "this branch", required: true, choices: ["this branch", "working tree"] }] }],
     env_sets: [{ file: "env-sets.json", index: 0, name: "staging", description: "", keys: ["API_URL", "DEPLOY_TOKEN"] }],
     problems: [{ file: "workflows.json", index: 3, code: "invalid_input" }],
@@ -57,10 +58,11 @@ const STATUS: Record<string, [number, string]> = {
   library_limit: [409, "The library is full for this kind."],
   key_refused: [409, "That variable name is refused."],
   invalid_input: [400, "Check the highlighted field."],
-  keychain_unavailable: [503, "The keychain is not available."],
+  keychain_unavailable: [503, "There is no usable keychain on this computer yet, so values cannot be saved."],
   keychain_blocked: [503, "The keychain is locked or the prompt was cancelled."],
   keychain_failed: [502, "The keychain could not finish."],
   folder_untrusted: [403, "This folder is not trusted yet."],
+  confirm_required: [409, "Confirm what this run grants before it starts."],
   not_found: [404, "That item is not in the library any more."],
 };
 
@@ -112,7 +114,7 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       await wait(); preflight();
       if (taken(workflows, draft.name, null)) refuse("name_taken");
       limit(workflows, init.limits?.workflows ?? PINNED_LIMITS.workflows);
-      const one: Workflow = { ...draft, name: draft.name.trim(), id: nextId("01jwn"), ...stamp };
+      const one: Workflow = { ...draft, name: draft.name.trim(), id: nextId("01jwn"), ...local, ...stamp };
       workflows.set(one.id, one); writes.push(`workflow.create:${one.name}`); return one;
     },
     async updateWorkflow(id, draft, seen) {
@@ -120,22 +122,32 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       const one = workflows.get(id) ?? refuse("not_found");
       if (seen !== one.revision) refuse("revision_conflict");
       if (taken(workflows, draft.name, id)) refuse("name_taken");
-      const next = bump({ ...one, ...draft, name: draft.name.trim() });
+      // An edit to the command or the parameters drops the recorded ack of a non-local entry; a rename does not. The source stays.
+      const changed = draft.command !== one.command || JSON.stringify(draft.params) !== JSON.stringify(one.params);
+      const next = bump({ ...one, ...draft, name: draft.name.trim(), needs_ack: one.source !== "local" && (one.needs_ack || changed) });
       workflows.set(id, next); writes.push(`workflow.update:${next.name}`); return next;
     },
     async deleteWorkflow(id) { await wait(); preflight(); workflows.delete(id); writes.push(`workflow.delete:${id}`); },
-    async runWorkflow(id, values, where) {
+    async runWorkflow(id, values, where, ackGrants = []) {
       await wait(); preflight();
       const one = workflows.get(id) ?? refuse("not_found");
       fill(one.command, one.params, values);
-      writes.push(`workflow.run:${id}:${"thread_id" in where ? `thread=${where.thread_id}` : `project=${where.project_id}`}`);
+      const attached = one.env_set_ids.flatMap((setId) => { const set = sets.get(setId); return set ? [set] : []; });
+      const needed: ProfileGrant[] = [...(attached.length > 0 ? ["env_values" as const] : []), ...(one.source !== "local" && one.needs_ack ? ["untrusted_source" as const] : [])];
+      // The ack must match exactly what the run needs: a missing code and an extra one are both `confirm_required`.
+      if (needed.length !== ackGrants.length || needed.some((grant) => !ackGrants.includes(grant))) {
+        const [status, message] = STATUS.confirm_required!;
+        throw new ApiFailure("confirm_required", message, status, { grants: needed, env_sets: attached.map((set) => ({ name: set.name, keys: set.keys.map((key) => key.name) })) });
+      }
+      if (needed.includes("untrusted_source")) workflows.set(id, { ...one, needs_ack: false });
+      writes.push(`workflow.run:${id}:${"thread_id" in where ? `thread=${where.thread_id}` : `project=${where.project_id}`}${ackGrants.length > 0 ? `:ack=${[...ackGrants].join("+")}` : ""}`);
       return { terminal_id: "term-1" };
     },
     async createPrompt(draft: PromptDraft) {
       await wait(); preflight();
       if (taken(prompts, draft.name, null)) refuse("name_taken");
       limit(prompts, init.limits?.prompts ?? PINNED_LIMITS.prompts);
-      const one: Prompt = { ...draft, name: draft.name.trim(), id: nextId("01jpn"), ...stamp };
+      const one: Prompt = { ...draft, name: draft.name.trim(), id: nextId("01jpn"), source: "local", ...stamp };
       prompts.set(one.id, one); writes.push(`prompt.create:${one.name}`); return one;
     },
     async updatePrompt(id, draft, seen) {
@@ -183,6 +195,25 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       writes.push(`key.remove:${setId}:${key}`);
       return { name: key, present: false };
     },
+    async importLibrary(document, dryRun): Promise<ImportAnswer> {
+      await wait(); preflight();
+      const body = typeof document === "object" && document !== null ? (document as Record<string, unknown>) : {};
+      const lines: ImportAnswer["lines"] = [];
+      let created = 0; let renamed = 0; let refused = 0;
+      for (const [kind, key] of [["workflow", "workflows"], ["prompt", "prompts"], ["env_set", "env_sets"]] as const) {
+        const list = Array.isArray(body[key]) ? (body[key] as { name?: unknown }[]) : [];
+        list.forEach((entry, index) => {
+          const name = typeof entry?.name === "string" ? entry.name.trim() : "";
+          if (name === "") { refused += 1; lines.push({ kind, index, outcome: "refused", code: "invalid_input" }); return; }
+          const all = kind === "workflow" ? workflows : kind === "prompt" ? prompts : sets;
+          const clash = taken(all as Map<string, { id: string; name: string }>, name, null);
+          if (clash) renamed += 1; else created += 1;
+          lines.push({ kind, index, outcome: clash ? "renamed" : "created", name: clash ? `${name} (2)` : name });
+        });
+      }
+      if (!dryRun) writes.push(`import:${created}+${renamed}`);
+      return { dry_run: dryRun, problems: [], created, renamed, refused, lines };
+    },
     async suggestions() {
       await wait();
       if (init.suggestions === "untrusted") return refuse("folder_untrusted");
@@ -192,8 +223,8 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
       await wait(); preflight();
       const found = init.suggestions && init.suggestions !== "untrusted" ? init.suggestions : suggestionFixtures();
       // The entry's own file and index name it; an index counts dropped entries too, so it is not a position in the served array.
-      if (file === "workflows.json") { const one = found.workflows.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found"); return { kind: "workflow", entry: await this.createWorkflow({ name: one.name, description: one.description, command: one.command, params: one.params, env_set_ids: [] }) }; }
-      if (file === "prompts.json") { const one = found.prompts.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found"); return { kind: "prompt", entry: await this.createPrompt({ name: one.name, description: one.description, body: one.body, params: one.params }) }; }
+      if (file === "workflows.json") { const one = found.workflows.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found"); const created = await this.createWorkflow({ name: one.name, description: one.description, command: one.command, params: one.params, env_set_ids: one.env_set_names.flatMap((name) => [...sets.values()].filter((set) => set.name === name).map((set) => set.id)) }); const entry: Workflow = { ...created, source: "repo", needs_ack: true }; workflows.set(entry.id, entry); return { kind: "workflow", entry }; }
+      if (file === "prompts.json") { const one = found.prompts.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found"); const created = await this.createPrompt({ name: one.name, description: one.description, body: one.body, params: one.params }); const entry: Prompt = { ...created, source: "repo" }; prompts.set(entry.id, entry); return { kind: "prompt", entry }; }
       const one = found.env_sets.find((entry) => entry.file === file && entry.index === index) ?? refuse("not_found");
       return { kind: "env_set", entry: await this.createEnvSet({ name: one.name, description: one.description, keys: one.keys }) };
     },
