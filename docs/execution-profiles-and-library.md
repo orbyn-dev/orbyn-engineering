@@ -5,7 +5,7 @@ prompts and environment sets. Both are local and on this device. Neither needs a
 
 This file is the contract. The stores and routes are built against it, and so is the web UI (the profile picker, the
 Settings pages and the library panel). Change it by pull request, and say so to whoever builds on the part you change.
-Status: **contract decided by the lead.** No route, table or keychain item below exists yet. The web side is built hidden against mocks and shows only once the service answers: Part 1 (profiles) in `web/src/features/profiles` on `GET /api/profiles`, and Part 2 (the library) in `web/src/features/library` on `GET /api/library`.
+Status: **contract decided by the lead.** Part 1 (profiles) is built in the service: the `profiles` and `profile_applications` tables, the routes and the Person classes. No Part 2 route, table or keychain item exists yet. The web side is built hidden against mocks and shows only once the service answers: Part 1 in `web/src/features/profiles` on `GET /api/profiles` (the list answer is a bare array, as below), and Part 2 (the library) in `web/src/features/library` on `GET /api/library`.
 
 Owner rulings this file carries:
 
@@ -212,7 +212,13 @@ Errors for the family: `400 invalid_input` (field named, value never echoed), `4
 `409 run_active` when a thread's engine would change during a run (the model and mode alone change from the next turn).
 
 Audit: each Person write adds a row before the effect, with ids and names only (`profile.created`, `profile.changed`,
-`profile.deleted`, `profile.applied`).
+`profile.deleted`, `profile.applied`). Clearing a thread's profile (`profile_id: null`) adds `profile.cleared`.
+
+Built behaviour the sketch leaves open:
+
+- A crew keeps no engine or permission mode of its own yet, so an apply to a crew writes the Autopilot mode (the same table as `PUT /api/crew/autopilot/mode`) and records the copied engine, builder-default model and permission mode in its application row only.
+- Availability maps a signed-out engine to `cannot_start`; a sign-in that could not be confirmed does not block. `unmanaged` only labels. `disabled` is an engine turned off in Settings or for the thread's project.
+- Apply changes the thread's model only and leaves effort and options (precedence rule 2). An engine switch takes that engine's remembered selection, then the tier's model, and builds the handoff as the engine switch route does.
 
 Adding the routes also means, per the classes.rs rule: one row in `PERSON`, one in `ENFORCED`, one in
 `web/src/api/personKey.ts`, and a row for every route in `tests/routes.json`.

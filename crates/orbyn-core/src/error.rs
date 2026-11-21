@@ -163,6 +163,16 @@ pub enum CoreError {
     /// A stored record that fails its own checks, or a read that cannot finish: the answer is an error, never a guess (rule 7).
     #[error("{0}")]
     Unreadable(String),
+    /// A refusal that has its own status and stable code, such as an execution profile's `confirm_required`. `detail`
+    /// is `null` or a small object a client reads without parsing the message; it never holds a secret or a value
+    /// the person typed.
+    #[error("{message}")]
+    Refused {
+        status: u16,
+        code: &'static str,
+        message: String,
+        detail: serde_json::Value,
+    },
     #[error("{0}")]
     Internal(String),
     /// A stored row a person can repair (reset it, then enter it again). Server-side data, so `internal` and 500, but unlike
@@ -221,7 +231,9 @@ impl CoreError {
             Self::Gone(_) => "gone",
             Self::Stale(_) => "stale",
             Self::TaskEnded => "task_ended",
-            Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
+            Self::Account { code, .. }
+            | Self::PatternRefused { code, .. }
+            | Self::Refused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
@@ -289,6 +301,7 @@ impl CoreError {
             | Self::Stale(_)
             | Self::InvalidTransition { .. } => 409,
             Self::Gone(_) => 410,
+            Self::Refused { status, .. } => *status,
             Self::UpdateUnavailable(_)
             | Self::Unsupported(_)
             | Self::UnsupportedOption(_)
@@ -390,6 +403,17 @@ impl CoreError {
                 message,
                 detail,
             } => Self::PatternRefused {
+                code,
+                message: message.clone(),
+                detail: detail.clone(),
+            },
+            Self::Refused {
+                status,
+                code,
+                message,
+                detail,
+            } => Self::Refused {
+                status: *status,
                 code,
                 message: message.clone(),
                 detail: detail.clone(),

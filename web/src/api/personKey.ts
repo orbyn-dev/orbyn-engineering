@@ -173,6 +173,12 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/issues/start-thread"],
   ["POST", "/api/threads/{id}/issue-links"],
   ["POST", "/api/threads/{id}/issue-links/remove"],
+  // Execution profiles (docs/execution-profiles-and-library.md, Part 1): every write is Person-class. The reads and `POST /api/profiles/check` are Local.
+  ["POST", "/api/profiles"],
+  ["PATCH", "/api/profiles/{id}"],
+  ["DELETE", "/api/profiles/{id}"],
+  ["PUT", "/api/threads/{id}/profile"],
+  ["POST", "/api/crew/profile/apply"],
 ];
 
 /**
@@ -206,12 +212,6 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/devices/{id}/actions"],
   // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.
   ["POST", "/api/threads/{id}/transcripts"],
-  // Execution profiles (docs/execution-profiles-and-library.md, Part 1): every write is Person-class. The reads and `POST /api/profiles/check` are Local.
-  ["POST", "/api/profiles"],
-  ["PATCH", "/api/profiles/{id}"],
-  ["DELETE", "/api/profiles/{id}"],
-  ["PUT", "/api/threads/{id}/profile"],
-  ["POST", "/api/crew/profile/apply"],
   // The personal library (same doc, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
   ["POST", "/api/library/workflows"],
   ["PATCH", "/api/library/workflows/{id}"],
