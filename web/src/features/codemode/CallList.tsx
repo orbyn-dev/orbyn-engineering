@@ -22,7 +22,7 @@ const SAY: Partial<Record<CallStatus, string>> = {
   declined: "Declined",
   expired: "Expired",
   refused: "Refused",
-  interrupted: "In flight when the core restarted",
+  interrupted: "Running when Orbyn restarted",
   failed: "Failed",
   unknown: "Unknown",
 };

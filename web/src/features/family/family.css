@@ -1,0 +1,163 @@
+/* The thread family: header chip and line, the tree, the panel tab (Engineer Designs t3gap-family-*). */
+.fam-pop {
+  display: flex;
+  flex-direction: column;
+  margin: 1px;
+}
+.fam-head {
+  padding: 6px 10px 8px;
+  color: var(--color-muted);
+  font-size: var(--text-meta);
+}
+.fam-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fam-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+.fam-row:hover {
+  background: var(--color-hover);
+}
+.fam-row[aria-current="true"] {
+  background: var(--color-selected);
+}
+.fam-row:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+.fam-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.fam-title b {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fam-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-chip);
+  color: var(--color-textSoft);
+  font-size: var(--text-label);
+}
+.fam-quiet,
+.fam-engine,
+.fam-status {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
+.fam-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+}
+.fam-status[data-kind="failed"] {
+  color: var(--color-danger);
+}
+.fam-status[data-kind="waiting"] {
+  color: var(--color-text);
+}
+.fam-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-blueSolid);
+}
+.fam-engine {
+  grid-column: 1;
+}
+.fam-pop[data-sheet] .fam-row,
+.pulls-sheet-body .fam-row {
+  padding-block: 12px;
+}
+.fam-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-chip);
+  color: var(--color-text);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fam-chip > svg {
+  color: var(--color-muted);
+}
+.fam-chip[data-pressed] {
+  background: var(--color-selected);
+}
+.fam-chip:focus-visible {
+  outline: 2px solid var(--color-focus);
+}
+.page-sub .fam-chip {
+  margin-top: 6px;
+}
+.fam-line a {
+  max-width: 28ch;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--color-borderStrong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fam-line a:hover {
+  text-decoration-color: currentColor;
+}
+.fam-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+}
+.fam-note {
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-muted);
+  font-size: var(--text-small);
+}
+.fam-note b {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.fam-skel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+.fam-skel {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--color-chip);
+}

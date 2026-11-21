@@ -61,6 +61,8 @@ beforeEach(() => {
   useConnection.setState({ offline: false, serviceDown: false });
   vi.spyOn(pullsApi, "detail");
   vi.spyOn(pullsApi, "checks").mockResolvedValue(checks);
+  vi.spyOn(pullsApi, "breakdown").mockResolvedValue({ files: 1n, added: 1n, modified: 0n, deleted: 0n, renamed: 0n, additions: 3n, deletions: 0n });
+  vi.spyOn(pullsApi, "linkedThreads").mockResolvedValue([]);
   vi.spyOn(pullsApi, "files").mockResolvedValue([
     { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: null, viewed: false },
   ]);
@@ -324,6 +326,16 @@ describe("one pull request as a page", () => {
     await show(detail());
     const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
     expect(tabs).toEqual(["Summary", "Guide", "Conversation · 3", "Files changed · 2", "Checks · 4"]);
+  });
+
+  it("shows the change breakdown and the linked threads on the Summary, and asks for both once", async () => {
+    vi.mocked(pullsApi.linkedThreads).mockResolvedValue([{ id: "t9", project_id: "p", title: "Fix login redirect", engine: "claude", worktree: null, active_run: null, last_run_state: "completed", updated_at: new Date().toISOString() } as never]);
+    await show(detail());
+    expect(screen.getByText("Change breakdown")).toBeInTheDocument();
+    expect(screen.getByText("Linked threads · 1")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Fix login redirect/ })).toBeInTheDocument();
+    expect(pullsApi.breakdown).toHaveBeenCalledWith("p", 142, expect.anything());
+    expect(pullsApi.linkedThreads).toHaveBeenCalledTimes(1);
   });
 
   it("chooses the merge method and options from the Merge method menu", async () => {

@@ -1,15 +1,23 @@
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../../ui/controls";
-import type { HostCause, HostErrorKind, HostState } from "./contract";
-import { CHIPS } from "./hostText";
+import { type HostCause, type HostErrorKind, type HostState, type Chip, chipFor, plain } from "../../enginehost";
 import "./engineHost.css";
 
 const LOOP = "[Circular error cause]";
 
+/** A chip drawn from its label and tone, for a state that is not a host state (a gap). */
+export function HostPill({ chip }: { chip: Chip }) {
+  return (
+    <span className={chip.tone === "plain" ? "set-pill dot" : `set-pill ${chip.tone}${chip.spin ? "" : " dot"}`}>
+      {chip.spin ? <Loader2 size={11} className="spin" aria-hidden /> : null}{chip.label}
+    </span>
+  );
+}
+
 /** The state chip: green only for Running, blue (with a spinner) for a wait, red for what failed, plain for the rest. */
 export function HostChip({ state }: { state: HostState }) {
-  const chip = CHIPS[state];
+  const chip = chipFor(state);
   return (
     <span className={chip.tone === "plain" ? "set-pill dot" : `set-pill ${chip.tone}${chip.spin ? "" : " dot"}`}>
       {chip.spin ? <Loader2 size={11} className="spin" aria-hidden /> : null}{chip.label}
@@ -54,4 +62,4 @@ export function useToggle(): [boolean, () => void] {
 }
 
 /** The words for a failed write: the error's own message, never anything the person typed or the service stored. */
-export const reasonOf = (failure: unknown): string => (failure instanceof Error && failure.message ? failure.message : "Something went wrong.");
+export const reasonOf = (failure: unknown): string => (failure instanceof Error && failure.message ? plain(failure.message, 300) : "Something went wrong.");

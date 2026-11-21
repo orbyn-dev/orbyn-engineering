@@ -19,7 +19,8 @@ import { FeedbackAction, hasFeedback, UpdateAction, useCustomModels } from "./Pr
 import type { InstanceStore } from "./ProviderInstances";
 import { patchInstance } from "./providerInstanceData";
 import { EngineHostBanner, EngineHostCard } from "../engineHost/HostCard";
-import { SignInStorageRow } from "../engineHost/SignInStorage";
+import { KeyStorageRow } from "../engineHost/KeyStorage";
+import { EngineGapCard } from "../engineHost/NeedsAttention";
 
 function AddModelDialog({ onClose, add, disabled, error }: { onClose(): void; add(id: string, label: string): Promise<boolean>; disabled: boolean; error: string | null }) {
   const [id, setId] = useState("");
@@ -146,10 +147,11 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
           {signIn && engine.sign_in_command ? <CopyCommand command={engine.sign_in_command} label="Copy sign-in command" /> : null}
           {engine.auth === "logged_out" ? <Button small busy={checking} onClick={() => void recheck()}>Check again</Button> : null}
         </SettingRow>
-        <SignInStorageRow engineId={engine.id} />
+        <KeyStorageRow engineId={engine.id} />
         <SettingRow title="Location"><code className="set-path">{engine.path ?? "Not found"}</code></SettingRow>
       </SettingGroup>
       <EngineHostCard engineId={engine.id} />
+      <EngineGapCard engine={engine} />
       {engine.installed && !engine.update_command && engine.manual_hint && !engine.compatibility ? <p className="setting-line-desc">{engine.manual_hint}</p> : null}
       {engine.installed && !opencode ? <CodeModeSetting engine={engine} /> : null}
       {engine.installed ? (engine.auth === "logged_out"

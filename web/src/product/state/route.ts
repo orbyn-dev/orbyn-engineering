@@ -64,6 +64,8 @@ export type Route =
       id?: string;
     }
   | { name: "usage" }
+  /** The Welcome page: open or clone a project, connect a tracker, pick the engine, go back to a project. */
+  | { name: "welcome" }
   | { name: "skills"; skill?: string }
   | { name: "tasks" }
   /** Crew Preview: drawn only while the service says Crew is on. */
@@ -110,6 +112,8 @@ export function routeHref(route: Route): string {
       return `#/trust/${enc(route.projectId)}${route.threadId ? `/${enc(route.threadId)}` : ""}`;
     case "usage":
       return "#/usage";
+    case "welcome":
+      return "#/welcome";
     case "skills":
       return route.skill === undefined ? "#/skills" : `#/skills/${enc(route.skill)}`;
     case "tasks":
@@ -189,6 +193,8 @@ export function parseRoute(hash: string): Route {
       return first ? { name: "trust", projectId: first, threadId: second ?? null } : { name: "home" };
     case "usage":
       return { name: "usage" };
+    case "welcome":
+      return { name: "welcome" };
     case "skills":
       return first ? { name: "skills", skill: first } : { name: "skills" };
     case "tasks":

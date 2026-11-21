@@ -33,17 +33,18 @@ import { Button, IconButton, LinkButton } from "../../ui/controls";
 import { Empty, ErrorState, Loading, NarrowBack } from "../../product/ui/states";
 import { PanelHost, TerminalBar, TerminalDrawerBody } from "../panels";
 import { threadRunState } from "../workspace";
-import { RelatedThreads } from "./RelatedThreads";
 import { Composer } from "./composer/Composer";
 import { DetailsPopover } from "./details/DetailsPopover";
 import { ThreadHeaderMenu } from "./ThreadHeaderMenu";
 import { ArchivedBanner, CompactingStep, useThreadChip } from "./ThreadStates";
+import { FamilyChip, FamilyLine, FamilyPanel } from "../family";
 import { IssueChip } from "../issues";
 import { ReposChip } from "../repos";
 import { PullChip } from "./PullChip";
 import { composerSettled, useComposerDock } from "./heroTransition";
 import { runningTools } from "../../product/timeline/timeline";
 import { SideChatPanel } from "./SideChatPanel";
+import { openSideChat } from "./sideChat";
 import { SubagentBar } from "./SubagentBar";
 import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
@@ -99,15 +100,15 @@ export function TopBar({
               {project.name}
             </span>
           ) : null}
+          <FamilyLine thread={thread} />
           {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
-        {narrow ? <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /></> : null}
+        {narrow ? <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></> : null}
       </div>
-      <RelatedThreads thread={thread} />
       <GitActions thread={thread} />
       {branch ? <BranchShortcut thread={thread} /> : null}
       <div className="layout-toggles" role="group" aria-label="Layout">
-        {narrow ? null : <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /></>}
+        {narrow ? null : <><ReposChip thread={thread} /><IssueChip thread={thread} /><PullChip thread={thread} /><FamilyChip thread={thread} /></>}
         <Button small tone="quiet" className="topbar-details" data-details-toggle aria-pressed={detailsShown} aria-haspopup="dialog" icon={<Info size={16} aria-hidden />} onClick={onToggleDetails}>
           Details
         </Button>
@@ -501,7 +502,7 @@ export function ThreadView({ id }: { id: string }) {
           closing={!panelOpen}
           moves={panelMoves}
           maximized={maximized}
-          sideChat={<SideChatPanel parent={thread} />}
+          content={{ side: <SideChatPanel parent={thread} />, linked: <FamilyPanel thread={thread} onStart={() => void openSideChat(thread, null)} /> }}
           onToggleMaximize={() => setMaximized(!maximized)}
           onReturn={() => {
             setMaximized(false);

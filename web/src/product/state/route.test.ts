@@ -5,6 +5,7 @@ describe("routes", () => {
   it.each<Route>([
     { name: "home" },
     { name: "tasks" },
+    { name: "welcome" },
     { name: "crew", tab: "flow", task: `sha256:${"a".repeat(64)}` },
     { name: "crew", tab: "flow", task: "task_1-a.b" },
     { name: "skills" },

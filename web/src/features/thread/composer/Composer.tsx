@@ -24,6 +24,7 @@ import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
+import { ComposerHostLine, useHostLine } from "../../enginehost";
 import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
 import { useThreadSettings } from "./useThreadSettings";
@@ -157,7 +158,9 @@ export function Composer({
   const compacting = useCompacting(thread);
   const ready = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
   // The first-run notice holds Send until it is answered; Continue sends the message itself once it has been.
-  const canSend = ready && !gate.noticeOpen;
+  // An engine host that is unavailable with no driver to fall back to turns Send off; the typed message stays in the box.
+  const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine);
+  const canSend = ready && !gate.noticeOpen && !hostLine.sendBlocked;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -219,7 +222,7 @@ export function Composer({
   };
 
   const send = async (followUp: "default" | "opposite" = "default", noticeAnswered = false) => {
-    if (!(noticeAnswered ? ready : canSend)) return false;
+    if (hostLine.sendBlocked || !(noticeAnswered ? ready : canSend)) return false;
     const typed = draft;
     const prompt = promptWithChips(draft, chips);
     const serviceCommand = /^\/(compact|goal)(?:\s|$)/.exec(typed.trim());
@@ -454,6 +457,7 @@ export function Composer({
       />
       <QuestionCard threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
       {gate.cards(() => void send("default", true))}
+      {hostLine.line ? <ComposerHostLine line={hostLine.line} /> : null}
       <ComposerBanners engine={engine} />
       <CompactOffer threadId={thread.id} engine={thread.engine} active={busy} items={log?.items ?? []} />
       {runId !== null && runId === stoppedRun ? <StopNotice threadId={thread.id} runId={runId} /> : null}

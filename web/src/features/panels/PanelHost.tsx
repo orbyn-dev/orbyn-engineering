@@ -34,6 +34,7 @@ const WAITING_LINE: Partial<Record<BuiltinTab, string>> = {
   diff: "The diff comes back when the service does.",
   activity: "Activity shows again as soon as it is back.",
   side: "Your side chats open again as soon as it is back. Nothing is lost.",
+  linked: "Linked threads show again as soon as it is back.",
   tools: "The tools list comes back when the service does.",
   review: "Your comments are kept here and show again when it is back.",
 };
@@ -179,7 +180,7 @@ export function PanelHost({
   closing,
   moves,
   maximized,
-  sideChat = null,
+  content = {},
   onToggleMaximize,
   onReturn,
 }: {
@@ -189,8 +190,7 @@ export function PanelHost({
   /** False while the panel is part of the page as it first appeared. */
   moves: boolean;
   maximized: boolean;
-  /** The Side chat tab's content; the thread owns it, so it is handed in. */
-  sideChat?: ReactNode;
+  content?: { side?: ReactNode; linked?: ReactNode }; // The Side chat and Linked threads tabs: the thread owns both
   onToggleMaximize(): void;
   onReturn(): void;
 }) {
@@ -557,7 +557,7 @@ export function PanelHost({
           </div>
         ) : (
           <div id={`context-${domId(tab)}`} role="tabpanel" aria-labelledby={`${TAB_ID}${domId(tab)}`} className="tabpanel">
-            <PanelBody tab={tab} thread={thread} sideChat={sideChat} />
+            <PanelBody tab={tab} thread={thread} content={content} />
           </div>
         )}
       </div>

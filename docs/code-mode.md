@@ -367,6 +367,14 @@ own reply. Swap the client for the generated types and routes when the backend m
   rules never read it.
 - **Search and describe.** Drawn as rows in the thread, from the reply read leniently (the exact reply shapes are not in this document).
 - **Untrusted text.** The script, logs, results and call previews are React text, never markup or links, never logged, never opened.
+- **Lost runs.** The run card shows the core's `lost` message as it is, with no text of its own around it, and the calls the record
+  holds. The row note is "lost", and the footer says "Lost · 4 calls recorded", or "Lost · 4 calls done, 1 unknown" when a call was
+  running at the restart (that call reads "Running when Orbyn restarted" and is never counted as done). The three frames (restart,
+  a replay that could not match, a call in flight) differ only in the message and the calls.
+- **Runs list.** `CodeRunsList` draws the per-thread list (id, status, times, call count, the first 120 characters of the script,
+  "Runs are kept for 7 days") from a guessed `GET /api/threads/:id/code-runs` (`web/mock/codemode.ts` only) and opens a run as the same
+  block the thread draws. It sits under the Tools tab, not in a tab of its own, because where it opens is not settled. There is no Stop.
+  An unknown status is shown as Unknown and cannot be opened.
 - **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
   the Orbyn group when an engine reports them.
 - **When the real route lands.** `PUT /api/engines/:id/code-mode` changes what an engine may call, so it is a Person-class write

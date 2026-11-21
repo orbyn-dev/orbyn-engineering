@@ -343,3 +343,60 @@
   border-radius: 50%;
   background: currentColor;
 }
+
+/* The list of runs for a thread (Engineer frame codemode-runs-list). */
+.cm-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+.cm-runs-h {
+  padding: 4px 2px;
+  color: var(--color-muted);
+  font-size: var(--text-caption);
+}
+.cm-run {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.cm-run-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.cm-run-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cm-run-status.fail {
+  color: var(--color-danger);
+}
+.cm-run-status.wait {
+  color: var(--color-warning, var(--color-muted));
+}
+.cm-run-when,
+.cm-runs-foot {
+  color: var(--color-muted);
+  font-size: var(--text-label);
+}
+.cm-run-head {
+  overflow: hidden;
+  color: var(--color-textSoft);
+  font-size: var(--text-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-runs-foot {
+  margin: 4px 2px 0;
+}

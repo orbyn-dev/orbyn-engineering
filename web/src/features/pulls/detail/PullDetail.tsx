@@ -21,12 +21,12 @@ import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
 import { pullsApi } from "../api";
 import { checkConnectionNow, useConnectionKind } from "../../../product/state/connection";
-import { useThreadPulls } from "../model/pullStore";
 import { forgeName, numberLabel } from "../../../product/pulls/labels";
 import { useVisibleProjects } from "../../../product/state/workspace";
 import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
+import { ChangeBreakdownCard, LinkedThreadsCard } from "./PullLinkedCards";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
 import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, reviewAskedOf, reviewWords } from "../model/pullModel";
 import { Checks, Description, People } from "./PullSummaryCards";
@@ -66,10 +66,6 @@ export function PullDetail({
   const forges = useAsync("pulls:forges", (signal) => pullsApi.forges(signal), { refreshOn: topics("forges") });
   const connection = useConnectionKind();
   const projects = useVisibleProjects();
-  const pullUrl = detail.data?.pull.url;
-  // The address says which project's pull request, which a number alone does not.
-  const linkedThread = useThreadPulls((store) => (pullUrl ? Object.entries(store.byThread).find(([, entry]) => entry.pulls?.some((one) => one.url === pullUrl))?.[0] : undefined));
-  const threadTitle = useWorkspace((state) => (linkedThread ? state.threads[linkedThread]?.title : undefined));
   /** The review card is open, and what was sent once it was. */
   const [reviewing, setReviewing] = useState(false);
   const [requested, setRequested] = useState<string | null>(null);
@@ -508,6 +504,7 @@ export function PullDetail({
                 {description}
               </div>
               {requested !== null ? <RequestedChangesEntry note={requested} /> : null}
+              <ChangeBreakdownCard projectId={projectId} number={number} />
               <FilesCard files={fileList.data ?? []} additions={additions === null ? null : Number(additions)} deletions={deletions === null ? null : Number(deletions)} />
             </div>
             <div className="pull-side">{sideColumn()}</div>
@@ -534,12 +531,8 @@ export function PullDetail({
             {reviewWords(pull, current.reviewers, viewers, requested !== null || mine?.viewer_review_state === "changes_requested", approvals)}
           </Row>
           <Row name="Conflicts">{conflictWords(mergeable)}</Row>
-          {threadTitle ? (
-            <Row name="Thread">
-              <a href={`#/threads/${linkedThread}`}>{threadTitle}</a>
-            </Row>
-          ) : null}
         </div>
+        <LinkedThreadsCard projectId={projectId} number={number} />
         <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing} />
         <MergeRow
           method={mergeMethod}
