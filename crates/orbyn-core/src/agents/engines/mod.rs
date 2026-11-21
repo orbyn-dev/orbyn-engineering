@@ -479,6 +479,17 @@ impl EngineManager {
             .collect())
     }
 
+    /// The `enable_provider_update_checks` setting: whether engine CLI versions and model
+    /// lists are looked up on their own. Asked-for refreshes ignore it.
+    pub fn provider_checks_on(&self) -> bool {
+        crate::settings::preferences::stored_preference(
+            &self.store,
+            "enable_provider_update_checks",
+            None,
+        )
+        .map_or(true, |value| value != false)
+    }
+
     pub async fn statuses(&self, refresh: bool) -> Result<Vec<EngineStatus>> {
         let mut cached = self.statuses.lock().await;
         if refresh || cached.is_none() {
@@ -593,6 +604,13 @@ impl EngineManager {
     async fn read_models(&self, id: &str, refresh: bool) -> Result<EngineModels> {
         let mut cache = self.models.lock().await;
         let driver = self.driver(id)?;
+        // With provider checks off, a kept list is not read again on its own.
+        if !refresh
+            && let Some(cached) = cache.get(id)
+            && !self.provider_checks_on()
+        {
+            return Ok(cached.models.clone());
+        }
         if !refresh
             && let Some(cached) = cache.get(id)
             && cached.key.is_some()
