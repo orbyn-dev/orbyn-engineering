@@ -3,11 +3,14 @@
 Design note for the escape backend (beta item 4k, U2). Status: PRs 1 to 4 are built, the web screens of PR 5 (5a-5c) are built, and
 capacity-pressure retention (issue #686, built in #757, migration 58) is built, as the as-built sections below record.
 Not built: the report and per-area counts backend (so `escape-dashboard` and the two route-counts frames stay drawn), the Review
-queue that would open `escape-report`'s mark dialog, the create-check form, and the scan from the merge and revert paths. Retention
+queue that would open `escape-report`'s mark dialog and the scan from the merge and revert paths. Retention
 is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
 (`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
 the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
-previews flag.
+previews flag. **No Crew tab or Settings page links to the escape screens yet** (log, possible list, detail, settings): the designs
+draw them under a Crew "Review" tab (and `escape-settings` under Settings › Crew › Escapes) that the beta does not have, marked
+"reached another way". The entry point is a design question and nothing here invents one. The reach through the app is therefore
+unchanged; see "Propose a check" below for the one act that is now wired inside the detail page.
 
 ## What an escape is
 
@@ -60,7 +63,7 @@ against the engine, model and area copied from the merge **when logged**. A hard
 ## Screens and the reads they need
 
 All are `#/preview/crew/<frame>` in `web/src/features/crew/escape/`, reachable only in a build with the dev-only previews flag
-(`__ORBYN_PREVIEWS__`). Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
+(`__ORBYN_PREVIEWS__`); no Crew tab, Settings page or other screen opens them in the app (no entry is drawn, see above). Since PR 5 (see "As built: PR 5, web screens") every frame except the six drawn ones below reads the real
 service. The table keeps the read each frame needs; `web/mock/` has no escape data. Frame ids: Crew Designs v20 in `orbyn-designs`
 (path in `docs/match-kit.md`).
 
@@ -356,14 +359,23 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
 
 - **Live (real reads).** `escape-log`, `-empty`, `-low-sample` and `-error` (5a) and `escape-limit` (5b) on `GET /escapes`;
   `escape-possible` (5a) on `GET /escapes/possible`; `escape-detail`, `-detail-tooling`, `-confirmed`, `-dismissed` and
-  `-gap` (5a), and the eight `escape-check-*` frames (5b), on `GET /escapes/{id}`. A check's accept, approve, retry and
+  `-gap` (5a), and the eight `escape-check-*` frames (5b), on `GET /escapes/{id}`. A check's propose, accept, approve, retry and
   withdraw send the person's own check routes, and its retry, withdraw and approve are that page with its dialog opened by a
-  click. `escape-settings` (5c) reads `GET /escapes/thresholds` (read only); `escape-narrow-window` and `-narrow-panel`
+  click. **Propose a check** (`live/propose.tsx`) is the design's `escape-create-check` dialog on the real `POST /escapes/{id}/check`:
+  the button on a confirmed escape with no check (or whose check was withdrawn, and whose gap is not a tooling gap) opens a dialog
+  on `web/src/ui/Dialog.tsx` with the escape's name, merge, what it counts against and its gap (read only), and the person's own
+  new test file, what it asserts, how it runs and an optional commit it must pass on (left out of the body when empty, so the
+  service uses the revert or fix it recorded). Nothing is sent before "Propose the check"; the body carries `project` and `seen`
+  (the escape's state and gap and the check's state); the dialog is busy while the write is in flight, one press sends one write,
+  and a refusal (`stale`, a path the rules refuse, a tooling gap) shows the service's own words with what was typed kept. A proposal only
+  writes a row: accepting stays the only act that starts a worker. The path rules are the service's, so the form checks none.
+  The Planned pill on the button is gone; the model row and the tooling-gap proposal keep theirs. `escape-settings` (5c) reads `GET /escapes/thresholds` (read only); `escape-narrow-window` and `-narrow-panel`
   (5c) are the same log read in the design's 640 px window and its 320 px side panel.
 - **Still drawn samples, six.** `escape-report` (the Review item's mark dialog: the beta has no Review queue to open it from,
   and its how-found and the fix fields are Planned), `escape-dashboard` and `escape-route-counts` / `-shifted` (the report
   and per-area counts routes are not built; every figure is Not measured, never a zero), and `escape-create-check*` (the
-  create form is a later batch). They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
+  v20 sample with the Review queue behind it; its dialog is built on the escape's own page, see Propose a check above).
+  They are drawn at v79 with Planned pills, and `escape-create-check*` stays at v20.
 - **Where it lives.** `web/src/features/crew/escape/live/screens.tsx` maps each live frame to its read, and
   `LiveEscapeLog.tsx`, `LiveEscapePossible.tsx`, `LiveEscapeDetail.tsx`, `live/check.tsx` and `LiveEscapeSettings.tsx`
   draw them over `live/api.ts` and `live/useEscapes.ts`; `screens.ts` splits live from drawn and `names.ts` lists every
@@ -380,7 +392,7 @@ PR 1 to PR 4 already serve; 22 of the 28 frame ids in `web/src/features/crew/esc
   draws the frame's first four cards, the narrow window the page's rows. Rate, gap and check counts read Not measured while the
   report route does not exist.
 - **Not built.** No report or counts backend; a merged escape's "Merged to main" timeline row and the escape page's as-of line are absent because
-  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the create-check form is a drawn sample.
+  the detail read carries no `as_of` (the log read does, and its page shows it) and no read carries the merge row; the Review queue item that would open Propose a check is not in the beta, so the dialog opens from the escape's own page.
 
 ## Decisions (owner)
 
