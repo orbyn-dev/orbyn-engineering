@@ -8,14 +8,14 @@ comment is historical and must not be used to claim a batch.
 
 ## Current pickup check
 
-Checked 19 November 2026 UTC against product revision
-[`38ece38f`](https://github.com/orbyn-dev/orbyn-engineering/tree/38ece38f0417186d0f41b091b9c8e2a99be45bc5).
+Checked 21 November 2026 UTC against product revision
+[`c4f264c40`](https://github.com/orbyn-dev/orbyn-engineering/commit/c4f264c40) plus the parity truth pass that unticks I14, J19 and K52.
 All 26 batch issues are still closed. #187 remains the reconciliation index,
 not a claim that the unfinished rows are complete.
 
-At that revision, `python scripts/count-parity.py` reports 713 rows and 466
-source checkboxes ticked. Of 533 included rows, 396 are declared checked, 100
-partial, 33 open and 4 not doable; 180 are excluded and none have unresolved
+At that revision, `python scripts/count-parity.py` reports 713 rows and 463
+source checkboxes ticked. Of 533 included rows, 384 are declared checked, 109
+partial, 36 open and 4 not doable; 180 are excluded and none have unresolved
 scope. These are checklist declarations, not fresh runtime qualification.
 
 The four successor issues named in the historical pickup paragraph now stand as follows:
@@ -56,9 +56,9 @@ claims below remain the 7 November snapshot, not the current pickup queue.
 ## Remaining work and evidence
 
 [Parity rows](parity.md) retain the exact `remaining:`, scope and refusal notes.
-`python scripts/count-parity.py` reports 713 rows, 467 source checkboxes ticked,
-and 534 included rows: 396 declared checked, 101 partial, 33 open and 4 not doable.
-There are 179 excluded and zero unresolved-scope rows. Issue closure changes none
+`python scripts/count-parity.py` reports 713 rows, 463 source checkboxes ticked,
+and 533 included rows: 384 declared checked, 109 partial, 36 open and 4 not doable.
+There are 180 excluded and zero unresolved-scope rows. Issue closure changes none
 of those declarations and supplies no new runtime evidence.
 
 - **Native/manual qualification:** #186 records packaged macOS and Windows
