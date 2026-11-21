@@ -269,6 +269,85 @@ async fn a_report_is_stamped_by_the_core() {
     assert_eq!(refusal["code"], "not_authorized");
 }
 
+/// The brief's turns are a budget like its minutes: a failure with every turn spent stops the
+/// task with the same `budget` reason and the same plain result, not the loop guard's stop.
+#[tokio::test]
+async fn a_task_stops_when_the_briefs_turns_are_spent() {
+    // Every turn leaves the same file outside the lease, so the check fails the same way and
+    // the loop guard would only act after the turns are gone.
+    let w = world(
+        true,
+        Arc::new(|_, root| {
+            bad(root);
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "budget": { "turns": 2, "minutes": 30 } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    w.until_state(&id, "stopped").await;
+
+    let task = w.task(&id);
+    assert_eq!(
+        (task.state.as_str(), task.stop_reason.as_deref()),
+        ("stopped", Some("budget"))
+    );
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    assert_eq!(
+        (run.attempts, run.failures),
+        (2, 1),
+        "the second failure spent the last turn, before the loop guard counted a second failure"
+    );
+    let results = w.core.store.crew_results(&id).unwrap();
+    let last = results.last().unwrap();
+    assert_eq!(last.stop_reason, Some(StopReason::Budget));
+    assert!(
+        last.summary.contains("turn budget"),
+        "the result says what ran out: {}",
+        last.summary
+    );
+    assert_eq!(
+        last.usage.turns,
+        Some(2),
+        "the result counts the turns spent"
+    );
+    assert_eq!(
+        w.sent_to(&w.worker(&id)).len(),
+        2,
+        "the brief and one retry, and no new turn once the turns are spent"
+    );
+}
+
+/// A turn that passes on the last allowed one is not stopped by the budget: the stop is for a
+/// task with no turn left, not for one that finished inside it.
+#[tokio::test]
+async fn a_pass_on_the_last_turn_is_not_stopped_by_the_turn_budget() {
+    let w = world(
+        true,
+        Arc::new(|_, root| {
+            good(root);
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "budget": { "turns": 1, "minutes": 30 } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    w.until_state(&id, "passed").await;
+    assert_eq!(w.core.store.crew_run(&id).unwrap().unwrap().attempts, 1);
+}
+
 /// A key with one more check after the shared three, so a kind can be driven end to end.
 fn key_with(check: serde_json::Value) -> serde_json::Value {
     let mut key = key();

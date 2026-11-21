@@ -302,19 +302,79 @@ async fn a_request_of_the_wrong_shape_leaves_no_canary_in_a_log() {
     }
 }
 
-/// KNOWN ISSUE (Engineering 2 tracks it): `ApiJson` puts serde's rejection text in the 400 body,
-/// and for an unknown enum value that text names the value it was sent. It goes back to the
-/// caller that sent it, never to a log, so it is not a leak to another party, but a value typed
-/// into the wrong field is echoed. Not fixed here (tests only); this test states the property
-/// that should hold and is ignored until the issue is closed.
+/// A request of the wrong shape is refused with a 400 that names the field and never the value:
+/// serde's own rejection text quotes the value it refused, and an account body can carry a
+/// password, an emailed code or a second-factor code. The text goes back to the caller that sent
+/// it, so a value typed into the wrong field must not be echoed.
 #[tokio::test]
-#[ignore = "known issue: the 400 body for a refused value echoes it (Engineering 2 tracks it)"]
 async fn the_body_of_a_request_of_the_wrong_shape_carries_no_canary() {
-    let (password, action, body, _logged) = wrong_shape("logging-shape-body").await;
+    let (password, action, body, logged) = wrong_shape("logging-shape-body").await;
     for value in [&password, &action] {
         assert!(
             !body.contains(value.as_str()),
             "the answer echoes a value: {body}"
         );
+        assert!(
+            !logged.contains(value.as_str()),
+            "a value of the refused request is in a log line: {}",
+            line_with(&logged, value)
+        );
     }
+    assert!(
+        body.contains("action"),
+        "the answer should name the refused field: {body}"
+    );
+}
+
+/// The emailed or second-factor code sent where the body wants another type. The 400 names the
+/// field; neither the response nor a log line carries the code or a piece of it.
+#[tokio::test]
+async fn a_code_of_the_wrong_type_is_not_echoed_or_logged() {
+    let _ = captured();
+    let served = serve("logging-code-shape", AccountGate::LocalOnly, false).await;
+    // An eight-character emailed code in its numeric form: serde's rejection quotes the number.
+    let code = 48_190_273_u64;
+    let shown = code.to_string();
+    let mut answers: Vec<Value> = Vec::new();
+    for path in [
+        "/api/account/sign-up/code",
+        "/api/account/sign-in/second-factor",
+    ] {
+        let (status, body) = served.call("POST", path, json!({ "code": code })).await;
+        assert_eq!(status, 400, "{path}: {body}");
+        assert_eq!(body["code"], "invalid_input", "{path}: {body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("code")),
+            "{path}: the answer should name the field: {body}"
+        );
+        answers.push(body);
+    }
+    // No piece of the value is in an answer.
+    for body in &answers {
+        assert!(!body.to_string().contains(&shown), "{body}");
+        for fragment in [&shown[..4], &shown[4..]] {
+            assert!(
+                !body.to_string().contains(fragment),
+                "the answer carries a piece of the code: {body}"
+            );
+        }
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let logged = text();
+    assert!(
+        !logged.is_empty(),
+        "the capture saw nothing: it is not attached"
+    );
+    assert!(
+        !logged.contains(&shown),
+        "the code is in a log line: {}",
+        line_with(&logged, &shown)
+    );
+    let events: String = orbyn_core::operations::diagnostics::recent_events()
+        .iter()
+        .map(|e| format!("{} {} {}\n", e.level, e.target, e.message))
+        .collect();
+    assert!(!events.contains(&shown), "the code is in the kept warnings");
 }

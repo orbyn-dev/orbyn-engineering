@@ -781,7 +781,8 @@ async fn secret_scan(site: &Site<'_>, description: String, started: Instant) -> 
 
 /// Runs a `repo_required` check: the repository's own checks from `.orbyn/crew.json`, in order,
 /// as the merge queue reads them. The file is read at the commit the task started from, so a
-/// worker's edit in its checkout cannot lower the bar. Every check must exit 0; the check passes
+/// worker's edit to that file cannot lower the bar (the commands themselves still run in the checkout the worker left, so
+/// files they call are guarded only by the key's `protected_paths`). Every check must exit 0; the check passes
 /// when the repository declares none.
 async fn repo_required(
     params: &NamedParams,
@@ -796,18 +797,14 @@ async fn repo_required(
             started,
         );
     }
-    let commit = match site.base {
-        Some(base) => base.to_owned(),
-        None => match super::classes::base_commit(site.worktree).await {
-            Some(commit) => commit,
-            None => {
-                return error(
-                    description,
-                    "The repository's commit cannot be read, so its own checks cannot run.",
-                    started,
-                );
-            }
-        },
+    // No starting commit is an error: the checkout's own HEAD is a commit the worker controls, so reading the file there would
+    // let a worker lower the bar by committing a `crew.json` with no checks.
+    let Some(commit) = site.base.map(str::to_owned) else {
+        return error(
+            description,
+            "The task's starting commit is not recorded, so the repository's own checks cannot be read at it.",
+            started,
+        );
     };
     let checks = match super::autopilot::merge::repo_checks(site.worktree, &commit).await {
         Ok(checks) => checks,

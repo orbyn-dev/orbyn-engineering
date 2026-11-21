@@ -170,12 +170,12 @@ backoff timer wakes it.
 
 **Merge.** The client gives conflicts back as plain records. The app merges them field by field with `orbyn-sync`:
 per-field hybrid logical clock, the larger stamp wins, ties break by canonical JSON. **The apply path applies only the allowlist.** Today `check` in
-`preferences.rs` accepts all 62 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
+`preferences.rs` accepts all 63 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
 through as unknown. So a peer could send `default_project_scripts`, which would run commands on the person's other
 computers, and a compromised device could use that. The rule: the sync apply path (a private path that does not queue
 fields again) applies **only the 11 allowlisted keys plus keybindings**, each through `check` and the per-key rules
 under [No escalation across devices](#no-escalation-across-devices). Every other incoming field is kept and passed
-on unchanged, never applied locally. *Required test:* each of the 51 catalog keys that is not allowlisted, arriving from
+on unchanged, never applied locally. *Required test:* each of the 52 catalog keys that is not allowlisted, arriving from
 a peer, is not applied (the local value and the outbox are unchanged), and is still kept for the next upload.
 
 **Status over the shell event stream.** The worker publishes status on the existing `GET /api/shell/events` stream
@@ -264,7 +264,7 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (11 of the 62 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+**Synced keys** (11 of the 63 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
 Engineering 1, narrowed by the [rule below](#what-never-syncs). Only the person-level value of a key syncs.
 
 | Group | Keys |
@@ -298,7 +298,7 @@ Twenty-eight keys, by decision:
 
 ### Not in v1, may sync later
 
-The other 23 keys are not synced in v1, so 11 + 28 + 23 = 62:
+The other 24 keys are not synced in v1, so 11 + 28 + 24 = 63:
 
 | Key | Reason |
 | --- | --- |
@@ -308,6 +308,7 @@ The other 23 keys are not synced in v1, so 11 + 28 + 23 = 62:
 | `project_title_instructions`, `review_guide_instructions`, `source_control_writing_style` | Free-text prompts; wait for the prompts record |
 | `enable_provider_update_checks`, `continue_threads_after_update`, `warm_next_turn`, `preview_profiles` | Per-computer behaviour or local browser data |
 | `compact_idle_threads`, `idle_compaction`, `snooze_limited_threads`, `auto_resume_limited_threads`, `task_skip_near_limit`, `poll_pull_requests` | Thread and polling behaviour; not requested for v1 |
+| `crew_turn_budget` | A crew's spending limit; held back with the personal Crew defaults (D4) |
 
 Also never synced in Phase 1: the secret-redaction settings (Settings › Secrets: which formats are hidden, the person's own patterns and the projects whose agents read values as they are). They sit outside the preference catalog, so the allowlist never reaches them, and turning one off widens what an agent reads; `ServerSettings` (service-wide: auto-settle, snooze presets, model prices and aliases,
 title instructions), every per-project override, the Crew ledger, transcripts, diffs, environment-set values,
@@ -424,9 +425,9 @@ now and does not wait for them.
 3. "Confirm it's you" is built and enforced inside `orbynd`, with a route-table guard so no new account-changing route
    can skip it.
 4. Controls 1 to 7 and 5b of the [threat model](account-threat-model.md) are built and their checks pass:
-   - the allowlist-only apply test for all 51 non-allowlisted keys, and the drift tests that tie the allowlist to the
+   - the allowlist-only apply test for all 52 non-allowlisted keys, and the drift tests that tie the allowlist to the
      Engine's never-sync list (`account/tests/never_sync.rs`): no allowlisted key is one the Engine refuses, the
-     Engine's 28 never-sync keys are exactly the catalog keys it refuses, the other 23 non-allowlisted keys are named
+     Engine's 28 never-sync keys are exactly the catalog keys it refuses, the other 24 non-allowlisted keys are named
      so a new key forces a decision, and a peer record carrying a never-sync key is refused on apply through the real
      adapter;
    - the keybinding test;

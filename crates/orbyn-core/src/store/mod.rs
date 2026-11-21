@@ -93,7 +93,7 @@ pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
     BackgroundRow, BackgroundRunRow, NewBackground, PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX,
-    RunEnd,
+    RunEnd, Unwound,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
@@ -125,7 +125,8 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use orbyn_contracts::{
-    AgUiEvent, AuditEvent, Project, Run, RunState, Thread, ThreadEvent, ThreadLifecycle, Worktree,
+    AgUiEvent, AuditEvent, Project, Run, RunState, Thread, ThreadEvent, ThreadFamily,
+    ThreadLifecycle, Worktree,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 use serde::Serialize;
@@ -140,7 +141,7 @@ pub use hub::EventHub;
 pub use queue::{PullGuideWrite, WatchRow, WatchUpdate};
 pub use runs::{Admission, Recovery};
 pub(crate) use setup::{NewSetup, SetupState};
-use threads::thread_family;
+use threads::thread_family_ids;
 pub use threads::{LifecycleRules, LimitStop, TickReport, default_settings};
 
 const ACTIVE_STATES: &str = "('admitted', 'starting', 'running', 'awaiting_approval')";
@@ -424,6 +425,32 @@ impl Store {
         })
     }
 
+    /// Records that the project's folder is now a Git repository. The caller ran Git;
+    /// this only changes the row, keeping its metadata revision current for clients.
+    pub fn mark_project_git(&self, id: &str) -> Result<Project> {
+        self.commit(|tx, _| {
+            let project = tx
+                .query_row("SELECT * FROM projects WHERE id = ?1", [id], project_row)
+                .optional()?
+                .ok_or_else(|| CoreError::NotFound("project".into()))?;
+            ensure_live(tx, &project)?;
+            if project.is_git {
+                return Ok(project);
+            }
+            let revision =
+                crate::project::project_icon_override::revision(&project.metadata_revision)?
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        CoreError::Invalid("Project metadata revision is exhausted.".into())
+                    })?;
+            tx.execute(
+                "UPDATE projects SET is_git=1, metadata_revision=?2 WHERE id=?1",
+                params![id, revision],
+            )?;
+            Ok(tx.query_row("SELECT * FROM projects WHERE id=?1", [id], project_row)?)
+        })
+    }
+
     /// Every thread of a project, archived ones included.
     pub fn list_all_threads(&self, project_id: &str) -> Result<Vec<Thread>> {
         let mut threads = self.list_threads(Some(project_id), false)?;
@@ -559,6 +586,49 @@ impl Store {
         with_run_state(&conn, thread)
     }
 
+    /// The thread's whole family: the topmost thread and everything below it. The
+    /// stored edge is `parent_thread_id` (a fork, a side chat and a subagent each set
+    /// it, and `relation` names which), so any member asks for the same tree.
+    /// Archived, settled and snoozed members stay, because the family is the tree the
+    /// store holds and not a view of it.
+    pub fn thread_family(&self, id: &str) -> Result<ThreadFamily> {
+        let conn = self.reader();
+        let mut root = id.to_owned();
+        let mut walked = std::collections::BTreeSet::new();
+        // Walk to the top. A thread that changed parent in a way that made a loop
+        // would otherwise never end here.
+        loop {
+            if !walked.insert(root.clone()) {
+                return Err(CoreError::Invalid(
+                    "A thread cannot be its own ancestor.".into(),
+                ));
+            }
+            let parent: Option<Option<String>> = conn
+                .query_row(
+                    "SELECT parent_thread_id FROM threads WHERE id = ?1",
+                    [&root],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match parent {
+                None => return Err(CoreError::NotFound("thread".into())),
+                Some(Some(parent)) => root = parent,
+                Some(None) => break,
+            }
+        }
+        let mut threads = Vec::new();
+        for member in thread_family_ids(&conn, &root)? {
+            let thread =
+                conn.query_row("SELECT * FROM threads WHERE id = ?1", [&member], thread_row)?;
+            threads.push(with_run_state(&conn, thread)?);
+        }
+        Ok(ThreadFamily {
+            thread_id: id.to_owned(),
+            root_thread_id: root,
+            threads,
+        })
+    }
+
     /// Live threads, or archived ones, pinned first and then by saved position.
     pub fn list_threads(&self, project_id: Option<&str>, archived: bool) -> Result<Vec<Thread>> {
         let conn = self.reader();
@@ -569,6 +639,26 @@ impl Store {
         )?;
         let threads = statement
             .query_map(params![project_id, archived], thread_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        threads
+            .into_iter()
+            .map(|thread| with_run_state(&conn, thread))
+            .collect()
+    }
+
+    /// Threads of one project that linked a pull request number, most recently changed
+    /// first. A link keeps the number but not the project, so the thread's own project
+    /// is what scopes that number to one repository.
+    pub fn threads_linked_to_pull(&self, project_id: &str, number: u64) -> Result<Vec<Thread>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT threads.* FROM threads
+             JOIN thread_pull_requests ON thread_pull_requests.thread_id = threads.id
+             WHERE threads.project_id = ?1 AND thread_pull_requests.number = ?2
+             ORDER BY threads.updated_at DESC, threads.created_at DESC",
+        )?;
+        let threads = statement
+            .query_map(params![project_id, number as i64], thread_row)?
             .collect::<Result<Vec<_>, _>>()?;
         threads
             .into_iter()
@@ -598,41 +688,7 @@ impl Store {
     /// of them has a run, because that owner still has effects in flight. Audit
     /// rows outlive the threads. Returns every deleted id.
     pub fn delete_thread(&self, id: &str, actor: &str) -> Result<Vec<String>> {
-        let deleted = self.commit(|tx, _| {
-            let family = thread_family(tx, id)?;
-            for member in &family {
-                let active: i64 = tx.query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM runs WHERE thread_id = ?1
-                         AND state IN {ACTIVE_STATES}"
-                    ),
-                    [member],
-                    |row| row.get(0),
-                )?;
-                if active > 0 {
-                    return Err(CoreError::ThreadBusy);
-                }
-            }
-            insert_audit(
-                tx,
-                &AuditRecord {
-                    actor: actor.to_owned(),
-                    action: "thread.delete".into(),
-                    target: id.to_owned(),
-                    decision: None,
-                    source: "user".into(),
-                    thread_id: Some(id.to_owned()),
-                    run_id: None,
-                    detail: serde_json::json!({ "family": family }),
-                },
-            )?;
-            let deleted = tx.execute("DELETE FROM threads WHERE id = ?1", [id])?;
-            if deleted == 0 {
-                return Err(CoreError::NotFound("thread".into()));
-            }
-            prune_scratch(tx)?;
-            Ok(family)
-        })?;
+        let deleted = self.commit(|tx, _| delete_thread_in(tx, id, actor))?;
         for member in &deleted {
             self.hub.remove(member);
         }
@@ -762,6 +818,44 @@ fn refuse_newer(conn: &Connection) -> Result<()> {
         return Err(CoreError::DatabaseTooNew { found, supported });
     }
     Ok(())
+}
+
+/// `Store::delete_thread` inside the caller's transaction, so a larger change can delete a thread in the same commit. Keeps the
+/// active-run check and the audit row. The caller removes each returned id from the hub after the commit.
+pub(crate) fn delete_thread_in(tx: &Transaction<'_>, id: &str, actor: &str) -> Result<Vec<String>> {
+    let family = thread_family_ids(tx, id)?;
+    for member in &family {
+        let active: i64 = tx.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM runs WHERE thread_id = ?1
+                 AND state IN {ACTIVE_STATES}"
+            ),
+            [member],
+            |row| row.get(0),
+        )?;
+        if active > 0 {
+            return Err(CoreError::ThreadBusy);
+        }
+    }
+    insert_audit(
+        tx,
+        &AuditRecord {
+            actor: actor.to_owned(),
+            action: "thread.delete".into(),
+            target: id.to_owned(),
+            decision: None,
+            source: "user".into(),
+            thread_id: Some(id.to_owned()),
+            run_id: None,
+            detail: serde_json::json!({ "family": family }),
+        },
+    )?;
+    let deleted = tx.execute("DELETE FROM threads WHERE id = ?1", [id])?;
+    if deleted == 0 {
+        return Err(CoreError::NotFound("thread".into()));
+    }
+    prune_scratch(tx)?;
+    Ok(family)
 }
 
 /// Forgets scratch projects with no thread left. The folders stay on disk.

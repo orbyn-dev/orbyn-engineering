@@ -22,10 +22,10 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `guard` | The secret scan (H2) and the answer-key leak check (H1) |
 | `persist` | Storing a decision with its task, after both checks |
 | `tool` | The tool list and `crew_route`, the dry-run tool |
-| `start` | `crew_start`: validates the brief and key, routes, grants the leases and runs the worker through `delegate` |
+| `start` | `crew_start`: validates the brief and key, refuses a crew that spent its turn budget, routes, grants the leases and runs the worker through `delegate` |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
-| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use |
+| `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
@@ -38,8 +38,9 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `backtest` | Reviewer backtest, pure part (slice 4n PR 1): which pull requests are eligible (merged within 180 days, at least 30 days old), the `EscapeSource` trait for outcomes (the real source, `escape_log.rs`, reads the escape log: see below), and each lane's recall and precision from 5 escapes and 10 findings, matched by file only. `replay` (PR 2) is the one part that runs: `run` replays each requested review lane or check on each eligible pull request through a `LaneRunner` (fake in tests, no live engine yet), keeps a budget of tokens per engine that is never summed or pooled (a lane stops when its own engine's budget is spent; lanes of one engine share it), records a broken lane as failed without stopping the others, stores each finding fingerprint with `caught`, `unmatched` or `no_escape`, and scores with `score`. When the escape source says Not measured the run still finishes and shows finding counts only. A request is refused if it has a builder lane, a money-like field or name, or an engine without a budget. A person starts it: no timer, startup hook or scheduler calls it, and a test fails if any other non-test code reaches it. `api` (PR 3) is the person's way in, behind the Preview flag: `crew_backtest_estimate` and `crew_backtest_report` only read; `crew_backtest_start` records the run and replays it in the background, one run at a time (a second start is refused in the same transaction that would insert it), and is refused until a live `LaneRunner` exists (none yet: tests install a fake); `crew_backtest_stop` only asks, and the run ends as stopped before its next replay. Outcomes come from the escape log through `EscapeLog` (read-only): confirmed escapes only, merged in the 30 to 180 day window and found within 30 days of their merge; the pull request is the merge's record id and the files are those the escape's fix or revert commit changed, read from git on the merge's checkout; an escape whose files cannot be read (a post-merge check or a person's mark names no commit, no checkout, git failed) is counted as unresolved beside the lane's score and never scored; a log that cannot be read whole (over its 5,000 cap, one damaged row) or that holds no escape at all is Not measured, never partial. History is the project's own Crew merges, numbered by merge record. `crew_backtest_recover` runs once when the core opens and marks a run a crash left `running` as failed, "interrupted". Scoring normalises paths (`./`, `..`, separators) and counts identical findings once. Stored by `store/crew_backtest.rs` (migration 49, ids, counts and fingerprints only) |
 | `escapes` | The escape log (slice 4k): reads (PR 1), a person's writes (PR 2, `person.rs`: mark, confirm, dismiss, gap; `Person` routes, audit first, `409 stale`, idempotent), a person's created check (PR 4, `check.rs`: propose, accept, approve, retry, withdraw; `Person` routes; only accept starts a worker, through the router; the worker may add exactly one test file (`check_paths.rs`); the proof (`check_proof.rs`) runs on a `git archive` tree, with output discarded and a time limit, confined on macOS and otherwise only after a person approves the exact change; it must fail on the escaped merge and pass on the fix; every task an accept created is recorded for good, and the merge queue's entries and `merge_blocker` refuse it unless the escape's current check names it, is `proven` and was proven on the commit being queued, through one shared guard; the tick unwinds stuck and withdrawn checks; migration 52) and the possible-escape scan (PR 3, `scan.rs`: three signals from read-only git on the project checkout, writes `possible` only, bounded, idempotent, run by the service's own tick; `possible.rs` reads `GET /escapes/possible`, which never writes). PR 1: merges that got past review and checks and were later found defective. A revert is a **possible** escape at once, written by the schema (migration 51 back-fills it and a trigger on `crew_merges` adds it with the revert); confirmed only when a person confirms or marks it (PR 2). Possible, confirmed and dismissed are always separate counts. Display only: the breaker, Router and gates never read it. Views for `GET /api/crew/escapes`, `/escapes/{id}` and `/escapes/thresholds`; thresholds (60 d, 14 d, 10 merges, 2x) are device config in `settings`. Stored by `store/crew_escapes.rs`, whose read functions are the stable API for the backtest's `EscapeSource`. See [docs/crew/escapes.md](../../../../docs/crew/escapes.md) |
 | `background` | Background crews' state: definition, strict validation, redaction, runs with spend against a budget set at creation, and the stop for the budget that queues a review. Stored in the data folder, audited, no trigger and no engine |
+| `background_start` | Run now (slice 4h, PR 1): a person starts one run of an enabled background crew by hand (the `manual` event, `Core::crew_background_run_now`). It makes the run's lead thread (the run's id is the thread's id, the `crew_id` of its tasks; no engine ever runs it and `tell_lead` skips it), stores no Autopilot mode row: a background run's merges are `off` in code, so every merge of the run waits for a person, and starts the task through `launch_crew_task` as Crew-started and Low priority, so `capacity_start_check` can pause it (the refusal is a held `background` start with key `<crew>:manual`, and the run and thread are taken back). The crew's turns and minutes are the brief's budget: minutes are the existing task timer, turns are the worker's runs, checked when a verification fails. A background worker's turn with no output fails the run (`NO_REPLY`, engine error) instead of being judged by what it leaves behind. A task's end ends the run: passed is `needs_review`; budget, repeated failure and engine error are `stopped` with that reason; anything else is `needs_review` with a plain sentence. The brief is code-owned per template (no event or repository text in it) and may write under the repository's top-level entries except `.orbyn/` and `.github/`; its checks are a file scope and a size cap, so a person reads every change. `issue_label` and `dependency_update` crews and crews that are off are refused. No listener, no daily budget, no route yet |
 | `triggers` | `.orbyn/crew.json` `background` triggers and templates, parsed and checked: kinds, budgets, engines, schedules, hidden text and name collisions. Pure policy: nothing starts, writes or calls a model |
-| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the result for the lead; a worker's run ending |
+| `settle` | Applies a judgement: pass, or retry, change of approach or stop; the budget stop for the brief's minutes or turns; the result for the lead; a worker's run ending |
 
 ## Rules to keep
 
@@ -70,6 +71,10 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   thread or messages to others (see the [bus](bus/README.md)).
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
+  A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
+- A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
+  none). There is no Settings control yet: it can be set only through the settings API for now. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
+  task is refused once the crew has spent it, and a task already running is never stopped by it.
 
 ## Known limits of Preview
 
@@ -81,6 +86,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
   the app data folder (#441).
 - An attachment tool takes a thread id; a worker may name only its own. `computer_*` and every `orbyn_*` tool
   off the allow list are refused to a worker.
+- A worker's shell command is not read, so it can still write outside its lease; the gate sees the engine's
+  file-change tools, not files a command writes (#441).
 - A key with protected paths and no record of them from the start fails closed (`needs_person`).
 
 ## Follow-ups
@@ -89,7 +96,12 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 - Evidence names HEAD as its commit; when the checkout had uncommitted changes, `does_not_prove` says so.
 - `budget.minutes` ends a task even in the middle of a turn, through a timer that holds the core weakly and
   is set again after a restart. A verification gets what is left of the budget and stops once the task has
-  been stopped. Turn limits are #438.
+  been stopped. `budget.turns` stops the next failed attempt once the worker's turns and the approvals reserved
+  against the same budget reach the brief's turns. A crew whose turn budget is spent starts no new task,
+  and a task already running is not stopped by it. The check sits in `launch_crew_task`, so `crew_start`, background
+  Run-now, escape checks, review lanes and fixes pass it. Autopilot's merge corrections (`autopilot/merge/correction.rs`)
+  call `create_crew_task` directly and are not checked: they are deterministic and spend no worker turns. A task whose
+  worker thread exists or whose first prompt is still queued counts at least one turn, so a queued start is not free.
 - Windows: the leak test (`a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker`) is
   Unix-only. On Windows a command's echo can differ in quotes and line endings, so the withholding needs its
   own test there, and a check's deadline must kill every process the check started (the process owner does;

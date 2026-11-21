@@ -53,6 +53,18 @@ function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximiz
 }
 
 describe("surface tabs", () => {
+  it("opens the file picker from the launcher and shows its configured shortcut", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.keybindings).mockResolvedValue({ rules: [{ key: "ctrl+shift+o", command: "filePicker.toggle", when: "!terminalFocus" }], issues: [] } as never);
+    useUi.setState({ palette: null });
+    panel();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    const item = await screen.findByRole("menuitem", { name: /Open file…/ });
+    await waitFor(() => expect(item).toHaveTextContent("Ctrl+Shift+O"));
+    await user.click(item);
+    expect(useUi.getState().palette).toBe("files");
+  });
+
   it("shows the open surfaces as icon-only slots, with no Pull requests tab and no Terminal tab, and the open one's name under the strip", () => {
     panel();
     expect(names()).toEqual(["Changes", "Browser", "Activity", "Side chat", "notes.md"]);
@@ -162,8 +174,8 @@ describe("surface tabs", () => {
     const user = userEvent.setup();
     panel();
     await user.click(screen.getByRole("button", { name: "Open a tab" }));
-    // Only the entries whose command already has a key show one: Changes and Browser.
-    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools"]);
+    // Only entries whose commands have keys show them.
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["ChangesCtrl+D", "BrowserCtrl+Shift+J", "Activity", "Side chat", "Tools", "Open file…Ctrl+P"]);
     await user.click(screen.getByRole("menuitem", { name: "Tools" }));
     expect(useUi.getState().panelTab).toBe("tools");
     expect(useUi.getState().panelTabsClosed).toEqual([]);

@@ -513,8 +513,21 @@ async fn secret_scans_fail_a_changed_file_holding_a_recognised_secret() {
     assert_eq!(run_check(&scan, &site).await.outcome, CheckOutcome::Error);
 }
 
+/// `repo_required` with no recorded starting commit is an error, never a read of the checkout's own HEAD.
+#[tokio::test]
+async fn repo_required_without_a_starting_commit_is_an_error() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    let repo = check(json!({ "id": "chk-repo", "kind": "repo_required",
+        "proves": "The repository's own checks pass.", "params": {} }));
+    assert_eq!(
+        run_check(&repo, &site_of(root, None)).await.outcome,
+        CheckOutcome::Error
+    );
+}
+
 /// Issue #437: `repo_required` runs the repository's own checks from `.orbyn/crew.json`, read at
-/// the commit the task started from, so a worker's edit in its checkout cannot lower the bar.
+/// the commit the task started from, so a worker's edit to that file cannot lower the bar.
 #[tokio::test]
 async fn repo_required_runs_the_repositorys_own_checks_at_the_starting_commit() {
     let dir = integrity_repo();
