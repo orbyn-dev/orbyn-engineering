@@ -34,6 +34,7 @@ impl RunManager {
         actor: &str,
     ) -> Result<Run> {
         check_prompt(prompt)?;
+        self.refuse_background_lead(thread_id)?;
         let thread = self.store.thread(thread_id)?;
         self.check_goal_action(&thread, prompt)?;
         self.attachment_files(thread_id, attachments)?;
@@ -55,6 +56,17 @@ impl RunManager {
         })?;
         self.launch(thread, run.clone(), prompt.to_owned(), attachments, &root)?;
         Ok(run)
+    }
+
+    /// The lead thread of a background crew's run runs no engine (docs/crew/background-engine-start.md): a message to it would start a
+    /// model outside the crew's budget, so it is refused here, whoever sends it.
+    fn refuse_background_lead(&self, thread_id: &str) -> Result<()> {
+        if self.store.background_run(thread_id)?.is_some() {
+            return Err(CoreError::Invalid(
+                "This thread belongs to a background crew's run and takes no messages. Start a new run with Run now.".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Retry only the immutable input and project action captured for this run.
@@ -372,6 +384,7 @@ impl RunManager {
         wanted: &ModelSelection,
     ) -> Result<QueuedMessage> {
         check_prompt(prompt)?;
+        self.refuse_background_lead(thread_id)?;
         let thread = self.store.thread(thread_id)?;
         if thread
             .lifecycle

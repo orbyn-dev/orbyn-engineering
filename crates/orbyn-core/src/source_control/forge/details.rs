@@ -22,11 +22,12 @@ pub const DETAILS_ROW_LIMIT: usize = 100;
 const DETAILS_REVIEW_LIMIT: usize = 100;
 
 /// The `PullDetails` fields one batched request supplies, by wire name.
-pub const DETAIL_FIELDS: [&str; 4] = [
+pub const DETAIL_FIELDS: [&str; 5] = [
     "created_at",
     "requested_reviewers",
     "viewer_review_state",
     "comment_count",
+    "approval_count",
 ];
 
 /// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
@@ -64,6 +65,7 @@ pub(super) fn details_query(numbers: &[u64]) -> String {
 reviewRequests(first:50){{nodes{{requestedReviewer{{__typename ...on User{{login}} \
 ...on Mannequin{{login}} ...on Team{{slug}}}}}}}} \
 latestReviews(first:50){{nodes{{state author{{login}}}}}} \
+latestOpinionatedReviews(first:100,writersOnly:true){{totalCount pageInfo{{hasNextPage}} nodes{{state}}}} \
 comments{{totalCount}} reviews(first:{DETAILS_REVIEW_LIMIT}){{totalCount pageInfo{{hasNextPage}} nodes{{comments{{totalCount}}}}}}}}"
             )
         })
@@ -110,6 +112,7 @@ pub(super) fn parse_details(
             pull.as_object()?;
             let created_at = optional(pull, "createdAt");
             let comment_count = comment_count(pull);
+            let approval_count = approval_count(pull);
             let requested_reviewers = pull
                 .pointer("/reviewRequests/nodes")
                 .and_then(Value::as_array)
@@ -146,6 +149,7 @@ pub(super) fn parse_details(
                 && requested_reviewers.is_none()
                 && viewer_review_state.is_none()
                 && comment_count.is_none()
+                && approval_count.is_none()
             {
                 return None;
             }
@@ -157,11 +161,34 @@ pub(super) fn parse_details(
                     created_at,
                     requested_reviewers,
                     comment_count,
+                    approval_count,
                     viewer_review_state,
                 },
             ))
         })
         .collect()
+}
+
+/// Approvals among the latest opinionated review of each user with write access (the
+/// count GitHub's merge box uses). Never report a partial count.
+fn approval_count(pull: &Value) -> Option<u32> {
+    let connection = pull.get("latestOpinionatedReviews")?;
+    let nodes = connection.get("nodes")?.as_array()?;
+    let total = connection.get("totalCount")?.as_u64()?;
+    if total != u64::try_from(nodes.len()).ok()?
+        || connection.pointer("/pageInfo/hasNextPage")?.as_bool()?
+    {
+        return None;
+    }
+    let mut approved = 0;
+    for node in nodes {
+        match node.get("state")?.as_str()? {
+            "APPROVED" => approved += 1,
+            "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING" => {}
+            _ => return None,
+        }
+    }
+    Some(approved)
 }
 
 pub(super) fn classify_details(

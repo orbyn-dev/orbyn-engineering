@@ -651,13 +651,25 @@ against the router. N1 reads a command word by word with the quotes off, and und
 
 **As built (slice 4f, approve once):** a command the chain denied (the lead said no, or a second key is missing) is also *held*, in memory only
 (a restart drops it, and the raw command, which may hold a secret, is never written to disk). `GET /api/crew/approvals/held` lists the holds
-with the redacted command (the answer key's text withheld; a command too long to read whole cannot be approved). The person answers from the
-app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny` and `/dismiss`. **No agent approves; a person may approve once.**
+with the redacted command, its working directory and the flags that change what runs (the answer key's text withheld; a newline, a bidi or an
+invisible character is shown as a visible mark; a hold whose text is not the command the engine would run, or is too long to read whole, cannot
+be approved). The person answers from the app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny` and `/dismiss`.
+**No agent approves; a person may approve once.**
 
-- **One command, once.** An approval is bound to a hash of the exact command text, its arguments and paths, the worker's thread and the task. It
-  covers one retry of that same request from that same thread, within 10 minutes of approving (a hold waits 10 minutes for the person), and is
-  used up by that retry. Another command, other arguments, another thread, a second retry or a late one gets nothing. A hold is decided once: a
-  racing approve and deny have exactly one winner. A hold that expired, or whose task ended, answers 410 (`gone`); one already decided answers 409.
+- **One command, once.** An approval is bound to the command text, its paths, the worker's thread, the task and the engine's whole request:
+  every field of its parameters except the engine's own bookkeeping (`itemId`, `turnId`, `threadId`, `startedAtMs`, `approvalId`, `callId`,
+  `conversationId`, `reason`, `description`, `title`, `toolCallId`, `sessionId`, `commandActions`, `parsedCmd`, `timeout`), which changes from one
+  request to the next and made a real retry never match. A field that list does not name (the working directory, the arguments, the environment,
+  an effect flag, a Codex `kind` or `environmentId`, a key an agent adds) is bound, so a retry that changes, adds or drops one gets nothing. `command`
+  is bound as the engine sent it, an argv array is never joined (`["echo","a b"]` and `["echo","a","b"]` are different), and an array with a word
+  that is empty or holds a space is not approved once, because the text a person reads could stand for either. An ACP request is bound to the kinds
+  of choice it offers, and is not approved once unless one is `allow_once`, so an approval never ends in the agent's lasting allow. It covers one
+  retry of that same request from that same thread, within 10 minutes of approving (a hold waits 10 minutes for the person), and is used up by
+  that retry. Another thread, a second retry or a late one gets nothing. The row and the dialog show the working directory, the arguments, the
+  names (never the values) of the environment overrides and the effect flags, redacted like the command. A hold is decided once: a racing approve
+  and deny have exactly one winner, in either order. A hold that expired, or whose task ended, answers
+  410 (`gone`); one already decided answers 409. A hold whose target is not the command the engine would run, or is too long to show whole,
+  answers `unreadable` and can never be approved once.
 - **Never the always-denied list.** A command on the list (N1 to N10) is never held. The list is read again when the person approves and again when the
   worker retries, so a change in between (the checkout moved to main, say) turns the approval into a refusal. A person's deny rule still wins at the gate.
 - **Proof that a person is there: local presence (Approving once: local presence).** Approving needs a grant the desktop app records after the person
@@ -665,7 +677,9 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   the service with `--parent-stdin` and a piped stdin only the shell holds (an engine gets its own piped stdin from the service, never the shell's). The flow, over newline JSON on that channel:
   1. The shell sends `presence_describe {request_id, hold_id}`. The service answers `presence_hold {request_id, hold_id, thread_id, task_id,
      command_shown, command_sha256, worker_name, task_title}` or `presence_refused {request_id, code}`. The command, the worker's name and the task's title
-     come from the service, redacted (the answer key's text withheld) and bounded, never from the web page. `command_sha256` is the hold's binding hash.
+     come from the service, redacted (the answer key's text withheld) and bounded, never from the web page. `command_sha256` is the hold's binding:
+     an HMAC-SHA256, keyed with a value this process draws at start, of the task, the thread, the kind, the command, its paths and the fields
+     that decide what runs. The ledger row carries the same value, so a reader of the ledger cannot test a guess at a short redacted command.
   2. The shell shows the dialog. When the person clicks Approve it mints a nonce (16 random bytes, hex) and sends `presence_grant {request_id, nonce,
      hold_id, thread_id, task_id, command_sha256}`. The service records one grant for the hold in memory (`PresenceBook`), only if the hold is open now
      and every bound field matches it as it stands now, and answers `presence_ready {request_id}`. The shell hands the nonce to the page only after that.
@@ -675,9 +689,10 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
      does it use the grant up and decide. A refusal at any step leaves the grant as it was; a wrong nonce does not burn it. The ledger row is
      `approved_once` with `via: "desktop_presence"` and `decided_by: "person"`.
   The strings in `presence_hold` are made for a plain-text dialog: control, invisible, bidirectional and format characters become a visible `�`,
-  a newline becomes a visible `⏎`, the command is capped at 1000 characters with `truncated` set if it was cut (the hash is of the full command), and
-  a hold that cannot be read whole is refused with `unreadable`. The shell's dialog renders all of them as plain text (no markup, no HTML, no
-  link detection) and shows them as given; it also refuses an answer that still holds a control character.
+  a newline becomes a visible `⏎`, the command is capped at 1000 characters with `truncated` set if it was cut (the binding is of the full command), and
+  a hold that cannot be read whole is refused with `unreadable`. The held list, the ledger row and the dialog all show the same escaped text, and the
+  command's reason is escaped with it. The shell's dialog renders all of them as plain text (no markup, no HTML, no link detection) and shows them as
+  given; it also refuses an answer that still holds a control character.
   Refusal codes on the shell channel: `unavailable`, `invalid`, `not_found`, `gone`, `unreadable`, `mismatch`.
   **Errors on the route:** a service started without `--parent-stdin`, or a remote one, answers `403 desktop_required`; with a desktop shell, a missing,
   wrong, used, expired or mismatched nonce is `403 presence_required`. `Origin: tauri://localhost` is not trusted for any of this.
@@ -759,7 +774,8 @@ app's window, local only: `POST /api/crew/approvals/{hold}/approve-once`, `/deny
   a remote viewer is refused, and with the Preview flag off the routes answer 404 for every method.
 - **Ledger.** Every step writes a row: `held`, `approved_once`, `denied_by_person`, `dismissed_by_person`, `hold_used` (the retry went through; the
   `allowed` row says `decided_by: person`) and `hold_ended` (it expired or its task ended). A row carries the hold id, who decided, the redacted command
-  and a `sha256:` hash of the exact request, never the raw command.
+  and an `hmac-sha256:` binding of the request's chosen fields, never the raw command. A reader who knows every bound field still cannot compute the
+  binding: the key lives only in the service process, and the holds it binds never outlive a restart.
 
 Known limits: an unauthenticated caller gets 401, not 404, on a Crew route even with the flag off, like every protected route. The
 ledger rows hold the lead's and second key's reasons but not the asker's model, a risk tier or a title; an injected text is kept as its
@@ -972,12 +988,14 @@ background crew is per device and is not shared through git. A repository's own 
   `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
   There is no route that starts a run, spends, merges or reverts.
 
-What is not built: **no trigger fires and no engine starts**, so no run exists unless the core's run functions are called (tests do; a later
-slice will). A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
+What is not built: **no trigger fires**, so a run starts only when the core's `crew_background_run_now` is called (the `manual` event of
+[the engine start](crew/background-engine-start.md), PR 1; no route calls it yet, tests do) or a test calls the run functions. That call starts one Crew
+worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
 lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
 review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
-limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a template's
-prompt and checks are not defined yet.
+limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a
+template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`); any other
+template is refused.
 
 **As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
 `background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
@@ -1168,8 +1186,8 @@ trigger refused again updates its row; when the same trigger later starts, the r
 if refused after that. At most 200 rows per project, `started` rows are dropped before `held` ones, then the oldest by last sighting. No task text and no engine
 output are stored. Nothing is retried on a timer, the refusal is still `not_authorized`, and with pausing off, for a
 person's start or for High and Medium work nothing is written. `GET /api/crew/capacity` returns them as `held`.
-Background crew runs still start no crew task (`crew_background_start_run` only records a run row), so they have no start
-path to mark Low and Crew-started yet; whoever adds one passes `Links::crew_started` with a `PausedTrigger` of kind `Background`.
+A background crew's Run now (`crew_background_run_now`, the `manual` event) starts one crew task as Low and Crew-started with a
+`PausedTrigger` of kind `Background`; `crew_background_start_run` still only records a run row, and later triggers start through the same path.
 
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and

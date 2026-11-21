@@ -118,8 +118,8 @@ async fn a_denied_command_is_held_once_and_a_retry_does_not_add_another() {
         held[0].body["bound"]
             .as_str()
             .unwrap()
-            .starts_with("sha256:"),
-        "the row names the bound hash"
+            .starts_with("hmac-sha256:"),
+        "the row names the keyed binding, never a plain digest a reader can test"
     );
 }
 
@@ -641,33 +641,59 @@ async fn dismissing_is_logged_and_a_retry_may_be_held_again() {
     ));
 }
 
-#[tokio::test]
-async fn a_racing_approve_and_deny_have_exactly_one_winner() {
-    for round in 0..8 {
-        let (w, id) = held_world().await;
-        let hold = hold_of(&w, &id, &format!("make step-{round}")).await;
-        let nonce = grant_for(&w, &hold);
-        let (approve, deny) =
-            tokio::join!(w.core.autopilot_approve_once(&hold, Some(&nonce)), async {
-                w.core.autopilot_deny_held(&hold)
-            },);
-        assert_eq!(
-            usize::from(approve.is_ok()) + usize::from(deny.is_ok()),
-            1,
-            "round {round}"
-        );
-        let state = state_of(&w, &hold);
-        assert_eq!(
-            state,
-            if approve.is_ok() {
-                State::Approved
+/// Both orders go in flight: the approve submitted first and the deny submitted first. Exactly one wins, the state is the
+/// winner's, the loser answers that the hold is decided, and one ledger row records the decision.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_racing_approve_and_deny_have_exactly_one_winner_in_either_order() {
+    for approve_first in [true, false] {
+        for round in 0..4 {
+            let (w, id) = held_world().await;
+            let hold = hold_of(&w, &id, &format!("make step-{round}")).await;
+            let nonce = grant_for(&w, &hold);
+            let approve = || {
+                let (core, hold, nonce) = (w.core.clone(), hold.clone(), nonce.clone());
+                async move { core.autopilot_approve_once(&hold, Some(&nonce)).await }
+            };
+            let deny = || {
+                let (core, hold) = (w.core.clone(), hold.clone());
+                async move { core.autopilot_deny_held(&hold) }
+            };
+            let (approve, deny) = if approve_first {
+                let (a, d) = (tokio::spawn(approve()), tokio::spawn(deny()));
+                (a.await.unwrap(), d.await.unwrap())
             } else {
-                State::Denied
+                let (d, a) = (tokio::spawn(deny()), tokio::spawn(approve()));
+                (a.await.unwrap(), d.await.unwrap())
+            };
+            assert_eq!(
+                usize::from(approve.is_ok()) + usize::from(deny.is_ok()),
+                1,
+                "approve first: {approve_first}, round {round}"
+            );
+            if approve.is_err() {
+                assert!(
+                    matches!(approve, Err(CoreError::InvalidTransition { .. })),
+                    "{approve:?}"
+                );
             }
-        );
-        let decided =
-            events(&w, &id, "approved_once").len() + events(&w, &id, "denied_by_person").len();
-        assert_eq!(decided, 1, "one ledger row for one decision");
+            if deny.is_err() {
+                assert!(
+                    matches!(deny, Err(CoreError::InvalidTransition { .. })),
+                    "{deny:?}"
+                );
+            }
+            assert_eq!(
+                state_of(&w, &hold),
+                if approve.is_ok() {
+                    State::Approved
+                } else {
+                    State::Denied
+                }
+            );
+            let decided =
+                events(&w, &id, "approved_once").len() + events(&w, &id, "denied_by_person").len();
+            assert_eq!(decided, 1, "one ledger row for one decision");
+        }
     }
 }
 
@@ -828,4 +854,425 @@ async fn two_approvals_with_the_same_nonce_racing_have_exactly_one_success() {
         assert_eq!(events(&w, &id, "approved_once").len(), 1);
         assert_eq!(w.core.presence.len(), 0);
     }
+}
+
+/// The newest open hold of a task, whatever it shows.
+fn open_hold(w: &World, id: &str) -> orbyn_contracts::AutopilotHeld {
+    w.core
+        .autopilot_held()
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|item| item.task_id == id && item.state == State::Held)
+        .expect("an open hold")
+}
+
+/// What a real retry looks like: the engine's own item id, title and description change on every request, and the command, its
+/// working directory and the flags that change what it does do not. The approval covers the second group only.
+#[tokio::test]
+async fn an_approval_matches_a_real_retry_whose_engine_ids_changed() {
+    let (w, id) = held_world().await;
+    let from = scope(&w, &id);
+    let mcp = |input: Value| {
+        let mut one = ask(ActionKind::Command, "make deploy", &[]);
+        one.detail = json!({ "tool": "Bash", "input": input });
+        one
+    };
+    let refused = w
+        .core
+        .gate
+        .request(
+            &from,
+            mcp(json!({
+                "command": "make deploy", "description": "deploy the app", "cwd": "/repo",
+                "run_in_background": false, "timeout": 120000,
+            })),
+        )
+        .await;
+    assert!(matches!(refused, Verdict::Deny(_)), "the lead said no");
+    let hold = open_hold(&w, &id);
+    let nonce = grant_for(&w, &hold.id);
+    w.core
+        .autopilot_approve_once(&hold.id, Some(&nonce))
+        .await
+        .unwrap();
+    // The retry repeats the command, its working directory and its flags; only the engine's own words changed.
+    let retry = mcp(json!({
+        "command": "make deploy", "description": "deploy the app, again", "cwd": "/repo",
+        "run_in_background": false, "timeout": 60000,
+    }));
+    assert_eq!(
+        w.core.gate.request(&from, retry).await,
+        Verdict::Allow,
+        "the one retry"
+    );
+    assert_eq!(state_of(&w, &hold.id), State::Used);
+}
+
+/// The control for the test above: dropping the engine's transient words from the binding must not drop the working directory.
+#[tokio::test]
+async fn an_approval_does_not_cover_a_retry_from_another_working_directory() {
+    let (w, id) = held_world().await;
+    let from = scope(&w, &id);
+    let at = |cwd: &str| {
+        let mut one = ask(ActionKind::Command, "make deploy", &[]);
+        one.detail = json!({ "command": "make deploy", "cwd": cwd });
+        one
+    };
+    let refused = w.core.gate.request(&from, at("/repo/app")).await;
+    assert!(matches!(refused, Verdict::Deny(_)), "the lead said no");
+    let hold = open_hold(&w, &id);
+    let nonce = grant_for(&w, &hold.id);
+    w.core
+        .autopilot_approve_once(&hold.id, Some(&nonce))
+        .await
+        .unwrap();
+    let elsewhere = w.core.gate.request(&from, at("/tmp/elsewhere")).await;
+    assert!(matches!(elsewhere, Verdict::Deny(_)), "another directory");
+    assert_eq!(state_of(&w, &hold.id), State::Approved, "still unused");
+    assert_eq!(
+        w.core.gate.request(&from, at("/repo/app")).await,
+        Verdict::Allow,
+        "the exact retry"
+    );
+}
+
+/// The fallbacks a hold can name instead of a command: Codex's reason when it has no command, an ACP title, an MCP Bash call
+/// with no command. A person cannot check what would run, so such a hold is never approved once.
+#[tokio::test]
+async fn a_fallback_target_is_held_and_never_approved_once() {
+    for (target, detail) in [
+        (
+            "needs network access",
+            json!({ "itemId": "cmd7", "threadId": "t-1", "turnId": "u-1", "reason": "needs network access" }),
+        ),
+        (
+            "List files",
+            json!({ "sessionId": "s-1", "toolCall": { "toolCallId": "c1", "title": "List files", "kind": "execute", "rawInput": {} } }),
+        ),
+        (
+            "Bash",
+            json!({ "tool": "Bash", "input": { "description": "no command given" } }),
+        ),
+    ] {
+        let (w, id) = held_world().await;
+        let mut one = ask(ActionKind::Command, target, &[]);
+        one.detail = detail;
+        let refused = w.core.gate.request(&scope(&w, &id), one).await;
+        assert!(matches!(refused, Verdict::Deny(_)), "{target}");
+        let held = open_hold(&w, &id);
+        assert!(
+            !held.readable,
+            "{target}: a person cannot read what would run"
+        );
+        let described = describe(&w, &held.id, unix_now());
+        assert_eq!(described["code"], "unreadable", "{target}");
+        // A valid grant, so the refusal comes from the readability check and not from a missing grant.
+        let nonce = fresh_nonce();
+        w.core.held_grant_for_test(&held.id, &nonce, unix_now());
+        let refused = w.core.autopilot_approve_once(&held.id, Some(&nonce)).await;
+        assert!(
+            matches!(refused, Err(CoreError::Invalid(_))),
+            "{target}: {refused:?}"
+        );
+        assert_eq!(state_of(&w, &held.id), State::Held);
+    }
+}
+
+/// An approval made while the worker is on its task branch does not let the retry through once the checkout is on main: the
+/// always-denied list is read again before the approval, so the retry is refused and the approval stays unused.
+#[tokio::test]
+async fn an_approval_made_on_a_task_branch_does_not_let_the_retry_through_on_main() {
+    let (w, id) = held_world().await;
+    let (_, run) = w
+        .core
+        .store
+        .crew_task_for_worker(&w.worker(&id))
+        .unwrap()
+        .unwrap();
+    let worktree = std::path::PathBuf::from(run.worktree.unwrap());
+    run_git(&worktree, &["checkout", "-q", "-B", "task-work"]);
+    let hold = hold_of(&w, &id, "git push").await;
+    let nonce = grant_for(&w, &hold);
+    w.core
+        .autopilot_approve_once(&hold, Some(&nonce))
+        .await
+        .unwrap();
+    // The checkout moves to main before the worker retries: the same push is now a push to main (N5).
+    run_git(&worktree, &["checkout", "-q", "-B", "main"]);
+    let verdict = request(&w, &id, ActionKind::Command, "git push").await;
+    assert!(
+        matches!(verdict, Verdict::Deny(_)),
+        "the list refuses it, the approval does not"
+    );
+    assert_eq!(
+        state_of(&w, &hold),
+        State::Approved,
+        "the approval is unused"
+    );
+    assert!(events(&w, &id, "hold_used").is_empty());
+}
+
+/// The row a person reads lists the flags that change what runs as well as the command.
+#[tokio::test]
+async fn the_row_shows_the_flags_that_change_what_runs() {
+    let (w, id) = held_world().await;
+    let mut one = ask(ActionKind::Command, "make deploy", &[]);
+    one.detail = json!({
+        "tool": "Bash",
+        "input": { "command": "make deploy", "cwd": "/repo", "run_in_background": true },
+    });
+    let refused = w.core.gate.request(&scope(&w, &id), one).await;
+    assert!(matches!(refused, Verdict::Deny(_)), "the lead said no");
+    let held = open_hold(&w, &id);
+    for shown in [
+        held.command.clone(),
+        events(&w, &id, "held")[0].body["action"]["target"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    ] {
+        assert!(shown.contains("cwd: /repo"), "{shown:?}");
+        assert!(shown.contains("runs in the background"), "{shown:?}");
+    }
+    // The flags are bound: a retry that turns the background off is not the command the person approved.
+    let nonce = grant_for(&w, &held.id);
+    w.core
+        .autopilot_approve_once(&held.id, Some(&nonce))
+        .await
+        .unwrap();
+    let mut foreground = ask(ActionKind::Command, "make deploy", &[]);
+    foreground.detail = json!({
+        "tool": "Bash",
+        "input": { "command": "make deploy", "cwd": "/repo", "run_in_background": false },
+    });
+    let verdict = w.core.gate.request(&scope(&w, &id), foreground).await;
+    assert!(matches!(verdict, Verdict::Deny(_)), "a different effect");
+    assert_eq!(state_of(&w, &held.id), State::Approved);
+}
+
+/// A command that would draw a fake line or reorder the row is shown as visible text, in the row and in the ledger.
+#[tokio::test]
+async fn a_row_escapes_a_newline_bidi_or_zero_width_character() {
+    let (w, id) = held_world().await;
+    let command = "make deploy\u{202E}\n\u{200B}check\u{2028}\u{3164}x";
+    // The always-denied list may read such a command itself; the hold is made directly, as the chain's denial would.
+    let task = w.core.store.crew_task(&id).unwrap().unwrap();
+    w.core
+        .held_make(
+            &task,
+            &w.worker(&id),
+            &ask(ActionKind::Command, command, &[]),
+            "The lead said no.\n\u{2066}",
+            &[],
+            unix_now(),
+        )
+        .expect("held");
+    let held = open_hold(&w, &id);
+    for shown in [
+        held.command.clone(),
+        held.reason.clone(),
+        events(&w, &id, "held")[0].body["action"]["target"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    ] {
+        assert!(
+            !shown
+                .chars()
+                .any(|c| c.is_control() || ('\u{200B}'..='\u{202E}').contains(&c)),
+            "{shown:?}"
+        );
+    }
+    assert!(held.command.contains('\u{23CE}'), "{:?}", held.command);
+    assert!(held.command.contains('\u{FFFD}'), "{:?}", held.command);
+}
+
+/// A request with the given detail and the target a person would read, held by the lead's no.
+async fn held_detail(w: &World, id: &str, target: &str, detail: Value) -> String {
+    let mut one = ask(ActionKind::Command, target, &[]);
+    one.detail = detail;
+    let refused = w.core.gate.request(&scope(w, id), one).await;
+    assert!(matches!(refused, Verdict::Deny(_)), "the lead said no");
+    open_hold(w, id).id
+}
+
+/// The worker's retry with `detail`, and what the gate said to it.
+async fn retry_with(w: &World, id: &str, target: &str, detail: Value) -> Verdict {
+    let mut one = ask(ActionKind::Command, target, &[]);
+    one.detail = detail;
+    w.core.gate.request(&scope(w, id), one).await
+}
+
+async fn approve(w: &World, hold: &str) {
+    let nonce = grant_for(w, hold);
+    w.core
+        .autopilot_approve_once(hold, Some(&nonce))
+        .await
+        .unwrap();
+}
+
+/// Codex's legacy approval puts argv in `command`; joined with spaces, `["make","deploy now"]` and `["make","deploy","now"]` read alike. The
+/// approval covers the array as sent.
+#[tokio::test]
+async fn an_argv_that_differs_only_by_splitting_is_not_the_approved_one() {
+    let (w, id) = held_world().await;
+    let hold = held_detail(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy", "now"], "cwd": "/repo" }),
+    )
+    .await;
+    approve(&w, &hold).await;
+    let merged = retry_with(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy now"], "cwd": "/repo" }),
+    )
+    .await;
+    assert!(matches!(merged, Verdict::Deny(_)), "{merged:?}");
+    assert_eq!(state_of(&w, &hold), State::Approved, "still unused");
+    let same = retry_with(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy", "now"], "cwd": "/repo" }),
+    )
+    .await;
+    assert_eq!(same, Verdict::Allow, "the array as approved");
+}
+
+/// An argv with a word that holds a space cannot be told from another argv by the text a person reads, so it cannot be approved.
+#[tokio::test]
+async fn an_argv_that_reads_two_ways_cannot_be_approved_once() {
+    let (w, id) = held_world().await;
+    held_detail(
+        &w,
+        &id,
+        "make deploy now",
+        json!({ "command": ["make", "deploy now"], "cwd": "/repo" }),
+    )
+    .await;
+    assert!(!open_hold(&w, &id).readable);
+}
+
+/// Every field of the request is bound but the engine's bookkeeping: a field an engine adds, Codex's `kind` and `environmentId`.
+#[tokio::test]
+async fn an_unknown_field_or_a_changed_kind_or_environment_is_not_the_approved_request() {
+    let base = json!({
+        "command": "make deploy", "cwd": "/repo", "kind": "command", "environmentId": "env-1",
+        "itemId": "i-1", "turnId": "u-1", "reason": "deploy", "callId": "c-1",
+    });
+    let mut dropped = base.clone();
+    dropped.as_object_mut().unwrap().remove("environmentId");
+    let mut kind = base.clone();
+    kind["kind"] = json!("writeStdin");
+    let mut environment = base.clone();
+    environment["environmentId"] = json!("env-2");
+    let mut added = base.clone();
+    added["somethingNew"] = json!(true);
+    // Each refusal is a task of its own: a run of refusals in a row stops the task and ends its holds.
+    for (name, changed) in [
+        ("kind", kind),
+        ("environmentId", environment),
+        ("an added field", added),
+        ("a dropped field", dropped),
+    ] {
+        let (w, id) = held_world().await;
+        let hold = held_detail(&w, &id, "make deploy", base.clone()).await;
+        approve(&w, &hold).await;
+        let verdict = retry_with(&w, &id, "make deploy", changed).await;
+        assert!(matches!(verdict, Verdict::Deny(_)), "{name}: {verdict:?}");
+        assert_eq!(state_of(&w, &hold), State::Approved, "{name}: still unused");
+    }
+    // Only the bookkeeping changes on a real retry.
+    let (w, id) = held_world().await;
+    let hold = held_detail(&w, &id, "make deploy", base.clone()).await;
+    approve(&w, &hold).await;
+    let mut retry = base;
+    retry["itemId"] = json!("i-2");
+    retry["turnId"] = json!("u-2");
+    retry["reason"] = json!("deploy again");
+    retry["callId"] = json!("c-2");
+    let verdict = retry_with(&w, &id, "make deploy", retry).await;
+    assert_eq!(verdict, Verdict::Allow, "the one retry");
+}
+
+fn acp(kinds: &[&str]) -> Value {
+    let options: Vec<Value> = kinds
+        .iter()
+        .map(|kind| json!({ "optionId": format!("o-{kind}"), "name": *kind, "kind": *kind }))
+        .collect();
+    json!({
+        "sessionId": "s-1", "options": options,
+        "toolCall": { "toolCallId": "c-1", "title": "Run", "kind": "execute", "rawInput": { "command": "make deploy" } },
+    })
+}
+
+/// An allow on an ACP request picks `allow_once` and falls back to `allow_always`, a lasting grant. An approve-once is only
+/// possible when the request offers `allow_once`, and the retry must offer the same kinds.
+#[tokio::test]
+async fn an_acp_request_with_only_allow_always_cannot_be_approved_once() {
+    let (w, id) = held_world().await;
+    held_detail(
+        &w,
+        &id,
+        "make deploy",
+        acp(&["allow_always", "reject_once"]),
+    )
+    .await;
+    let held = open_hold(&w, &id);
+    assert!(!held.readable, "no allow_once is offered");
+    let nonce = fresh_nonce();
+    w.core.held_grant_for_test(&held.id, &nonce, unix_now());
+    let refused = w.core.autopilot_approve_once(&held.id, Some(&nonce)).await;
+    assert!(matches!(refused, Err(CoreError::Invalid(_))), "{refused:?}");
+    assert_eq!(state_of(&w, &held.id), State::Held);
+
+    let (w, id) = held_world().await;
+    let hold = held_detail(&w, &id, "make deploy", acp(&["allow_once", "reject_once"])).await;
+    assert!(open_hold(&w, &id).readable);
+    approve(&w, &hold).await;
+    let lasting = retry_with(
+        &w,
+        &id,
+        "make deploy",
+        acp(&["allow_always", "reject_once"]),
+    )
+    .await;
+    assert!(matches!(lasting, Verdict::Deny(_)), "other option kinds");
+    let once = retry_with(&w, &id, "make deploy", acp(&["reject_once", "allow_once"])).await;
+    assert_eq!(once, Verdict::Allow);
+}
+
+/// The dialog and the row show the arguments and the names of the environment overrides, never their values.
+#[tokio::test]
+async fn the_row_shows_the_arguments_and_the_environment_names() {
+    let (w, id) = held_world().await;
+    let hold = held_detail(
+        &w,
+        &id,
+        "make",
+        json!({
+            "tool": "Bash",
+            "input": { "command": "make", "args": ["deploy", "--prod"], "env": { "DEPLOY_TARGET": "eu-west-9" } },
+        }),
+    )
+    .await;
+    let shown = describe(&w, &hold, unix_now())["command_shown"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(shown.contains(r#"args: ["deploy","--prod"]"#), "{shown:?}");
+    assert!(shown.contains("env: DEPLOY_TARGET"), "{shown:?}");
+    assert!(!shown.contains("eu-west-9"), "{shown:?}");
+    // The arguments and the environment are bound.
+    approve(&w, &hold).await;
+    let other = retry_with(&w, &id, "make",
+        json!({ "tool": "Bash", "input": { "command": "make", "args": ["deploy", "--prod", "--force"], "env": { "DEPLOY_TARGET": "eu-west-9" } } }),
+    )
+    .await;
+    assert!(matches!(other, Verdict::Deny(_)), "other arguments");
 }
