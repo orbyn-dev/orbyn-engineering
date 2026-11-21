@@ -143,7 +143,8 @@ async fn codex_runs_in_default_collaboration_even_with_plan_mode_saved() {
         assert_eq!(turn["approvalPolicy"], "on-request");
         assert_eq!(turn["serviceTier"], "priority");
     }
-    assert_eq!(turns[0]["sandboxPolicy"]["type"], "readOnly");
+    // A saved plan_mode no longer restricts a run (the web dropped plan mode): both turns can write.
+    assert_eq!(turns[0]["sandboxPolicy"]["type"], "workspaceWrite");
     assert_eq!(turns[1]["sandboxPolicy"]["type"], "workspaceWrite");
     assert_eq!(turns[0]["threadId"], turns[1]["threadId"]);
     let threads: Vec<Value> = entries
@@ -156,10 +157,10 @@ async fn codex_runs_in_default_collaboration_even_with_plan_mode_saved() {
     let plan_context = threads[0]["developerInstructions"].as_str().unwrap();
     let ordinary_context = threads[1]["developerInstructions"].as_str().unwrap();
     let plan_instruction = "Plan mode: read and propose a plan. Change nothing.\n";
-    assert!(plan_context.contains(plan_instruction));
+    assert!(!plan_context.contains(plan_instruction));
     assert!(!ordinary_context.contains(plan_instruction));
     assert!(ordinary_context.starts_with("<orbyn_context>\nCheckout:"));
-    assert_eq!(plan_context.replace(plan_instruction, ""), ordinary_context);
+    assert_eq!(plan_context, ordinary_context);
 }
 
 #[tokio::test]

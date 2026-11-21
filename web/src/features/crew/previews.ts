@@ -3,6 +3,7 @@ import { REVIEW_FRAMES } from "./autopilot/review/names";
 import { BACKTEST_FRAMES } from "./backtest/names";
 import { CAPACITY_LIVE_FRAMES } from "./capacity/live/names";
 import { CAPACITY_FRAMES } from "./capacity/names";
+import { DASHBOARD_FRAMES } from "./dashboard/names";
 import { ESCAPE_FRAMES } from "./escape/names";
 import { FLOW_FRAMES } from "./flow/names";
 import { NEEDSYOU_FRAMES } from "./needsyou/names";
@@ -21,7 +22,7 @@ export function crewPreviewRoute(hash: string): string | null {
   // A detail frame may name what it opens in the hash's query ('?id=<escape id>'); the frame id itself is still the route.
   const match = /^#\/preview\/crew\/([a-z0-9-]+)(?:\?[A-Za-z0-9_.=&-]+)?$/.exec(hash);
   // Built here, not at module level, so a production build drops every frame id with this branch.
-  const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...CAPACITY_LIVE_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES, ...FLOW_FRAMES];
+  const frames: readonly string[] = [...REVIEW_FRAMES, ...ESCAPE_FRAMES, ...CAPACITY_FRAMES, ...CAPACITY_LIVE_FRAMES, ...ORACLE_FRAMES, ...BACKTEST_FRAMES, ...SETTINGS_FRAMES, ...FLOW_FRAMES, ...DASHBOARD_FRAMES];
   return [...frames, ...NEEDSYOU_FRAMES].find((name) => name === match?.[1]) ?? null;
 }
 

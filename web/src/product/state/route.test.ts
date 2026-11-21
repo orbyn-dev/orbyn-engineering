@@ -35,6 +35,8 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app", from: "capacity" },
     { name: "settings", section: "crew", crewPage: "coverage", from: "escapes" },
     { name: "settings", section: "crew", crewPage: "capacity", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "dashboard" },
+    { name: "settings", section: "crew", crewPage: "dashboard", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "escapes" },
     { name: "settings", section: "crew", crewPage: "escapes", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "possible", repo: "p/app" },
@@ -52,6 +54,8 @@ describe("routes", () => {
     expect(routeHref({ name: "settings", section: "crew", crewPage: "coverage" })).toBe("#/settings/crew/capacity/coverage");
     expect(routeHref({ name: "settings", section: "crew", crewPage: "escape", id: "a b" })).toBe("#/settings/crew/escapes/detail?id=a+b");
     expect(routeHref({ name: "settings", section: "crew", crewPage: "backtest" })).toBe("#/settings/crew/backtest");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "dashboard", repo: "p/app" })).toBe("#/settings/crew/dashboard?repo=p%2Fapp");
+    expect(parseRoute("#/settings/crew/dashboard/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "dashboard" });
     expect(parseRoute("#/settings/crew/areas/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "areas" });
     expect(parseRoute("#/settings/crew/capacity/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "capacity" });
     expect(parseRoute("#/settings/crew/nope")).toEqual({ name: "settings", section: "crew" });
