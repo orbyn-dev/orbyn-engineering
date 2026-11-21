@@ -41,3 +41,12 @@
 .repos-counts { color: var(--color-muted); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
 .repos-pop-add { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; border: 0; background: none; color: var(--color-accent); font: inherit; cursor: pointer; text-align: left; }
 .repos-pop-add:disabled { color: var(--color-muted); cursor: default; }
+
+/* Add a folder: the path field with the desktop app's Browse button beside it. */
+.repos-folder-field { display: flex; gap: 8px; align-items: center; }
+.repos-folder-field .dialog-field { flex: 1; min-width: 0; }
+
+/* New thread: the Engine and Permission rows. */
+.repos-start-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--color-border); }
+.repos-start-label { color: var(--color-muted); font-size: var(--text-meta); }
+.repos-start-control { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }

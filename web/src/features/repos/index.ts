@@ -2,5 +2,6 @@
 export { RepositoriesSection } from "./RepositoriesSection";
 export { NewThreadDialog } from "./NewThreadDialog";
 export { ReposChip } from "./ReposChip";
-export { reposApi, setReposApi, useRepos } from "./api";
+export { reposApi, setReposApi, useRepos, useThreadRepos } from "./api";
+export { groupByRepo, plain } from "./model";
 export type { ReposApi, RepoRow, ReposView, ThreadRepo } from "./contract";

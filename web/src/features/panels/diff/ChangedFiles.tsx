@@ -3,6 +3,7 @@ import { useRef, type KeyboardEvent } from "react";
 import type { FileDiff } from "../../../api/types";
 import { ChangeLetter, MiddleName } from "../../workspace";
 import { Button } from "../../../ui/controls";
+import { groupByRepo, plain, type ThreadRepo } from "../../repos";
 import { changeOf, isBinaryPatch, renameOf } from "./diffModel";
 
 /** What a row says before its name, so the name reads as one phrase. */
@@ -29,7 +30,7 @@ export function fileName(file: FileDiff): string {
 }
 
 /** The filter and the changed files, one row each. The row of the file on show is marked, and the arrow keys move between rows. */
-export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, onMore }: {
+export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, onMore, repos }: {
   files: readonly FileDiff[];
   /** How many files the list has not drawn yet; Show adds all of them. */
   more: number;
@@ -38,7 +39,10 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
   onFilter(value: string): void;
   onPick(path: string): void;
   onMore(): void;
+  /** The repositories of a multi-repository thread: the files are then grouped under them. `null` or none keeps one flat list. */
+  repos?: readonly ThreadRepo[] | null;
 }) {
+  const groups = repos ? groupByRepo(files, repos) : [];
   const list = useRef<HTMLDivElement>(null);
   const onKeyDown = (event: KeyboardEvent) => {
     const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
@@ -50,6 +54,23 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
     event.preventDefault();
     next.focus();
   };
+  const row = (file: FileDiff) => (
+    <button
+      key={file.path}
+      type="button"
+      className={`fli ${file.path === selected ? "on" : ""}`}
+      data-diff-row={file.path}
+      aria-current={file.path === selected || undefined}
+      tabIndex={file.path === (selected ?? files[0]?.path) ? 0 : -1}
+      title={fileName(file)}
+      aria-label={`${KIND[changeOf(file)]} ${fileName(file)}${fileNumbers(file) ? `, ${fileNumbers(file)}` : ""}`}
+      onClick={() => onPick(file.path)}
+    >
+      <ChangeLetter change={changeOf(file)} />
+      {file.status === "renamed" ? <span className="nm">{fileName(file)}</span> : <MiddleName text={file.path} middle />}
+      <span className="num">{fileNumbers(file)}</span>
+    </button>
+  );
   return (
     <div className="fl2">
       <label className="flf">
@@ -57,22 +78,17 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
         <input type="search" aria-label="Filter files" placeholder="Filter files" value={filter} onChange={(event) => onFilter(event.target.value)} />
       </label>
       <div ref={list} role="group" aria-label="Changed files" onKeyDown={onKeyDown}>
-        {files.map((file) => (
-          <button
-            key={file.path}
-            type="button"
-            className={`fli ${file.path === selected ? "on" : ""}`}
-            data-diff-row={file.path}
-            aria-current={file.path === selected || undefined}
-            tabIndex={file.path === (selected ?? files[0]?.path) ? 0 : -1}
-            title={fileName(file)}
-            aria-label={`${KIND[changeOf(file)]} ${fileName(file)}${fileNumbers(file) ? `, ${fileNumbers(file)}` : ""}`}
-            onClick={() => onPick(file.path)}
-          >
-            <ChangeLetter change={changeOf(file)} />
-            {file.status === "renamed" ? <span className="nm">{fileName(file)}</span> : <MiddleName text={file.path} middle />}
-            <span className="num">{fileNumbers(file)}</span>
-          </button>
+        {groups.length === 0 ? files.map(row) : groups.map((group) => (
+          <div key={group.repo?.repo_id ?? "other"} className="fl-repo" role="group" aria-label={group.repo ? `${plain(group.repo.name)} changes` : "Other changed files"}>
+            {group.repo ? (
+              <h3 className="fl-repo-head">
+                <span className="nm">{plain(group.repo.name)}</span>
+                <code>{plain(group.repo.branch)}</code>
+                <span className="num">{`+${count(group.repo.added)} −${count(group.repo.deleted)}`}</span>
+              </h3>
+            ) : <h3 className="fl-repo-head"><span className="nm">Other files</span></h3>}
+            {group.files.map(row)}
+          </div>
         ))}
         {more > 0 ? (
           <div className="x2banner">

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { repoFixtures } from "../../../mock/repos";
-import { canJoinThread, checkCloneSource, cloneText, defaultTicks, isPublishName, plain, repoState, startLabel } from "./model";
+import { groupByRepo, canJoinThread, checkCloneSource, cloneText, defaultTicks, isPublishName, plain, repoState, startLabel } from "./model";
 
 describe("repository state", () => {
   it("reads trusted, not trusted and not a Git folder from the row", () => {
@@ -52,5 +52,27 @@ describe("untrusted text", () => {
     expect(cloneText(row!)).toBeNull();
     expect(cloneText({ ...row!, clone: { state: "cloning", percent: 41.6 } })).toBe("Cloning 42%");
     expect(cloneText({ ...row!, clone: { state: "failed", percent: null, message: "No access." } })).toBe("Clone failed. No access.");
+  });
+});
+
+describe("grouping changed files by repository", () => {
+  const repo = (id: string, files?: string[]) => ({ repo_id: id, name: id, branch: "fix/login", added: 1, deleted: 0, trusted: true, files });
+  const file = (path: string) => ({ path });
+
+  it("puts each file under the repository that reports it, in the repositories' order, and keeps unknown files last", () => {
+    const groups = groupByRepo([file("calendar/feed.ts"), file("auth/redirect.ts"), file("README.md")], [repo("engineering", ["auth/redirect.ts"]), repo("planner", ["calendar/feed.ts"])]);
+    expect(groups.map((group) => [group.repo?.repo_id ?? null, group.files.map((entry) => entry.path)])).toEqual([
+      ["engineering", ["auth/redirect.ts"]], ["planner", ["calendar/feed.ts"]], [null, ["README.md"]],
+    ]);
+  });
+
+  it("leaves out a repository with no file in the list, for instance under a filter", () => {
+    const groups = groupByRepo([file("auth/redirect.ts")], [repo("engineering", ["auth/redirect.ts"]), repo("planner", ["calendar/feed.ts"])]);
+    expect(groups.map((group) => group.repo?.repo_id)).toEqual(["engineering"]);
+  });
+
+  it("returns no groups when the service does not say which repository a file belongs to", () => {
+    expect(groupByRepo([file("a.ts")], [repo("engineering"), repo("planner")])).toEqual([]);
+    expect(groupByRepo([file("a.ts")], [])).toEqual([]);
   });
 });

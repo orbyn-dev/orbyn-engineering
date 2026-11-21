@@ -7,9 +7,10 @@ import { setReposApi } from "./api";
 
 afterEach(() => { setReposApi(null); window.location.hash = ""; });
 
-const open = async (mock = createReposMock()) => {
+const open = async (mock = createReposMock(), note: string | null = null) => {
   setReposApi(mock);
-  render(<NewThreadDialog projectId="p1" projectName="orbyn" onClose={() => {}} />);
+  render(<NewThreadDialog projectId="p1" projectName="orbyn" start={{ engine: "claude", model: "opus", permission_mode: "auto_edits" }}
+    engineControl={<button type="button">Claude Code · Opus</button>} permissionControl={<button type="button">Auto-accept edits</button>} note={note} onClose={() => {}} />);
   const dialog = await screen.findByRole("dialog", { name: /New thread in orbyn/ });
   await within(dialog).findAllByRole("checkbox");
   return { mock, dialog };
@@ -37,6 +38,18 @@ it("starts only in the ticked repositories, each from its chosen branch, with on
   await user.dblClick(within(dialog).getByRole("button", { name: "Start in 1 repository" }));
   await waitFor(() => expect(mock.writes).toEqual(["start:orbyn-engineering@develop"]));
   expect(window.location.hash).toMatch(/^#\/threads\//);
+});
+
+it("draws the Engine and Permission rows the host hands in, and starts with that engine and permission, in one write", async () => {
+  const { mock, dialog } = await open(createReposMock(), "Cursor does not ask before acting, so Supervised is not available here.");
+  expect(within(dialog).getByText("Engine")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Claude Code · Opus" })).toBeVisible();
+  expect(within(dialog).getByText("Permission")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Auto-accept edits" })).toBeVisible();
+  expect(within(dialog).getByText(/Supervised is not available here/)).toBeVisible();
+  await userEvent.dblClick(within(dialog).getByRole("button", { name: "Start in 2 repositories" }));
+  await waitFor(() => expect(mock.writes).toHaveLength(1));
+  expect(mock.starts).toEqual([{ engine: "claude", model: "opus", permission_mode: "auto_edits" }]);
 });
 
 it("cannot start with nothing ticked", async () => {
