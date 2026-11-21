@@ -3,7 +3,8 @@ import { useAsync } from "../../lib/useAsync";
 import { ApiFailure, request } from "../../api/client";
 import type { Thread } from "../../api/types";
 import type { GitActionResult } from "../../generated/GitActionResult";
-import type { PublishInput, ReposApi, ReposView, RepoRow, StartThreadInput, ThreadRepo } from "./contract";
+import type { PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
+import { cleanScan, cleanTaskFolder } from "./scanModel";
 
 const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
@@ -51,6 +52,25 @@ const http: ReposApi = {
     if (offered === false) return null;
     try {
       return await request<ThreadRepo[]>("GET", `/api/threads/${q(threadId)}/repos`, undefined, signal);
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
+    }
+  },
+  async scan(projectId, path, signal) {
+    if (offered === false) return null;
+    try {
+      // Person-class (it reads a folder the person picked); it writes nothing. The answer is untrusted: shaped and capped before the page holds it.
+      return cleanScan(await request<RepoScan>("POST", `/api/projects/${q(projectId)}/repos/scan`, { path }, signal));
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
+    }
+  },
+  async taskFolder(threadId, signal) {
+    if (offered === false) return null;
+    try {
+      return cleanTaskFolder(await request<TaskFolder>("GET", `/api/threads/${q(threadId)}/task-folder`, undefined, signal));
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;
@@ -127,4 +147,17 @@ export function useThreadRepos(threadId: string, refreshKey = 0): { repos: Threa
   }, [threadId, version, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => read(), [read]);
   return { repos, reload: read };
+}
+
+/** The thread's task folder; `folder` is `null` while loading, for a thread with none, and when the service has no such route. */
+export function useTaskFolder(threadId: string, refreshKey = 0): TaskFolder | null {
+  const version = useApiVersion();
+  const [folder, setFolder] = useState<TaskFolder | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    setFolder(null);
+    reposApi().taskFolder(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setFolder(next); }, () => { if (!abort.signal.aborted) setFolder(null); });
+    return () => abort.abort();
+  }, [threadId, version, refreshKey]);
+  return folder;
 }

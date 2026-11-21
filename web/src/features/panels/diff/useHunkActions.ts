@@ -20,6 +20,8 @@ export interface Reverted {
   threadId: string;
   cwd: string;
   path: string;
+  /** The repository of the file when it is not the primary one; absent for the primary. */
+  repoId?: string;
   before: string;
   revision: string;
   /** When the undo runs out, in milliseconds. */
@@ -29,6 +31,17 @@ export interface Reverted {
 export const UNDO_SECONDS = 10;
 
 const why = (failure: unknown) => (failure instanceof Error ? failure.message : toFailure(failure).message);
+
+/**
+ * The path a write sends. A file of the primary repository is resolved to the checkout as before. A file of another repository of the
+ * thread goes as its repo-relative path with `repo_id` (docs/multi-repo.md): the service resolves it against that repository's worktree
+ * only, so the page does not resolve it against the thread folder. A path that is absolute or climbs out is refused here as well.
+ */
+async function writablePath(threadId: string, cwd: string, path: string, repoId: string | undefined): Promise<string | null> {
+  if (repoId === undefined) return checkoutPath(threadId, cwd, path);
+  if (path === "" || path.startsWith("/") || /^[A-Za-z]:/.test(path) || path.split(/[\\/]/).includes("..")) return null;
+  return path;
+}
 
 /**
  * Hunk and line edits of the working tree. Every write goes through the file route with the revision of the
@@ -61,28 +74,28 @@ export function useHunkActions(threadId: string, cwd: string) {
   const reverted = shown ? { path: shown.path, seconds: Math.max(0, Math.ceil((shown.until - now) / 1000)) } : null;
 
   /** Reads the file the diff names; the lines the diff showed must still be there for `change` to answer. */
-  const write = async (path: string, change: (content: string) => string | null) => {
-    const inside = await checkoutPath(threadId, cwd, path);
+  const write = async (path: string, change: (content: string) => string | null, repoId?: string) => {
+    const inside = await writablePath(threadId, cwd, path, repoId);
     if (inside === null) throw new Error("That file is outside this thread's folder.");
-    const file = await readThreadFile(threadId, inside);
+    const file = await readThreadFile(threadId, inside, undefined, repoId);
     if (file.binary || file.truncated) throw new Error("That file can't be edited here.");
     const next = change(file.content);
     if (next === null) return null;
-    const saved = await saveThreadFile(threadId, { path: inside, content: next, base_revision: file.revision }) as { revision: string };
+    const saved = await saveThreadFile(threadId, { path: inside, content: next, base_revision: file.revision, ...(repoId === undefined ? {} : { repo_id: repoId }) }) as { revision: string };
     return { before: file.content, revision: saved.revision };
   };
   const stale = (failure: unknown) => toFailure(failure).status === 409;
 
-  const revert = async (path: string, hunk: Hunk) => {
+  const revert = async (path: string, hunk: Hunk, repoId?: string) => {
     if (busy.current) return;
     busy.current = true;
     setNotice(null);
     try {
-      const done = await write(path, (content) => revertedContent(content, hunk));
+      const done = await write(path, (content) => revertedContent(content, hunk), repoId);
       if (done === null) throw Object.assign(new Error("stale"), { stale: true });
       const at = Date.now();
       setNow(at);
-      setOpen((list) => [...list, { threadId, cwd, path, before: done.before, revision: done.revision, until: at + UNDO_SECONDS * 1000 }]);
+      setOpen((list) => [...list, { threadId, cwd, path, ...(repoId === undefined ? {} : { repoId }), before: done.before, revision: done.revision, until: at + UNDO_SECONDS * 1000 }]);
       changed();
     } catch (failure) {
       const old = stale(failure) || (failure as { stale?: boolean }).stale === true;
@@ -97,12 +110,12 @@ export function useHunkActions(threadId: string, cwd: string) {
   };
 
   /** Writes one line; true when it was written. The caller keeps the typed text when it was not. */
-  const saveLine = async (path: string, number: number, was: string, next: string) => {
+  const saveLine = async (path: string, number: number, was: string, next: string, repoId?: string) => {
     if (busy.current) return false;
     busy.current = true;
     setNotice(null);
     try {
-      const done = await write(path, (content) => editedContent(content, number, was, next));
+      const done = await write(path, (content) => editedContent(content, number, was, next), repoId);
       if (done === null) throw Object.assign(new Error("stale"), { stale: true });
       changed();
       return true;
@@ -126,9 +139,9 @@ export function useHunkActions(threadId: string, cwd: string) {
     busy.current = true;
     setOpen((list) => list.filter((item) => item !== entry));
     try {
-      const inside = await checkoutPath(entry.threadId, entry.cwd, entry.path);
+      const inside = await writablePath(entry.threadId, entry.cwd, entry.path, entry.repoId);
       if (inside === null) throw new Error("That file is outside this thread's folder.");
-      await saveThreadFile(entry.threadId, { path: inside, content: entry.before, base_revision: entry.revision });
+      await saveThreadFile(entry.threadId, { path: inside, content: entry.before, base_revision: entry.revision, ...(entry.repoId === undefined ? {} : { repo_id: entry.repoId }) });
       changed(entry.threadId);
     } catch {
       // The same pattern as a failed revert: it says so, and that nothing was changed.
