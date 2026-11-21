@@ -131,7 +131,7 @@ describe("the row", () => {
     expect(rowSummary(runView(record({ status: "error", error: { kind: "runtime", message: "x" } }), null)!, now).note).toBe("· runtime error");
     expect(rowSummary(runView(record({ status: "error", error: { kind: "limit", message: "x" } }), null)!, now).note).toBe("· limit");
     expect(rowSummary(runView(record({ status: "error", error: { kind: "denied", message: "x" } }), null)!, now).note).toBe("· denied");
-    expect(rowSummary(runView(record({ status: "error", error: { kind: "lost", message: "x" } }), null)!, now)).toEqual({ note: "· core restarted", due: "Lost", tone: "fail" });
+    expect(rowSummary(runView(record({ status: "error", error: { kind: "lost", message: "x" } }), null)!, now)).toEqual({ note: "· lost", due: "Lost", tone: "fail" });
     const resumed = runView(record({ status: "running", ended_at: null, resumes: 1, calls: calls(6) }), null)!;
     expect(rowSummary(resumed, now).note).toBe("· resumed");
     expect(rowSummary(runView(record({ resumes: 1, calls: calls(6), ended_at: "2026-11-21T10:01:04.000Z" }), null)!, now).due).toBe("1m 04s");

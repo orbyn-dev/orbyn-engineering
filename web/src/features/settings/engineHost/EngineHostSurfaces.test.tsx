@@ -5,8 +5,7 @@ import { createEngineHostMock, hostFixtures } from "../../../../mock/engineHost"
 import { CauseChain } from "./HostParts";
 import { EngineHostBanner, EngineHostCard } from "./HostCard";
 import { EngineHostGroup } from "./HostGroup";
-import { setEngineHostApi } from "./hostApi";
-import type { HostRow } from "./contract";
+import { setEngineHostApi, type HostRow } from "../../enginehost";
 
 afterEach(() => { setEngineHostApi(null); vi.unstubAllGlobals(); });
 const rowOf = (name: string) => screen.getByText(name, { selector: ".name" }).closest("[role=row]") as HTMLElement;

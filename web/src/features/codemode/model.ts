@@ -195,7 +195,7 @@ const ERROR_NOTES = new Map<string, string>(Object.entries({
   runtime: "· runtime error",
   limit: "· limit",
   denied: "· denied",
-  lost: "· core restarted",
+  lost: "· lost",
 }));
 
 export const callWord = (count: number): string => `${count} ${count === 1 ? "call" : "calls"}`;

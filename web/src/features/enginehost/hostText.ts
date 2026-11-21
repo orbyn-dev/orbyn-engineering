@@ -114,3 +114,35 @@ export function bannerLine(row: HostRow): string | null {
   }
   return null;
 }
+
+/** Text the service or a model chose (an engine's name, an error): cut so no line can grow the page. React escapes it; it is never markup. */
+export const plain = (text: string, max = 80): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+
+/** `3 h 4 min`, `38 min`, `45 s`: how long a host has run, as the Processes list writes it. */
+export function runningFor(since: string | null | undefined, now: number): string {
+  const start = since ? Date.parse(since) : Number.NaN;
+  if (Number.isNaN(start)) return "";
+  const seconds = Math.max(0, Math.round((now - start) / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+/** Hosts that are a process: running, restarting or stuck. One that is idle or never started is not listed. */
+export const isProcess = (row: HostRow): boolean => row.state === "running" || row.state === "restarting" || row.state === "crashed" || row.state === "cant_start";
+
+/** The line under a host in Maintenance › Processes. */
+export function processLine(row: HostRow, now: number): string {
+  switch (row.state) {
+    case "running": return `Running ${runningFor(row.since, now)} · ${row.pooled ? `shared by every ${plain(row.name, 40)} thread` : `orbyn-engine-host ${plain(row.host_version ?? "", 20)}`}`.trimEnd();
+    case "restarting":
+    case "crashed": {
+      const restart = row.restart;
+      return restart ? `Restarting · try ${restart.attempt} of ${restart.limit}${restart.next_try_seconds === null ? "" : ` · next try in ${restart.next_try_seconds} s`}` : "Restarting";
+    }
+    default: return `Can’t start · stopped ${row.stops_in_window ?? 5} times in 5 minutes`;
+  }
+}
+
+/** What Stop costs, in the words the Stop question uses. */
+export const STOPPED_SENTENCE = "The engine host stopped. Your work in the project is kept; send your message again.";
