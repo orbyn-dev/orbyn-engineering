@@ -4,7 +4,7 @@ import type { EngineStatus, ModelInfo, PermissionMode, Thread } from "../../../a
 import type { StashedPrompt } from "../../../product/state/ui";
 import { IconButton } from "../../../ui/controls";
 import { ContextMeter } from "./ComposerExtras";
-import { ACCESS, EffortTrigger, type useTraitsMenu } from "./ComposerTraits";
+import { ACCESS, EffortTrigger, type AccessView, type useTraitsMenu } from "./ComposerTraits";
 import { ModelPickerTrigger } from "./ModelPicker";
 
 /** The row under the field: attach, stash, model, effort, access and send or stop. */
@@ -24,6 +24,7 @@ export function ComposerBar({
   showContext,
   unmanaged,
   access,
+  accessView,
   busy,
   stopping,
   sending,
@@ -51,6 +52,7 @@ export function ComposerBar({
   showContext: boolean;
   unmanaged: boolean;
   access: PermissionMode;
+  accessView: AccessView;
   busy: boolean;
   stopping: boolean;
   sending: boolean;
@@ -113,6 +115,7 @@ export function ComposerBar({
         model={model}
         effort={thread.effort ?? null}
         access={unmanaged ? null : access}
+        accessLabel={accessView.label}
         disabled={busy}
         onOpen={(element) => traits.openAt(element, false)}
       />
@@ -121,12 +124,14 @@ export function ComposerBar({
           type="button"
           className="composer-control composer-access"
           aria-haspopup="menu"
-          aria-label={`Permissions: ${ACCESS[access].label}`}
-          disabled={busy || !thread.lifecycle}
+          aria-label={`Permissions: ${accessView.label}`}
+          title={accessView.locked ?? undefined}
+          data-dimmed={accessView.dimmed || undefined}
+          disabled={busy || !thread.lifecycle || !!accessView.locked}
           onClick={(event) => traits.openAt(event.currentTarget, true)}
         >
           <AccessIcon size={14} aria-hidden />
-          <span>{ACCESS[access].label}</span>
+          <span>{accessView.label}</span>
         </button>
       ) : null}
       </span>

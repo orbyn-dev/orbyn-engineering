@@ -23,3 +23,9 @@ export function runRefusal(failure: unknown): RunRefusal | null {
   if (failure.code === NOTICE_REQUIRED) return { kind: "notice", message: null };
   return null;
 }
+
+/** The run the service started for a one-turn override, when its answer names one. */
+export function overrideRun(answer: unknown): { id: string } | null {
+  const id = typeof answer === "object" && answer !== null ? (answer as { id?: unknown }).id : null;
+  return typeof id === "string" ? { id } : null;
+}

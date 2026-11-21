@@ -1,6 +1,6 @@
 import { Folder, GitBranch, ShieldOff } from "lucide-react";
 import type { PermissionMode, Thread } from "../../../api/types";
-import { ACCESS, type useTraitsMenu } from "./ComposerTraits";
+import { ACCESS, type AccessView, type useTraitsMenu } from "./ComposerTraits";
 
 /** The checkout, branch and access row under the composer. */
 export function ComposerContext({
@@ -10,6 +10,7 @@ export function ComposerContext({
   branchPending,
   unmanaged,
   access,
+  accessView,
   busy,
   traits,
 }: {
@@ -19,6 +20,7 @@ export function ComposerContext({
   branchPending: boolean;
   unmanaged: boolean;
   access: PermissionMode;
+  accessView: AccessView;
   busy: boolean;
   traits: Pick<ReturnType<typeof useTraitsMenu>, "openAt">;
 }) {
@@ -64,12 +66,14 @@ export function ComposerContext({
                 type="button"
                 className="context-action"
                 aria-haspopup="menu"
-                aria-label={`Permissions: ${ACCESS[access].label}`}
-                disabled={busy || !thread.lifecycle}
+                aria-label={`Permissions: ${accessView.label}`}
+                title={accessView.locked ?? undefined}
+                data-dimmed={accessView.dimmed || undefined}
+                disabled={busy || !thread.lifecycle || !!accessView.locked}
                 onClick={(event) => traits.openAt(event.currentTarget, true)}
               >
                 <AccessIcon size={12} aria-hidden />
-                {ACCESS[access].label}
+                {accessView.label}
               </button>
             )}
           </dd>

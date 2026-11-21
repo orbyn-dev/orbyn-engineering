@@ -7,6 +7,7 @@
 .et-row { justify-content:space-between; padding:14px 0; border-top:1px solid var(--color-border); }
 .et-row>div { min-width:0; }
 .et-row code { font-size:12px; white-space:normal; }
+.et-side { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
 .et-field { display:flex; flex-direction:column; gap:8px; min-width:150px; }
 .et-field select { color:var(--color-text); background:var(--color-sunken); border:1px solid var(--color-border); border-radius:6px; padding:6px 9px; }
 .et-actions { justify-content:flex-end; flex-wrap:wrap; margin-top:12px; }

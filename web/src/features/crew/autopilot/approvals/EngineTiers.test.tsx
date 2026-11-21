@@ -150,10 +150,11 @@ it("retains pending save ownership when an earlier view refresh completes and th
   expect(Object.values(useTierEditors.getState().editors)[0]?.base).toEqual(savedView.settings);
   expect(screen.getByText(/Mapped by you/)).toHaveTextContent("Lead"); expect(send).toHaveBeenCalledTimes(1);
 });
-it("says Reviewer only, with the service's reason, beside an engine the service limits to review (not frame-checked)", async () => {
+it("draws the Reviewer only chip, with Crew's own tooltip, for an engine the service limits to review (frame crew-cursor-reviewer-only)", async () => {
   useWorkspace.setState({ engines: { data: [{ id: "example-acp", name: "Example ACP", crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" } as unknown as EngineStatus], error: null, loading: false } });
   render(<EngineTiers />);
-  expect(await screen.findByText("Reviewer only · Not yet confined for writing work")).toBeVisible();
+  expect(await screen.findByText("Reviewer only")).toBeVisible();
+  expect(screen.getByText("Reviewer only").closest("[title]")).toHaveAttribute("title", expect.stringContaining("confinement check passes for it under the engine host"));
   expect(screen.getAllByText(/Reviewer only/)).toHaveLength(1);
   useWorkspace.setState({ engines: { data: [], error: null, loading: false } });
 });

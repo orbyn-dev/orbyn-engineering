@@ -28,10 +28,19 @@ const NO_APPROVALS = "no_approvals";
 const REFUSED_WITHOUT_ASKING: PermissionMode[] = ["supervised", "auto_edits"];
 
 /** Whether this engine's own list says it never asks before acting. */
-function neverAsks(engine: Pick<EngineStatus, "capabilities"> | null): boolean {
+export function neverAsks(engine: Pick<EngineStatus, "capabilities"> | null): boolean {
   const offered: readonly string[] | undefined = engine?.capabilities.permission_modes;
   return offered?.includes(NO_APPROVALS) ?? false;
 }
+
+/** How the frames name a mode in the refusal card: "Auto edits", where the picker says "Auto-accept edits". */
+export function refusalModeName(mode: PermissionMode): string {
+  return mode === "auto_edits" ? "Auto edits" : ACCESS[mode].label;
+}
+
+/** What an engine that never asks shows in the mode pick: its one mode, never the saved one. */
+export const oneModeLabel = (engineName: string) => `No approvals (${engineName})`;
+export const oneModeReason = (engineName: string) => `${engineName} does not ask before acting, so this thread has one mode.`;
 
 /** The modes a thread on this engine cannot run in, in menu order: drawn dimmed with the reason, never hidden. */
 export function refusedModes(engine: Pick<EngineStatus, "capabilities"> | null): PermissionMode[] {

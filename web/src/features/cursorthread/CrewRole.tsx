@@ -1,19 +1,26 @@
+import { Info } from "lucide-react";
 import type { CrewRoleFields } from "./contract";
 
-/** The label a Crew engine list shows for an engine that may only review, or null for any other. NOT frame-checked: the Crew frames are not merged. */
+/**
+ * Crew's own words for why (frame crew-cursor-reviewer-only): the limit is Crew's rule, not a setting, so the tooltip is drawn
+ * here and not taken from the service's `crew_role_reason`, which is display data for other screens.
+ */
+export const CREW_ROLE_TOOLTIP = "Cursor can run writing briefs only after Orbyn’s confinement check passes for it under the engine host; until then it reviews only.";
+
+/** The label a Crew engine list shows for an engine that may only review, or null for any other. */
 export function crewRoleLabel(engine: CrewRoleFields | null | undefined): string | null {
   return engine?.crew_role === "reviewer_only" ? "Reviewer only" : null;
 }
 
-/** "Reviewer only" in small type, with the service's reason as its title and, when there is one, a line after it. */
-export function CrewRoleNote({ engine }: { engine: CrewRoleFields | null | undefined }) {
+/** The "Reviewer only" chip under the tier, with Crew's reason on hover or focus. It is a limit, not a tier and not a control. */
+export function CrewRoleNote({ engine, engineName }: { engine: CrewRoleFields | null | undefined; engineName?: string }) {
   const label = crewRoleLabel(engine);
   if (!label) return null;
-  const reason = typeof engine?.crew_role_reason === "string" && engine.crew_role_reason.trim() !== "" ? engine.crew_role_reason.trim() : null;
+  const tooltip = engineName && engineName !== "Cursor" ? CREW_ROLE_TOOLTIP.replace("Cursor", engineName) : CREW_ROLE_TOOLTIP;
   return (
-    <small className="ct-role" title={reason ?? undefined}>
+    <span className="ct-role" title={tooltip} tabIndex={0}>
+      <Info size={12} aria-hidden />
       {label}
-      {reason ? ` · ${reason}` : ""}
-    </small>
+    </span>
   );
 }

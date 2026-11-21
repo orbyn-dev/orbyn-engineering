@@ -507,6 +507,69 @@ describe("terminal split and vertical split", () => {
     await waitFor(() => expect(mock).toHaveBeenCalledWith("DELETE", "/api/threads/th/terminals/t3"));
   });
 
+  describe("a tab's own X ends every pane of the tab (frames x-term-tab-close, x-term-end-confirm)", () => {
+    const deletes = () => mock.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => path);
+
+    it("asks once for the whole tab when any shell runs, names the count and the running one, and ends them all with one click each", async () => {
+      serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal", alive: false, exit_code: 0 })]);
+      const user = await mountSplits();
+      await user.click(screen.getByRole("button", { name: "Close dev" }));
+      const dialog = await screen.findByRole("dialog", { name: "End this tab?" });
+      expect(dialog).toHaveTextContent("This tab has 2 terminals and dev is still running. Ending the tab ends both of them and stops dev.");
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+      expect(deletes()).toEqual([]);
+      const end = within(dialog).getByRole("button", { name: "End all" });
+      await user.dblClick(end);
+      await waitFor(() => expect(deletes().sort()).toEqual(["/api/threads/th/terminals/t2", "/api/threads/th/terminals/t3"]));
+      await waitFor(() => expect(screen.queryByRole("tab", { name: /^dev/ })).not.toBeInTheDocument());
+    });
+
+    it("asks when only a later pane is still running", async () => {
+      serveSplits([shell({ alive: false, exit_code: 0 }), shell({ id: "t3", title: "two", direction: "horizontal" })]);
+      const user = await mountSplits();
+      await user.click(screen.getByRole("button", { name: "Close dev" }));
+      expect(await screen.findByRole("dialog", { name: "End this tab?" })).toHaveTextContent("two is still running");
+      expect(deletes()).toEqual([]);
+    });
+
+    it("closes a tab whose shells have all finished without asking, every pane of it", async () => {
+      serveSplits([shell({ alive: false, exit_code: 0 }), shell({ id: "t3", title: "two", direction: "horizontal", alive: false, exit_code: 0 })]);
+      const user = await mountSplits();
+      await user.click(screen.getByRole("button", { name: "Close dev" }));
+      await waitFor(() => expect(deletes().sort()).toEqual(["/api/threads/th/terminals/t2", "/api/threads/th/terminals/t3"]));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("keeps the terminal wording for a tab of one pane", async () => {
+      serveSplits([shell()]);
+      const user = await mountSplits();
+      await user.click(screen.getByRole("button", { name: "Close dev" }));
+      expect(await screen.findByRole("dialog", { name: "End this terminal?" })).toHaveTextContent("dev is still running. Ending the terminal stops it.");
+    });
+
+    it("Cancel ends nothing, and End process in the menu and the close shortcut act on the whole tab", async () => {
+      serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal" })]);
+      const user = await mountSplits();
+      await user.click(screen.getByRole("button", { name: "Close dev" }));
+      await user.click(within(await screen.findByRole("dialog", { name: "End this tab?" })).getByRole("button", { name: "Cancel" }));
+      expect(deletes()).toEqual([]);
+      await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("tab", { name: "dev (2)" }) });
+      await user.click(screen.getByRole("menuitem", { name: "End process" }));
+      expect(await screen.findByRole("dialog", { name: "End this tab?" })).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      act(() => void runHandlers("terminal.close"));
+      expect(await screen.findByRole("dialog", { name: "End this tab?" })).toBeVisible();
+      expect(deletes()).toEqual([]);
+    });
+
+    it("a pane's own X still ends only that pane", async () => {
+      serveSplits([shell(), shell({ id: "t3", title: "two", direction: "horizontal", alive: false, exit_code: 0 })]);
+      const user = await mountSplits();
+      await user.click(screen.getByRole("button", { name: "Close pane two" }));
+      await waitFor(() => expect(deletes()).toEqual(["/api/threads/th/terminals/t3"]));
+    });
+  });
+
   it("offers no pane close for the main shell, and no split before the service lists it", async () => {
     serveSplits([]);
     render(<TerminalDrawerBody threadId="th" onClose={() => undefined} />);

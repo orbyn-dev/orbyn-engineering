@@ -25,6 +25,7 @@ import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
 import { useQueueReload } from "./useQueueReload";
 import { ComposerHostLine, useHostLine } from "../../enginehost";
+import { cursorThreadApi, overrideRun } from "../../cursorthread";
 import { useEngineGate } from "./useEngineGate";
 import { useStopRun } from "./useStopRun";
 import { useThreadSettings } from "./useThreadSettings";
@@ -54,7 +55,7 @@ import { Presence } from "../../../ui/Presence";
 import { useWorkspace } from "../../../product/state/workspace";
 import { CompactOffer, ComposerBanners, InlineLimits, StashDrawer, StopNotice } from "./ComposerExtras";
 import { localCommand, promptHistory, type RecallPosition } from "./composerInput";
-import { offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
+import { accessViewOf, neverAsks, offeredModes, shownAccess, useTraitsMenu } from "./ComposerTraits";
 import { QuestionCard } from "../QuestionCard";
 import { SubagentChips } from "../SubagentBar";
 import { effortOption, effortValue, resolveModel, useEngineModels } from "../../../product/state/modelStore";
@@ -157,10 +158,8 @@ export function Composer({
   const serviceDown = useConnectionKind() === "service-down";
   const compacting = useCompacting(thread);
   const ready = outbound !== "" && !sending && !uploading && overBy === 0 && !serviceDown && !compacting;
-  // The first-run notice holds Send until it is answered; Continue sends the message itself once it has been.
-  // An engine host that is unavailable with no driver to fall back to turns Send off; the typed message stays in the box.
   const hostLine = useHostLine(thread.engine, engine?.name ?? thread.engine);
-  const canSend = ready && !gate.noticeOpen && !hostLine.sendBlocked;
+  const canSend = ready && !gate.noticeOpen && !gate.refused && !hostLine.sendBlocked;
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
@@ -221,7 +220,7 @@ export function Composer({
     return true;
   };
 
-  const send = async (followUp: "default" | "opposite" = "default", noticeAnswered = false) => {
+  const send = async (followUp: "default" | "opposite" = "default", noticeAnswered = false, withoutApprovals = false) => {
     if (hostLine.sendBlocked || !(noticeAnswered ? ready : canSend)) return false;
     const typed = draft;
     const prompt = promptWithChips(draft, chips);
@@ -249,7 +248,7 @@ export function Composer({
     const steering = busy && (followUp === "default" ? !queued : queued);
     setSending(true);
     setError(null);
-    gate.clear();
+    if (!withoutApprovals) gate.clear();
     try {
       await beforeSend?.();
       // Claude hears a typed reply as the reason it was declined, so nothing is queued.
@@ -262,7 +261,8 @@ export function Composer({
       }
       await Promise.all(pendingHere.map((approval) => api.decideApproval(approval.id, false, false)));
       const ids = attachments.flatMap((file) => file.id ?? []);
-      const run = busy ? null : await api.startRun(thread.id, prompt.trim(), ids);
+      const start = () => withoutApprovals ? cursorThreadApi().sendWithoutApprovals(thread.id, { prompt: prompt.trim(), attachment_ids: ids }).then(overrideRun) : api.startRun(thread.id, prompt.trim(), ids);
+      const run = busy ? null : await start();
       if (steering) {
         const steered = await api.steer(thread.id, prompt.trim());
         if (steered.state === "queued") useUi.getState().pushToast("This engine reads it on its next turn");
@@ -377,9 +377,9 @@ export function Composer({
   );
 
   const unmanaged = engine !== null && !engine.capabilities.managed;
-  // A saved mode this engine does not offer runs Supervised, so it shows that way.
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
+  const accessView = accessViewOf(!unmanaged && neverAsks(engine), engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
   const allEngines = useWorkspace((state) => state.engines.data);
   const installed = useMemo(() => (allEngines ?? []).filter((entry) => entry.installed), [allEngines]);
   const models = useEngineModels(thread.engine);
@@ -420,9 +420,8 @@ export function Composer({
     model,
     effort: thread.effort ?? null,
     extras: thread.options ?? {},
-    access: unmanaged ? null : access,
+    access: unmanaged || accessView.locked ? null : access,
     modes: offeredModes(engine),
-    refused: gate.refused.modes.length > 0 ? gate.refused : undefined,
     onEffort: (value) => void setEffort(value),
     onOption: (option, value) => {
       setError(null);
@@ -456,7 +455,7 @@ export function Composer({
         onEdit={(prompt) => setDraft(thread.id, draft.trim() ? `${draft}\n\n${prompt}` : prompt)}
       />
       <QuestionCard threadId={thread.id} waiting={thread.active_run?.state === "awaiting_approval"} />
-      {gate.cards(() => void send("default", true))}
+      {gate.cards(() => void send("default", true), () => send("default", true, true))}
       {hostLine.line ? <ComposerHostLine line={hostLine.line} /> : null}
       <ComposerBanners engine={engine} />
       <CompactOffer threadId={thread.id} engine={thread.engine} active={busy} items={log?.items ?? []} />
@@ -549,6 +548,7 @@ export function Composer({
           showContext={showContext}
           unmanaged={unmanaged}
           access={access}
+          accessView={accessView}
           busy={busy}
           stopping={stopping}
           sending={sending}
@@ -569,6 +569,7 @@ export function Composer({
         branchPending={branchPending}
         unmanaged={unmanaged}
         access={access}
+        accessView={accessView}
         busy={busy}
         traits={traits}
       />
@@ -588,6 +589,7 @@ export function Composer({
             busy,
             unmanaged,
             access,
+            accessView,
             traits,
           })}
         />
