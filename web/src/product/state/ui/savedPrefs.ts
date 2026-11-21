@@ -47,6 +47,7 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   followUpBehavior: state.followUpBehavior,
   diffLayout: state.diffLayout,
   previewSearchEngine: state.previewSearchEngine,
+  previewSearchAddress: state.previewSearchAddress,
   proactivePanels: state.proactivePanels,
   recentUrls: state.recentUrls,
   linkTarget: state.linkTarget,
