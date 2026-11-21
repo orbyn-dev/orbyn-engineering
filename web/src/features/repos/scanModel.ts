@@ -8,7 +8,7 @@ const TEXT_CAP = 512;
 const CONTROL = /[\u0000-\u001f\u007f]+/g;
 const text = (value: unknown): string | null => (typeof value === "string" ? value.replace(CONTROL, " ").trim().slice(0, TEXT_CAP) : null);
 
-const SOURCES: ReadonlySet<string> = new Set(["child", "code-workspace"]);
+const SOURCES: ReadonlySet<string> = new Set(["child", "code_workspace"]);
 const REFUSALS: ReadonlySet<string> = new Set(["outside", "missing", "not_directory"]);
 
 /** `true` for an object with own keys only: a service answer is data, never read through the prototype. */
