@@ -15,6 +15,28 @@ node src/main.mjs fake
 Layout: `src/frame.mjs` (encode, decode, error shape), `src/host.mjs` (handshake and dispatch),
 `src/families/` (one file per family), `test/` (protocol tests against the fake family).
 
+## Adding a family
+
+A family is one file in `src/families/` that exports `{ name, sdk: {name, version}, capabilities, create(ctx) }`
+(see `fake.mjs` for the smallest, `opencode.mjs` and `muse.mjs` for a served process, `claude.mjs` for an in-process SDK).
+
+1. `create(ctx)` gets `ctx.send(frame)` (write any host frame) and `ctx.log(event)` (a `log` frame, never put prompt text or
+   tokens in it). It returns `{ handle(request), close() }`; `handle` returns the response `result` or throws.
+2. Implement `open`, `send`, `cancel`, `respond`, `closeSession` (`steer`, `fork`, `models`, `usage`, `stopTask`, `background`,
+   `rollback`, `probe` only if the engine can) and list the optional ones in `capabilities`. `send` answers `{runId}` when
+   the turn is accepted, then streams `delta` frames (the engine's own events, untouched) and ends with exactly one `runDone`.
+3. Policy stays in Rust: every engine permission or question becomes a `permission` or `question` frame, answered by `respond`.
+   An allow reaches the engine in its once-only form; there is no host timeout on a pending one; cancel, run end and a crash
+   refuse it. Never add an always-allow.
+4. Errors use `serializeError` (`src/frame.mjs`) with a `kind` from the closed set in the protocol doc.
+5. Apply `open.confinement` (argv prefix, env allowlist) to every process the family starts; a family that cannot must
+   fail `open` with `kind: "unsupported"`. Log env keys you add before the engine starts.
+6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
+   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`).
+7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
+   `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
+   and write each test so it fails before the code. State in the PR what has not run against the real engine.
+
 ## Single executable (SEA)
 
 ```bash
