@@ -204,11 +204,19 @@ pub enum EngineOutcome {
     SessionLost,
 }
 
+/// A steer handed to a running engine. Its id travels with the text so a refusal
+/// can be recorded against the message the steer logged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SteerMessage {
+    pub message_id: String,
+    pub prompt: String,
+}
+
 #[derive(Debug)]
 pub enum EngineEvent {
     Agui(AgUiEvent),
     /// The engine refused a message sent mid-turn.
-    SteerFailed(String),
+    SteerFailed(SteerMessage),
     /// The engine says the turn stopped on a usage or rate limit.
     Limited {
         /// Unix seconds, when it says.
@@ -279,8 +287,8 @@ impl From<AgUiEvent> for EngineEvent {
 pub struct RunHandle {
     pub cancel: CancellationToken,
     pub task: JoinHandle<()>,
-    /// Takes steering text while the run works, for engines that accept it.
-    pub input: Option<mpsc::UnboundedSender<String>>,
+    /// Takes steering messages while the run works, for engines that accept them.
+    pub input: Option<mpsc::UnboundedSender<SteerMessage>>,
     /// Takes run controls other than text, for engines that accept them.
     pub control: Option<mpsc::UnboundedSender<RunControl>>,
 }

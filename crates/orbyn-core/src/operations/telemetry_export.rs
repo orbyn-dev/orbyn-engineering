@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use orbyn_contracts::ResourceSample;
+use orbyn_contracts::{ResourceSample, ResourceTelemetryHistory, TelemetryExportAttempt};
 use serde_json::{Value, json};
 
 use crate::app::Core;
@@ -20,9 +20,33 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(15);
 const QUEUE_LIMIT: usize = 256;
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const FINAL_FLUSH: Duration = Duration::from_secs(2);
+const ATTEMPTS_KEPT: usize = 50;
 const OWN_TARGET: &str = module_path!();
 
 static ACTIVE: Mutex<Option<Arc<Exporter>>> = Mutex::new(None);
+static ATTEMPTS: Mutex<VecDeque<TelemetryExportAttempt>> = Mutex::new(VecDeque::new());
+
+/// Notes whether the collector took a batch. Counts only; no payload is kept.
+fn note_attempt(signal: &str, accepted: bool, records: usize) {
+    let mut attempts = lock(&ATTEMPTS);
+    if attempts.len() == ATTEMPTS_KEPT {
+        attempts.pop_back();
+    }
+    attempts.push_front(TelemetryExportAttempt {
+        at: crate::util::now(),
+        signal: signal.to_owned(),
+        accepted,
+        records,
+    });
+}
+
+/// What this service has tried to send to the person's own collector since it started.
+pub fn export_history() -> ResourceTelemetryHistory {
+    ResourceTelemetryHistory {
+        active: lock(&ACTIVE).is_some(),
+        attempts: lock(&ATTEMPTS).iter().cloned().collect(),
+    }
+}
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -185,7 +209,14 @@ impl Exporter {
     async fn flush_with(&self, sample: Option<ResourceSample>) {
         if let Some(url) = &self.endpoints.logs {
             let batch: Vec<LogRecord> = lock(&self.logs).drain(..).collect();
-            if !batch.is_empty() && !self.post(url, &Self::logs_body(&batch)).await {
+            let sent = if batch.is_empty() {
+                true
+            } else {
+                let accepted = self.post(url, &Self::logs_body(&batch)).await;
+                note_attempt("logs", accepted, batch.len());
+                accepted
+            };
+            if !sent {
                 let mut queue = lock(&self.logs);
                 for record in batch.into_iter().rev() {
                     if queue.len() == QUEUE_LIMIT {
@@ -197,8 +228,12 @@ impl Exporter {
         }
         if let (Some(url), Some(sample)) = (&self.endpoints.metrics, sample) {
             let fresh = lock(&self.last_sample).as_deref() != Some(sample.at.as_str());
-            if fresh && self.post(url, &Self::metrics_body(&sample)).await {
-                *lock(&self.last_sample) = Some(sample.at);
+            if fresh {
+                let accepted = self.post(url, &Self::metrics_body(&sample)).await;
+                note_attempt("metrics", accepted, 1);
+                if accepted {
+                    *lock(&self.last_sample) = Some(sample.at);
+                }
             }
         }
     }

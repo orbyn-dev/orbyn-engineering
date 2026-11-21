@@ -162,6 +162,7 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
         "force-reload" => {
             let _ = window.reload();
         }
+        #[cfg(any(debug_assertions, feature = "devtools"))]
         "devtools" => {
             if window.is_devtools_open() {
                 window.close_devtools();
@@ -264,12 +265,13 @@ fn edit_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
 }
 
 fn view_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+    #[cfg(any(debug_assertions, feature = "devtools"))]
     let devtools = if cfg!(target_os = "macos") {
         "Alt+Cmd+I"
     } else {
         "Ctrl+Shift+I"
     };
-    SubmenuBuilder::new(app, "View")
+    let menu = SubmenuBuilder::new(app, "View")
         .item(&item(app, "toggle-sidebar", "Toggle Sidebar", None)?)
         .item(&item(app, "palette", "Command Palette", None)?)
         .separator()
@@ -279,14 +281,15 @@ fn view_submenu(app: &AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
             "force-reload",
             "Force Reload",
             Some("CmdOrCtrl+Shift+R"),
-        )?)
-        .item(&item(
-            app,
-            "devtools",
-            "Toggle Developer Tools",
-            Some(devtools),
-        )?)
-        .separator()
+        )?);
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    let menu = menu.item(&item(
+        app,
+        "devtools",
+        "Toggle Developer Tools",
+        Some(devtools),
+    )?);
+    menu.separator()
         .item(&item(
             app,
             "zoom-reset",

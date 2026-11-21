@@ -1,3 +1,4 @@
+import type { AppUpdateRequest } from "../generated/AppUpdateRequest";
 import { serviceUrl } from "./origin";
 import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
@@ -346,7 +347,8 @@ export const api = {
   shell: (signal?: AbortSignal) => request<ShellStatus>("GET", "/api/shell", undefined, signal),
   shellAction: (action: ShellAction) => request<void>("POST", "/api/shell/actions", { action }),
   checkUpdates: () => request<UpdateStatus>("POST", "/api/updates/check"),
-  applyAppUpdate: () => request<void>("POST", "/api/updates/app/apply"),
+  applyAppUpdate: (update: AppUpdateRequest) => request<void>("POST", "/api/updates/app/apply", update),
+  downloadAppUpdate: (update: AppUpdateRequest) => request<void>("POST", "/api/updates/app/download", update),
   applyAllUpdates: () => request<ApplyAllResult>("POST", "/api/updates/apply-all"),
   settings: (signal?: AbortSignal) =>
     request<ServerSettings>("GET", "/api/settings", undefined, signal),

@@ -1,4 +1,4 @@
-/* The live Crew map and lanes. Values are the design's own (Crew Designs, the map and lanes frames), on the app's tokens. */
+/* The live Crew map and lanes. Values are the design's own (Crew Designs' crew-map and lanes-main), on the app's tokens. */
 .mp-root { display: flex; flex-direction: column; gap: 12px; padding: 12px 20px 20px; min-width: 0; color: var(--color-textSoft); font-size: var(--text-meta); container-type: inline-size; }
 .mp-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow-wrap: anywhere; }
 .mp-crew { display: flex; align-items: center; gap: 8px; color: var(--color-muted); font-size: 12px; }
@@ -8,22 +8,55 @@
 .mp-engines, .mp-lanes { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--color-muted); font-size: 12px; }
 .mp-lanes b { font-weight: 500; color: var(--color-text); }
 .mp-split { display: flex; gap: 16px; align-items: flex-start; min-width: 0; }
-.mp-tree, .mp-col, .mp-board { flex: 1 1 0; min-width: 0; }
-.mp-tree { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.mp-node[data-worker] { margin-left: 18px; }
+.mp-canvas, .mp-col { flex: 1 1 0; min-width: 0; }
+/* The shared board sits in the design's 330 px column beside the lanes. */
+.mp-board { flex: 0 0 330px; width: 330px; min-width: 0; }
+.mp-canvas { display: flex; flex-direction: column; gap: 4px; overflow-x: auto; }
+.mp-map { position: relative; flex: none; }
+.mp-ed { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.mp-ed path { fill: none; stroke-width: 1.5; }
+.mp-start { stroke: var(--color-faint); }
+.mp-talk { stroke: var(--color-muted); stroke-dasharray: 4 4; }
+.mp-tree { list-style: none; margin: 0; padding: 0; }
+/* The nested list of the narrow frames and of a crew past eight workers: the lead, then each worker one level under it. */
+.mp-nest { flex: 1 1 0; min-width: 0; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mp-nli[data-worker] { margin-left: 18px; }
 .mp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; width: 100%; text-align: left; padding: 9px 10px; border: 0; border-radius: var(--radius-11); background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); color: inherit; font: inherit; cursor: pointer; }
 .mp-row[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--color-text); }
-.mp-row:focus-visible, .mp-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.mp-row:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .mp-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 140px; }
 .mp-main b { font-weight: 500; color: var(--color-text); }
-.mp-sub { color: var(--color-muted); font-size: 12px; }
 .mp-outcome { flex-basis: 100%; color: var(--color-text); font-size: 12.5px; line-height: 1.35; }
 .mp-meta { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--color-muted); font-size: 11.5px; }
-.mp-st { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 500; white-space: nowrap; background: var(--color-sunken); color: var(--color-textSoft); box-shadow: inset 0 0 0 1px var(--color-border); }
-.mp-info { background: var(--color-blueSoft); color: var(--color-blue); box-shadow: none; }
-.mp-ok { background: var(--color-greenSoft); color: var(--color-green); box-shadow: none; }
-.mp-warn { background: var(--color-warnSoft); color: var(--color-warnText); box-shadow: inset 0 0 0 1px var(--color-warnBorder); }
-.mp-err { background: var(--color-dangerSoft); color: var(--color-danger); box-shadow: none; }
+.mp-node { position: absolute; margin: 0; }
+.mp-card { display: flex; flex-direction: column; gap: 4px; width: 100%; height: 130px; min-width: 0; overflow: hidden; padding: 10px 12px; border: 0; border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); color: var(--color-textSoft); font: inherit; font-size: var(--text-meta); text-align: left; cursor: pointer; }
+.mp-node:not([data-worker]) .mp-card { box-shadow: 0 0 0 1px var(--color-borderHover); }
+.mp-card[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--color-text); }
+.mp-card-needs { box-shadow: 0 0 0 1px var(--color-warnBorder); background: var(--color-warnSoft); }
+.mp-card-fail { box-shadow: 0 0 0 1px var(--color-danger); background: var(--color-dangerSoft); }
+.mp-card:focus-visible, .mp-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.mp-card-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mp-card-h b { font-weight: 500; color: var(--color-text); white-space: nowrap; }
+.mp-card-h .mp-st { margin-left: auto; flex: none; }
+.mp-unread { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--color-textSoft); font-size: 11px; }
+.mp-card-model { display: flex; align-items: center; gap: 4px; color: var(--color-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-card-outcome { color: var(--color-text); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-card-why { color: var(--color-muted); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-card-meta { display: flex; flex-wrap: nowrap; gap: 3px 10px; min-width: 0; overflow: hidden; color: var(--color-muted); font-size: 11.5px; }
+.mp-card-meta > span { display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; }
+.mp-elab-start { transform: translate(0, -50%); }
+.mp-pl { margin-left: 4px; height: 16px; flex: none; }
+.mp-spin { width: 11px; height: 11px; margin-right: 4px; border-radius: 50%; border: 1.6px solid var(--color-borderStrong); border-top-color: var(--color-textSoft); display: inline-block; animation: spin 900ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { .mp-spin { animation: none; } }
+.mp-subcard { position: absolute; display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow: hidden; padding: 7px 10px; border-radius: var(--radius-lg); background: var(--color-sunken); color: var(--color-textSoft); font-size: 11px; }
+.mp-subcard-none { background: transparent; box-shadow: none; border: 1px dashed var(--color-borderStrong); color: var(--color-muted); }
+/* A secondary line beside a label (the facts list's class, author and revision). */
+.mp-sub { min-width: 0; color: var(--color-muted); font-size: 12px; }
+.mp-elab { position: absolute; display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); color: var(--color-textSoft); font-size: 11px; white-space: nowrap; transform: translate(-50%, -50%); }
+.mp-elab b { font-weight: 500; color: var(--color-text); }
+.mp-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 6px 0 12px; color: var(--color-muted); font-size: 12px; }
+.mp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.mp-legend svg path { fill: none; stroke-width: 1.5; }
 .mp-detail { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--color-sunken); }
 .mp-dhead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .mp-dhead h3, .mp-board h3, .mp-detail h4 { margin: 0; font-size: 13px; font-weight: 500; color: var(--color-text); }
@@ -39,9 +72,32 @@
 .mp-tool { display: flex; align-items: center; gap: 10px; }
 .mp-count { margin-left: auto; color: var(--color-muted); font-size: 12px; }
 .mp-note-inline { margin-left: 6px; color: var(--color-muted); font-size: 11px; }
+.mp-h { margin: 8px 0 0; font-size: 13px; font-weight: 500; color: var(--color-text); }
+
+/* The swim lanes: the lanes, the messages as arrows and the time axis of Crew Designs' lanes-main. */
+.mp-swim { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-x: auto; }
+.mp-ltl { position: relative; flex: none; margin: 0 0 8px; }
+.mp-lsv { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.mp-ln { fill: none; stroke: var(--color-borderStrong); stroke-width: 1; }
+.mp-ngth { fill: none; stroke: var(--color-borderStrong); stroke-width: 1; }
+.mp-arrow { fill: none; stroke: var(--color-muted); stroke-width: 1.5; }
+.mp-arrow-live { stroke: var(--color-blueSolid); stroke-width: 1.75; }
+.mp-arrowhead { fill: var(--color-muted); }
+.mp-arrowhead-live { fill: var(--color-blueSolid); }
+.mp-lrows { list-style: none; margin: 0; padding: 0; }
+.mp-lrow { position: absolute; left: 0; width: 128px; display: flex; flex-direction: column; gap: 1px; min-width: 0; color: var(--color-textSoft); font-size: 12px; }
+.mp-lrow b { font-weight: 500; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-lrow small { color: var(--color-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-tick { position: absolute; color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-kbd); white-space: nowrap; transform: translateX(-50%); }
+.mp-lbar { position: absolute; height: 16px; padding: 0 7px; border-radius: var(--radius-5); background: var(--color-blueSoft); color: var(--color-blue); font-size: 10.5px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-lmk { position: absolute; display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--color-surface); box-shadow: 0 0 0 1px var(--color-borderStrong); color: var(--color-textSoft); font-size: 11px; white-space: nowrap; transform: translateY(-50%); }
+.mp-lmk b { font-weight: 500; color: var(--color-text); }
+.mp-lmk-live { color: var(--color-blue); box-shadow: 0 0 0 1px var(--color-blueSolid); }
+.mp-swim-pl { position: absolute; right: 0; bottom: 4px; display: flex; align-items: center; gap: 6px; max-width: 460px; color: var(--color-muted); font-size: 11.5px; line-height: 1.35; }
 /* Below 640 px: one column; the details open under the list as a sheet. */
 @container (max-width: 640px) {
   .mp-split { flex-direction: column; }
-  .mp-tree, .mp-col, .mp-board, .mp-detail { width: 100%; flex: none; }
+  .mp-canvas, .mp-nest, .mp-col, .mp-board, .mp-detail { width: 100%; flex: none; }
 }
 .mp-neutral { color: var(--color-textSoft); }
+.mp-ok { background: var(--color-greenSoft); color: var(--color-green); box-shadow: none; }

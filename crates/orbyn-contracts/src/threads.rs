@@ -186,6 +186,12 @@ pub struct EditQueuedMessage {
 
 wire! {
 pub struct SteerRun {
+    /// The client's own id for this steer. It is echoed in `SteerResult` and used
+    /// for the logged message, so a timeline can find the message it sent. Absent
+    /// lets the service make one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message_id: Option<String>,
     pub prompt: String,
     /// A running turn keeps its own model; these apply from the next turn on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
