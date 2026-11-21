@@ -63,7 +63,9 @@ export function ProvidersSection() {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState<{ instance: ProviderInstance; program: string; title: string } | null>(null);
-  const catalog = useProviderList(engines.data ?? []);
+  const { catalog, reload: reloadCatalog } = useProviderList(engines.data ?? []);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const checkedAt = useRef<number | null>(null);
   if (engines.data && !offline) checkedAt.current = Date.now();
 
@@ -80,6 +82,7 @@ export function ProvidersSection() {
     try {
       await api.refreshEngines();
       await refreshEngines();
+      if (mounted.current) await reloadCatalog();
     } catch (failure) {
       setError(toFailure(failure).message);
     } finally {

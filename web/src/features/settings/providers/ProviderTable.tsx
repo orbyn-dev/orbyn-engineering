@@ -74,11 +74,11 @@ function Labels({ entry }: { entry: ProviderEntry | undefined }) {
 }
 
 /** The grouped list, read again whenever the engines change. `null` until the service answers or when it cannot. */
-export function useProviderList(engines: EngineStatus[]): ProviderList | null {
+export function useProviderList(engines: EngineStatus[]) {
   const key = engines.map((engine) => [engine.id, engine.installed, engine.auth, engine.version ?? "", engine.instance_of ?? "", engine.compatibility?.status ?? "",
     engine.capabilities.managed, engine.capabilities.approvals].join(":")).join();
   const list = useAsync(`provider-list:${key}`, (signal) => listProviders(signal), { keep: true });
-  return list.data;
+  return { catalog: list.data, reload: list.reload };
 }
 
 const COLUMNS = "28px minmax(0, 1fr) 90px minmax(130px, auto) 60px 72px";
