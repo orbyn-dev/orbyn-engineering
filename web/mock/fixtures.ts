@@ -810,7 +810,7 @@ export function logs(): Record<string, WireThreadEvent[]> {
         { type: "CUSTOM", name: "background.stopped", value: { taskId: "b2", taskType: "local_agent", description: "Check the login tests for stale redirects" } },
         { type: "CUSTOM", name: "background.stopped", value: { taskId: "b3", taskType: "local_bash", description: "pnpm dev --port 5173" } },
         { type: "CUSTOM", name: "background.stopped", value: { taskId: "b4", taskType: "local_bash", description: "pnpm typecheck --watch" } },
-        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b5", taskType: "local_workflow" } },
+        { type: "CUSTOM", name: "background.stopped", value: { taskId: "b5", taskType: "monitor" } },
         { type: "RUN_FINISHED", threadId: "t-bg-stopped-many", runId: "r-bm", outcome: { type: "success" } },
       ]),
     ),
