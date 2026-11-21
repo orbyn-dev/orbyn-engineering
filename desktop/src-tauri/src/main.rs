@@ -21,14 +21,11 @@ use links::ServicePort;
 use menu::Zoom;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{AppHandle, Manager, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
-
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 struct Core(Mutex<Option<CoreProcess>>);
 /// Fences window requests queued by an earlier service process.
@@ -521,13 +518,9 @@ fn main() {
                     open_link(&handle, url.to_string());
                 }
             }
-            std::thread::spawn(move || {
-                launch_core(&handle);
-                loop {
-                    app_update::check(&handle, handle.state::<ServiceGeneration>().0.load(Ordering::SeqCst));
-                    std::thread::sleep(UPDATE_CHECK_INTERVAL);
-                }
-            });
+            // Core schedules the app update check (startup, every six hours) and asks the
+            // shell for it, so the setting and ORBYN_OFFLINE are honoured in one place.
+            std::thread::spawn(move || launch_core(&handle));
             Ok(())
         })
         .on_window_event(|window, event| match event {
