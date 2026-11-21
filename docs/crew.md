@@ -498,6 +498,51 @@ merge).
   real engines and actual forge publication remain unqualified.
   `crew_finding` refuses after the reviewer's run has ended (H7); the Gates are core writes and do not.
 
+**Known limits of the review stages (#451, 2026-11-20).** Every limit the slice 4b review rounds named now has a decision.
+A fixed item names its test; an accepted one says why and what would close it. Implementation notes and the decision table
+stay in the [review README](../crates/orbyn-core/src/crew/review/README.md#decisions-for-451).
+
+- **A reworded claim is a new finding — accepted.** The fingerprint is the lane, the file and the claim with case and spacing
+  ignored, so only the label uses it. Blocking and the one-fix-per-place guard keep to the lane and file: a paraphrase never
+  clears a confirmed finding and a silent lane clears nothing; a fixed place can read as "fixed" plus a new report. Exact
+  semantic identity (compare by file and nearby line as the second review does, or let the lead mark two findings the same)
+  is a product decision with no agreed rule. Unblocked by that decision; `the_same_place_twice_stops_the_loop` and
+  `a_fingerprint_ignores_the_line_the_case_and_the_spacing` cover today's rule.
+- **A reviewer shares the lead's checkout — blocked on #436.** Read-only comes from the lease, the protected-byte comparison
+  and the scope check; no process or filesystem isolation exists. A reviewer's own checkout at the exact commit needs #436.
+  Unblocked by #436.
+- **The second blind review lane costs a whole lane run — accepted.** A finding without a repro is checked by an independent
+  run on another vendor, and a cheaper check anchored on the claim would break that independence. The cost is unmeasured
+  because it needs real engine runs; only fake engines are tested here. Unblocked by a real-lane measurement.
+- **A finding outside the reviewed task's own scope — closed.** A fix inherits the reviewed task's checks and writes only the
+  finding's file. A finding outside the task's own `file_scope` checks now sends no fix brief; the lead is told a person must
+  authorise a new task (`a_fix_outside_the_tasks_scope_checks_is_refused`). Check-defining manifests, tests, CI, rule files and
+  protected paths stay refused. The residual is accepted: a fix never widens the reviewed scope.
+- **Real Claude and Codex yield — unqualified.** Only fake engines ran, so no real lane has shown how often reviewers file
+  findings the check confirms. Unblocked by real-lane runs on signed-in engines, which need a live-run decision rather than
+  code work (#451).
+- **Hidden paths and index flags — index flags closed; ignored new files accepted.** Any `assume-unchanged` or
+  `skip-worktree` entry, sparse checkouts included, refuses admission and fails verification whenever it appears. A new file
+  hidden by `.gitignore`, `.git/info/exclude` or `core.excludesFile` stays invisible to the Git-based scope and size checks:
+  counting every ignored file would charge pre-existing caches and local data to a narrow task. A crafted `.git/index` with
+  matching file times, a `.git` file pointing at another folder and a writable `.git` are the same class. Unblocked by isolated
+  checkouts (#436) or a task-start byte baseline; `ignored_new_files_remain_an_accepted_blind_spot`,
+  `an_index_flag_does_not_hide_a_reviewers_edit` and `a_flag_that_was_there_at_the_start_refuses_admission` cover today's
+  behaviour.
+- **The clearing repro runs at the current checkout — blocked on #436.** It must pass now, is not shown to have failed before
+  the fix (the Gate says so), and its Evidence records the commit it ran on. Fail-before/pass-after at the finding's exact
+  commit needs a throwaway checkout and process ownership in #436. Unblocked by #436.
+- **Byte-exact Git is scoped to the checks that decide — accepted.** Crew's scope, size and changed-path checks run
+  `git_byte_exact` (line-ending conversion and the untracked cache off) and refuse a nonempty or unreadable `info/attributes`;
+  `git_hardened` keeps its previous behaviour for every other caller. Adding the flags to every hardened read would change
+  file explorer and merge reads too, and real Windows `core.autocrlf=true` behaviour is unverified ([handoff](handoff.md)).
+  Repository metadata remains writable. Unblocked by auditing every caller and recording Windows evidence;
+  `autocrlf_cannot_hide_a_byte_change_from_scope_or_size` and `only_the_byte_exact_helper_carries_the_crew_flags` cover it.
+- **The touched guard and HEAD reads — closed.** `chk-fix-touched` is a core byte comparison in the immutable key, run only for
+  a stored fix task, never a shell command; a missing, unreadable or nonregular file cannot pass. The two plain
+  `rev-parse HEAD` reads the issue named use `git_hardened`, in `review/lanes.rs` and the start path. Covered by
+  `a_fix_with_spaces_and_valid_punctuation_gets_a_core_byte_check` and the verifier tests.
+
 **Review decisions** (2026-11-11, Designer part 2, frames in `crew-designs.html`):
 
 - **Required before merge by default:**
