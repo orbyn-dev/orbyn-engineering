@@ -47,7 +47,7 @@ const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 /** `Restart 3 of 5 · next try in 4 s`: the try, and when the next one is. */
 export function restartLine(row: HostRow): string {
   const restart = row.restart;
-  if (!restart) return "Waiting to start it again.";
+  if (!restart) return row.restart_count ? `Waiting to start it again. Restarted ${plural(row.restart_count, "time", "times")} since Orbyn started.` : "Waiting to start it again.";
   const next = restart.next_try_seconds;
   return `Restart ${restart.attempt} of ${restart.limit}${next === null ? "" : ` · next try in ${next} s`}`;
 }
@@ -62,17 +62,43 @@ export function listLine(row: HostRow, now = Date.now()): string {
     case "not_started": return "Starts with the first thread that uses it.";
     case "starting": return "Waiting for the host to say hello";
     case "running": return row.pooled
-      ? `One host for every ${plain(row.name, 60)} thread · since ${clock(row.since)}`
-      : `Host ${plain(row.host_version ?? "", 20)} · protocol ${row.protocol ?? ""} · since ${clock(row.since)}`;
+      ? `One host for every ${plain(row.name, 60)} thread${sinceClock(row)}`
+      : [`Host ${plain(row.host_version ?? "", 20)}`.trimEnd(), row.protocol != null ? `protocol ${row.protocol}` : null, sinceClock(row).slice(3) || null].filter(Boolean).join(" · ");
     case "stopped": return `Stopped ${ago(row.stopped_at, now)} because nothing was using it. Starts with the next thread.`;
     case "crashed": return `Stopped at ${clock(row.stopped_at)}.${crashedThreads(row)} Restarting next.`;
     case "restarting": return restartLine(row);
-    case "cant_start": return `Stopped ${row.stops_in_window ?? 5} times in 5 minutes.${row.last_error ? ` Last error: ${sentence(plain(row.last_error.message, 200))}` : ""}`;
+    case "cant_start": return `${cantStartLead(row)}${row.last_error ? ` Last error: ${sentence(plain(row.last_error.message, 200))}` : ""}`;
     case "version_mismatch": return mismatchLine(row);
     case "not_used": return `${plain(row.name, 60)} runs through its own program here.`;
     default: return "";
   }
 }
+
+/** ` · since 09:12` when the service says when it started running, nothing when it does not. */
+const sinceClock = (row: HostRow): string => (row.since && clock(row.since) ? ` · since ${clock(row.since)}` : "");
+
+/** What stopped a family that can't start: the service's own sentence, or the protocol's rule (five stops in five minutes). */
+export const cantStartLead = (row: HostRow): string =>
+  row.detail ? sentence(plain(row.detail, 200)) : `Stopped ${row.stops_in_window ?? 5} times in 5 minutes.`;
+
+/** The Reason row of a Not used card. */
+export const notUsedReason = (row: HostRow): string | null =>
+  row.not_used === "flag_off" ? "The SDK path is off." : row.not_used === "unsupported_platform" ? "This build has no engine host for this platform." : null;
+
+/** What a crash says in its details: how the host process ended. The exit code or signal appears only there. */
+export function exitLine(crash: { exit_code?: number; signal?: number }): string | null {
+  if (typeof crash.exit_code === "number") return `Exited with code ${crash.exit_code}`;
+  if (typeof crash.signal === "number") return `Stopped by signal ${crash.signal}`;
+  return null;
+}
+
+const ERROR_KIND_WORDS = new Map<string, string>(Object.entries({
+  exited: "The host exited", closed_output: "The host closed its output", stalled: "The host stopped answering", malformed: "The host sent a frame this app could not read",
+  oversize: "The host sent a frame that was too large", hello_timeout: "The host did not say hello in time", start_failed: "The host did not start",
+}));
+
+/** How the host failed, as a short phrase; a kind this app does not know is not shown. */
+export const errorKindLine = (kind: string): string | null => (typeof kind === "string" ? ERROR_KIND_WORDS.get(kind) : undefined) ?? null;
 
 function crashedThreads(row: HostRow): string {
   return row.failed_threads ? ` ${plural(row.failed_threads, "thread", "threads")} failed.` : "";
@@ -88,6 +114,7 @@ export function stateLine(row: HostRow, today = new Date()): string {
       return `Since ${clock(row.since)}${same ? " today" : since ? ` on ${shortDate(row.since)}` : ""}`;
     }
     case "stopped": return "Stopped because nothing was using it. Starts with the next thread.";
+    case "not_used": return `Not used. ${plain(row.name, 60)} keeps running through its own program.`;
     case "version_mismatch": return "Refused at hello. Nothing is running on it.";
     default: return listLine(row, today.getTime());
   }
@@ -143,13 +170,16 @@ export const isProcess = (row: HostRow): boolean => row.state === "running" || r
 /** The line under a host in Maintenance › Processes. */
 export function processLine(row: HostRow, now: number): string {
   switch (row.state) {
-    case "running": return `Running ${runningFor(row.since, now)} · ${row.pooled ? `shared by every ${plain(row.name, 40)} thread` : `orbyn-engine-host ${plain(row.host_version ?? "", 20)}`}`.trimEnd();
+    case "running": {
+      const long = runningFor(row.since, now);
+      return `Running${long ? ` ${long}` : ""} · ${row.pooled ? `shared by every ${plain(row.name, 40)} thread` : `orbyn-engine-host ${plain(row.host_version ?? "", 20)}`}`.trimEnd();
+    }
     case "restarting":
     case "crashed": {
       const restart = row.restart;
-      return restart ? `Restarting · try ${restart.attempt} of ${restart.limit}${restart.next_try_seconds === null ? "" : ` · next try in ${restart.next_try_seconds} s`}` : "Restarting";
+      return restart ? `Restarting · try ${restart.attempt} of ${restart.limit}${restart.next_try_seconds === null ? "" : ` · next try in ${restart.next_try_seconds} s`}` : row.restart_count ? `Restarting · restarted ${plural(row.restart_count, "time", "times")}` : "Restarting";
     }
-    default: return `Can’t start · stopped ${row.stops_in_window ?? 5} times in 5 minutes`;
+    default: return row.detail ? `Can’t start · ${sentence(plain(row.detail, 120)).replace(/\.$/, "")}` : `Can’t start · stopped ${row.stops_in_window ?? 5} times in 5 minutes`;
   }
 }
 

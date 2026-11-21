@@ -198,7 +198,7 @@ names are proposals for Eng 2 to confirm:
   `unsupported_platform`) covers part of this; `not_installed` and `unavailable` are not in it.
 - Stop and restart Person routes and the engine spawn secret wiring are slice 2 (Planned).
 
-`web/src/features/enginehost/contract.ts` (`HostRow`) is an older hand-written, mocked shape and does not match the slice 1 names above.
+The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). The `HostRow` fields for the Planned items above, and for stop, restart and retry, are filled only by the dev mock: the real client leaves them empty, and the screens draw nothing for them (no Stop, Restart or Try again button until the Person routes of slice 2 exist).
 
 ## Crash and recovery
 

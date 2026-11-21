@@ -1,6 +1,6 @@
 import type { EngineStatus } from "../../api/types";
 import type { HostRow } from "./contract";
-import { plain, restartLine, type Chip } from "./hostText";
+import { cantStartLead, plain, restartLine, type Chip } from "./hostText";
 
 /**
  * Why an engine has no models or can't run, in the words the Engineer frames give (`enginehost-picker-*`, `enginehost-gaps-*`).
@@ -58,7 +58,7 @@ export function pickerGap(engine: EngineStatus, host: HostRow | null): Gap | nul
     case "crashed":
       return { kind: "restarting", title: "Restarting the engine host", sentence: `${restartLine(host)}. Your work in the project is kept.`, chip: { label: "Restarting", tone: "info", spin: true }, action: null };
     case "cant_start":
-      return { kind: "cant_start", title: "Can’t start", sentence: `The engine host stopped ${host.stops_in_window ?? 5} times in 5 minutes.${host.last_error ? ` Last error: ${plain(host.last_error.message, 200).replace(/\.$/, "")}.` : ""}`, chip: { label: "Can’t start", tone: "err" }, action: host.can_retry ? "try_again" : null };
+      return { kind: "cant_start", title: "Can’t start", sentence: `${host.detail ? cantStartLead(host) : `The engine host stopped ${host.stops_in_window ?? 5} times in 5 minutes.`}${host.last_error ? ` Last error: ${plain(host.last_error.message, 200).replace(/\.$/, "")}.` : ""}`, chip: { label: "Can’t start", tone: "err" }, action: host.can_retry ? "try_again" : null };
     case "version_mismatch":
       return { kind: "mismatch", title: "Version mismatch", sentence: "The engine host does not match this app version.", chip: { label: "Version mismatch", tone: "err" }, action: "update" };
     default:
