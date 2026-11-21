@@ -125,7 +125,8 @@ impl Core {
 
     /// The key for a child's environment, honouring the opt-in setting: `None` when it is off or nothing
     /// is saved. A driver calls this at spawn and puts [`SpawnSecret::expose`] in `SpawnSecret::env` of the
-    /// child, and nowhere else.
+    /// child, and nowhere else. The engine host's pools reach it through `agents::driver::host::secrets_from`,
+    /// so a host's spawn environment gets a key from here and from no other place.
     pub fn engine_spawn_secret(
         &self,
         engine: &str,

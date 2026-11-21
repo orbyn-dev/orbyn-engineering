@@ -284,6 +284,8 @@
     ["POST","/api/diagnostics/otlp","local"],
     ["POST","/api/diagnostics/processes/{pid}/stop","local"],
     ["POST","/api/diagnostics/repair","local"],
+    ["POST","/api/engine-host/{family}/restart","person"],
+    ["POST","/api/engine-host/{family}/stop","person"],
     ["POST","/api/engines/custom","person"],
     ["POST","/api/engines/probe-binary","person"],
     ["POST","/api/engines/refresh","local"],

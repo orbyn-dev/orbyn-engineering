@@ -243,11 +243,13 @@ impl EngineDriver for HostDriver {
             .await
             .map_err(|unavailable| CoreError::EngineUnavailable(unavailable.0))?;
         let send_id = connection.next_id();
-        let route = connection.register(send_id, &spec.run_id).map_err(|_| {
-            CoreError::EngineUnavailable(
-                "The engine host is stopping. Send your message again.".into(),
-            )
-        })?;
+        let route = connection
+            .register(send_id, &spec.run_id, &spec.thread_id)
+            .map_err(|_| {
+                CoreError::EngineUnavailable(
+                    "The engine host is stopping. Send your message again.".into(),
+                )
+            })?;
         let accepted = match begin(
             &connection,
             &spec,
@@ -268,6 +270,7 @@ impl EngineDriver for HostDriver {
         let (input, steering) = mpsc::unbounded_channel();
         let (control, controls) = mpsc::unbounded_channel();
         let run = Run {
+            pool: self.pool.clone(),
             connection,
             route,
             send_id,

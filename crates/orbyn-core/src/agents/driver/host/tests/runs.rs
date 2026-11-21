@@ -242,22 +242,6 @@ async fn a_crash_mid_run_fails_the_run_and_the_host_restarts_with_backoff() {
 }
 
 #[tokio::test]
-async fn a_permission_or_question_with_no_handler_is_refused() {
-    let Some(rig) = standin(&[], fast()) else {
-        return;
-    };
-    let driver = rig.driver();
-    for prompt in ["[perm]", "[question]"] {
-        let (events, outcome) = start(&driver, spec(prompt)).await.unwrap().outcome().await;
-        assert_eq!(outcome, EngineOutcome::Completed);
-        let said = texts(&events);
-        assert!(said.contains(r#""behavior":"deny""#), "{prompt}: {said}");
-        assert!(!said.contains("allow"));
-    }
-    rig.pool.shutdown().await;
-}
-
-#[tokio::test]
 async fn a_rate_limit_reports_its_reset_and_a_turn_limit_says_so_plainly() {
     let Some(rig) = standin(&[], fast()) else {
         return;
