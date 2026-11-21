@@ -1,6 +1,7 @@
-The claude/*.ndjson and opencode/*.ndjson transcripts are adapted from T3 Code (https://github.com/pingdotgg/t3code, commit
+The claude/*.ndjson, opencode/*.ndjson and muse/*.ndjson transcripts are adapted from T3 Code (https://github.com/pingdotgg/t3code, commit
 9168ca73d02003557725430b515b44e1551544af, apps/server/src/orchestration-v2/testkit/fixtures/*/claude_transcript.ndjson and
-opencode2_{permission,interrupt,inbox,fork}/opencode_transcript.ndjson; the latter are recorded OpenCode 2.0.18 HTTP/SSE sessions),
+opencode2_{permission,interrupt,inbox,fork}/opencode_transcript.ndjson (recorded OpenCode 2.0.18 HTTP/SSE sessions) and
+muse_{permission,subagent_approval,subagent_interrupt,workflow}/muse_transcript.ndjson (recorded Muse Code 1.4.3 to 1.4.6 JSON-RPC sessions)),
 MIT License, Copyright (c) 2026 T3 Tools Inc. Unmodified copies.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
@@ -8,3 +9,6 @@ documentation files (the "Software"), to deal in the Software without restrictio
 the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
 subject to the above copyright notice and this permission notice being included in all copies or substantial
 portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+The bundled SDK, @muse-code/sdk 1.4.6, is MIT licensed, Copyright (c) Meta Platforms, Inc. and affiliates; its LICENSE ships in
+node_modules/@muse-code/sdk/LICENSE.
