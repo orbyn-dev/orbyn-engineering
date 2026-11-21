@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod activity;
+mod app_update;
 mod chrome;
 mod core_process;
 mod desktop_origin;
@@ -25,7 +26,6 @@ use tauri::tray::TrayIconBuilder;
 use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{AppHandle, Manager, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_updater::{Update, UpdaterExt};
 
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -36,8 +36,7 @@ struct ServiceGeneration(AtomicU64);
 /// Whether a crashed service is started again by itself, which happens once.
 #[derive(Default)]
 struct Restarts(Mutex<restart_policy::RestartPolicy>);
-/// The update found by the latest check, installed only when orbynd asks.
-struct PendingUpdate(Mutex<Option<Update>>);
+
 /// Links that arrived before the service could take them.
 struct WaitingLinks(Mutex<Vec<String>>);
 
@@ -109,11 +108,9 @@ fn show_failure(app: &AppHandle, reason: &str, repeated: bool) {
 
 /// Replaces any running core, then supplies its address to the stable asset page.
 fn launch_core(app: &AppHandle) {
-    let generation = app
-        .state::<ServiceGeneration>()
-        .0
-        .fetch_add(1, Ordering::SeqCst)
-        + 1;
+    let Some(generation) = app_update::prepare_service(app) else {
+        return;
+    };
     if let Err(error) = close_preview_windows(app) {
         show_failure(app, &error, false);
         return;
@@ -125,58 +122,62 @@ fn launch_core(app: &AppHandle) {
     }
     let watcher = app.clone();
     let messages = app.clone();
-    let on_message = move |message: ServiceMessage| match message {
-        ServiceMessage::CheckAppUpdate => check_for_update(&messages),
-        ServiceMessage::InstallAppUpdate => install_update(&messages),
-        ServiceMessage::ShellAction { action } => menu::on_action(&messages, action),
-        ServiceMessage::PreviewWindow { thread_id, tab_id } => {
-            let app = messages.clone();
-            let dispatch = app.clone();
-            if let Err(error) = app.run_on_main_thread(move || {
-                if dispatch
-                    .state::<ServiceGeneration>()
-                    .0
-                    .load(Ordering::SeqCst)
-                    != generation
-                {
-                    return;
-                }
-                if let Err(error) = open_preview_window(&dispatch, &thread_id, &tab_id) {
+    let on_message = move |message: ServiceMessage| {
+        if messages
+            .state::<ServiceGeneration>()
+            .0
+            .load(Ordering::SeqCst)
+            != generation
+        {
+            return;
+        }
+        match message {
+            ServiceMessage::CheckAppUpdate => app_update::check(&messages, generation),
+            ServiceMessage::DownloadAppUpdate {
+                release_id,
+                operation,
+            } => app_update::download(&messages, generation, release_id, operation),
+            ServiceMessage::InstallAppUpdate {
+                release_id,
+                operation,
+            } => app_update::install(&messages, generation, release_id, operation),
+            ServiceMessage::ShellAction { action } => menu::on_action(&messages, action),
+            ServiceMessage::PreviewWindow { thread_id, tab_id } => {
+                let app = messages.clone();
+                let dispatch = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    if dispatch
+                        .state::<ServiceGeneration>()
+                        .0
+                        .load(Ordering::SeqCst)
+                        != generation
+                    {
+                        return;
+                    }
+                    if let Err(error) = open_preview_window(&dispatch, &thread_id, &tab_id) {
+                        tell_core(
+                            &dispatch,
+                            serde_json::json!({
+                                "type": "shell_failed", "message": error
+                            }),
+                        );
+                    }
+                }) {
                     tell_core(
-                        &dispatch,
+                        &app,
                         serde_json::json!({
-                            "type": "shell_failed", "message": error
+                            "type": "shell_failed",
+                            "message": format!("Cannot open the preview window: {error}.")
                         }),
                     );
                 }
-            }) {
-                tell_core(
-                    &app,
-                    serde_json::json!({
-                        "type": "shell_failed",
-                        "message": format!("Cannot open the preview window: {error}.")
-                    }),
-                );
             }
-        }
-        ServiceMessage::Activity(now) => activity::apply(&messages, now),
-        ServiceMessage::ChooseProjectImage { request_id } => {
-            image_picker::choose(&messages, request_id)
-        }
-        ServiceMessage::PresenceHold {
-            request_id,
-            hold_id,
-            thread_id,
-            task_id,
-            command_shown,
-            command_sha256,
-            worker_name,
-            task_title,
-            truncated,
-        } => presence::deliver(
-            &messages,
-            &request_id,
-            presence::Answer::Hold(presence::Hold {
+            ServiceMessage::Activity(now) => activity::apply(&messages, now),
+            ServiceMessage::ChooseProjectImage { request_id } => {
+                image_picker::choose(&messages, request_id)
+            }
+            ServiceMessage::PresenceHold {
+                request_id,
                 hold_id,
                 thread_id,
                 task_id,
@@ -185,17 +186,45 @@ fn launch_core(app: &AppHandle) {
                 worker_name,
                 task_title,
                 truncated,
-            }),
-        ),
-        ServiceMessage::PresenceReady { request_id } => {
-            presence::deliver(&messages, &request_id, presence::Answer::Ready)
-        }
-        ServiceMessage::PresenceRefused { request_id, code } => {
-            presence::deliver(&messages, &request_id, presence::Answer::Refused(code))
+            } => presence::deliver(
+                &messages,
+                &request_id,
+                presence::Answer::Hold(presence::Hold {
+                    hold_id,
+                    thread_id,
+                    task_id,
+                    command_shown,
+                    command_sha256,
+                    worker_name,
+                    task_title,
+                    truncated,
+                }),
+            ),
+            ServiceMessage::PresenceReady { request_id } => {
+                presence::deliver(&messages, &request_id, presence::Answer::Ready)
+            }
+            ServiceMessage::PresenceRefused { request_id, code } => {
+                presence::deliver(&messages, &request_id, presence::Answer::Refused(code))
+            }
         }
     };
     let on_exit = move |reason: String| {
-        watcher.state::<Core>().0.lock().expect("core slot").take();
+        if !app_update::service_exited(&watcher, generation) {
+            return;
+        }
+        {
+            let state = watcher.state::<Core>();
+            let mut state = state.0.lock().expect("core slot");
+            if watcher
+                .state::<ServiceGeneration>()
+                .0
+                .load(Ordering::SeqCst)
+                != generation + 1
+            {
+                return;
+            }
+            state.take();
+        }
         let decision = watcher
             .state::<Restarts>()
             .0
@@ -377,90 +406,6 @@ fn open_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Read-only: reports what is available and leaves installing to the service,
-/// which refuses while runs are active.
-fn check_for_update(app: &AppHandle) {
-    let (Some(pubkey), Some(endpoint)) = (
-        option_env!("ORBYN_UPDATE_PUBKEY"),
-        option_env!("ORBYN_UPDATE_ENDPOINT").and_then(|value| url::Url::parse(value).ok()),
-    ) else {
-        tell_core(
-            app,
-            serde_json::json!({ "type": "app_update_unconfigured" }),
-        );
-        return;
-    };
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let result = match app
-            .updater_builder()
-            .pubkey(pubkey)
-            .endpoints(vec![endpoint])
-        {
-            Ok(builder) => match builder.build() {
-                Ok(updater) => updater.check().await.map_err(|error| error.to_string()),
-                Err(error) => Err(error.to_string()),
-            },
-            Err(error) => Err(error.to_string()),
-        };
-        let message = match result {
-            Ok(Some(update)) => {
-                let message = serde_json::json!({
-                    "type": "app_update_available",
-                    "version": update.version,
-                    "notes": update.body,
-                });
-                *app.state::<PendingUpdate>().0.lock().expect("update slot") = Some(update);
-                message
-            }
-            Ok(None) => serde_json::json!({ "type": "app_update_none" }),
-            Err(message) => {
-                serde_json::json!({ "type": "app_update_check_failed", "message": message })
-            }
-        };
-        tell_core(&app, message);
-    });
-}
-
-fn install_update(app: &AppHandle) {
-    let pending = app
-        .state::<PendingUpdate>()
-        .0
-        .lock()
-        .expect("update slot")
-        .take();
-    let Some(update) = pending else {
-        tell_core(
-            app,
-            serde_json::json!({ "type": "app_update_failed", "message": "No update is ready." }),
-        );
-        return;
-    };
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let progress = app.clone();
-        let mut downloaded = 0u64;
-        let on_chunk = move |chunk: usize, total: Option<u64>| {
-            downloaded += chunk as u64;
-            tell_core(
-                &progress,
-                serde_json::json!({
-                    "type": "app_update_progress",
-                    "downloaded": downloaded,
-                    "total": total,
-                }),
-            );
-        };
-        match update.download_and_install(on_chunk, || {}).await {
-            Ok(()) => app.restart(),
-            Err(error) => tell_core(
-                &app,
-                serde_json::json!({ "type": "app_update_failed", "message": error.to_string() }),
-            ),
-        }
-    });
-}
-
 fn install_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Orbyn Engineering", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -545,7 +490,7 @@ fn main() {
         .manage(presence::Presence::default())
         .manage(Restarts::default())
         .manage(ServiceGeneration::default())
-        .manage(PendingUpdate(Mutex::new(None)))
+        .manage(app_update::Updates::default())
         .manage(WaitingLinks(Mutex::new(Vec::new())))
         .manage(ServicePort::default())
         .manage(Zoom::default())
@@ -578,7 +523,7 @@ fn main() {
             std::thread::spawn(move || {
                 launch_core(&handle);
                 loop {
-                    check_for_update(&handle);
+                    app_update::check(&handle, handle.state::<ServiceGeneration>().0.load(Ordering::SeqCst));
                     std::thread::sleep(UPDATE_CHECK_INTERVAL);
                 }
             });
@@ -605,6 +550,7 @@ fn main() {
 
     app.run(|app, event| match event {
         RunEvent::Exit => {
+            app_update::shutdown(app);
             app.state::<activity::KeepAwake>().set(false);
             if let Some(core) = app.state::<Core>().0.lock().expect("core slot").take() {
                 core.stop();

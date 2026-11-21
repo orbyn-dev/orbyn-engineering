@@ -133,3 +133,27 @@ pub struct RunScript {
     pub id: Option<String>,
 }
 }
+
+wire! {
+/// One frame of `GET /api/threads/{id}/terminals/{terminal}/output/events`: a
+/// terminal's output as it is produced. Text is UTF-8, so a character split across
+/// two PTY reads arrives whole in the next frame; control sequences are kept and
+/// other bytes read as U+FFFD, the same as `TerminalScrollback.text`.
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CommandOutputEvent {
+    /// Output kept before the subscription began, oldest first: zero or more frames.
+    Snapshot { text: String },
+    /// Output produced after the snapshots.
+    Chunk { text: String },
+    /// The terminal's output ended, so the subscription closes after this frame.
+    /// `exit_code` is the child's exit code as reported by then, and `None` when it
+    /// had not been reported yet.
+    Ended { exit_code: Option<i32> },
+    /// This client fell behind the live output and lost `dropped` chunks, so the
+    /// stream ends. Connect again for the retained output.
+    Overflow {
+        #[ts(type = "number")]
+        dropped: u64,
+    },
+}
+}

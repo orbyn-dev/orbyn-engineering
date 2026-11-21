@@ -2,11 +2,14 @@
 //! they hold over time, and the recent warnings. All of it stays in memory and goes
 //! when the service stops.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use orbyn_contracts::{ResourceSample, ServiceEvent, ServiceProcess};
+use orbyn_contracts::{
+    HostResources, ProcessResourceHistory, ProcessResourceSample, ProcessResourceSeries,
+    ResourceSample, ServiceEvent, ServiceProcess, TraceDiagnostics, TraceSpanSummary,
+};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use crate::error::{CoreError, Result};
@@ -17,6 +20,7 @@ const SAMPLE_EVERY: Duration = Duration::from_secs(60);
 const EVENTS_KEPT: usize = 50;
 
 static HISTORY: Mutex<VecDeque<ResourceSample>> = Mutex::new(VecDeque::new());
+static PROCESS_HISTORY: Mutex<BTreeMap<u32, ProcessResourceSeries>> = Mutex::new(BTreeMap::new());
 static EVENTS: Mutex<VecDeque<ServiceEvent>> = Mutex::new(VecDeque::new());
 
 impl crate::app::Core {
@@ -125,6 +129,93 @@ pub(crate) fn sample() {
         processes: processes.len(),
     };
     keep(&mut lock(&HISTORY), entry, HISTORY_SAMPLES);
+    record_processes(&processes);
+}
+
+/// Adds one sample per live process and forgets the ones that ended.
+fn record_processes(processes: &[ServiceProcess]) {
+    let at = now();
+    let mut series = lock(&PROCESS_HISTORY);
+    series.retain(|pid, _| processes.iter().any(|process| process.pid == *pid));
+    for process in processes {
+        let entry = series
+            .entry(process.pid)
+            .or_insert_with(|| ProcessResourceSeries {
+                pid: process.pid,
+                name: process.name.clone(),
+                samples: Vec::new(),
+            });
+        // A reused pid is a new process.
+        if entry.name != process.name {
+            entry.name.clone_from(&process.name);
+            entry.samples.clear();
+        }
+        if entry.samples.len() == HISTORY_SAMPLES {
+            entry.samples.remove(0);
+        }
+        entry.samples.push(ProcessResourceSample {
+            at: at.clone(),
+            memory_bytes: process.memory_bytes,
+        });
+    }
+}
+
+/// Per-process memory for this service's own tree, oldest sample first.
+pub fn process_history() -> ProcessResourceHistory {
+    ProcessResourceHistory {
+        processes: lock(&PROCESS_HISTORY).values().cloned().collect(),
+    }
+}
+
+/// This machine's memory, swap, cores, load and uptime, read now.
+pub fn host_resources() -> HostResources {
+    let mut system = System::new();
+    system.refresh_memory();
+    system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+    #[cfg(windows)]
+    let load: Option<sysinfo::LoadAvg> = None;
+    #[cfg(not(windows))]
+    let load = Some(System::load_average());
+    HostResources {
+        total_memory_bytes: system.total_memory(),
+        used_memory_bytes: system.used_memory(),
+        available_memory_bytes: system.available_memory(),
+        total_swap_bytes: system.total_swap(),
+        used_swap_bytes: system.used_swap(),
+        cpu_count: system.cpus().len(),
+        load_one: load.as_ref().map(|load| load.one),
+        load_five: load.as_ref().map(|load| load.five),
+        load_fifteen: load.as_ref().map(|load| load.fifteen),
+        uptime_seconds: System::uptime(),
+    }
+}
+
+impl crate::app::Core {
+    /// Summarises the local operation timings already on disk; `since` bounds the window.
+    pub fn trace_diagnostics(&self, since: Option<Duration>) -> Result<TraceDiagnostics> {
+        let report = super::local_trace::summarize(&self.config.data_dir, since)
+            .map_err(|error| CoreError::Internal(error.to_string()))?;
+        Ok(TraceDiagnostics {
+            span_count: report.span_count,
+            skipped_lines: report.skipped_lines,
+            first_end_ms: report.first_end_ms,
+            last_end_ms: report.last_end_ms,
+            spans: report
+                .spans
+                .into_iter()
+                .map(|span| TraceSpanSummary {
+                    name: span.name,
+                    count: span.count,
+                    per_minute: span.per_minute,
+                    p50_ms: span.p50_ms,
+                    p90_ms: span.p90_ms,
+                    max_ms: span.max_ms,
+                    interrupted: span.interrupted,
+                    failed: span.failed,
+                })
+                .collect(),
+        })
+    }
 }
 
 /// Takes a sample now and one a minute after that, for the life of the runtime.

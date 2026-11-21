@@ -367,8 +367,8 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert_eq!(replies.len(), 2, "{out}");
-        assert_eq!(replies[0]["error"]["code"], PARSE_ERROR);
+        assert_eq!(replies[0]["error"]["code"].as_i64(), Some(-32700));
         assert_eq!(replies[1]["id"], 7);
-        assert_eq!(replies[1]["error"]["code"], INTERNAL_ERROR);
+        assert_eq!(replies[1]["error"]["code"].as_i64(), Some(-32603));
     }
 }

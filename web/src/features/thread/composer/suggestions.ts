@@ -1,8 +1,8 @@
 import { api } from "../api";
 import { pullsApi } from "../api";
 import type { Thread } from "../../../api/types";
-import { chipId, type ThreadChip } from "../../../product/composer/composerContext";
-import { insertToken, pullToken, type Trigger } from "../../../product/composer/skillMention";
+import { chipId, type ComposerChip } from "../../../product/composer/composerContext";
+import { insertToken, type Trigger } from "../../../product/composer/skillMention";
 import { LOCAL_COMMANDS, MENU_ROWS, PLAN_COMMANDS } from "./composerConstants";
 import type { Suggestion } from "./MentionMenu";
 
@@ -12,9 +12,22 @@ export function pickResult(
   caret: number,
   trigger: Trigger,
   suggestion: Suggestion,
-): { text: string; caret: number; chip?: ThreadChip } {
-  // A picked thread is context, not text: it waits above the draft as a chip
-  // and its block carries the link the agent reads on demand.
+): { text: string; caret: number; chip?: ComposerChip } {
+  // A picked thread or pull request is context, not text: it waits above the
+  // draft as a chip and its block carries the link the agent reads on demand.
+  if (suggestion.pull) {
+    return {
+      text: draft.slice(0, trigger.start) + draft.slice(caret),
+      caret: trigger.start,
+      chip: {
+        id: chipId(),
+        kind: "pull",
+        number: suggestion.pull.number,
+        title: suggestion.pull.title,
+        url: suggestion.pull.url,
+      },
+    };
+  }
   if (suggestion.thread) {
     return {
       text: draft.slice(0, trigger.start) + draft.slice(caret),
@@ -58,7 +71,7 @@ export async function loadSuggestions(
       .map((pull) => ({
         value: String(pull.number),
         detail: pull.title,
-        insert: pullToken(pull.number, pull.title, pull.url),
+        pull: { number: pull.number, title: pull.title, url: pull.url },
       }));
   }
   const found = await api.mentions(thread.id, trigger.query, signal);

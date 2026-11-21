@@ -28,8 +28,8 @@ breaks one looks like a message with no reply, and the person has to send it twi
 | ACP, OpenCode (`opencode acp`) | No signal: the protocol has no event for work the agent keeps doing after a turn. The run ends with the prompt's reply and the process is stopped. The driver sees only tool calls still open at the stop, and closes them without a notice. | The run ends on the `session/prompt` reply matched by request id, from a process started for this run (a resume replays history first and the driver discards it). A `session/update` that names another session is dropped. A reply without a `stopReason`, or with `refusal`, `max_tokens`, `max_turn_requests` or an unknown one, fails with a plain message; only `end_turn` completes. |
 | AG-UI | No signal: the protocol subset has no background-work event. The run ends at `RUN_FINISHED`; open tool calls are closed without a notice. | Every POST (the first and each resume after an interrupt) is a new run with its own `runId`. A `RUN_FINISHED` or `RUN_ERROR` that names another run or thread is ignored; a frame with no ids still ends the run. |
 
-Not yet shown in the app: the `background.stopped` events from Claude and Codex have no display, so the person
-sees the run end without a note. Nothing in the Codex, ACP or AG-UI rows has been run against a real engine;
+The app shows each `background.stopped` from Claude (shells, subagents) and Codex (subagents) as a row under
+its run; a Claude workflow keeps its own state and gets no row. Nothing in the Codex, ACP or AG-UI rows has been run against a real engine;
 the Codex signals come from the schema of Codex 0.166.0 and the rest from the fake engines.
 
 ## Observed on Claude Code 2.1.327

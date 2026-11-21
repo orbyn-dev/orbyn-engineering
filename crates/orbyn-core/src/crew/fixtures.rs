@@ -119,7 +119,7 @@ pub fn hold_command(core: &crate::Core, task_id: &str, checkout: &Path, command:
         kind: orbyn_contracts::ActionKind::Command,
         target: command.to_owned(),
         summary: "A request from the worker.".to_owned(),
-        detail: json!({}),
+        detail: json!({ "command": command }),
         paths: Vec::new(),
     };
     core.held_make(

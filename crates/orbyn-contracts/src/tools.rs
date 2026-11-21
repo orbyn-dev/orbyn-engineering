@@ -1,6 +1,7 @@
 //! Engine tools and skill packs.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
 
 wire_enum! {
@@ -80,6 +81,22 @@ pub struct EngineTools {
     /// True when a list was cut short (a deadline or page cap), so what is shown may not be all.
     #[serde(default)]
     pub incomplete: bool,
+}
+}
+
+wire! {
+/// The tool an MCP App's server advertises for the app: what it is called, what it does
+/// and what it accepts, in the shape the page's host context carries. Only these three
+/// fields cross to the web; the server's other descriptor detail and its connection
+/// stay in the service.
+#[serde(rename_all = "camelCase")]
+pub struct McpAppToolInfo {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub description: Option<String>,
+    /// The JSON Schema the server advertises for the call's arguments.
+    pub input_schema: Value,
 }
 }
 
