@@ -70,6 +70,7 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (60, CREW_NOTES),
     (61, include_str!("plan_mode_reset.sql")),
     (62, include_str!("issues.sql")),
+    (63, include_str!("code_runs.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the

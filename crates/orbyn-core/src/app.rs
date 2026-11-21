@@ -355,6 +355,7 @@ impl Core {
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
         core.crew_backtest_recover();
+        core.code_runs_recover();
         // Settled here, with nothing left in this function that can fail before the held tasks get their results: a failed open after
         // this commit would leave them with no result and their leases granted, since the next open finds no run to recover.
         let background_starts = core.store.recover_background_starts()?;

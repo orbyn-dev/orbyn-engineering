@@ -203,6 +203,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/issues/start-thread"),
     ("POST", "/api/threads/{id}/issue-links"),
     ("POST", "/api/threads/{id}/issue-links/remove"),
+    ("PUT", "/api/engines/{id}/code-mode"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -975,6 +976,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/issue-links/remove",
         "the person removes a thread's link to an issue",
+    ),
+    (
+        "PUT",
+        "/api/engines/{id}/code-mode",
+        "the person turns Code Mode on or off for an engine, which changes what the engine may call",
     ),
 ];
 
