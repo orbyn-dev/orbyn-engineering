@@ -129,12 +129,22 @@ describe("Settings › Crew › Escapes (entry-crew-settings-escapes-*, entry-cr
   });
 });
 
+/** The "Settings" link that goes to `href`: the breadcrumb (K55) has a "Settings" link of its own, to the Settings home. */
+async function settingsLink(href: string): Promise<HTMLElement> {
+  return await waitFor(() => {
+    const found = screen.getAllByRole("link", { name: "Settings" }).find((a) => a.getAttribute("href") === href);
+    if (!found) throw new Error(`no Settings link to ${href}`);
+    return found;
+  });
+}
+
 describe("Settings › Crew › Escapes: the Settings link and the Possible tab (v87 follow-up)", () => {
   it("the log's Settings link opens the escape settings in the app, read only", async () => {
     mock.reset("crew-escapes");
     const user = userEvent.setup();
     open("#/settings/crew/escapes");
-    const link = await screen.findByRole("link", { name: "Settings" });
+    // The breadcrumb (K55) also has a "Settings" link; the log's own link is the one that points at the escape settings.
+    const link = await settingsLink("#/settings/crew/escapes/settings");
     expect(link).toHaveAttribute("href", "#/settings/crew/escapes/settings");
     await user.click(link);
     expect(window.location.hash).toBe("#/settings/crew/escapes/settings");
@@ -269,7 +279,7 @@ describe("Settings › Crew › Reviewer backtest (entry-crew-backtest-page and 
     open("#/settings/crew/backtest");
     await user.click(await screen.findByRole("link", { name: "Open the estimate" }));
     expect(window.location.hash).toBe("#/settings/crew/backtest/estimate");
-    await user.click(await screen.findByRole("link", { name: "Settings" }));
+    await user.click(await settingsLink("#/settings/crew/backtest"));
     expect(window.location.hash).toBe("#/settings/crew/backtest");
   });
 

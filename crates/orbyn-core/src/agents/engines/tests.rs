@@ -1013,3 +1013,56 @@ async fn provider_list_uses_cached_statuses() {
         serde_json::to_value(expected).unwrap()
     );
 }
+
+#[tokio::test]
+async fn provider_checks_off_keeps_the_list_but_a_refresh_still_reads() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let dir = TempDir::new();
+    let core = crate::app::Core::open(crate::CoreConfig::new(
+        dir.path().join("data"),
+        "http://127.0.0.1:1".into(),
+    ))
+    .unwrap();
+    let slow = Slow {
+        engines: core.engines.clone(),
+        reads: Arc::default(),
+        generation: Arc::default(),
+        failing: Arc::default(),
+        heard: Arc::default(),
+        _dir: dir,
+    };
+    core.engines.register(Arc::new(SlowDriver {
+        reads: slow.reads.clone(),
+        generation: slow.generation.clone(),
+        failing: slow.failing.clone(),
+    }));
+    slow.engines.models("slow", false).await.unwrap();
+    assert_eq!(slow.reads(), 1);
+    core.set_preferences(
+        None,
+        &std::collections::BTreeMap::from([(
+            "enable_provider_update_checks".to_owned(),
+            serde_json::json!(false),
+        )]),
+    )
+    .unwrap();
+    // Old enough that the list would be read again, and the engine's key has moved on.
+    slow.generation.store(1, SeqCst);
+    slow.engines
+        .model_reads
+        .age_all(MODELS_FRESH + Duration::from_secs(1));
+    for cached in slow.engines.models.lock().await.values_mut() {
+        cached.checked -= MODELS_KEY_CHECK + Duration::from_secs(1);
+    }
+    let kept = slow.engines.models("slow", false).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(kept.models[0].label, "Slow Model 0");
+    assert_eq!(
+        slow.reads(),
+        1,
+        "no automatic catalog read with the setting off"
+    );
+    let asked = slow.engines.models("slow", true).await.unwrap();
+    assert_eq!(slow.reads(), 2);
+    assert_eq!(asked.models[0].label, "Slow Model 1");
+}
