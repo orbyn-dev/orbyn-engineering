@@ -122,7 +122,7 @@ service does not read). It **creates a thread** in that project and answers `201
   runs no script. The thread uses the project's own folder; `model`, `engine_session` and every other member of the file are never
   applied. The engine is `?engine=` or the file's `thread.engine`, and must be one this install has and the project allows
   (`404` otherwise); no engine session id is honoured, so the first run of the thread starts a fresh session.
-- **Marked.** The thread has `source: "orbyn-transcript"` and `imported_at` (columns on the thread, migration 68). The messages are
+- **Marked.** The thread has `source: "orbyn-transcript"` and `imported_at` (columns on the thread, migration 69). The messages are
   ordinary log events, so the thread opens with them as read-only history; they are searchable. A thread made here has neither member.
 - **Audit.** One `thread.imported` row: `{source, messages, dropped}`, no title and no text.
 - `dry_run` validates and answers the counts and `problems` and writes nothing, not even the audit row.
