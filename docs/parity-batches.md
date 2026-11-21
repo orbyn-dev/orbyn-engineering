@@ -13,9 +13,9 @@ Checked 21 November 2026 UTC against product revision
 All 26 batch issues are still closed. #187 remains the reconciliation index,
 not a claim that the unfinished rows are complete.
 
-After the re-pin to T3 `9168ca73d`, `python scripts/count-parity.py` reports 732 rows and 463
-source checkboxes ticked. Of 547 included rows, 382 are declared checked, 117
-partial, 44 open and 4 not doable; 185 are excluded and none have unresolved
+After the re-pin to T3 `9168ca73d`, `python scripts/count-parity.py` reports 733 rows and 463
+source checkboxes ticked. Of 548 included rows, 382 are declared checked, 117
+partial, 45 open and 4 not doable; 185 are excluded and none have unresolved
 scope. The 15 new rows are unticked. These are checklist declarations, not fresh runtime qualification.
 
 The four successor issues named in the historical pickup paragraph now stand as follows:
@@ -56,8 +56,8 @@ claims below remain the 7 November snapshot, not the current pickup queue.
 ## Remaining work and evidence
 
 [Parity rows](parity.md) retain the exact `remaining:`, scope and refusal notes.
-`python scripts/count-parity.py` reports 732 rows, 463 source checkboxes ticked,
-and 547 included rows: 382 declared checked, 117 partial, 44 open and 4 not doable.
+`python scripts/count-parity.py` reports 733 rows, 463 source checkboxes ticked,
+and 548 included rows: 382 declared checked, 117 partial, 45 open and 4 not doable.
 There are 185 excluded and zero unresolved-scope rows. Issue closure changes none
 of those declarations and supplies no new runtime evidence.
 
