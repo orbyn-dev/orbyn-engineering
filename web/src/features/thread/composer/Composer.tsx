@@ -23,6 +23,7 @@ import { useAttachments } from "./useAttachments";
 import { ComposerBar } from "./ComposerBar";
 import { ComposerField } from "./ComposerField";
 import { useCommand as useSharedCommand } from "../../../product/shell/shortcuts";
+import { useQueueReload } from "./useQueueReload";
 import { useStopRun } from "./useStopRun";
 import { useThreadSettings } from "./useThreadSettings";
 import { useStash } from "./useStash";
@@ -157,9 +158,8 @@ export function Composer({
   const queue = useAsync(`queue:${thread.id}`, (signal) => api.queue(thread.id, signal));
   const reloadQueue = queue.reload;
   const runId = thread.active_run?.id ?? null;
-  useEffect(() => {
-    reloadQueue();
-  }, [runId, reloadQueue]);
+  useEffect(() => void reloadQueue(), [runId, reloadQueue]);
+  useQueueReload(thread.id, reloadQueue);
 
   const trigger = menuDismissed ? null : triggerAt(draft, caret);
   const lookupKey = trigger ? `${thread.id}:${trigger.char}:${trigger.query}` : `${thread.id}:idle`;
