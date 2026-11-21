@@ -51,7 +51,7 @@ describe("rpcWritesApi.mutateFile (Person)", () => {
       code: "policy_denied",
       status: 403,
     });
-    stub(refused(400, "invalid_path"));
+    stub(refused(400, "invalid_input"));
     await expect(rpcWritesApi.mutateFile("t1", { action: "delete", path: ".git/config" })).rejects.toMatchObject({ code: "invalid_input", status: 400 });
   });
 
@@ -143,7 +143,7 @@ describe("rpcWritesApi.createRef and switchRef (Local)", () => {
   });
 
   it("maps a refused name or a missing ref to ApiFailure", async () => {
-    stub(refused(400, "invalid_name"));
+    stub(refused(400, "invalid_input"));
     await expect(rpcWritesApi.createRef("t1", "x", "-bad")).rejects.toMatchObject({ code: "invalid_input", status: 400 });
     stub(refused(404, "not_found"));
     await expect(rpcWritesApi.switchRef("t1", "missing")).rejects.toMatchObject({ code: "not_found", status: 404 });
