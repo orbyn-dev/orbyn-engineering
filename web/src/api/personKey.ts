@@ -154,6 +154,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   // Field-level routes (`FIELD_LEVEL` in classes.rs): `Local` as a whole, and the service reads the key for part of the body only.
   // File actions: the key is read for every action except a plain read.
   ["POST", "/api/projects/{id}/worktrees/{worktree}/file-actions"],
+  // Pull checkout: only when the body has `worktree: false`, which switches the project's own checkout. The web sends the key for both.
+  ["POST", "/api/projects/{id}/pulls/{number}/checkout"],
   // Runs and AG-UI resume: only when the body raises `permission_mode` (or has a non-empty `resume`).
   ["POST", "/api/threads/{id}/runs"],
   ["POST", "/agui/threads/{id}"],

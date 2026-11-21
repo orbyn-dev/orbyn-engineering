@@ -10,7 +10,8 @@
 //! `local_only`. Reads, an engine's own thread work and settings that grant nothing stay `Local`.
 //!
 //! Left `Local` on purpose: `POST /api/threads/{id}/git/action` (push). Two routes are `Local` as a whole but check the key
-//! in their handler for part of the request, listed in [`FIELD_LEVEL`]: `POST /api/threads/{id}/runs` when its body raises
+//! in their handler for part of the request, listed in [`FIELD_LEVEL`]: `POST /api/projects/{id}/pulls/{number}/checkout` when its
+//! body has `worktree: false` (a switch in the project's checkout), `POST /api/threads/{id}/runs` when its body raises
 //! `permission_mode` above the thread's current mode, and `POST /agui/threads/{id}` when its `resume[]` is non-empty (it
 //! answers an interrupt, as `decide` does). `/agui/threads/{id}` reads only `threadId`, `runId` and `resume`; `queue` and
 //! `steer` take model, effort and options but no `permission_mode`. `PATCH /api/threads/{id}` also takes it and is `Person`
@@ -204,6 +205,11 @@ pub const FIELD_LEVEL: &[(&str, &str, &str)] = &[
         "POST",
         "/agui/threads/{id}",
         "a non-empty resume[], which answers an interrupt (routes/stream.rs)",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/checkout",
+        "worktree false, which switches the project's own checkout (routes/pulls.rs)",
     ),
 ];
 
