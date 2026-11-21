@@ -4,9 +4,9 @@ import { toFailure } from "../../lib/useAsync";
 import { Button, Field } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { reposApi } from "./api";
-import type { PublishedRepo, RepoRow } from "./contract";
+import type { RepoRow } from "./contract";
 import { ConfirmFacts, Path } from "./Dialogs";
-import { isPublishName, isRemoteName, plain, PUBLISH_PROVIDERS } from "./model";
+import { isPublishName, plain, PUBLISH_PROVIDERS } from "./model";
 
 type Step = "provider" | "repository" | "done";
 const STEP_LABEL: Record<Step, string> = { provider: "Step 1 of 3 · Provider", repository: "Step 2 of 3 · Repository", done: "Step 3 of 3 · Summary" };
@@ -14,7 +14,7 @@ const STEP_LABEL: Record<Step, string> = { provider: "Step 1 of 3 · Provider", 
 /**
  * Publish, in three steps: where to host it, which repository to create, then the summary. Only the second step writes, and one
  * click on Publish is one write: the ref refuses a second click before the first renders and `busy` blocks Escape, Back and the
- * button while it runs. A failure stays on the second step and says why. The repository name is the person's text: it is checked
+ * button while it runs. The write sends the name and the visibility only (`PublishInput` in docs/multi-repo.md); the provider step is the page's own and sends nothing. A failure stays on the second step and says why. The repository name is the person's text: it is checked
  * before it is sent and drawn only as text; the link to the host is built from the checked name, never taken from the service.
  */
 export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone(): void /* the list reads again; the dialog stays for the summary */ }) {
@@ -22,14 +22,12 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
   const [provider, setProvider] = useState<string | null>(null);
   const [name, setName] = useState(`orbyn-dev/${plain(repo.name)}`);
   const [visibility, setVisibility] = useState<"private" | "public">("private");
-  const [remote, setRemote] = useState("origin");
-  const [protocol, setProtocol] = useState<"ssh" | "https">("ssh");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ name: string; pushed: boolean } | null>(null);
+  const [result, setResult] = useState<{ name: string } | null>(null);
   const running = useRef(false);
-  const ids = { provider: useId(), visibility: useId(), protocol: useId() };
-  const valid = isPublishName(name) && isRemoteName(remote);
+  const ids = { provider: useId(), visibility: useId() };
+  const valid = isPublishName(name);
 
   const publish = async () => {
     if (running.current || !valid) return;
@@ -38,8 +36,8 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
     setError(null);
     try {
       const sent = name.trim();
-      const done: PublishedRepo = await reposApi().publish(projectId, repo.id, { name: sent, visibility, provider: "github", remote: remote.trim(), protocol });
-      setResult({ name: sent, pushed: done.pushed !== false });
+      await reposApi().publish(projectId, repo.id, { name: sent, visibility });
+      setResult({ name: sent });
       setStep("done");
       onDone();
     } catch (failure) {
@@ -92,18 +90,6 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
               </label>
             ))}
           </fieldset>
-          <details className="repos-advanced">
-            <summary>Advanced</summary>
-            <Field label="Remote" error={remote !== "" && !isRemoteName(remote) ? "Use letters, digits, dot, dash or underscore." : undefined}>
-              {(field) => <input {...field} className="dialog-field" value={remote} spellCheck={false} onChange={(event) => setRemote(event.target.value)} />}
-            </Field>
-            <fieldset className="repos-visibility" aria-labelledby={ids.protocol}>
-              <legend id={ids.protocol}>Protocol</legend>
-              {(["ssh", "https"] as const).map((value) => (
-                <label key={value}><input type="radio" name={ids.protocol} checked={protocol === value} onChange={() => setProtocol(value)} />{value === "ssh" ? "SSH" : "HTTPS"}</label>
-              ))}
-            </fieldset>
-          </details>
           <ConfirmFacts facts={[{ label: "Folder", value: <Path path={repo.path} />, mono: true }, { label: "Branch pushed", value: plain(repo.branch ?? "Unknown"), mono: true }]} />
           {error ? <p className="field-error" role="alert">{error}</p> : null}
         </>
@@ -111,8 +97,8 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
       {step === "done" && result ? (
         <div className="repos-published">
           <span className="repos-published-tick" aria-hidden><Check size={18} /></span>
-          <b>{result.pushed ? "Repository published" : "Repository created"}</b>
-          <p>{result.pushed ? `${plain(repo.branch ?? "The branch")} is now live on GitHub.` : `Remote “${plain(remote.trim())}” is set up. Make a commit and push it to share your code.`}</p>
+          <b>Repository published</b>
+          <p>{plain(repo.branch ?? "The branch")} is now live on GitHub.</p>
           <ConfirmFacts facts={[{ label: "Repository", value: result.name, mono: true }]} />
           <a className="btn btn-secondary" href={`https://github.com/${result.name}`} target="_blank" rel="noopener noreferrer">Open on GitHub</a>
         </div>

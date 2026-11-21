@@ -14,13 +14,14 @@ const show = (mock = createReposMock()) => {
 };
 const rowOf = async (name: string) => (await screen.findByText(name)).closest("li") as HTMLElement;
 
-it("makes no request and draws nothing while the service reports no repositories", async () => {
-  const fetching = vi.fn();
+it("draws nothing, and no error, when the service answers the list with 404 (flag off or routes missing); the only request is that read", async () => {
+  const fetching = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<RepositoriesSection projectId="p1" projectName="orbyn" />);
+  await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
-  expect(fetching).not.toHaveBeenCalled();
+  expect(fetching.mock.calls.map((call) => `${call[1]?.method} ${String(call[0]).replace(/^.*\/api/, "/api")}`)).toEqual(["GET /api/projects/p1/repos"]);
 });
 
 it("lists each repository with its folder, branch and trust state, and the action that state offers", async () => {
@@ -107,23 +108,51 @@ it("sets up Git after a confirmation", async () => {
   await waitFor(() => expect(mock.writes).toEqual(["git:orbyn-notes"]));
 });
 
-it("clones from a Git URL or owner/name, naming the project it joins, and never from text Git could read as an option", async () => {
+it("clones from a Git URL, naming the project it joins, and never from text Git could read as an option", async () => {
   const mock = show();
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Add repository" }));
   await user.click(await screen.findByRole("menuitem", { name: "Clone a repository…" }));
   const dialog = await screen.findByRole("dialog", { name: "Clone a repository" });
   expect(within(dialog).getByText("orbyn")).toBeVisible();
-  const field = within(dialog).getByRole("textbox", { name: "Git URL or owner/name" });
+  const field = within(dialog).getByRole("textbox", { name: "Git URL" });
   await user.type(field, "--upload-pack=touch x");
   expect(within(dialog).getByRole("button", { name: "Clone" })).toBeDisabled();
   await user.clear(field);
-  await user.type(field, "orbyn-dev/orbyn-docs");
+  for (const refused of ["orbyn-dev/orbyn-docs", "ext::sh -c x", "file:///etc/passwd", "https://u:pw@host/x.git", "https://host/x\u0000y"]) {
+    await user.clear(field);
+    await user.type(field, refused);
+    expect(within(dialog).getByRole("button", { name: "Clone" })).toBeDisabled();
+  }
+  await user.clear(field);
+  await user.type(field, "https://github.com/orbyn-dev/orbyn-docs.git");
   await user.dblClick(within(dialog).getByRole("button", { name: "Clone" }));
-  await waitFor(() => expect(mock.writes).toEqual(["clone:orbyn-dev/orbyn-docs"]));
+  await waitFor(() => expect(mock.writes).toEqual(["clone:https://github.com/orbyn-dev/orbyn-docs.git"]));
   const added = await rowOf("orbyn-docs");
   expect(within(added).getByText("Cloning 0%")).toBeVisible();
   expect(within(added).queryByRole("button", { name: "Trust…" })).toBeNull();
+});
+
+it("creates a new folder by a safe name only, and cancels a running clone after a confirm", async () => {
+  const mock = show(createReposMock({ repositories: [...repoFixtures(), { ...repoFixtures()[0]!, id: "big", name: "big", primary: false, clone: { state: "cloning", percent: 10 } }] }));
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Add repository" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Create a new folder…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Create a repository" });
+  const field = within(dialog).getByRole("textbox", { name: "Folder name" });
+  for (const bad of ["a/b", "..", "a..b", ".hidden", "C:x", "-x"]) {
+    await user.clear(field);
+    await user.type(field, bad);
+    expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+  }
+  await user.clear(field);
+  await user.type(field, "orbyn-docs");
+  await user.dblClick(within(dialog).getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(mock.writes).toEqual(["create:orbyn-docs"]));
+  await user.click(within(await rowOf("big")).getByRole("button", { name: "Cancel" }));
+  expect(mock.writes).toEqual(["create:orbyn-docs"]);
+  await user.click(within(await screen.findByRole("dialog", { name: "Cancel cloning big?" })).getByRole("button", { name: "Cancel clone" }));
+  await waitFor(() => expect(mock.writes).toEqual(["create:orbyn-docs", "cancel-clone:big"]));
 });
 
 it("adds a folder in place, not trusted", async () => {

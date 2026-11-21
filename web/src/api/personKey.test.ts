@@ -120,6 +120,21 @@ describe("the Cursor thread routes, which are not on the service yet", () => {
   });
 });
 
+describe("the multi-repository writes of docs/multi-repo.md", () => {
+  const writes = [
+    "/api/projects/p1/repos/add-folder", "/api/projects/p1/repos/create", "/api/projects/p1/repos/clone", "/api/projects/p1/repos/r1/publish",
+    "/api/projects/p1/repos/r1/trust", "/api/projects/p1/repos/r1/setup-git", "/api/projects/p1/repos/r1/remove", "/api/projects/p1/repos/r1/clone/cancel",
+    "/api/projects/p1/repo-threads", "/api/threads/t1/repos",
+  ];
+  it("send the key on every write and on no read", () => {
+    for (const path of writes) expect(sendsPersonKey("POST", path), path).toBe(true);
+    expect(sendsPersonKey("GET", "/api/projects/p1/repos")).toBe(false);
+    expect(sendsPersonKey("GET", "/api/threads/t1/repos")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/repos")).toBe(false);
+    expect(sendsPersonKey("POST", "/api/projects/p1/repos/r1")).toBe(false);
+  });
+});
+
 describe("the terminal sockets", () => {
   it("offers the key as a subprotocol beside orbyn.v1, never in the URL", async () => {
     shell(vi.fn(async () => "shell-key"));
