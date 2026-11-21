@@ -799,12 +799,14 @@ impl Core {
     ) -> (u32, Vec<wire::AutopilotForecastConflict>) {
         let mut tips: HashMap<(String, String), Option<String>> = HashMap::new();
         let mut checked = 0u32;
+        // Every git call made here, so a run of failing candidates cannot make one read cost a call per queue entry.
+        let mut attempts = 0u32;
         let mut conflicts = Vec::new();
         for entry in entries
             .iter()
             .filter(|e| matches!(e.state.as_str(), "queued" | "blocked"))
         {
-            if checked >= FORECAST_MAX {
+            if attempts >= FORECAST_MAX {
                 break;
             }
             // A forge merge is tried on the forge; its candidate may not be in this repository.
@@ -815,6 +817,7 @@ impl Core {
             let tip = match tips.get(&key) {
                 Some(tip) => tip.clone(),
                 None => {
+                    attempts += 1;
                     let found = gitops::rev(
                         Path::new(&entry.repo),
                         &format!("refs/heads/{}", entry.branch),
@@ -826,6 +829,11 @@ impl Core {
                 }
             };
             let Some(tip) = tip else { continue };
+            // A custom merge driver would run a program of the repository's choosing during the dry run.
+            if gitops::has_merge_driver(Path::new(&entry.repo)).await {
+                continue;
+            }
+            attempts += 1;
             let Ok(paths) =
                 gitops::conflict_paths(Path::new(&entry.repo), &tip, &entry.candidate).await
             else {

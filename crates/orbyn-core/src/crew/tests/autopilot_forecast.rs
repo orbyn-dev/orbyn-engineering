@@ -131,3 +131,20 @@ async fn clean_queued_candidates_are_not_forecast_as_conflicting() {
         queue.forecast.conflicts
     );
 }
+
+/// A repository that configures a custom merge driver is not dry-run: the driver would run a program of the repository's choosing
+/// on a read, so its candidates are left out of the forecast, never guessed at.
+#[tokio::test]
+async fn a_repository_with_a_merge_driver_is_not_dry_run() {
+    let (w, main) = world_with_base().await;
+    let first = candidate(&w, &main, "work-1", &[("shared.txt", "first\n")]).await;
+    std::fs::write(w.repo.join("shared.txt"), "branch\n").unwrap();
+    commit_all(&w.repo, "the branch moved on");
+    run_git(&w.repo, &["config", "merge.custom.driver", "true"]);
+    let (task, crew) = started(&w, 1).await;
+    entry(&w, &main, &task, &crew, &first, 1);
+
+    let queue = w.core.autopilot_merge_queue(page()).await.unwrap();
+    assert_eq!(queue.forecast.checked, 0, "{:?}", queue.forecast);
+    assert!(!queue.forecast.conflict_forecast, "{:?}", queue.forecast);
+}

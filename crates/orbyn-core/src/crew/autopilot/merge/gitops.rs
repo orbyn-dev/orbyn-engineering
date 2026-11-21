@@ -300,6 +300,23 @@ const MERGE_TREE_CAP: usize = 64 * 1024;
 /// The most conflicting files one candidate reports; a merge can conflict in more, and the screen needs the first few.
 pub const CONFLICT_PATHS_MAX: usize = 20;
 
+/// Whether the repository configures any custom merge driver (`merge.<name>.driver`). A driver named by `info/attributes` runs a
+/// program during a merge, so a dry run in such a repository is not made: the forecast leaves the candidate out. An unreadable
+/// config counts as configured.
+pub async fn has_merge_driver(repo: &Path) -> bool {
+    match git_hardened_output_capped(
+        repo,
+        &["config", "--get-regexp", r"^merge\..*\.driver$"],
+        MERGE_TREE_CAP,
+    )
+    .await
+    {
+        // 1 is no match.
+        Ok((status, _)) => status.code() != Some(1),
+        Err(_) => true,
+    }
+}
+
 /// The files a dry-run merge of `candidate` onto `branch` would report as conflicting, from `git merge-tree`. The trial tree is
 /// written as unreachable objects only: no ref, index or worktree moves. Empty means the merge is clean at this read.
 pub async fn conflict_paths(repo: &Path, branch: &str, candidate: &str) -> Result<Vec<String>> {
