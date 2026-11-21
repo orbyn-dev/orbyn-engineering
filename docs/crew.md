@@ -1650,7 +1650,7 @@ with approvals, skills, CLI agents in a terminal (engine console, G14), PR flow,
 | W5 | Code editor tab | Files opened from the explorer get an editor: syntax colour, find, go to line, line comments (same comment threads as Changes), save. Language-server diagnostics come after the beta | New panel tab type |
 | W6 | Changes: revert hunk, edit inline, attach to agent | Revert one hunk, edit a line in place, or send a selection to the engine | Extends the shell's Changes view |
 | W7 | Batched review feedback | "Send all to engine" sends all drafts as one message, so the agent fixes everything in one pass | Already designed (Review and comments tab); confirm the behaviour |
-| W8 | Execution profiles | Named presets: engine, model tier, permission mode and Autopilot mode. Picked per thread or crew, for example "Careful", "Fast", "Hands-off" (there is no read-only permission mode). Contract written: [execution-profiles-and-library.md](execution-profiles-and-library.md) | Settings, Crew, plus a picker in the composer |
+| W8 | Execution profiles | Named presets: engine, model tier, permission mode and Autopilot mode. Picked per thread or crew, built in as "Careful", "Fast" and "Cheap" (there is no read-only permission mode and no built-in full-access preset). Contract written: [execution-profiles-and-library.md](execution-profiles-and-library.md) | Settings, Crew, plus a picker in the composer |
 | W9 | Workflows, prompts and env sets | Saved commands with parameters, reusable prompts and environment-variable sets. Kept in a personal library on the device only; Orbyn never writes them into a repository, and a committed `.orbyn/` file is read-only. Environment-set values live in the OS keychain. Ties into B63 workflow recipes. Contract written: [execution-profiles-and-library.md](execution-profiles-and-library.md) | Local, no server |
 | W10 | CLI-agent attention | When an engine runs in a terminal (engine console), Orbyn notices it waiting for input and shows a notification and a Needs you item | Extends G14 |
 | W11 | Run page for a PR | One static page per Crew task: prompt, plan, route, checks, findings and diff | Generated locally: Save as file writes a static page and Copy PR comment copies Markdown; nothing is uploaded in the beta, and the signed proof and its verify step are Planned |
@@ -1694,7 +1694,7 @@ reason.
 **In the Crew beta (Preview):**
 
 - Phase 1 wiring: optional Orbyn account on staging, with personal settings syncing across devices
-- Warp features W1, W4, W5, W6, W7, W11 and W12 (above); W2, W3, W8, W9 and W10 are After the beta or Planned in the designs
+- Warp features W1, W4, W5, W6, W7, W8, W9, W11 and W12 (above); W2, W3 and W10 are After the beta or Planned in the designs
 - Slice 0: protocol v0 spec and schemas (not yet published)
 - Slices 1 to 4: contracts, router v0 on defaults, runs, verifier, bus, leases
 - 4b: review stages
