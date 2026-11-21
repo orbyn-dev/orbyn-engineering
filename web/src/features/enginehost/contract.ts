@@ -93,6 +93,8 @@ export interface KeyStorage {
   choice: StorageChoice;
   /** ISO time the key was saved. */
   saved_at?: string | null;
+  /** Only on the answer to `removeKey`: how many of the engine's running threads the service stopped with the key. */
+  stopped?: number | null;
 }
 
 /** A refused keychain write: the service answers with one of these codes and nothing else about why. */
@@ -126,4 +128,6 @@ export interface EngineHostApi {
   saveKey(engineId: string, key: string): Promise<KeyStorage>;
   /** Delete the key Orbyn saved; the engine's own sign-in is untouched and running threads keep going. The real route must be Person-class (ENFORCED). */
   removeKey(engineId: string): Promise<KeyStorage>;
+  /** Ask the keychain again after it was locked or refused. Changes nothing; answers the row as the service now has it. */
+  retryKeychain(engineId: string): Promise<KeyStorage>;
 }
