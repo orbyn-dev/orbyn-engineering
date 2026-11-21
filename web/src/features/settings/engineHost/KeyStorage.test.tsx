@@ -422,3 +422,31 @@ it("Remove opt-in sends one PUT with opted_in false and returns the row to not a
   expect(out[0]?.person).toBe(true);
   expect(out[0]).toMatchObject({ method: "PUT", url: "/api/settings/engine-credentials/cursor", body: JSON.stringify({ opted_in: false }) });
 });
+
+it("a refused Remove opt-in changes nothing, says so, and Retry sends the same request and never asks for a key", async () => {
+  let fail = true;
+  const sent: { method: string; url: string; body?: string }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    sent.push({ method: init.method ?? "GET", url, body: init.body as string | undefined });
+    if (init.method === "PUT") {
+      if (fail) return new Response(JSON.stringify({ code: "keychain_failed", message: "no" }), { status: 500 });
+      return new Response(JSON.stringify({ engine: "cursor", opted_in: false, present: false, state: "off" }), { status: 200 });
+    }
+    return new Response(JSON.stringify(NO_KEY), { status: 200 });
+  }));
+  const user = userEvent.setup();
+  render(<KeyStorageRow engineId="cursor" />);
+  await user.click(await screen.findByRole("button", { name: "Remove opt-in" }));
+  expect(await screen.findByText("Orbyn couldn’t remove the opt-in. Try again.")).toBeVisible();
+  expect(screen.getByText("Opted in, no key saved. Orbyn stores nothing yet.")).toBeVisible();
+  expect(screen.getByText("Opted in, no key")).toBeVisible();
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Orbyn stores nothing until you choose.")).toBeVisible();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const puts = sent.filter((entry) => entry.method === "PUT");
+  expect(puts.map((entry) => `${entry.url} ${entry.body}`)).toEqual([
+    `/api/settings/engine-credentials/cursor ${JSON.stringify({ opted_in: false })}`,
+    `/api/settings/engine-credentials/cursor ${JSON.stringify({ opted_in: false })}`,
+  ]);
+});

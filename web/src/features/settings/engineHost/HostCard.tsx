@@ -1,7 +1,7 @@
 import { SettingRow } from "../rows/SettingRow";
 import { SettingsBanner } from "../rows/SettingsBanner";
 import { type HostRow, useEngineHosts, bannerLine, capabilityLine, notUsedReason, plain, stateLine } from "../../enginehost";
-import { CauseChain, CrashDetails, DetailsToggle, HostChip, useToggle } from "./HostParts";
+import { CauseChain, CrashDetails, DetailsToggle, HostChip, hasCrashDetails, useToggle } from "./HostParts";
 
 function useHostRow(engineId: string): HostRow | null {
   return useEngineHosts().hosts?.find((row) => row.id === engineId) ?? null;
@@ -41,7 +41,7 @@ export function EngineHostCard({ engineId }: { engineId: string }) {
         {row.state === "not_used" && notUsedReason(row) ? <SettingRow title="Reason" description={notUsedReason(row)} /> : null}
         {(row.state === "version_mismatch" || failed) && row.action ? <SettingRow title="Action" description={plain(row.action, 80)} /> : null}
         {failed && error ? <SettingRow title="Last error" description={plain(error.message, 200)}>
-          {error.causes.length > 0 || error.kind || row.last_crash ? <DetailsToggle open={open} onToggle={toggle} /> : null}
+          {error.causes.length > 0 || error.kind || (row.last_crash && hasCrashDetails(row.last_crash)) ? <DetailsToggle open={open} onToggle={toggle} /> : null}
         </SettingRow> : null}
       </div>
       {failed && error && open ? <>
