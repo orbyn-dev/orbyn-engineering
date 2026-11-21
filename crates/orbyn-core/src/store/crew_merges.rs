@@ -478,6 +478,17 @@ impl Store {
     /// The merge was reverted by `commit` on the branch.
     pub fn set_merge_reverted(&self, task_id: &str, commit: &str) -> Result<()> {
         self.commit(|tx, _| {
+            let project: Option<String> = tx.query_row(
+                "SELECT t.project_id FROM crew_merges m JOIN crew_runs r ON r.task_id=m.task_id
+                 JOIN threads t ON t.id=r.lead_thread_id
+                 WHERE m.task_id=?1 AND NOT EXISTS(SELECT 1 FROM crew_escapes e WHERE e.merge_task_id=?1)
+                 AND NOT EXISTS(SELECT 1 FROM crew_escape_tombstones x WHERE x.merge_task_id=?1)",
+                [task_id], |row| row.get(0),
+            ).optional()?;
+            if let Some(project) = project {
+                // A typed capacity refusal leaves the plan untouched and never undoes a valid revert.
+                super::crew_escape_retention::room_for_revert(tx, &project, unix_now())?;
+            }
             tx.execute(
                 "UPDATE crew_merges SET review_state = 'reverted', reverted_commit = ?2, needs_person = NULL, reviewed_unix = ?3 WHERE task_id = ?1",
                 params![task_id, commit, unix_now()],

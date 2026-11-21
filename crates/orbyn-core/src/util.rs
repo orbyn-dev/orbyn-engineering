@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use crate::error::{CoreError, Result};
 use sha2::{Digest, Sha256};
@@ -79,6 +80,36 @@ pub(crate) fn from_hex(text: &str) -> Option<Vec<u8>> {
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
+}
+
+/// A key for the approval ledger's binding hash, drawn once per process. It lives in memory only: the holds and grants it binds
+/// live there too, so there is nothing to verify after a restart, and nothing on disk carries it.
+static BINDING_KEY: LazyLock<Option<[u8; 32]>> = LazyLock::new(|| random_bytes::<32>().ok());
+
+/// An HMAC-SHA256 of `message` with this process's binding key, as lowercase hex. `None` when the OS random source failed at
+/// start, and the caller then holds nothing: a binding that cannot be keyed is never computed from a guessable digest.
+pub(crate) fn binding_hmac(message: &str) -> Option<String> {
+    let key = (*BINDING_KEY).as_ref()?;
+    Some(hex(&hmac_sha256(key, message.as_bytes())))
+}
+
+/// HMAC-SHA256 (RFC 2104) over the workspace's own SHA-256, so the one keyed hash this app needs adds no dependency.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut block = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = Sha256::new();
+    inner.update(block.map(|byte| byte ^ 0x36));
+    inner.update(message);
+    let inner = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(block.map(|byte| byte ^ 0x5c));
+    outer.update(inner);
+    outer.finalize().into()
 }
 
 /// Compares through digests so the comparison leaks nothing about the secret.
@@ -345,6 +376,40 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    /// The RFC 4231 vectors for HMAC-SHA256, run at Test case 1, 2 and 6.
+    #[test]
+    fn hmac_sha256_matches_the_rfc_4231_vectors() {
+        assert_eq!(
+            hex(&hmac_sha256(&[0x0b; 20], b"Hi There")),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+        assert_eq!(
+            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert_eq!(
+            hex(&hmac_sha256(
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            )),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
+
+    #[test]
+    fn the_process_binding_is_keyed_stable_and_hex() {
+        let first = binding_hmac("the same fields").unwrap();
+        assert_eq!(first, binding_hmac("the same fields").unwrap());
+        assert_ne!(first, binding_hmac("other fields").unwrap());
+        assert_ne!(
+            first,
+            sha256_hex(b"the same fields"),
+            "a keyed binding is not a plain digest of the message"
+        );
+        assert_eq!(first.chars().count(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

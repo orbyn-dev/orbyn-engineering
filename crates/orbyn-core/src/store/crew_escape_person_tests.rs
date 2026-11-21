@@ -585,8 +585,8 @@ fn a_full_log_refuses_more_and_never_drops_a_row() {
         conn.execute_batch(
             "PRAGMA foreign_keys = OFF;
              WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
-             INSERT INTO crew_escapes (id, project_id, merge_task_id, source, state, engine, areas, found_unix)
-             SELECT 'g' || i, 'p1', 'ghost' || i, 'revert', 'possible', 'alpha', '[]', 1 FROM n;
+             INSERT INTO crew_escapes (id, project_id, merge_task_id, source, state, engine, areas, found_unix, decided_unix, decided_by)
+             SELECT 'g' || i, 'p1', 'ghost' || i, 'revert', 'confirmed', 'alpha', '[]', 1, 1, 'person' FROM n;
              PRAGMA foreign_keys = ON;",
         )
         .unwrap();

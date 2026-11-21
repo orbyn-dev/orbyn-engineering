@@ -4,7 +4,12 @@ import type { AutopilotReviewItem } from "./AutopilotReviewItem";
 
 export type AutopilotReviewQueue = { items: Array<AutopilotReviewItem>, total: number, next_offset?: number | null, 
 /**
- * The background runs that stopped without a merge and wait for the person, oldest first. A merge's risk ranks the
- * `items`; a background run has no risk, commit or diff, so it is listed beside them and carries its own state.
+ * The background runs that stopped without a merge and wait for the person, oldest first, one page. A merge's risk ranks
+ * the `items`; a background run has no risk, commit or diff, so it is listed beside them and carries its own state.
  */
-background_runs?: Array<AutopilotBackgroundReviewItem>, now_unix: number, };
+background_runs?: Array<AutopilotBackgroundReviewItem>, 
+/**
+ * How many background runs wait in all. `background_runs` is the same `limit` and `offset` window of them as `items` is of
+ * the merges, and `next_offset` is set while either list has more.
+ */
+background_total?: number, now_unix: number, };

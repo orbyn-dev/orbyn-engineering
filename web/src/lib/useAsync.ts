@@ -28,6 +28,9 @@ const isAbort = (error: unknown) => error instanceof DOMException && error.name 
  */
 export interface AsyncOptions {
   keep?: boolean;
+  /** No prior answer is safe without a new read (for example, unbound engine-account limits).
+   * Clears data while any read runs and reports background errors too. Overrides `keep`. */
+  fresh?: boolean;
   /** The service topics this read shows. A matching `data_changed` reads it again in the background. */
   refreshOn?: (what: string) => boolean;
 }
@@ -48,13 +51,15 @@ const startState = <T,>(key: string, keep: boolean): AsyncState<T> => {
 };
 
 export function useAsync<T>(key: string, load: (signal: AbortSignal, context: LoadContext) => Promise<T>, options: AsyncOptions = {}) {
-  const keep = options.keep === true;
+  const keep = options.keep === true && options.fresh !== true;
   const [state, setState] = useState<AsyncState<T>>(() => startState<T>(key, keep));
   const keyRef = useRef(key);
   const keepRef = useRef(keep);
+  const freshRef = useRef(options.fresh === true);
   useLayoutEffect(() => {
     keyRef.current = key;
     keepRef.current = keep;
+    freshRef.current = options.fresh === true;
   });
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -88,12 +93,15 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
     const abort = new AbortController();
     controller.current = abort;
     // An event-driven read shows nothing while it runs.
-    if (!context.background) setState((previous) => ({ ...previous, refreshing: true }));
+    if (freshRef.current) setState({ status: "loading", data: null, error: null, refreshing: true });
+    else if (!context.background) setState((previous) => ({ ...previous, refreshing: true }));
     const started = context.background ? asBackground(() => loader.current(abort.signal, context)) : loader.current(abort.signal, context);
     return started.then(
       (data) => {
         if (id === generation.current) {
           settled();
+          // A queued event may have started a newer fresh read while settling.
+          if (freshRef.current && id !== generation.current) return;
           if (keepRef.current) writeKept(asked, data);
           setState({ status: "ready", data, error: null, refreshing: false });
         }
@@ -101,14 +109,15 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
       (error: unknown) => {
         if (id !== generation.current || isAbort(error)) return;
         settled();
+        if (freshRef.current && id !== generation.current) return;
         // A read an event started never replaces what is on screen with an error.
-        if (context.background) {
+        if (context.background && !freshRef.current) {
           setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: false } : previous));
           return;
         }
         setState((previous) => ({
           status: "error",
-          data: previous.data,
+          data: freshRef.current ? null : previous.data,
           error: toFailure(error),
           refreshing: false,
         }));

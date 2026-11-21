@@ -100,7 +100,7 @@ it("lists the five About rows the design draws, and the orbyn.dev link, with no 
 
 it("says an app update is downloaded on the About card and offers Later and Restart to update", async () => {
   vi.mocked(request).mockResolvedValue({ version: "0.42.1", platform: "macos", remote: false });
-  const updates = { app: { current: "0.42.1", latest: "0.43.0", notes: null, mode: "desktop", can_apply: true, blocked_reason: null, unconfigured: false, downloaded: 10n, total: 10n } };
+  const updates = { app: { current: "0.42.1", latest: "0.43.0", notes: null, mode: "desktop", can_apply: true, blocked_reason: null, unconfigured: false, phase: "ready", release_id: "release-1", operation: 1, downloaded: 10n, total: 10n } };
   useWorkspace.setState({ updates: { data: updates as never, error: null, loading: false } });
   const user = userEvent.setup();
   render(<AboutSection />);

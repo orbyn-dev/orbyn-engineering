@@ -36,6 +36,79 @@ struct Overlay {
     key: Option<(Instant, &'static str)>,
 }
 
+#[derive(Default)]
+struct InputState {
+    cues: Overlay,
+    clear_generation: u64,
+    key_generation: u64,
+}
+
+/// Application request-boundary state, sampled under the page-session lock.
+/// This timestamp describes our request, never Chrome's pixel-capture instant.
+pub(super) struct PendingCapture {
+    owner: Arc<Recording>,
+    cues: Overlay,
+    at: Instant,
+    document: u64,
+    clear_generation: u64,
+    key_generation: u64,
+}
+
+pub(super) enum CaptureCompletion {
+    Frame(Arc<Recording>, CapturedFrame),
+    TooLarge(Arc<Recording>),
+}
+
+impl CaptureCompletion {
+    pub async fn submit(self) {
+        match self {
+            Self::Frame(owner, frame) => owner.submit(frame),
+            Self::TooLarge(owner) => {
+                owner
+                    .fail("Recorded frame exceeds the JPEG size limit.")
+                    .await
+            }
+        }
+    }
+}
+
+impl PendingCapture {
+    /// Completion may veto frozen cues, but never samples or clears newer input.
+    /// A stopped/replaced clip cannot receive this request's bytes or cues.
+    pub fn finish(
+        mut self,
+        jpeg: Option<Vec<u8>>,
+        document: u64,
+        safe_focus: bool,
+        current: Option<&Arc<Recording>>,
+    ) -> Option<CaptureCompletion> {
+        if !self.owner.active() || !current.is_some_and(|owner| Arc::ptr_eq(owner, &self.owner)) {
+            return None;
+        }
+        let Some(jpeg) = jpeg else {
+            return Some(CaptureCompletion::TooLarge(self.owner));
+        };
+        {
+            let input = lock(&self.owner.input);
+            if document != self.document || input.clear_generation != self.clear_generation {
+                self.cues = Overlay::default();
+            } else if !safe_focus || input.key_generation != self.key_generation {
+                self.cues.key = None;
+            }
+        }
+        let frame = CapturedFrame {
+            jpeg,
+            overlay: self.cues,
+            at: self.at,
+            #[cfg(test)]
+            worker_started: None,
+            #[cfg(test)]
+            gate_waiting: None,
+        };
+        Some(CaptureCompletion::Frame(self.owner, frame))
+    }
+}
+
 pub(super) struct CapturedFrame {
     jpeg: Vec<u8>,
     overlay: Overlay,
@@ -64,7 +137,7 @@ pub(super) struct Recording {
     options: PreviewRecordingOptions,
     started: Instant,
     stop: CancellationToken,
-    overlay: Mutex<Overlay>,
+    input: Mutex<InputState>,
     writer: Mutex<Writer>,
     // Read without the writer lock, so a busy writer never hides these.
     error: Mutex<Option<String>>,
@@ -74,6 +147,8 @@ pub(super) struct Recording {
     // When the next frame is due. Frames keep to this schedule rather than to
     // when each one was captured, so capture latency does not halve the rate.
     next: Mutex<Option<Instant>>,
+    #[cfg(test)]
+    written: tokio::sync::Notify,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -112,7 +187,7 @@ impl Recording {
             options,
             started: Instant::now(),
             stop: CancellationToken::new(),
-            overlay: Mutex::new(Overlay::default()),
+            input: Mutex::new(InputState::default()),
             writer: Mutex::new(Writer {
                 frames: 0,
                 bytes: 0,
@@ -123,6 +198,8 @@ impl Recording {
             queue: Mutex::new(Queue::default()),
             gate,
             next: Mutex::new(None),
+            #[cfg(test)]
+            written: tokio::sync::Notify::new(),
         }))
     }
 
@@ -159,7 +236,7 @@ impl Recording {
             && (0.0..=4096.0).contains(&x)
             && (0.0..=4096.0).contains(&y)
         {
-            lock(&self.overlay).mouse = Some((Instant::now(), x, y));
+            lock(&self.input).cues.mouse = Some((Instant::now(), x, y));
         }
     }
 
@@ -167,12 +244,18 @@ impl Recording {
         // No caller can submit an arbitrary label or printable text.
         let label = if safe_focus { key_label(key) } else { None };
         if self.options.show_key_presses {
-            lock(&self.overlay).key = label.map(|label| (Instant::now(), label));
+            let mut input = lock(&self.input);
+            input.cues.key = label.map(|label| (Instant::now(), label));
+            if label.is_none() {
+                input.key_generation = input.key_generation.saturating_add(1);
+            }
         }
     }
 
     pub fn clear_input(&self) {
-        *lock(&self.overlay) = Overlay::default();
+        let mut input = lock(&self.input);
+        input.cues = Overlay::default();
+        input.clear_generation = input.clear_generation.saturating_add(1);
     }
 
     pub async fn due(self: &Arc<Self>) -> bool {
@@ -204,16 +287,49 @@ impl Recording {
         true
     }
 
-    /// Snapshot input under the same page-session lock as the screenshot.
+    /// Freeze cues, local request time, document and clip identity before the
+    /// screenshot is dispatched. The caller holds the page-session lock here.
+    pub fn begin_capture(self: &Arc<Self>, document: u64, safe_focus: bool) -> PendingCapture {
+        let input = lock(&self.input);
+        let mut cues = input.cues.clone();
+        if !safe_focus {
+            cues.key = None;
+        }
+        PendingCapture {
+            owner: self.clone(),
+            cues,
+            at: Instant::now(),
+            document,
+            clear_generation: input.clear_generation,
+            key_generation: input.key_generation,
+        }
+    }
+
+    // Ready-image fixtures already own their capture boundary; production uses
+    // begin_capture/finish around the asynchronous screenshot request.
+    #[cfg(test)]
     pub fn capture(&self, jpeg: Vec<u8>) -> CapturedFrame {
         CapturedFrame {
             jpeg,
-            overlay: lock(&self.overlay).clone(),
+            overlay: lock(&self.input).cues.clone(),
             at: Instant::now(),
             #[cfg(test)]
             worker_started: None,
             #[cfg(test)]
             gate_waiting: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) async fn wait_for_frames(&self, count: u64) {
+        loop {
+            let written = self.written.notified();
+            tokio::pin!(written);
+            written.as_mut().enable();
+            if lock(&self.writer).frames >= count {
+                return;
+            }
+            written.await;
         }
     }
 
@@ -329,6 +445,8 @@ impl Recording {
                 }
             }
         }
+        #[cfg(test)]
+        self.written.notify_waiters();
     }
 
     /// Cancel first, then wait on the actual writer, including a job whose
@@ -651,9 +769,9 @@ mod tests {
         )
         .unwrap();
         recording.key("Enter", false);
-        assert!(lock(&recording.overlay).key.is_none());
+        assert!(lock(&recording.input).cues.key.is_none());
         recording.key("synthetic-password", true);
-        assert!(lock(&recording.overlay).key.is_none());
+        assert!(lock(&recording.input).cues.key.is_none());
         recording.key("Enter", true);
         let frame = recording.capture(black());
         recording.clear_input();
@@ -669,6 +787,57 @@ mod tests {
             pixels.get_pixel(12, 66)[0] > 150,
             "capture-time cue survives later input state changes"
         );
+    }
+
+    #[tokio::test]
+    async fn pending_focus_veto_never_erases_a_newer_live_key_cue() {
+        for veto in ["start", "completion", "unsafe-input"] {
+            let dir = Scratch::new();
+            let recording = Recording::start(
+                dir.path(),
+                PreviewRecordingOptions {
+                    show_key_presses: true,
+                    ..options()
+                },
+            )
+            .unwrap();
+            recording.key("Enter", true);
+            let pending = recording.begin_capture(1, veto != "start");
+            if veto == "unsafe-input" {
+                recording.key("", false);
+            }
+            recording.key("Tab", true);
+            let completed = pending
+                .finish(Some(black()), 1, veto != "completion", Some(&recording))
+                .unwrap();
+            let CaptureCompletion::Frame(owner, frame) = completed else {
+                panic!("valid frame was refused")
+            };
+            owner.frame(frame).await;
+            let pending = recording.begin_capture(1, true);
+            let CaptureCompletion::Frame(owner, frame) = pending
+                .finish(Some(black()), 1, true, Some(&recording))
+                .unwrap()
+            else {
+                panic!("subsequent frame was refused")
+            };
+            owner.frame(frame).await;
+            recording.finish(None).await.unwrap();
+            let earlier = image::open(dir.path().join("000000.jpg"))
+                .unwrap()
+                .to_rgb8();
+            let subsequent = image::open(dir.path().join("000001.jpg"))
+                .unwrap()
+                .to_rgb8();
+            assert!(
+                earlier.get_pixel(12, 66)[0] < 70,
+                "{veto} restored a vetoed cue"
+            );
+            assert!(
+                subsequent.get_pixel(12, 66)[0] > 150,
+                "{veto} erased the newer live TAB cue"
+            );
+        }
     }
 
     #[tokio::test]
@@ -907,8 +1076,8 @@ mod tests {
         let recording = Recording::start(dir.path(), options()).unwrap();
         recording.mouse(20.0, 30.0);
         recording.key("Enter", true);
-        assert!(lock(&recording.overlay).mouse.is_none());
-        assert!(lock(&recording.overlay).key.is_none());
+        assert!(lock(&recording.input).cues.mouse.is_none());
+        assert!(lock(&recording.input).cues.key.is_none());
         lock(&recording.writer).frames = MAX_FRAMES;
         recording.frame(recording.capture(black())).await;
         assert!(

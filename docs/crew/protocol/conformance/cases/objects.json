@@ -2,6 +2,14 @@
   "suite": "Content-addressed objects, versions and shape",
   "cases": [
     {
+      "id": "route-disabled-and-legacy-not-installed",
+      "title": "Disabled and historical not-installed reasons are valid in a stamped route decision",
+      "rules": ["H14"],
+      "steps": [
+        { "op": "validate", "object": { "$example": "route-decision.valid.disabled" }, "expect": {} }
+      ]
+    },
+    {
       "id": "obj-id-matches",
       "title": "A stamped example validates and its id is the hash of its canonical form",
       "rules": [

@@ -43,9 +43,6 @@ esac
 
 /// What the slow forge costs per call.
 const FORGE_MS: u64 = 400;
-/// What an answer from memory may cost, with room for a busy test machine.
-const INSTANT: Duration = Duration::from_millis(100);
-
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -196,12 +193,20 @@ async fn a_repeated_read_never_reaches_the_slow_forge() {
         // The old behaviour, a real read on every call, is what `refresh` still does.
         let mut forced = Vec::new();
         let mut kept = Vec::new();
+        let mut latest = Value::Null;
         for _ in 0..3 {
-            forced.push(f.timed(&format!("{path}?refresh=1")).await.0);
+            let (elapsed, body) = f.timed(&format!("{path}?refresh=1")).await;
+            forced.push(elapsed);
+            latest = body;
         }
+        // Any subsequent forge call fails and is logged before its delay. Cached
+        // reads must still return the last successful response without reaching it.
+        f.set("gh-fail", "");
         let before = f.calls();
         for _ in 0..40 {
-            kept.push(f.timed(path).await.0);
+            let (elapsed, body) = f.timed(path).await;
+            kept.push(elapsed);
+            assert_eq!(body, latest, "{path}: cached response changed");
         }
         assert_eq!(f.calls(), before, "{path}: the forge was asked again");
         let slowest = *kept.iter().max().unwrap();
@@ -210,7 +215,7 @@ async fn a_repeated_read_never_reaches_the_slow_forge() {
             median(&mut forced),
             median(&mut kept),
         );
-        assert!(slowest < INSTANT, "{path}: {slowest:?}");
+        std::fs::remove_file(f.dir.path().join("gh-fail")).unwrap();
     }
     // The first call and the three forced ones read the list; the 40 each did not.
     assert_eq!(f.asked("pr list"), 4);

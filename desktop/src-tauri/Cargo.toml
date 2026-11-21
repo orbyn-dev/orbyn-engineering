@@ -6,6 +6,10 @@ rust-version = "1.90"
 publish = false
 license-file = "../../LICENSE"
 
+[features]
+# Technical testers opt in at build time; ordinary release builds have no inspector.
+devtools = ["tauri/devtools"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -13,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = ["devtools", "tray-icon"] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "=2.8.4"

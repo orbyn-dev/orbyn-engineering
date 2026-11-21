@@ -24,7 +24,7 @@ mod api;
 mod classify;
 mod file;
 mod glob;
-mod pin;
+pub(in crate::crew) mod pin;
 mod record;
 
 pub(in crate::crew) use api::engine_words;

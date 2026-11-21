@@ -130,13 +130,12 @@ impl Core {
             .set_crew_autopilot_mode(&scope_key(scope), mode.name())
     }
 
-    /// Forgets the person's choice for a scope, so it reads as unset again.
-    pub fn clear_crew_autopilot_mode(&self, scope: &ModeScope) -> Result<()> {
-        self.store.clear_crew_autopilot_mode(&scope_key(scope))
-    }
-
-    /// The mode in force: the crew's, else the repository's, else the default, else `Full`.
+    /// The mode in force: the crew's, else the repository's, else the default, else `Full`. A background run's crew is always `Off`: no
+    /// background merge lands without a person is a rule of the code, so no stored row can change it.
     pub fn crew_autopilot_mode(&self, project_id: &str, crew_id: &str) -> Mode {
+        if self.crew_background_lead(crew_id) {
+            return Mode::Off;
+        }
         self.mode_in(&[
             ModeScope::Crew(crew_id.to_owned()),
             ModeScope::Repo(project_id.to_owned()),
@@ -261,6 +260,19 @@ impl Core {
                 &denied_words(refusal.id, refusal.rule),
                 &needles,
             );
+        }
+
+        // The lease (H10) at the boundary: a file change may name only paths the brief granted this
+        // worker. Refused here with the lease's own words, before the write, rather than left to the
+        // verifier's file_scope to notice afterwards. The always-denied list above keeps its own
+        // words for a protected path. A refused write is recorded as a denial (`decided_by: lease`), so it counts
+        // toward the trip wires (3 in a row, 20 in a run) like any other: a worker cannot retry out-of-lease
+        // writes without limit.
+        if let Some(words) =
+            self.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, ask)
+        {
+            let body = json!({ "action": action, "decided_by": "lease", "mode": mode.name() });
+            return self.autopilot_denied(task, &body, &words, &needles);
         }
 
         // The blast-radius guard: a destructive command against a production-linked target needs a second key, even in Full. It is

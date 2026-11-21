@@ -71,7 +71,10 @@ pub fn specs() -> Vec<Value> {
         before it merges a task, so name them for work you mean to merge. There is no limit on lanes, and a lane can be added after a pass. Lanes \
                 the repo's rules (`.orbyn/crew.json`) ask for run as well. Every lane is a separate read-only run, \
                 routed to another vendor than the builder where one is configured. A lane named again runs again, as the \
-                next round.",
+                next round, The lanes the repo's rules ask for are added on every call, so asking again re-runs them. \
+                A call starts lanes until its 45 second tool budget is nearly spent, and is then an error that lists the lanes \
+                that started, those waiting on a person, those refused with the reason, and the ones not reached, with the \
+                `lanes` to pass to ask again. Ask again for only the lanes not reached.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "task": { "type": "string" }, "lanes": { "type": "array" } },
@@ -150,7 +153,15 @@ impl Core {
         match tool {
             "crew_publish_review" => self.publish_review_tool(binding, args).await,
             FINDING_TOOL => self.crew_finding_tool(binding, args),
-            REVIEW_TOOL => self.crew_lanes_tool(binding, args).await,
+            // The lanes start inside the MCP layer's tool budget (the 45 seconds a call is given). The loop is
+            // paced by that call's own deadline, so it answers before the layer drops the call, naming the lanes
+            // it started (#628). Outside a budgeted call the full budget from now applies.
+            REVIEW_TOOL => {
+                let deadline = crate::tools::mcp::call_deadline()
+                    .unwrap_or_else(|| std::time::Instant::now() + crate::tools::mcp::TOOL_BUDGET);
+                // Boxed: the lane loop's future is large, and this one sits on every review tool's call path.
+                Box::pin(self.crew_lanes_tool(binding, args, deadline, lanes::LANE_RESERVE)).await
+            }
             CHECK_FINDING_TOOL => self.crew_check_finding_tool(binding, args).await,
             _ => self.crew_status_tool(binding, args),
         }

@@ -47,21 +47,24 @@ when the Crew Preview flag is on). For a Crew worker or reviewer:
 2. **Injection trip wire:** a request whose summary, target or (outside a file change) detail reads as injected
    instructions stops the task, `injection_suspected`. The ledger keeps the class, never the text.
 3. **Always denied:** N1 to N10, before any approver, rule, mode or person's saved allow. The lead is never asked.
-4. **Tier:** reads and writes inside the leased paths and the brief's own check commands need nobody. Network, installing
+4. **Lease:** every path a file change names must lie in the lease the brief granted this worker; a refusal is the lease's
+   own (H10) and refuses the write, never the task. It is recorded as a denial (`decided_by: lease`) and counts toward the
+   trip wires (rule 7), so a worker cannot retry out-of-lease writes without limit.
+5. **Tier:** reads and writes inside the leased paths and the brief's own check commands need nobody. Network, installing
    dependencies, running a script or code the worker wrote, and CI files need two keys. The rest is the lead's.
-5. **Chain:** the lead answers a [`Summary`](chain.rs) (kind, target, paths, the brief's outcome, the tier and why), never
+6. **Chain:** the lead answers a [`Summary`](chain.rs) (kind, target, paths, the brief's outcome, the tier and why), never
    raw page or tool text, and must give a reason (an approval without one is a denial). Two keys: a second approver on
    another vendor (`family`) must also say yes. A disagreement is denied and logged as its own row. A person's deny rule
    still wins over an approval, and an allow rule or no rule lets an approval through.
-5b. **Held for a person:** a denied command is held ([`held`](held.rs)). The person may approve that exact command once (bound to its
+6b. **Held for a person:** a denied command is held ([`held`](held.rs)). The person may approve that exact command once (bound to its
    text, arguments, paths, thread and task; one retry; 10 minutes), deny it or dismiss it, from the app's window only. The retry is checked
    against the always-denied list first and then lets the one approval through, with a ledger row (`decided_by: person`). Approving needs
    the person's click in the desktop app's own dialog (`presence`). Nothing on the always-denied list is ever held.
-5c. **Blast-radius guard** ([`blast`](blast.rs), [`targets`](targets.rs), [`exit`](exit.rs)): a destructive command (file deletion, database, cloud, containers, git) against a
+6c. **Blast-radius guard** ([`blast`](blast.rs), [`targets`](targets.rs), [`exit`](exit.rs)): a destructive command (file deletion, database, cloud, containers, git) against a
    production-linked target is tier `guard`, above the check commands and leases and below N3 and N8. Under On or Off it is denied and held for the person; under Full the lead and a
    second key on another vendor must both say yes. The person's one-time approval covers it. The lists of `prod` and `safe` targets are a table on this device, never a repository
    file; loosening them needs the desktop presence grant (the dialog is not built yet). A `command_exit` row records the exit status, or `unknown`. See docs/crew.md, "As built (slice 4i, guard)".
-6. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
+7. **Trip wires** after each denial: 3 in a row or 20 in a run stop the task, `too_many_denials`. "In a run" is counted per task
    (a task has one run). Only an approval by the lead or by two keys ends a row of denials: a read that needs nobody does not,
    so a worker cannot put `ls` between its denials.
 
@@ -195,6 +198,16 @@ checks: they do not resolve DNS, prove destination ownership or prevent rebindin
 They apply only to hosts the text reader extracts: bare single-label, numeric shorthand and IPv6
 arguments of connecting programs are not consistently extracted. The synthetic N3 controls use
 explicit URL authorities; this admission change does not qualify those other command forms.
+
+The repository validation view reports invalid entries without their submitted values, using
+zero-based array indices. These notes do not block engines or change admission: a wrong JSON
+type still denies the whole configured list, while an invalid string is dropped individually.
+A one-label wildcard base (including `*.com` and `*.internal`) warns but still grants its base
+and all descendants. There is no public-suffix check; `*.co.uk` is not distinguished from other
+multi-label bases. The producer caps host notes at 16 plus an omission summary. Settings displays
+generic Rule notes with a separate 16-note cap and summary, and Check again reads the selected
+project's committed validation view. The actual three-engine replay and detector qualification
+remain outstanding under #457; synthetic parser and UI checks do not supply that evidence.
 
 It reads the kind, target and paths the gate is given, and for a command the simple commands inside it. It cannot see
 what the gate is never asked: an engine's own file reads and its own network, which Orbyn does not hear about. It follows a `cd` (so `cd .. && rm x` is outside), `git -C`, `git worktree add`, `find -delete`, `tar -C` and `unzip -d`, and counts a

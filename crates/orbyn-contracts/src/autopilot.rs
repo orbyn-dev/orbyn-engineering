@@ -197,11 +197,16 @@ pub struct AutopilotReviewQueue {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub next_offset: Option<u32>,
-    /// The background runs that stopped without a merge and wait for the person, oldest first. A merge's risk ranks the
-    /// `items`; a background run has no risk, commit or diff, so it is listed beside them and carries its own state.
+    /// The background runs that stopped without a merge and wait for the person, oldest first, one page. A merge's risk ranks
+    /// the `items`; a background run has no risk, commit or diff, so it is listed beside them and carries its own state.
     #[serde(default)]
     #[ts(optional, as = "Option<Vec<AutopilotBackgroundReviewItem>>")]
     pub background_runs: Vec<AutopilotBackgroundReviewItem>,
+    /// How many background runs wait in all. `background_runs` is the same `limit` and `offset` window of them as `items` is of
+    /// the merges, and `next_offset` is set while either list has more.
+    #[serde(default)]
+    #[ts(optional, as = "Option<u32>")]
+    pub background_total: u32,
     #[ts(type = "number")]
     pub now_unix: i64,
 }
@@ -380,7 +385,9 @@ pub struct CrewForgeResolved {
 }
 
 wire! {
-/// What the queue will do next, from what is stored. Conflicts are found when a merge is tried, not forecast.
+/// What the queue will do next, from what is stored, and what a dry run of the queued candidates' merges onto the branch
+/// says: a candidate that conflicts now is reported before the queue reaches it. The dry run is a local `git merge-tree`;
+/// it is not the dependency-graph forecast the plan draws, which needs the router's task graph.
 pub struct AutopilotForecast {
     /// The queued entry that merges first when the queue is processed.
     #[serde(default)]
@@ -389,8 +396,25 @@ pub struct AutopilotForecast {
     pub queued: u32,
     pub blocked: u32,
     pub waiting_for_person: u32,
-    /// There is no conflict forecast from the dependency graph yet.
+    /// The queued candidates the dry run covered, in queue order. A candidate whose repository or commit cannot be read
+    /// locally is left out rather than guessed at, so this can be smaller than `queued + blocked`.
+    pub checked: u32,
+    /// The dry run says at least one covered candidate would conflict with the branch as it stands now.
     pub conflict_forecast: bool,
+    /// The covered candidates that would conflict now, in queue order: which task, its candidate commit and the files the
+    /// dry run reports. Empty when nothing conflicts, or when there was nothing to check locally.
+    pub conflicts: Vec<AutopilotForecastConflict>,
+}
+}
+
+wire! {
+/// One queued candidate a dry-run merge says would conflict with the branch now.
+pub struct AutopilotForecastConflict {
+    pub task_id: String,
+    /// The candidate commit the dry run merged onto the branch tip.
+    pub merge_commit: String,
+    /// The files the dry run reports as conflicting, at most 20.
+    pub paths: Vec<String>,
 }
 }
 
@@ -427,6 +451,41 @@ pub struct AutopilotWatchRow {
 }
 
 wire! {
+/// A watch on main bisecting now, as it stood when the read was made. Progress is kept in memory only, so it lasts while the
+/// watch runs: the outcome is stored as the merge rows and the ledger, and a restart keeps the outcome but not the progress.
+pub struct AutopilotBisect {
+    /// `checking_tip`, `checking_boundary`, `bisecting`, `confirming` or `checking_parent`.
+    pub phase: String,
+    /// The check runs that have finished, and the most this bisect can run. Each one is a real run of the repository's
+    /// checks at that commit.
+    pub tested: u32,
+    pub steps: u32,
+    /// While bisecting, the last commit known to pass and the first known to fail, which bound the cause.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub after: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub before: Option<String>,
+    /// The commit whose checks are running now, while one is in flight.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub testing: Option<String>,
+    /// Each finished run, oldest first: the commit and whether the checks passed there.
+    pub checked: Vec<AutopilotBisectCheck>,
+}
+}
+
+wire! {
+/// One finished check run of a bisect in progress.
+pub struct AutopilotBisectCheck {
+    pub commit: String,
+    /// Whether the repository's checks passed at that commit.
+    pub passes: bool,
+}
+}
+
+wire! {
 pub struct AutopilotWatch {
     pub rows: Vec<AutopilotWatchRow>,
     pub total: u32,
@@ -437,8 +496,10 @@ pub struct AutopilotWatch {
     pub unwatched: u32,
     /// The latest breaks, reverts and notices, newest first.
     pub recent: Vec<AutopilotLogRow>,
-    /// Bisect progress is not stored; the outcome is, as the rows above and `recent`.
-    pub bisect_progress: bool,
+    /// The bisect a watch is running now, or none. It is kept in memory only.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub bisect: Option<AutopilotBisect>,
 }
 }
 

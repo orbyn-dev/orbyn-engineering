@@ -100,6 +100,21 @@ fn a_background_shell_does_not_hold_the_run_and_is_reported_stopped() {
 }
 
 #[test]
+fn a_workflow_is_never_reported_as_a_background_stop() {
+    let mut mapper = StreamMapper::default();
+    mapper.on_frame(&started("w1", "local_workflow"));
+    mapper.on_frame(&launch_frame());
+    mapper.on_frame(&started("b1", "local_bash"));
+    mapper.on_frame(&done());
+    let ended = mapper.end_background();
+    assert!(
+        matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
+            if name == "background.stopped" && value["taskId"] == "b1"),
+        "only the shell is reported; the workflow keeps its own state"
+    );
+}
+
+#[test]
 fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     let mut mapper = StreamMapper::answering("mine");
     // The CLI ran a turn for a task notification before reaching the prompt.

@@ -8,12 +8,13 @@
 //! redacted and has the key's text withheld, and a value that still fails the scan is replaced.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
 use serde_json::Value;
 
+use super::gitops;
 use super::queue::MergeTarget;
 use super::review_queue::ReviewAnswer;
 use super::risk::{
@@ -39,6 +40,9 @@ pub const DIGEST_HOURS_MAX: u32 = 720;
 const MODES_MAX: u32 = 500;
 const ROWS_MAX: usize = 100;
 const RECENT: u32 = 20;
+/// How many queued candidates one queue read dry-runs. Each is one `git merge-tree`, so the bound keeps a page cheap and a
+/// very long queue from turning a read into a many-second call.
+const FORECAST_MAX: u32 = 8;
 const ACTIVE_MAX: u32 = 1000;
 const LATER_MAX: usize = 50;
 const ACTIVE: [&str; 4] = ["queued", "blocked", "waiting", "merging"];
@@ -161,6 +165,25 @@ fn strings(value: &Value) -> Vec<String> {
         .collect()
 }
 
+/// What a display mask touches. A row's read fields keep their keys; what is shown masks both,
+/// because a value can sit in an object's key.
+#[derive(Clone, Copy)]
+enum Masked {
+    Keys,
+    Values,
+    KeysAndValues,
+}
+
+impl Masked {
+    fn keys(self) -> bool {
+        matches!(self, Self::Keys | Self::KeysAndValues)
+    }
+
+    fn values(self) -> bool {
+        matches!(self, Self::Values | Self::KeysAndValues)
+    }
+}
+
 /// Cleans text and stored JSON for one task: redacted, the task's key withheld, and scanned.
 ///
 /// The person's own patterns (Settings › Secrets) mask what is shown, here and nowhere else: the stored rows are never
@@ -179,17 +202,43 @@ impl Scrub {
         items.iter().map(|t| self.text(t)).collect()
     }
 
+    /// The row as shown: its JSON keys are masked too, because a value can sit in a key.
     fn json(&self, value: &Value) -> Value {
-        self.mask(ledger::safe(value, &self.needles))
+        self.mask(ledger::safe(value, &self.needles), Masked::KeysAndValues)
     }
 
-    fn mask(&self, value: Value) -> Value {
+    /// The row's fields: values masked, keys readable, so the row can read its own fields.
+    fn fields(&self, value: &Value) -> Value {
+        self.mask(ledger::safe(value, &self.needles), Masked::Values)
+    }
+
+    /// The row's keys as shown, its values as they are (already masked by fields).
+    fn mask_keys(&self, value: Value) -> Value {
+        self.mask(value, Masked::Keys)
+    }
+
+    fn mask(&self, value: Value, masked: Masked) -> Value {
         match value {
-            Value::String(text) => Value::String(self.person.labelled(&text)),
-            Value::Array(items) => Value::Array(items.into_iter().map(|v| self.mask(v)).collect()),
-            Value::Object(map) => {
-                Value::Object(map.into_iter().map(|(k, v)| (k, self.mask(v))).collect())
+            Value::String(text) => Value::String(if masked.values() {
+                self.person.labelled(&text)
+            } else {
+                text
+            }),
+            Value::Array(items) => {
+                Value::Array(items.into_iter().map(|v| self.mask(v, masked)).collect())
             }
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| {
+                        let k = if masked.keys() {
+                            self.person.labelled(&k)
+                        } else {
+                            k
+                        };
+                        (k, self.mask(v, masked))
+                    })
+                    .collect(),
+            ),
             other => other,
         }
     }
@@ -250,7 +299,8 @@ fn answer_of(value: &Value) -> Option<wire::AutopilotAnswer> {
 }
 
 fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
-    let body = scrub.json(&event.body);
+    // The row reads its fields from the values-masked body; only what is shown gets its keys masked.
+    let body = scrub.fields(&event.body);
     let action = body.get("action").cloned().unwrap_or(Value::Null);
     let second = body.get("second").and_then(|s| {
         let answer = answer_of(s.get("answer")?)?;
@@ -284,7 +334,7 @@ fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
         lead: body.get("lead").and_then(answer_of),
         second,
         needs_second_engine: body["needs_second_engine"].as_bool() == Some(true),
-        body,
+        body: scrub.mask_keys(body),
     }
 }
 
@@ -331,6 +381,13 @@ impl Core {
             .into_iter()
             .filter_map(|(scope, mode, updated_at)| {
                 let mode = mode_wire(Mode::parse(&mode)?);
+                // A background crew's mode is always off (the code's rule), so a stored row for it is not a setting to show.
+                if scope
+                    .strip_prefix("crew:")
+                    .is_some_and(|id| self.crew_background_lead(id))
+                {
+                    return None;
+                }
                 let (scope, id) = match scope.split_once(':') {
                     Some(("repo", id)) => (wire::AutopilotScopeKind::Repo, Some(id.to_owned())),
                     Some(("crew", id)) => (wire::AutopilotScopeKind::Crew, Some(id.to_owned())),
@@ -371,6 +428,11 @@ impl Core {
                 valid_id(id)?;
                 if self.store.crew_tasks_in_crew(id)?.is_empty() {
                     return Err(CoreError::NotFound("crew".into()));
+                }
+                if self.crew_background_lead(id) {
+                    return Err(CoreError::PolicyDenied(
+                        "A background crew's merges always wait for a person; its mode cannot be changed.".into(),
+                    ));
                 }
                 ModeScope::Crew(id.to_owned())
             }
@@ -521,10 +583,11 @@ impl Core {
         let mut scrubs = Scrubs::new(self)?;
         let mut areas = crate::crew::autopilot::AreaCache::new();
         let total = all.merges.len();
-        let next_offset = page.next(total);
+        let background_total = all.background.len();
+        // One window for both lists: the page continues while either one has more.
+        let next_offset = page.next(total.max(background_total));
         // The person's own patterns mask the crew's name and the run's reason, as they mask every other field here.
-        let background_runs = all
-            .background
+        let background_runs = slice(&all.background, page)
             .into_iter()
             .map(|item| {
                 let scrub = scrubs.of(&item.run_id);
@@ -602,6 +665,7 @@ impl Core {
             total: to_u32(total),
             next_offset,
             background_runs,
+            background_total: to_u32(background_total),
             now_unix: now,
         })
     }
@@ -699,8 +763,9 @@ impl Core {
         })
     }
 
-    /// What waits to merge, in the order queued, one page, with what the queue will do next.
-    pub fn autopilot_merge_queue(&self, page: Page) -> Result<wire::AutopilotMergeQueue> {
+    /// What waits to merge, in the order queued, one page, with what the queue will do next and what a dry run of the
+    /// queued candidates' merges onto the branch says.
+    pub async fn autopilot_merge_queue(&self, page: Page) -> Result<wire::AutopilotMergeQueue> {
         self.crew_preview_only()?;
         let (all, _) = self.store.merge_entries_page(&ACTIVE, ACTIVE_MAX, 0)?;
         let mut scrubs = Scrubs::new(self)?;
@@ -741,6 +806,7 @@ impl Core {
             rows.push(row);
         }
         let count = |state: &str| to_u32(all.iter().filter(|e| e.state == state).count());
+        let (checked, conflicts) = self.queue_conflicts(&all, &mut scrubs).await;
         let forecast = wire::AutopilotForecast {
             next_task_id: all
                 .iter()
@@ -749,7 +815,9 @@ impl Core {
             queued: count("queued"),
             blocked: count("blocked"),
             waiting_for_person: count("waiting"),
-            conflict_forecast: false,
+            checked,
+            conflict_forecast: !conflicts.is_empty(),
+            conflicts,
         };
         Ok(wire::AutopilotMergeQueue {
             entries: slice(&rows, page),
@@ -759,7 +827,75 @@ impl Core {
         })
     }
 
-    /// The watch on main: what it found for each merge, newest first, and the latest breaks and reverts.
+    /// A dry-run merge of each queued candidate onto its branch tip, up to [`FORECAST_MAX`], so the queue view says what
+    /// would conflict now. A candidate whose repository or commit cannot be read locally is left out, never guessed at.
+    async fn queue_conflicts(
+        &self,
+        entries: &[MergeEntry],
+        scrubs: &mut Scrubs<'_>,
+    ) -> (u32, Vec<wire::AutopilotForecastConflict>) {
+        let mut tips: HashMap<(String, String), Option<String>> = HashMap::new();
+        let mut checked = 0u32;
+        // Every git call made here, so a run of failing candidates cannot make one read cost a call per queue entry.
+        let mut attempts = 0u32;
+        let mut conflicts = Vec::new();
+        for entry in entries
+            .iter()
+            .filter(|e| matches!(e.state.as_str(), "queued" | "blocked"))
+        {
+            if attempts >= FORECAST_MAX {
+                break;
+            }
+            // A forge merge is tried on the forge; its candidate may not be in this repository.
+            if !matches!(self.store.crew_forge_merge(&entry.task_id), Ok(None)) {
+                continue;
+            }
+            let key = (entry.repo.clone(), entry.branch.clone());
+            let tip = match tips.get(&key) {
+                Some(tip) => tip.clone(),
+                None => {
+                    attempts += 1;
+                    let found = gitops::rev(
+                        Path::new(&entry.repo),
+                        &format!("refs/heads/{}", entry.branch),
+                    )
+                    .await
+                    .ok();
+                    tips.insert(key, found.clone());
+                    found
+                }
+            };
+            let Some(tip) = tip else { continue };
+            // A custom merge driver would run a program of the repository's choosing during the dry run.
+            if gitops::has_merge_driver(Path::new(&entry.repo)).await {
+                continue;
+            }
+            attempts += 1;
+            let Ok(paths) =
+                gitops::conflict_paths(Path::new(&entry.repo), &tip, &entry.candidate).await
+            else {
+                continue;
+            };
+            checked += 1;
+            if paths.is_empty() {
+                continue;
+            }
+            conflicts.push(wire::AutopilotForecastConflict {
+                task_id: entry.task_id.clone(),
+                merge_commit: entry.candidate.clone(),
+                paths: scrubs
+                    .of(&entry.task_id)
+                    .texts(&paths)
+                    .into_iter()
+                    .take(gitops::CONFLICT_PATHS_MAX)
+                    .collect(),
+            });
+        }
+        (checked, conflicts)
+    }
+
+    /// The watch on main: what it found for each merge, newest first, the latest breaks and reverts, and the bisect a watch
+    /// is running now, if any.
     pub fn autopilot_watch(&self, page: Page) -> Result<wire::AutopilotWatch> {
         self.crew_preview_only()?;
         let (records, total) = self.store.crew_merges_page(page.limit, page.offset)?;
@@ -785,7 +921,12 @@ impl Core {
             broken: of("broken"),
             unwatched: of("unknown"),
             recent,
-            bisect_progress: false,
+            // In memory and written only while a watch runs, so a restart shows no stale bisect.
+            bisect: self
+                .crew_bisect
+                .lock()
+                .ok()
+                .and_then(|progress| progress.clone()),
         })
     }
 

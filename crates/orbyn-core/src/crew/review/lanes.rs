@@ -1,5 +1,9 @@
-//! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. A lane named after the
-//! work has passed runs like any other, and a lane the repo's rules ask for runs without being named. A lane
+//! `crew_review`: starts one read-only run per reviewer lane, with no limit on how many. The lanes start one after
+//! another inside the call's tool budget (the deadline of the MCP timer itself, with room kept for the longest
+//! start seen and a reserve), and a call the budget cuts short is an error listing the lanes that started, that
+//! wait on a person, that were refused and that were not reached, so a retry asks for only the last. A lane named after the
+//! work has passed runs like any other, and a lane the repo's rules ask for runs without being named, once per
+//! commit: the repo-rule lanes are added on every call, so asking again re-runs them. A lane
 //! named again is the next round of that lane. Each run is routed by role (`review`, with its lane) at the worker
 //! tier (the lead tier for the security lane, a locked lane and the merge-owed code lane), to another vendor than the builder where one is configured, and its key holds one check: the review
 //! left no file changed that was unchanged when it began. The reviewer is told the work's purpose, the commit
@@ -64,6 +68,88 @@ impl Core {
             _ => true,
         }
     }
+}
+
+/// The time a call keeps back for what runs after its last lane start: the answer, and the MCP timer's own slack.
+pub(super) const LANE_RESERVE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether another lane may start with `remaining` of the call's budget left. A start takes about as long as the
+/// longest one seen so far, so the next one is begun only when it can end, plus the reserve, inside the budget.
+fn room_for_another(
+    remaining: std::time::Duration,
+    longest_start: std::time::Duration,
+    reserve: std::time::Duration,
+) -> bool {
+    remaining >= longest_start + reserve
+}
+
+/// The cut call's answer, built from what each lane's start returned: lanes that started (with their task),
+/// lanes waiting on a person, lanes that failed to start after their row was written (transient), lanes refused
+/// by a rule of the core with the reason (asking again changes nothing) and lanes not reached. Only the
+/// failed and not reached lanes are advised to be asked for again, with the exact `lanes` to pass.
+fn cut_note(task: &str, lanes: &[CrewToken], answers: &[Value]) -> String {
+    let mut begun = Vec::new();
+    let mut waiting = Vec::new();
+    let mut failed = Vec::new();
+    let mut refused = Vec::new();
+    let mut again = Vec::new();
+    for (lane, answer) in lanes.iter().zip(answers) {
+        let id = answer["task"].as_str();
+        let with_id = |text: &str| match id {
+            Some(id) => format!("{text} ({id})"),
+            None => text.to_owned(),
+        };
+        if let Some(error) = answer.get("error") {
+            let why = error["message"].as_str().unwrap_or("it was refused");
+            if answer["failed_to_start"] == true {
+                failed.push(format!("{lane} ({why})"));
+                again.push(lane.as_str());
+            } else {
+                refused.push(format!("{lane} ({why})"));
+            }
+        } else if answer["state"] == "needs_person" {
+            let why = if answer["routed"] == false {
+                "no engine could take it"
+            } else {
+                "same-engine consent, asked again when the lane is named again"
+            };
+            waiting.push(with_id(&format!("{lane}: {why}")));
+        } else {
+            begun.push(with_id(lane.as_str()));
+        }
+    }
+    let rest: Vec<&str> = lanes[answers.len()..]
+        .iter()
+        .map(CrewToken::as_str)
+        .collect();
+    again.extend(&rest);
+    let named = |items: &[String]| items.join(", ");
+    let mut note = format!(
+        "lanes: the tool budget ran out. Started: {}.",
+        if begun.is_empty() {
+            "none".to_owned()
+        } else {
+            named(&begun)
+        }
+    );
+    if !waiting.is_empty() {
+        note += &format!(" Waiting on a person: {}.", named(&waiting));
+    }
+    if !failed.is_empty() {
+        note += &format!(" Failed to start, so worth a retry: {}.", named(&failed));
+    }
+    if !refused.is_empty() {
+        note += &format!(
+            " Refused, so asking again changes nothing: {}.",
+            named(&refused)
+        );
+    }
+    note += &format!(
+        " Not reached: {}. Ask again with task {task} and lanes {}; lanes the repo's rules ask for are added on every call, so asking again re-runs them, even one that started above.",
+        rest.join(", "),
+        json!(again)
+    );
+    note
 }
 
 /// What a review run is for.
@@ -145,10 +231,12 @@ impl Core {
         .ok()
     }
 
-    pub(super) async fn crew_lanes_tool(
+    pub(in crate::crew) async fn crew_lanes_tool(
         self: &Arc<Self>,
         binding: &McpBinding,
         args: &Value,
+        deadline: std::time::Instant,
+        reserve: std::time::Duration,
     ) -> Result<Value, CrewError> {
         let (thread, stamper) = self.review_lead(binding, "crew_review")?;
         let Some(fields) = args.as_object() else {
@@ -198,6 +286,7 @@ impl Core {
             .iter()
             .filter(|rule| rule.applies(touched.as_deref()))
             .collect();
+        // The lanes the repo's rules ask for are added on every call, as before: asking again re-runs them.
         for rule in &from_rules {
             lanes.push(rule.lane.clone());
         }
@@ -218,10 +307,35 @@ impl Core {
             ));
         }
         let mut started = Vec::new();
-        for lane in &lanes {
-            let answer = match self
-                .start_review_run(&thread, &stamper, &task, lane, &commit, Run::Lane)
-                .await
+        let mut longest = std::time::Duration::ZERO;
+        for (place, lane) in lanes.iter().enumerate() {
+            // The first lane always starts, so a call makes progress on any machine. A later lane starts only
+            // while the call's own deadline (the instant the MCP layer's timer fires, so the layer never drops
+            // the call first) leaves room for the longest start seen plus a reserve; otherwise the loop answers,
+            // naming the lanes it started and the ones it did not reach (#628).
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if place > 0 && !room_for_another(remaining, longest, reserve) {
+                return Err(invalid(cut_note(&task.id, &lanes, &started)));
+            }
+            let rows = |core: &Self| {
+                core.store.crew_reviews_of(&task.id).map_or(0, |all| {
+                    all.iter()
+                        .filter(|r| r.role == "review" && r.lane == lane.as_str())
+                        .count()
+                })
+            };
+            let rows_before = rows(self);
+            let began = std::time::Instant::now();
+            // Boxed: the start's future is large, and the loop holds it across the await.
+            let answer = match Box::pin(self.start_review_run(
+                &thread,
+                &stamper,
+                &task,
+                lane,
+                &commit,
+                Run::Lane,
+            ))
+            .await
             {
                 Ok(mut answer) => {
                     answer["lane"] = json!(lane);
@@ -230,8 +344,17 @@ impl Core {
                         json!(from_rules.iter().any(|r| r.lane == *lane && r.locked));
                     answer
                 }
-                Err(error) => json!({ "lane": lane, "started": false, "error": error }),
+                // An error after the lane's row was written is a start that failed (transient); one before it is a
+                // refusal of the core (too many rounds, too many changed files) that asking again does not change.
+                Err(error) => {
+                    let mut answer = json!({ "lane": lane, "started": false, "error": error });
+                    if rows(self) > rows_before {
+                        answer["failed_to_start"] = json!(true);
+                    }
+                    answer
+                }
             };
+            longest = longest.max(began.elapsed());
             started.push(answer);
         }
         Ok(json!({ "task": task.id, "commit": commit, "lanes": started }))
@@ -479,5 +602,56 @@ impl Core {
              blocks nothing until the core confirms it by a check or by a second independent review. When you have \
              filed everything (or found nothing), call crew_report with a short summary."
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration as D;
+
+    /// Issue #628: three lanes of about 20 s each in a 45 s budget. The second starts at 20 s and ends at 40 s; the
+    /// third would start with 5 s left, inside the longest start plus the reserve, so the call stops and names it.
+    #[test]
+    fn slow_lane_starts_stop_the_loop_before_the_budget() {
+        let budget = D::from_secs(45);
+        let mut elapsed = D::ZERO;
+        let mut longest = D::ZERO;
+        let mut started = 0;
+        for place in 0..3 {
+            if place > 0 && !room_for_another(budget - elapsed, longest, LANE_RESERVE) {
+                break;
+            }
+            elapsed += D::from_secs(20);
+            longest = longest.max(D::from_secs(20));
+            started += 1;
+        }
+        assert_eq!(started, 2);
+        assert!(elapsed < budget);
+        assert!(room_for_another(
+            D::from_secs(40),
+            D::from_secs(2),
+            LANE_RESERVE
+        ));
+    }
+
+    #[test]
+    fn a_cut_note_separates_started_waiting_refused_and_not_reached() {
+        let lanes: Vec<CrewToken> = ["a", "b", "c", "d", "f", "e"]
+            .iter()
+            .map(|l| CrewToken::new(*l).unwrap())
+            .collect();
+        let answers = vec![
+            json!({ "lane": "a", "task": "task-a", "state": "running", "routed": true }),
+            json!({ "lane": "b", "task": "task-b", "state": "needs_person", "routed": false }),
+            json!({ "lane": "c", "started": false, "state": "needs_person", "same_engine_consent": {} }),
+            json!({ "lane": "d", "started": false, "error": { "message": "too many rounds" } }),
+            json!({ "lane": "f", "started": false, "failed_to_start": true, "error": { "message": "engine did not start" } }),
+        ];
+        let note = cut_note("task-0", &lanes, &answers);
+        assert_eq!(
+            note,
+            "lanes: the tool budget ran out. Started: a (task-a). Waiting on a person: b: no engine could take it (task-b), c: same-engine consent, asked again when the lane is named again. Failed to start, so worth a retry: f (engine did not start). Refused, so asking again changes nothing: d (too many rounds). Not reached: e. Ask again with task task-0 and lanes [\"f\",\"e\"]; lanes the repo's rules ask for are added on every call, so asking again re-runs them, even one that started above."
+        );
     }
 }

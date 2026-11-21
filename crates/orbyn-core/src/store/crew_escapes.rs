@@ -4,9 +4,8 @@
 //! nothing and no caller can forget it. Ids, commit ids, enums, areas, engine and model names and one short reason of at most 200
 //! characters are stored; never a diff, a test body, command output, a prompt or a secret.
 //!
-//! Pruning to [`ESCAPES_PER_PROJECT_MAX`] is not built in PR 1 (only reverts write, bounded by merges). Event DELETE is refused by
-//! trigger, so the 20,000-event limit needs its own removal path in a later PR. `crew_merges.areas` is `CHECK(json_valid)`, so the
-//! revert trigger never sees invalid JSON; valid JSON that is not a list of strings makes every read of that row `Unreadable`.
+//! Capacity-pressure retention is owned by `crew_escape_retention` (schema 58): confirmed/check history is protected and every
+//! eligible eviction leaves a permanent suppression receipt and audit. Unclassified orphan events remain immutable.
 //!
 //! **Unreadable fails closed.** Every read maps any storage error, an unknown enum word or a damaged `areas` value to
 //! `CoreError::Unreadable`: the whole read fails, never a row left out and never a guess (rule 7).
@@ -243,6 +242,22 @@ impl Store {
             .map_err(unreadable)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(unreadable)
+    }
+
+    /// Detail-only tail window, newest first plus one truncation sentinel. Provenance readers keep using `crew_escape_events`.
+    pub(crate) fn crew_escape_recent_events(
+        &self,
+        escape_id: &str,
+    ) -> Result<Vec<EscapeEventRecord>> {
+        let conn = self.reader();
+        conn.prepare(
+            "SELECT * FROM crew_escape_events WHERE escape_id = ?1 ORDER BY id DESC LIMIT ?2",
+        )
+        .map_err(unreadable)?
+        .query_map(params![escape_id, EVENTS_PER_ESCAPE_MAX + 1], event_row)
+        .map_err(unreadable)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(unreadable)
     }
 
     /// Per engine: the project's merges that reached the branch at or after `merged_since`, and the escapes of those merges by
