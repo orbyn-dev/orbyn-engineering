@@ -1080,14 +1080,33 @@ background crew is per device and is not shared through git. A repository's own 
   `GET /{id}`, `GET /{id}/runs`; writes, local only, `POST /create`, `/{id}/update`, `/{id}/enable`, `/{id}/disable`, `/{id}/delete`.
   There is no route that starts a run, spends, merges or reverts.
 
-What is not built: **no trigger fires**, so a run starts only when the core's `crew_background_run_now` is called (the `manual` event of
-[the engine start](crew/background-engine-start.md), PR 1; no route calls it yet, tests do) or a test calls the run functions. That call starts one Crew
+What is not built: **no route starts a run**. A run starts when the core's `crew_background_run_now` is called (the `manual` event of
+[the engine start](crew/background-engine-start.md), PR 1; no route calls it yet, tests do), when a listener fires (next paragraph) or when a test calls the run functions. A start creates one Crew
 worker task for the run; the lead thread of the run runs no engine and takes no message. Turning the crew off cancels that task. A budget-stopped run is queued as a waiting review on its own row and **is not yet an item of the after-merge Review queue**: that queue
 lists merges, each with a merge commit and a revert, and a stopped run has neither. Joining the two, and the person's answer to a waiting
 review, wait for the slice that brings a run's result through the merge queue, so a background crew has no merge authority today. Known
 limits: removing a project leaves its crews (a later trigger must refuse a crew whose project is gone); crews are per device; a
 template's prompt and checks are code-owned and defined only for the four templates a run can start (`background_start.rs`); any other
 template is refused.
+
+**As built (slice 4h, listeners, migration 59):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
+service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
+startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read from the forge and spends no event):
+a `schedule` crew once per `every_hours` bucket, and a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
+narrowed by its optional workflow filter. Every firing first claims a row in `crew_background_events` (first write wins) and then starts a run through the same seam as Run now:
+
+| Event | Claim | Held-start key |
+| --- | --- | --- |
+| schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
+
+`<hash>` is the first 16 hex characters of the SHA-256 of the failing check's name. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one
+never fires again (a clock that moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass.
+A firing refused for review capacity, the daily budget, an untrusted folder, no engine or a run already in progress is **dropped, not retried**: its claim stays, capacity also leaves its held row,
+and every refusal writes one `crew.background.listener.refused` audit row (the crew, the listener, a fixed reason word; the actor is the constant `crew`). **Text from outside never reaches the prompt**:
+a check's name, a head sha and a `.orbyn/crew.json` trigger's name only decide whether a run starts; the brief, the worker's prompt, the lead thread and the audit stay code-owned. A stop is
+looked at between firings, never inside a start, and a run a crash leaves is settled when the core opens. A trigger in the file with no stored crew is ignored. At most 64 CI crews are watched per pass, from a rotating start.
+`crew_background_events` is not pruned yet.
 
 **As built (slice 4h, triggers — parsed only):** a repository can describe the background crews it would like Orbyn to run, in
 `background` of `.orbyn/crew.json`. Orbyn reads the file and never writes it (architecture rule 4).
@@ -1281,8 +1300,8 @@ trigger refused again updates its row; when the same trigger later starts, the r
 if refused after that. At most 200 rows per project, `started` rows are dropped before `held` ones, then the oldest by last sighting. No task text and no engine
 output are stored. Nothing is retried on a timer, the refusal is still `not_authorized`, and with pausing off, for a
 person's start or for High and Medium work nothing is written. `GET /api/crew/capacity` returns them as `held`.
-A background crew's Run now (`crew_background_run_now`, the `manual` event) starts one crew task as Low and Crew-started with a
-`PausedTrigger` of kind `Background`; `crew_background_start_run` still only records a run row, and later triggers start through the same path.
+A background crew's Run now (`crew_background_run_now`, the `manual` event) and the listeners start one crew task as Low and Crew-started with a
+`PausedTrigger` of kind `Background`; `crew_background_start_run` still only records a run row.
 
 **As built (slice 4l, merge hook):** `crew/capacity/hooks.rs` is called by one line in `merge/queue.rs`, right after the area
 breaker's look at a stored merge, and does nothing with the Crew Preview flag off. It records the merged range's hunks and

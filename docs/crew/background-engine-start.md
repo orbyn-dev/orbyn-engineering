@@ -1,13 +1,13 @@
 # Engine start for background crews (4h)
 
-Design note. Status: PR 1 (the `manual` event, Run now through the core) and PR 2 (the budget: turn and minute counting from engine events, and the daily per-engine budget) built; the listeners and the Review join remain to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
+Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (the budget: turn and minute counting from engine events, and the daily per-engine budget) and PR 3 (the listeners: the schedule timer and the CI-failure watch, one owned future) built; the Review join remains to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
 
 ## 1. What exists today
 
 - Stored crews and runs (`crew/background.rs`, `store::crew_background`, schema 41 and 42): template, trigger kind and settings, a budget of `turns` and `minutes` per run fixed at creation, on/off, audit rows. Routes create, update, enable, disable and delete. No route starts a run.
 - Run seam: `crew_background_start_run`, `crew_background_spend` and `crew_background_end_run`. Only tests call them. A run is a row; it starts no crew task and no engine.
-- Trigger parser (#636): `crew::triggers::parse_and_validate` reads `background` of `.orbyn/crew.json` (`ci_failed`, `schedule`, `manual`). Nothing reads it yet, and it is not mapped to a stored crew.
-- Trigger listener: not available today. No CI-failure listener, no schedule timer, no manual start. The pull watch (`scm/watch.rs`) reads checks of linked pull requests only, and the main watch (`forge_watch.rs`) watches merges, not CI on a branch.
+- Trigger parser (#636): `crew::triggers::parse_and_validate` reads `background` of `.orbyn/crew.json` (`ci_failed`, `schedule`, `manual`). The listeners (PR 3) read it only to log a trigger that has no stored crew; it is never mapped to a stored crew and starts nothing.
+- Trigger listeners (PR 3, built): the schedule timer and the CI-failure watch (section 2a), and the manual start (Run now, PR 1). The pull watch (`scm/watch.rs`) reads checks of linked pull requests only, and the main watch (`forge_watch.rs`) watches merges, not CI on a branch; the CI-failure watch reads the branch head's checks itself (`crew_head_checks`).
 
 ## 2. What starts a run
 
@@ -17,6 +17,25 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core) and PR 
 - Refused, not started: crew off or deleted, project gone, Preview off, a run already running, no engine that passes `worker_refusal` and the router's tier rules among the trigger's `engines`.
 - A refusal after the task exists (for example the task could not be stored or routed) holds the task for a person and ends the run `needs_review` with the reason, in one transaction with the refusal audit (after the commit each held task gives up its leases and gets one `NeedsPerson` result, best effort; a task with no run row gets none and `review_reason` carries the reason); the run is kept and returned, not an error. A refusal before any task exists takes back the run and its lead thread in one transaction, so a crash leaves nothing behind.
 - `crew_start` needs a lead thread. The build opens one thread per run in the crew's project, marked as the crew's.
+
+### 2a. The listeners as built (PR 3)
+
+- One owned future, `run_crew_background_listeners`, behind the Preview flag and an interval (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60s to 24h). **No interval means no pass**, not even at startup. With one, a pass runs at startup and then once per interval.
+- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: turned on later, it sees the branch head and the current schedule bucket as new events. The start's own refusal stays as the second guard.
+- Claims (table `crew_background_events`, migration 59, first write wins; the claim is the dedupe and the refusal is never retried):
+
+| Event | Claim identity | `PausedTrigger` key |
+| --- | --- | --- |
+| schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| CI failure | `ci:<crew>:<head>:<name hash>` | `<crew>:ci:<head>:<name hash>` |
+
+  `<bucket>` is the Unix time divided by `every_hours`; a bucket at or before the newest one claimed for the crew never fires, so a clock that moves back starts nothing. `<name hash>` is 16 hex characters of the failing check's SHA-256, so a long check name cannot break the held row's 128-character key.
+- At most one start attempt per crew per pass. A head with several failing checks fires the first (by name) and leaves the rest unclaimed for a later pass.
+- A pass watches at most 64 CI crews, from a rotating start, so a store with more is covered over a few passes.
+- Refused for capacity, the daily budget, an untrusted folder, no engine, a run in progress or a crew that was turned off meanwhile: dropped, never retried. One code-owned audit row (`crew.background.listener.refused`: the crew, the listener, a fixed reason word) records it, and capacity also leaves its held row.
+- A stop is looked at between firings and never inside one, so a claim is always followed by its whole start. A run a crash leaves behind is settled when the core next opens (`recover_background_starts`).
+- Text from outside (a check's name, a head sha, a file trigger's name) only decides whether a run starts: it never reaches the brief, a prompt, the lead thread or an audit row. The listener's audit actor is the constant `crew`.
+- Not done: `crew_background_events` grows by one row per firing and is not pruned or removed with the crew.
 
 ## 3. Budget
 
