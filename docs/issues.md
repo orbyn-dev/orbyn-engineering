@@ -51,7 +51,7 @@ write is, and goes in `ENFORCED` and `PERSON_ROUTES` (`personKey.ts`).
 | `POST /api/threads/{id}/issue-links/remove` | **yes** | `204`. Removes this thread's link only |
 | `POST /api/issues/start-thread` | **yes** | `Thread`. Body `{ tracker, scope, key, message, project_id }`: creates the thread, links it and queues `message`, in one write |
 
-`GET /api/issues/trackers` answers `404` when Code of Issues is off, and the client reads that as "this
+`GET /api/issues/trackers` answers `404` when the Issues flag is off, and the client reads that as "this
 service reports no issues". A tracker not connected is a row with `connected: false`, never a `404`.
 
 ## Shapes
