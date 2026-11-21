@@ -36,3 +36,23 @@ describe("history", () => {
     expect(suggestion(list, "a\nb")).toBe("");
   });
 });
+
+describe("history across a project", () => {
+  it("joins the terminals of a project, oldest first like one history, and leaves other projects out", async () => {
+    const { historyAcross } = await import("./history");
+    recordCommand("a:main", "git status", 1);
+    recordCommand("b:main", "npm test", 2);
+    recordCommand("a:main", "git status", 3);
+    recordCommand("z:main", "other project", 4);
+    expect(historyAcross(["a", "b"]).map((entry) => entry.command)).toEqual(["git status", "npm test", "git status"]);
+  });
+});
+
+describe("history row time", () => {
+  it("says how long ago it ran, and the result only when the shell reported one", async () => {
+    const { rowWhen } = await import("./history");
+    expect(rowWhen({ command: "x", ok: null, at: 0 }, 4 * 60_000)).toBe("4 min ago");
+    expect(rowWhen({ command: "x", ok: false, at: 0 }, 4 * 60_000)).toBe("failed · 4 min ago");
+    expect(rowWhen({ command: "x", ok: true, at: 0 }, 4 * 60_000)).toBe("ok · 4 min ago");
+  });
+});
