@@ -50,9 +50,6 @@ export function KeybindingsSection() {
 
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Keybindings
-      </h1>
       <label className="set-find">
         <Search size={13} aria-hidden />
         <input aria-label="Filter keybindings" placeholder="Find a shortcut" value={filter} onChange={(event) => setFilter(event.target.value)} />

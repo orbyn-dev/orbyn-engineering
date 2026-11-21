@@ -87,9 +87,6 @@ export function ThreadsSection() {
   const data = settings.data;
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Threads
-      </h1>
       <SettingGroup>
         <Toggle
           title={settingsLabel("threads-group-by-project")}

@@ -424,9 +424,6 @@ function TasksView({ page }: { page: boolean }) {
         </PageBar>
       ) : (
         <>
-          <h1 className="sr-only" tabIndex={-1} data-page-title>
-            Scheduled tasks
-          </h1>
           <TaskDefaults />
           <div className="tasks-head">
             <p className="set-grp">Tasks</p>

@@ -142,8 +142,9 @@ export function Shell() {
       ) : (
         <main id="main" ref={main} tabIndex={-1} className="main">
           {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => navigate(underneath)} /> : null}
-          {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. */}
-          <div className="main-view" hidden={route.name === "settings"}>
+          {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. It leaves the
+              accessibility tree and the tab order while Settings is open, so the open page owns the only h1. */}
+          <div className="main-view" hidden={route.name === "settings"} inert={route.name === "settings" || undefined}>
             <RouteView route={underneath} needsProject={needsProject} />
           </div>
         </main>

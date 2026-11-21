@@ -112,9 +112,6 @@ export function ProvidersSection() {
   return (
     <>
       <div className="section-bar">
-        <h1 className="sr-only" tabIndex={-1} data-page-title>
-          Providers
-        </h1>
         {updatable.length > 1 && !updating ? (
           <Button small disabled={offline} onClick={() => setConfirmingAll(true)}>
             Update all
