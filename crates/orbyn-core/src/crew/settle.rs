@@ -363,7 +363,13 @@ impl Core {
         if over_time {
             return Some("The task ran past its time budget.");
         }
-        let spent = self.store.crew_turns_spent(&task.id).ok()?;
+        let spent = match self.store.crew_turns_spent(&task.id) {
+            Ok(spent) => spent,
+            Err(error) => {
+                tracing::warn!(%error, task = %task.id, "could not count a task's turns; not stopping it for them");
+                return None;
+            }
+        };
         (spent >= u64::from(brief.budget.turns)).then_some("The task ran past its turn budget.")
     }
 

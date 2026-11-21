@@ -403,7 +403,8 @@ Guards, all enforced in code:
 - **Today:** workers run in the lead's checkout. There is no merge gate for a single worker, and diff checks see the lead's uncommitted changes too.
 - The brief's file lease prevents two writers on the same files, and a worker's file-change tool outside it is refused
   at the gate with the lease's own words, before the write; the verifier's `file_scope` is no longer what catches it. A
-  shell command is not read, so a command can still write outside the lease (issue #441's sandbox).
+  shell command is not read, so a command can still write outside the lease (issue #441's sandbox). A refused write is
+  recorded as a denial and counts toward the trip wires (3 in a row, 20 in a run).
 - The lead merges in order.
 - Read-only workers share the lead's checkout.
 
