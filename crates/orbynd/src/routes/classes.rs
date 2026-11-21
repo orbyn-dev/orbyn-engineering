@@ -1007,6 +1007,8 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/profile/apply",
         "applies a profile to a crew, which can raise its permission mode and Autopilot mode",
+    ),
+    (
         "PUT",
         "/api/engines/{id}/code-mode",
         "the person turns Code Mode on or off for an engine, which changes what the engine may call",
