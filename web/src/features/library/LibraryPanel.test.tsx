@@ -485,7 +485,7 @@ it("copies a repo workflow as a From repo entry that names the sets it resolved"
   expect(screen.getByText(/Environment: work-laptop/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Copy to Personal" }));
   await pickItem(user, "Start dev server");
-  expect(screen.getByRole("heading", { name: /^Start dev server\s*From repo$/ })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: /^Start dev server\s*From repo$/ }, { timeout: 3000 })).toBeVisible();
   expect(screen.getByText(/Its next run asks you to confirm first/)).toBeVisible();
 });
 
