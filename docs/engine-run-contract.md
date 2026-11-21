@@ -15,8 +15,13 @@ breaks one looks like a message with no reply, and the person has to send it twi
    the message "No reply: the engine finished without answering. Send your message again." (see
    `conversation::runs::turn`), and a run whose engine no longer holds the conversation with the message
    "The engine lost this conversation." (see `conversation::runs::execute`). Slash commands and goals are
-   exempt: they may have nothing to say. A Crew lead, a Crew worker and a subagent are judged by what they leave behind, not by what
-   they say, and are exempt too, except the worker of a background crew's run, whose turn nobody reads live: no reply there ends the run
+   exempt: they may have nothing to say. A Crew worker and a subagent are judged by what they leave behind, not by what
+   they say, and are exempt too. So is a run on a Crew lead's thread that Crew itself started: its prompt is a message Crew queued
+   (a task's result, a review notice, a start it refused), recorded on the queued message (`queued_messages.crew_note`) and copied to the
+   run at admission (`runs.crew_note`). The lead's thread is also the person's own chat, so a run the person started there, or a message the
+   person queued there, still fails as "No reply". Messages other parts of the app queue on that thread (automations, a delegated
+   thread's report) are not Crew's notes and owe a reply too. A run admitted before migration 60 counts as the person's. The one
+   exception to all of this is the worker of a background crew's run, whose turn nobody reads live: no reply there ends the run
    `engine_error`.
 
 ## How each rule is met

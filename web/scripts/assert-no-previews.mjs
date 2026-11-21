@@ -35,6 +35,9 @@ const markers = [
   // Cursor thread design preview (features/cursorthread): the dev-only hash route and its mock.
   "preview/cursor-thread",
   "createCursorThreadMock",
+  // Repositories design preview (features/repos): the dev-only hash route and its mock.
+  "preview/repos",
+  "createReposMock",
 ];
 const dir = process.argv[2] ?? "dist";
 const walk = (path) =>

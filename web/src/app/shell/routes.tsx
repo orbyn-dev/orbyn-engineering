@@ -1,4 +1,4 @@
-import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost } from "../../features/onboarding";
+import { DraftView, EmptyProject, NoProjects, TrustFolder, WelcomeHost, WelcomePage } from "../../features/onboarding";
 import { CrewSurface } from "../../features/crew";
 import { WithFilePanel } from "../../features/panels";
 import { IssuesPage } from "../../features/issues";
@@ -37,6 +37,8 @@ export function RouteView({ route, needsProject }: { route: PageRoute; needsProj
       return <IssuesPage />;
     case "usage":
       return <UsagePage />;
+    case "welcome":
+      return <WelcomePage />;
     case "skills":
       return <SkillsPage skill={route.skill} />;
     case "tasks":

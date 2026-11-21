@@ -20,8 +20,10 @@ import type {
   PullWatch,
   ReviewLineComment,
   UpdatePull,
+  Thread,
 } from "./types";
 import type { PullRevision } from "../generated/PullRevision";
+import type { PullChangeBreakdown } from "../generated/PullChangeBreakdown";
 
 const q = encodeURIComponent;
 const base = (projectId: string, number: number) => `/api/projects/${q(projectId)}/pulls/${number}`;
@@ -46,6 +48,12 @@ export const pullsApi = {
     request<PullTimelineEvent[]>("GET", `${base(projectId, number)}/timeline`, undefined, signal),
   files: (projectId: string, number: number, signal?: AbortSignal) =>
     request<PullFile[]>("GET", `${base(projectId, number)}/files`, undefined, signal),
+  /** The files by change kind, with the lines added and deleted. */
+  breakdown: (projectId: string, number: number, signal?: AbortSignal) =>
+    request<PullChangeBreakdown>("GET", `${base(projectId, number)}/breakdown`, undefined, signal),
+  /** Every thread of the project that links this pull request. */
+  linkedThreads: (projectId: string, number: number, signal?: AbortSignal) =>
+    request<Thread[]>("GET", `${base(projectId, number)}/linked-threads`, undefined, signal),
   revisions: (projectId: string, number: number, signal?: AbortSignal) =>
     request<PullRevision[]>("GET", `/api/projects/${q(projectId)}/pulls/${number}/revisions`, undefined, signal),
   commitFiles: (projectId: string, sha: string, signal?: AbortSignal) =>

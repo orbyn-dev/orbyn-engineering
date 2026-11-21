@@ -24,6 +24,7 @@ import { ModelPickerTrigger } from "../../thread";
 import { DraftProjectPicker } from "../DraftProjectPicker";
 import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../product/state/draftStore";
 import { DraftModelControls } from "./DraftModelControls";
+import { RepoStart } from "./RepoStart";
 import { MAX_PREVIOUS_WORKTREES, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
 import { SUGGESTIONS } from "./suggestions";
 
@@ -150,6 +151,14 @@ export function DraftView({ projectId }: { projectId: string | null }) {
     );
     addPrompt(thread.id, { runId: run.id, text });
     return thread;
+  };
+
+  /** A model picked in the composer or in the repository dialog: the same choice, so both show it. */
+  const pickModel = (next: ModelChoice) => {
+    const picked = { ...next, effort: engine && next.engine === engine.id && next.model === pickedModel ? pickedEffort : null };
+    setExtras({});
+    setChoice(picked);
+    setPrefs({ lastModel: picked });
   };
 
   const send = async () => {
@@ -356,12 +365,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                         extras={extras}
                         access={unmanaged ? null : access}
                         register={setOpenTraits}
-                        onModel={(next) => {
-                          const picked = { ...next, effort: next.engine === engine.id && next.model === pickedModel ? pickedEffort : null };
-                          setExtras({});
-                          setChoice(picked);
-                          setPrefs({ lastModel: picked });
-                        }}
+                        onModel={pickModel}
                         onEffort={(value) => {
                           const picked = { engine: engine.id, model: pickedModel, effort: value };
                           setChoice(picked);
@@ -457,6 +461,7 @@ export function DraftView({ projectId }: { projectId: string | null }) {
                         </dd>
                       </div>
                     ) : null}
+                    {engine ? <RepoStart project={project} engines={installed} engine={engine} model={pickedModel} access={access} onModel={pickModel} onAccess={setAccess} /> : null}
                   </dl>
                   ) : (
                     <span />

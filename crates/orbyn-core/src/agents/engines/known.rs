@@ -175,7 +175,7 @@ impl KnownEngine {
         crate::host::process::resolve(program).is_some_and(|command| !self.is_other(&command))
     }
 
-    fn is_other(&self, command: &crate::host::process::ResolvedCommand) -> bool {
+    pub(crate) fn is_other(&self, command: &crate::host::process::ResolvedCommand) -> bool {
         let mut files = vec![command.path.clone(), command.program.clone()];
         files.extend(command.prefix.iter().map(std::path::PathBuf::from));
         if let Ok(real) = std::fs::canonicalize(&command.path) {

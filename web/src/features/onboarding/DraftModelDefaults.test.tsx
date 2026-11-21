@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, request } from "../../api/client";
@@ -7,6 +7,8 @@ import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { DRAFT_KEY } from "../../product/state/draftStore";
 import { DraftView } from "./DraftView";
+import { createReposMock } from "../../../mock/repos";
+import { setReposApi } from "../repos";
 
 vi.mock("../../api/client", async (original) => {
   const actual = await original<typeof import("../../api/client")>();
@@ -94,4 +96,22 @@ it("shows no side panel and no launcher on a draft, even when the panel preferen
   expect(screen.queryByRole("complementary", { name: "Thread context" })).toBeNull();
   expect(screen.queryByText("Open a surface")).toBeNull();
   expect(screen.queryByRole("button", { name: "Surfaces" })).toBeNull();
+});
+
+it("offers the repository dialog on the new-thread screen only when the service reports several repositories for the project", async () => {
+  vi.mocked(request).mockResolvedValue(defaults("project-model") as never);
+  const first = render(<DraftView projectId="a" />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+  expect(screen.queryByRole("button", { name: /^Repositories/ })).toBeNull();
+  first.unmount();
+  setReposApi(createReposMock());
+  try {
+    render(<DraftView projectId="a" />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Repositories: 4" }));
+    const dialog = await screen.findByRole("dialog", { name: /New thread in Fixture/ });
+    expect(within(dialog).getByText("Engine")).toBeVisible();
+    expect(within(dialog).getByText("Permission")).toBeVisible();
+  } finally {
+    setReposApi(null);
+  }
 });
