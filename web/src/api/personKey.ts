@@ -189,6 +189,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/projects/{id}/repos/{repo_id}/setup-git"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/remove"],
   ["POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"],
+  ["POST", "/api/projects/{id}/repo-threads"],
+  ["POST", "/api/threads/{id}/repos"],
   // Code Mode (docs/code-mode.md): switching an engine's Code Mode changes what the engine may call.
   ["PUT", "/api/engines/{id}/code-mode"],
   // The personal library (docs/execution-profiles-and-library.md, Part 2): every write is Person-class, a workflow run included. The reads, the two renders and the export are Local.
@@ -224,8 +226,6 @@ export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern:
   ["POST", "/api/issues/item/state"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
   // Folder scan and `.code-workspace` import (docs/multi-repo.md, "Folder scan"): Person-class although it writes nothing, because it reads a folder the person picked.
-  ["POST", "/api/projects/{id}/repo-threads"],
-  ["POST", "/api/threads/{id}/repos"],
   // Devices (docs/devices.md, provisional): every write is one action route, all types (screenshot and power off included). The reads are not Person-class.
   ["POST", "/api/devices/{id}/actions"],
   // Transcript import (docs/attachments-transcripts.md): creates thread context from an untrusted file, so Person-class. Export stays Local.

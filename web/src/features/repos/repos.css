@@ -73,3 +73,5 @@
 @media (min-width: 721px) {
   .repos-scan .repos-scan-row { grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr) auto; }
 }
+.branch-repo, .repos-scope { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.repos-scope { margin: 6px 12px 0; }

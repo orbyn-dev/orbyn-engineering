@@ -262,9 +262,23 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   the file conflict is `409 file_conflict` and keeps its message. A git action on an untrusted repository opens the existing trust
   prompt; a `404` says it is not one of the thread's repositories. `GET .../repos` `404` is an ordinary thread (or the flag off): nothing
   draws and nothing is said.
-- **Primary only for now.** The header Git menu, the branch and commit pickers, the editor and file tabs, "Open in editor" and pull
-  request screens act on the primary repository; opening a file of another repository from the Changes panel shows a notice instead
-  of opening the primary's file at the same path.
+- **Repository choice (header Git menu and pickers).** A thread in two or more repositories shows one chip, "Repository: <name>", beside the
+  header Git button, in the branch dialog and, in the Commit and Branch scopes, under the Changes header. The choice is shared by those
+  places for the thread (kept in memory, the primary by default: the repository whose id is the project's, else the first). Every read
+  and write they make carries its `repo_id`: `GET .../branches` and `.../commits` in the query, `POST .../git/action`, `.../branches`
+  and `.../branches/switch` in the body; the primary's calls leave it out. A commit or branch comparison is one repository's, so those
+  two scopes read the diff of the chosen repository only. An ordinary thread (or one in a single repository) gets no chip and no call
+  changes (no extra argument at all). If the chosen repository can't answer Git questions, the Git menu stays so another can be picked,
+  with its Git items off. Names from the service are drawn as one capped line of text.
+- **Trust from a refused write.** `409 repo_untrusted` on a hunk revert, undo or line edit adds a "Trust repository…" button to the
+  notice, which opens the same trust dialog the repository's Git menu opens (one click, one write, busy guard). Trusting clears the
+  notice and re-reads; the refused write is not repeated, the person tries again. It is offered for a multi-repository thread only.
+- **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
+  chosen), the editor and file tabs, "Open in editor" and the Create pull request base check of the Changes footer act on the primary
+  repository; opening a file of another repository from the Changes panel shows a notice instead of opening the primary's file at the
+  same path. `ThreadRepo.files` is capped at 200 by the service; the list at that cap is unchecked.
+- **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
+  `orbynd` with `ORBYN_MULTI_REPO=1`.
 
 ## As built: repo_id on Git and file calls
 
@@ -287,6 +301,32 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 - **Not built.** Pull request routes (`.../pulls`, `.../pulls/{number}/merge`, `.../review`) do not take `repo_id` yet: a pull request is
   linked to a thread by number, and two repositories can share a number, so they need their own change; they act on the primary
   repository until then. Adding a repository to a thread (`POST /api/threads/{id}/repos`), `repo-threads`, the task folder.
+
+## As built: repository threads and the task folder
+
+Behind the same flag; no new migration (`thread_repos` is from the slice above). Built: `POST /api/projects/{id}/repo-threads`,
+`GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads.
+
+- **Start.** `StartThreadInput { repos, engine, model, permission_mode, message?, branch_name? }`, answered with the `Thread`. Two to eight
+  repositories (`409 repo_limit` past 8; fewer than two is `400`, one repository uses the normal start); each `base_branch` must be a
+  local branch of that repository (`400`); a repository chosen twice is `400`. Every chosen repository, the project's own folder
+  included, must be trusted, finished cloning and a Git repository: `409 repo_untrusted`, `400`, `409 not_git`. All of that is
+  checked before anything is created. `permission_mode` must be one the engine offers (`400 permission_mode_unsupported`).
+- **Branch.** One name for every repository: `branch_name` (a valid branch name, at most 200 characters), else `orbyn/<first 8 characters
+  of the thread id>`. A repository that already has the name refuses the start (`400`), so nothing is overwritten.
+- **Folder.** `<data>/threads/<thread id>/`, one worktree per repository at `<folder>/<name>` made with
+  `git worktree add -b <branch> -- <path> refs/heads/<base>`. The folder is not a repository. The thread's `cwd` is the folder, so the
+  engine's working directory and write scope contain every worktree and approvals name the absolute worktree path as always. If any
+  worktree, the thread or its rows cannot be made, the worktrees and branches made so far, the folder and the thread are removed. The
+  primary repository (the project's own folder, when chosen) is position 0; `permission_mode` is applied after creation and the optional
+  `message` is queued as the first turn.
+- **Reads.** `GET .../task-folder` answers `TaskFolder { root, branch, repos: ThreadRepo[], max_per_thread }`, `404` for an ordinary
+  thread. `GET .../files` and `.../files/metadata` take `repo_id` too, so the tree of one repository can be shown.
+- **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
+  in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
+  the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
+- **Not built.** Deleting a multi-repository thread does not remove its worktrees or branches yet (the folder stays under app data); removing
+  a repository from a thread; pull request routes with `repo_id`; per-repository settings.
 
 ## Not in the beta
 

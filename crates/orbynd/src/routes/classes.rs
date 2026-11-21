@@ -234,6 +234,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("DELETE", "/api/library/env-sets/{id}/keys/{key}"),
     ("POST", "/api/library/import"),
     ("POST", "/api/projects/{id}/library/suggestions/copy"),
+    ("POST", "/api/projects/{id}/repo-threads"),
+    ("POST", "/api/threads/{id}/repos"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -1151,6 +1153,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/library/suggestions/copy",
         "the person copies an entry from a repository's committed .orbyn/ file into the device library",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repo-threads",
+        "the person starts a thread in several repositories, which creates a worktree and a branch in each",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/repos",
+        "the person adds a repository to a thread, which creates a worktree and a branch in it",
     ),
 ];
 

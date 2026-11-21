@@ -4,6 +4,7 @@
 mod scan;
 mod scope;
 mod source;
+mod threads;
 
 pub use scope::in_repo;
 
@@ -52,7 +53,7 @@ impl Drop for Staging {
     }
 }
 
-fn on(core: &Core) -> Result<()> {
+pub(super) fn on(core: &Core) -> Result<()> {
     if core.config.multi_repo {
         Ok(())
     } else {
@@ -61,7 +62,7 @@ fn on(core: &Core) -> Result<()> {
 }
 
 /// The branch, the branches a thread may start from (current first) and whether a remote exists.
-async fn describe(path: &Path, is_git: bool) -> (Option<String>, Vec<String>, bool) {
+pub(super) async fn describe(path: &Path, is_git: bool) -> (Option<String>, Vec<String>, bool) {
     if !is_git || !path.is_dir() {
         return (None, Vec::new(), false);
     }
