@@ -1,6 +1,7 @@
 //! Repositories of a project (docs/multi-repo.md). Names follow the T3 Code workspace folder schema (MIT,
 //! 9168ca73d, names only). Every name, path, branch and URL here is untrusted text.
 
+use crate::PermissionMode;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -127,5 +128,47 @@ pub struct ThreadRepo {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub files: Option<Vec<String>>,
+}
+}
+
+wire! {
+/// A repository of a new thread and the branch its own branch is cut from.
+pub struct StartRepoChoice {
+    pub repo_id: String,
+    pub base_branch: String,
+}
+}
+
+wire! {
+/// Starts a thread in two or more repositories of a project, each on one new branch name.
+pub struct StartThreadInput {
+    pub repos: Vec<StartRepoChoice>,
+    pub engine: String,
+    pub model: Option<String>,
+    pub permission_mode: PermissionMode,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub message: Option<String>,
+    /// One new branch name for every repository; absent, the service makes one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub branch_name: Option<String>,
+}
+}
+
+wire! {
+/// Adds a trusted repository of the project to a multi-repository thread.
+pub struct AddThreadRepo {
+    pub repo_id: String,
+}
+}
+
+wire! {
+/// A multi-repository thread's folder: one worktree per repository, `<root>/<name>`, on one branch.
+pub struct TaskFolder {
+    pub root: String,
+    pub branch: String,
+    pub repos: Vec<ThreadRepo>,
+    pub max_per_thread: u32,
 }
 }

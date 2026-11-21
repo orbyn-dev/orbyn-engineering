@@ -8,14 +8,21 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use orbyn_contracts::{AddRepoFolder, CloneRepo, CreateRepo, ScanRepos};
+use orbyn_contracts::{
+    AddRepoFolder, AddThreadRepo, CloneRepo, CreateRepo, ScanRepos, StartThreadInput,
+};
 
 use crate::http::{ApiJson, ApiResult, AppState};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/projects/{id}/repos", get(list))
-        .route("/api/threads/{id}/repos", get(thread_repos))
+        .route(
+            "/api/threads/{id}/repos",
+            get(thread_repos).post(add_thread_repo),
+        )
+        .route("/api/threads/{id}/task-folder", get(task_folder))
+        .route("/api/projects/{id}/repo-threads", post(start_thread))
         .route("/api/projects/{id}/repos/add-folder", post(add_folder))
         .route("/api/projects/{id}/repos/create", post(create))
         .route("/api/projects/{id}/repos/clone", post(clone))
@@ -113,4 +120,27 @@ async fn thread_repos(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.thread_repos(&id).await?))
+}
+
+async fn add_thread_repo(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<AddThreadRepo>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.add_thread_repo(&id, body).await?))
+}
+
+async fn task_folder(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.task_folder(&id).await?))
+}
+
+async fn start_thread(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<StartThreadInput>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.start_repo_thread(&id, body).await?))
 }

@@ -598,3 +598,331 @@ async fn an_unknown_untrusted_or_flagged_off_repository_is_refused_at_every_entr
         Err(CoreError::NotFound(_))
     ));
 }
+
+fn start_input(repos: &[(&str, &str)]) -> orbyn_contracts::StartThreadInput {
+    orbyn_contracts::StartThreadInput {
+        repos: repos
+            .iter()
+            .map(|(repo_id, base)| orbyn_contracts::StartRepoChoice {
+                repo_id: (*repo_id).to_owned(),
+                base_branch: (*base).to_owned(),
+            })
+            .collect(),
+        engine: "claude".into(),
+        model: None,
+        permission_mode: orbyn_contracts::PermissionMode::Supervised,
+        message: None,
+        branch_name: None,
+    }
+}
+
+async fn two_trusted(dir: &TempDir) -> (Arc<Core>, String, String, PathBuf, PathBuf) {
+    let core = core(dir, true).await;
+    let (main, other) = two_repos(dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    core.store.trust_project(&project, "user").unwrap();
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &added.id).await.unwrap();
+    (core, project, added.id, main, other)
+}
+
+fn branches(path: &Path) -> String {
+    let out = std::process::Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[tokio::test]
+async fn a_thread_in_two_repositories_gets_a_folder_with_a_worktree_on_one_branch_in_each() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let mut input = start_input(&[(&other_id, "main"), (&project, "main")]);
+    input.branch_name = Some("feature/shared".into());
+    let thread = core.start_repo_thread(&project, input).await.unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    assert_eq!(folder.branch, "feature/shared");
+    assert_eq!(folder.root, thread.cwd);
+    assert!(Path::new(&thread.cwd).starts_with(dir.path().join("data/threads")));
+    assert!(
+        !Path::new(&thread.cwd).join(".git").exists(),
+        "the folder is not a repository"
+    );
+    // The project's own folder is primary and first; each worktree is `<folder>/<name>` on the shared branch.
+    assert_eq!(folder.repos[0].repo_id, project);
+    assert_eq!(folder.repos.len(), 2);
+    for repo in &folder.repos {
+        assert_eq!(repo.branch, "feature/shared");
+        assert!(
+            Path::new(&thread.cwd)
+                .join(&repo.name)
+                .join("a.txt")
+                .exists()
+        );
+    }
+    assert!(
+        branches(&main).contains("feature/shared") && branches(&other).contains("feature/shared")
+    );
+    assert_eq!(folder.max_per_thread, 8);
+    // Calls with no repo_id act on the primary worktree; the repo_id picks the other one.
+    assert_eq!(
+        core.read_file(&thread.id, "a.txt").await.unwrap().content,
+        "one\n"
+    );
+    let second = crate::in_repo(Some(other_id), core.read_file(&thread.id, "a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(second.content, "other\n");
+}
+
+#[tokio::test]
+async fn a_repo_thread_is_refused_before_anything_is_made_when_the_choice_is_not_usable() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let untrusted_folder = repo(&dir.path().join("third"));
+    let third = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&untrusted_folder),
+            },
+        )
+        .await
+        .unwrap();
+    let state = |c: &Core| {
+        std::fs::read_dir(c.config.data_dir.join("threads"))
+            .map(|d| d.count())
+            .unwrap_or(0)
+    };
+    let refuse = |input: orbyn_contracts::StartThreadInput| {
+        let core = core.clone();
+        let project = project.clone();
+        async move { core.start_repo_thread(&project, input).await.unwrap_err() }
+    };
+    // Untrusted, one repository, nine repositories, twice the same, a bad branch, a taken branch name.
+    assert!(matches!(
+        refuse(start_input(&[(&project, "main"), (&third.id, "main")])).await,
+        CoreError::RepoUntrusted(_)
+    ));
+    assert!(matches!(
+        refuse(start_input(&[(&project, "main")])).await,
+        CoreError::Invalid(_)
+    ));
+    let many: Vec<(String, &str)> = (0..9).map(|n| (format!("r{n}"), "main")).collect();
+    let many: Vec<(&str, &str)> = many.iter().map(|(a, b)| (a.as_str(), *b)).collect();
+    assert!(matches!(
+        refuse(start_input(&many)).await,
+        CoreError::RepoLimit(_)
+    ));
+    assert!(matches!(
+        refuse(start_input(&[(&project, "main"), (&project, "main")])).await,
+        CoreError::Invalid(_)
+    ));
+    assert!(matches!(
+        refuse(start_input(&[(&project, "main"), (&other_id, "nope")])).await,
+        CoreError::Invalid(_)
+    ));
+    assert!(matches!(
+        refuse(start_input(&[(&project, "-x"), (&other_id, "main")])).await,
+        CoreError::Invalid(_)
+    ));
+    assert!(matches!(
+        refuse(start_input(&[(&project, "main"), ("no-such", "main")])).await,
+        CoreError::NotFound(_)
+    ));
+    let mut bad = start_input(&[(&project, "main"), (&other_id, "main")]);
+    bad.branch_name = Some("bad..name".into());
+    assert!(matches!(refuse(bad).await, CoreError::Invalid(_)));
+    let mut taken = start_input(&[(&project, "main"), (&other_id, "main")]);
+    taken.branch_name = Some("main".into());
+    assert!(matches!(refuse(taken).await, CoreError::Invalid(_)));
+    let mut mode = start_input(&[(&project, "main"), (&other_id, "main")]);
+    mode.engine = "no-such-engine".into();
+    assert!(refuse(mode).await.status() >= 400);
+    use orbyn_contracts::PermissionMode::{Auto, Supervised};
+    assert!(super::threads::check_mode(&[Supervised, Auto], Auto, "e").is_ok());
+    assert!(matches!(
+        super::threads::check_mode(&[Supervised], Auto, "e"),
+        Err(CoreError::PermissionModeUnsupported(_))
+    ));
+    assert_eq!(state(&core), 0, "nothing was created");
+    assert!(!branches(&main).contains("orbyn/") && !branches(&other).contains("orbyn/"));
+    assert!(
+        core.store
+            .list_threads(Some(&project), false)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_failure_part_way_leaves_no_worktree_branch_or_thread() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    // The second repository's folder is gone, so its worktree cannot be made after the first was.
+    std::fs::remove_dir_all(&other).unwrap();
+    let error = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await;
+    assert!(error.is_err());
+    assert!(!branches(&main).contains("orbyn/"), "{}", branches(&main));
+    assert!(
+        std::fs::read_dir(dir.path().join("data/threads")).map_or(true, |mut d| d.next().is_none())
+    );
+    assert!(
+        core.store
+            .list_threads(Some(&project), false)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_third_repository_joins_a_thread_on_its_branch_and_the_eighth_is_the_last() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let branch = core.task_folder(&thread.id).await.unwrap().branch;
+    let extra = core
+        .create_repo(
+            &project,
+            CreateRepo {
+                name: "extra".into(),
+            },
+        )
+        .await
+        .unwrap();
+    // A new empty repository has no commit, so it has no branch to cut from.
+    assert!(
+        core.add_thread_repo(
+            &thread.id,
+            orbyn_contracts::AddThreadRepo {
+                repo_id: extra.id.clone()
+            }
+        )
+        .await
+        .is_err()
+    );
+    let made = repo(&dir.path().join("made"));
+    let row = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&made),
+            },
+        )
+        .await
+        .unwrap();
+    // Untrusted is refused; trusted joins on the thread's branch.
+    assert!(matches!(
+        core.add_thread_repo(
+            &thread.id,
+            orbyn_contracts::AddThreadRepo {
+                repo_id: row.id.clone()
+            }
+        )
+        .await,
+        Err(CoreError::RepoUntrusted(_))
+    ));
+    core.trust_repo(&project, &row.id).await.unwrap();
+    let joined = core
+        .add_thread_repo(
+            &thread.id,
+            orbyn_contracts::AddThreadRepo {
+                repo_id: row.id.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(joined.branch, branch);
+    assert!(branches(&made).contains(&branch));
+    assert!(matches!(
+        core.add_thread_repo(
+            &thread.id,
+            orbyn_contracts::AddThreadRepo {
+                repo_id: row.id.clone()
+            }
+        )
+        .await,
+        Err(CoreError::Invalid(_))
+    ));
+    assert_eq!(core.task_folder(&thread.id).await.unwrap().repos.len(), 3);
+    // An ordinary thread has no task folder and takes no repository.
+    let plain = core
+        .store
+        .create_thread(crate::store::NewThread {
+            project_id: project.clone(),
+            title: "p".into(),
+            engine: "claude".into(),
+            model: None,
+            cwd: path_text(&dir.path().join("main")),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap()
+        .id;
+    assert!(matches!(
+        core.task_folder(&plain).await,
+        Err(CoreError::NotFound(_))
+    ));
+    assert!(matches!(
+        core.add_thread_repo(&plain, orbyn_contracts::AddThreadRepo { repo_id: row.id })
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn an_untrusted_primary_folder_cannot_start_a_repo_thread_either() {
+    let dir = TempDir::new();
+    let core = core(&dir, true).await;
+    let (main, other) = two_repos(&dir);
+    let project = core.add_project(&path_text(&main)).await.unwrap().id;
+    let added = core
+        .add_repo_folder(
+            &project,
+            AddRepoFolder {
+                path: path_text(&other),
+            },
+        )
+        .await
+        .unwrap();
+    core.trust_repo(&project, &added.id).await.unwrap();
+    let error = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&added.id, "main")]),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CoreError::RepoUntrusted(_)), "{error:?}");
+    assert!(
+        !dir.path().join("data/threads").exists()
+            || std::fs::read_dir(dir.path().join("data/threads"))
+                .unwrap()
+                .next()
+                .is_none()
+    );
+}

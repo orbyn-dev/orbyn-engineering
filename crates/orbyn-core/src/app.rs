@@ -446,6 +446,16 @@ impl Core {
     /// Creates a thread, with a worktree when asked. `git worktree add` runs repo
     /// hooks, so it needs a trusted folder like an engine does.
     pub async fn create_thread(&self, request: orbyn_contracts::CreateThread) -> Result<Thread> {
+        self.create_thread_in(request, None).await
+    }
+
+    /// `create_thread`, optionally in a folder the caller made and under an id it chose: a multi-repository
+    /// thread's task folder, which is not a repository.
+    pub(crate) async fn create_thread_in(
+        &self,
+        request: orbyn_contracts::CreateThread,
+        task_folder: Option<(String, String)>,
+    ) -> Result<Thread> {
         self.workspace.root()?;
         let project = match self.scratch_request(&request)? {
             Some(scratch) => scratch,
@@ -476,9 +486,15 @@ impl Core {
             }
             None => None,
         };
-        let cwd = worktree
-            .as_ref()
-            .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone());
+        let (thread_id_chosen, cwd) = match task_folder {
+            Some((id, folder)) => (Some(id), folder),
+            None => (
+                None,
+                worktree
+                    .as_ref()
+                    .map_or_else(|| project.path.clone(), |worktree| worktree.path.clone()),
+            ),
+        };
         let project_id = project.id.clone();
         let remembered = self.store.remembered_selection(&request.engine)?;
         let default = self.project_default_selection(&request.engine, &project_id)?;
@@ -519,7 +535,7 @@ impl Core {
             wait_for_exit: !script.asynchronous,
             script: Some(script.clone()),
         });
-        let thread_id = new_id();
+        let thread_id = thread_id_chosen.unwrap_or_else(new_id);
         let registration = setup.as_ref().map(|_| self.setups.registration(&thread_id));
         let thread = self.store.create_registered_thread(
             &thread_id,
