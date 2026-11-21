@@ -1254,10 +1254,13 @@ per-engine units.
 
 **As built (slice 4f, UI part C):** the escape log (Crew Designs v20, 17 frames), review capacity (v21, 18 frames) and the
 Settings › Crew page (v23, `settings-crew`, with its Review capacity, Independent oracle and Reviewer backtest rows) as
-display-only Preview screens in `web/src/features/crew/{escape,capacity,settings}`, opened by `#/preview/crew/<frame>` in
+Preview screens in `web/src/features/crew/{escape,capacity,settings}`, opened by `#/preview/crew/<frame>` in
 dev builds only. They share one stage in `features/crew/shared`: the design's own markup, with its rules renamed `cx-*` in
-`shared/design.css` on the app's tokens. None of them has a backend, a client or a guessed route: every button is disabled
-with "Crew is not connected to this app yet", and the escape and capacity backends are separate slices (escape design: [crew/escapes.md](crew/escapes.md)). Values the design
+`shared/design.css` on the app's tokens. They were first display-only, with every button disabled with "Crew is not connected to
+this app yet". That is no longer true of all of them: the escape and capacity backends are built as separate slices (escape design:
+[crew/escapes.md](crew/escapes.md); capacity: slice 4l below) and their live screens read them (22 of the 28 escape frames and the two
+`capacity-live-*` screens), still reachable only behind the dev-only previews flag. The remaining escape frames (report, dashboard,
+route counts, create check) and the other capacity frames stay drawn samples with disabled buttons. Values the design
 marks Proposed (the 60-day window, the 10-merge and 2x router tie-break, a limit of 8, sampling one in four rounded up)
 stay Proposed on the screen. The settings rows are drawn in the Preview frame only: in the real Settings page they would
 show a state ("Not set") that nothing stores yet. The v22 units apply to the v19 frames too: the header line reads

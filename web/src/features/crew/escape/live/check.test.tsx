@@ -300,12 +300,16 @@ describe("the check frames of Crew Designs v79", () => {
 });
 
 describe("the escape log at its limit", () => {
-  it("draws the refusal banner and the showing-of heading when the project holds 5,000 escapes", async () => {
+  it("draws the retention banner and the showing-of heading when the project holds 5,000 escapes", async () => {
     answers.log = { status: 200, body: log({ total: 5000 }) };
     render(<LiveEscapes view="log" />);
-    expect(await screen.findByText(/This project has reached the 5,000-escape limit\./)).toBeInTheDocument();
-    expect(screen.getByText(/The same holds at 20,000 audit events\. Confirmed escapes are never dropped\./)).toBeInTheDocument();
-    expect(screen.getByTitle("Planned: pruning the oldest dismissed and possible escapes is not built; the writer refuses instead")).toBeInTheDocument();
+    expect(await screen.findByText(/This project holds 5,000 escapes, the limit\./)).toBeInTheDocument();
+    expect(screen.getByText(/To make room for a new escape, the oldest dismissed escapes, then the oldest possible ones, are removed\./)).toBeInTheDocument();
+    expect(screen.getByText(/Confirmed escapes and escapes with a check are kept/)).toBeInTheDocument();
+    expect(screen.getByText(/If every escape is kept, a new one is refused\./)).toBeInTheDocument();
+    expect(screen.getByText(/How many are kept now: Not measured/)).toBeInTheDocument();
+    expect(screen.getByTitle("Planned: the log read does not say how many escapes are kept or whether room was made")).toBeInTheDocument();
+    expect(screen.queryByText(/not built|is not recorded/)).toBeNull();
     expect(screen.getByText(/Showing 3 of 5,000/)).toBeInTheDocument();
     expect(posts(calls)).toHaveLength(0);
   });
@@ -313,7 +317,7 @@ describe("the escape log at its limit", () => {
   it("draws no banner below the limit", async () => {
     render(<LiveEscapes view="log" />);
     await screen.findByText("Escapes");
-    expect(screen.queryByText(/5,000-escape limit/)).toBeNull();
+    expect(screen.queryByText(/the limit\./)).toBeNull();
     expect(screen.getByText(/6 in all/)).toBeInTheDocument();
   });
 });

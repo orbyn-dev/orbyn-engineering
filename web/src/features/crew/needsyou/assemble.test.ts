@@ -66,6 +66,24 @@ describe("each source becomes one inbox row", () => {
     expect(items.every((one) => one.risk === null)).toBe(true);
   });
 
+  it("a daily-cap stop shows the core's reason verbatim and says to wait for the reset; the lifetime stop keeps its words", () => {
+    const why = "Engine alpha reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-20T00:00:00+11:00.";
+    const unreadable = "The crew's daily budget could not be read, so the run stopped instead of going on.";
+    const notUpdated = "The crew's daily budget could not be updated, so the run stopped instead of going on.";
+    const items = backgroundItems([{ crew, runs: [
+      bgRun({ id: "d1", stop_reason: "budget", review_reason: why }),
+      bgRun({ id: "d2", stop_reason: "budget", review_reason: unreadable }),
+      bgRun({ id: "d3", stop_reason: "budget", review_reason: notUpdated }),
+      bgRun({ id: "l1", stop_reason: "budget", review_reason: "The run reached its budget and stopped." }),
+    ] }]);
+    expect(items.map((one) => [one.id, one.title, one.cost, one.hint])).toEqual([
+      ["background:d1", "Paused: budget reached", why, "This run stays stopped. New runs can start after the daily reset: 2026-11-20T00:00:00+11:00. The budget is fixed at creation."],
+      ["background:d2", "Paused: budget reached", unreadable, "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it."],
+      ["background:d3", "Paused: budget reached", notUpdated, "No reset time: the daily budget could not be read or updated, so this is not a wait for the reset. Open the run to review it."],
+      ["background:l1", "Paused: budget reached", "The run stopped at its budget. The budget cannot be changed; turn the crew off, or create a new crew with a bigger budget.", undefined],
+    ]);
+  });
+
   it("an area the breaker demoted under a Full ceiling is one autonomy row in the design's words", () => {
     const row: AutopilotAreaRow = {
       area: "web/auth", area_key: "web/auth", ceiling: "full", now: "on", state: "demoted",

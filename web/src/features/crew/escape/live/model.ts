@@ -13,7 +13,7 @@ export const WHY = {
   queue: "the Review queue is not in the beta, so there is no button to open it",
   check: "the create-check screen (the form for the path, what it asserts and the run command) is still a drawn sample, so no live screen collects a proposal yet",
   tooling: "a created check only adds test files in v1; a tooling gap is logged with no proposal",
-  pruning: "pruning the oldest dismissed and possible escapes is not built; the writer refuses instead",
+  retention: "the log read does not say how many escapes are kept or whether room was made",
   openItself: "a choice to open the check task by itself is not built",
   put: "the constants are read from this device; changing them (PUT /api/crew/escapes/thresholds) is not built",
   router: "confirmed escapes do not feed the Router in v1, so a tie-break between equal engines decides nothing",

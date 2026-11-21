@@ -1,0 +1,11 @@
+{
+  "name": "orbyn-engine-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node host that runs engine SDKs for the Rust core. See ../docs/engine-host-protocol.md.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

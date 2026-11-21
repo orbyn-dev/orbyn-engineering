@@ -193,17 +193,20 @@ function EscapeCards({ rows, onOpen }: { rows: readonly EscapeRow[]; onOpen(id: 
   );
 }
 
-/** The limit banner the writer's own refusal draws when a project holds its 5,000 escapes, at every width. */
+/** The limit banner, drawn when the log's total is at the core's 5,000 cap. Retention clears the oldest dismissed, then the
+ * oldest possible escapes to admit a new one; confirmed escapes, escapes with a check and unclassifiable history are kept, and
+ * a log of only kept history refuses. The read carries no kept count and no retention result, so those read Not measured. */
 function LimitBanner() {
   return (
     <div className="cx-cwbn cx-amber" role="status">
       <Ic n="alert" sm />
       <span>
-        This project has reached the {count(ESCAPES_LIMIT)}-escape limit. A new escape is not recorded, and Mark as an
-        escape is refused, until room is made. The same holds at 20,000 audit events. Confirmed escapes are never dropped.
+        This project holds {count(ESCAPES_LIMIT)} escapes, the limit. To make room for a new escape, the oldest dismissed
+        escapes, then the oldest possible ones, are removed. Confirmed escapes and escapes with a check are kept. If every
+        escape is kept, a new one is refused. How many are kept now: Not measured.
       </span>
       <span className="cx-acts">
-        <Planned why={WHY.pruning} />
+        <Planned why={WHY.retention} />
       </span>
     </div>
   );
@@ -258,8 +261,8 @@ function WhatCounts({ log }: { log: EscapeLog }) {
 }
 
 /**
- * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, and `escape-limit` (the banner the
- * writer's own refusal draws when a project holds its 5,000 escapes), on the real escape log read. `escape-narrow-window`
+ * Crew Designs v79, `escape-log` with its empty, low-sample and unreadable states, and `escape-limit` (the banner drawn
+ * when a project holds its 5,000 escapes), on the real escape log read. `escape-narrow-window`
  * is the same page below 640 px, measured (not chosen by frame id) (two tiles, one card per escape) and `escape-narrow-panel` the 320 px side panel (one counts
  * card, one card per escape), as the design's narrow frames draw. The limit is the core's own cap and the read carries
  * the count, so the page says it is reached only when the count does. Counts are shown apart and never added; there is
