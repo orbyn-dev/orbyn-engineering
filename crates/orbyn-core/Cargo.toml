@@ -11,6 +11,9 @@ license-file.workspace = true
 test-support = []
 # The Engine adapter and its dependency. Off in every normal build, release included, because
 # nothing calls it while sign-in is off; the tests switch it on through the dev-dependency below.
+# The macOS keychain behind the engine API-key setting (src/credentials). On in the service's normal
+# build; on other platforms the dependency does not exist and the store says unavailable.
+engine-credentials = ["dep:security-framework"]
 engine-client = ["dep:orbyn-device-client", "dep:chacha20poly1305", "dep:security-framework"]
 
 [dependencies]
@@ -54,7 +57,7 @@ tar = { version = "0.4", default-features = false }
 
 # The macOS keychain behind the Engine adapter (docs/account.md, "The device and its keys"): the
 # maintained, MIT or Apache-2.0 binding the rustls platform verifier already pulls into the desktop
-# lock. Only built with `engine-client`, which no normal build enables.
+# lock. Built with `engine-client` (no normal build) or `engine-credentials` (the service).
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "=3.7.0", optional = true }
 

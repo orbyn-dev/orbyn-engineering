@@ -177,7 +177,10 @@ fn the_service_name_separates_dev_and_release_items() {
 
 #[test]
 fn a_platform_with_no_backend_says_unavailable_and_stores_nothing() {
-    #[cfg(not(all(target_os = "macos", feature = "engine-client")))]
+    #[cfg(not(all(
+        target_os = "macos",
+        any(feature = "engine-client", feature = "engine-credentials")
+    )))]
     {
         let c = Credentials::system(DEV_SERVICE);
         assert_eq!(c.status("cursor", true), Ok(Status::Unavailable));
@@ -186,4 +189,17 @@ fn a_platform_with_no_backend_says_unavailable_and_stores_nothing() {
             Err(CredentialError::Unavailable)
         );
     }
+}
+
+#[test]
+fn the_default_service_is_dev_with_debug_assertions_and_never_the_other_name() {
+    assert_ne!(DEV_SERVICE, RELEASE_SERVICE);
+    assert_eq!(
+        default_service(),
+        if cfg!(debug_assertions) {
+            DEV_SERVICE
+        } else {
+            RELEASE_SERVICE
+        }
+    );
 }

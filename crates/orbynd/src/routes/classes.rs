@@ -127,6 +127,10 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("DELETE", "/api/policy/rules/{id}"),
     ("PUT", "/api/preferences"),
     ("PUT", "/api/projects/{id}/preferences"),
+    ("PUT", "/api/settings/engine-credentials/{engine}"),
+    ("PUT", "/api/settings/engine-credentials/{engine}/key"),
+    ("POST", "/api/settings/engine-credentials/{engine}/retry"),
+    ("DELETE", "/api/settings/engine-credentials/{engine}/key"),
     ("PUT", "/api/settings/preferences"),
     ("PUT", "/api/settings/secrets/formats/{id}"),
     ("POST", "/api/settings/secrets/patterns"),
@@ -727,6 +731,26 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/questions/{id}/dismiss",
         "the person's dismissal of an agent's question",
+    ),
+    (
+        "PUT",
+        "/api/settings/engine-credentials/{engine}",
+        "turns keeping an engine's API key in the keychain off or on",
+    ),
+    (
+        "PUT",
+        "/api/settings/engine-credentials/{engine}/key",
+        "saves or replaces an engine's API key in the keychain",
+    ),
+    (
+        "POST",
+        "/api/settings/engine-credentials/{engine}/retry",
+        "asks the keychain again for an engine's API key state",
+    ),
+    (
+        "DELETE",
+        "/api/settings/engine-credentials/{engine}/key",
+        "removes an engine's API key from the keychain",
     ),
     (
         "PUT",

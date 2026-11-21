@@ -182,6 +182,8 @@ pub struct Core {
     pub(crate) crew_bisect: std::sync::Mutex<Option<orbyn_contracts::AutopilotBisect>>,
     /// Crew Preview: the reviewer replay's runner and its run in progress.
     pub(crate) crew_backtest: crate::crew::backtest::Slot,
+    /// Engine API keys, kept in the OS keychain only (`credentials`).
+    pub(crate) credentials: crate::credentials::Credentials,
     _lock: OwnerLock,
 }
 
@@ -333,6 +335,7 @@ impl Core {
             crew_merges: tokio::sync::Mutex::new(()),
             crew_bisect: std::sync::Mutex::new(None),
             crew_backtest: Default::default(),
+            credentials: Self::system_credentials(),
             _lock: lock,
         };
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
