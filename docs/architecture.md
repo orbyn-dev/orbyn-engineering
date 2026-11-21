@@ -2658,7 +2658,8 @@ A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or
 `crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
 the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the
 attempt, without naming the file, if a protected path changed, then runs every check of the key in the task's checkout, writes
-one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. A pass needs
+one Evidence per check (the output excerpt redacted before the secret scan) and one Gate, and judges. The kinds it runs are those
+`crew/checks.rs` implements (docs/crew.md, "Verification without limits"); a kind it does not run is listed as not verified. A pass needs
 Evidence (H8). A failure goes through `failed` to the state the loop guard names, in one transaction: a different failure
 retries with the reason, the same failure twice changes approach once, and the same failure after that stops the run
 (`repeated_failure`). The worker is told the reason a check failed, never the check, its id or any other part of the key,
