@@ -21,7 +21,7 @@ use crate::source_control::git::git_hardened as git;
 use crate::store::{CrewPinnedRef, Store};
 
 /// How the checkout's default branch compares to the commit this project remembered.
-pub(super) enum Decision {
+pub(in crate::crew) enum Decision {
     /// No ref and nothing remembered: HEAD alone is read, as before.
     None,
     /// The ref is the remembered commit or a descendant. `write` moves the memory when the start records it.
@@ -54,7 +54,7 @@ pub(super) fn stored(store: &Store, project_id: &str) -> Result<Option<CrewPinne
 }
 
 /// What the checkout's default branch says now, against the commit last accepted for this project. Reads only.
-pub(super) async fn decide(root: &Path, stored: Option<&CrewPinnedRef>) -> Decision {
+pub(in crate::crew) async fn decide(root: &Path, stored: Option<&CrewPinnedRef>) -> Decision {
     match read_pinned(root).await {
         Pinned::Absent => match stored {
             Some(stored) => Decision::Blocked {

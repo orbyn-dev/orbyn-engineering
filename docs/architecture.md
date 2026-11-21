@@ -2697,6 +2697,21 @@ The context travels in the engine's own context channel (for Codex, its develope
 wrapped as data (`trust="data"`), so text from another crew member reaches the worker there and no
 longer in the user-role prompt.
 A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
+The protected `.orbyn/crew.json` may lower H4/H5 through `bus: { exchanges, posts }`.
+Start validates this section before admission. Existing whole-document, class and pin failures keep
+the router's `needs_person` refusal and audit without launching a worker. Each post (including an ask) and board write reads
+the lead checkout's committed HEAD and accepted default-branch rules through the bounded plain-blob
+reader and remembered ancestry check. The stricter repository values are combined with the current
+host ceilings, never written into the process-wide bus. Caller/lead/worker project bindings come from
+Store and are checked again after Git reads. No caller chooses a policy path or another project.
+Fields are optional nonnegative integers (zero refuses the first counted action). Missing file/section
+adds no limit; higher limits and unknown fields are ignored with bounded diagnostics quoting no values.
+Present null, invalid types, duplicate recognized fields, invalid JSON, links, oversized or unreadable
+policy fail closed. Read-only tools and cancellation remain available. A committed change affects a later
+operation, including active tasks; an uncommitted edit does not. Removing a lower limit can restore the host
+ceiling, and stored counts never reset. Restart rereads policy without a policy migration or epoch.
+Git reads occur before the bus writer lock, adding local Git work to each mutation; a concurrent rule
+change affects subsequent captures. Bus operations check but do not advance the existing default-branch pin.
 `crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
 the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the
 attempt, without naming the file, if a protected path changed, then runs every check of the key in the task's checkout, writes
