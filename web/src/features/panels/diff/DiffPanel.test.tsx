@@ -827,3 +827,36 @@ it("keeps one flat list for a thread the service reports no repositories for", a
   expect(screen.queryByRole("heading", { name: /orbyn/ })).toBeNull();
   expect(rowsOf()).toHaveLength(2);
 });
+
+it("tells two README.md files in different repositories apart: one is open, its header names the repository, and picking the other opens that one", async () => {
+  const readme = (repo_id: string, line: string): FileDiff & { repo_id: string } => ({ path: "README.md", repo_id, status: "modified", additions: 1, deletions: 0, patch: `@@ -1,1 +1,2 @@\n same\n+${line}\n` });
+  setup([readme("e", "engineering line"), readme("p", "planner line")] as FileDiff[]);
+  const { createReposMock } = await import("../../../../mock/repos");
+  const { setReposApi } = await import("../../repos");
+  setReposApi(createReposMock({ threads: { t: [
+    { repo_id: "e", name: "orbyn-engineering", branch: "fix/login", added: 1, deleted: 0, trusted: true },
+    { repo_id: "p", name: "orbyn-planner", branch: "fix/login", added: 1, deleted: 0, trusted: true },
+  ] } }));
+  try {
+    const user = userEvent.setup();
+    await open();
+    await screen.findByRole("heading", { name: /orbyn-planner/ });
+    expect(rowsOf().filter((row) => row.getAttribute("aria-current") === "true")).toHaveLength(1);
+    expect(rowsOf()[0]).toHaveAttribute("aria-current", "true");
+    expect(await screen.findByText("engineering line")).toBeVisible();
+    expect(document.querySelector(".fh2 .repo-pill")).toHaveTextContent("orbyn-engineering");
+    await user.click(rowsOf()[1]!);
+    expect(await screen.findByText("planner line")).toBeVisible();
+    expect(screen.queryByText("engineering line")).toBeNull();
+    expect(rowsOf().map((row) => row.getAttribute("aria-current"))).toEqual([null, "true"]);
+    expect(document.querySelector(".fh2 .repo-pill")).toHaveTextContent("orbyn-planner");
+  } finally {
+    setReposApi(null);
+  }
+});
+
+it("draws no repository label in the file header for a thread in one repository", async () => {
+  setup();
+  await open();
+  expect(document.querySelector(".fh2 .repo-pill")).toBeNull();
+});

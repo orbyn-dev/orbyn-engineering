@@ -32,15 +32,23 @@ export function fileName(file: FileDiff): string {
 /** A changed file as the thread's Changes read answers it: in a multi-repository thread it also carries its `repo_id`, and its path is relative to that repository. */
 export type RepoFile = FileDiff & { repo_id?: string };
 
+/**
+ * What names one changed file in the list: its repository and its path. Two repositories can each change a `README.md`, so the path
+ * alone does not tell them apart; a file with no `repo_id` (a thread in one repository) is keyed by its path alone.
+ */
+export const fileKey = (file: { path: string; repo_id?: string }): string => (file.repo_id === undefined ? file.path : `${file.repo_id}\u0000${file.path}`);
+
 /** The filter and the changed files, one row each. The row of the file on show is marked, and the arrow keys move between rows. */
 export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, onMore, repos, threadId, onRepoChanged }: {
   files: readonly RepoFile[];
   /** How many files the list has not drawn yet; Show adds all of them. */
   more: number;
+  /** The `fileKey` of the file on show. */
   selected: string | null;
   filter: string;
   onFilter(value: string): void;
-  onPick(path: string): void;
+  /** Called with the `fileKey` of the row picked. */
+  onPick(key: string): void;
   onMore(): void;
   /** The repositories of a multi-repository thread: the files are then grouped under them. `null` or none keeps one flat list. */
   repos?: readonly ThreadRepo[] | null;
@@ -63,15 +71,15 @@ export function ChangedFiles({ files, more, selected, filter, onFilter, onPick, 
   };
   const row = (file: RepoFile) => (
     <button
-      key={`${file.repo_id ?? ""}\u0000${file.path}`}
+      key={fileKey(file)}
       type="button"
-      className={`fli ${file.path === selected ? "on" : ""}`}
+      className={`fli ${fileKey(file) === selected ? "on" : ""}`}
       data-diff-row={file.path}
-      aria-current={file.path === selected || undefined}
-      tabIndex={file.path === (selected ?? files[0]?.path) ? 0 : -1}
+      aria-current={fileKey(file) === selected || undefined}
+      tabIndex={fileKey(file) === (selected ?? (files[0] ? fileKey(files[0]) : null)) ? 0 : -1}
       title={fileName(file)}
       aria-label={`${KIND[changeOf(file)]} ${fileName(file)}${fileNumbers(file) ? `, ${fileNumbers(file)}` : ""}`}
-      onClick={() => onPick(file.path)}
+      onClick={() => onPick(fileKey(file))}
     >
       <ChangeLetter change={changeOf(file)} />
       {file.status === "renamed" ? <span className="nm">{fileName(file)}</span> : <MiddleName text={file.path} middle />}
