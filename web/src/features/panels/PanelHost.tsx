@@ -1,4 +1,4 @@
-import { CloudOff, Maximize2, Minimize2, MoreHorizontal, Plus, RefreshCw, X } from "lucide-react";
+import { CloudOff, File, Maximize2, Minimize2, MoreHorizontal, Plus, RefreshCw, X } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { captureFocusReturn } from "../../ui/focusReturn";
@@ -27,7 +27,6 @@ import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./st
 import { useConnectionKind } from "../../product/state/connection";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
 const LAUNCHER_COMMANDS: Partial<Record<BuiltinTab, string>> = { diff: "diff.toggle", browser: "preview.toggle" };
 /** The strip's side padding (8 px each side), and the width of the "..." menu. */
@@ -298,6 +297,7 @@ export function PanelHost({
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
     }),
+    { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },
     ...(orderChanged(order) ? [{ ...reset, separatorBefore: true }] : []),
   ];
   const plusButton = useRef<HTMLButtonElement>(null);

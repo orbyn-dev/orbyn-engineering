@@ -1,8 +1,8 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=ORBYN_UPDATE_PUBKEY");
     println!("cargo:rerun-if-env-changed=ORBYN_UPDATE_ENDPOINT");
-    // Listing the commands makes the capability files decide who may call them, so
-    // the product UI, which has no capability, cannot.
+    // The main window capability grants these commands. Each also checks the current
+    // document: startup gets retry/log/quit; product gets presence/person_key.
     let manifest = tauri_build::AppManifest::new().commands(&[
         "restart_core",
         "show_core_log",

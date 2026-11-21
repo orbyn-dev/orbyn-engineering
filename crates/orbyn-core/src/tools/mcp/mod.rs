@@ -2,6 +2,7 @@
 //! A token is random per run, reaches only that run's engine and dies with the run.
 
 pub mod apps;
+mod flight;
 pub mod tools;
 
 use std::collections::HashMap;

@@ -1,12 +1,13 @@
 //! `crew_start`'s refusals, the lease rules and the task states around routing. A refused
 //! start stores nothing and starts nothing.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use orbyn_contracts::{CrewPathPattern, LeaseMode};
 use serde_json::{Value, json};
 
-use super::harness::{KEY_MARKER, Turn, World, bind, brief, key, world};
+use super::harness::{KEY_MARKER, Turn, World, bind, brief, key, report, world};
 
 async fn quiet() -> World {
     world(true, Arc::new(|_, _| Turn::Hang)).await
@@ -285,4 +286,212 @@ async fn leases_conflict_expire_on_use_and_guard_their_paths() {
         check("src/lib.txt", LeaseMode::Write).unwrap_err().code,
         orbyn_contracts::ErrorCode::LeaseExpired
     );
+}
+
+/// A brief that writes one file, so tasks in one crew never fight over the same lease.
+fn leased(path: &str) -> Value {
+    brief(json!({ "files": [{ "path": path, "mode": "write" }] }))
+}
+
+/// The owner's crew-wide budget (2026-11-20): turns per crew, set through the settings API, refusing a new
+/// start and never killing in-flight work. The spend is the per-task tally summed over the crew,
+/// so the crew's budget and a task's own cannot disagree.
+#[tokio::test]
+async fn a_crew_that_spent_its_turn_budget_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(2))]),
+        )
+        .unwrap();
+    let mut tasks = Vec::new();
+    for path in ["src/a.txt", "src/b.txt"] {
+        let (answer, error) = w.start(leased(path), key()).await;
+        assert!(!error, "{answer}");
+        tasks.push(answer["task"].as_str().unwrap().to_owned());
+    }
+    // Each start spends its worker's first turn, so the crew's two are gone; both workers are
+    // sent their brief. Wait for the engine side too, so the counts below are not a race.
+    w.until("the crew's two turns are spent", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 2
+            && w.prompts.lock().unwrap().len() == 2
+    })
+    .await;
+    // The crew's spend is the same tally the tasks are budgeted by, task by task.
+    let per_task: u64 = tasks
+        .iter()
+        .map(|id| w.core.store.crew_turns_spent(id).unwrap())
+        .sum();
+    assert_eq!(
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap(),
+        per_task,
+        "the crew's budget and a task's budget are one tally"
+    );
+
+    let (refusal, error) = w.start(leased("src/c.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(
+        refusal["message"],
+        "The crew has spent its turn budget, so no new task can start."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 2, "a refused start stores nothing");
+    assert_eq!(
+        w.prompts.lock().unwrap().len(),
+        2,
+        "a refused start sends nothing"
+    );
+    assert_eq!(
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap(),
+        2,
+        "a refused start spends nothing"
+    );
+    // The tasks already running are not stopped and keep their turns.
+    for id in &tasks {
+        let task = w.task(id);
+        assert_eq!(
+            (task.state.as_str(), task.stop_reason.as_deref()),
+            ("running", None)
+        );
+    }
+}
+
+/// The budget refuses starts only: a task already running keeps its retry, spends past the
+/// crew's number and is not stopped by it (owner ruling, 2026-11-20).
+#[tokio::test]
+async fn an_in_flight_task_is_not_killed_by_the_crew_budget() {
+    let w = world(
+        true,
+        Arc::new(|turn, root| {
+            if turn == 0 {
+                std::fs::create_dir_all(root.join("docs")).unwrap();
+                std::fs::write(root.join("docs/bad.txt"), "outside\n").unwrap();
+                Turn::Report(report("done"))
+            } else {
+                Turn::Hang
+            }
+        }),
+    )
+    .await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(1))]),
+        )
+        .unwrap();
+    let (answer, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    // The first turn fails its check, which spends the crew's only turn; the retry is queued and
+    // runs, so the crew is over its number while the task is still working.
+    w.until("the retry runs after the crew's turns are spent", |w| {
+        w.sent_to(&w.worker(&id)).len() == 2 && w.core.store.crew_turns_spent(&id).unwrap() > 1
+    })
+    .await;
+    let (refusal, error) = w.start(leased("src/b.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(
+        refusal["message"],
+        "The crew has spent its turn budget, so no new task can start."
+    );
+    let task = w.task(&id);
+    assert_eq!(
+        (task.state.as_str(), task.stop_reason.as_deref()),
+        ("running", None),
+        "the crew's budget refused a start, it did not stop the task"
+    );
+}
+
+/// The budget is a device-local number measured per crew: a second crew has its own allowance,
+/// so one crew's spend never refuses another's start. The docs define no reset; the count is read
+/// from each crew's tasks, so a new crew starts at zero.
+#[tokio::test]
+async fn a_crew_budget_measures_each_crew_on_its_own() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(1))]),
+        )
+        .unwrap();
+    let (answer, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(!error, "{answer}");
+    let spent = answer["task"].as_str().unwrap().to_owned();
+    w.until("the first crew has spent its turn", |w| {
+        w.core.store.crew_turns_spent(&spent).unwrap() == 1
+    })
+    .await;
+    let (refused, error) = w.start(leased("src/b.txt"), key()).await;
+    assert!(error && refused["code"] == "not_authorized", "{refused}");
+
+    // A second crew on this device starts with its own turns.
+    let project = w.core.store.thread(&w.lead).unwrap().project_id;
+    let other = w
+        .core
+        .create_thread(orbyn_contracts::CreateThread {
+            project_id: Some(project),
+            engine: "alpha".into(),
+            model: None,
+            title: Some("other lead".into()),
+            worktree: None,
+            skill_profile: None,
+            base_branch: None,
+            effort: None,
+            options: Default::default(),
+        })
+        .await
+        .unwrap();
+    let token = bind(&w.core, &other.id, "other-lead-run");
+    let (answer, error) = w
+        .call(
+            &token,
+            "crew_start",
+            json!({ "brief": leased("src/c.txt"), "answer_key": key() }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"], "running");
+    // The first crew is still spent: nothing reset it.
+    let (refused, error) = w.start(leased("src/d.txt"), key()).await;
+    assert!(error, "{refused}");
+}
+
+/// A task whose first prompt is still queued (no `runs` row yet) already counts a turn, so a lead
+/// cannot be granted unlimited starts while the queue holds them back.
+#[tokio::test]
+async fn a_task_whose_first_prompt_is_queued_counts_a_turn() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(1))]),
+        )
+        .unwrap();
+    let (answer, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let thread = w.worker(&id);
+    w.until("the worker was sent its brief", |w| {
+        !w.sent_to(&thread).is_empty()
+    })
+    .await;
+    // Put the worker back to where a queued first prompt leaves it: no run, one queued message.
+    {
+        let conn = w.core.store.reader();
+        conn.execute("DELETE FROM runs WHERE thread_id = ?1", [&thread])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO queued_messages (id, thread_id, prompt, attachment_ids, created_at)
+             VALUES ('queued-1', ?1, 'brief', '[]', '2026-11-21T00:00:00Z')",
+            [&thread],
+        )
+        .unwrap();
+    }
+    assert_eq!(w.core.store.crew_turns_spent(&id).unwrap(), 1);
+    assert_eq!(w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap(), 1);
+    let (refusal, error) = w.start(leased("src/b.txt"), key()).await;
+    assert!(error, "a queued start was counted as free: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(count(&w, "crew_tasks"), 1);
 }
