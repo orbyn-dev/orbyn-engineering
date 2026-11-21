@@ -197,11 +197,15 @@ Apply request and answer:
 { "profile_id": "01j...", "seen_revision": 3, "ack_grants": [] }   // ack_grants only for a grant-raising profile
 // 200
 {
-  "applied": { "engine": "claude", "model": "claude-sonnet-4-5", "permission_mode": "supervised" },
+  "applied": { "engine": "claude", "model": "claude-sonnet-4-5", "permission_mode": "supervised" },   // a crew answer adds "autopilot_mode"
   "ignored": ["autopilot_mode"],          // fields that do not apply to this target (every plain thread)
   "application": { "profile_id": "01j...", "name": "Careful", "revision": 3, "customized": false, "applied_at": "..." }
 }
 ```
+
+`applied.autopilot_mode` is present only in a crew answer (`POST /api/crew/profile/apply`), where it is the Autopilot mode written; a thread
+answer omits it and lists it in `ignored`. `application` is `null` when the person cleared the chip (`profile_id: null`): `applied` is
+then `{}` and `ignored` is `[]`.
 
 `seen_revision` is optional; when present and stale the route answers `409 revision_conflict` and applies nothing, so
 the person sees what they are about to apply.

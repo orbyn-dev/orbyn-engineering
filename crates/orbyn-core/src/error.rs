@@ -64,6 +64,21 @@ pub enum CoreError {
     PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
+    /// A folder that is already a repository of a project.
+    #[error("{0}")]
+    RepoExists(String),
+    /// An untrusted repository was asked to do anything but be trusted.
+    #[error("{0}")]
+    RepoUntrusted(String),
+    /// More repositories than a thread may work in.
+    #[error("{0}")]
+    RepoLimit(String),
+    /// A clone source the service will not run.
+    #[error("{0}")]
+    CloneRefused(String),
+    /// An action that needs Git, on a folder that has none.
+    #[error("{0}")]
+    NotGit(String),
     /// An issue tracker with no connection, or whose tool is missing or signed out.
     #[error("{0}")]
     TrackerNotConnected(String),
@@ -208,6 +223,11 @@ impl CoreError {
             Self::ProjectHasWork { .. } => "project_has_work",
             Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
+            Self::RepoExists(_) => "repo_exists",
+            Self::RepoUntrusted(_) => "repo_untrusted",
+            Self::RepoLimit(_) => "repo_limit",
+            Self::CloneRefused(_) => "clone_refused",
+            Self::NotGit(_) => "not_git",
             Self::TrackerNotConnected(_) => "tracker_not_connected",
             Self::TrackerRateLimited(_) => "rate_limited",
             Self::TrackerForbidden(_) => "forbidden",
@@ -251,7 +271,7 @@ impl CoreError {
         match self {
             Self::NotFound(_) => 404,
             Self::Updating => 503,
-            Self::Invalid(_) => 400,
+            Self::Invalid(_) | Self::CloneRefused(_) => 400,
             Self::FileTooLarge { .. } => 413,
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
@@ -292,6 +312,10 @@ impl CoreError {
             | Self::RunsActive
             | Self::PullHeadChanged
             | Self::TrackerNotConnected(_)
+            | Self::RepoExists(_)
+            | Self::RepoUntrusted(_)
+            | Self::RepoLimit(_)
+            | Self::NotGit(_)
             | Self::Git(_)
             | Self::ProjectHasWork { .. }
             | Self::EngineBusy(_)
@@ -362,6 +386,11 @@ impl CoreError {
             },
             Self::PullHeadChanged => Self::PullHeadChanged,
             Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::RepoExists(s) => Self::RepoExists(s.clone()),
+            Self::RepoUntrusted(s) => Self::RepoUntrusted(s.clone()),
+            Self::RepoLimit(s) => Self::RepoLimit(s.clone()),
+            Self::CloneRefused(s) => Self::CloneRefused(s.clone()),
+            Self::NotGit(s) => Self::NotGit(s.clone()),
             Self::TrackerNotConnected(s) => Self::TrackerNotConnected(s.clone()),
             Self::TrackerRateLimited(s) => Self::TrackerRateLimited(s.clone()),
             Self::TrackerForbidden(s) => Self::TrackerForbidden(s.clone()),

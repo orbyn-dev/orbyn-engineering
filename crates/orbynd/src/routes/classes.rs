@@ -210,6 +210,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("PUT", "/api/threads/{id}/profile"),
     ("POST", "/api/crew/profile/apply"),
     ("PUT", "/api/engines/{id}/code-mode"),
+<<<<<<< HEAD
     // The personal library (docs/execution-profiles-and-library.md, Part 2).
     ("POST", "/api/library/workflows"),
     ("PATCH", "/api/library/workflows/{id}"),
@@ -225,6 +226,17 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("DELETE", "/api/library/env-sets/{id}/keys/{key}"),
     ("POST", "/api/library/import"),
     ("POST", "/api/projects/{id}/library/suggestions/copy"),
+=======
+    ("POST", "/api/projects/{id}/repos/add-folder"),
+    ("POST", "/api/projects/{id}/repos/create"),
+    ("POST", "/api/projects/{id}/repos/clone"),
+    ("POST", "/api/projects/{id}/repos/scan"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/publish"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/trust"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/setup-git"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/remove"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"),
+>>>>>>> origin/main
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -1030,6 +1042,7 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+<<<<<<< HEAD
         "/api/library/workflows",
         "the person saves a library workflow, a command that can later run in their shell",
     ),
@@ -1097,6 +1110,50 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/library/suggestions/copy",
         "the person copies an entry from a repository's committed .orbyn/ file into the device library",
+=======
+        "/api/projects/{id}/repos/add-folder",
+        "the person adds a folder to a project in place; nothing is copied and it starts untrusted",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/create",
+        "the person creates a new repository under Orbyn's data",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/clone",
+        "the person clones a repository from a remote into Orbyn's data",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/scan",
+        "reads a folder or workspace file the person picked, which may be anywhere on disk",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/publish",
+        "the person publishes a repository to a host",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/trust",
+        "the person trusts a folder, which lets Orbyn run things in it",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/setup-git",
+        "the person starts Git in a folder that has none",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/remove",
+        "the person stops tracking a repository",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/clone/cancel",
+        "the person stops a running clone",
+>>>>>>> origin/main
     ),
 ];
 

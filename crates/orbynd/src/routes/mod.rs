@@ -34,6 +34,7 @@ mod projects;
 mod pulls;
 mod raw_files;
 mod renders;
+mod repos;
 mod runs;
 mod secrets;
 mod settings;
@@ -131,7 +132,11 @@ pub fn router(state: AppState) -> Router {
         .merge(code_mode::routes())
         .merge(issues::routes())
         .merge(profiles::routes())
+<<<<<<< HEAD
         .merge(library::routes())
+=======
+        .merge(repos::routes())
+>>>>>>> origin/main
         .merge(explorer::routes())
         .merge(files::routes())
         .merge(raw_files::routes())

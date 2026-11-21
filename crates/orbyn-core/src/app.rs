@@ -88,6 +88,8 @@ pub struct CoreConfig {
     pub code_mode: bool,
     /// Whether the issue routes exist (docs/issues.md). Ships `false`: every issue route answers 404.
     pub issues: bool,
+    /// Whether the multi-repository routes exist (docs/multi-repo.md). Ships `false`: every one answers 404.
+    pub multi_repo: bool,
     /// How engines map to tiers for the Crew router. `None` is the built-in map (Claude and Codex); an engine
     /// outside the map is a builder only. Settings will fill this in a later slice; tests use it for fake engines.
     pub crew_tiers: Option<crate::crew::RouterConfig>,
@@ -123,6 +125,7 @@ impl CoreConfig {
             crew_preview: false,
             code_mode: false,
             issues: false,
+            multi_repo: false,
             crew_tiers: None,
             crew_merge_required_checks: Vec::new(),
             crew_merge_watch_interval: None,
@@ -184,6 +187,8 @@ pub struct Core {
     pub(crate) code_runs: crate::tools::mcp::code::CodeRuns,
     /// Issue trackers: the keychain tokens, the sources and a short read cache (`issues`).
     pub(crate) issues: crate::issues::IssueDesk,
+    /// Project repositories: the clones in flight (`repos`).
+    pub(crate) repos: crate::repos::RepoDesk,
     /// Crew Preview: who approves for the lead and who may be a second key (Autopilot).
     pub(crate) crew_autopilot: crate::crew::Autopilot,
     /// Crew Preview: one merge or revert at a time, so the queue moves a branch in order.
@@ -346,6 +351,7 @@ impl Core {
             crew_bus: crate::crew::Bus::default(),
             code_runs: crate::tools::mcp::code::CodeRuns::new(),
             issues: crate::issues::IssueDesk::new(Self::system_credentials()),
+            repos: crate::repos::RepoDesk::default(),
             crew_autopilot: crate::crew::Autopilot::default(),
             crew_merges: tokio::sync::Mutex::new(()),
             crew_bisect: std::sync::Mutex::new(None),
@@ -359,6 +365,7 @@ impl Core {
         core.store.clear_crew_claims()?;
         core.crew_backtest_recover();
         core.code_runs_recover();
+        core.repos_recover();
         // Settled here, with nothing left in this function that can fail before the held tasks get their results: a failed open after
         // this commit would leave them with no result and their leases granted, since the next open finds no run to recover.
         let background_starts = core.store.recover_background_starts()?;

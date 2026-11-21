@@ -1,4 +1,4 @@
--- Migration 65: the personal library (docs/execution-profiles-and-library.md, Part 2): workflows, prompts and environment
+-- Migration 67: the personal library (docs/execution-profiles-and-library.md, Part 2): workflows, prompts and environment
 -- sets, all on this device. An environment set is a name and a list of key NAMES. There is no value column anywhere in
 -- these tables, on purpose: values live in the OS keychain only (hard rule 1), and a test fails if a column could hold one.
 CREATE TABLE library_workflows (

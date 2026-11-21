@@ -1,7 +1,8 @@
 import { Check } from "lucide-react";
 import { useId, useRef, useState } from "react";
+import { ApiFailure } from "../../api/client";
 import { toFailure } from "../../lib/useAsync";
-import { Button, Field } from "../../ui/controls";
+import { Button, Field, Pill } from "../../ui/controls";
 import { Dialog } from "../../ui/Dialog";
 import { reposApi } from "./api";
 import type { RepoRow } from "./contract";
@@ -24,6 +25,8 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
   const [visibility, setVisibility] = useState<"private" | "public">("private");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The service's own words when it answers `422 unsupported`: publishing is not built yet. Not a failure and never a success. */
+  const [planned, setPlanned] = useState<string | null>(null);
   const [result, setResult] = useState<{ name: string } | null>(null);
   const running = useRef(false);
   const ids = { provider: useId(), visibility: useId() };
@@ -34,6 +37,7 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
     running.current = true;
     setBusy(true);
     setError(null);
+    setPlanned(null);
     try {
       const sent = name.trim();
       await reposApi().publish(projectId, repo.id, { name: sent, visibility });
@@ -41,7 +45,8 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
       setStep("done");
       onDone();
     } catch (failure) {
-      setError(`Publish failed. ${toFailure(failure).message}`);
+      if (failure instanceof ApiFailure && failure.code === "unsupported") setPlanned(failure.message);
+      else setError(`Publish failed. ${toFailure(failure).message}`);
     } finally {
       running.current = false;
       setBusy(false);
@@ -55,8 +60,8 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
     </>
   ) : step === "repository" ? (
     <>
-      <Button disabled={busy} onClick={() => { setError(null); setStep("provider"); }}>Back</Button>
-      <Button tone="primary" busy={busy} disabled={!valid} onClick={() => void publish()}>Publish</Button>
+      <Button disabled={busy} onClick={() => { setError(null); setPlanned(null); setStep("provider"); }}>Back</Button>
+      <Button tone="primary" busy={busy} disabled={!valid || planned !== null} onClick={() => void publish()}>Publish</Button>
     </>
   ) : <Button tone="primary" data-dialog-focus onClick={onClose}>Done</Button>;
 
@@ -91,6 +96,7 @@ export function PublishDialog({ projectId, repo, onClose, onDone }: { projectId:
             ))}
           </fieldset>
           <ConfirmFacts facts={[{ label: "Folder", value: <Path path={repo.path} />, mono: true }, { label: "Branch pushed", value: plain(repo.branch ?? "Unknown"), mono: true }]} />
+          {planned !== null ? <p className="field-hint" role="status"><Pill tone="info">Planned</Pill> {plain(planned)}</p> : null}
           {error ? <p className="field-error" role="alert">{error}</p> : null}
         </>
       ) : null}

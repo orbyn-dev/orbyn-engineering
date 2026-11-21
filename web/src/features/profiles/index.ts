@@ -2,4 +2,4 @@
 export { ProfilesSettings } from "./ProfilesSettings";
 export { ProfilePicker } from "./ProfilePicker";
 export { profilesApi, setProfilesApi, useProfiles, useProfilesOffered } from "./api";
-export type { ApplyAnswer, ApplyBody, Profile, ProfileDraft, ProfilesApi } from "./contract";
+export type { ApplyProfileAnswer, ApplyBody, Profile, ProfileDraft, ProfilesApi } from "./contract";

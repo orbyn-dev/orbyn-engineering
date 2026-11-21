@@ -139,7 +139,7 @@ be inside Orbyn's data directory. Answer:
 ```ts
 type RepoScan = { path: string; is_git: boolean; code_workspace_file: string | null;
                   folders: ScannedFolder[]; truncated: boolean };
-type ScannedFolder = { name: string; path: string; is_git: boolean; source: "child" | "code-workspace";
+type ScannedFolder = { name: string; path: string; is_git: boolean; source: "child" | "code_workspace";
                        in_project: boolean; refused: "outside" | "missing" | "not_directory" | null };
 ```
 
@@ -155,7 +155,7 @@ type ScannedFolder = { name: string; path: string; is_git: boolean; source: "chi
 
 The same route. When `path` is a `.code-workspace` file, or a folder with exactly one at its top, the service
 reads that file (at most 256 KiB, JSON with comments and trailing commas; anything else is `400 invalid`)
-and returns its `folders` as `source: "code-workspace"` entries, `code_workspace_file` naming the file. An
+and returns its `folders` as `source: "code_workspace"` entries, `code_workspace_file` naming the file. An
 entry is `{ path, name? }`, at most 64; each is resolved against the file's folder and canonicalized.
 A folder that resolves outside the file's own folder, or whose path has a drive prefix, is listed with
 `refused: "outside"` and cannot be added by import, so a workspace file cannot point the app at an arbitrary
@@ -190,6 +190,77 @@ whatever the page checked.
 4. `add-folder` takes a path the person picked: it must exist, be a directory, not be inside Orbyn's data
    directory, and not be another project's repository. Paths, names, branch names and remote URLs are shown
    as text only, never as a link, command or markup.
+
+## As built: project repositories
+
+Behind `CoreConfig::multi_repo` (`ORBYN_MULTI_REPO=1`): with it off every route below answers `404`. Built: the repository list,
+`add-folder`, `create`, `clone`, `cancel`, `trust`, `setup-git`, `remove` and the folder scan with `.code-workspace` import. **Not built
+yet** (the next slice): `repo-threads`, the thread's repository routes, the task folder, `repo_id` on the Git and file routes, and `publish`
+(it checks the repository is trusted and then answers `422 unsupported`: "Publishing a repository arrives in a later update.").
+
+- **Storage.** Table `project_repos` (migration 64): id, project, name, path (unique), trusted, is_git, managed, clone state and message.
+  The project's own folder is not a row; it is the first row of the list (`primary`, `id` the project id), and `trust` and `setup-git` on it
+  go to the project's own trust and Git init. `remove` on it is `400`.
+- **Names.** A repository's `name` is a safe folder name (letters, digits, `-`, `_`, `.`; no leading dot; at most 64) taken from the
+  folder or source, unique within the project (`-2`, `-3` appended). It is what a task folder's worktree will be called.
+- **Trust.** `add-folder` and `clone` start untrusted; `create` starts trusted (Orbyn made an empty folder). `trust` is refused while a
+  clone is running. `setup-git` on an untrusted folder is `409 repo_untrusted`. A folder that is any project's folder or any project's
+  repository is `409 repo_exists`; one inside Orbyn's data, or the skills library, is `400`. A project holds at most 64 extra
+  repositories (`409 repo_limit`).
+- **Clone.** The source passes the rules in "Clone and path input" (`400 clone_refused`; the check runs before anything is stored). A clone
+  runs in the background into `<data>/repos/.incoming-<id>`, then is renamed to `<data>/repos/<name>`, with `GIT_ALLOW_PROTOCOL=https:ssh`,
+  `GIT_TERMINAL_PROMPT=0`, no helpers, no file protocol, no submodules, no template hooks and a 10 minute limit. The row answers
+  `clone.state: "cloning"` at once and ends as no `clone` (done) or `failed` with a message of at most 300 characters; a failed clone stays
+  listed until it is removed. `percent` is always `null`. `cancel` stops a running clone (`400` when none runs) and answers the row as
+  failed, "Cancelled."; a clone running when the core stops is marked failed at the next start. A repository that is cloned still has to
+  be trusted.
+- **Scan.** As the section above, `RepoScan` and `ScannedFolder` in `orbyn-contracts`; at most 200 entries looked at, 64 returned; a
+  workspace file over 256 KiB, not JSON (comments and trailing commas allowed) or without `folders` is `400`.
+- **Errors added:** `repo_exists`, `repo_untrusted`, `repo_limit` (409), `clone_refused` (400), `not_git` (409; for the thread slice).
+
+## As built: web UI
+
+The web client for the project repository routes (`web/src/features/repos/`) uses the generated types (`RepoRow`, `ReposView`,
+`RepoClone`, `RepoScan`, `ScannedFolder`) and was checked against `crates/orbynd/src/routes/repos.rs`. Real against the first guess:
+
+- **Scan source** is `"child" | "code_workspace"` on the wire (snake_case, as every generated enum). The guess and this document's first
+  draft said `code-workspace`; the page dropped such entries as unknown, so a workspace import listed nothing. Fixed in the client and above.
+- **Clone** is `state: "cloning" | "failed"`; `percent` is optional and always `null` or absent, so a running clone shows "Cloning" with no
+  figure or bar. A cancelled clone is `failed` with the message `Cancelled.`; `cancel` answers that row (not Git, untrusted, no branches),
+  and the row stays listed until `remove`.
+- **Trust.** `create` starts trusted with Git; `add-folder` and `clone` start untrusted. The service refuses `setup-git` on an untrusted
+  folder (`409 repo_untrusted`) and `trust` while a clone is running, so the row's state is trust first: a folder that is not trusted
+  is shown as Not trusted (with Trust…) whether or not it holds Git, and only a trusted folder with no Git offers Set up Git. A cloning or
+  failed row offers no Trust. The Create dialog says it starts trusted; the Add a folder and Clone dialogs say they do not.
+- **Publish** answers `422 unsupported` ("Publishing a repository arrives in a later update.") after the trust check, and takes no body.
+  The dialog shows the Planned pill with the service's message on the repository step, leaves Publish off and shows no success.
+- **Answers and codes.** `remove` is `204` with no body. A `404` on the list is "not offered": nothing is drawn, no error is shown and
+  no other call is made. Error codes pass through as `{ code, message }`: `repo_exists`, `repo_limit`, `repo_untrusted` (409),
+  `clone_refused`, `invalid` (400), `not_found` (404), `unsupported` (422).
+- Still hand-written in `contract.ts` until their routes ship: `StartThreadInput`, `ThreadRepo`, `TaskFolder`, the thread Git actions.
+  The mock (`web/mock/repos.ts`, hidden behind the preview flag) follows the generated shapes and the service's answers above.
+
+## As built: repo_id on Git and file calls
+
+Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
+an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
+
+- **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`, and
+  `PUT .../files/content` (`GitAction`, `CreateBranch`, `SwitchBranch`, `WriteFile`). Query: `GET .../commits`, `GET .../diff`,
+  `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+- **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
+  returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
+  file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
+  file `revision` belongs to that repository's file. In Core the route sets the repository with `orbyn_core::in_repo(repo_id, work)`;
+  work spawned from inside does not inherit it.
+- **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
+  repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
+  working in a thread that already has its worktree.
+- **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
+  200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
+- **Not built.** Pull request routes (`.../pulls`, `.../pulls/{number}/merge`, `.../review`) do not take `repo_id` yet: a pull request is
+  linked to a thread by number, and two repositories can share a number, so they need their own change; they act on the primary
+  repository until then. Adding a repository to a thread (`POST /api/threads/{id}/repos`), `repo-threads`, the task folder.
 
 ## Not in the beta
 
