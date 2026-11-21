@@ -96,6 +96,8 @@ mod engine_credentials_tests;
 #[cfg(test)]
 mod engine_host_tests;
 #[cfg(test)]
+mod governance_tests;
+#[cfg(test)]
 mod library_tests;
 #[cfg(test)]
 mod never_asks_tests;
