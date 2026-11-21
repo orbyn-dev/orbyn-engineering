@@ -37,6 +37,7 @@ const base: Approval = {
   state: "pending",
   decided_by: null,
   decided_at: null,
+  via: null,
   created_at: "2026-11-21T10:00:42.000Z",
 };
 const withVia = (extra: Partial<Approval> = {}, call = 5): Approval => ({ ...base, ...extra, via: { code_run: "run_7c41e2", call, script_sha256: "3f9a1c0000000000000000000000000000000000000000000000000000000e07" } } as Approval);

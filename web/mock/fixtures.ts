@@ -478,6 +478,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-320),
     },
     {
@@ -490,6 +491,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-300),
     },
     {
@@ -502,6 +504,7 @@ export function pendingApprovals(): Approval[] {
       state: "pending",
       decided_by: null,
       decided_at: null,
+      via: null,
       created_at: iso(-620),
     },
   ];

@@ -82,6 +82,7 @@ fn pending(store: &Store, run: &str) -> orbyn_contracts::Approval {
                 source: "default".into(),
                 reason: "no rule".into(),
             },
+            via: None,
         })
         .unwrap()
 }
@@ -715,6 +716,7 @@ fn finishing_expires_pending_approvals_and_blocks_new_ones() {
             source: "default".into(),
             reason: String::new(),
         },
+        via: None,
     });
     assert!(matches!(late, Err(CoreError::RunClosed)));
 }

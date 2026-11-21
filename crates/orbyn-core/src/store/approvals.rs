@@ -3,7 +3,8 @@
 //! before the engine hears about it.
 
 use orbyn_contracts::{
-    ActionKind, AgUiEvent, Approval, ApprovalState, PolicyDecision, PolicyEffect, RunState,
+    ActionKind, AgUiEvent, Approval, ApprovalState, ApprovalVia, PolicyDecision, PolicyEffect,
+    RunState,
 };
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
@@ -23,6 +24,7 @@ pub struct NewApproval {
     pub summary: String,
     pub detail: Value,
     pub decision: PolicyDecision,
+    pub via: Option<ApprovalVia>,
 }
 
 /// The allow rule stored by a `remember` decision.
@@ -56,6 +58,9 @@ pub(super) fn approval_row(row: &Row<'_>) -> rusqlite::Result<(Approval, String)
             decided_by: row.get("decided_by")?,
             decided_at: row.get("decided_at")?,
             created_at: row.get("created_at")?,
+            via: row
+                .get::<_, Option<String>>("via")?
+                .and_then(|text| serde_json::from_str(&text).ok()),
         },
         row.get("target")?,
     ))
@@ -78,6 +83,7 @@ impl Store {
                 decided_by: None,
                 decided_at: None,
                 created_at: now(),
+                via: new.via.clone(),
             };
             insert_audit(
                 tx,
@@ -94,8 +100,8 @@ impl Store {
             )?;
             tx.execute(
                 "INSERT INTO approvals (id, thread_id, run_id, engine, kind, target, summary,
-                    detail, state, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9)",
+                    detail, state, created_at, via)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10)",
                 params![
                     approval.id,
                     approval.thread_id,
@@ -105,7 +111,12 @@ impl Store {
                     new.target,
                     approval.summary,
                     serde_json::to_string(&approval.detail)?,
-                    approval.created_at
+                    approval.created_at,
+                    approval
+                        .via
+                        .as_ref()
+                        .map(serde_json::to_string)
+                        .transpose()?
                 ],
             )?;
             // A question for you ends a snooze early.

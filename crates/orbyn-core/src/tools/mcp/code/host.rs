@@ -26,6 +26,7 @@ pub(super) struct RunHost {
     pub(super) pending: PendingList,
     next: AtomicUsize,
     run_id: String,
+    script_sha256: String,
     /// The calls a lost run recorded, by index, when this run is its replay.
     replay: HashMap<u32, StoredCodeCall>,
     failure: ReplayFailure,
@@ -40,6 +41,7 @@ impl RunHost {
         binding: &McpBinding,
         pending: PendingList,
         run_id: &str,
+        script_sha256: &str,
         replay: HashMap<u32, StoredCodeCall>,
         failure: ReplayFailure,
     ) -> Self {
@@ -49,6 +51,7 @@ impl RunHost {
             pending,
             next: AtomicUsize::new(1),
             run_id: run_id.to_owned(),
+            script_sha256: script_sha256.to_owned(),
             replay,
             failure,
             effects: tokio::sync::Mutex::new(()),
@@ -182,14 +185,24 @@ impl ToolHost for RunHost {
             tracing::warn!(%error, "could not record a tool call");
         }
         let budget = super::super::budget_for(name).unwrap_or(super::super::TOOL_BUDGET);
-        let outcome =
-            match tokio::time::timeout(budget, core.call_orbyn_tool(&self.binding, name, &args))
-                .await
-            {
-                Ok(Ok(value)) => Ok(value),
-                Ok(Err(error)) => Err(failure(code_of(&error), error.public_message())),
-                Err(_) => Err(failure("failed", "This tool did not finish in time.")),
-            };
+        let via = orbyn_contracts::ApprovalVia {
+            code_run: self.run_id.clone(),
+            call: index,
+            script_sha256: self.script_sha256.clone(),
+        };
+        let outcome = match tokio::time::timeout(
+            budget,
+            crate::governance::approvals::with_via(
+                via,
+                core.call_orbyn_tool(&self.binding, name, &args),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(failure(code_of(&error), error.public_message())),
+            Err(_) => Err(failure("failed", "This tool did not finish in time.")),
+        };
         let (status, text) = match &outcome {
             Ok(value) => ("ok", value.to_string()),
             Err(error) if error.code == "denied" => ("denied", failure_text(error)),

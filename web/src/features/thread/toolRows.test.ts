@@ -29,7 +29,7 @@ describe("sentence tool row grouping", () => {
   it("preserves order and boundaries around messages and pending approvals", () => {
     const message = { kind: "message" as const, key: "m", seq: 3, runId: "r", ts: "", role: "assistant", text: "Still checking", done: true };
     const approval: ThreadItem = { kind: "approval", key: "approval", seq: 4, runId: "r", ts: "", approval: {
-      id: "a", thread_id: "t", run_id: "r", kind: "command", summary: "Approve", detail: null, state: "pending", decided_by: null, decided_at: null, created_at: "",
+      id: "a", thread_id: "t", run_id: "r", kind: "command", summary: "Approve", detail: null, state: "pending", decided_by: null, decided_at: null, via: null, created_at: "",
     } };
     const items = [message, call(0), { ...message, key: "m2" }, call(1), approval, ...Array.from({ length: 42 }, (_, n) => call(n + 2))];
     const entries = arrangeTimeline(items, {}, "r");
