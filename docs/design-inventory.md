@@ -12,7 +12,7 @@ unverified, read from the code and the frame ids rather than copied from the ear
 snapshot. It is a code check, not an eye review: no row was compared side by side with
 its frame, and copy, spacing, colour and motion are still unreviewed. Frame ids were read
 from the artifacts' `<section id>` entries, not from the Designer's audit. The engineer
-artifact now publishes 904 frames (crew 448, components 25, motion 69); this table still
+artifact now publishes 904 frames. Crew (448 frames), Components (25) and Motion (69) are separate artifacts, not part of that count; this table still
 holds the 231 Phase 0 rows, so frames added since (the redesigned shell, Crew, the file
 editor, hunks, comments and the rest of the pull request states) are not rows here and
 are not counted below. 212 of the 231 ids are still in the engineer artifact; the other
