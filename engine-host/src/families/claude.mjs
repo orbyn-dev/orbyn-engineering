@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { AsyncQueue } from "../asyncQueue.mjs";
 
 // Claude on the host: query() from @anthropic-ai/claude-agent-sdk over the person's own `claude`.
@@ -103,10 +104,24 @@ export function claudeFamily({ loadSdk }) {
             run?.held.delete(msg.task_id);
             ctx.send({ type: "background", sessionId: session.id, event: { type: "ended", id: msg.task_id, status } });
           }
+        } else if (msg.type === "command_lifecycle" && run && msg.command_uuid === run.uuid) {
+          run.lifecycle = true;
+          if (msg.state === "started") run.started = true;
         } else if (msg.type === "result") {
           session.resultWaiter?.();
           if (!run) return;
-          if (run.held.size > 0) return; // rule 1: background work the engine started holds the run
+          // rule 2: with lifecycle frames, a result before our prompt's command started belongs to a
+          // leftover turn the engine began for its own notifications; it never ends this run.
+          if (run.lifecycle && !run.started) {
+            ctx.log({ type: "leftoverResult", sendId: run.sendId });
+            return;
+          }
+          // rule 1: background work the engine started holds the first result; the follow-up turn ends the run.
+          if (run.held.size > 0 && !run.holdUsed) {
+            run.holdUsed = true;
+            ctx.log({ type: "holdingResult", sendId: run.sendId, tasks: run.held.size });
+            return;
+          }
           if (msg.subtype === "success" && !msg.is_error) {
             finish(session, { ok: true, result: { reason: "completed", threadDisposition: "reusable", usage: msg.usage, costUsd: msg.total_cost_usd } });
           } else {
@@ -159,8 +174,8 @@ export function claudeFamily({ loadSdk }) {
               if (!session) throw Object.assign(new Error("unknown session"), { name: "UnknownSession" });
               if (session.run) throw Object.assign(new Error("a run is already open on this session"), { name: "RunInProgress" });
               await ensureQuery(session);
-              session.run = { sendId: request.id, turnId: `turn-${request.id}`, held: new Set(), done: false };
-              session.inbox.push({ type: "user", message: { role: "user", content: request.message }, parent_tool_use_id: null });
+              session.run = { sendId: request.id, turnId: `turn-${request.id}`, uuid: randomUUID(), held: new Set(), done: false };
+              session.inbox.push({ type: "user", message: { role: "user", content: request.message }, parent_tool_use_id: null, uuid: session.run.uuid });
               return { runId: `run-${request.id}`, engineSessionId: session.engineSessionId ?? undefined, turnId: session.run.turnId };
             }
             case "steer": {
