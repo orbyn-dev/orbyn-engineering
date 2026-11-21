@@ -59,13 +59,15 @@ in the query for a `GET`; absent means the primary repository, so a one-reposito
 - `POST /api/threads/{id}/pulls` (link or open a pull request), `.../pulls/{number}/merge` and `.../review`:
   `repo_id` says which repository's pull request; a thread may link one pull request per repository.
 
-- **File writes name their repository.** The inline line edit, `PUT /api/threads/{id}/files/content`, and a hunk
-  revert take `repo_id` in the body beside the repo-relative `path`; absent means the primary repository. The
+- **File reads and writes name their repository.** The web app's hunk revert, its undo and its inline line
+  edit are all one read and one write of a file: `GET /api/threads/{id}/files/content?path=` and
+  `PUT /api/threads/{id}/files/content` with `{ path, content, base_revision }`. There is no separate hunk-revert
+  route. Both take `repo_id` (query on the read, body on the write); absent means the primary repository. The
   service resolves `path` against that repository's worktree only and refuses a path that does not belong to it
-  (`400 invalid`: absolute, `..`, a symlink out of the worktree, or a file the repository does not have), so a
-  same-named file in another repository is never touched. A `repo_id` that is not one of the thread's
-  repositories is `404 not_found`; an untrusted one is `409 repo_untrusted`. Both stay Person-class. The hunk
-  revert is not an existing route yet; the backend PR that adds it names it here and gives it the same rule.
+  (`400 invalid`: absolute, `..`, a symlink out of the worktree), so a same-named file in another repository is
+  never read or written. The `revision` a read returns belongs to that repository's file, so a write with
+  another repository's revision is a conflict. A `repo_id` that is not one of the thread's repositories is
+  `404 not_found`; an untrusted one is `409 repo_untrusted`. The write stays Person-class.
 
 A `repo_id` that is not one of the thread's repositories is `404 not_found`; one whose repository is no longer
 trusted is `409 repo_untrusted`. These routes keep the class they have today (the Person-class ones stay
