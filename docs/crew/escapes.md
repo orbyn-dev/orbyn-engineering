@@ -7,12 +7,20 @@ queue that would open `escape-report`'s mark dialog and the scan from the merge 
 is capacity-driven, not age-based: nothing is pruned until a project's log is full. The screens are Crew Designs v79 on the real reads
 (`escape-*`, [crew.md](../crew.md) "slice 4f, UI part C"); 22 of 28 frames are live and six are still drawn: four redrawn at v79 and
 the two `escape-create-check*` at v20. All of them open by `#/preview/crew/<frame>`, which exists only in a build with the dev-only
-previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row ("Open Escapes", no value
+previews flag. **Reached from the app (Crew Designs v87, behind `crew_preview`):** Settings › Crew has an Escapes row (button "Open", read out as "Open Escapes", no value
 chip) that opens the live log at `#/settings/crew/escapes`; a row of the log opens that escape's page at `#/settings/crew/escapes/detail?id=`;
-the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants).
-Not reached: the possible list (`escape-possible`) and the thresholds page (`escape-settings`) have no drawn entry, the Review-tab
-Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the "Back to" controls are the
-Designer's follow-up; browser Back works. See "Propose a check" below for the act wired inside the detail page.
+the log header carries a Coverage link to the coverage map for the same project (`entry-crew-coverage-link-log` and its narrow variants) and a
+Settings link to the thresholds page (`escape-settings`, read only) at `#/settings/crew/escapes/settings`. Under the header a tab strip, "All escapes"
+and "Possible N", opens the possible list (`escape-possible`) at `#/settings/crew/escapes/possible` for the same project (`?repo=`); N is the log's own
+Possible count (`GET /escapes`), an ellipsis read out as "reading" while it loads and a dash read out as "can't read" when it fails, never a 0 that was
+not measured. With none waiting the list says "Nothing waits for you" (`entry-crew-possible-empty`) and draws no confirmed table. The coverage map
+shows "Back to escapes" or "Back to Review capacity" at its top left only when its address says where it was opened from (`?from=escapes` or
+`?from=capacity`, set by the two Coverage links); with no origin, or one it does not know, there is no control, and history is never read. The
+escape thresholds page shows "Back to escapes" above its title (the log, `#/settings/crew/escapes`), and the log and the possible list show
+"Back to Review" above the title in a 640 px window and in the 320 px panel (not at the full width, which keeps its crumb; Crew Designs v371).
+Review is Planned, so "Back to Review" returns to Settings › Crew (`#/settings/crew`) until a Review tab exists. The
+Review-tab Escapes section (`entry-crew-review-escapes*`) is not built because the beta has no Review tab, and the log keeps its existing
+"Dashboard › Escape log" crumb, which no beta page backs. Browser Back works. See "Propose a check" below for the act wired inside the detail page.
 
 ## What an escape is
 

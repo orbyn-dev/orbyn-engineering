@@ -59,7 +59,6 @@ export const defaults: Prefs = {
   fontSmoothing: true,
   persistentComposerContext: false,
   skillsInSlashMenu: false,
-  planControls: true,
   contextMeter: true,
   stashes: {},
   threadNotifications: false,

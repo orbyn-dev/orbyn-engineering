@@ -137,6 +137,8 @@ export function runShellCommand(command: string, route: Route): boolean {
       if (ui.panelOpen !== true) return false;
       ui.closePanel();
       return true;
+    case "view.reopenClosed":
+      return ui.reopenLastClosedPanelTab();
     case "threadPanel.toggle":
       ui.setPanelOpen(ui.panelOpen !== true);
       return true;

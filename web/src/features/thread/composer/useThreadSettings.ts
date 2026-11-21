@@ -4,18 +4,10 @@ import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 
-/** Changes to the thread's mode, access, effort and model, each reporting its own failure. */
+/** Changes to the thread's access, effort and model, each reporting its own failure. */
 export function useThreadSettings(thread: Thread, setError: (message: string | null) => void) {
   const putThread = useWorkspace((state) => state.putThread);
   const setPrefs = useUi((state) => state.setPrefs);
-  const setPlanMode = async (on: boolean) => {
-    setError(null);
-    try {
-      putThread(await api.patchThread(thread.id, { plan_mode: on }));
-    } catch (failure) {
-      setError(`Couldn't change the mode. ${toFailure(failure).message}`);
-    }
-  };
   const setAccess = async (mode: PermissionMode) => {
     setError(null);
     try {
@@ -46,5 +38,5 @@ export function useThreadSettings(thread: Thread, setError: (message: string | n
       setError(`Couldn't change the model. ${toFailure(failure).message}`);
     }
   };
-  return { putThread, setPlanMode, setAccess, setEffort, pickModel };
+  return { putThread, setAccess, setEffort, pickModel };
 }

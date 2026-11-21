@@ -23,6 +23,17 @@ import { foldersMigrated, prefsOf, savedPrefs } from "./savedPrefs";
 const TOAST_MS = 4000;
 let toastCounter = 0;
 const DRAFTS_KEY = "orbyn.drafts.v1";
+/** How many closed panel tabs Reopen closed tab remembers for one thread. */
+export const CLOSED_TABS_KEPT = 20;
+/** The tabs closed last, newest at the end, per thread layout. Kept for this run only, never saved. */
+const closedTabs = new Map<string, RightTab[]>();
+/** Forgets every remembered closed tab; for tests. */
+export const forgetClosedTabs = () => closedTabs.clear();
+const rememberClosed = (layoutKey: string, tabs: RightTab[]) => {
+  if (tabs.length === 0) return;
+  const kept = [...(closedTabs.get(layoutKey) ?? []).filter((id) => !tabs.includes(id)), ...tabs];
+  closedTabs.set(layoutKey, kept.slice(-CLOSED_TABS_KEPT));
+};
 
 interface UiState extends Prefs {
   /** Counts saved server preferences, so a mounted reader can read them again. Never persisted. */
@@ -70,6 +81,8 @@ interface UiState extends Prefs {
   closeAllPanelTabs(): void;
   /** Puts a closed surface back in the row, opens it and shows the panel. */
   reopenPanelTab(tab: RightTab): void;
+  /** Reopens the surface closed last, as the reopen shortcut does; false when none is closed. */
+  reopenLastClosedPanelTab(): boolean;
   /** Opens a file from the left bar as a tab, or shows the one already open. */
   openFileTab(target: FileTarget): void;
   /** Moves a tab to `index` in the row's order. */
@@ -237,6 +250,7 @@ export const useUi = create<UiState>((set, get) => {
       if (!row.includes(tab)) return;
       const at = row.indexOf(tab);
       const shown = panelTab && row.includes(panelTab) ? panelTab : row[0];
+      rememberClosed(get().layoutKey, [tab]);
       set({
         // A surface of the panel's own stays in the order, closed; a file tab is simply gone.
         ...(isFileTab(tab)
@@ -249,6 +263,7 @@ export const useUi = create<UiState>((set, get) => {
     closeOtherPanelTabs(tab) {
       const { panelTabOrder, panelTabsClosed } = get();
       if (!isFileTab(tab) && panelTabsClosed.includes(tab)) return;
+      rememberClosed(get().layoutKey, panelTabOrder.filter((id) => id !== tab && (isFileTab(id) || !panelTabsClosed.includes(id))));
       set({
         panelTabsClosed: RIGHT_TAB_IDS.filter((id) => id !== tab),
         panelTabOrder: panelTabOrder.filter((id) => !isFileTab(id) || id === tab),
@@ -257,6 +272,8 @@ export const useUi = create<UiState>((set, get) => {
       savePrefs();
     },
     closeAllPanelTabs() {
+      const { panelTabOrder, panelTabsClosed } = get();
+      rememberClosed(get().layoutKey, panelTabOrder.filter((id) => isFileTab(id) || !panelTabsClosed.includes(id)));
       set({ panelTabsClosed: [...RIGHT_TAB_IDS], panelTabOrder: get().panelTabOrder.filter((id) => !isFileTab(id)), panelTab: null });
       savePrefs();
     },
@@ -268,6 +285,21 @@ export const useUi = create<UiState>((set, get) => {
         panelTab: tab,
       });
       savePrefs();
+    },
+    reopenLastClosedPanelTab() {
+      const stack = closedTabs.get(get().layoutKey) ?? [];
+      // The tab closed last comes back first; one that is back already (opened again by hand) is skipped.
+      while (stack.length > 0) {
+        const tab = stack.pop()!;
+        const { panelTabOrder, panelTabsClosed } = get();
+        if (isFileTab(tab) ? panelTabOrder.includes(tab) : !panelTabsClosed.includes(tab)) continue;
+        get().reopenPanelTab(tab);
+        return true;
+      }
+      const last = get().panelTabsClosed.at(-1);
+      if (last === undefined) return false;
+      get().reopenPanelTab(last);
+      return true;
     },
     movePanelTab(tab, index) {
       const order = get().panelTabOrder.filter((id) => id !== tab);

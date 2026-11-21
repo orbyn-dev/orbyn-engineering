@@ -1,6 +1,7 @@
 import { ErrorState, Loading } from "../../../../product/ui/states";
 import { useCrewPreview } from "../../autopilot/approvals/useCrew";
 import { Frame } from "../../shared/Frame";
+import { useCrewHref } from "../../shared/nav";
 import { Ic } from "../../shared/parts";
 import { Planned } from "../../capacity/Planned";
 import { WHY } from "./model";
@@ -23,9 +24,20 @@ export function LiveEscapeSettings() {
 
 function SettingsBody() {
   const read = useEscapeThresholds();
+  const href = useCrewHref();
   return (
     <Frame sheet live>
       <div className="cx-cwsheet" style={{ maxWidth: "760px" }}>
+        <div style={{ display: "flex" }}>
+          <a
+            className="cx-t10r"
+            href={href({ page: "escapes" })}
+            style={{ marginLeft: "0", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: "2px", color: "inherit" }}
+          >
+            <Ic n="left" sm />
+            <span style={{ textDecoration: "underline", textUnderlineOffset: "2px" }}>Back to escapes</span>
+          </a>
+        </div>
         <h3 style={{ margin: "0", fontSize: "16px", fontWeight: 500, color: "var(--color-text)" }}>
           Crew › Escapes
           <span className="cx-cwpv">Preview</span>
