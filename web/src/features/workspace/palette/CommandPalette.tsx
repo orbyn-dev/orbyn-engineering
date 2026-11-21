@@ -1,6 +1,6 @@
-import { File, FolderPlus, MessageSquare, RotateCcw, Search, Settings, SquarePen, SunMoon, TextSearch } from "lucide-react";
+import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, SquarePen, SunMoon, TextSearch } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api } from "../api";
+import { api, pullsApi } from "../api";
 import { compactAge } from "../../../lib/format";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { navigate, parseRoute, SETTINGS_SECTIONS, type Route } from "../../../product/state/route";
@@ -9,6 +9,7 @@ import { useVisibleProjects, useWorkspace } from "../../../product/state/workspa
 import { ProjectBadge } from "../../../product/ui/badges";
 import { useAccountAvailable } from "../../account";
 import { AddProjectPalette } from "./AddProjectPalette";
+import { loadFrecency, rankEntries, recordUse, saveFrecency } from "./paletteRanking";
 
 interface Entry {
   key: string;
@@ -18,6 +19,8 @@ interface Entry {
   icon: ReactNode;
   /** Extra words that find this entry, such as a thread's project and branch. */
   search?: string;
+  /** Picking this row counts toward its frecency (threads and pull requests only). */
+  track?: boolean;
   route:
     | Route
     | "add-project"
@@ -64,6 +67,16 @@ function useMessageSearch(query: string, enabled: boolean) {
   return hits.data ?? [];
 }
 
+/** Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed. */
+function usePullSearch(query: string, enabled: boolean) {
+  const on = enabled && query.trim().length >= MESSAGE_SEARCH_MIN;
+  const list = useAsync(`palette:pulls:${on ? "on" : "off"}`, async (signal) => {
+    if (!on) return [];
+    return (await pullsApi.list("open", "", signal)).pulls;
+  });
+  return list.data ?? [];
+}
+
 export function CommandPalette({ start, onClose }: { start: PaletteStart; onClose(): void }) {
   const threads = useWorkspace((state) => state.threads);
   const allProjects = useWorkspace((state) => state.projects.data);
@@ -89,6 +102,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
   const hits = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
   const accountOn = useAccountAvailable();
+  const pulls = usePullSearch(query, !searchTitle[start] && !newIn);
+  const [book, setBook] = useState(() => loadFrecency());
   const entries = useMemo<Entry[]>(() => {
     if (searchTitle[start]) {
       return hits.map((hit) => ({
@@ -123,6 +138,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
       .map((thread) => ({
         key: thread.id,
+        track: true,
         group: "Threads",
         label: thread.title,
         meta: compactAge(thread.updated_at),
@@ -152,11 +168,30 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       icon: <TextSearch size={16} aria-hidden />,
       route: { message: hit.message_id, thread: hit.thread_id },
     }));
-    return [...(needle ? all.filter(found) : all).slice(0, 50), ...inMessages];
-  }, [threads, query, newIn, projects, allProjects, hits, start, messages, accountOn]);
+    const inPulls: Entry[] = newIn
+      ? []
+      : pulls.map(({ project_id, pull }) => ({
+          key: `pull:${project_id}:${pull.number}`,
+          track: true,
+          group: "Pull requests",
+          label: pull.title,
+          meta: `#${pull.number}`,
+          search: `${allProjects?.find((project) => project.id === project_id)?.name ?? ""} ${pull.head}`,
+          icon: <GitPullRequest size={16} aria-hidden />,
+          route: { name: "pulls", project: project_id, number: Number(pull.number) } as Route,
+        }));
+    const matching = needle ? [...all, ...inPulls].filter(found) : all;
+    return [...rankEntries(matching, query, book, Date.now()).slice(0, 50), ...inMessages];
+  }, [threads, query, newIn, projects, allProjects, hits, start, messages, accountOn, pulls, book]);
 
   const choose = (entry: Entry | undefined) => {
     if (!entry) return;
+    // Only a person's pick is remembered; opening the palette or listing rows writes nothing.
+    if (entry.track) {
+      const next = recordUse(book, entry.key, Date.now());
+      setBook(next);
+      saveFrecency(next);
+    }
     if (entry.route === "add-project") {
       setAdding(true);
       return;
@@ -243,7 +278,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
           aria-expanded
           aria-controls="palette-list"
           aria-label="Search"
-          placeholder={searchTitle[start] ?? "Search threads and commands"}
+          placeholder={searchTitle[start] ?? "Search threads, pull requests and commands"}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);

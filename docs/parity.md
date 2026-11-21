@@ -111,7 +111,7 @@ remaining behavior, native/manual qualification and refusal notes.
 - [x] A34 Mark unread: flags a thread | packages/contracts/src/orchestrationV2.ts | w d m s | S
 - [x] A35 Confirmations: toggles for archive, delete, unpin | packages/contracts/src/settings.ts | w d | S | web done
 - [x] A36 Copy reference/thread/ID: PR link first, then thread chip, then bare ID | docs/user/thread-sidebar.md | w d m | S | web done
-- [x] A37 Palette thread search: title, branch, PR, project with frecency ranking | apps/web/src/components/CommandPalette.logic.ts | w d m | M | status: partial | remaining: PR search and frecency ranking; threads are matched by title, project and branch and sorted by last update, with no ranking test
+- [x] A37 Palette thread search: title, branch, PR, project with frecency ranking | apps/web/src/components/CommandPalette.logic.ts | w d m | M | status: partial | remaining: built and unit-tested in web (open pull requests matched by title, project and branch; frecency keeps only ids and times in browser storage, capped); not run against the real `orbynd`, and the `palette` frame draws no pull request rows
 - [x] A38 Message search: all-words match, opens at the message, CJK-aware minimum | packages/contracts/src/orchestrationV2.ts | w d m s | L | server done | web done
 - [x] A39 Find in thread: find bar with highlights and position | apps/web/src/components/chat/ThreadFindBar.tsx | w d s | M | web done
 - [x] A40 Thread navigation keys: previous, next, jump 1–9 | packages/contracts/src/keybindings.ts | w d | S
