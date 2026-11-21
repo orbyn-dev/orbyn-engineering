@@ -310,3 +310,8 @@
   flex: 0 0 calc(var(--topbar-h) + 12px);
   overflow: hidden;
 }
+/* A pane's own close sits at the end of its title row. */
+.term-view-title .term-view-close {
+  margin-left: auto;
+  margin-right: -8px;
+}
