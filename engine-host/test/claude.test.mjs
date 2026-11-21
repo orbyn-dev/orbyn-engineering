@@ -181,3 +181,38 @@ test("models, usage, stopTask and background call the SDK query", async () => {
   assert.deepEqual(calls.filter((c) => c !== "close"), ["stop:t1", "bg:tu1"]);
   assert.ok(calls.includes("close"), "the models probe is closed");
 });
+
+test("AskUserQuestion is a question frame; answers come back in updatedInput", async () => {
+  const { AsyncQueue } = await import("../src/asyncQueue.mjs");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const frames = [];
+  createInterface({ input: output }).on("line", (l) => frames.push(JSON.parse(l)));
+  let toolResult;
+  const query = ({ prompt, options }) => {
+    const out = new AsyncQueue();
+    (async () => {
+      for await (const _ of prompt) {
+        toolResult = await options.canUseTool("AskUserQuestion", { questions: [{ question: "Which?", header: "h", options: [], multiSelect: false }] }, {});
+        out.push({ type: "result", subtype: "success", is_error: false, result: "ok", session_id: "x" });
+      }
+    })();
+    return { [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](), close() {}, interrupt: async () => {} };
+  };
+  runHost({ family: claudeFamily({ loadSdk: async () => ({ query }) }), input, output });
+  const send = (f) => input.write(`${JSON.stringify(f)}\n`);
+  const wait = (pred) => new Promise((resolve) => {
+    const t = setInterval(() => { const f = frames.find(pred); if (f) { clearInterval(t); resolve(f); } }, 5);
+  });
+  send({ id: 1, type: "init", protocol: 1 });
+  send({ id: 2, type: "open", operation: "create", sessionId: "s", cwd: "/tmp", options: { sdk: {} } });
+  send({ id: 3, type: "send", sessionId: "s", message: "hi" });
+  const q = await wait((f) => f.type === "question");
+  assert.equal(q.tool, "AskUserQuestion");
+  assert.equal(frames.some((f) => f.type === "permission"), false);
+  send({ id: 4, type: "respond", requestId: q.requestId, decision: { answers: { "Which?": "A" } } });
+  await wait((f) => f.type === "runDone");
+  assert.equal(toolResult.behavior, "allow");
+  assert.deepEqual(toolResult.updatedInput.answers, { "Which?": "A" });
+  assert.equal("updatedPermissions" in toolResult, false);
+});

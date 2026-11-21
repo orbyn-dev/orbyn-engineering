@@ -78,9 +78,9 @@ export function claudeFamily({ loadSdk }) {
             pendingPermissions.delete(requestId);
             resolve(v);
           };
-          pendingPermissions.set(requestId, { resolve: settle, sessionId: session.id, input });
+          pendingPermissions.set(requestId, { resolve: settle, sessionId: session.id, input, tool: toolName });
           opts.signal?.addEventListener("abort", () => settle({ behavior: "deny", message: "The run was cancelled." }), { once: true });
-          ctx.send({ type: "permission", sendId: session.run?.sendId, requestId, tool: toolName, input });
+          ctx.send({ type: toolName === "AskUserQuestion" ? "question" : "permission", sendId: session.run?.sendId, requestId, tool: toolName, input });
         });
 
       const onMessage = (session, msg) => {
@@ -193,6 +193,14 @@ export function claudeFamily({ loadSdk }) {
               pendingPermissions.delete(request.requestId);
               const d = request.decision ?? {};
               // Once-only allow: no updatedPermissions, so the SDK never learns a session-wide rule.
+              if (p.tool === "AskUserQuestion" && d.answers && typeof d.answers === "object") {
+                p.resolve({ behavior: "allow", updatedInput: { ...p.input, answers: d.answers } });
+                return null;
+              }
+              if (p.tool === "AskUserQuestion" && d.behavior === "allow") {
+                p.resolve({ behavior: "deny", message: "The person did not answer." }); // a question is only answered with answers
+                return null;
+              }
               p.resolve(d.behavior === "allow" ? { behavior: "allow", updatedInput: p.input } : { behavior: "deny", message: d.message ?? "Denied." });
               return null;
             }
