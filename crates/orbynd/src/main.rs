@@ -206,6 +206,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
     config.code_mode = env_flag("ORBYN_CODE_MODE");
     config.issues = env_flag("ORBYN_ISSUES");
+    config.multi_repo = env_flag("ORBYN_MULTI_REPO");
     (
         config.crew_merge_required_checks,
         config.crew_merge_watch_interval,
@@ -407,6 +408,20 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let access = Arc::new(
         access
             .with_desktop(args.parent_stdin)
+            .with_refusal_audit({
+                let core = core.clone();
+                Arc::new(move |refusal: &http::access::PersonRefusal| {
+                    core.record_person_route_refusal(
+                        &refusal.method,
+                        &refusal.route,
+                        refusal.field,
+                        refusal.caller.as_str(),
+                        refusal.code,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+                })
+            })
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
             .with_frames({

@@ -203,6 +203,39 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/issues/start-thread"),
     ("POST", "/api/threads/{id}/issue-links"),
     ("POST", "/api/threads/{id}/issue-links/remove"),
+    // Execution profiles (docs/execution-profiles-and-library.md, Part 1).
+    ("POST", "/api/profiles"),
+    ("PATCH", "/api/profiles/{id}"),
+    ("DELETE", "/api/profiles/{id}"),
+    ("PUT", "/api/threads/{id}/profile"),
+    ("POST", "/api/crew/profile/apply"),
+    ("PUT", "/api/engines/{id}/code-mode"),
+    ("POST", "/api/projects/{id}/repos/add-folder"),
+    ("POST", "/api/projects/{id}/repos/create"),
+    ("POST", "/api/projects/{id}/repos/clone"),
+    ("POST", "/api/projects/{id}/repos/scan"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/publish"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/trust"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/setup-git"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/remove"),
+    ("POST", "/api/projects/{id}/repos/{repo_id}/clone/cancel"),
+    // The personal library (docs/execution-profiles-and-library.md, Part 2).
+    ("POST", "/api/library/workflows"),
+    ("PATCH", "/api/library/workflows/{id}"),
+    ("DELETE", "/api/library/workflows/{id}"),
+    ("POST", "/api/library/workflows/{id}/run"),
+    ("POST", "/api/library/prompts"),
+    ("PATCH", "/api/library/prompts/{id}"),
+    ("DELETE", "/api/library/prompts/{id}"),
+    ("POST", "/api/library/env-sets"),
+    ("PATCH", "/api/library/env-sets/{id}"),
+    ("DELETE", "/api/library/env-sets/{id}"),
+    ("PUT", "/api/library/env-sets/{id}/keys/{key}"),
+    ("DELETE", "/api/library/env-sets/{id}/keys/{key}"),
+    ("POST", "/api/library/import"),
+    ("POST", "/api/projects/{id}/library/suggestions/copy"),
+    ("POST", "/api/projects/{id}/repo-threads"),
+    ("POST", "/api/threads/{id}/repos"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -240,12 +273,22 @@ pub async fn require_person(
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, ApiFailure> {
-    let enforced = request
+    let route = request
         .extensions()
         .get::<MatchedPath>()
-        .is_some_and(|path| needs_key(request.method().as_str(), path.as_str()));
-    if enforced {
-        access.person_check(request.headers())?;
+        .map(|path| path.as_str().to_owned())
+        .filter(|path| needs_key(request.method().as_str(), path));
+    if let Some(route) = route
+        && let Err(refusal) = access.person_check(request.headers())
+    {
+        // The row names the method and the matched pattern, never the URL, a header or a body.
+        access.audit_person_refusal(
+            request.method().as_str(),
+            &route,
+            None,
+            access.caller_class(request.headers()),
+        );
+        return Err(refusal);
     }
     Ok(next.run(request).await)
 }
@@ -967,6 +1010,161 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "/api/threads/{id}/issue-links/remove",
         "the person removes a thread's link to an issue",
     ),
+    (
+        "POST",
+        "/api/profiles",
+        "the person saves an execution profile, which can name full access or Autopilot Full",
+    ),
+    (
+        "PATCH",
+        "/api/profiles/{id}",
+        "the person changes an execution profile, which can name full access or Autopilot Full",
+    ),
+    (
+        "DELETE",
+        "/api/profiles/{id}",
+        "the person deletes an execution profile",
+    ),
+    (
+        "PUT",
+        "/api/threads/{id}/profile",
+        "applies a profile to a thread, which can raise its permission mode, or forgets the applied profile",
+    ),
+    (
+        "POST",
+        "/api/crew/profile/apply",
+        "applies a profile to a crew, which can raise its permission mode and Autopilot mode",
+    ),
+    (
+        "PUT",
+        "/api/engines/{id}/code-mode",
+        "the person turns Code Mode on or off for an engine, which changes what the engine may call",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/add-folder",
+        "the person adds a folder to a project in place; nothing is copied and it starts untrusted",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/create",
+        "the person creates a new repository under Orbyn's data",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/clone",
+        "the person clones a repository from a remote into Orbyn's data",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/scan",
+        "reads a folder or workspace file the person picked, which may be anywhere on disk",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/publish",
+        "the person publishes a repository to a host",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/trust",
+        "the person trusts a folder, which lets Orbyn run things in it",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/setup-git",
+        "the person starts Git in a folder that has none",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/remove",
+        "the person stops tracking a repository",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repos/{repo_id}/clone/cancel",
+        "the person stops a running clone",
+    ),
+    (
+        "POST",
+        "/api/library/workflows",
+        "the person saves a library workflow, a command that can later run in their shell",
+    ),
+    (
+        "PATCH",
+        "/api/library/workflows/{id}",
+        "the person changes a library workflow, a command that can later run in their shell",
+    ),
+    (
+        "DELETE",
+        "/api/library/workflows/{id}",
+        "the person deletes a library workflow",
+    ),
+    (
+        "POST",
+        "/api/library/workflows/{id}/run",
+        "starts a library workflow in the person's shell, with the values of its environment sets",
+    ),
+    (
+        "POST",
+        "/api/library/prompts",
+        "the person saves a library prompt",
+    ),
+    (
+        "PATCH",
+        "/api/library/prompts/{id}",
+        "the person changes a library prompt",
+    ),
+    (
+        "DELETE",
+        "/api/library/prompts/{id}",
+        "the person deletes a library prompt",
+    ),
+    (
+        "POST",
+        "/api/library/env-sets",
+        "the person creates an environment set",
+    ),
+    (
+        "PATCH",
+        "/api/library/env-sets/{id}",
+        "the person renames an environment set or changes its key names, which deletes the keychain item of a removed key",
+    ),
+    (
+        "DELETE",
+        "/api/library/env-sets/{id}",
+        "the person deletes an environment set and every keychain value in it",
+    ),
+    (
+        "PUT",
+        "/api/library/env-sets/{id}/keys/{key}",
+        "the person stores a secret value in the OS keychain",
+    ),
+    (
+        "DELETE",
+        "/api/library/env-sets/{id}/keys/{key}",
+        "the person removes a secret value from the OS keychain",
+    ),
+    (
+        "POST",
+        "/api/library/import",
+        "imports an untrusted document into the personal library",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/library/suggestions/copy",
+        "the person copies an entry from a repository's committed .orbyn/ file into the device library",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/repo-threads",
+        "the person starts a thread in several repositories, which creates a worktree and a branch in each",
+    ),
+    (
+        "POST",
+        "/api/threads/{id}/repos",
+        "the person adds a repository to a thread, which creates a worktree and a branch in it",
+    ),
 ];
 
 #[cfg(test)]
@@ -1009,5 +1207,183 @@ mod tests {
                 assert_eq!(status, want, "{method} {path} with {key:?}");
             }
         }
+    }
+
+    use crate::http::access::{CallerClass, PersonRefusal, REFUSAL_WINDOW};
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    type Rows = Arc<Mutex<Vec<PersonRefusal>>>;
+
+    /// A stub router over every enforced route, with the refusal audit going to `rows` (or failing) and a clock the test moves.
+    async fn audited(key: Option<&str>, fail: bool) -> (String, Rows, Arc<AtomicU64>, Arc<Access>) {
+        let rows: Rows = Arc::default();
+        let offset = Arc::new(AtomicU64::new(0));
+        let base = Instant::now();
+        let sink_rows = rows.clone();
+        let clock_offset = offset.clone();
+        let access = Arc::new(
+            Access::new("secret", Vec::new(), None)
+                .with_person_key(key)
+                .with_refusal_audit_clock(
+                    Arc::new(move |refusal| {
+                        if fail {
+                            return Err("disk full".to_owned());
+                        }
+                        sink_rows.lock().unwrap().push(refusal.clone());
+                        Ok(())
+                    }),
+                    Arc::new(move || {
+                        base + Duration::from_secs(clock_offset.load(Ordering::SeqCst))
+                    }),
+                ),
+        );
+        let mut router = Router::new();
+        let paths: std::collections::BTreeSet<&str> =
+            ENFORCED.iter().map(|(_, path)| *path).collect();
+        for path in paths {
+            router = router.route(path, any(|| async { StatusCode::NO_CONTENT }));
+        }
+        let router = router.route_layer(from_fn_with_state(access.clone(), require_person));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        (url, rows, offset, access)
+    }
+
+    const ANSWER: &str = "/api/questions/{id}/answer";
+
+    async fn post(base: &str, path: &str, origin: bool) -> reqwest::Response {
+        let mut request = reqwest::Client::new()
+            .post(format!("{base}{path}"))
+            .header("authorization", "Bearer secret-service-token")
+            .header("x-secret-header", "header-secret")
+            .body("body-secret");
+        if origin {
+            request = request.header("origin", "http://127.0.0.1:5391");
+        }
+        request.send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_refused_person_call_writes_one_row_with_the_pattern_and_nothing_secret() {
+        let (base, rows, _, _) = audited(Some("the-key"), false).await;
+        let response = post(&base, "/api/questions/q-123/answer?x=1", false).await;
+        assert_eq!(response.status().as_u16(), 403);
+        let rows = rows.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].method.as_str(), rows[0].route.as_str()),
+            ("POST", ANSWER)
+        );
+        assert_eq!(rows[0].caller, CallerClass::ServiceToken);
+        assert_eq!(rows[0].code, "person_required");
+        let text = format!("{:?}", rows[0]);
+        for secret in [
+            "q-123",
+            "x=1",
+            "secret-service-token",
+            "header-secret",
+            "body-secret",
+        ] {
+            assert!(!text.contains(secret), "{secret} leaked into {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_service_with_no_shell_records_desktop_required() {
+        let (base, rows, _, _) = audited(None, false).await;
+        assert_eq!(
+            post(&base, "/api/questions/q/answer", false).await.status(),
+            403
+        );
+        assert_eq!(rows.lock().unwrap()[0].code, "desktop_required");
+    }
+
+    #[tokio::test]
+    async fn the_right_key_and_a_local_route_write_no_row() {
+        let (base, rows, _, _) = audited(Some("the-key"), false).await;
+        let response = reqwest::Client::new()
+            .post(format!("{base}/api/questions/q/answer"))
+            .header("x-orbyn-person", "the-key")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 204);
+        assert!(rows.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeats_inside_a_minute_coalesce_and_a_new_minute_or_route_or_class_writes_again() {
+        let (base, rows, offset, _) = audited(Some("the-key"), false).await;
+        for _ in 0..5 {
+            assert_eq!(
+                post(&base, "/api/questions/a/answer", false).await.status(),
+                403
+            );
+        }
+        assert_eq!(rows.lock().unwrap().len(), 1, "a loop writes one row");
+        offset.store(REFUSAL_WINDOW.as_secs() - 1, Ordering::SeqCst);
+        post(&base, "/api/questions/b/answer", false).await;
+        assert_eq!(rows.lock().unwrap().len(), 1, "still inside the minute");
+        // Another route, and the same route from a browser, each get a row of their own.
+        post(&base, "/api/questions/a/dismiss", false).await;
+        post(&base, "/api/questions/a/answer", true).await;
+        assert_eq!(rows.lock().unwrap().len(), 3);
+        offset.store(REFUSAL_WINDOW.as_secs() + 1, Ordering::SeqCst);
+        post(&base, "/api/questions/a/answer", false).await;
+        let rows = rows.lock().unwrap();
+        assert_eq!(rows.len(), 4, "a new minute writes again");
+        assert_eq!(rows[2].caller, CallerClass::Browser);
+    }
+
+    #[tokio::test]
+    async fn the_memory_of_refusals_stays_bounded() {
+        let (_, rows, _, access) = audited(Some("the-key"), false).await;
+        for n in 0..5000 {
+            access.audit_person_refusal(
+                "POST",
+                &format!("/r/{n}"),
+                None,
+                CallerClass::ServiceToken,
+            );
+        }
+        assert!(rows.lock().unwrap().len() <= 1024);
+    }
+
+    #[tokio::test]
+    async fn a_handler_level_refusal_is_audited_by_field_and_a_failed_write_still_refuses() {
+        let headers = axum::http::HeaderMap::new();
+        let (_, rows, offset, access) = audited(Some("the-key"), false).await;
+        for _ in 0..3 {
+            let refused = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
+            assert!(refused.is_err());
+        }
+        let _ = access.person_check_field(&headers, "POST", "/r/{id}", "worktree");
+        access.audit_person_refusal("POST", "/r/{id}", None, CallerClass::ServiceToken);
+        {
+            let rows = rows.lock().unwrap();
+            let fields: Vec<_> = rows.iter().map(|row| row.field).collect();
+            assert_eq!(fields, [Some("resume"), Some("worktree"), None]);
+        }
+        offset.store(REFUSAL_WINDOW.as_secs() + 1, Ordering::SeqCst);
+        let _ = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
+        assert_eq!(rows.lock().unwrap().len(), 4);
+
+        let (_, rows, _, failing) = audited(Some("the-key"), true).await;
+        let refused = failing.person_check_field(&headers, "POST", "/r/{id}", "resume");
+        assert!(refused.is_err(), "a failed audit write still refuses");
+        assert!(rows.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_audit_write_still_answers_403() {
+        let (base, rows, _, _) = audited(Some("the-key"), true).await;
+        let response = post(&base, "/api/questions/q/answer", false).await;
+        assert_eq!(response.status().as_u16(), 403);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["code"], "person_required");
+        assert!(rows.lock().unwrap().is_empty());
     }
 }

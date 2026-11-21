@@ -73,7 +73,7 @@ async fn valid_branch(cwd: &Path, name: &str) -> Result<()> {
 
 impl Core {
     fn scm_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.store.thread(id)?;
+        let thread = self.scoped_thread(id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }

@@ -69,7 +69,7 @@ export type Scenario =
   /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
   /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
-  /** Code Mode (stand-in routes, mock/codemode.ts): the first thread with a search, a describe, a finished run, and a paused run with its approval. */
+  /** Code Mode (dev and test stand-in for the service routes, mock/codemode.ts): the first thread with a search, a describe, a finished run, and a paused run with its approval. */
   | "codemode"
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
@@ -1214,7 +1214,7 @@ export function createMockApi(options: MockOptions = {}) {
         failure.remaining -= 1;
         return err(failure.status, failure.code, failure.message);
       }
-      if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname)) {
+      if (parsed.pathname.startsWith("/api/code-runs") || /^\/api\/engines\/[^/]+\/code-mode$/.test(parsed.pathname) || /^\/api\/threads\/[^/]+\/code-runs$/.test(parsed.pathname)) {
         const answered = codeModeMock.handle(method, parsed.pathname, body);
         if (answered) return answered;
       }
@@ -1223,7 +1223,7 @@ export function createMockApi(options: MockOptions = {}) {
       if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
-    /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes. */
+    /** The Code Mode stand-in (mock/codemode.ts): seed a run record, read the writes, switch the routes off (404). */
     codeMode: codeModeMock,
     /** Changes the account has waiting to upload, for the offline and paused wording. */
     setAccountWaiting(count: number) {

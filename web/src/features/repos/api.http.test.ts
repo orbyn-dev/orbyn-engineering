@@ -81,27 +81,21 @@ it("encodes ids into the path", async () => {
 
 it("sends each thread Git action on the existing route, with repo_id for a chosen repository and none for the primary", async () => {
   const phases = { phases: [{ name: "commit", ok: true, message: null, url: null }], notice: null };
-  const fetching = stub(...Array.from({ length: 7 }, () => json(phases)));
+  const fetching = stub(...Array.from({ length: 4 }, () => json(phases)));
   const api = reposApi();
   await api.threadGit("t1", "r2", { kind: "commit", message: "Fix" });
   await api.threadGit("t1", "r2", { kind: "push" });
   await api.threadGit("t1", "r2", { kind: "pull_request", title: "T" });
   await api.threadGit("t1", null, { kind: "push" });
-  await api.threadGit("t1", "r2", { kind: "merge", number: 7, method: "squash" });
-  await api.threadGit("t1", "r2", { kind: "review", number: 7, event: "approve", body: "ok" });
-  await api.threadGit("t/1", null, { kind: "merge", number: 7, method: "merge" });
   const seen = fetching.mock.calls.map((_, index) => call(fetching, index));
   expect(seen.map(({ method, path, body }) => [method, path, body])).toEqual([
     ["POST", "/api/threads/t1/git/action", { commit_message: "Fix", push: false, repo_id: "r2" }],
     ["POST", "/api/threads/t1/git/action", { push: true, repo_id: "r2" }],
     ["POST", "/api/threads/t1/git/action", { push: true, pull_request: { title: "T", body: "" }, repo_id: "r2" }],
     ["POST", "/api/threads/t1/git/action", { push: true }],
-    ["POST", "/api/threads/t1/pulls/7/merge", { method: "squash", auto: false, delete_branch: false, strip_credits: false, repo_id: "r2" }],
-    ["POST", "/api/threads/t1/pulls/7/review", { event: "approve", body: "ok", comments: [], repo_id: "r2" }],
-    ["POST", "/api/threads/t%2F1/pulls/7/merge", { method: "merge", auto: false, delete_branch: false, strip_credits: false }],
   ]);
-  // Merge and review are Person-class routes: the key goes with them. The git action route keeps the class it has.
-  expect(seen.map((one) => one.key !== null)).toEqual([false, false, false, false, true, true, true]);
+  // The git action route keeps the class it has: no person key.
+  expect(seen.map((one) => one.key !== null)).toEqual([false, false, false, false]);
 });
 
 it("reads a failed phase of an action as a failure, and passes 404 and 409 through as they are", async () => {
@@ -143,4 +137,86 @@ it("sends branch_name on a thread start only when it is given", async () => {
   await reposApi().startThread("p1", base);
   expect(call(fetching, 0).body.branch_name).toBe("feat/x");
   expect("branch_name" in call(fetching, 1).body).toBe(false);
+});
+
+// Real service shapes (crates/orbynd/src/routes/repos.rs, docs/multi-repo.md "As built: project repositories").
+it("reads the service's own clone object: state cloning or failed, percent absent, a message only after a failure", async () => {
+  const cloning = { ...row, id: "c1", clone: { state: "cloning" } };
+  const failed = { ...row, id: "c2", clone: { state: "failed", message: "The clone failed: no access." } };
+  stub(json({ repositories: [row, cloning, failed], clone_directory: "/data/repos", max_per_thread: 8 }));
+  const view = await reposApi().list("p1");
+  expect(view?.repositories.map((one) => one.clone)).toEqual([null, { state: "cloning" }, { state: "failed", message: "The clone failed: no access." }]);
+});
+
+it("reads cancel as the failed row the service answers, and remove as an empty 204", async () => {
+  const cancelled = { ...row, id: "c1", is_git: false, trusted: false, branch: null, branches: [], clone: { state: "failed", percent: null, message: "Cancelled." } };
+  const fetching = stub(json(cancelled), new Response(null, { status: 204 }));
+  expect(await reposApi().cancelClone("p1", "c1")).toEqual(cancelled);
+  await expect(reposApi().remove("p1", "c1")).resolves.toBeUndefined();
+  expect(call(fetching, 0)).toMatchObject({ method: "POST", path: "/api/projects/p1/repos/c1/clone/cancel", body: undefined });
+  expect(call(fetching, 1)).toMatchObject({ method: "POST", path: "/api/projects/p1/repos/c1/remove", body: undefined });
+});
+
+it("passes the service's repository error codes through with their status", async () => {
+  const cases: [number, string][] = [[409, "repo_exists"], [409, "repo_limit"], [400, "clone_refused"], [409, "repo_untrusted"], [400, "invalid"], [404, "not_found"]];
+  for (const [status, code] of cases) {
+    stub(json({ code, message: "no" }, status));
+    await expect(reposApi().addFolder("p1", "/x")).rejects.toMatchObject({ code, status });
+  }
+});
+
+it("reads publish's 422 unsupported as that failure, not as an answer", async () => {
+  stub(json({ code: "unsupported", message: "Publishing a repository arrives in a later update." }, 422));
+  await expect(reposApi().publish("p1", "r1", { name: "o/r", visibility: "private" })).rejects.toMatchObject({ code: "unsupported", status: 422, message: "Publishing a repository arrives in a later update." });
+});
+
+it("reads the scan's code_workspace source, and drops an entry whose source this page does not know (the old guess, code-workspace)", async () => {
+  const entry = (name: string, source: string) => ({ name, path: `/w/${name}`, is_git: true, source, in_project: false, refused: null });
+  stub(json({ path: "/w/x.code-workspace", is_git: false, code_workspace_file: "x.code-workspace", truncated: false, folders: [entry("a", "code_workspace"), entry("b", "child"), entry("c", "code-workspace")] }));
+  const scan = await reposApi().scan("p1", "/w/x.code-workspace");
+  expect(scan?.folders.map((folder) => [folder.name, folder.source])).toEqual([["a", "code_workspace"], ["b", "child"]]);
+  expect(scan?.code_workspace_file).toBe("x.code-workspace");
+});
+
+// Real service shape of GET /api/threads/{id}/repos (crates/orbyn-core/src/repos/scope.rs): `files` is a list, or null for an untrusted repository.
+it("reads the real thread repositories answer as it is: untrusted entries have no files, and no pull request is invented", async () => {
+  const answer = [
+    { repo_id: "p1", name: "app", branch: "feat/x", added: 3, deleted: 1, trusted: true, files: ["a.ts"] },
+    { repo_id: "r2", name: "lib", branch: "feat/x", added: 0, deleted: 0, trusted: false, files: null },
+  ];
+  stub(json(answer), json({ not: "a list" }));
+  expect(await reposApi().threadRepos("t1")).toEqual(answer);
+  expect(await reposApi().threadRepos("t1")).toBeNull();
+});
+
+it("lets a refused thread repositories read through with the service's code", async () => {
+  stub(json({ code: "repo_untrusted", message: "Trust this repository before using it." }, 409));
+  await expect(reposApi().threadRepos("t1")).rejects.toMatchObject({ code: "repo_untrusted", status: 409 });
+});
+
+it("sends the generated StartThreadInput and AddThreadRepo bodies, and reads the generated TaskFolder", async () => {
+  const folder = { root: "/data/threads/t1", branch: "orbyn/t1", repos: [{ repo_id: "a", name: "a", branch: "orbyn/t1", added: 0, deleted: 0, trusted: true, files: [] }], max_per_thread: 8 };
+  const fetching = stub(json({ id: "t1" }), json({ repo_id: "b", name: "b", branch: "orbyn/t1", added: 0, deleted: 0, trusted: true }), json(folder));
+  const api = reposApi();
+  await api.startThread("p1", { repos: [{ repo_id: "a", base_branch: "main" }, { repo_id: "b", base_branch: "dev" }], engine: "claude", model: null, permission_mode: "supervised", message: "go", branch_name: "feat/x" });
+  await api.addThreadRepo("t1", "b");
+  expect((await api.taskFolder("t1"))?.max_per_thread).toBe(8);
+  expect(call(fetching, 0)).toMatchObject({ method: "POST", path: "/api/projects/p1/repo-threads", key: expect.any(String), body: { repos: [{ repo_id: "a", base_branch: "main" }, { repo_id: "b", base_branch: "dev" }], engine: "claude", model: null, permission_mode: "supervised", message: "go", branch_name: "feat/x" } });
+  expect(call(fetching, 1)).toMatchObject({ method: "POST", path: "/api/threads/t1/repos", body: { repo_id: "b" }, key: expect.any(String) });
+  expect(call(fetching, 2)).toMatchObject({ method: "GET", path: "/api/threads/t1/task-folder", key: null });
+});
+
+it("passes the thread start and add refusals through with the service's code, status and message", async () => {
+  const refusals: [string, number, string][] = [
+    ["repo_limit", 409, "A thread works in at most 8 repositories."],
+    ["repo_untrusted", 409, "Trust b before starting a thread in it."],
+    ["not_git", 409, "b is not a Git repository."],
+    ["invalid", 400, "b already has a branch named feat/x."],
+    ["permission_mode_unsupported", 400, "no"],
+  ];
+  stub(...refusals.map(([code, status, message]) => json({ code, message }, status)), ...refusals.map(([code, status, message]) => json({ code, message }, status)));
+  for (const [code, status, message] of refusals) {
+    await expect(reposApi().startThread("p1", { repos: [], engine: "claude", model: null, permission_mode: "supervised" })).rejects.toMatchObject({ code, status, message });
+  }
+  for (const [code, status] of refusals.slice(0, 4)) await expect(reposApi().addThreadRepo("t1", "b")).rejects.toMatchObject({ code, status });
 });

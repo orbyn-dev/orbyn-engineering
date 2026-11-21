@@ -31,15 +31,6 @@ it("names the repository and its branch at the top and offers that repository's 
   expect(screen.queryByText(/all repositories/i)).toBeNull();
 });
 
-it("says Open pull request when the repository's branch has one", async () => {
-  const { user } = draw({ ...planner, pull_request: { number: 142, url: "https://github.com/orbyn-dev/orbyn-planner/pull/142" } });
-  await openMenu(user);
-  expect(screen.getByRole("menuitem", { name: "Open pull request" })).toBeVisible();
-  expect(screen.queryByRole("menuitem", { name: "Create pull request…" })).toBeNull();
-  expect(screen.getByRole("menuitem", { name: "Merge pull request…" })).toBeVisible();
-  expect(screen.getByRole("menuitem", { name: "Review pull request…" })).toBeVisible();
-});
-
 it("writes nothing on open, and a Push is one write for one click", async () => {
   let changed = 0;
   const { mock, user } = draw(planner, () => { changed += 1; });
@@ -74,24 +65,6 @@ it("leaves repo_id out for the project's primary repository", async () => {
   await openMenu(user, "orbyn-engineering");
   await user.click(screen.getByRole("menuitem", { name: "Push" }));
   await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:primary:push"]));
-});
-
-it("merges and reviews the repository's own pull request through a dialog, once", async () => {
-  const withPr = { ...planner, pull_request: { number: 142, url: "https://github.com/o/p/pull/142" } };
-  const { mock, user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
-  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
-  expect(mock.writes).toEqual([]);
-  await user.dblClick(within(merge).getByRole("button", { name: "Merge" }));
-  await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge"]));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Review pull request…" }));
-  const review = await screen.findByRole("dialog", { name: "Review the pull request for orbyn-planner" });
-  await user.type(within(review).getByRole("textbox", { name: "Comment" }), "Looks fine");
-  await user.click(within(review).getByRole("button", { name: "Send review" }));
-  await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge", "thread-git:thread-1:orbyn-planner:review"]));
 });
 
 it("offers the shared trust prompt when the service answers repo_untrusted, and trusting it writes the trust route only", async () => {
@@ -131,44 +104,13 @@ it("shows hostile names as text", async () => {
   expect(document.querySelector("img")).toBeNull();
 });
 
-// ---- success notices: a proposal in the Engineer frames; the app showed none before ----
+// ---- notices: a push, commit or pull request shows none (the frames draw none) ----
 const toastTexts = () => useUi.getState().toasts.map((toast) => toast.text);
-const withPr = { ...planner, pull_request: { number: 142, url: "https://github.com/o/p/pull/142" } };
 
-it("says in one plain notice that the pull request was merged, and only after the service answers", async () => {
-  useUi.setState({ toasts: [] });
-  const { mock, user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
-  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
-  expect(toastTexts()).toEqual([]);
-  await user.dblClick(within(merge).getByRole("button", { name: "Merge" }));
-  await waitFor(() => expect(toastTexts()).toEqual(["Merged pull request #142 of orbyn-planner."]));
-  expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge"]);
-});
-
-it("says in one plain notice that the review was sent", async () => {
-  useUi.setState({ toasts: [] });
-  const { user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Review pull request…" }));
-  const review = await screen.findByRole("dialog", { name: "Review the pull request for orbyn-planner" });
-  await user.type(within(review).getByRole("textbox", { name: "Comment" }), "Looks fine");
-  await user.click(within(review).getByRole("button", { name: "Send review" }));
-  await waitFor(() => expect(toastTexts()).toEqual(["Sent your review of pull request #142 of orbyn-planner."]));
-});
-
-it("shows no success notice when the merge fails: the dialog stays open with the service's words", async () => {
-  useUi.setState({ toasts: [] });
-  const { mock, user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
-  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
-  mock.failNext("thread-git");
-  await user.click(within(merge).getByRole("button", { name: "Merge" }));
-  expect(await within(merge).findByRole("alert")).toHaveTextContent("The service could not do that.");
-  expect(toastTexts()).toEqual([]);
-  expect(screen.getByRole("dialog", { name: "Merge the pull request for orbyn-planner" })).toBeVisible();
+it("offers no merge, review or open-pull-request item: those routes take no repo_id yet", async () => {
+  const { user } = draw();
+  const menu = await openMenu(user);
+  expect(within(menu).queryByRole("menuitem", { name: /merge|review|open pull request/i })).toBeNull();
 });
 
 it("shows no notice for a push, commit or pull request: the frames draw none", async () => {

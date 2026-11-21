@@ -8,7 +8,7 @@ const TEXT_CAP = 512;
 const CONTROL = /[\u0000-\u001f\u007f]+/g;
 const text = (value: unknown): string | null => (typeof value === "string" ? value.replace(CONTROL, " ").trim().slice(0, TEXT_CAP) : null);
 
-const SOURCES: ReadonlySet<string> = new Set(["child", "code-workspace"]);
+const SOURCES: ReadonlySet<string> = new Set(["child", "code_workspace"]);
 const REFUSALS: ReadonlySet<string> = new Set(["outside", "missing", "not_directory"]);
 
 /** `true` for an object with own keys only: a service answer is data, never read through the prototype. */
@@ -86,7 +86,7 @@ export const canAddScanned = (folder: ScannedFolder): boolean => folder.refused 
 /**
  * A branch name for a new task, by the checks of `git check-ref-format --branch`: no empty parts, no `..`, no control character, space,
  * `~ ^ : ? * [ \`, no `@{`, no leading dash or dot part, no part ending `.lock`, no trailing slash or dot, and not `@`. The service checks it
- * again, and a name already used in any chosen repository is refused there (`409 invalid`).
+ * again, and a name already used in any chosen repository is refused there (`400 invalid`, "<repo> already has a branch named <name>.").
  */
 export function checkBranchName(input: string): { ok: true; name: string } | { ok: false; reason: string } {
   const name = input.trim();

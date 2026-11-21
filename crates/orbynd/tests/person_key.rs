@@ -293,6 +293,188 @@ async fn a_service_without_a_desktop_shell_has_no_key_and_refuses_person_routes(
     assert!(!f.dir.path().join("app/made.txt").exists());
 }
 
+/// A refused `Person` call writes one audit row through the real service: the route pattern and the caller class, with no
+/// body, header or token, and a second refusal of the same route inside the minute adds none. The refusal itself is unchanged.
+#[tokio::test]
+async fn a_refused_person_call_leaves_one_audit_row_without_the_request() {
+    let f = fixture(true).await;
+    let path = f.file_actions();
+    let body = json!({ "action": "create_file", "path": "made-secret-name.txt" });
+    for _ in 0..3 {
+        let (status, reply) = f.call(&path, body.clone(), Some("not-the-key")).await;
+        assert_eq!((status, &reply["code"]), (403, &json!("person_required")));
+    }
+    let rows: Vec<Value> = f
+        .service
+        .json("/api/audit?limit=200")
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["action"] == "person_route.refused")
+        .cloned()
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(
+        row["target"],
+        "POST /api/projects/{id}/worktrees/{worktree}/file-actions"
+    );
+    assert_eq!(
+        (row["actor"].as_str(), row["decision"].as_str()),
+        (Some("service_token"), Some("deny"))
+    );
+    assert_eq!(row["detail"]["code"], "person_required");
+    assert!(row["ts"].as_str().is_some_and(|ts| !ts.is_empty()));
+    let text = row.to_string();
+    for secret in [
+        f.service.token.as_str(),
+        "not-the-key",
+        "made-secret-name",
+        f.project.as_str(),
+        f.worktree.as_str(),
+    ] {
+        assert!(!text.contains(secret), "{secret} is in the row: {text}");
+    }
+}
+
+impl Fixture {
+    /// The `person_route.refused` audit rows so far.
+    async fn refusal_rows(&self) -> Vec<Value> {
+        self.service
+            .json("/api/audit?limit=200")
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["action"] == "person_route.refused")
+            .cloned()
+            .collect()
+    }
+
+    /// The one row for `target`, after checking that nothing sent is in it.
+    fn only_row<'a>(&self, rows: &'a [Value], target: &str, absent: &[&str]) -> &'a Value {
+        let matching: Vec<&Value> = rows.iter().filter(|row| row["target"] == target).collect();
+        assert_eq!(matching.len(), 1, "{target}: {rows:?}");
+        let row = matching[0];
+        assert_eq!(
+            (row["actor"].as_str(), row["decision"].as_str()),
+            (Some("service_token"), Some("deny"))
+        );
+        assert_eq!(row["detail"]["code"], "person_required");
+        let text = row.to_string();
+        for secret in [
+            self.service.token.as_str(),
+            "not-the-key",
+            self.project.as_str(),
+            self.thread.as_str(),
+        ]
+        .into_iter()
+        .chain(absent.iter().copied())
+        {
+            assert!(!text.contains(secret), "{secret} is in the row: {text}");
+        }
+        row
+    }
+}
+
+/// A refusal made inside a handler for part of the request (`FIELD_LEVEL`) leaves the same audit row as a route-level one,
+/// with the field's name in the target and no value, once per route, field and caller a minute. The three call sites are
+/// the run's permission mode, the AG-UI resume and the pull checkout.
+#[tokio::test]
+async fn a_refused_handler_level_check_leaves_one_audit_row_with_the_field_name_only() {
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+
+    // Runs: raising the permission mode above the thread's own.
+    let runs = format!("/api/threads/{}/runs", f.thread);
+    let raise = json!({ "prompt": "raise-secret-prompt", "permission_mode": "full_access" });
+    // The AG-UI resume.
+    let agui = format!("/agui/threads/{}", f.thread);
+    let resume = json!({
+        "threadId": f.thread, "runId": "r1",
+        "resume": [{ "interruptId": "resume-secret-id", "status": "resolved", "payload": { "approved": true } }],
+    });
+    // The pull checkout that moves the project's own checkout.
+    let checkout = format!("/api/projects/{}/pulls/12/checkout", f.project);
+    for _ in 0..3 {
+        for (path, body) in [
+            (&runs, raise.clone()),
+            (&agui, resume.clone()),
+            (&checkout, json!({ "worktree": false })),
+        ] {
+            let (status, reply) = f.call(path, body, Some("not-the-key")).await;
+            assert_eq!(
+                (status, &reply["code"]),
+                (403, &json!("person_required")),
+                "{path}"
+            );
+        }
+    }
+    let rows = f.refusal_rows().await;
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let sent = ["raise-secret-prompt", "resume-secret-id", "full_access"];
+    let run_row = f.only_row(
+        &rows,
+        "POST /api/threads/{id}/runs [permission_mode]",
+        &sent,
+    );
+    f.only_row(&rows, "POST /agui/threads/{id} [resume]", &sent);
+    f.only_row(
+        &rows,
+        "POST /api/projects/{id}/pulls/{number}/checkout [worktree]",
+        &sent,
+    );
+    assert_eq!(run_row["detail"]["field"], "permission_mode");
+    assert!(run_row["ts"].as_str().is_some_and(|ts| !ts.is_empty()));
+
+    // The same calls that stay Local write nothing, and the key still passes.
+    let (status, reply) = f.call(&runs, json!({ "prompt": "[approve]" }), None).await;
+    assert_ne!(status, 403, "{reply}");
+    let (status, _) = f
+        .call(
+            &agui,
+            json!({ "threadId": f.thread, "runId": "r2", "resume": [] }),
+            None,
+        )
+        .await;
+    assert_ne!(status, 403);
+    assert_eq!(f.refusal_rows().await.len(), 3);
+    let (status, reply) = f
+        .call(&checkout, json!({ "worktree": false }), Some(&key))
+        .await;
+    assert_ne!(status, 403, "{reply}");
+}
+
+/// The window is shared: a route-level and a handler-level refusal each write one row, and repeating either, in any order,
+/// adds none.
+#[tokio::test]
+async fn route_level_and_handler_level_refusals_share_the_minute() {
+    let f = fixture(true).await;
+    let checkout = format!("/api/projects/{}/pulls/12/checkout", f.project);
+    let create = json!({ "action": "create_file", "path": "made.txt" });
+    for _ in 0..2 {
+        let (status, _) = f.call(&f.file_actions(), create.clone(), None).await;
+        assert_eq!(status, 403);
+        let (status, _) = f.call(&checkout, json!({ "worktree": false }), None).await;
+        assert_eq!(status, 403);
+    }
+    let rows = f.refusal_rows().await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let mut targets: Vec<&str> = rows
+        .iter()
+        .map(|row| row["target"].as_str().unwrap())
+        .collect();
+    targets.sort_unstable();
+    assert_eq!(
+        targets,
+        [
+            "POST /api/projects/{id}/pulls/{number}/checkout [worktree]",
+            "POST /api/projects/{id}/worktrees/{worktree}/file-actions",
+        ]
+    );
+}
+
 /// Every file under `root`, read whole, for the bytes of `needle`.
 fn files_holding(root: &Path, needle: &[u8], found: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(root) else {

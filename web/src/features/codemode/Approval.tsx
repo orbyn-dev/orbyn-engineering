@@ -3,7 +3,7 @@ import "./codemode.css";
 import type { Approval, JsonValue } from "../../api/types";
 import { useWorkspace } from "../../product/state/workspace";
 import { CallList } from "./CallList";
-import { normalizeCall, viaOf } from "./model";
+import { callsOf, viaOf } from "./model";
 import { ScriptBox } from "./ScriptBox";
 import { useCodeRun } from "./useCodeRun";
 import type { ApprovalVia } from "./types";
@@ -108,10 +108,10 @@ export function ViaFacts({ approval, via, withTool = true }: { approval: Approva
 export function ViaContext({ via }: { via: ApprovalVia }) {
   const record = useCodeRun(via.codeRun, true);
   if (!record) return null;
-  const made = record.calls.map(normalizeCall).filter((call) => call.index !== via.call && call.status !== "running" && call.status !== "waiting");
+  const made = callsOf(record).filter((call) => call.index !== via.call && call.status !== "running" && call.status !== "waiting");
   return (
     <>
-      {record.script !== null ? <ScriptBox script={record.script} sha={via.scriptSha256 ?? record.script_sha256 ?? null} /> : null}
+      {typeof record.script === "string" ? <ScriptBox script={record.script} sha={via.scriptSha256 ?? record.script_sha256 ?? null} /> : null}
       {made.length > 0 ? <CallList title="Calls so far" calls={made} /> : null}
     </>
   );

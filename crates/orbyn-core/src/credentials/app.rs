@@ -19,6 +19,13 @@ impl Core {
         self
     }
 
+    /// Replaces the environment-set keychain, for tests: they use memory and never the real keychain.
+    #[cfg(feature = "test-support")]
+    pub fn with_env_sets(mut self, env_sets: super::EnvSets) -> Self {
+        self.env_sets = env_sets;
+        self
+    }
+
     /// The store a normal build opens: the macOS keychain, or nothing where there is none.
     pub(crate) fn system_credentials() -> Credentials {
         Credentials::system(super::default_service())

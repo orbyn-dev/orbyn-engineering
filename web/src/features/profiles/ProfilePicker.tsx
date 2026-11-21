@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { profilesApi, useProfiles, useProfilesOffered } from "./api";
-import type { GrantCode, Profile } from "./contract";
+import type { ProfileGrant, Profile } from "./contract";
 import { useEngineOptions } from "./ProfilesSettings";
 import { availabilityText, grantsFromFailure, grantsOf, grantText, plain, profileLine, usable } from "./model";
 import "./profiles.css";
@@ -42,7 +42,7 @@ function PickerBody({ thread, disabled, onError }: { thread: Thread; disabled: b
   const { name: engineName } = useEngineOptions();
   const refreshThread = useWorkspace((state) => state.refreshThread);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [confirm, setConfirm] = useState<{ profile: Profile; grants: GrantCode[] } | null>(null);
+  const [confirm, setConfirm] = useState<{ profile: Profile; grants: ProfileGrant[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [, bump] = useState(0);
@@ -52,7 +52,7 @@ function PickerBody({ thread, disabled, onError }: { thread: Thread; disabled: b
   const edited = mine !== undefined && (thread.model !== mine.model || thread.lifecycle?.permission_mode !== mine.mode);
   const chip = mine ? (edited ? `${plain(mine.name, 24)}, edited` : plain(mine.name, 24)) : "No profile";
 
-  const apply = async (profile: Profile, ack: GrantCode[]) => {
+  const apply = async (profile: Profile, ack: ProfileGrant[]) => {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);

@@ -384,3 +384,15 @@ it("saves a line edit with the repo_id of a non-primary repository", async () =>
   await user.keyboard("{Meta>}{Enter}{/Meta}");
   await waitFor(() => expect(save).toHaveBeenCalledWith("t", expect.objectContaining({ path: "auth/redirect.ts", repo_id: "planner" })));
 });
+
+it("shows the service's words for repo_untrusted (409) and not the changed-file message", async () => {
+  const user = userEvent.setup();
+  const { save } = setup({ files: [inRepo("planner")] });
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "main" } } as never } });
+  save.mockRejectedValue(new ApiFailure("repo_untrusted", "Trust this repository before using it.", 409));
+  await open();
+  await revertHunk(user);
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Trust this repository before using it. Nothing was changed.");
+  expect(alert).not.toHaveTextContent("has changed since this diff was read");
+});

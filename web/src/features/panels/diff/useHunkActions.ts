@@ -10,6 +10,8 @@ export interface HunkNotice {
   title: string;
   detail: string;
   action: "Refresh diff" | "Reload diff";
+  /** Set when the service refused the write with `409 repo_untrusted`: the repository to offer trust for (`null` is the primary). The write is not repeated after trusting. */
+  untrusted?: { repoId: string | null };
 }
 
 /**
@@ -84,7 +86,12 @@ export function useHunkActions(threadId: string, cwd: string) {
     const saved = await saveThreadFile(threadId, { path: inside, content: next, base_revision: file.revision, ...(repoId === undefined ? {} : { repo_id: repoId }) }) as { revision: string };
     return { before: file.content, revision: saved.revision };
   };
-  const stale = (failure: unknown) => toFailure(failure).status === 409;
+  // A 409 is a changed file (`file_conflict`) unless it is `repo_untrusted`: that repository is not trusted, and the file did not change.
+  const refusedFor = (failure: unknown, repoId: string | undefined): Pick<HunkNotice, "untrusted"> => {
+    const one = toFailure(failure);
+    return one.status === 409 && one.code === "repo_untrusted" ? { untrusted: { repoId: repoId ?? null } } : {};
+  };
+  const stale = (failure: unknown) => { const one = toFailure(failure); return one.status === 409 && one.code !== "repo_untrusted"; };
 
   const revert = async (path: string, hunk: Hunk, repoId?: string) => {
     if (busy.current) return;
@@ -103,6 +110,7 @@ export function useHunkActions(threadId: string, cwd: string) {
         title: "Couldn’t revert the hunk.",
         detail: old ? "The file has changed since this diff was read. Nothing was changed." : `${why(failure)} Nothing was changed.`,
         action: "Refresh diff",
+        ...refusedFor(failure, repoId),
       });
     } finally {
       busy.current = false;
@@ -125,6 +133,7 @@ export function useHunkActions(threadId: string, cwd: string) {
         title: "Couldn’t save the line.",
         detail: old ? `${path} changed on disk. Reload the diff, then edit again.` : why(failure),
         action: "Reload diff",
+        ...refusedFor(failure, repoId),
       });
       return false;
     } finally {
@@ -143,9 +152,9 @@ export function useHunkActions(threadId: string, cwd: string) {
       if (inside === null) throw new Error("That file is outside this thread's folder.");
       await saveThreadFile(entry.threadId, { path: inside, content: entry.before, base_revision: entry.revision, ...(entry.repoId === undefined ? {} : { repo_id: entry.repoId }) });
       changed(entry.threadId);
-    } catch {
+    } catch (failure) {
       // The same pattern as a failed revert: it says so, and that nothing was changed.
-      if (entry.threadId === threadId) setNotice({ title: "Couldn’t undo the revert.", detail: "Nothing was changed.", action: "Refresh diff" });
+      if (entry.threadId === threadId) setNotice({ title: "Couldn’t undo the revert.", detail: "Nothing was changed.", action: "Refresh diff", ...refusedFor(failure, entry.repoId) });
     } finally {
       busy.current = false;
     }
