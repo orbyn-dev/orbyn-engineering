@@ -25,7 +25,9 @@ import type {
   WorkspaceStatus,
 } from "../src/api/types.ts";
 import { createAccountMock } from "./account.ts";
+import { createBacktestMock } from "./backtest.ts";
 import { createBackgroundMock } from "./background.ts";
+import { createCapacityMock } from "./capacity.ts";
 import { createCrewMock } from "./crew.ts";
 import { createEscapesMock } from "./escapes.ts";
 import { boardMock } from "./board.ts";
@@ -61,7 +63,9 @@ export type Scenario =
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   /** Settings › Crew › Worker provider: "crew-worker-provider-any" starts on Any provider, "crew-worker-provider-fail" refuses the write. Pinned-ref block: "crew-classes-pinned". */
   /** Live review fixtures: "crew-review-consent", "crew-review-same", "crew-review-full", "crew-review-remove". Background crews: "crew-background" (the four the designs draw), "crew-background-empty". */
-  /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-checks" (the check frames’ escapes), "crew-escapes-limit" (5,000 in all), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale". */
+  /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-checks" (the check frames’ escapes), "crew-escapes-limit" (5,000 in all), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale", "crew-escapes-stored" (a person’s stored thresholds). */
+  /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
+  /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
   | `crew${"" | `-${string}`}`
   /** The Pull requests page with its rows in every data state, and the variants a screen needs. */
@@ -146,7 +150,9 @@ export function createMockApi(options: MockOptions = {}) {
 
   const accountMock = createAccountMock();
   const crewMock = createCrewMock();
+  const capacityMock = createCapacityMock();
   const escapesMock = createEscapesMock();
+  const backtestMock = createBacktestMock();
   const backgroundMock = createBackgroundMock();
   const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
@@ -157,7 +163,9 @@ export function createMockApi(options: MockOptions = {}) {
     scenario = next;
     accountMock.reset(next === "account");
     crewMock.reset(next);
+    capacityMock.reset(next);
     escapesMock.reset(next);
+    backtestMock.reset(next);
     backgroundMock.reset(next);
     reviewControlsMock.reset();
     secretsMock.reset();
@@ -589,8 +597,21 @@ export function createMockApi(options: MockOptions = {}) {
         }
         if (seg[2] === "apply-all") return applyAll();
         if (seg[2] === "app") {
-          finishStep("app");
-          return { status: 202 };
+          if (updates.app.release_id !== data.release_id || updates.app.operation !== data.operation) {
+            return err(422, "update_unavailable", "The available update changed. Review the new version before downloading.");
+          }
+          if (activeRuns() > 0) return err(409, "runs_active", "Finish or stop active runs first.");
+          if (seg[3] === "download" && updates.app.phase === "available") {
+            // The deterministic fake models a verified download; consent never installs.
+            updates = { ...updates, app: { ...updates.app, phase: "ready", operation: updates.app.operation + 1 } };
+            return { status: 202 };
+          }
+          if (seg[3] === "apply" && updates.app.phase === "ready") {
+            finishStep("app");
+            updates = { ...updates, app: { ...updates.app, phase: "idle" } };
+            return { status: 202 };
+          }
+          return err(422, "update_unavailable", "No update is ready.");
         }
         break;
       case "GET /api/preferences": {
@@ -782,8 +803,8 @@ export function createMockApi(options: MockOptions = {}) {
           body: {
             details: all
               .filter((one) => asked.includes(`${one.project_id}:${one.number}`))
-              .map((one) => (scenario === "pulls-rate-limited" ? { ...one, comment_count: undefined } : one)),
-            paused: scenario === "pulls-rate-limited" ? ["comment_count"] : [],
+              .map((one) => (scenario === "pulls-rate-limited" ? { ...one, comment_count: undefined, approval_count: undefined } : one)),
+            paused: scenario === "pulls-rate-limited" ? ["comment_count", "approval_count"] : [],
           },
         };
       }
@@ -1147,7 +1168,7 @@ export function createMockApi(options: MockOptions = {}) {
       }
       if (parsed.pathname.startsWith("/api/account")) return accountMock.handle(method, parsed.pathname, body);
       if (parsed.pathname.startsWith("/api/settings/secrets")) return secretsMock.handle(method, parsed.pathname, body);
-      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
+      if (parsed.pathname.startsWith("/api/crew")) return reviewControlsMock.handle(scenario, method, parsed.pathname, body) ?? mapMock(scenario, method, parsed.pathname, parsed.searchParams) ?? boardMock(scenario, method, parsed.pathname, parsed.searchParams) ?? flowMock(scenario, method, parsed.pathname, parsed.searchParams) ?? backgroundMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? needsYouMock(scenario, method, parsed.pathname) ?? escapesMock.handle(method, parsed.pathname, parsed.searchParams, body) ?? backtestMock.handle(method, parsed.pathname) ?? capacityMock.handle(scenario, method, parsed.pathname, body) ?? crewMock.handle(method, parsed.pathname, body, parsed.searchParams, confirm);
       return route(method, parsed.pathname, parsed.searchParams, body);
     },
     /** Changes the account has waiting to upload, for the offline and paused wording. */

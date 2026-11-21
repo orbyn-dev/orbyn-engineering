@@ -18,12 +18,16 @@ pub(super) const DETAILS_BATCH: usize = 25;
 /// Rows one details request may ask about, the size of a project's list.
 pub const DETAILS_ROW_LIMIT: usize = 100;
 
+/// Reviews counted in one bounded response. More reviews leave the count unknown.
+const DETAILS_REVIEW_LIMIT: usize = 100;
+
 /// The `PullDetails` fields one batched request supplies, by wire name.
-pub const DETAIL_FIELDS: [&str; 4] = [
+pub const DETAIL_FIELDS: [&str; 5] = [
     "created_at",
     "requested_reviewers",
     "viewer_review_state",
     "comment_count",
+    "approval_count",
 ];
 
 /// When GitHub's GraphQL limit resets, as seconds since the epoch, read from `gh api rate_limit`.
@@ -61,7 +65,8 @@ pub(super) fn details_query(numbers: &[u64]) -> String {
 reviewRequests(first:50){{nodes{{requestedReviewer{{__typename ...on User{{login}} \
 ...on Mannequin{{login}} ...on Team{{slug}}}}}}}} \
 latestReviews(first:50){{nodes{{state author{{login}}}}}} \
-comments{{totalCount}} reviews(first:100){{nodes{{comments{{totalCount}}}}}}}}"
+latestOpinionatedReviews(first:100,writersOnly:true){{totalCount pageInfo{{hasNextPage}} nodes{{state}}}} \
+comments{{totalCount}} reviews(first:{DETAILS_REVIEW_LIMIT}){{totalCount pageInfo{{hasNextPage}} nodes{{comments{{totalCount}}}}}}}}"
             )
         })
         .collect();
@@ -71,9 +76,27 @@ repository(owner:$owner,name:$repo){{{aliases}}}}}"
     )
 }
 
-/// Reads the response. A pull request whose comments cannot be totalled is left out
-/// whole, so a row never carries a partial set. The viewer's review state is absent
-/// when the response names no viewer.
+/// A count is known only when every review and every component count is present.
+/// Do not fetch more pages or let malformed nodes become a partial sum.
+fn comment_count(pull: &Value) -> Option<u32> {
+    let reviews = pull.get("reviews")?;
+    let nodes = reviews.get("nodes")?.as_array()?;
+    if nodes.len() > DETAILS_REVIEW_LIMIT
+        || reviews.pointer("/pageInfo/hasNextPage")?.as_bool()?
+        || reviews.get("totalCount")?.as_u64()? != u64::try_from(nodes.len()).ok()?
+    {
+        return None;
+    }
+    let total =
+        |value: &Value| u32::try_from(value.pointer("/comments/totalCount")?.as_u64()?).ok();
+    nodes
+        .iter()
+        .try_fold(total(pull)?, |sum, review| sum.checked_add(total(review)?))
+}
+
+/// Reads known facts independently. An incomplete comment count stays absent while
+/// valid reviewer facts remain available. A missing/null or wholly unknown row is
+/// omitted; the viewer's review state is absent when no viewer is named.
 pub(super) fn parse_details(
     response: &Value,
     project_id: &str,
@@ -82,22 +105,14 @@ pub(super) fn parse_details(
     let viewer = response
         .pointer("/data/viewer/login")
         .and_then(Value::as_str);
-    let total = |value: &Value| {
-        value
-            .pointer("/comments/totalCount")
-            .and_then(Value::as_u64)
-    };
     numbers
         .iter()
         .filter_map(|number| {
             let pull = response.pointer(&format!("/data/repository/p{number}"))?;
-            let in_reviews: u64 = pull
-                .pointer("/reviews/nodes")?
-                .as_array()?
-                .iter()
-                .filter_map(total)
-                .sum();
-            let comments = total(pull)? + in_reviews;
+            pull.as_object()?;
+            let created_at = optional(pull, "createdAt");
+            let comment_count = comment_count(pull);
+            let approval_count = approval_count(pull);
             let requested_reviewers = pull
                 .pointer("/reviewRequests/nodes")
                 .and_then(Value::as_array)
@@ -130,19 +145,50 @@ pub(super) fn parse_details(
                     field(review, "state").to_lowercase()
                 }))
             });
+            if created_at.is_none()
+                && requested_reviewers.is_none()
+                && viewer_review_state.is_none()
+                && comment_count.is_none()
+                && approval_count.is_none()
+            {
+                return None;
+            }
             Some((
                 *number,
                 PullDetails {
                     project_id: project_id.to_owned(),
                     number: *number,
-                    created_at: optional(pull, "createdAt"),
+                    created_at,
                     requested_reviewers,
-                    comment_count: Some(u32::try_from(comments).unwrap_or(u32::MAX)),
+                    comment_count,
+                    approval_count,
                     viewer_review_state,
                 },
             ))
         })
         .collect()
+}
+
+/// Approvals among the latest opinionated review of each user with write access (the
+/// count GitHub's merge box uses). Never report a partial count.
+fn approval_count(pull: &Value) -> Option<u32> {
+    let connection = pull.get("latestOpinionatedReviews")?;
+    let nodes = connection.get("nodes")?.as_array()?;
+    let total = connection.get("totalCount")?.as_u64()?;
+    if total != u64::try_from(nodes.len()).ok()?
+        || connection.pointer("/pageInfo/hasNextPage")?.as_bool()?
+    {
+        return None;
+    }
+    let mut approved = 0;
+    for node in nodes {
+        match node.get("state")?.as_str()? {
+            "APPROVED" => approved += 1,
+            "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING" => {}
+            _ => return None,
+        }
+    }
+    Some(approved)
 }
 
 pub(super) fn classify_details(

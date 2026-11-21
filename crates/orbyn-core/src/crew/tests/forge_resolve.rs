@@ -78,7 +78,12 @@ async fn a_needs_person_head_does_not_block_the_lane() {
         let intent = s.w.core.store.crew_forge_merge(&head).unwrap().unwrap();
         assert_eq!(intent.phase, ForgePhase::NeedsPerson);
         assert_eq!(s.w.core.store.merge_entry(&head).unwrap().unwrap().state, "blocked");
-        let queue = s.w.core.autopilot_merge_queue(crate::crew::Page::new(None, None).unwrap()).unwrap();
+        let queue = s
+            .w
+            .core
+            .autopilot_merge_queue(crate::crew::Page::new(None, None).unwrap())
+            .await
+            .unwrap();
         let row = queue.entries.iter().find(|e| e.task_id == head).unwrap();
         assert_eq!(row.forge.as_ref().map(|f| f.phase.as_str()), Some("needs_person"));
         assert_eq!(row.forge.as_ref().map(|f| f.revision), Some(intent.revision));

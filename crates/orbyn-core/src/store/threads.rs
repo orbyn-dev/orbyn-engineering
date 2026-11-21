@@ -8,7 +8,7 @@ use orbyn_contracts::{
     AgUiEvent, AutoSettleChoice, AutoSettleSettings, ServerSettings, SnoozePreset, Thread,
     UpdateThread,
 };
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use super::{ACTIVE_STATES, Appended, AuditRecord, Store, insert_audit, insert_event};
@@ -36,14 +36,14 @@ pub struct TickReport {
     pub settled: Vec<String>,
 }
 
-/// A thread and everything below it, deepest last.
-pub(crate) fn thread_family(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
-    let mut statement = tx.prepare(
-        "WITH RECURSIVE family(id) AS (
-            SELECT id FROM threads WHERE id = ?1
-            UNION SELECT threads.id FROM threads
+/// A thread and everything below it, parents before their children.
+pub(crate) fn thread_family_ids(conn: &Connection, id: &str) -> Result<Vec<String>> {
+    let mut statement = conn.prepare(
+        "WITH RECURSIVE family(id, depth) AS (
+            SELECT id, 0 FROM threads WHERE id = ?1
+            UNION SELECT threads.id, family.depth + 1 FROM threads
                 JOIN family ON threads.parent_thread_id = family.id
-         ) SELECT id FROM family",
+         ) SELECT id FROM family ORDER BY depth, id",
     )?;
     let family = statement
         .query_map([id], |row| row.get(0))?
@@ -760,7 +760,7 @@ fn settle(tx: &Transaction<'_>, appended: &mut Appended, id: &str, actor: &str) 
 
 /// A running descendant means this thread is still waiting on delegated work.
 fn family_is_busy(tx: &Transaction<'_>, id: &str) -> Result<bool> {
-    for member in thread_family(tx, id)? {
+    for member in thread_family_ids(tx, id)? {
         if has_active_run(tx, &member)? {
             return Ok(true);
         }

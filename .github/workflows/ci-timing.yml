@@ -1,0 +1,38 @@
+name: CI timing
+
+# Advisory: writes a timing table to the step summary of a finished CI run (wall time, the
+# six slowest jobs with queue and run time, hosted or self-hosted) and a warning annotation
+# when the run took longer than the budget in the header of ci.yml. It writes nothing
+# else: no pull request comment, no label, no issue. scripts/ci_timing.py always exits 0,
+# so this workflow never goes red. Pull request and push runs only; the warning is for
+# pull request runs, since a push to main runs the full suite and is slower by design.
+# workflow_run workflows run from the default branch, so this takes effect after merge.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  timing:
+    name: Timing report
+    if: github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_EVENT: ${{ github.event.workflow_run.event }}
+    steps:
+      # The default branch's scripts folder only, never the pull request's code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts
+      - shell: bash
+        run: python3 scripts/ci_timing.py --run-id "$RUN_ID" --event "$RUN_EVENT" || true

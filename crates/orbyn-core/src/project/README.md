@@ -13,7 +13,7 @@ Projects and the files inside them, and the one managed workspace that holds the
 | `project_icon_override` | Project display metadata validation |
 | `project_image_import` | A project image chosen outside the project |
 | `project_image_picker` | Searching a project for candidate images |
-| `explorer` | A project's worktrees, lazy file reads, guarded user file actions, and focus-scoped native watches |
+| `explorer` | A project's worktrees and their removal, lazy file reads, guarded user file actions (also for a thread's file `mutate`), and focus-scoped native watches |
 | `files` | Reading and editing a thread's checkout inside its write scope |
 | `file_bytes` | Raw bytes of a checkout file for media and binary views |
 | `outside_files` | Read-only files outside a thread's checkout |
@@ -30,7 +30,10 @@ The crate's [group table](../../README.md#groups) lists every group.
 `explorer` is a person's project/worktree view. File actions create empty files or
 folders, move or rename entries without replacement, and delete files or empty
 folders. Core checks fresh membership and read-only state on every action, fences
-run admission, and audits attempts and outcomes. See the architecture's
+run admission, and audits attempts and outcomes. A thread's file `mutate` uses the
+same guard and fence, addressed by thread instead of a worktree id, and
+`explorer::remove` removes one worktree Orbyn made after fresh membership, the
+sibling `<repo>-wt` root and "no thread uses it" all hold. See the architecture's
 [Explorer](../../../../docs/architecture.md#explorer) contract for limits.
 
 - A worktree is named by an id Core derives from its real path and finds only in the

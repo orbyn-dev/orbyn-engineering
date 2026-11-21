@@ -12,6 +12,31 @@ fn project_of(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
 }
 
+#[tokio::test]
+async fn host_notes_read_the_committed_project_and_thread_file_without_blocking_classes() {
+    let w = two().await;
+    commit_crew(
+        &w.repo,
+        r#"{"allowed_hosts":["collector","hidden:443","*.com"]}"#,
+    );
+    std::fs::write(w.repo.join(".orbyn/crew.json"), r#"{"allowed_hosts":[]}"#).unwrap();
+    let project = project_of(&w);
+    let by_project = w
+        .core
+        .crew_classes_view(None, Some(&project))
+        .await
+        .unwrap();
+    let by_thread = w.core.crew_classes_view(Some(&w.lead), None).await.unwrap();
+    assert_eq!(by_project.notes.len(), 2);
+    assert_eq!(by_project.notes, by_thread.notes);
+    assert!(by_project.problems.is_empty() && by_project.rules.is_empty());
+    assert!(by_project.working_copy_differs);
+    assert!(!by_project.notes.join(" ").contains("hidden:443"));
+    let hosts =
+        crate::crew::autopilot::read_allowed_hosts(&w.repo, by_project.commit.as_deref()).await;
+    assert_eq!(hosts, ["collector", "*.com"]);
+}
+
 /// A view as JSON without the two fields that only say how it was asked for.
 fn asked_neutrally(view: &impl serde::Serialize) -> Value {
     let mut value = serde_json::to_value(view).unwrap();

@@ -1,5 +1,5 @@
 use crate::app::Core;
-use orbyn_contracts::{ForgeStatus, PullRequest};
+use orbyn_contracts::{ForgeStatus, PullFile, PullRequest};
 use std::time::{Duration, Instant};
 
 use super::stack::stack_of;
@@ -22,6 +22,36 @@ fn pull(number: u64, head: &str, base: &str) -> PullRequest {
         checks_state: None,
         checks: None,
     }
+}
+
+#[test]
+fn a_change_breakdown_counts_kinds_and_lines() {
+    let file = |status: &str, additions: u64, deletions: u64| PullFile {
+        path: "a.rs".into(),
+        previous_path: None,
+        status: status.into(),
+        additions,
+        deletions,
+        patch: None,
+        viewed: false,
+    };
+    let breakdown = pulls::change_breakdown(&[
+        file("added", 3, 0),
+        file("modified", 2, 1),
+        file("deleted", 0, 4),
+        file("renamed", 1, 1),
+        // A forge status none of the four names counts only in `files`.
+        file("copied", 5, 0),
+    ]);
+    assert_eq!(breakdown.files, 5);
+    assert_eq!(breakdown.added, 1);
+    assert_eq!(breakdown.modified, 1);
+    assert_eq!(breakdown.deleted, 1);
+    assert_eq!(breakdown.renamed, 1);
+    // Line totals cover every file, including the unnamed kind.
+    assert_eq!(breakdown.additions, 11);
+    assert_eq!(breakdown.deletions, 6);
+    assert_eq!(pulls::change_breakdown(&[]).files, 0);
 }
 
 #[test]

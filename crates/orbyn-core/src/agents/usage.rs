@@ -3,27 +3,25 @@
 //! file is ever read. Files are large, so they are streamed and unchanged ones
 //! are served from memory.
 
+mod limits;
+#[cfg(test)]
+#[path = "usage/limits_tests.rs"]
+pub(crate) mod limits_tests;
+
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use orbyn_contracts::{
-    DailyUsage, EngineLimits, EngineUsage, LimitWindow, LimitsOverview, LimitsUnavailable,
-    ModelPrice, ModelUsage, PooledWindow, ServerSettings, TierUsage, TokenCosts, UsageReport,
+    DailyUsage, EngineLimits, EngineUsage, LimitWindow, ModelPrice, ModelUsage, PooledWindow,
+    ServerSettings, TierUsage, TokenCosts, UsageReport,
 };
 use serde_json::Value;
 
-use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::util::{new_id, now, parse_time, write_private};
-
-/// An engine's limits are served without a refresh for this long. A read may start the
-/// engine's app-server, so the polled read after it only ever hears the last answer.
-const LIMITS_FRESH: Duration = Duration::from_secs(2 * 60);
-/// Past this, the last limits are no longer shown without waiting for a new read.
-const LIMITS_MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tokens {
@@ -455,7 +453,7 @@ fn summarize(
 pub struct UsageCenter {
     host_id: String,
     cache: Arc<Mutex<ScanCache>>,
-    limits: crate::util::swr::Swr<EngineLimits>,
+    limits: limits::LimitsReads,
 }
 
 impl UsageCenter {
@@ -473,10 +471,7 @@ impl UsageCenter {
         Ok(Self {
             host_id,
             cache: Arc::default(),
-            limits: crate::util::swr::Swr::<EngineLimits>::new(LIMITS_FRESH, LIMITS_MAX_AGE, 32)
-                .same_as(|old, new| {
-                    old.plan == new.plan && old.windows == new.windows && old.limits == new.limits
-                }),
+            limits: limits::LimitsReads::default(),
         })
     }
 
@@ -539,96 +534,11 @@ impl UsageCenter {
             .cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = ScanCache::default();
-        self.limits.invalidate_all();
-        self.limits.announce("limits");
+        self.limits.forget();
     }
 
     pub fn set_notify(&self, notify: &crate::util::swr::Notify) {
         self.limits.set_notify(notify.clone());
-    }
-
-    /// Keeps a report a test already holds, as if the engine had just given it.
-    #[cfg(test)]
-    pub(crate) fn keep_limits(&self, limits: &EngineLimits) {
-        self.limits
-            .put(&crate::util::swr::key(&[&limits.engine]), limits.clone());
-    }
-}
-
-impl Core {
-    /// An engine's own limit report. The last one answers at once and is read again in
-    /// the background after five minutes, announcing `limits:<engine>` when it changed,
-    /// so opening a thread does not wait on an app-server. `force` reads now; a forced
-    /// read still spends no model usage.
-    pub async fn engine_limits(&self, id: &str, force: bool) -> Result<EngineLimits> {
-        let driver = self.engines.driver(id)?;
-        let engine = id.to_owned();
-        self.usage
-            .limits
-            .get(
-                &crate::util::swr::key(&[id]),
-                &format!("limits:{id}"),
-                force,
-                move || async move {
-                    let report = driver.limits().await?.ok_or_else(|| {
-                        CoreError::Unsupported("This engine does not report its limits.".into())
-                    })?;
-                    Ok(EngineLimits {
-                        engine,
-                        checked_at: now(),
-                        windows: limit_windows(&report),
-                        plan: report
-                            .get("planType")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                        limits: report,
-                    })
-                },
-            )
-            .await
-    }
-
-    /// The last limit report kept for an engine, if any. It never asks the engine, so it
-    /// starts no process and writes nothing.
-    pub fn cached_limits(&self, id: &str) -> Option<EngineLimits> {
-        self.usage.limits.peek(&crate::util::swr::key(&[id]))
-    }
-
-    /// Every engine's limits, and one number per window across them.
-    pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
-        let mut engines = Vec::new();
-        let mut unavailable = Vec::new();
-        // Each engine's report may start its own process, so they are asked together.
-        let installed: Vec<String> = self
-            .engines
-            .statuses(false)
-            .await?
-            .into_iter()
-            .filter(|status| status.installed)
-            .map(|status| status.id)
-            .collect();
-        let reads: Vec<_> = installed
-            .iter()
-            .map(|id| self.engine_limits(id, force))
-            .collect();
-        for (id, read) in installed
-            .iter()
-            .zip(futures_util::future::join_all(reads).await)
-        {
-            match read {
-                Ok(limits) => engines.push(limits),
-                Err(CoreError::Unsupported(_)) => {}
-                Err(error) => unavailable.push(LimitsUnavailable {
-                    engine: id.clone(),
-                    reason: error.public_message(),
-                }),
-            }
-        }
-        Ok(LimitsOverview {
-            pooled: pool_windows(&engines),
-            engines,
-            unavailable,
-        })
     }
 }
 
@@ -718,6 +628,7 @@ mod tests {
     use super::*;
     use orbyn_contracts::ModelAlias;
     use serde_json::json;
+    use std::time::Duration;
 
     fn lines(items: &[&str]) -> std::io::Cursor<Vec<u8>> {
         std::io::Cursor::new(items.join("\n").into_bytes())
@@ -1030,68 +941,5 @@ mod tests {
             .expect("a cancelled warm-up ends at once");
         // A request that arrives afterwards is not left waiting on the lock.
         assert!(center.cache.try_lock().is_ok());
-    }
-
-    fn limits_of(engine: &str, plan: &str) -> EngineLimits {
-        EngineLimits {
-            engine: engine.to_owned(),
-            checked_at: now(),
-            windows: Vec::new(),
-            plan: Some(plan.to_owned()),
-            limits: Value::Null,
-        }
-    }
-
-    #[tokio::test]
-    async fn kept_limits_answer_per_engine_until_they_are_forgotten() {
-        let dir = crate::testing::TempDir::new();
-        let center = UsageCenter::new(dir.path()).unwrap();
-        center.keep_limits(&limits_of("claude", "max"));
-        let key = |engine: &str| crate::util::swr::key(&[engine]);
-        let read = |plan: &'static str| async move { Ok(limits_of("x", plan)) };
-        let kept = center
-            .limits
-            .get(&key("claude"), "t", false, || read("asked"))
-            .await;
-        assert_eq!(kept.unwrap().plan.as_deref(), Some("max"));
-        // Another engine's limits are another key.
-        let other = center
-            .limits
-            .get(&key("codex"), "t", false, || read("asked"))
-            .await;
-        assert_eq!(other.unwrap().plan.as_deref(), Some("asked"));
-        center.forget();
-        let again = center
-            .limits
-            .get(&key("claude"), "t", false, || read("asked"))
-            .await;
-        assert_eq!(again.unwrap().plan.as_deref(), Some("asked"));
-    }
-
-    #[tokio::test]
-    async fn only_a_changed_window_or_plan_is_announced() {
-        let dir = crate::testing::TempDir::new();
-        let center = UsageCenter::new(dir.path()).unwrap();
-        let heard = Arc::new(Mutex::new(Vec::<String>::new()));
-        let sink = heard.clone();
-        center.set_notify(
-            &(Arc::new(move |what: &str| sink.lock().unwrap().push(what.to_owned()))
-                as crate::util::swr::Notify),
-        );
-        let key = crate::util::swr::key(&["claude"]);
-        center.keep_limits(&limits_of("claude", "max"));
-        for plan in ["max", "pro"] {
-            center.limits.age_all(LIMITS_FRESH + Duration::from_secs(1));
-            // A stale value answers at once; the read that follows lands in the background.
-            center
-                .limits
-                .get(&key, "limits:claude", false, move || async move {
-                    Ok(limits_of("claude", plan))
-                })
-                .await
-                .unwrap();
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        assert_eq!(*heard.lock().unwrap(), ["limits:claude"]);
     }
 }

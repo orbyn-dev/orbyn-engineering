@@ -56,6 +56,16 @@
 .ap-banner-am { background: var(--color-warnSoft); box-shadow: inset 0 0 0 1px var(--color-warnBorder); }
 .ap-banner > .ap-facts { flex: 1 1 100%; }
 .ap-banner-acts { display: flex; gap: 6px; margin-left: auto; }
+.ap-rule-notes { align-items: flex-start; margin: 0; line-height: 1.45; }
+.ap-rule-notes-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ap-rule-notes-body > b { font-weight: 500; }
+.ap-rule-notes-body p { margin: 8px 0 0; }
+.ap-rule-notes-body > b + p { margin: 4px 0 8px; }
+.ap-rule-notes-body ul { margin: 0; padding-left: 18px; list-style: disc; }
+@media (max-width: 640px) {
+  .ap-rule-notes { flex-direction: column; }
+  .ap-rule-notes > .ap-banner-acts { margin-left: 0; }
+}
 .ap-page > .ap-banner, .ap-stop > .ap-banner { margin: 0; }
 .ap-acts, .ap-drawer-foot { display: flex; gap: 8px; flex-wrap: wrap; }
 
