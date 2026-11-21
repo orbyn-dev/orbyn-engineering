@@ -7,8 +7,11 @@ pub mod instances;
 pub mod known;
 pub mod maintenance;
 pub mod manifest;
+pub mod notice;
 pub mod outcomes;
 pub mod probe;
+#[cfg(any(test, feature = "test-support"))]
+pub mod stand_in;
 pub mod vendor_pages;
 pub mod warm;
 
@@ -167,13 +170,31 @@ impl EngineManager {
             Some(hub) => hub.wrap("claude", claude, config.claude_program.clone()),
             None => claude,
         };
-        let drivers: Vec<Arc<dyn EngineDriver>> = vec![
+        let mut drivers: Vec<Arc<dyn EngineDriver>> = vec![
             claude,
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),
             )),
         ];
+        // Cursor runs through the host only behind its own flag; off, the known ACP engine is untouched.
+        if let Some(hub) = host.as_ref().filter(|hub| hub.knows("cursor"))
+            && let Some(known) = known_engine("cursor")
+        {
+            let rust: Arc<dyn EngineDriver> = Arc::new(AcpDriver::known(known.as_custom(), known));
+            drivers.push(
+                hub.wrap(
+                    "cursor",
+                    rust,
+                    known
+                        .programs
+                        .first()
+                        .copied()
+                        .unwrap_or("cursor-agent")
+                        .to_owned(),
+                ),
+            );
+        }
         Self {
             catalog: CatalogCache::new(config.cache_dir.clone()),
             store,
@@ -798,7 +819,11 @@ impl EngineManager {
         };
         let (inherited_credentials, endpoint_origin) =
             crate::host::child_env::inherited_login(&family);
+        let (crew_role, crew_role_reason) =
+            notice::crew_role(&descriptor.capabilities.permission_modes);
         EngineStatus {
+            crew_role,
+            crew_role_reason,
             instance_of: instance.as_ref().map(|one| one.driver.clone()),
             accent: instance.and_then(|one| one.accent),
             inherited_credentials,

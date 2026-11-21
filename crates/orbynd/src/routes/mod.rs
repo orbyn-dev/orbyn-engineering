@@ -98,6 +98,8 @@ mod engine_host_tests;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]
+mod never_asks_tests;
+#[cfg(test)]
 mod profiles_tests;
 #[cfg(test)]
 mod secrets_tests;
@@ -144,10 +146,10 @@ pub fn router(state: AppState) -> Router {
         .merge(source_control::routes())
         .merge(pulls::routes())
         .merge(usage::routes())
-        .merge(engines::routes())
+        .merge(engines::routes(state.clone()))
         .merge(automations::routes())
         .merge(preview::routes())
-        .merge(runs::routes())
+        .merge(runs::routes(state.clone()))
         .merge(interactions::routes())
         .merge(skills::routes())
         .merge(governance::routes())
