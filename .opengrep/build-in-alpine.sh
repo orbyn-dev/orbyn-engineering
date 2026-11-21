@@ -9,12 +9,15 @@ OCAML_VERSION="${OCAML_VERSION:-5.5.1}"
 export OPAMROOT=/workspace/_opam
 export OPAMCONFIRMLEVEL=unsafe-yes
 
-apk add --no-cache git build-base zip bash libffi-dev zstd-static tar zstd curl opam \
-  pkgconf pcre2-dev pcre2-static gmp-dev gmp-static libev-dev
+apk add --no-cache git build-base zip bash libffi-dev zstd-static tar zstd curl opam
 opam --version
 
 git config --global --add safe.directory /workspace
 cd /workspace
+
+# The engine's own list of static libraries. Its Makefile installs them with plain `apk add` and says not to use --no-cache:
+# otherwise opam does not see pkgconf as installed (opam issue 5186) and the dependency solve fails.
+make install-deps-ALPINE-for-semgrep-core
 
 # The tree-sitter runtime the engine links.
 ( cd libs/ocaml-tree-sitter-core && ./configure && ./scripts/install-tree-sitter-lib )
