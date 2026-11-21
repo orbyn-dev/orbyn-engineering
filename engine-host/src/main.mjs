@@ -1,5 +1,6 @@
 import { runHost } from "./host.mjs";
 import { claudeFamily } from "./families/claude.mjs";
+import { cursorFamily, isBenignSdkRejection } from "./families/cursor.mjs";
 import { fake } from "./families/fake.mjs";
 import { museFamily } from "./families/muse.mjs";
 import { opencodeFamily } from "./families/opencode.mjs";
@@ -21,6 +22,17 @@ if (process.env.ORBYN_ENGINE_HOST_CLAUDE === "1") {
       }),
   });
 }
+// Gated: the Cursor SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is neither bundled
+// nor a dependency. In development it loads from node_modules if present; in the single executable it is absent.
+// The key, if any, is only CURSOR_API_KEY in the environment the core passes at spawn.
+if (process.env.ORBYN_ENGINE_HOST_CURSOR === "1") {
+  families.cursor = cursorFamily({
+    loadSdk: () =>
+      import("@cursor/sdk").catch((cause) => {
+        throw Object.assign(new Error("The Cursor SDK is not available in this build.", { cause }), { kind: "unsupported" });
+      }),
+  });
+}
 const name = process.argv[2];
 const family = families[name];
 if (!family) {
@@ -28,9 +40,24 @@ if (!family) {
   process.exit(2);
 }
 
+let output = process.stdout;
+if (name === "cursor") {
+  // Fd 1 carries frames only: the SDK's own output goes to stderr before any SDK code loads (protocol, Transport).
+  const rawWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = process.stderr.write.bind(process.stderr);
+  console.log = console.info = console.debug = console.warn = console.error;
+  output = { write: rawWrite };
+  // The SDK leaves some promises unhandled after a run closes; only those are survivable.
+  process.on("unhandledRejection", (reason) => {
+    if (isBenignSdkRejection(reason)) return;
+    process.stderr.write(`unhandled rejection: ${reason instanceof Error ? reason.name : typeof reason}\n`);
+    process.exit(1);
+  });
+}
+
 runHost({
   family,
   input: process.stdin,
-  output: process.stdout,
+  output,
   onExit: (code) => process.exit(code),
 });
