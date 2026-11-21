@@ -4,7 +4,7 @@ The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, later Codex
 core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` (behind a flag), `opencode` and `muse` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode` and `muse` are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -82,6 +82,41 @@ for the prompt's uuid before the result. A leftover turn has not been seen on a 
 
 Not done, so Planned: `rollback`, subagent
 transcripts, and any run against a real `claude` with a valid login.
+
+## Cursor family (behind a flag)
+
+`src/families/cursor.mjs` runs the public surface of `@cursor/sdk` (`Agent.create`/`Agent.resume`, `agent.send` with `onDelta`,
+`run.wait`/`steer`/`cancel`, `agent.close`). It starts only with `ORBYN_ENGINE_HOST_CURSOR=1`; without it `cursor` is an unknown
+family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is **not bundled and not a
+dependency** (not even optional): esbuild `external`, loaded with a dynamic import that fails with "The Cursor SDK is not
+available in this build." (`kind: "unsupported"`). In the single executable it is therefore absent.
+
+- **Pooled.** One host process serves every Cursor session (T3's single worker, keyed by `sessionId`). A pooled host cannot take a
+  per-run argv prefix, so `open` with `confinement.argvPrefix` fails with `kind: "unsupported"` and starts nothing; the core
+  starts the whole host under the prefix instead. `confinement.env` is not applied per session either (the host's own environment is
+  the SDK's); its keys are logged as `confinementEnvNotApplied`, never the values.
+- **Credentials.** The host reads no keychain or token store. The key, if any, is `CURSOR_API_KEY` in the environment the core passes
+  at spawn, handed to `Agent.create`/`resume` as `apiKey`; it is redacted out of every error and is never in a frame or log. A key in
+  a request (`options.apiKey`) is refused as `invalid_request`.
+- **No approvals.** The Cursor SDK raises no interactive approval or question (T3's adapter declares none), so this family never sends
+  a `permission` or `question` frame and `respond` only logs. Sessions default to the SDK's own sandbox on (`local.sandboxOptions.enabled`);
+  the core's `options.local` wins. Policy for Cursor is therefore the sandbox and the core's confinement of the host, not `ApprovalGate`.
+- Requests: `open` (create, resume; `fork` is `unsupported`), `send`, `steer` (`complete_delivered` is `accepted`, anything else
+  `rejected` so the core sends a follow-up), `cancel`, `respond`, `closeSession`, `close`. `runDone` exactly once from
+  `run.wait()`: `finished` is `completed`, `cancelled` is `cancelled`, `error` is `failed` with an error `kind` (`auth`, `rate_limit`
+  and `network` with a `retry` hint, `invalid_request`, `session_lost` on a resume that is not found, `engine`). Deltas are the
+  SDK's `interaction.update` payload, untouched.
+
+Tested against replayed T3 Code transcripts (MIT, `test/fixtures/NOTICE`) of the SDK's public calls, not an internal worker
+protocol: simple, multi-turn, close then resume, steering, cancel mid tool, a read-only tool call. `test/replayCursor.mjs` plays a
+transcript as a fake SDK (it asserts each recorded outbound call, then delivers the recorded updates and result). Errors, pooling,
+confinement, the key and the flag use a hand-written fake SDK.
+
+Not done, so Planned: any run against the real `@cursor/sdk` (the transcripts were recorded by T3, and the error class names,
+the `session_lost` message match and the `CURSOR_API_KEY` handoff are unverified); loading the SDK from disk in the single executable
+(its webpack chunks and native binaries; T3 loads it with `createRequire`); background shells as `background` frames (T3 reads an
+SDK-internal hook, no transcript covers it) and `stopTask`; `usage`, `models`, `readHistory`, `rollback`, `fork`; attachments;
+subagent, todo and plan transcripts (`proposed_plan` was not copied: it holds a personal path); per-session confinement; Windows.
 
 ## OpenCode family
 
