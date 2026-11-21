@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS = [
   "projects",
   "source-control",
   "worktrees",
+  "browser",
   "crew",
   "secrets",
   "maintenance",

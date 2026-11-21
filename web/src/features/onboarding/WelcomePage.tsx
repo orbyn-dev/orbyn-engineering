@@ -72,7 +72,8 @@ export function WelcomePage() {
       await defaults.choose(engine.id);
       pushToast(`New threads start on ${engine.name}.`);
     } catch (failure) {
-      pushToast(`Couldn't change the engine. ${toFailure(failure).message}`);
+      // The hook rethrows the service's words as a plain Error, so its message is the reason.
+      pushToast(`Couldn't change the engine. ${failure instanceof Error ? failure.message : toFailure(failure).message}`);
     }
   };
   const open = (id: string, trusted: boolean) => navigate(trusted ? { name: "new", projectId: id } : { name: "trust", projectId: id, threadId: null });
@@ -102,7 +103,7 @@ export function WelcomePage() {
         </button>
       </div>
       <section aria-labelledby="welcome-agents">
-        <h2 id="welcome-agents">Engine for new threads</h2>
+        <h2 id="welcome-agents">Agents</h2>
         {engines === null ? (
           <p className="welcome-quiet" role="status">Looking for agents…</p>
         ) : (
