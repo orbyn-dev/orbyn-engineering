@@ -75,13 +75,24 @@ describe("the routes", () => {
     expect(Object.fromEntries(calls[1]!.url.searchParams)).toEqual({ tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" });
   });
 
-  it("fills what an older detail leaves out, and drops transitions, which are not in the contract", async () => {
+  it("fills what an older detail leaves out, and has no `states` when the service sent no list", async () => {
     service(() => json({ ...REF, body: "b", transitions: [{ category: "closed", name: "Closed" }] }));
     const detail = await createHttpIssuesApi().get(REF);
     expect(detail.comments).toEqual([]);
     expect(detail.linked_pull_requests).toEqual([]);
     expect(detail.linked_threads).toEqual([]);
-    expect(detail.transitions).toBeUndefined();
+    // The old mock-only word is not the contract's: only `states` says a state change is offered.
+    expect(detail.states).toBeUndefined();
+  });
+
+  it("keeps only well-formed states, with capped names, and `[]` when the service offers none", async () => {
+    service(() => json({ ...REF, body: "b", states: [{ category: "open", name: "Open" }, { category: "closed", name: "x".repeat(500), close_reason: "not_planned" }, { category: "weird", name: "Bad" }, { category: "open" }, null, "x"] }));
+    const detail = await createHttpIssuesApi().get(REF);
+    expect(detail.states).toEqual([{ category: "open", name: "Open" }, { category: "closed", name: "x".repeat(80), close_reason: "not_planned" }]);
+    service(() => json({ ...REF, body: "b", states: [] }));
+    expect((await createHttpIssuesApi().get(REF)).states).toEqual([]);
+    service(() => json({ ...REF, body: "b", states: "Closed" }));
+    expect((await createHttpIssuesApi().get(REF)).states).toBeUndefined();
   });
 
   it("reads the links and the find with the words as one query value", async () => {
@@ -137,12 +148,78 @@ describe("the routes", () => {
     await expect(createHttpIssuesApi().link("t", REF)).rejects.toMatchObject({ code: "tracker_not_connected", status: 409, message: "gh is signed out." });
   });
 
-  it("has no state change: the beta contract is read only against the tracker, so nothing is sent", async () => {
-    service(() => json({}));
-    await expect(createHttpIssuesApi().setState(REF, { category: "closed", name: "Closed" })).rejects.toThrow();
-    await expect(createLiveIssuesApi().setState(REF, { category: "closed", name: "Closed" })).rejects.toThrow();
-    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
-    expect(calls.some((call) => call.url.pathname.includes("/state"))).toBe(false);
+  it("sends the sort only when one was chosen, and the labels as repeated `label`", async () => {
+    service(() => json({ issues: [], counts: null, failed: [], next_cursors: {} }));
+    const query: IssueQuery = { tracker: null, state: "open", labels: ["bug", "good first"], assignee: "none", text: "" };
+    await createHttpIssuesApi().list(query);
+    await createHttpIssuesApi().list({ ...query, sort: "created" });
+    expect(calls[0]!.url.searchParams.has("sort")).toBe(false);
+    expect(calls[1]!.url.searchParams.get("sort")).toBe("created");
+    expect(calls[1]!.url.searchParams.getAll("label")).toEqual(["bug", "good first"]);
+  });
+
+  it("writes the update with the person key: the ref and only the fields given, as values in a JSON body", async () => {
+    service(() => json({ ...REF, body: "new", states: [{ category: "open", name: "Open" }] }));
+    const detail = await createHttpIssuesApi().update(REF, { body: "a\"b </script> <<<ISSUE TEXT", labels: ["bug"] });
+    expect(calls).toHaveLength(1);
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("POST /api/issues/item/update");
+    expect(calls[0]!.url.search).toBe("");
+    expect(calls[0]!.headers.get(PERSON_HEADER)).toBe("shell-key");
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, body: "a\"b </script> <<<ISSUE TEXT", labels: ["bug"] });
+    expect(detail.comments).toEqual([]);
+    expect(detail.states).toEqual([{ category: "open", name: "Open" }]);
+  });
+
+  it("refuses an update over a limit, or with nothing in it, before anything is sent", async () => {
+    service(() => json({ ...REF, body: "b" }));
+    const api = createHttpIssuesApi();
+    await expect(api.update(REF, {})).rejects.toThrow(/nothing to change/i);
+    await expect(api.update(REF, { title: "a\nb" })).rejects.toThrow(/one line/i);
+    await expect(api.update(REF, { title: "x".repeat(257) })).rejects.toThrow(/256/);
+    await expect(api.update(REF, { body: "é".repeat(33_000) })).rejects.toThrow(/64 KiB/);
+    await expect(api.update(REF, { labels: Array.from({ length: 51 }, (_, at) => `l${at}`) })).rejects.toThrow(/50 labels/);
+    await expect(api.update(REF, { assignees: Array.from({ length: 26 }, (_, at) => `u${at}`) })).rejects.toThrow(/25 assignees/);
+    expect(calls).toEqual([]);
+    // At the limits it is sent.
+    await api.update(REF, { title: "x".repeat(256), body: "a".repeat(65_536), labels: Array.from({ length: 50 }, (_, at) => `l${at}`), assignees: Array.from({ length: 25 }, (_, at) => `u${at}`) });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("writes the state with the person key as the state's name", async () => {
+    service(() => json({ ...REF, body: "b", states: [] }));
+    await createHttpIssuesApi().setState(REF, { category: "closed", name: "Closed", close_reason: "completed" });
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("POST /api/issues/item/state");
+    expect(calls[0]!.headers.get(PERSON_HEADER)).toBe("shell-key");
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ ...REF, state: "Closed" });
+  });
+
+  it("reads the candidates for a scope, capped, with no entry a write could not use", async () => {
+    const many = Array.from({ length: 260 }, (_, at) => ({ name: `l${at}` }));
+    service(() => json({ labels: [...many, { color: "red" }], assignees: [{ login: "riley", id: 7, name: "R".repeat(300) }, { login: "no-id" }, { id: "x" }], truncated: false }));
+    const found = await createHttpIssuesApi().candidates(REF);
+    expect(`${calls[0]!.method} ${calls[0]!.url.pathname}`).toBe("GET /api/issues/candidates");
+    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ tracker: "github", scope: "orbyn-dev/orbyn-engineering" });
+    expect(found.labels).toHaveLength(200);
+    expect(found.assignees).toEqual([{ login: "riley", id: "7", name: "R".repeat(80) }]);
+    // More than 200 arrived, so the list is cut short whatever the service said.
+    expect(found.truncated).toBe(true);
+    service(() => json("nonsense"));
+    expect(await createHttpIssuesApi().candidates(REF)).toEqual({ labels: [], assignees: [], truncated: false });
+  });
+
+  it("offers() reads once, and only a 404 or 405 that is not a missing issue says no", async () => {
+    service(() => json({ code: "invalid", message: "tracker is required" }, 400));
+    expect(await createHttpIssuesApi().offers()).toBe(true);
+    service(() => json({ code: "tracker_not_connected", message: "m" }, 409));
+    expect(await createHttpIssuesApi().offers()).toBe(true);
+    service(() => new Response("", { status: 404 }));
+    expect(await createHttpIssuesApi().offers()).toBe(false);
+    service(() => new Response("", { status: 405 }));
+    expect(await createHttpIssuesApi().offers()).toBe(false);
+    service(() => { throw new TypeError("offline"); });
+    await expect(createHttpIssuesApi().offers()).rejects.toThrow();
+    // Every probe is a read: nothing was written.
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 
   it("pages with `cursors`: once, JSON then URL-encoded, with the same filters", async () => {
@@ -184,6 +261,26 @@ describe("the client the app starts with", () => {
     await expect(api.startThread(REF, { message: "m", project_id: "p" })).rejects.toThrow();
     await expect(api.connect("gitlab", { token: TOKEN })).rejects.toThrow();
     expect(calls.map((call) => `${call.method} ${call.url.pathname}`)).toEqual(["GET /api/issues/trackers"]);
+  });
+
+  it("offers the writes only after the trackers answer and the probe says so, and caches the answer; a network failure asks again", async () => {
+    let candidates = 404;
+    service((call) => (call.url.pathname === "/api/issues/trackers" ? json([{ tracker: "github", connected: true }]) : json({ code: "x", message: "m" }, candidates)));
+    const api = createLiveIssuesApi();
+    expect(await api.offers()).toBe(false);
+    candidates = 400;
+    // Cached: the first answer stands for the life of the page.
+    expect(await api.offers()).toBe(false);
+    expect(calls.map((call) => call.url.pathname)).toEqual(["/api/issues/trackers", "/api/issues/candidates"]);
+    service((call) => (call.url.pathname === "/api/issues/trackers" ? json([{ tracker: "github", connected: true }]) : json({ code: "invalid", message: "m" }, 400)));
+    expect(await createLiveIssuesApi().offers()).toBe(true);
+    service(() => json({ code: "not_found", message: "Not found." }, 404));
+    const absent = createLiveIssuesApi();
+    expect(await absent.offers()).toBe(false);
+    await expect(absent.update(REF, { body: "x" })).rejects.toThrow();
+    await expect(absent.setState(REF, { category: "open", name: "Open" })).rejects.toThrow();
+    await expect(absent.candidates(REF)).rejects.toThrow();
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
   it("turns the real routes on once the trackers answer, and not before", async () => {

@@ -56,8 +56,11 @@ export function applyQuery(issues: readonly IssueSummary[], query: IssueQuery, v
       const hay = `${issue.display_key} ${issue.title}`.toLowerCase();
       return words.every((word) => hay.includes(word));
     })
-    .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    .sort((a, b) => (query.sort === "created" ? Date.parse(b.created_at) - Date.parse(a.created_at) : Date.parse(b.updated_at) - Date.parse(a.updated_at)));
 }
+
+/** What the sort control says: `Sort: Updated` or `Sort: Created`. */
+export const sortWord = (sort: IssueQuery["sort"]): string => (sort === "created" ? "Created" : "Updated");
 
 /** The labels in a list with how many issues carry each, most used first. */
 export function labelCounts(issues: readonly IssueSummary[]): { name: string; count: number }[] {

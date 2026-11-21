@@ -184,6 +184,11 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
 export const PENDING_PERSON_ROUTES: readonly (readonly [method: string, pattern: string])[] = [
   ["POST", "/api/threads/{id}/send-without-approvals"],
   ["POST", "/api/projects/{project_id}/engines/{engine}/notice/acknowledge"],
+  // Issues (docs/issues.md, "Issue writes and list controls"): the two writes of the tracker's own data. The five Issues writes of the
+  // first slice (connect, disconnect, link, unlink, start-thread) are in `routes.json` and so in `PERSON_ROUTES`. These two are not
+  // built in the service yet: when they land in `routes.json` the test below fails and each line moves into `PERSON_ROUTES`.
+  ["POST", "/api/issues/item/update"],
+  ["POST", "/api/issues/item/state"],
   // Multi-repository projects (docs/multi-repo.md, PR #923): every write is Person-class. The reads (`GET .../repos`) are not.
   ["POST", "/api/projects/{id}/repos/add-folder"],
   ["POST", "/api/projects/{id}/repos/create"],
