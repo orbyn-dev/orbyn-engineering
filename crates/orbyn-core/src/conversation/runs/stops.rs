@@ -50,11 +50,13 @@ impl RunManager {
         }
     }
 
-    pub(super) fn requeue_steer(&self, scope: &RunScope, prompt: &str) {
-        let queued = self
-            .store
-            .requeue_failed_steer(&scope.run_id, &scope.thread_id, prompt);
-        if let Err(error) = queued {
+    pub(super) fn requeue_steer(&self, scope: &RunScope, steer: &SteerMessage) {
+        if let Err(error) = self.store.requeue_failed_steer(
+            &scope.run_id,
+            &scope.thread_id,
+            &steer.message_id,
+            &steer.prompt,
+        ) {
             tracing::warn!(%error, "could not requeue a steered message");
         }
     }

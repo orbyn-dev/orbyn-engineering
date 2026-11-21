@@ -3,6 +3,7 @@
 //! only ever calls a tool with a draft.
 
 mod board;
+pub(in crate::crew) mod config;
 pub(super) mod deliver;
 mod ledger;
 mod notify;
@@ -11,7 +12,7 @@ pub(super) mod rules;
 mod wait;
 
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use orbyn_contracts::{CrewError, CrewId, CrewMember, CrewRole, CrewToken, ErrorCode};
 use serde_json::{Value, json};
@@ -21,6 +22,9 @@ use super::tool::{LEAD_MEMBER, invalid};
 use crate::app::Core;
 use crate::tools::mcp::McpBinding;
 
+pub(super) type DeliveryKey = (String, String, String);
+pub(super) type DeliveryClaims = Arc<Mutex<HashSet<DeliveryKey>>>;
+
 pub const POST_TOOL: &str = "crew_post";
 pub const ASK_TOOL: &str = "crew_ask";
 pub const BOARD_READ_TOOL: &str = "crew_board_read";
@@ -29,7 +33,7 @@ pub const BOARD_WRITE_TOOL: &str = "crew_board_write";
 pub const BUS_TOOLS: [&str; 4] = [POST_TOOL, ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL];
 
 /// The limits the guards apply. A repo rule may lower the first two (SPEC.md H4, H5) through
-/// [`Bus::lower`]; nothing reads a rule from a repo yet, so a crew runs on the defaults.
+/// caller-scoped committed policy. [`Bus::lower`] supplies a process-wide host ceiling only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
     /// Messages between two members before the lead is told (H4).
@@ -79,10 +83,13 @@ pub struct Bus {
     pub(super) lock: tokio::sync::Mutex<()>,
     pub(super) wake: tokio::sync::Notify,
     pub(super) waiting: Mutex<HashSet<String>>,
+    // A launch and an early inbox call must not both hand over the same message.
+    // These short claims hold no mutex guard across the engine's asynchronous start.
+    pub(super) deliveries: DeliveryClaims,
 }
 
 impl Bus {
-    /// Applies a repo rule: the exchange and post limits can only go down (H4, H5).
+    /// Tightens the process-wide host ceiling. Repository rules never mutate this state.
     pub fn lower(&self, exchanges: Option<u32>, posts: Option<u32>) {
         if let Ok(mut limits) = self.limits.lock() {
             *limits = limits.lowered(exchanges, posts);
@@ -266,11 +273,6 @@ impl Core {
             ));
         }
         Ok(())
-    }
-
-    /// The limits a crew runs on.
-    pub(super) fn crew_limits(&self) -> Limits {
-        self.crew_bus.limits()
     }
 
     /// The caller of a bus tool. Off, the tools do not exist (`unknown_tool`); a worker whose

@@ -1781,6 +1781,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "boon",
  "chacha20poly1305",
  "ed25519-dalek",
  "futures-util",
@@ -1919,6 +1920,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sha2 0.11.1",
  "time",
  "tokio",

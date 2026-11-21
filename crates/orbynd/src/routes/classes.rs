@@ -115,6 +115,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/engines/{id}/update"),
     ("POST", "/api/shell/actions"),
     ("POST", "/api/updates/app/apply"),
+    ("POST", "/api/updates/app/download"),
     ("POST", "/api/updates/apply-all"),
     ("POST", "/api/workspace/rollback"),
     ("POST", "/api/workspace/setup"),
@@ -157,6 +158,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/projects/{id}/pulls/{number}/review"),
     ("POST", "/api/projects/{id}/trust"),
     ("POST", "/api/projects/{id}/workflows/{run}/approve"),
+    ("DELETE", "/api/projects/{id}/worktrees/{worktree}"),
     (
         "POST",
         "/api/projects/{id}/worktrees/{worktree}/file-actions",
@@ -175,6 +177,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/computer"),
     ("POST", "/api/threads/{id}/console"),
     ("PUT", "/api/threads/{id}/files/content"),
+    ("POST", "/api/threads/{id}/files/mutate"),
     ("POST", "/api/threads/{id}/pulls/{number}/merge"),
     ("POST", "/api/threads/{id}/pulls/{number}/review"),
     ("POST", "/api/threads/{id}/scripts"),
@@ -689,6 +692,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "approves a workflow run on the forge",
     ),
     (
+        "DELETE",
+        "/api/projects/{id}/worktrees/{worktree}",
+        "removes a worktree and every file in it",
+    ),
+    (
         "POST",
         "/api/projects/{id}/worktrees/{worktree}/file-actions",
         "explorer writes to the person's files",
@@ -774,6 +782,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "runs a command as the person in the thread's checkout",
     ),
     (
+        "POST",
+        "/api/threads/{id}/files/mutate",
+        "creates, renames or deletes files in the person's checkout",
+    ),
+    (
         "PUT",
         "/api/threads/{id}/files/content",
         "writes a file in the person's checkout",
@@ -802,6 +815,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/updates/app/apply",
         "replaces the installed app",
+    ),
+    (
+        "POST",
+        "/api/updates/app/download",
+        "consents to an app download and reserves run admission",
     ),
     (
         "POST",
