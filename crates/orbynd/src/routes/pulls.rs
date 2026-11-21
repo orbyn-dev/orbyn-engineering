@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use orbyn_contracts::{
     AddPullComment, AskAboutStop, BulkClosePulls, CheckoutPull, EditPullComment, GeneratePullGuide,
@@ -468,8 +468,15 @@ pub async fn stack_action(
 pub async fn checkout(
     State(state): State<AppState>,
     Path((id, number)): Path<(String, u64)>,
+    headers: HeaderMap,
     ApiJson(body): ApiJson<CheckoutPull>,
 ) -> ApiResult<impl IntoResponse> {
+    // `worktree: false` runs `git switch` in the project's own checkout, which moves it under the person (ruling F3, as
+    // the branch routes), so it needs the person key, and it is refused before the fetch. `worktree: true` adds a worktree
+    // and leaves that checkout alone, so it stays `Local`.
+    if !body.worktree {
+        state.access.person_check(&headers)?;
+    }
     Ok(Json(
         state
             .core

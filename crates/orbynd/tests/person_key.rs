@@ -81,6 +81,15 @@ fn options_probing(
             ("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into()),
             // The most the service says, so the log check below reads a real log.
             ("ORBYN_LOG".into(), "debug".into()),
+            // A test may put a stand-in `gh` in `<dir>/bin` after the service has started.
+            (
+                "PATH".into(),
+                format!(
+                    "{}:{}",
+                    dir.path().join("bin").display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            ),
             (
                 "ORBYN_FAKE_PROBE_FILE".into(),
                 dir.path().join("probe.json").to_string_lossy().into_owned(),
@@ -550,6 +559,89 @@ async fn the_routes_that_move_a_checkout_refuse_a_token_only_caller_and_take_the
     let (status, body) = f.call(&init, json!({}), Some(&key)).await;
     assert_eq!(status, 200, "{body}");
     assert!(plain.join(".git").exists());
+}
+
+/// Ruling F3: a pull checkout with `worktree: false` runs `git switch` in the project's own checkout, so it needs the
+/// person key and is refused before the fetch; `worktree: true` leaves that checkout alone and stays `Local`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_pull_checkout_that_moves_the_main_checkout_needs_the_key() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    let folder = f.dir.path().join("app");
+
+    // A stand-in `gh` that answers `pr view` with a pull whose branch is `feature`, and a bare remote that has it.
+    let bin = f.dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = f.dir.path().join("gh-log");
+    let gh = format!(
+        r#"#!/bin/sh
+echo "$@" >> "{}"
+case "$1 $2" in
+  "pr view") echo '{{"number":12,"title":"T","url":"https://github.com/o/r/pull/12","state":"OPEN","headRefName":"feature","baseRefName":"main","author":{{"login":"me"}},"isDraft":false,"labels":[],"statusCheckRollup":[]}}' ;;
+esac
+"#,
+        log.display()
+    );
+    std::fs::write(bin.join("gh"), gh).unwrap();
+    std::fs::set_permissions(bin.join("gh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let remote = f.dir.path().join("remote.git");
+    run_git(
+        f.dir.path(),
+        &["init", "-q", "--bare", remote.to_str().unwrap()],
+    );
+    run_git(&folder, &["branch", "feature"]);
+    run_git(
+        &folder,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    run_git(&folder, &["push", "-q", "origin", "feature", "main"]);
+    run_git(&folder, &["branch", "-D", "feature"]);
+    // A GitHub-shaped origin, so the forge is `gh`; git still fetches from the bare remote.
+    run_git(
+        &folder,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", remote.display()),
+            "https://github.com/o/r.git",
+        ],
+    );
+    run_git(
+        &folder,
+        &["remote", "set-url", "origin", "https://github.com/o/r.git"],
+    );
+    let checkout = format!("/api/projects/{}/pulls/12/checkout", f.project);
+
+    // worktree false, token only: refused with nothing changed (no fetch, so no local branch, and the forge is not asked).
+    let (status, body) = f.call(&checkout, json!({ "worktree": false }), None).await;
+    assert_eq!(
+        (status, &body["code"]),
+        (403, &json!("person_required")),
+        "{body}"
+    );
+    assert!(!has_branch(&folder, "feature"), "a refused call fetched");
+    assert_eq!(current_branch(&folder), "main");
+    assert!(std::fs::read_to_string(&log).unwrap_or_default().is_empty());
+
+    // worktree false, with the key: switches the project's checkout.
+    let (status, body) = f
+        .call(&checkout, json!({ "worktree": false }), Some(&key))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(current_branch(&folder), "feature");
+    run_git(&folder, &["switch", "-q", "main"]);
+
+    // worktree true, token only: allowed, and the project's checkout stays where it was.
+    let (status, body) = f.call(&checkout, json!({ "worktree": true }), None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        Path::new(body["path"].as_str().unwrap())
+            .join("a.txt")
+            .exists()
+    );
+    assert_eq!(current_branch(&folder), "main");
 }
 
 /// A browser cannot set a header on a socket and the key must not be in the URL, so the page offers it as the subprotocol
