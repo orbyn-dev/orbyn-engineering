@@ -168,6 +168,14 @@ impl RunManager {
             handoff: handoff.as_deref(),
         });
         let kind = RunKind::parse(&prompt);
+        // What the engine reads is masked once, here, for every engine; the person's own
+        // message, the queue and the timeline keep the text as typed. A `/goal` is kept as typed.
+        let sent_prompt = self.mask_for_engine(&thread.project_id, &prompt)?;
+        let sent_kind = if sent_prompt == prompt {
+            kind.clone()
+        } else {
+            RunKind::parse(&sent_prompt)
+        };
         // An app's note rides with the next ordinary turn only, and the timeline
         // records exactly what was sent before the engine sees it.
         if kind == RunKind::Turn
@@ -221,12 +229,12 @@ impl RunManager {
             cwd: start,
             library: root,
             checkout,
-            prompt: format!("{context}\n\n{prompt}"),
+            prompt: format!("{context}\n\n{sent_prompt}"),
             context,
-            kind,
+            kind: sent_kind,
             mode: scope.mode,
             plan: scope.plan,
-            user_prompt: prompt,
+            user_prompt: sent_prompt,
             model: chosen.model.clone(),
             effort: chosen.effort.clone(),
             options: chosen.options.clone(),

@@ -22,6 +22,7 @@ describe("routes", () => {
     { name: "settings", section: null },
     { name: "settings", section: "projects" },
     { name: "settings", section: "appearance", sub: "theme-editor" },
+    { name: "settings", section: "chat", row: "search-engine" },
     { name: "settings", section: "threads", machine: "remote/missing" },
     { name: "settings", section: "worktrees", selection: { kind: "project_group", group_key: "group:/one?x" } },
     { name: "settings", section: "threads", selection: { kind: "checkout", group_key: "group:/one", project_id: "id/2" } },
@@ -35,6 +36,8 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "coverage", repo: "p/app", from: "capacity" },
     { name: "settings", section: "crew", crewPage: "coverage", from: "escapes" },
     { name: "settings", section: "crew", crewPage: "capacity", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "dashboard" },
+    { name: "settings", section: "crew", crewPage: "dashboard", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "escapes" },
     { name: "settings", section: "crew", crewPage: "escapes", repo: "p/app" },
     { name: "settings", section: "crew", crewPage: "possible", repo: "p/app" },
@@ -52,6 +55,8 @@ describe("routes", () => {
     expect(routeHref({ name: "settings", section: "crew", crewPage: "coverage" })).toBe("#/settings/crew/capacity/coverage");
     expect(routeHref({ name: "settings", section: "crew", crewPage: "escape", id: "a b" })).toBe("#/settings/crew/escapes/detail?id=a+b");
     expect(routeHref({ name: "settings", section: "crew", crewPage: "backtest" })).toBe("#/settings/crew/backtest");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "dashboard", repo: "p/app" })).toBe("#/settings/crew/dashboard?repo=p%2Fapp");
+    expect(parseRoute("#/settings/crew/dashboard/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "dashboard" });
     expect(parseRoute("#/settings/crew/areas/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "areas" });
     expect(parseRoute("#/settings/crew/capacity/xyz")).toEqual({ name: "settings", section: "crew", crewPage: "capacity" });
     expect(parseRoute("#/settings/crew/nope")).toEqual({ name: "settings", section: "crew" });
@@ -69,6 +74,16 @@ describe("routes", () => {
     expect(parseRoute("#/settings/crew/capacity/coverage?from=elsewhere")).toEqual({ name: "settings", section: "crew", crewPage: "coverage" });
     expect(parseRoute("#/settings/crew/capacity/coverage?from=")).toEqual({ name: "settings", section: "crew", crewPage: "coverage" });
     expect(parseRoute("#/settings/crew/escapes?from=capacity")).toEqual({ name: "settings", section: "crew", crewPage: "escapes" });
+  });
+
+  it("reads a row key from a Settings address, only a plain one, and never on Crew or over a sub-page", () => {
+    expect(parseRoute("#/settings/chat/search-engine")).toEqual({ name: "settings", section: "chat", row: "search-engine" });
+    expect(parseRoute("#/settings/appearance/theme-editor")).toEqual({ name: "settings", section: "appearance", sub: "theme-editor" });
+    for (const bad of ["__proto__", "Search_Engine", "a%2Fb", "a b", "-a", "a--b", "a".repeat(5) + "-", ""]) {
+      expect(parseRoute(`#/settings/chat/${bad}`)).toEqual({ name: "settings", section: "chat" });
+    }
+    expect(parseRoute("#/settings/crew/search-engine")).toEqual({ name: "settings", section: "crew" });
+    expect(routeHref({ name: "settings", section: "chat", row: "__proto__" })).toBe("#/settings/chat");
   });
 
   it("falls back to the list for a pull request link without a number", () => {
@@ -117,13 +132,14 @@ describe("routes", () => {
 
   it("reads a page inside a page, and keeps an unknown page name as data, never as a lookup key", () => {
     expect(parseRoute("#/settings/appearance/theme-editor")).toEqual({ name: "settings", section: "appearance", sub: "theme-editor" });
-    // A sub-page the section does not have is the section itself; so is one under a section with none.
-    expect(parseRoute("#/settings/appearance/nope")).toEqual({ name: "settings", section: "appearance" });
-    expect(parseRoute("#/settings/chat/theme-editor")).toEqual({ name: "settings", section: "chat" });
+    // A sub-page the section does not have is read as a row key, which Settings looks up and ignores when it has no such row.
+    expect(parseRoute("#/settings/appearance/nope")).toEqual({ name: "settings", section: "appearance", row: "nope" });
+    expect(parseRoute("#/settings/chat/theme-editor")).toEqual({ name: "settings", section: "chat", row: "theme-editor" });
     expect(routeHref({ name: "settings", section: "chat", sub: "theme-editor" })).toBe("#/settings/chat");
     for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
       expect(parseRoute(`#/settings/${name}`)).toEqual({ name: "settings", section: null, unknown: name });
-      expect(parseRoute(`#/settings/appearance/${name}`)).toEqual({ name: "settings", section: "appearance" });
+      // A row key is data: it is never a property name on anything (Settings keeps its rows in a Map).
+      expect(parseRoute(`#/settings/appearance/${name}`)).toEqual(name === "constructor" ? { name: "settings", section: "appearance", row: name } : { name: "settings", section: "appearance" });
     }
     // The note is shown once; an address never carries it.
     expect(routeHref({ name: "settings", section: null, unknown: "voice" })).toBe("#/settings");

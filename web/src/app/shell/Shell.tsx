@@ -140,7 +140,7 @@ export function Shell() {
         <main id="main" ref={main} tabIndex={-1} hidden />
       ) : (
         <main id="main" ref={main} tabIndex={-1} className="main">
-          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} onClose={() => navigate(underneath)} /> : null}
+          {route.name === "settings" ? <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => navigate(underneath)} /> : null}
           {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. */}
           <div className="main-view" hidden={route.name === "settings"}>
             <RouteView route={underneath} needsProject={needsProject} />

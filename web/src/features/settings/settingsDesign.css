@@ -980,6 +980,30 @@
   font-size: var(--text-small);
 }
 
+@media (max-width: 599px) {
+  .settings-note { flex-wrap: wrap; }
+  .settings-note > span { flex: 1 1 100%; }
+}
+
+/* The row an address names (pb-k55-row-anchor): a steady 2 px ring in the Browser panel pointer's blue on the selected background; the halo that fades
+   over about half a second is left out with reduced motion (pb-k55-row-anchor-still). The ring is inset, so the window's edge never cuts it. */
+.settings-page [data-anchored="true"] {
+  margin-inline: -12px;
+  padding-inline: 12px;
+  border-radius: 10px;
+  background: var(--color-selected);
+  box-shadow: inset 0 0 0 2px var(--color-blueSolid);
+  outline: none;
+  animation: set-anchor-halo 500ms ease-out;
+}
+@keyframes set-anchor-halo {
+  from { box-shadow: inset 0 0 0 2px var(--color-blueSolid), 0 0 0 5px color-mix(in srgb, var(--color-blueSolid) 30%, transparent); }
+  to { box-shadow: inset 0 0 0 2px var(--color-blueSolid), 0 0 0 5px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-page [data-anchored="true"] { animation: none; }
+}
+
 /* Theme editor: the element inspector (parity K15). Settings is hidden while picking so the app behind it can be pointed at. */
 html[data-inspecting] .settings-page { display: none; }
 html[data-inspecting] .main-view[hidden] { display: block; }

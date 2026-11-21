@@ -116,3 +116,23 @@ it("numbers every cause outermost first and ends on the loop marker in plain wor
 });
 
 beforeEach(() => vi.useRealTimers());
+
+it("opens nothing on the card for a crash that left neither how it ended nor words, and shows the text as written when it did", async () => {
+  const base = hostFixtures().find((row) => row.id === "codex")!;
+  const crash = { at: new Date().toISOString(), message: "x", stderr_tail: "", error_kind: undefined } as never;
+  const bare: HostRow = { ...base, state: "crashed", restart: null, restart_count: 0, last_error: { message: "The host process closed its output.", causes: [] }, last_crash: crash };
+  setEngineHostApi(createEngineHostMock({ hosts: [bare] }));
+  const { unmount } = render(<EngineHostCard engineId="codex" />);
+  expect(await screen.findByText("The host process closed its output.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Show details" })).toBeNull();
+  unmount();
+  const words: HostRow = { ...bare, last_crash: { at: new Date().toISOString(), message: "x", stderr_tail: "line one\n<b>two</b> https://example.com", error_kind: "closed_output", exit_code: 3 } as never };
+  setEngineHostApi(createEngineHostMock({ hosts: [words] }));
+  const user = userEvent.setup();
+  render(<EngineHostCard engineId="codex" />);
+  await user.click(await screen.findByRole("button", { name: "Show details" }));
+  const text = screen.getByText(/line one/);
+  expect(text.tagName).toBe("PRE");
+  expect(text.textContent).toBe("line one\n<b>two</b> https://example.com");
+  expect(text.querySelector("a, b")).toBeNull();
+});

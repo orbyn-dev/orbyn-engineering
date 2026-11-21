@@ -7,6 +7,7 @@ import { EngineHostGroup } from "../settings/engineHost/HostGroup";
 import { HostProcessRows, useHostProcesses } from "../settings/engineHost/HostProcesses";
 import { engineHostApi, setEngineHostApi, useEngineHosts } from "./index";
 import { hostCrashes, hostRows, toHostRow } from "./hostStatus";
+import { processLine, stateLine } from "./hostText";
 import { ComposerHostLine } from "./HostUi";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -162,4 +163,31 @@ it("keeps the newest answer when an older request lands late", async () => {
   expect(screen.getByText("running")).toBeVisible();
   await act(async () => { pending[1]!(json([status({ family: "claude", state: "starting" })])); await vi.advanceTimersByTimeAsync(0); });
   expect(screen.getByText("running")).toBeVisible();
+});
+
+it("an unknown state is only a chip: no line and no action on the list, only the State row on the card (enginehost-unknown-*)", async () => {
+  vi.stubGlobal("fetch", answer([status({ family: "codex", state: "hibernating" as never, host_version: "0.1.0", protocol_host: 1, restart_count: 4 })]));
+  render(<><EngineHostGroup /><EngineHostCard engineId="codex" /></>);
+  const table = await screen.findByRole("table", { name: "Engine host" });
+  const row = within(table).getByText("Codex", { selector: ".name" }).closest("[role=row]") as HTMLElement;
+  expect(row.querySelector(".eh-sub")?.textContent).toBe("");
+  expect(within(row).queryByRole("button")).toBeNull();
+  const card = screen.getByRole("group", { name: "Engine host" });
+  expect(within(card).getByText("State")).toBeVisible();
+  expect(within(card).getByText("Unknown")).toBeVisible();
+  for (const left of ["Host", "Engine SDK", "It can", "Last error", "Action"]) expect(within(card).queryByText(left)).toBeNull();
+});
+
+it("says how many times a host restarted from the count the service sends, and reads no try number or limit", async () => {
+  const one = toHostRow(status({ family: "codex", state: "restarting", restart_count: 1 }))!;
+  const two = toHostRow(status({ family: "codex", state: "restarting", restart_count: 2 }))!;
+  const none = toHostRow(status({ family: "codex", state: "restarting" }))!;
+  expect(two.restart).toBeUndefined();
+  expect(stateLine(one)).toBe("Waiting to start it again. Restarted 1 time since Orbyn started.");
+  expect(stateLine(two)).toBe("Waiting to start it again. Restarted 2 times since Orbyn started.");
+  expect(stateLine(none)).toBe("Waiting to start it again.");
+  expect(processLine(two, Date.now())).toBe("Restarting · restarted 2 times");
+  // A service that sent a try and a limit in the future is not read until the contract has them.
+  const sent = toHostRow({ ...status({ family: "codex", state: "restarting", restart_count: 2 }), restart: { attempt: 3, limit: 5 } } as never)!;
+  expect(stateLine(sent)).toBe("Waiting to start it again. Restarted 2 times since Orbyn started.");
 });

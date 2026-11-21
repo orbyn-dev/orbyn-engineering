@@ -1,7 +1,7 @@
 import { SCOPE_LINE_SECTIONS, SettingsScopeProvider } from "./rows/SettingsScopeContext";
 import { ScopeSentence } from "./rows/ScopeSentence";
 import { SettingRowIds } from "./rows/SettingRow";
-import { searchSettings, settingSearchId } from "./settingsSearch";
+import { SETTINGS, searchSettings, settingSearchId } from "./settingsSearch";
 import { api } from "./api";
 import { onShellChange } from "./api";
 import { useAsync } from "../../lib/useAsync";
@@ -90,14 +90,17 @@ const views: Record<SettingsSection, () => React.JSX.Element | null> = {
 };
 
 /** Settings fill the main area of the frame: a section list on the left, the open section on the right. */
-export function SettingsPage({ section, sub = null, unknown, onClose }: { section: SettingsSection | null; sub?: SettingsSubPage | null; unknown?: string; onClose(): void }) {
-  return <SettingsScopeProvider section={section ?? "general"}><SettingsPageContent section={section} sub={sub} unknown={unknown} onClose={onClose} /></SettingsScopeProvider>;
+export function SettingsPage({ section, sub = null, unknown, row, onClose }: { section: SettingsSection | null; sub?: SettingsSubPage | null; unknown?: string; row?: string; onClose(): void }) {
+  return <SettingsScopeProvider section={section ?? "general"}><SettingsPageContent section={section} sub={sub} unknown={unknown} row={row} onClose={onClose} /></SettingsScopeProvider>;
 }
+
+/** The rows an address can name: `chat/search-engine` is the row `chat-search-engine`. A Map, so a key such as `constructor` finds nothing. */
+const ADDRESS_ROWS = new Map<string, string>(SETTINGS.flatMap((item) => (item.id.startsWith(`${item.section}-`) ? [[`${item.section}/${item.id.slice(item.section.length + 1)}`, item.id] as [string, string]] : [])));
 
 /** A page name from an address, as the note shows it: plain text, shortened. */
 const shown = (name: string) => (name.length > 40 ? `${name.slice(0, 40)}…` : name);
 
-function SettingsPageContent({ section, sub, unknown, onClose }: { section: SettingsSection | null; sub: SettingsSubPage | null; unknown?: string; onClose(): void }) {
+function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }: { section: SettingsSection | null; sub: SettingsSubPage | null; unknown?: string; row?: string; onClose(): void }) {
   const route = useRoute();
   const sectionRoute = (next: SettingsSection) => ({ name: "settings" as const, section: next, selection: route.name === "settings" ? route.selection : undefined, machine: route.name === "settings" ? route.machine : undefined });
   const ref = useRef<HTMLElement | null>(null);
@@ -105,13 +108,18 @@ function SettingsPageContent({ section, sub, unknown, onClose }: { section: Sett
   const setRef = useCallback((element: HTMLElement | null) => { ref.current = element; return measure(element); }, [measure]);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [target, setTarget] = useState<{ id: string } | null>(null);
+  const [target, setTarget] = useState<{ id: string; anchor?: boolean } | null>(null);
   const shell = useAsync("settings-search-shell", (signal) => api.shell(signal), { keep: true });
   // The Account category exists only while the sign-in gate is on: no dead entry, nothing disabled-looking.
   const accountOn = useAccountAvailable();
   // Crew is Preview: its category exists only while the service says Crew is on.
   const crewOn = useCrewFlag();
-  const current = (section === "account" && !accountOn) || (section === "crew" && !crewOn) ? "general" : (section ?? "general");
+  // A page that is off on this device opens General with a note that says so (a page that does not exist has its own note).
+  const off = (section === "account" && !accountOn) || (section === "crew" && !crewOn);
+  const current = off ? "general" : (section ?? "general");
+  const note = unknown !== undefined
+    ? { key: `unknown:${unknown}`, text: `There is no setting called “${shown(unknown)}” in this app. Showing General instead.` }
+    : off && section ? { key: `off:${section}`, text: `That page is off on this device: “${shown(labels[section])}”. Showing General instead.` } : null;
   const View = views[current];
   // A sub-page belongs to its own page only.
   const open = sub && SUBPAGES[sub].parent === current ? sub : null;
@@ -147,12 +155,27 @@ function SettingsPageContent({ section, sub, unknown, onClose }: { section: Sett
     return searchSettings(query, shell.data?.attached === true, available);
   }, [query, shell.data]);
 
+  // An address that names a row on the open page: reveal it, and ring it until the next click or key.
+  useEffect(() => {
+    const id = section && addressRow !== undefined && section === current ? ADDRESS_ROWS.get(`${section}/${addressRow}`) : undefined;
+    if (id) setTarget({ id, anchor: true });
+    else setTarget((now) => (now?.anchor ? null : now));
+  }, [section, addressRow, current]);
+
   useEffect(() => {
     if (!target) return;
     const page = ref.current;
     if (!page) return;
     let frame = 0;
     let finished = false;
+    let ringed: HTMLElement | null = null;
+    const unring = () => {
+      ringed?.removeAttribute("data-anchored");
+      document.removeEventListener("pointerdown", unring, true);
+      document.removeEventListener("keydown", unring, true);
+      ringed?.removeEventListener("blur", unring);
+      ringed = null;
+    };
     const reveal = () => {
       if (finished) return;
       const row = page.querySelector<HTMLElement>(`[id="${target.id}"]`);
@@ -163,6 +186,14 @@ function SettingsPageContent({ section, sub, unknown, onClose }: { section: Sett
         if (row.closest("[hidden]")) return;
         row.scrollIntoView?.({ block: "center" });
         row.focus({ preventScroll: true });
+        if (target.anchor) {
+          // No timer: the ring stays while the row has focus, and goes with the next click or key.
+          ringed = row;
+          row.setAttribute("data-anchored", "true");
+          document.addEventListener("pointerdown", unring, true);
+          document.addEventListener("keydown", unring, true);
+          row.addEventListener("blur", unring);
+        }
         finished = true;
         observer.disconnect();
       });
@@ -170,7 +201,7 @@ function SettingsPageContent({ section, sub, unknown, onClose }: { section: Sett
     const observer = new MutationObserver(reveal);
     observer.observe(page, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
     reveal();
-    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); unring(); };
   }, [target, current]);
 
   // The section list scrolls (down on a short window, sideways on a narrow one), so the open section is kept in view.
@@ -244,10 +275,10 @@ function SettingsPageContent({ section, sub, unknown, onClose }: { section: Sett
         </header>
         <div className="settings-scroll">
           <div className="settings-body">
-            {unknown !== undefined && dismissed !== unknown ? (
+            {note && dismissed !== note.key ? (
               <div className="settings-note" role="status">
-                <span>There is no setting called “{shown(unknown)}” in this app. Showing General instead.</span>
-                <Button small onClick={() => setDismissed(unknown)}>Dismiss</Button>
+                <span>{note.text}</span>
+                <Button small onClick={() => setDismissed(note.key)}>Dismiss</Button>
               </div>
             ) : null}
             {SCOPE_LINE_SECTIONS.has(current) ? <ScopeSentence /> : null}

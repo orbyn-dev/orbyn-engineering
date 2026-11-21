@@ -209,6 +209,7 @@ impl RunManager {
                 task: None,
                 input: None,
                 control: None,
+                steers: HashMap::new(),
             },
         );
         if !preparation_retry {
@@ -546,6 +547,12 @@ impl RunManager {
         steer: &SteerMessage,
         role: &str,
     ) -> Result<()> {
+        // The engine gets the masked text; the timeline below and a requeue keep what was typed.
+        let project_id = self.store.thread(thread_id)?.project_id;
+        let sent = SteerMessage {
+            message_id: steer.message_id.clone(),
+            prompt: self.mask_for_engine(&project_id, &steer.prompt)?,
+        };
         for event in [
             AgUiEvent::TextMessageStart {
                 message_id: steer.message_id.clone(),
@@ -563,9 +570,12 @@ impl RunManager {
         }
         // Marked only once the engine took it, so a refusal or a closed run leaves it
         // plain. The mark belongs to the thread: a run that ends right here cannot reject it.
-        input
-            .send(steer.clone())
-            .map_err(|_| CoreError::RunClosed)?;
+        if let Some(active) = self.lock().get_mut(run_id) {
+            active
+                .steers
+                .insert(steer.message_id.clone(), steer.prompt.clone());
+        }
+        input.send(sent).map_err(|_| CoreError::RunClosed)?;
         // The engine has the message: a failed mark must not fail the request, or a
         // retry would send it twice.
         if let Err(error) = self.store.append_thread_event(

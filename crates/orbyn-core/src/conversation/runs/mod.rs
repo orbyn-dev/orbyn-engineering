@@ -321,6 +321,9 @@ struct ActiveRun {
     task: Option<JoinHandle<()>>,
     input: Option<mpsc::UnboundedSender<SteerMessage>>,
     control: Option<mpsc::UnboundedSender<RunControl>>,
+    /// Steers sent to the engine, as typed, by message id: the engine got them masked, so a
+    /// refused one is queued again from here and the person's text is not lost.
+    steers: HashMap<String, String>,
 }
 
 /// The `CUSTOM steer.state` marker for one steer, as the timeline reads it.
@@ -340,6 +343,17 @@ async fn sleep_until_due(due: Option<tokio::time::Instant>) {
 }
 
 impl RunManager {
+    /// The text an engine reads: the secrets Settings > Secrets hides from agents become
+    /// `[hidden: <label>]`. Fails when the settings cannot be read, so nothing goes out unmasked.
+    pub(super) fn mask_for_engine(&self, project_id: &str, text: &str) -> Result<String> {
+        let redactor = crate::redaction::redactor_from(
+            &self.store,
+            crate::redaction::Surface::Agents,
+            Some(project_id),
+        )?;
+        Ok(redactor.labelled(text))
+    }
+
     pub(crate) fn new(services: RunServices) -> Self {
         let RunServices {
             store,
