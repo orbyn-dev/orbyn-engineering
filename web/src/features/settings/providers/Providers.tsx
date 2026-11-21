@@ -17,6 +17,7 @@ import { ProviderListActions, ProviderTable, useProviderList } from "./ProviderT
 import { SettingsBanner } from "../rows/SettingsBanner";
 import { followEngineUpdates } from "./engineUpdates";
 import { skippedNoInstaller, UpdateAllFacts, UpdateAllView } from "./UpdateAll";
+import { hasProviderDetail } from "./providerDetailFamily";
 
 const POLL_WHILE_UPDATING_MS = 1500;
 
@@ -62,7 +63,9 @@ export function ProvidersSection() {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState<{ instance: ProviderInstance; program: string; title: string } | null>(null);
-  const catalog = useProviderList(engines.data ?? []);
+  const { catalog, reload: reloadCatalog } = useProviderList(engines.data ?? []);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const checkedAt = useRef<number | null>(null);
   if (engines.data && !offline) checkedAt.current = Date.now();
 
@@ -79,6 +82,7 @@ export function ProvidersSection() {
     try {
       await api.refreshEngines();
       await refreshEngines();
+      if (mounted.current) await reloadCatalog();
     } catch (failure) {
       setError(toFailure(failure).message);
     } finally {
@@ -93,7 +97,7 @@ export function ProvidersSection() {
   if (view.page === "history") return <HistoryImportView onBack={list} />;
   if (view.page === "registry") return <AcpRegistryView onBack={list} />;
   const detail = view.page === "detail" ? engines.data?.find((engine) => engine.id === view.id) : undefined;
-  if (detail) {
+  if (detail && hasProviderDetail(detail)) {
     return (
       <>
         <ProviderDetail engine={detail} store={store} onBack={list} onEdit={() => setEditing(detail.id)} />

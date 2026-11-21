@@ -764,6 +764,75 @@ async fn refresh_links_the_branch_pull_request_on_its_own() {
 }
 
 #[tokio::test]
+async fn linked_threads_list_the_projects_threads_that_link_the_pull_request() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let (code, _) = f
+        .service
+        .send(
+            &format!("/api/threads/{}/branches", f.thread),
+            json!({ "name": "feature" }),
+        )
+        .await;
+    assert_eq!(code, 201);
+    let (code, linked) = f
+        .service
+        .send(
+            &format!("/api/threads/{}/pulls/refresh", f.thread),
+            json!({}),
+        )
+        .await;
+    assert_eq!(code, 200, "{linked}");
+    assert_eq!(linked[0]["number"], 12);
+    // Same project, but this thread links no pull request.
+    let unlinked = f.service.thread(&project, "codex").await;
+    let threads = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/12/linked-threads"))
+        .await;
+    let ids: Vec<&str> = threads
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|thread| thread["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [f.thread.as_str()], "only the linking thread");
+    assert_ne!(unlinked, f.thread);
+    assert_eq!(threads[0]["project_id"], project.as_str());
+    // A number nothing links in this project answers with no threads, not an error.
+    let none = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/3/linked-threads"))
+        .await;
+    assert_eq!(none, json!([]));
+}
+
+#[tokio::test]
+async fn change_breakdown_counts_the_files_by_change_kind() {
+    let f = fixture().await;
+    f.hosted();
+    let project = f.project().await;
+    let breakdown = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/12/breakdown"))
+        .await;
+    assert_eq!(breakdown["files"], 2);
+    assert_eq!(breakdown["added"], 0);
+    assert_eq!(breakdown["modified"], 1);
+    assert_eq!(breakdown["deleted"], 1);
+    assert_eq!(breakdown["renamed"], 0);
+    assert_eq!(breakdown["additions"], 1);
+    assert_eq!(breakdown["deletions"], 3);
+    // The counts are the same file rows the files read serves.
+    let files = f
+        .service
+        .json(&format!("/api/projects/{project}/pulls/12/files"))
+        .await;
+    assert_eq!(files.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn forges_report_each_cli_and_bitbucket_says_why_not() {
     let f = fixture().await;
     let forges = f.service.json("/api/forges").await;

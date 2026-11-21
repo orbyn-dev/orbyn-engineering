@@ -167,3 +167,60 @@ async fn a_bad_interval_is_refused_at_startup() {
         .expect("refused");
     assert!(error.contains("ORBYN_TELEMETRY_INTERVAL_MS"), "{error}");
 }
+
+#[tokio::test]
+async fn export_history_says_what_was_sent_and_what_was_refused() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    // Without an endpoint nothing runs and nothing is recorded.
+    let idle = Service::start(&data, fast());
+    let none = idle.json("/api/diagnostics/telemetry").await;
+    assert_eq!(none["active"], false);
+    assert_eq!(none["attempts"].as_array().unwrap().len(), 0);
+    let (base, _seen) = collector().await;
+    save(
+        &idle,
+        json!({ "metrics_url": format!("{base}/v1/metrics") }),
+    )
+    .await;
+    idle.stop().await;
+
+    let live = Service::start(&data, fast());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut found = Value::Null;
+    while Instant::now() < deadline {
+        found = live.json("/api/diagnostics/telemetry").await;
+        if !found["attempts"].as_array().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(found["active"], true);
+    let first = &found["attempts"][0];
+    assert_eq!(first["signal"], "metrics");
+    assert_eq!(first["accepted"], true);
+    assert_eq!(first["records"], 1);
+    live.stop().await;
+
+    // A collector that is gone shows as refused, and the service still answers.
+    let dead = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1/metrics", dead.local_addr().unwrap());
+    drop(dead);
+    let other = TempDir::new();
+    let data = other.path().join("data");
+    let setup = Service::start(&data, fast());
+    save(&setup, json!({ "metrics_url": url })).await;
+    setup.stop().await;
+    let down = Service::start(&data, fast());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut found = Value::Null;
+    while Instant::now() < deadline {
+        found = down.json("/api/diagnostics/telemetry").await;
+        if !found["attempts"].as_array().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(found["attempts"][0]["accepted"], false, "{found}");
+    down.stop().await;
+}
