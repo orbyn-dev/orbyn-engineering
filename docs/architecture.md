@@ -2315,8 +2315,9 @@ Approving a held Crew command needs the person's click in the desktop app's own 
 thread_id, task_id, command_sha256}`; the service answers on stdout `presence_hold`
 (the redacted command, worker name, task title, ids and the hold's binding, all from the service),
 `presence_ready` or `presence_refused {code}`. The binding is an HMAC-SHA256, keyed with a value the
-service process draws at start, over the task, the thread, the kind, the command, its paths and the
-fields that decide what runs; the engine's item ids and titles are excluded, so a retry matches.
+service process draws at start, over the task, the thread, the kind and every field of the request except the engine's own
+bookkeeping (item and call ids, titles, reasons; the list is in `docs/crew.md`), plus the option kinds an ACP request offers, so a
+retry matches.
 `host::presence::PresenceBook`
 keeps one in-memory grant per hold for 60 seconds, bound to the hold, thread, task and hash,
 replaced by a later grant, used once and dropped by a restart; `autopilot_approve_once` checks it

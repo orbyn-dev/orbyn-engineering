@@ -8,8 +8,9 @@
 //!
 //! The holds live in memory only, as the account's confirmations do: a restart ends the worker's turn and drops them, and the
 //! raw command (which may hold a secret) is never written to disk. What is written is the ledger row of each decision, with the
-//! redacted command and a binding of the request. A hold is bound to what decides what runs (the command, its paths, its working
-//! directory and the flags that change its effect), not to the engine's own item ids and titles, which change on every request; the
+//! redacted command and a binding of the request. A hold is bound to every field of the request except a short list of the engine's own
+//! bookkeeping (item and call ids, titles, reasons), which change on every request, and for an ACP request also to the option kinds
+//! it offers; the
 //! binding is an HMAC keyed with a value this process draws at start, so a reader of the ledger cannot test a guess at a short
 //! redacted command. Each hold is decided once, under one lock, so a racing approve and deny have exactly one winner.
 //!
