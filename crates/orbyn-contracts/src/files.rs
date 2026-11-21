@@ -131,7 +131,7 @@ pub struct FileDiff {
     pub patch: String,
     /// The repository of a multi-repository thread the file is in; absent for an ordinary thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional = nullable)]
+    #[ts(optional)]
     pub repo_id: Option<String>,
 }
 }

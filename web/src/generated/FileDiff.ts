@@ -4,4 +4,4 @@ export type FileDiff = { path: string, status: string, additions: number, deleti
 /**
  * The repository of a multi-repository thread the file is in; absent for an ordinary thread.
  */
-repo_id?: string | null, };
+repo_id?: string, };
