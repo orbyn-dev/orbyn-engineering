@@ -74,8 +74,8 @@ Also done, from the SDK's own types (0.3.321), tested against a fake query: `mod
 Run-end rules: the prompt goes in with a `uuid`; a `result` that arrives after a `command_lifecycle` `queued` for it but
 before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
 background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
-transcript only. Two real runs (a one-word reply and a permissioned file write) matched the frame order; they did
-not send a `uuid`, so lifecycle frames are unconfirmed on a real run.
+transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`
+for the prompt's uuid before the result. A leftover turn has not been seen on a real run.
 
 Not done, so Planned: `rollback`, subagent
 transcripts, and any run against a real `claude` with a valid login.
