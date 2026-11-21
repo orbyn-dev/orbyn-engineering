@@ -20,8 +20,12 @@ decide where each applies (Settings › Secrets, W4).
 | Terminal blocks | Formats left on, then the person's patterns | Yes, one switch |
 | What agents read | The same, unless the project is switched off | Yes, one switch, and one per project |
 
-Terminal blocks and the agent context are not built yet; `Core::redactor(surface, project)` is the
-one door they will use. Until then only Crew and the two failure-text paths apply redaction.
+Terminal blocks are not built yet. What agents read is masked once, where a run starts
+(`conversation/runs/turn.rs`, so every engine gets it) and where a steer is sent
+(`runs/admission.rs`): the message, queued follow-ups, steers, review text and Crew briefs that go through
+`launch` or `steer`. Each value becomes `[hidden: label]`. The person's own message, queue and timeline keep
+what was typed. Attached files, an engine's own tool output and Crew messages held for a worker turn are not
+masked here (Crew's own locked rule covers what Crew stores).
 
 ## Rules
 
