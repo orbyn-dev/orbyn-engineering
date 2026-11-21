@@ -4,9 +4,29 @@
 
 use std::sync::Arc;
 
+use orbyn_contracts::PermissionMode;
 use serde_json::{Value, json};
 
 use super::harness::{Turn, World, brief, report, world_tiered};
+use crate::governance::approvals::RunScope;
+use crate::tools::mcp::McpBinding;
+
+/// The lead's binding, as `harness::bind` registers it for a run, for the tests that call a review tool directly.
+pub fn lead_binding(world: &World) -> McpBinding {
+    McpBinding {
+        scope: RunScope {
+            run_id: "run-lead".into(),
+            thread_id: world.lead.clone(),
+            engine: "alpha".into(),
+            family: "alpha".into(),
+            write_scope: None,
+            mode: PermissionMode::Supervised,
+            plan: false,
+        },
+        permission_prompt: false,
+        skills: Vec::new(),
+    }
+}
 
 /// A finding draft in `path` at `line`.
 pub fn finding(path: &str, line: u32, claim: &str) -> Value {

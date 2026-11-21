@@ -29,7 +29,14 @@ struct Ready {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServiceMessage {
     CheckAppUpdate,
-    InstallAppUpdate,
+    DownloadAppUpdate {
+        release_id: String,
+        operation: u32,
+    },
+    InstallAppUpdate {
+        release_id: String,
+        operation: u32,
+    },
     ShellAction {
         action: ShellAction,
     },

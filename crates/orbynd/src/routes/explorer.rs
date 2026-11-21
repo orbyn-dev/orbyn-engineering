@@ -47,8 +47,9 @@ async fn file_action(
 }
 
 /// The explicit VCS `removeWorktree`: removes a linked worktree Orbyn made under the
-/// project's sibling `<repo>-wt` root when no thread works in it. Git keeps
-/// uncommitted work, because the removal runs without force.
+/// project's sibling `<repo>-wt` root when no thread works in it. It is refused when
+/// the worktree holds any modified, untracked or ignored file, since Git's own removal
+/// deletes ignored files; commits and branches are never touched.
 async fn remove_worktree(
     State(state): State<AppState>,
     Path((id, worktree)): Path<(String, String)>,

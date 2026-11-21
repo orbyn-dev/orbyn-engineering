@@ -224,7 +224,7 @@ From [parity.md](../parity.md) on main at `ae67b34a`, counted with `scripts/coun
 
 ## Appendix B: designed screens not yet built
 
-From [design-inventory.md](../design-inventory.md) on main: 160 screens missing, partial or preview-only in code.
+The list below is a 2026-11-11 snapshot. [design-inventory.md](../design-inventory.md) was recounted on 2026-11-20 and finds 44 of its 231 Phase 0 screens still unimplemented (38 missing, 4 preview-only, 2 unverified), so this appendix over-counts: check the row there before starting.
 
 ### Tool calls, every state (35)
 

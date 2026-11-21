@@ -147,6 +147,20 @@ async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> 
 /// `git_hardened` that never holds more than `cap` bytes of output: past the cap the process tree is stopped and the call is an
 /// error. For read paths whose output size a repository controls (messages, file lists, blame). Dropping the future stops git too.
 pub(crate) async fn git_hardened_capped(cwd: &Path, args: &[&str], cap: usize) -> Result<Vec<u8>> {
+    let (status, bytes) = git_hardened_output_capped(cwd, args, cap).await?;
+    if !status.success() {
+        return Err(CoreError::Git("git failed".into()));
+    }
+    Ok(bytes)
+}
+
+/// `git_hardened_capped`, with the exit status kept for a caller that reads a non-zero one as an answer rather than a failure:
+/// a merge dry run reports a conflict as status 1. The output is still capped and stderr still drained.
+pub(crate) async fn git_hardened_output_capped(
+    cwd: &Path,
+    args: &[&str],
+    cap: usize,
+) -> Result<(std::process::ExitStatus, Vec<u8>)> {
     use tokio::io::AsyncReadExt;
     let command = hardened_command(cwd, &[], args).await?;
     let mut child = crate::host::process::ManagedChild::spawn(command)
@@ -192,10 +206,7 @@ pub(crate) async fn git_hardened_capped(cwd: &Path, args: &[&str], cap: usize) -
     };
     let (_, status) = tokio::join!(finish, child.wait());
     let status = status.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
-    if !status.success() {
-        return Err(CoreError::Git("git failed".into()));
-    }
-    Ok(bytes)
+    Ok((status, bytes))
 }
 
 pub(crate) fn text(bytes: &[u8]) -> String {

@@ -14,6 +14,14 @@ mod write;
 
 pub use watch::ExplorerWatch;
 
+/// A person's path cleaned for a file route: relative, `/` separators, nothing to resolve
+/// (`.` and `..` are dropped or refused), no backslash or control character, no Git's
+/// folder and no Windows device or stream name. Empty is the root. The explorer's
+/// [`guard`] owns these rules; a thread's file routes use the same ones.
+pub(crate) fn clean_relative(raw: &str) -> Result<String> {
+    guard::clean(raw, cfg!(windows))
+}
+
 #[cfg(test)]
 mod tests;
 

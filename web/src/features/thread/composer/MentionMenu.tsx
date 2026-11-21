@@ -8,6 +8,8 @@ export interface Suggestion {
   insert?: string;
   /** A thread this row picks: it waits above the draft as a chip, not inline text. */
   thread?: { id: string; title: string };
+  /** A pull request this row picks: it waits above the draft as a chip, not inline text. */
+  pull?: { number: number; title: string; url: string };
 }
 
 /** The name with its matched query marked once, as the frame draws it. */

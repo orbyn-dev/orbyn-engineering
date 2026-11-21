@@ -9,6 +9,7 @@
  * which is not steered mid-turn), `crew-map-truncated`, `crew-map-no-messages`, `crew-map-many-messages` (more than one page), `crew-map-scrubbed` (members whose names the service scrubbed), `crew-map-hostile` (extra fields a service must never
  * send: a message body and a fact value, which the screens must never draw).
  */
+import type { FlowEdge } from "../src/generated/FlowEdge.ts";
 import type { FlowEngineStatus } from "../src/generated/FlowEngineStatus.ts";
 import type { FlowFact } from "../src/generated/FlowFact.ts";
 import type { FlowMap } from "../src/generated/FlowMap.ts";
@@ -88,6 +89,22 @@ const sample = (scenario: string): FlowMessage[] => {
   ];
 };
 
+/** Who has written to whom, counted by kind and carrying the newest delivery, as the map route groups its edges. */
+const edges = (scenario: string): FlowEdge[] => {
+  const rows = new Map<string, FlowEdge>();
+  for (const message of sample(scenario)) {
+    const key = message.from + "|" + message.to + "|" + message.kind;
+    const found = rows.get(key);
+    if (found) {
+      found.count += 1;
+      found.delivery = message.delivery ?? found.delivery;
+    } else {
+      rows.set(key, { from: message.from, to: message.to, kind: message.kind, label: message.label, count: 1, delivery: message.delivery ?? null });
+    }
+  }
+  return [...rows.values()];
+};
+
 const facts = (scenario: string): FlowFact[] =>
   scenario === "crew-map-empty" ? [] : [
     { key: "contract", class: "contract", author: "implement", rev: 2, at: at(36), verified: true },
@@ -108,7 +125,7 @@ export function mapMock(scenario: string, method: string, path: string, query: U
   if (path === "/api/crew/flow/map") {
     const list = nodes(scenario);
     const engines = [...new Set(list.map((node) => node.engine))].map((engine) => ({ engine, status: status(engine, scenario) }));
-    const body: FlowMap = { crew, nodes: list, edges: [{ from: "implement", to: "tests", kind: "fact", label: "a fact", count: 1, delivery: "live" }], engines, truncated: scenario === "crew-map-truncated" };
+    const body: FlowMap = { crew, nodes: list, edges: edges(scenario), engines, truncated: scenario === "crew-map-truncated" };
     return { status: 200, body: hostile ? { ...body, nodes: list.map((node) => ({ ...node, thread: HOSTILE.thread, worktree: HOSTILE.worktree, tokens: HOSTILE.tokens, level: HOSTILE.level })) } : body };
   }
   if (path === "/api/crew/flow/messages") {
