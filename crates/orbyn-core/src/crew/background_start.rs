@@ -3,7 +3,8 @@
 //! `launch_crew_task` as a Crew-started, Low-priority task, so review capacity can pause it (`capacity_start_check`) and the pause is
 //! noted as a held `background` start. Nothing here listens for anything: no CI watch, no schedule, no route.
 //!
-//! **The lead thread runs no engine.** It exists so the task has a crew and a project, and it is never sent a prompt: the run is
+//! **The lead thread runs no engine.** It exists so the task has a crew and a project. Nothing in the crew's own paths sends it a
+//! prompt (the retry and the lead notices refuse a background lead), and a person's message to it is refused at admission: the run is
 //! the person's to read, not a lead's to answer. A run's id is its lead thread's id, which is also the `crew_id` of every task of
 //! that thread, so a task finds its run (and the run its tasks) with no extra column.
 //!
@@ -13,8 +14,9 @@
 //! (`budget`, `repeated_failure`, `engine_error`, `disabled`) do not name it. A worker turn that produces nothing is an engine error
 //! (`docs/engine-run-contract.md`), never a finished run.
 //!
-//! **No background merge lands without a person.** The run's lead thread is its crew, and the crew's Autopilot mode is pinned `off`
-//! before the worker can pass, so the merge queue holds every merge of the run as `waiting` whatever the repository's mode says.
+//! **No background merge lands without a person.** The run's lead thread is its crew, and `crew_autopilot_mode` answers `off` for a
+//! crew that is a background run's lead, so the merge queue holds every merge of the run as `waiting` whatever the repository's mode
+//! says and whatever a stored row for the crew's scope holds. It is a rule of the code, not a stored row.
 //!
 //! **Budget.** The crew's turns and minutes become the brief's budget. Minutes are the task's existing timer, which cancels the worker
 //! mid-turn; turns are the worker's runs, checked each time a verification fails (the same place the minutes are), so a run whose last
@@ -29,7 +31,7 @@ use serde_json::json;
 use super::background::run_wire;
 use super::capacity::{PausedKind, PausedTrigger};
 use super::start::{Launch, Links};
-use super::{Mode, ModeScope, redact, wire_name};
+use super::{redact, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::store::{BackgroundRow, CrewTask, NewThread, RunEnd};
@@ -45,9 +47,9 @@ const MAX_LINES: u64 = 2000;
 const WHY_MAX: usize = 300;
 
 /// What a template asks for, in the words of the task. Code-owned: no repository text and no event text is part of it.
-fn outcome(template: &str, branch: Option<&str>) -> String {
+fn outcome(template: &str, branch: Option<&str>) -> Result<String> {
     let on = branch.map_or_else(String::new, |branch| format!(" on branch {branch}"));
-    match template {
+    Ok(match template {
         "fix_failing_ci" => format!(
             "Find why the latest CI run{on} fails and fix it with the smallest change that makes it pass. Do not weaken or remove a check."
         ),
@@ -57,8 +59,20 @@ fn outcome(template: &str, branch: Option<&str>) -> String {
         "security_advisory" => {
             "Find one dependency with a published security advisory and update it to a version that fixes it.".to_owned()
         }
-        _ => "Do the work this background crew was made for.".to_owned(),
-    }
+        _ => {
+            return Err(CoreError::Invalid(
+                "This crew's template is not one a run can start. Make the crew again from a template.".into(),
+            ));
+        }
+    })
+}
+
+/// The templates a run knows how to ask for. Any other is refused, not run with a vague brief.
+fn known_template(template: &str) -> bool {
+    matches!(
+        template,
+        "fix_failing_ci" | "flaky_test" | "dependency_bump" | "security_advisory"
+    )
 }
 
 /// The top-level entries of `HEAD` a run may write: a folder as `name/**`, a file by its name. `.git`, `.github` and `.orbyn` are
@@ -75,7 +89,7 @@ async fn write_entries(root: &std::path::Path) -> Result<Vec<String>> {
                     .await
                     .is_err();
             let why = if unborn {
-                "The project has nothing committed yet, so there is nothing for a background run to work on."
+                "The project has no files committed yet, so there is nothing for a background run to work on."
             } else {
                 "The project's files could not be listed."
             };
@@ -102,7 +116,7 @@ async fn write_entries(root: &std::path::Path) -> Result<Vec<String>> {
     entries.truncate(WRITE_ENTRIES_MAX);
     if entries.is_empty() {
         return Err(CoreError::Invalid(
-            "The project has nothing committed yet, so there is nothing for a background run to work on.".into(),
+            "The project has no files committed yet, so there is nothing for a background run to work on.".into(),
         ));
     }
     Ok(entries)
@@ -125,14 +139,25 @@ impl Core {
     pub async fn crew_background_run_now(
         self: &Arc<Self>,
         id: &str,
+        actor: &str,
     ) -> Result<wire::BackgroundRun> {
         self.crew_preview_only()?;
         let crew = self.background_row(id)?;
         self.refuse_background_start(&crew)?;
+        let branch = match crew.trigger_settings["branch"].as_str() {
+            None => None,
+            Some(name) if orbyn_contracts::CrewBranch::new(name).is_ok() => Some(name),
+            Some(_) => {
+                return Err(CoreError::Invalid(
+                    "This crew's branch is not a branch name a run can use. Change the branch, then start a run.".into(),
+                ));
+            }
+        };
         let project = self.store.project(&crew.project_id)?;
         if !project.trusted {
             return Err(CoreError::FolderUntrusted);
         }
+        let outcome = outcome(&crew.template, branch)?;
         let engine = self.background_lead_engine(&crew.project_id).await?;
         let files = write_entries(std::path::Path::new(&project.path)).await?;
 
@@ -149,20 +174,26 @@ impl Core {
             relation: None,
             scratch: false,
         })?;
-        let crew_scope = ModeScope::Crew(thread.id.clone());
-        if let Err(error) = self.start_background_run_for(&crew, &thread, &crew_scope) {
-            self.discard_background_lead(&thread.id, &crew_scope);
+        if let Err(error) = self
+            .store
+            .start_background_run_as(&crew.id, &thread.id, actor)
+        {
+            // No run row exists yet or it is still taskless, so this fails closed whatever the cleanup does. The person is owed the
+            // refusal, not a store error from the cleanup.
+            if let Err(cleanup) = self.store.discard_unopened_background_lead(&thread.id) {
+                tracing::error!(%cleanup, run = %thread.id, "could not take back a background start that failed to open");
+            }
             return Err(error);
         }
         let stamper = match self.review_stamper(&thread, &engine) {
             Ok(stamper) => stamper,
             Err(error) => {
-                return self.unwind_background_start(&thread.id, &crew_scope, refusal(error));
+                return self.unwind_background_start(&thread.id, refusal(error));
             }
         };
         let draft = json!({
             "kind": "implement",
-            "outcome": outcome(&crew.template, crew.trigger_settings["branch"].as_str()),
+            "outcome": outcome,
             "inputs": [],
             "files": files.iter().map(|path| json!({ "path": path, "mode": "write" })).collect::<Vec<_>>(),
             "allowed_effects": ["read_repo", "write_leased", "run_checks"],
@@ -191,7 +222,7 @@ impl Core {
         let (brief, key) = match drafted {
             Ok(both) => both,
             Err(error) => {
-                return self.unwind_background_start(&thread.id, &crew_scope, refusal(error));
+                return self.unwind_background_start(&thread.id, refusal(error));
             }
         };
         let launched = self
@@ -219,11 +250,21 @@ impl Core {
             })
             .await;
         // A task that could not be routed or started ended the run itself (it waits for a person). A start refused before any task
-        // existed, such as one held by review capacity, left no run: the run is taken back and the reason goes to the person.
-        let run = self.store.background_run(&thread.id)?;
+        // existed, such as one held by review capacity, left no run: the run is taken back and the reason goes to the person as an
+        // error. A refusal after a task exists holds the task and ends the run `needs_review` with the reason; it returns that run
+        // like the route-refused path does, because the visible outcome is the same: a run waiting for a person, not an error.
+        let mut run = self.store.background_run(&thread.id)?;
+        // The person turned the crew off while the task was being made: the run is already `disabled`, and the worker that has just
+        // started is stopped with it. A run that ended for any other reason leaves its task to the person.
+        if run.as_ref().is_some_and(|run| {
+            run.state == "stopped" && run.stop_reason.as_deref() == Some("disabled")
+        }) {
+            self.cancel_background_tasks(&thread.id).await;
+            run = self.store.background_run(&thread.id)?;
+        }
         match (launched, run) {
             (Err(error), Some(run)) if run.state == "running" => {
-                self.unwind_background_start(&thread.id, &crew_scope, refusal(error))
+                self.unwind_background_start(&thread.id, refusal(error))
             }
             (_, Some(run)) => run_wire(run),
             (Err(error), None) => Err(refusal(error)),
@@ -238,19 +279,31 @@ impl Core {
                 "This background crew is off. Turn it on, then start a run.".into(),
             ));
         }
+        if !known_template(&crew.template) {
+            return Err(CoreError::Invalid(
+                "This crew's template is not one a run can start. Make the crew again from a template.".into(),
+            ));
+        }
         match crew.trigger_kind.as_str() {
             "ci_failure" | "schedule" => {}
+            "issue_label" => {
+                return Err(CoreError::PolicyDenied(
+                    "An issue label crew cannot run yet: Orbyn cannot see new issue labels.".into(),
+                ));
+            }
             kind => {
                 let words = kind.replace('_', " ");
                 return Err(CoreError::PolicyDenied(format!(
-                    "A {words} crew cannot be started yet: nothing in Orbyn can start it."
+                    "A {words} crew cannot run yet: Orbyn has nothing that can start it."
                 )));
             }
         }
         if let (Some(newest), _) = self.store.background_standing(&crew.id)?
             && newest.state == "running"
         {
-            return Err(CoreError::RunsActive);
+            return Err(CoreError::PolicyDenied(
+                "This crew already has a run in progress.".into(),
+            ));
         }
         Ok(())
     }
@@ -283,41 +336,92 @@ impl Core {
             })
     }
 
-    /// Opens the run with the lead thread's id and pins the crew's Autopilot mode `off`, so no merge of the run lands by itself.
-    fn start_background_run_for(
+    /// Takes back a taskless start (run and lead thread, in one commit) and returns the refusal as an error, or retains a
+    /// task-backed start for review: its tasks are held and the retained run is returned. An error of the store unwind is returned
+    /// as it is, since the run is still `running` and the caller must know. What follows the commit is best effort and only logged:
+    /// each held task gives up its leases (a run that ended `needs_review` leaves none showing as granted, as `end_crew_task` does) and gets a `NeedsPerson` result with the reason
+    /// unless it already has one. A task with no run row (that insert is what failed) cannot be given a result, so it has none and
+    /// the run's `review_reason` carries the reason.
+    pub(super) fn unwind_background_start(
         &self,
-        crew: &BackgroundRow,
-        thread: &orbyn_contracts::Thread,
-        scope: &ModeScope,
-    ) -> Result<()> {
-        self.set_crew_autopilot_mode(scope, Mode::Off)?;
-        self.store.start_background_run_as(&crew.id, &thread.id)?;
+        thread_id: &str,
+        refusal: CoreError,
+    ) -> Result<wire::BackgroundRun> {
+        let why = redact(&refusal.public_message());
+        let unwound = self.store.unwind_background_run(thread_id, &why)?;
+        if unwound.discarded {
+            return Err(refusal);
+        }
+        for task in unwound.held {
+            self.settle_held_background_task(task, &why);
+        }
+        match self.store.background_run(thread_id)? {
+            Some(run) => run_wire(run),
+            None => Err(refusal),
+        }
+    }
+
+    /// What follows the commit that held a background run's task for a person, best effort and only logged: the task gives up its
+    /// leases (a run that ended `needs_review` leaves none showing as granted, as `end_crew_task` does) and gets a `NeedsPerson`
+    /// result with the reason unless it already has one. Used by a refused start and by startup recovery.
+    pub(crate) fn settle_held_background_task(&self, task: CrewTask, why: &str) {
+        if let Err(error) = self.release_crew_leases(&task.id) {
+            tracing::warn!(%error, task = %task.id, "could not release a held background task's leases");
+        }
+        let has_result = self
+            .store
+            .crew_results(&task.id)
+            .map_or(true, |results| !results.is_empty());
+        if has_result {
+            return;
+        }
+        let task = self
+            .store
+            .crew_task(&task.id)
+            .ok()
+            .flatten()
+            .unwrap_or(task);
+        if let Err(error) = self.record_result(&task, ResultState::NeedsPerson, None, why, None) {
+            tracing::warn!(%error, task = %task.id, "could not write a held background task's result");
+        }
+    }
+
+    /// Queues a notice for a crew's lead thread. A background run's lead runs no engine, so the notice is refused there instead of
+    /// starting one; every path that writes to a lead's queue goes through here or checks `crew_background_lead` first.
+    pub(super) fn enqueue_for_lead(&self, lead_thread_id: &str, text: &str) -> Result<()> {
+        if self.crew_background_lead(lead_thread_id) {
+            return Err(CoreError::CrewTaskBusy(
+                "A background run's lead thread takes no messages.".into(),
+            ));
+        }
+        self.runs.enqueue(lead_thread_id, text, &[])?;
         Ok(())
     }
 
-    /// Takes back what a refused start made: the run, the pinned mode and the lead thread. Returns the refusal.
-    fn unwind_background_start(
-        &self,
-        thread_id: &str,
-        scope: &ModeScope,
-        refusal: CoreError,
-    ) -> Result<wire::BackgroundRun> {
-        if let Err(error) = self
-            .store
-            .unwind_background_run(thread_id, &redact(&refusal.public_message()))
-        {
-            tracing::warn!(%error, "could not take back a refused background run");
-        }
-        self.discard_background_lead(thread_id, scope);
-        Err(refusal)
-    }
-
-    fn discard_background_lead(&self, thread_id: &str, scope: &ModeScope) {
-        if let Err(error) = self.clear_crew_autopilot_mode(scope) {
-            tracing::warn!(%error, "could not remove a refused background run's mode");
-        }
-        if let Err(error) = self.store.delete_thread(thread_id, "crew") {
-            tracing::warn!(%error, "could not remove a refused background run's lead thread");
+    /// Cancels every task of a run that has not ended, as the person who turned the crew off. A failure is logged: the run already
+    /// ended, and a cancel that cannot finish is the task's own watchdog's to settle.
+    pub(super) async fn cancel_background_tasks(self: &Arc<Self>, run_id: &str) {
+        let tasks = match self.store.crew_tasks_in_crew(run_id) {
+            Ok(tasks) => tasks,
+            Err(error) => {
+                tracing::warn!(%error, "could not list a stopped background run's tasks");
+                return;
+            }
+        };
+        for (task, _) in tasks {
+            if super::lifecycle::is_final(&task.state) {
+                continue;
+            }
+            if let Err(error) = self
+                .crew_cancel_task(
+                    &task.id,
+                    Some("The person turned this background crew off."),
+                    "user",
+                )
+                .await
+            {
+                tracing::warn!(%error, task = %task.id, "could not cancel a background run's task");
+            }
         }
     }
 

@@ -22,6 +22,13 @@ pub(super) struct DailyCap {
     pub(super) reset: String,
 }
 
+/// What the daily check of a run in flight found.
+pub(super) enum DailyCheck {
+    Clear,
+    Cap(DailyCap),
+    Unreadable,
+}
+
 /// The person's today, and when it turns: `(day, reset)` from their UTC offset. The day is the local calendar date
 /// `YYYY-MM-DD`; the reset is the next local midnight as RFC 3339, so the client can show the person their own clock.
 pub(super) fn local_day_and_reset(offset_minutes: i32, now: i64) -> Option<(String, String)> {
@@ -43,17 +50,23 @@ impl Core {
     /// minutes so far) and, when the crew has a daily budget, on the engine's day. A failure here never changes how the run
     /// ended. Called once per turn from `crew_worker_run_ended`.
     pub(super) fn crew_background_turn_ended(&self, task: &CrewTask, worker: &str) {
-        let Ok(Some(run)) = self.store.background_run(&task.crew_id) else {
-            return;
+        let run = match self.store.background_run(&task.crew_id) {
+            Ok(Some(run)) => run,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(%error, task = %task.id, "could not read a background run to count its turn");
+                return;
+            }
         };
-        if run.state != "running" {
-            return;
-        }
-        let minutes = crate::util::parse_time(&run.started_at).map_or(0, |at| {
-            u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
-        });
-        if let Err(error) = self.store.count_background_run_turn(&run.id, minutes) {
-            tracing::warn!(%error, run = %run.id, "could not count a background run's turn");
+        // A turn that ends after its run did (a run cancelled at the cap while the engine was mid-turn) still happened: it counts
+        // for the engine's day, though no longer for the run.
+        if run.state == "running" {
+            let minutes = crate::util::parse_time(&run.started_at).map_or(0, |at| {
+                u32::try_from((crate::util::unix_now() - at).max(0) / 60).unwrap_or(u32::MAX)
+            });
+            if let Err(error) = self.store.count_background_run_turn(&run.id, minutes) {
+                tracing::warn!(%error, run = %run.id, "could not count a background run's turn");
+            }
         }
         let Ok(Some(crew)) = self.store.background_crew(&run.background_id) else {
             return;
@@ -63,6 +76,7 @@ impl Core {
             return;
         }
         let Ok(engine) = self.store.thread(worker).map(|thread| thread.engine) else {
+            tracing::warn!(run = %run.id, "could not read a background worker's engine to count its daily turn");
             return;
         };
         let Some((day, _)) = local_day_and_reset(crew.utc_offset_minutes, crate::util::unix_now())
@@ -77,39 +91,50 @@ impl Core {
         }
     }
 
-    /// Whether the worker's engine has spent this crew's daily turns: `Some` carries what the cancel says. The turn was just
-    /// counted; a run at the cap is cancelled by the caller, not retried. A crew from before the daily budget never matches.
-    pub(super) fn crew_background_daily_at_cap(&self, task: &CrewTask) -> Option<DailyCap> {
-        let run = self.store.background_run(&task.crew_id).ok().flatten()?;
+    /// Whether the worker's engine has spent this crew's daily turns. The turn was just counted; a run at the cap is cancelled by
+    /// the caller, not retried. A crew from before the daily budget is `Clear`. A budget that cannot be read is `Unreadable`, never
+    /// `Clear`: a run that cannot be shown to be inside its budget does not go on.
+    pub(super) fn crew_background_daily_check(&self, task: &CrewTask) -> DailyCheck {
+        let run = match self.store.background_run(&task.crew_id) {
+            Ok(Some(run)) => run,
+            // A task of no background run has no daily budget.
+            Ok(None) => return DailyCheck::Clear,
+            Err(_) => return DailyCheck::Unreadable,
+        };
         if run.state != "running" {
-            return None;
+            return DailyCheck::Clear;
         }
-        let crew = self
-            .store
-            .background_crew(&run.background_id)
-            .ok()
-            .flatten()?;
+        let crew = match self.store.background_crew(&run.background_id) {
+            Ok(Some(crew)) => crew,
+            _ => return DailyCheck::Unreadable,
+        };
         if crew.daily_turns == 0 {
-            return None;
+            return DailyCheck::Clear;
         }
-        let worker = self
+        let engine = self
             .store
             .crew_run(&task.id)
             .ok()
-            .flatten()?
-            .worker_thread_id?;
-        let engine = self.store.thread(&worker).ok()?.engine;
-        let (day, reset) = local_day_and_reset(crew.utc_offset_minutes, crate::util::unix_now())?;
-        let (_, turns) = self
-            .store
-            .background_daily_spent(&crew.id, &day, &engine)
-            .ok()?;
-        (turns >= crew.daily_turns).then_some(DailyCap {
+            .flatten()
+            .and_then(|run| run.worker_thread_id)
+            .and_then(|worker| self.store.thread(&worker).ok())
+            .map(|thread| thread.engine);
+        let (Some(engine), Some((day, reset))) = (
             engine,
-            turns,
-            cap: crew.daily_turns,
-            reset,
-        })
+            local_day_and_reset(crew.utc_offset_minutes, crate::util::unix_now()),
+        ) else {
+            return DailyCheck::Unreadable;
+        };
+        match self.store.background_daily_spent(&crew.id, &day, &engine) {
+            Ok((_, turns)) if turns >= crew.daily_turns => DailyCheck::Cap(DailyCap {
+                engine,
+                turns,
+                cap: crew.daily_turns,
+                reset,
+            }),
+            Ok(_) => DailyCheck::Clear,
+            Err(_) => DailyCheck::Unreadable,
+        }
     }
 
     /// The refusal before a background start stores anything: the engine the router would give the run has spent the crew's
@@ -123,18 +148,27 @@ impl Core {
         project_id: &str,
         lead_thread: &str,
     ) -> Result<(), CrewError> {
-        let Ok(Some(run)) = self.store.background_run(lead_thread) else {
-            return Ok(());
+        let unreadable = |error: &dyn std::fmt::Display| {
+            tracing::warn!(%error, "could not read a background crew's daily budget");
+            CrewError::new(
+                ErrorCode::NotAuthorized,
+                "The crew's daily budget could not be read, so no run was started. Try again.",
+            )
         };
-        if run.state != "running" {
-            return Ok(());
-        }
-        let Ok(Some(crew)) = self.store.background_crew(&run.background_id) else {
-            return Ok(());
+        let run = match self.store.background_run(lead_thread) {
+            Ok(Some(run)) if run.state == "running" => run,
+            Ok(_) => return Ok(()),
+            Err(error) => return Err(unreadable(&error)),
+        };
+        let crew = match self.store.background_crew(&run.background_id) {
+            Ok(Some(crew)) => crew,
+            Ok(None) => return Ok(()),
+            Err(error) => return Err(unreadable(&error)),
         };
         if crew.daily_runs == 0 && crew.daily_turns == 0 {
             return Ok(());
         }
+        // A routing problem is left to the path that owns it: it refuses the same start itself.
         let Ok(config) = self.crew_router_config_with_mappings(project_id) else {
             return Ok(());
         };
@@ -145,10 +179,11 @@ impl Core {
         let Some((day, reset)) =
             local_day_and_reset(crew.utc_offset_minutes, crate::util::unix_now())
         else {
-            return Ok(());
+            return Err(unreadable(&"the person's clock is out of range"));
         };
-        let Ok((runs, turns)) = self.store.background_daily_spent(&crew.id, &day, &engine) else {
-            return Ok(());
+        let (runs, turns) = match self.store.background_daily_spent(&crew.id, &day, &engine) {
+            Ok(spent) => spent,
+            Err(error) => return Err(unreadable(&error)),
         };
         if runs < crew.daily_runs && turns < crew.daily_turns {
             return Ok(());

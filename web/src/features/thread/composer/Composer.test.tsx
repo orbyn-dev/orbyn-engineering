@@ -2,9 +2,18 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure, api } from "../../../api/client";
-import type { Run, SlashCommand, Thread } from "../../../api/types";
+import { pullsApi } from "../../../api/pulls";
+import type {
+  PullRequest,
+  QueuedMessage,
+  Run,
+  SlashCommand,
+  Thread,
+  WireThreadEvent,
+} from "../../../api/types";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useThreadLogs } from "../../../product/state/threadLogs";
+import { emptyLog } from "../../../product/timeline/projection";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Composer } from "./Composer";
@@ -27,6 +36,14 @@ const thread: Thread = {
 };
 
 const run = { id: "r1" } as Run;
+/** The service's own event when the engine refused a steer mid-turn and requeued its text. */
+const steerFailed = (seq: number, prompt: string): WireThreadEvent => ({
+  seq,
+  thread_id: "t1",
+  run_id: null,
+  ts: "2026-01-01T00:00:00Z",
+  event: { type: "CUSTOM", name: "steer.failed", value: { prompt } },
+});
 const box = () => screen.getByRole("textbox");
 const terminalChip: TerminalChip = {
   id: "t-chip",
@@ -249,7 +266,9 @@ describe("Composer", () => {
     const queue = vi.spyOn(api, "queue").mockResolvedValue([
       { id: "q1", thread_id: "t1", prompt: "also check tests", attachment_ids: [], held: false, created_at: "" },
     ]);
-    const steer = vi.spyOn(api, "steer").mockResolvedValue({ state: "delivered" });
+    const steer = vi
+      .spyOn(api, "steer")
+      .mockResolvedValue({ message_id: "steer-message", state: "delivered" });
     const remove = vi.spyOn(api, "removeQueued").mockResolvedValue();
     setup({ active_run: { ...run, state: "running" } as Run });
     await userEvent.click(await screen.findByRole("button", { name: /^Add to the running turn/ }));
@@ -258,6 +277,27 @@ describe("Composer", () => {
     queue.mockRestore();
     steer.mockRestore();
     remove.mockRestore();
+  });
+
+  it("returns a refused steer to the queue", async () => {
+    const queue = vi.spyOn(api, "queue").mockResolvedValue([]);
+    setup({ active_run: { ...run, state: "running" } as Run });
+    await waitFor(() => expect(queue).toHaveBeenCalled());
+    const before = queue.mock.calls.length;
+    // The thread's log is already being followed, so the refusal is news rather than a replay.
+    act(() => useThreadLogs.setState({ logs: { t1: { ...emptyLog, lastSeq: 5 } }, queueVersion: {} }));
+    const requeued: QueuedMessage = {
+      id: "q2", thread_id: "t1", prompt: "keep this", attachment_ids: [], held: false, created_at: "",
+    };
+    queue.mockResolvedValue([requeued]);
+    act(() => useThreadLogs.getState().ingest("t1", [steerFailed(6, "keep this")]));
+    // One reload, so the queued strip the service now answers with is drawn.
+    await waitFor(() => expect(queue).toHaveBeenCalledTimes(before + 1));
+    expect(await screen.findByLabelText("Queued messages")).toHaveTextContent("keep this");
+    // Nothing else moves: the draft is untouched and no error is raised.
+    expect(box()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    queue.mockRestore();
   });
 
   it("keeps the draft and explains a failed start", async () => {
@@ -339,6 +379,40 @@ describe("Composer", () => {
     );
     expect(useComposerChips.getState().chips.t1).toHaveLength(0);
     mentions.mockRestore();
+    start.mockRestore();
+  });
+
+  it("picks a pull request from # as a labelled chip, removes it, and sends its block with the draft", async () => {
+    const pulls = vi.spyOn(pullsApi, "projectPulls").mockResolvedValue([
+      { number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77" } as PullRequest,
+    ]);
+    const start = vi.spyOn(api, "startRun").mockResolvedValue(run);
+    setup();
+    await userEvent.type(box(), "see #7");
+    await screen.findByRole("option", { name: /#77/ });
+    await userEvent.keyboard("{Enter}");
+    expect(box()).toHaveValue("see ");
+    expect(useComposerChips.getState().chips.t1?.[0]).toMatchObject({
+      kind: "pull", number: 77, title: "Tidy the docs", url: "https://github.com/o/r/pull/77",
+    });
+    expect(screen.getByTitle("#77 Tidy the docs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy pull chip" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove pull chip" }));
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    expect(box()).toHaveValue("see ");
+    await userEvent.type(box(), "#7");
+    await screen.findByRole("option", { name: /#77/ });
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        "t1",
+        "Pull request: [#77 Tidy the docs](https://github.com/o/r/pull/77)\n\nsee",
+        [],
+      ),
+    );
+    expect(useComposerChips.getState().chips.t1).toHaveLength(0);
+    pulls.mockRestore();
     start.mockRestore();
   });
 

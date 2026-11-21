@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
             "/api/threads/{id}/files/content",
             get(read_file).put(write_file),
         )
+        .route("/api/threads/{id}/files/metadata", get(file_metadata))
         .route("/api/threads/{id}/files/outside", get(read_outside_file))
         .route("/api/threads/{id}/files/open", post(open_in_editor))
         .route("/api/editors", get(editors))
@@ -61,6 +62,15 @@ async fn read_file(
     Query(query): Query<PathQuery>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.read_file(&id, &query.path).await?))
+}
+
+/// One checkout entry's metadata: no bytes, and a final link is described, not followed.
+async fn file_metadata(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<PathQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.file_metadata(&id, &query.path)?))
 }
 
 /// A file outside the checkout, read-only; Core decides what may be shown.

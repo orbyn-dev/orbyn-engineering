@@ -66,6 +66,14 @@ pub fn routes() -> Router<AppState> {
         .route("/api/projects/{id}/pulls/{number}/timeline", get(timeline))
         .route("/api/projects/{id}/pulls/{number}/files", get(files))
         .route(
+            "/api/projects/{id}/pulls/{number}/breakdown",
+            get(breakdown),
+        )
+        .route(
+            "/api/projects/{id}/pulls/{number}/linked-threads",
+            get(linked_threads),
+        )
+        .route(
             "/api/projects/{id}/pulls/{number}/revisions",
             get(revisions),
         )
@@ -237,6 +245,28 @@ pub async fn files(
             .pull_files(&id, number, refresh_of(&query))
             .await?,
     ))
+}
+
+/// Counts by change kind over this pull request's changed files.
+pub async fn breakdown(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, u64)>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .pull_change_breakdown(&id, number, refresh_of(&query))
+            .await?,
+    ))
+}
+
+/// The project's threads that linked this pull request.
+pub async fn linked_threads(
+    State(state): State<AppState>,
+    Path((id, number)): Path<(String, u64)>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.linked_threads(&id, number)?))
 }
 
 pub async fn revisions(

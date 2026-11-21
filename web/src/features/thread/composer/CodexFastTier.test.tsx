@@ -22,7 +22,7 @@ const defaultTier = { id: "default", label: "Default", default: true };
 const speed: ModelOption = {
   id: "service_tier", label: "Speed", values: [
     defaultTier,
-    { id: "fast", label: "Fast", default: false },
+    { id: "priority", label: "Fast", default: false },
   ],
 };
 const model = (id: string, label: string, options: ModelOption[]): ModelInfo => ({
@@ -43,7 +43,7 @@ function ComposerMenus({ onOption }: { onOption(option: string, value: string): 
   const models = useEngineModels(selected.engine);
   const current = resolveModel(models, selected.model);
   const traits = useTraitsMenu({
-    model: current, effort: null, extras: { service_tier: "fast" }, access: null,
+    model: current, effort: null, extras: { service_tier: "priority" }, access: null,
     onEffort: () => {}, onOption, onAccess: () => {},
   });
   return <>
@@ -80,7 +80,7 @@ it("offers Fast only for the selected model that lists it in its service tier", 
   const fast = within(menu).getByRole("menuitemradio", { name: "Fast" });
   expect(fast).toHaveAttribute("aria-checked", "true");
   await user.click(fast);
-  expect(onOption).toHaveBeenCalledWith("service_tier", "fast");
+  expect(onOption).toHaveBeenCalledWith("service_tier", "priority");
 
   await selectModel("Fast model", "Standard model");
   menu = await openTraits();

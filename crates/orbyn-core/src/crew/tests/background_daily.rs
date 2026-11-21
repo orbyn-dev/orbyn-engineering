@@ -112,7 +112,7 @@ fn audits(w: &World, action: &str) -> Vec<Value> {
 async fn a_run_is_cancelled_at_the_daily_cap_and_shows_what_it_spent() {
     let w = world(true, outside()).await;
     let id = crew_daily(&w, "One turn a day", 5, 1);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
 
     // The engine's one turn is counted as it happens, and the run is cancelled at the cap: stopped
     // `budget`, waiting for the person, with the engine, its turns against the cap and the reset time.
@@ -158,14 +158,18 @@ async fn a_run_is_cancelled_at_the_daily_cap_and_shows_what_it_spent() {
 async fn a_new_event_is_refused_with_the_reset_time_and_never_queued() {
     let w = world(true, outside()).await;
     let id = crew_daily(&w, "Spent", 5, 1);
-    w.core.crew_background_run_now(&id).await.unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
 
     let before = (
         threads(&w),
         w.core.store.crew_paused_starts(&project(&w)).unwrap().len(),
     );
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     let CoreError::PolicyDenied(why) = &error else {
         panic!("{error}")
     };
@@ -209,7 +213,7 @@ async fn a_new_event_is_refused_with_the_reset_time_and_never_queued() {
             [&id, &yesterday],
         )
         .unwrap();
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(run.state, wire::BackgroundRunState::Running);
 }
 
@@ -217,10 +221,14 @@ async fn a_new_event_is_refused_with_the_reset_time_and_never_queued() {
 async fn an_engine_out_of_daily_runs_is_refused_even_with_turns_left() {
     let w = world(true, good()).await;
     let id = crew_daily(&w, "One run a day", 1, 100);
-    w.core.crew_background_run_now(&id).await.unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
 
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     let CoreError::PolicyDenied(why) = &error else {
         panic!("{error}")
     };
@@ -233,7 +241,7 @@ async fn an_engine_out_of_daily_runs_is_refused_even_with_turns_left() {
 async fn a_crew_from_before_the_daily_budget_has_none() {
     let w = world(true, outside()).await;
     let id = crew_store_daily(&w, "Legacy", 0, 0);
-    w.core.crew_background_run_now(&id).await.unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
 
     // No daily cap, so the run is not cancelled at a turn: the loop guard ends it as usual.
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
@@ -244,14 +252,14 @@ async fn a_crew_from_before_the_daily_budget_has_none() {
     assert!(stopped.turns_spent >= 2, "{stopped:?}");
     assert!(audits(&w, "crew.background.daily.spend").is_empty());
     // And a new event is not refused for the day.
-    w.core.crew_background_run_now(&id).await.unwrap();
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
 }
 
 #[tokio::test]
 async fn a_turn_that_reaches_the_cap_but_passes_ends_the_run_needs_review() {
     let w = world(true, good()).await;
     let id = crew_daily(&w, "Pass at the cap", 5, 1);
-    let run = w.core.crew_background_run_now(&id).await.unwrap();
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
 
     // The engine's only turn is its last allowed one for the day, and it passes: the run ends
     // finished and waiting for the person, the way a run that passes on its budget's last turn
@@ -263,7 +271,11 @@ async fn a_turn_that_reaches_the_cap_but_passes_ends_the_run_needs_review() {
     assert_eq!(w.task(&tasks[0].0.id).state, "passed");
 
     // The next event is the one the daily budget refuses.
-    let error = w.core.crew_background_run_now(&id).await.unwrap_err();
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
     let CoreError::PolicyDenied(why) = &error else {
         panic!("{error}")
     };
@@ -318,6 +330,70 @@ async fn the_daily_budget_is_set_at_creation_only() {
     ] {
         assert!(serde_json::from_value::<wire::BackgroundCrewCreate>(bad).is_err());
     }
+}
+
+#[tokio::test]
+async fn a_daily_budget_that_cannot_be_read_refuses_the_start_instead_of_allowing_it() {
+    let w = world(true, good()).await;
+    let id = crew_daily(&w, "Unreadable", 5, 100);
+    w.core
+        .store
+        .reader()
+        .execute_batch("DROP TABLE crew_background_daily")
+        .unwrap();
+    let before = threads(&w);
+    let error = w
+        .core
+        .crew_background_run_now(&id, "user")
+        .await
+        .unwrap_err();
+    let CoreError::PolicyDenied(why) = &error else {
+        panic!("{error}")
+    };
+    assert!(why.contains("could not be read"), "{why}");
+    // Nothing was made: no run, no thread.
+    let page = crate::crew::Page::new(None, None).unwrap();
+    assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
+    assert_eq!(threads(&w), before);
+}
+
+#[tokio::test]
+async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
+    let w = world(true, good()).await;
+    let id = crew_daily(&w, "Late turn", 5, 100);
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let done = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    let task = w
+        .core
+        .store
+        .crew_tasks_in_crew(&run.id)
+        .unwrap()
+        .remove(0)
+        .0;
+    let worker = w
+        .core
+        .store
+        .crew_run(&task.id)
+        .unwrap()
+        .unwrap()
+        .worker_thread_id
+        .unwrap();
+    let day_turns = |w: &World| -> i64 {
+        w.core
+            .store
+            .reader()
+            .query_row(
+                "SELECT COALESCE(SUM(turns_spent), 0) FROM crew_background_daily WHERE background_id = ?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let counted = day_turns(&w);
+    w.core.crew_background_turn_ended(&task, &worker);
+    // The run is over, so its own total stays; the engine's day still grows by the turn.
+    assert_eq!(day_turns(&w), counted + 1);
+    assert_eq!(run_of(&w, &id).turns_spent, done.turns_spent);
 }
 
 #[test]

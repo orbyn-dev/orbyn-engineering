@@ -117,6 +117,8 @@ pub struct AccountCenter {
     keybindings: KeybindingFile,
     status: Arc<StatusHub>,
     inner: tokio::sync::Mutex<flow::Inner>,
+    /// One cancel of a waiting sign-in at a time: a second one waits for the first's answer.
+    cancelling: tokio::sync::Mutex<()>,
     confirmed: Mutex<Option<flow::Grant>>,
     approval_life: Mutex<std::time::Duration>,
     /// Whether the person has been told the service ended their session, and whether they ended
@@ -170,6 +172,7 @@ impl AccountCenter {
             },
             status: Arc::new(StatusHub::default()),
             inner: tokio::sync::Mutex::default(),
+            cancelling: tokio::sync::Mutex::default(),
             confirmed: Mutex::new(None),
             approval_life: Mutex::new(flow::APPROVAL_LIFETIME),
             ended: Mutex::new(flow::Ended::default()),

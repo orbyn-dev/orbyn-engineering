@@ -11,6 +11,7 @@ use orbyn_contracts::{
 };
 use serde_json::json;
 
+use super::background_daily::DailyCheck;
 use super::guard::{key_needles, refuse_leak, refuse_secret};
 use super::leases::{core_author, internal, timestamp};
 use super::lifecycle::Next;
@@ -312,11 +313,15 @@ impl Core {
         // No engine takes a hard limit, so a run whose engine reached the crew's daily cap is cancelled here, at the
         // cap, instead of being retried: the run ends 'budget' waiting for the person, with what the engine spent
         // today shown and when the day turns (docs/crew/background-engine-start.md, PR 2).
-        if let Some(cap) = self.crew_background_daily_at_cap(task) {
-            let why = format!(
-                "Engine {} reached this crew's daily budget: {} of its {} turns today. The budget resets at {}.",
-                cap.engine, cap.turns, cap.cap, cap.reset
-            );
+        let daily = self.crew_background_daily_check(task);
+        if !matches!(daily, DailyCheck::Clear) {
+            let why = match &daily {
+                DailyCheck::Cap(cap) => format!(
+                    "Engine {} reached this crew's daily budget: {} of its {} turns today. The budget resets at {}.",
+                    cap.engine, cap.turns, cap.cap, cap.reset
+                ),
+                _ => "The crew's daily budget could not be read, so the run stopped instead of going on.".to_owned(),
+            };
             if let Some(run) = self.store.background_run(&task.crew_id).ok().flatten()
                 && run.state == "running"
                 && let Err(error) = self.store.end_background_run_daily(

@@ -6,6 +6,9 @@ import { MAX_DIAGRAM_CHARS, mermaidConfig, sanitizeSvg } from "./mermaidSafety";
 const dark = (theme: string) =>
   theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
+/** How long the source waits for more streaming text before a diagram is drawn. */
+export const DRAW_DEBOUNCE_MS = 120;
+
 /** Draws a diagram; while it's incomplete or invalid, the source stands in. Mermaid SVG renders inline; no other SVG or HTML is rendered. */
 export function Mermaid({ code }: { code: string }) {
   const theme = useUi((state) => state.theme);
@@ -27,7 +30,7 @@ export function Mermaid({ code }: { code: string }) {
           // Bad syntax or over a limit: Mermaid may leave a stray render node behind; drop it.
           document.getElementById(`dmermaid${id}`)?.remove();
         });
-    }, 120);
+    }, DRAW_DEBOUNCE_MS);
     return () => {
       current = false;
       clearTimeout(timer);
