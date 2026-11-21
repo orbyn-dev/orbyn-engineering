@@ -181,8 +181,13 @@ context are both retained. The collaboration mode does not widen permissions.
 `paragraph` is the default and writes it as it comes, merged over 33 ms. Reasoning and
 tools always go out as they happen. Steering answers `delivered` or `queued`: an engine
 with no mid-turn input takes it on the next turn, and an engine that refuses one sends it
-to the queue with a `steer.failed` note. A typed decline carries its words only on
-engines with `decline_feedback`, which today is Claude; elsewhere the message queues.
+to the queue with a `steer.failed` note. The person's own `message_id` is used for the
+logged message and always echoed in the answer; a queued steer also names its
+`queued_message_id` and logs nothing on the timeline. Each transition logs
+`CUSTOM steer.state` with the message id and `delivered`, `queued` or `failed`, and a
+refusal's `steer.failed` names the message it moved to the queue. A typed decline carries
+its words only on engines with `decline_feedback`, which today is Claude; elsewhere the
+message queues.
 
 Attachments stay in app data, never in a target, and are removed with their thread.
 The limits are 100 per thread, 10 MiB per image, 80 MiB of images and 50 MiB per other
@@ -3391,7 +3396,7 @@ every method, path and which routes need a credential.
 | `DELETE /api/threads/:id/mcp-app-context` | Drop the unsent app note |
 | `PATCH, DELETE /api/queue/:id` | Edit or remove a queued message |
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
-| `POST /api/threads/:id/steer` | `SteerRun`: add text to the running turn (`422` if unsupported); a selection applies from the next turn |
+| `POST /api/threads/:id/steer` | `SteerRun` with an optional `message_id`: add text to the running turn (`422` if unsupported); `SteerResult` echoes the id and says `delivered` or `queued`, the latter with its queue row; a selection applies from the next turn |
 | `GET, POST /api/threads/:id/attachments?name=` | Raw upload body; `Content-Type` is the kind |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |

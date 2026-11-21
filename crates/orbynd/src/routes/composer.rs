@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post};
 use orbyn_contracts::ModelSelection;
-use orbyn_contracts::{EditQueuedMessage, EnqueueMessage, SteerResult, SteerRun, UpdateThread};
+use orbyn_contracts::{EditQueuedMessage, EnqueueMessage, SteerRun, UpdateThread};
 use orbyn_core::agents::selection;
 use serde::Deserialize;
 
@@ -107,7 +107,10 @@ async fn steer(
         options: body.options,
     };
     state.core.check_turn(&id, &wanted).await?;
-    let delivered = state.core.runs.steer(&id, &body.prompt)?;
+    let delivered = state
+        .core
+        .runs
+        .steer(&id, body.message_id.as_deref(), &body.prompt)?;
     if !selection::is_empty(&wanted) {
         let patch = UpdateThread {
             model: wanted.model,
@@ -117,7 +120,7 @@ async fn steer(
         };
         state.core.update_thread(&id, &patch, LOCAL_USER)?;
     }
-    Ok((StatusCode::ACCEPTED, Json(SteerResult { state: delivered })))
+    Ok((StatusCode::ACCEPTED, Json(delivered)))
 }
 
 #[derive(Deserialize)]
