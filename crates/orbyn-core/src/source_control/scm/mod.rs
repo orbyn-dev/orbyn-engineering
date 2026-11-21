@@ -212,7 +212,7 @@ impl Core {
                     checks_state: None,
                     checks: None,
                 });
-                self.store.link_pull(id, &pull)?;
+                self.store.link_pull(id, &self.pull_repo(id)?, &pull)?;
             }
             None => tracing::warn!("the forge returned no pull request number"),
         }

@@ -4,7 +4,7 @@
 use super::{MAX_PER_THREAD, describe, on};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
-use crate::source_control::git::git;
+use crate::source_control::git::{git, git_hardened, text};
 use crate::store::thread_repos::ThreadRepoRecord;
 use crate::util::new_id;
 use orbyn_contracts::{
@@ -62,7 +62,122 @@ async fn undo(made: &[(PathBuf, PathBuf)], branch: &str, folder: &Path) {
     let _ = std::fs::remove_dir_all(folder);
 }
 
+/// What retiring one worktree of a task folder came to.
+#[derive(Debug, PartialEq, Eq)]
+enum Retired {
+    Removed,
+    /// Left where it is: it holds changes or ignored files, or is not inside the thread's own folder.
+    Kept(&'static str),
+}
+
 impl Core {
+    /// The folder of the repository `repo_id` of `project_id`, as the source of its worktrees.
+    fn repo_source(&self, project_id: &str, repo_id: &str) -> Result<PathBuf> {
+        if repo_id == project_id {
+            return Ok(PathBuf::from(self.store.project(project_id)?.path));
+        }
+        self.store
+            .repo(project_id, repo_id)?
+            .map(|record| PathBuf::from(record.path))
+            .ok_or_else(|| CoreError::NotFound("repository".into()))
+    }
+
+    /// Removes one worktree Orbyn made in a thread's task folder, never one with something to lose: a change, an
+    /// untracked file or an ignored file (`.env`, build output) keeps it. The branch is never touched.
+    async fn retire_worktree(&self, project_id: &str, record: &ThreadRepoRecord) -> Retired {
+        let worktree = PathBuf::from(&record.worktree_path);
+        let folder = self.config.data_dir.join("threads").join(&record.thread_id);
+        if !worktree.starts_with(&folder) || worktree == folder {
+            return Retired::Kept("it is not in this thread's own folder");
+        }
+        let Ok(source) = self.repo_source(project_id, &record.repo_id) else {
+            return Retired::Kept("its repository is gone");
+        };
+        if !worktree.exists() {
+            let _ = git(&source, &["worktree", "prune"]).await;
+            return Retired::Removed;
+        }
+        match git_hardened(&worktree, &["status", "--porcelain", "--ignored"]).await {
+            Ok(out) if text(&out).trim().is_empty() => {}
+            Ok(_) => return Retired::Kept("it holds changes or ignored files"),
+            Err(_) => return Retired::Kept("its state cannot be read"),
+        }
+        let target = worktree.to_string_lossy().into_owned();
+        match git(&source, &["worktree", "remove", "--", &target]).await {
+            Ok(_) => Retired::Removed,
+            Err(_) => Retired::Kept("Git refused to remove it"),
+        }
+    }
+
+    /// Deletes a thread. A multi-repository thread's worktrees go with it when they hold nothing to lose; its branch
+    /// stays, as a single-repository thread's does. What was kept is in the audit log.
+    pub async fn delete_thread_and_worktrees(&self, id: &str, actor: &str) -> Result<()> {
+        let records = if self.config.multi_repo {
+            self.store.thread_repos(id)?
+        } else {
+            Vec::new()
+        };
+        let project_id = self.store.thread(id)?.project_id;
+        self.delete_thread(id, actor)?;
+        let mut kept = Vec::new();
+        for record in &records {
+            if let Retired::Kept(why) = self.retire_worktree(&project_id, record).await {
+                kept.push(json!({ "repo": record.name, "why": why }));
+            }
+        }
+        if let Some(first) = records.first() {
+            let folder = self.config.data_dir.join("threads").join(&first.thread_id);
+            // Empty after the worktrees are gone; a folder that still holds one is left alone.
+            let _ = std::fs::remove_dir(&folder);
+        }
+        if !records.is_empty() {
+            self.audit_repo(
+                "repo.thread.delete",
+                id,
+                json!({ "repos": records.len(), "kept": kept }),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Removes one repository from a multi-repository thread. The primary one stays, the last one stays, a run in
+    /// flight blocks it, and a worktree with changes is refused so nothing is lost; the branch is kept.
+    pub async fn remove_thread_repo(&self, thread_id: &str, repo_id: &str) -> Result<()> {
+        on(self)?;
+        let thread = self.store.thread(thread_id)?;
+        let records = self.store.thread_repos(thread_id)?;
+        let record = records
+            .iter()
+            .find(|r| r.repo_id == repo_id)
+            .ok_or_else(|| CoreError::NotFound("repository".into()))?;
+        if record.position == 0 {
+            return Err(CoreError::Invalid(
+                "The primary repository stays in the thread.".into(),
+            ));
+        }
+        if thread.active_run.is_some() {
+            return Err(CoreError::Invalid(
+                "Stop the run before removing a repository.".into(),
+            ));
+        }
+        match self.retire_worktree(&thread.project_id, record).await {
+            Retired::Removed => {}
+            Retired::Kept(why) => {
+                return Err(CoreError::Invalid(format!(
+                    "{} stays in the thread: {why}. Commit or discard its changes first.",
+                    record.name
+                )));
+            }
+        }
+        self.store.thread_repo_delete(thread_id, repo_id)?;
+        self.audit_repo(
+            "repo.thread.remove",
+            thread_id,
+            json!({ "repo": repo_id, "branch": record.branch }),
+        )?;
+        Ok(())
+    }
+
     /// One repository the person chose, or why it cannot be used. An untrusted one is refused here.
     async fn chosen_repo(
         &self,

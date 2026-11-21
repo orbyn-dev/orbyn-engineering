@@ -1,7 +1,7 @@
 //! Repositories of a project (docs/multi-repo.md). Names follow the T3 Code workspace folder schema (MIT,
 //! 9168ca73d, names only). Every name, path, branch and URL here is untrusted text.
 
-use crate::PermissionMode;
+use crate::{PermissionMode, PullRequest};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -128,6 +128,11 @@ pub struct ThreadRepo {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub files: Option<Vec<String>>,
+    /// This repository's pull request: the open one with the highest number, else the latest. Absent when the thread
+    /// linked none here.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub pull_request: Option<PullRequest>,
 }
 }
 

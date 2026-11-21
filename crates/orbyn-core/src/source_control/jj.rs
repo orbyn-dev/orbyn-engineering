@@ -190,6 +190,7 @@ fn file_of(lines: &[&str]) -> Option<FileDiff> {
         additions,
         deletions,
         patch: lines.concat(),
+        repo_id: None,
     })
 }
 
