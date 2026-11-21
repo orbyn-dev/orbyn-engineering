@@ -14,7 +14,7 @@ vi.mock("../../../../api/client", async (original) => {
 });
 vi.mock("./useInputContext", async (original) => {
   const real = await original<typeof import("./useInputContext")>();
-  return { ...real, usePathListing: () => () => null };
+  return { ...real, usePathListing: () => ({ listDir: () => null, state: "idle" }) };
 });
 
 const KEY = "th:main";

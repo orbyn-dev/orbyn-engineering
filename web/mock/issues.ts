@@ -8,7 +8,7 @@ import { ApiFailure } from "../src/api/client.ts";
 import type { Thread } from "../src/api/types.ts";
 import {
   TRACKER_KINDS,
-  type IssueDetail, type IssueList, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type StartThreadInput, type TrackerKind, type TrackerRow,
+  type IssueDetail, type IssueList, type IssueState, type IssueQuery, type IssueRef, type IssueSummary, type IssuesApi, type StartThreadInput, type TrackerKind, type TrackerRow,
 } from "../src/features/issues/contract.ts";
 import { applyQuery } from "../src/features/issues/model.ts";
 
@@ -36,28 +36,45 @@ export function issueFixtures(): IssueSummary[] {
 
 export function trackerFixtures(): TrackerRow[] {
   const connected: Partial<Record<TrackerKind, string>> = { github: REPO, forgejo: "git.orbyn.dev", linear: "Orbyn team" };
-  return TRACKER_KINDS.map((tracker) => ({ tracker, connected: tracker in connected, scope: connected[tracker] ?? null }));
+  return TRACKER_KINDS.map((tracker): TrackerRow => ({
+    tracker, connected: tracker in connected, scope: connected[tracker] ?? null,
+    status: tracker === "github" ? "signed_in" : tracker in connected ? "saved" : "not_connected",
+    address: tracker === "forgejo" ? "git.orbyn.dev" : null, account: tracker === "github" ? "sam-arden" : null,
+  }));
 }
 
-const refOf = (one: IssueSummary): IssueRef => ({ tracker: one.tracker, scope: one.scope, key: one.key, display_key: one.display_key, title: one.title, state: one.state, labels: one.labels });
+const refOf = (one: IssueSummary): IssueRef => ({ tracker: one.tracker, scope: one.scope, key: one.key, display_key: one.display_key, title: one.title, state: one.state, labels: one.labels, comment_count: one.comment_count });
+
+const OPEN: IssueState = { category: "open", name: "Open" };
+const DONE: IssueState = { category: "closed", name: "Closed", close_reason: "completed" };
+const NOT_PLANNED: IssueState = { category: "closed", name: "Closed", close_reason: "not_planned" };
+/** The states each tracker offers: GitHub three, a workflow its own names. */
+export function transitionFixtures(tracker: TrackerKind): IssueState[] {
+  if (tracker === "github") return [OPEN, DONE, NOT_PLANNED];
+  if (tracker === "linear") return [{ category: "open", name: "Todo" }, { category: "open", name: "In review" }, { category: "closed", name: "Done" }];
+  if (tracker === "azure_devops") return [{ category: "open", name: "To Do" }, { category: "open", name: "Doing" }, { category: "closed", name: "Done" }];
+  return [OPEN, DONE];
+}
 
 export interface IssuesMock extends IssuesApi {
   /** Every write the screens made, in order: `link:<thread>:<key>`, `unlink:<thread>:<key>`, `start:<key>:<project>`. */
   writes: string[];
-  /** Make the next read of that kind fail. */
-  failNext(what: "list" | "get" | "start" | null): void;
+  /** Make the next call of that kind fail: `reject` saves the token and the tracker does not accept it, `unreachable` finds no answer at the address. */
+  failNext(what: "list" | "get" | "start" | "find" | "state" | "token" | "reject" | "unreachable" | null): void;
 }
 
 export function createIssuesMock(init: {
   trackers?: TrackerRow[] | null; issues?: IssueSummary[]; links?: Record<string, IssueRef[]>; delayMs?: number; viewer?: string;
+  /** Trackers whose issues cannot change state from here. */
+  fixedState?: TrackerKind[];
 } = {}): IssuesMock {
-  const trackers = init.trackers === undefined ? trackerFixtures() : init.trackers;
+  let trackers = init.trackers === undefined ? trackerFixtures() : init.trackers;
   const issues = init.issues ?? issueFixtures();
   let links: Record<string, IssueRef[]> = init.links ?? (issues[0] ? { "thread-1": [refOf(issues[0])] } : {});
   const writes: string[] = [];
-  let fail: "list" | "get" | "start" | null = null;
+  let fail: Parameters<IssuesMock["failNext"]>[0] = null;
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, init.delayMs ?? 0));
-  const take = (what: "list" | "get" | "start") => {
+  const take = (what: "list" | "get" | "start" | "find" | "state") => {
     if (fail !== what) return;
     fail = null;
     throw new ApiFailure("tracker_unreachable", "GitHub did not answer.", 502);
@@ -81,15 +98,16 @@ export function createIssuesMock(init: {
       const one = find(tracker, key);
       if (!one) throw new ApiFailure("not_found", "No such issue.", 404);
       return {
-        ...one, body: "After sign-in the app opens `/home` even when `next` names another page.\n\nExpected: the page that asked for sign-in.",
+        ...one, transitions: init.fixedState?.includes(one.tracker) ? undefined : transitionFixtures(one.tracker), body: "After sign-in the app opens `/home` even when `next` names another page.\n\nExpected: the page that asked for sign-in.",
         comments: [{ id: "c1", author: { login: "sam" }, body: "Reproduced. The redirect reads `next` but never uses it.", created_at: ago(1440) }, { id: "c2", author: { login: "mika" }, body: "The picker has the same problem when it is opened from a link.", created_at: ago(240) }],
       };
     },
     links: async () => { await wait(); return links; },
     find: async (input) => {
       await wait();
+      take("find");
       const text = input.trim().replace(/^#/, "").toLowerCase();
-      if (!text) return [];
+      if (!text) return connectedIssues().filter((one) => one.state.category === "open").sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, 8).map(refOf);
       return connectedIssues().filter((one) => one.key.toLowerCase() === text || one.title.toLowerCase().includes(text)).map(refOf);
     },
     link: async (threadId, ref) => {
@@ -104,6 +122,35 @@ export function createIssuesMock(init: {
       writes.push(`unlink:${threadId}:${ref.key}`);
       await wait();
       links = { ...links, [threadId]: (links[threadId] ?? []).filter((entry) => !(entry.tracker === ref.tracker && entry.key === ref.key)) };
+    },
+    setState: async (tracker, key, state) => {
+      writes.push(`state:${key}:${state.name}${state.close_reason ? `:${state.close_reason}` : ""}`);
+      await wait();
+      take("state");
+      const at = issues.findIndex((one) => one.tracker === tracker && one.key === key);
+      if (at < 0) throw new ApiFailure("not_found", "No such issue.", 404);
+      issues[at] = { ...issues[at]!, state, updated_at: new Date().toISOString() };
+      const moved = refOf(issues[at]!);
+      links = Object.fromEntries(Object.entries(links).map(([id, held]) => [id, held.map((entry) => (entry.tracker === tracker && entry.key === key ? moved : entry))]));
+    },
+    // The token is never kept and never put in `writes`: the log says which tracker and which address, nothing else.
+    saveToken: async (tracker, input) => {
+      writes.push(`token:${tracker}:${input.address ?? ""}`);
+      await wait();
+      if (fail === "unreachable") { fail = null; throw new ApiFailure("host_unreachable", `Orbyn could not reach ${input.address ?? "that address"}. Check the address, or try again.`, 502); }
+      if (fail === "token") { fail = null; throw new ApiFailure("keychain_locked", "The keychain is locked. Unlock it, then try again.", 503); }
+      const rejected = fail === "reject";
+      if (rejected) fail = null;
+      const row: TrackerRow = { tracker, connected: !rejected, scope: input.address ?? (tracker === "linear" ? "Orbyn team" : null), status: rejected ? "rejected" : "saved", address: input.address ?? null };
+      trackers = (trackers ?? []).map((one) => (one.tracker === tracker ? row : one));
+      return row;
+    },
+    removeToken: async (tracker) => {
+      writes.push(`remove-token:${tracker}`);
+      await wait();
+      const row: TrackerRow = { tracker, connected: false, scope: null, status: "not_connected", address: null };
+      trackers = (trackers ?? []).map((one) => (one.tracker === tracker ? row : one));
+      return row;
     },
     startThread: async (ref, input: StartThreadInput) => {
       writes.push(`start:${ref.key}:${input.project_id}`);

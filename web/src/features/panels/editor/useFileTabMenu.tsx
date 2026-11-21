@@ -27,7 +27,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   const held = useEditorSessions((state) => (tab ? sessionOfTab(state.sessions, threadId, cwd, tab) : undefined));
   const closeItem: MenuItem = { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: close };
   if (!target) return null;
-  if (target.kind === "worktree") return [closeItem];
+  if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;
   const root = target.kind === "thread" ? cwd : (worktree?.path ?? "");
   const absolute = root ? `${root.replace(/\/$/, "")}/${relative}` : null;

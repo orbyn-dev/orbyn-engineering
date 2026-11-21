@@ -1,19 +1,25 @@
 import { History, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { api } from "../../../../api/client";
 import { toFailure } from "../../../../lib/useAsync";
+import { routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { controlsOf } from "../terminalControls";
 import { completeAt, applyCompletion } from "./completions";
-import { historyOf, recordCommand, searchHistory, suggestion } from "./history";
+import { HistoryPop, type HistoryScope } from "./HistoryPop";
+import { historyAcross, historyOf, recordCommand, suggestion } from "./history";
 import { tokenize } from "./highlight";
+import { ProposalCard, useProposal } from "./ProposalCard";
 import { routeLine, type Mode } from "./route";
 import { sendPrompt, takeBack, type Sent } from "./sendPrompt";
-import { useEngineTarget, usePathListing } from "./useInputContext";
+import { readEngineTarget, useEngineTarget, usePathListing } from "./useInputContext";
 
 const HOLD_LINES = 4;
 const HOLD_CHARS = 2000;
 const UNDO_MS = 10_000;
+/** A listing that is read quickly never flashes a row. */
+const LOADING_AFTER_MS = 400;
 const MODES: { mode: Mode; label: string }[] = [
   { mode: "suggest", label: "Suggest" },
   { mode: "shell", label: "Shell" },
@@ -39,31 +45,41 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
   const [picked, setPicked] = useState(-1);
   const [dismissed, setDismissed] = useState(false);
   const [explicit, setExplicit] = useState(false);
-  const [searching, setSearching] = useState<string | null>(null);
-  const [searchAt, setSearchAt] = useState(0);
+  const [searching, setSearching] = useState<HistoryScope | null>(null);
   const [sent, setSent] = useState<{ text: string; to: Sent } | null>(null);
+  const [askedRun, setAskedRun] = useState<string | null>(null);
+  const [dismissedProposal, setDismissedProposal] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
+  const undoing = useRef(false);
+  const retrying = useRef(false);
+  const ranProposal = useRef<string | null>(null);
   const thread = useWorkspace((state) => state.threads[threadId]);
+  const projectThreads = useWorkspace((state) => state.threads);
   const pushToast = useUi((state) => state.pushToast);
   const engine = useEngineTarget(threadId);
+  const offered = useProposal(threadId, askedRun);
 
   const history = historyOf(keyOf);
   const full = held === null ? line : line === "" ? held : `${held}\n${line}`;
   const route = useMemo(() => routeLine(mode, full, engine, keepInShell), [mode, full, engine, keepInShell]);
   const tokens = useMemo(() => (route.target === "engine" ? [] : tokenize(line)), [route.target, line]);
 
-  const wantDir = useMemo(() => {
-    const word = line.slice(0, cursor).split(/\s/).pop() ?? "";
-    return word.includes("/") ? word.slice(0, word.lastIndexOf("/") + 1).replace(/^\.\//, "") : "";
-  }, [line, cursor]);
-  const listDir = usePathListing(threadId, wantDir);
+  const word = useMemo(() => line.slice(0, cursor).split(/\s/).pop() ?? "", [line, cursor]);
+  const wantDir = word.includes("/") ? word.slice(0, word.lastIndexOf("/") + 1).replace(/^\.\//, "") : "";
+  const { listDir, state: listing } = usePathListing(threadId, wantDir);
   const completion = useMemo(
     () => (held !== null || searching !== null || dismissed || route.target === "engine" ? null : completeAt(line, cursor, { history: history.map((entry) => entry.command), listDir }, explicit)),
     [line, cursor, held, searching, dismissed, route.target, history, listDir, explicit],
   );
   const ghost = mode !== "engine" && cursor === line.length && held === null ? suggestion(history, line) : "";
-  const found = useMemo(() => (searching === null ? [] : searchHistory(history, searching)), [searching, history]);
+  const projectIds = useMemo(() => {
+    const project = projectThreads[threadId]?.project_id;
+    return Object.values(projectThreads).filter((entry) => entry.project_id === project).map((entry) => entry.id);
+  }, [projectThreads, threadId]);
+  // Only paths inside the worktree are listed, so only those can be waited for.
+  const waitingOnPath = completion === null && searching === null && held === null && !dismissed && route.target !== "engine" && word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && listing !== "idle";
 
   // A new thread or terminal starts clean; the timer ends the Undo offer.
   useEffect(() => {
@@ -71,6 +87,12 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
     const timer = setTimeout(() => setSent(null), UNDO_MS);
     return () => clearTimeout(timer);
   }, [sent]);
+
+  useEffect(() => {
+    if (!waitingOnPath || listing !== "loading") return void setSlow(false);
+    const timer = setTimeout(() => setSlow(true), LOADING_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [waitingOnPath, listing]);
 
   const edit = (value: string, at = value.length) => {
     setLine(value);
@@ -102,6 +124,7 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
     try {
       const to = await sendPrompt(thread, text);
       setSent({ text: full, to });
+      setAskedRun(to.kind === "run" ? to.id : null);
       clear();
       void useWorkspace.getState().refreshThread(threadId);
     } catch (failure) {
@@ -113,17 +136,68 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
   };
 
   const undo = async () => {
-    if (!sent) return;
+    if (!sent || undoing.current) return;
+    undoing.current = true;
     const back = sent;
+    const stopped = back.to.kind === "run";
     setSent(null);
     try {
       await takeBack(back.to);
+      if (stopped) setAskedRun(null);
+      pushToast(`${stopped ? "Stopped the run that started" : "Took it out of the queue"}. Your text is back in the line.`);
       edit(back.text);
       field.current?.focus();
       void useWorkspace.getState().refreshThread(threadId);
     } catch (failure) {
-      pushToast(`Couldn't take it back. ${toFailure(failure).message}`);
+      // It was not taken back, so the offer stays and nothing is claimed.
+      setSent(back);
+      pushToast(`${stopped ? "Couldn't stop the run" : "Couldn't take it out of the queue"}. ${toFailure(failure).message}`);
+    } finally {
+      undoing.current = false;
     }
+  };
+
+  const signIn = async () => {
+    try {
+      await navigator.clipboard.writeText(engine.signInCommand ?? "");
+      pushToast(`Copied the ${engine.name} sign-in command. Run it in a terminal.`);
+    } catch {
+      pushToast("Couldn't copy the command.");
+    }
+  };
+
+  /** Checks the engine once and sends the line only if it is now reachable and needs no second Enter. */
+  const tryAgain = async () => {
+    if (retrying.current) return;
+    retrying.current = true;
+    try {
+      await api.refreshEngines();
+      await useWorkspace.getState().refreshEngines();
+      const fresh = readEngineTarget(threadId);
+      const next = routeLine(mode, full, fresh, keepInShell);
+      if (next.target === "blocked") pushToast(`${fresh.name} still can't be reached.`);
+      else if (next.target === "engine" && !next.confirm) await sendToEngine();
+    } catch (failure) {
+      pushToast(`Couldn't check ${engine.name}. ${toFailure(failure).message}`);
+    } finally {
+      retrying.current = false;
+    }
+  };
+
+  const runProposal = () => {
+    if (!offered || offered.proposal.secret || ranProposal.current === offered.key) return;
+    const controls = controlsOf(keyOf);
+    if (!controls) return void pushToast("This terminal isn't open, so nothing was run.");
+    ranProposal.current = offered.key;
+    controls.write(`${offered.proposal.command}\r`);
+    recordCommand(keyOf, offered.proposal.command);
+    setDismissedProposal(offered.key);
+  };
+  const editProposal = () => {
+    if (!offered || offered.proposal.secret) return;
+    setDismissedProposal(offered.key);
+    edit(offered.proposal.command);
+    field.current?.focus();
   };
 
   const submit = () => {
@@ -151,8 +225,7 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
       setMode(MODES[(MODES.findIndex((entry) => entry.mode === mode) + 1) % MODES.length]?.mode ?? "suggest");
     } else if (event.ctrlKey && event.key.toLowerCase() === "r") {
       event.preventDefault();
-      setSearching("");
-      setSearchAt(0);
+      setSearching(event.shiftKey ? "project" : "shell");
     } else if (meta && event.key.toLowerCase() === "z" && sent && line === "") {
       event.preventDefault();
       void undo();
@@ -183,30 +256,14 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
     }
   };
 
-  const onSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
-    const row = found[searchAt];
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setSearching(null);
-      field.current?.focus();
-    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      if (found.length > 0) setSearchAt((searchAt + (event.key === "ArrowDown" ? 1 : found.length - 1)) % found.length);
-    } else if ((event.key === "Enter" || event.key === "Tab") && row) {
-      // The history row is the real command; the masked text is only what is shown.
-      event.preventDefault();
-      setSearching(null);
-      edit(row.entry.command);
-      field.current?.focus();
-    }
-  };
-
   return (
     <div className="term-input" data-target={route.target}>
       {sent ? (
         <div className="term-input-undo" role="status">
           <Sparkles size={14} aria-hidden />
-          <span>Sent to {engine.name} as a prompt.</span>
+          <span>
+            {sent.to.kind === "run" ? `Sent to ${engine.name} as a prompt. Undo stops the run that started.` : "Queued behind the current run. Undo takes it out of the queue."}
+          </span>
           <button type="button" className="text-action" onClick={() => void undo()}>
             Undo
           </button>
@@ -223,7 +280,7 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
         <span className="term-input-chip" data-target={route.target}>
           {route.target === "engine" ? `Prompt to ${engine.name}` : route.target === "blocked" ? "Not sent" : "Shell"}
         </span>
-        <button type="button" className="text-action term-input-history" onClick={() => { setSearching(""); setSearchAt(0); }}>
+        <button type="button" className="text-action term-input-history" onClick={() => setSearching("shell")}>
           <History size={14} aria-hidden /> History
         </button>
       </div>
@@ -276,30 +333,13 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
         </div>
       </div>
       {searching !== null ? (
-        <div className="term-input-pop" role="dialog" aria-label="Search history">
-          <div className="term-input-scope">
-            <span>This shell</span>
-            <input autoFocus aria-label="Search history" value={searching} onChange={(event) => { setSearching(event.target.value); setSearchAt(0); }} onKeyDown={onSearchKey} />
-          </div>
-          {found.length === 0 ? <p className="term-input-none">{history.length === 0 ? "Nothing run from this editor yet." : "No match."}</p> : null}
-          <ul role="listbox" aria-label="History">
-            {found.map((row, at) => (
-              <li key={row.entry.command} role="option" aria-selected={at === searchAt}>
-                <code>
-                  {row.match ? (
-                    <>
-                      {row.shown.slice(0, row.match[0])}
-                      <b>{row.shown.slice(row.match[0], row.match[1])}</b>
-                      {row.shown.slice(row.match[1])}
-                    </>
-                  ) : (
-                    row.shown
-                  )}
-                </code>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <HistoryPop
+          shell={history}
+          project={historyAcross(projectIds)}
+          scope={searching}
+          onPick={(command) => { setSearching(null); edit(command); field.current?.focus(); }}
+          onClose={() => { setSearching(null); field.current?.focus(); }}
+        />
       ) : completion ? (
         <ul className="term-input-pop" role="listbox" aria-label="Completions">
           {completion.items.map((item, at) => (
@@ -309,9 +349,33 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
             </li>
           ))}
         </ul>
+      ) : waitingOnPath && (slow || listing === "failed") ? (
+        <div className="term-input-pop term-input-wait" role="status">
+          <p>{listing === "failed" ? "Couldn't read this folder" : "Reading files…"}</p>
+          <span>Enter runs the line as typed</span>
+        </div>
+      ) : null}
+      {offered && offered.key !== dismissedProposal ? (
+        <ProposalCard engine={engine.name} proposal={offered.proposal} busy={ranProposal.current === offered.key} onRun={runProposal} onEdit={editProposal} onCancel={() => setDismissedProposal(offered.key)} />
       ) : null}
       <p className="term-input-note" role="status" aria-live="polite">
         {route.note}
+        {route.target === "blocked" && route.why === "offline" ? (
+          <button type="button" className="text-action" onClick={() => void tryAgain()}>
+            Try again
+          </button>
+        ) : null}
+        {route.target === "blocked" && route.why === "signed-out" ? (
+          engine.signInCommand ? (
+            <button type="button" className="text-action" onClick={() => void signIn()}>
+              Sign in
+            </button>
+          ) : (
+            <a className="text-action" href={routeHref({ name: "settings", section: "providers" })}>
+              Sign in
+            </a>
+          )
+        ) : null}
         {route.target === "blocked" && route.canRunInShell && route.why !== "secret" ? (
           <button type="button" className="text-action" onClick={() => { setMode("shell"); }}>
             Run in the shell instead
