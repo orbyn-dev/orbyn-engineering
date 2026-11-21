@@ -1247,6 +1247,41 @@ fn a_mode_change_during_a_live_run_says_it_applies_next_run() {
     );
 }
 
+/// A run keeps whether Crew queued its prompt; a plain message, and a row from before the
+/// flag existed, are the person's.
+#[test]
+fn a_run_keeps_whether_crew_queued_its_prompt() {
+    let f = fixture();
+    let person = f
+        .store
+        .enqueue(
+            &f.thread,
+            "hello",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (first, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap(), "{person:?}");
+    f.store.mark_starting(&first.id).unwrap();
+    f.store.mark_running(&first.id).unwrap();
+    f.store
+        .finish_run(&first.id, RunState::Completed, None)
+        .unwrap();
+    f.store
+        .enqueue_crew_note(
+            &f.thread,
+            "result",
+            &[],
+            &orbyn_contracts::ModelSelection::default(),
+        )
+        .unwrap();
+    let (second, _) = f.store.admit_next(&f.thread, "t").unwrap().unwrap();
+    assert!(f.store.run_is_crew_note(&second.id).unwrap());
+    assert!(!f.store.run_is_crew_note(&first.id).unwrap());
+    assert!(!f.store.run_is_crew_note("no-such-run").unwrap());
+}
+
 #[test]
 fn only_an_upgraded_database_reports_its_upgrade() {
     let dir = TempDir::new();

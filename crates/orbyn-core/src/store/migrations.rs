@@ -67,7 +67,8 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (57, include_str!("crew_background_daily.sql")),
     (58, include_str!("crew_escape_retention.sql")),
     (59, include_str!("crew_background_events.sql")),
-    (60, include_str!("plan_mode_reset.sql")),
+    (60, CREW_NOTES),
+    (61, include_str!("plan_mode_reset.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the
@@ -633,3 +634,12 @@ CREATE TABLE settings (
 // Which account the zone's local record belongs to, so a different account signing in on the same
 // data folder starts from nothing instead of inheriting the first one's changes.
 const ACCOUNT_OWNER: &str = "ALTER TABLE account_sync ADD COLUMN account TEXT;";
+
+// Crew asks its lead to read a task's result, a review, or a start it refused; the person asks the
+// lead to answer. A queued message keeps which one it was, because the run that starts from it is
+// judged by what the lead leaves behind rather than by what it says. The queued row is deleted when
+// the run starts, so the run keeps the answer too.
+const CREW_NOTES: &str = r#"
+ALTER TABLE queued_messages ADD COLUMN crew_note INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN crew_note INTEGER NOT NULL DEFAULT 0;
+"#;

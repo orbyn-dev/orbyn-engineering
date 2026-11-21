@@ -408,7 +408,7 @@ impl Core {
                 "A background run's lead thread takes no messages.".into(),
             ));
         }
-        self.runs.enqueue(lead_thread_id, text, &[])?;
+        self.runs.enqueue_crew_note(lead_thread_id, text, &[])?;
         Ok(())
     }
 

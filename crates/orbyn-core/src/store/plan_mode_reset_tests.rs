@@ -1,4 +1,4 @@
-//! Migration 60: every thread saved with plan mode on comes out with it off.
+//! Migration 61: every thread saved with plan mode on comes out with it off.
 
 use rusqlite::Connection;
 
@@ -18,10 +18,10 @@ fn plan_modes(store: &Store) -> Vec<i64> {
 }
 
 #[test]
-fn migration_60_follows_59_and_clears_plan_mode_on_every_thread() {
+fn migration_61_follows_60_and_clears_plan_mode_on_every_thread() {
     let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
     assert!(versions.windows(2).all(|w| w[1] == w[0] + 1), "contiguous");
-    assert!(versions.contains(&60));
+    assert!(versions.contains(&61));
 
     let dir = TempDir::new();
     let path = dir.path().join("orbyn.db");
@@ -62,7 +62,7 @@ fn migration_60_follows_59_and_clears_plan_mode_on_every_thread() {
     // The migration's own statement, on a database written before it.
     let (_, sql) = migrations::MIGRATIONS
         .iter()
-        .find(|(v, _)| *v == 60)
+        .find(|(v, _)| *v == 61)
         .unwrap();
     Connection::open(&path).unwrap().execute_batch(sql).unwrap();
     let store = Store::open(&path, "epoch-b").unwrap();
