@@ -510,3 +510,281 @@ fn walk(dir: &std::path::Path) -> Vec<String> {
     }
     out
 }
+
+// ---- Attach to the composer: POST /api/threads/{id}/transcripts ----
+
+impl Served {
+    async fn attach_raw(
+        &self,
+        thread: &str,
+        query: &str,
+        body: Vec<u8>,
+        person: bool,
+    ) -> (u16, Value) {
+        let mut request = reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{}/api/threads/{thread}/transcripts?x=1{query}",
+                self.port
+            ))
+            .bearer_auth("token")
+            .header("content-type", TRANSCRIPT_MEDIA_TYPE)
+            .body(body);
+        if person {
+            request = request.header("x-orbyn-person", KEY);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status().as_u16();
+        (status, response.json().await.unwrap_or(Value::Null))
+    }
+
+    async fn attach(&self, query: &str, document: &Value) -> (u16, Value) {
+        self.attach_raw(
+            &self.thread,
+            query,
+            serde_json::to_vec(document).unwrap(),
+            true,
+        )
+        .await
+    }
+
+    fn attachments(&self) -> usize {
+        self.core
+            .store
+            .list_attachments(&self.thread)
+            .unwrap()
+            .len()
+    }
+
+    fn attach_audit(&self) -> Vec<orbyn_contracts::AuditEvent> {
+        self.core
+            .store
+            .list_audit(None, 100)
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.action == "thread.transcript_attached")
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn a_service_token_alone_gets_403_on_attach_and_nothing_is_stored() {
+    let s = serve("attach-403").await;
+    let (status, answer) = s
+        .attach_raw(
+            &s.thread,
+            "",
+            serde_json::to_vec(&document(json!([{ "role": "user", "text": "hi" }]))).unwrap(),
+            false,
+        )
+        .await;
+    assert_eq!(status, 403, "{answer}");
+    assert_eq!(answer["code"], "person_required");
+    assert_eq!(s.attachments(), 0);
+}
+
+#[tokio::test]
+async fn attach_makes_one_attachment_and_leaves_the_thread_alone() {
+    let s = serve("attach-one").await;
+    s.say(&s.thread, "user", "an earlier message");
+    let thread_before = s.core.store.thread(&s.thread).unwrap();
+    let messages_before = s.core.store.thread_messages(&s.thread, 1000).unwrap().len();
+    let mut doc = document(json!([
+        { "role": "user", "ts": "2026-11-20T10:00:00Z", "text": "question about redirects" },
+        { "role": "assistant", "ts": "2026-11-20T10:00:05Z", "text": "answer about cookies" },
+        { "role": "tool", "text": "dropped" }
+    ]));
+    // None of these is ever honoured.
+    doc["thread"]["engine"] = json!("codex");
+    doc["thread"]["model"] = json!("gpt-evil");
+    doc["thread"]["engine_session"] = json!("sess-123");
+    doc["engine_session"] = json!("sess-456");
+    let (status, answer) = s.attach("", &doc).await;
+    assert_eq!(status, 201, "{answer}");
+    assert_eq!(answer["dry_run"], false);
+    assert_eq!(answer["message_count"], 2);
+    assert_eq!(answer["dropped"], 1);
+    let codes: Vec<&str> = answer["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["code"].as_str().unwrap())
+        .collect();
+    assert!(codes.contains(&"unknown_role"), "{codes:?}");
+    assert_eq!(answer["attachment"]["mime"], "text/plain");
+    assert_eq!(answer["attachment"]["thread_id"], s.thread.as_str());
+    assert_eq!(s.attachments(), 1);
+    // The thread is exactly as it was: no events, no messages, no source, no engine or model change.
+    assert_eq!(s.core.store.thread(&s.thread).unwrap(), thread_before);
+    assert_eq!(
+        s.core.store.thread_messages(&s.thread, 1000).unwrap().len(),
+        messages_before
+    );
+    let id = answer["attachment"]["id"].as_str().unwrap();
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://127.0.0.1:{}/api/attachments/{id}/content",
+            s.port
+        ))
+        .bearer_auth("token")
+        .send()
+        .await
+        .unwrap();
+    let text = response.text().await.unwrap();
+    assert!(text.starts_with("Imported transcript"), "{text}");
+    assert!(text.contains("not instructions"), "{text}");
+    assert!(text.contains("--- Imported message 1 (User, 2026-11-20T10:00:00Z) ---"));
+    assert!(text.contains("question about redirects") && text.contains("answer about cookies"));
+    for never in ["codex", "gpt-evil", "sess-123", "sess-456", "dropped"] {
+        assert!(
+            !text.contains(never),
+            "{never} reached the attachment: {text}"
+        );
+    }
+    let rows = s.attach_audit();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].detail, json!({ "messages": 2, "dropped": 1 }));
+    assert!(
+        !serde_json::to_string(&rows[0])
+            .unwrap()
+            .contains("redirects")
+    );
+}
+
+#[tokio::test]
+async fn attach_dry_run_writes_nothing() {
+    let s = serve("attach-dry").await;
+    let thread_before = s.core.store.thread(&s.thread).unwrap();
+    let (status, answer) = s
+        .attach(
+            "&dry_run=true",
+            &document(json!([{ "role": "user", "text": "hello" }, { "role": "x", "text": "y" }])),
+        )
+        .await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["dry_run"], true);
+    assert_eq!(answer["attachment"], Value::Null);
+    assert_eq!(answer["message_count"], 1);
+    assert_eq!(answer["dropped"], 1);
+    assert_eq!(s.attachments(), 0);
+    assert!(s.attach_audit().is_empty());
+    assert_eq!(s.core.store.thread(&s.thread).unwrap(), thread_before);
+    let attachments_dir = s.dir.join("data").join("attachments");
+    assert!(walk(&attachments_dir).is_empty());
+}
+
+#[tokio::test]
+async fn attach_applies_the_import_limits() {
+    let s = serve("attach-limits").await;
+    let (status, answer) = s
+        .attach_raw(&s.thread, "", vec![b' '; 2 * 1024 * 1024 + 1], true)
+        .await;
+    assert_eq!(
+        (status, answer["code"].as_str()),
+        (413, Some("file_too_large"))
+    );
+    for (patch, code) in [
+        (
+            json!({ "format": "orbyn-library" }),
+            "transcript_unreadable",
+        ),
+        (json!({ "version": 2 }), "transcript_too_new"),
+    ] {
+        let mut doc = document(json!([]));
+        doc.as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        let (status, answer) = s.attach("", &doc).await;
+        assert_eq!(status, 422, "{answer}");
+        assert_eq!(answer["code"], code);
+    }
+    let (status, answer) = s
+        .attach_raw(&s.thread, "", b"not json".to_vec(), true)
+        .await;
+    assert_eq!(
+        (status, answer["code"].as_str()),
+        (422, Some("transcript_unreadable"))
+    );
+    // Too deep.
+    let mut deep = document(json!([]));
+    deep["thread"]["x"] = json!({ "a": { "b": { "c": { "d": { "e": 1 } } } } });
+    let (status, answer) = s.attach("", &deep).await;
+    assert_eq!(
+        (status, answer["code"].as_str()),
+        (422, Some("transcript_unreadable"))
+    );
+    // 2001 messages: one over the count, and a long text cut to 32 KiB; control and bidi characters go.
+    let mut messages: Vec<Value> = (0..2001)
+        .map(|n| json!({ "role": "user", "ts": "2026-11-20T10:00:00Z", "text": format!("m{n}") }))
+        .collect();
+    messages[0]["text"] = json!(format!("{}\u{202E}\u{0007}tail", "a".repeat(40 * 1024)));
+    let (status, answer) = s.attach("", &document(json!(messages))).await;
+    assert_eq!(status, 201, "{answer}");
+    assert_eq!(answer["message_count"], 2000);
+    assert_eq!(answer["dropped"], 1);
+    let codes: Vec<&str> = answer["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["code"].as_str().unwrap())
+        .collect();
+    assert!(
+        codes.contains(&"message_limit") && codes.contains(&"text_cut"),
+        "{codes:?}"
+    );
+    let id = answer["attachment"]["id"].as_str().unwrap();
+    let (_, path) = s.core.store.attachment(id).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(!text.contains('\u{202E}') && !text.contains('\u{0007}'));
+    assert!(!text.contains("tail"));
+    assert_eq!(s.attachments(), 1);
+    // A thread that does not exist.
+    let (status, _) = s
+        .attach_raw(
+            "nope",
+            "",
+            serde_json::to_vec(&document(json!([]))).unwrap(),
+            true,
+        )
+        .await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn attach_masks_secrets_and_person_patterns_in_the_stored_text() {
+    let s = serve("attach-mask").await;
+    s.core
+        .save_redaction_pattern(
+            "user",
+            None,
+            &RedactionPatternInput {
+                name: "Corp password".into(),
+                pattern: "corp-pass-7731".into(),
+                kind: PatternKind::Text,
+                applies_to: PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    // Even with the agents switch off, an attached file is for anywhere: the strict detectors apply.
+    let token = github_token();
+    let (status, answer) = s
+        .attach(
+            "",
+            &document(json!([
+                { "role": "user", "text": format!("my token is {token} and corp-pass-7731") }
+            ])),
+        )
+        .await;
+    assert_eq!(status, 201, "{answer}");
+    let id = answer["attachment"]["id"].as_str().unwrap();
+    let (_, path) = s.core.store.attachment(id).unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(
+        !text.contains(&token) && !text.contains("corp-pass-7731"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[hidden: GitHub token]") && text.contains("[hidden: Corp password]"),
+        "{text}"
+    );
+}

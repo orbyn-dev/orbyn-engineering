@@ -467,6 +467,7 @@
     ["POST","/api/threads/{id}/switch-engine","local"],
     ["POST","/api/threads/{id}/terminals","person"],
     ["POST","/api/threads/{id}/title","local"],
+    ["POST","/api/threads/{id}/transcripts","person"],
     ["POST","/api/threads/{id}/vcs/refresh-status","local"],
     ["POST","/api/threads/{id}/vcs/refs","person"],
     ["POST","/api/threads/{id}/vcs/refs/switch","person"],

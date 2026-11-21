@@ -1394,3 +1394,65 @@ async fn when_the_redaction_settings_cannot_be_read_nothing_reaches_the_engine()
     assert!(seen.lock().unwrap().is_empty(), "the engine was started");
     assert!(read.lock().unwrap().is_empty(), "the engine read a file");
 }
+
+#[tokio::test]
+async fn an_attached_transcript_reaches_the_engine_as_a_masked_copy_never_the_stored_file() {
+    let read: Read = Arc::default();
+    let f = fixture(reading(&read)).await;
+    let doc = serde_json::json!({
+        "format": "orbyn-transcript", "version": 1, "exported_at": "2026-11-22T10:00:00Z",
+        "thread": { "title": "Old", "engine": "claude", "model": "opus", "created_at": "2026-11-20T10:00:00Z" },
+        "messages": [{ "role": "user", "ts": "2026-11-20T10:00:00Z", "text": "the corp word is zebra-quartz-91" }],
+        "omitted_earlier": 0
+    });
+    let attached = f
+        .core
+        .attach_transcript(&f.thread, doc.to_string().as_bytes(), false)
+        .unwrap();
+    let attachment = attached.attachment.unwrap();
+    let stored = f.core.store.list_attachments(&f.thread).unwrap()[0]
+        .1
+        .clone();
+    // A pattern the person adds after the attach: the stored text holds the word, the send must still hide it.
+    f.core
+        .save_redaction_pattern(
+            "t",
+            None,
+            &orbyn_contracts::RedactionPatternInput {
+                name: "Corp word".into(),
+                pattern: "zebra-quartz-91".into(),
+                kind: orbyn_contracts::PatternKind::Text,
+                applies_to: orbyn_contracts::PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let run = f
+        .core
+        .runs
+        .admit_with(
+            &f.thread,
+            "use it",
+            std::slice::from_ref(&attachment.id),
+            "t",
+        )
+        .unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Completed);
+    assert!(
+        std::fs::read_to_string(&stored)
+            .unwrap()
+            .contains("zebra-quartz-91")
+    );
+    let got = read.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_ne!(
+        got[0].0, stored,
+        "the engine gets a copy, not the stored file"
+    );
+    let text = String::from_utf8(got[0].1.clone()).unwrap();
+    assert!(!text.contains("zebra-quartz-91"), "{text}");
+    assert!(
+        text.contains("[hidden: Corp word]") && text.contains("Imported transcript"),
+        "{text}"
+    );
+}
