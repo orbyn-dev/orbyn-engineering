@@ -2679,7 +2679,8 @@ write lease for a reviewer and a lease that overlaps one another member holds no
 routes it (a decision stored with its task takes it to `routed`; a brief no engine can take goes to `needs_person` with
 the reasons), grants the brief's files and runs the worker through `delegate`, which takes it to `running`. The worker
 is sent the brief as data and nothing the `WorkerObject` type does not allow. One start runs at a time.
-Held worker messages are collected into guarded engine context at every actual turn launch,
+Held worker messages are collected into guarded engine context at every actual ordinary turn launch
+(not a `/compact` or a goal command, which not every driver sends context with),
 including a resume after `needs_person`; they never alter the person's queue or `user_prompt`.
 Pending message IDs are left out of the initial brief to avoid sending them twice. Selection
 reads current pending rows and claims their IDs atomically; claims cover an early MCP inbox
@@ -2689,6 +2690,9 @@ enqueue acceptance does not. Guard-key read failure sends no held body. Final ta
 list a bounded set of the ended worker's undelivered IDs and counts, without forwarding bodies
 or writing worker-delivery receipts. This metadata stays in the base notice if lead-held text
 must be omitted. Extra messages remain held under the existing bus caps.
+The context travels in the engine's own context channel (for Codex, its developer instructions),
+wrapped as data (`trust="data"`), so text from another crew member reaches the worker there and no
+longer in the user-role prompt.
 A crew worker is refused every `orbyn_*` tool that makes a thread or schedule or reads another thread (H3, H1).
 `crew_report` (the worker only) is stamped by the core, which refuses a draft that names an envelope field, and takes
 the task `running` to `verifying`; the checks run once the worker's turn has ended. The verifier is code: it first fails the

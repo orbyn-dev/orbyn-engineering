@@ -199,9 +199,11 @@ impl RunManager {
         // Crew messages are engine context, never part of the person's queued prompt.
         // The claim also keeps an engine's early MCP inbox read from taking them twice.
         let crew = self.crew.get().and_then(std::sync::Weak::upgrade);
+        // Only an ordinary turn takes them: a `/compact` or a goal command is not sent with the extra context by every driver, so
+        // the messages would be marked delivered without the engine seeing them.
         let held = match &crew {
-            Some(core) => core.held_for_worker_turn(&thread.id)?,
-            None => None,
+            Some(core) if kind == RunKind::Turn => core.held_for_worker_turn(&thread.id)?,
+            _ => None,
         };
         if let Some(held) = &held {
             context.push_str(&held.text());

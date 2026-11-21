@@ -349,6 +349,64 @@ async fn a_needs_person_worker_receives_held_messages_when_its_turn_resumes() {
     .await;
 }
 
+/// A `/compact` is not an ordinary turn: not every driver sends the extra context with it, so the held messages must stay held and
+/// reach the next ordinary turn, exactly once.
+#[tokio::test]
+async fn a_compact_command_leaves_held_messages_for_the_next_ordinary_turn() {
+    let d = duo().await;
+    let worker = d.w.worker(&d.b);
+    d.w.core
+        .store
+        .move_crew_task(&d.b, "needs_person", None)
+        .unwrap();
+    let active = d.w.core.store.thread(&worker).unwrap().active_run.unwrap();
+    d.w.core.runs.cancel(&active.id).unwrap();
+    d.w.until("the paused worker's turn ends", |w| {
+        w.core.store.thread(&worker).unwrap().active_run.is_none()
+    })
+    .await;
+
+    let body = "Keep the parser's newline behavior after a compact.";
+    let (sent, error) = d.call(&d.ta, "crew_post", Duo::fact(&d.mb, body)).await;
+    assert!(!error, "{sent}");
+    d.w.core
+        .store
+        .move_crew_task(&d.b, "running", None)
+        .unwrap();
+    d.w.core.runs.enqueue(&worker, "/compact", &[]).unwrap();
+    d.w.until("the compact turn starts", |w| w.sent_to(&worker).len() == 2)
+        .await;
+    let crew = d.w.task(&d.b).crew_id;
+    assert!(
+        !d.w.sent_to(&worker).last().unwrap().contains(body),
+        "a compact turn carried the held message"
+    );
+    assert_eq!(
+        d.w.core
+            .store
+            .held_crew_messages(&crew, &d.mb)
+            .unwrap()
+            .len(),
+        1,
+        "a compact turn marked the held message delivered"
+    );
+    d.w.until("the compact turn ends", |w| {
+        w.core.store.thread(&worker).unwrap().active_run.is_none()
+    })
+    .await;
+
+    d.w.core
+        .runs
+        .enqueue(&worker, "Continue after the compact.", &[])
+        .unwrap();
+    d.w.until("the next ordinary turn starts", |w| {
+        w.sent_to(&worker).len() == 3
+    })
+    .await;
+    let resumed = d.w.sent_to(&worker).last().unwrap().clone();
+    assert_eq!(resumed.matches(body).count(), 1, "{resumed}");
+}
+
 #[tokio::test]
 async fn a_terminal_worker_lists_undelivered_ids_to_the_lead_without_forwarding_bodies() {
     let d = duo().await;
