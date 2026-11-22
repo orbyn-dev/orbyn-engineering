@@ -460,6 +460,7 @@ async fn world_full(
     config.engines.codex_program = absent.join("codex.exe").to_string_lossy().into_owned();
     config.engines.known_engine_ids = Some(Vec::new());
     config.crew_preview = preview;
+    config.code_mode = true;
     if let Some(timeout) = approval_timeout {
         config.approval_timeout = timeout;
     }

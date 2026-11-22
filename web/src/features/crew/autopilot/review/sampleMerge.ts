@@ -79,7 +79,7 @@ export const mergeQueue: MergeQueueData = {
     },
     {
       heading: "Merging is code",
-      text: "The queue never merges on a model’s say-so. It merges when the required checks pass on the combined state, and not otherwise.",
+      text: "The queue does not merge on a model’s say-so. It merges when the required checks pass on the combined state, and not otherwise.",
     },
   ],
 };

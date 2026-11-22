@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useAsync } from "../../lib/useAsync";
 import { ApiFailure, request } from "../../api/client";
 import type { Thread } from "../../api/types";
+import type { GitAction } from "../../generated/GitAction";
 import type { GitActionResult } from "../../generated/GitActionResult";
-import type { PublishInput, ReposApi, ReposView, RepoRow, StartThreadInput, ThreadRepo } from "./contract";
+import type { AddThreadRepo, PublishInput, RepoScan, ReposApi, ReposView, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "./contract";
+import { cleanScan, cleanTaskFolder } from "./scanModel";
 
 const q = encodeURIComponent;
 const isMissing = (error: unknown) => error instanceof ApiFailure && error.status === 404;
@@ -21,8 +23,7 @@ let offered: boolean | null = null;
  * The real client for the routes of docs/multi-repo.md. The page asks for the project's list first; a `404` is "this service has
  * no multi-repository projects" (flag off or routes missing), answered as `null` with no error, so nothing draws and no write is
  * ever offered. Every write is Person-class (`personKey.ts`): `request` adds the key for each. Ids are encoded into the path.
- * The thread Git actions send the existing thread routes with an optional `repo_id` (absent is the primary repository). Removing a
- * repository from a thread is not in the beta and has no call.
+ * The thread Git actions send the existing thread routes with an optional `repo_id` (absent is the primary repository).
  */
 const http: ReposApi = {
   async list(projectId, signal) {
@@ -50,30 +51,46 @@ const http: ReposApi = {
   async threadRepos(threadId, signal) {
     if (offered === false) return null;
     try {
-      return await request<ThreadRepo[]>("GET", `/api/threads/${q(threadId)}/repos`, undefined, signal);
+      // `404` is an ordinary thread (or the flag off): nothing draws. An answer that is not a list is "nothing" as well.
+      const list = await request<ThreadRepo[]>("GET", `/api/threads/${q(threadId)}/repos`, undefined, signal);
+      return Array.isArray(list) ? list : null;
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;
     }
   },
-  addThreadRepo: (threadId, repoId) => request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, { repo_id: repoId }),
-  async threadGit(threadId, repoId, action) {
-    const thread = `/api/threads/${q(threadId)}`;
-    const repo = repoId === null ? {} : { repo_id: repoId };
-    switch (action.kind) {
-      case "commit":
-        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { commit_message: action.message, push: false, ...repo }));
-      case "push":
-        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { push: true, ...repo }));
-      case "pull_request":
-        return check(await request<GitActionResult>("POST", `${thread}/git/action`, { push: true, pull_request: { title: action.title, body: "" }, ...repo }));
-      case "merge":
-        await request<void>("POST", `${thread}/pulls/${action.number}/merge`, { method: action.method, auto: false, delete_branch: false, strip_credits: false, ...repo });
-        return;
-      case "review":
-        await request<void>("POST", `${thread}/pulls/${action.number}/review`, { event: action.event, body: action.body, comments: [], ...repo });
-        return;
+  async scan(projectId, path, signal) {
+    if (offered === false) return null;
+    try {
+      // Person-class (it reads a folder the person picked); it writes nothing. The answer is untrusted: shaped and capped before the page holds it.
+      return cleanScan(await request<RepoScan>("POST", `/api/projects/${q(projectId)}/repos/scan`, { path }, signal));
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
     }
+  },
+  async taskFolder(threadId, signal) {
+    if (offered === false) return null;
+    try {
+      return cleanTaskFolder(await request<TaskFolder>("GET", `/api/threads/${q(threadId)}/task-folder`, undefined, signal));
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
+    }
+  },
+  addThreadRepo: (threadId, repoId) => {
+    const body: AddThreadRepo = { repo_id: repoId };
+    return request<ThreadRepo>("POST", `/api/threads/${q(threadId)}/repos`, body);
+  },
+  async removeThreadRepo(threadId, repoId) { await request<void>("DELETE", `/api/threads/${q(threadId)}/repos/${q(repoId)}`); },
+  async threadGit(threadId, repoId, action) {
+    // `repo_id` is a body field of `GitAction`; absent is the primary repository.
+    const repo = repoId === null ? {} : { repo_id: repoId };
+    const body: GitAction =
+      action.kind === "commit" ? { commit_message: action.message, push: false, ...repo }
+        : action.kind === "push" ? { push: true, ...repo }
+          : { push: true, pull_request: { title: action.title, body: "" }, ...repo };
+    check(await request<GitActionResult>("POST", `/api/threads/${q(threadId)}/git/action`, body));
   },
 };
 
@@ -117,14 +134,29 @@ export function useRepos(projectId: string): { view: ReposView | null; settled: 
 }
 
 /** The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the service reports none. */
-export function useThreadRepos(threadId: string, refreshKey = 0): { repos: ThreadRepo[] | null; reload(): void } {
+export function useThreadRepos(threadId: string, refreshKey = 0, enabled = true): { repos: ThreadRepo[] | null; reload(): void } {
   const version = useApiVersion();
   const [repos, setRepos] = useState<ThreadRepo[] | null>(null);
   const read = useCallback(() => {
+    // Off: nothing is asked (a panel that needs the names only while a repository's file is open).
+    if (!enabled) return () => undefined;
     const abort = new AbortController();
     reposApi().threadRepos(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setRepos(next); }, () => { if (!abort.signal.aborted) setRepos(null); });
     return () => abort.abort();
-  }, [threadId, version, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [threadId, version, refreshKey, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => read(), [read]);
   return { repos, reload: read };
+}
+
+/** The thread's task folder; `folder` is `null` while loading, for a thread with none, and when the service has no such route. */
+export function useTaskFolder(threadId: string, refreshKey = 0): TaskFolder | null {
+  const version = useApiVersion();
+  const [folder, setFolder] = useState<TaskFolder | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    setFolder(null);
+    reposApi().taskFolder(threadId, abort.signal).then((next) => { if (!abort.signal.aborted) setFolder(next); }, () => { if (!abort.signal.aborted) setFolder(null); });
+    return () => abort.abort();
+  }, [threadId, version, refreshKey]);
+  return folder;
 }

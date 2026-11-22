@@ -204,7 +204,8 @@ input[type="checkbox"][role="switch"]:checked {
 input[type="checkbox"][role="switch"]:checked::after {
   left: 14px;
 }
-input[type="checkbox"][role="switch"]:disabled {
+input[type="checkbox"][role="switch"]:disabled,
+input[type="checkbox"][role="switch"][aria-readonly="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -346,6 +347,26 @@ input[type="checkbox"][role="switch"]:disabled {
 .pill-info {
   background: var(--color-infoSoft);
   color: var(--color-info);
+}
+/* Rule 8: the visible word beside an engine Orbyn cannot gate, wherever one is picked. */
+.unmanaged-label {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  white-space: nowrap;
+}
+.unmanaged-label-text {
+  color: var(--color-warnText);
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+.unmanaged-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-weight: 400;
+  text-overflow: ellipsis;
 }
 .count {
   display: inline-grid;
@@ -747,6 +768,16 @@ input[type="checkbox"][role="switch"]:disabled {
   font-family: var(--font-mono);
   font-size: var(--text-label);
 }
+/* A row that carries a label of its own, such as Crew views and its Planned pill: the pill sits where a shortcut would. */
+.popup-menu .menu-planned-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+}
+.popup-menu .menu-planned-row .pill {
+  margin-left: auto;
+}
 .menu-separator {
   height: 1px;
   margin: 4px 0;
@@ -757,7 +788,8 @@ input[type="checkbox"][role="switch"]:disabled {
   color: var(--color-faint);
   cursor: default;
 }
-.popup-menu button[aria-current] {
+.popup-menu button[aria-current],
+.popup-menu button[data-option-on] {
   color: var(--color-text);
 }
 /* Leaving: a menu or popover stays mounted, inert, and fades out over --m-base-out with --m-io,

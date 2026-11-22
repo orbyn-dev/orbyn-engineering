@@ -9,7 +9,7 @@ import { navigate, useRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
 import { PageBar } from "../../product/ui/PageBar";
 import { IconButton } from "../../ui/controls";
-import { issuesApi, useApiVersion, useTrackers } from "./api";
+import { issuesApi, markNotOffered, useApiVersion, useTrackers } from "./api";
 import type { IssueList, IssueQuery, IssueSummary, TrackerKind, TrackerRow } from "./contract";
 import { IssueDetail } from "./IssueDetail";
 import { IssueRows, IssuesHead, IssuesSkeleton, LoadMoreRow } from "./IssueRows";
@@ -55,6 +55,14 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
   const pushToast = useUi((state) => state.pushToast);
   const phone = useLayoutWidth() === "phone";
   const read = useAsync(`issues:list:${version}:${JSON.stringify(query)}`, (signal) => issuesApi().list(query, signal));
+  // A sorted list that the service turns down (a 400, or "no such route") means it does not take `sort`: the control goes back to
+  // Planned and the list is asked again in the service's own order. No sorted list is ever shown that was not sorted.
+  useEffect(() => {
+    if (read.status === "error" && query.sort !== undefined && [400, 404, 405].includes(read.error.status)) {
+      markNotOffered("sort");
+      setQuery((now) => ({ ...now, sort: undefined }));
+    }
+  }, [read.status, read.error, query.sort]);
   const loading = read.status === "loading";
   const waited = useWaited(loading);
   // The pages after the first, kept with the answer they follow: a new first answer (a filter, a refresh) drops them.
@@ -177,7 +185,7 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
             }}
           />
         ) : issues.length === 0 && filtered ? (
-          <NoMatch words={noMatchWords(query)} onClear={() => change({ ...noQuery, tracker: query.tracker, state: query.state })} />
+          <NoMatch words={noMatchWords(query)} onClear={() => change({ ...noQuery, tracker: query.tracker, state: query.state, sort: query.sort })} />
         ) : issues.length === 0 ? (
           <NoIssues where={where} state={query.state} />
         ) : (

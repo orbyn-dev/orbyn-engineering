@@ -42,6 +42,13 @@ describe("the Engine row of Details", () => {
     expect(screen.queryByText(/does not ask/)).toBeNull();
   });
 
+  it("uses Orbyn's own reason for another engine the service has a notice for", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true, engines: ["kiro"] }));
+    render(<EngineNote projectId="p" engine="kiro" engineName="Kiro" />);
+    expect(await screen.findByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
+    expect(screen.queryByText(/sandbox/i)).toBeNull();
+  });
+
   it("draws an engine's name as plain text", () => {
     render(<EngineNote projectId="p" engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
     expect(document.querySelector("b, i")).toBeNull();
@@ -71,8 +78,9 @@ describe("Reviewer only", () => {
   });
 
   it("falls back to Crew's own words when the service sends no reason", () => {
+    expect(CREW_ROLE_TOOLTIP).toBe("Orbyn cannot ask before it acts");
     render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: null }} />);
-    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
+    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", "Orbyn cannot ask before it acts");
   });
 
   it("draws nothing for any, and the reason is plain text", () => {

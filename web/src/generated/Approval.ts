@@ -2,5 +2,10 @@
 import type { JsonValue } from "../../../crates/orbyn-contracts/bindings/serde_json/JsonValue";
 import type { ActionKind } from "./ActionKind";
 import type { ApprovalState } from "./ApprovalState";
+import type { ApprovalVia } from "./ApprovalVia";
 
-export type Approval = { id: string, thread_id: string, run_id: string, kind: ActionKind, summary: string, detail: JsonValue, state: ApprovalState, decided_by: string | null, decided_at: string | null, created_at: string, };
+export type Approval = { id: string, thread_id: string, run_id: string, kind: ActionKind, summary: string, detail: JsonValue, state: ApprovalState, decided_by: string | null, decided_at: string | null, created_at: string, 
+/**
+ * Set when a Code Mode script's inner call asked. Display only: no rule or decision reads it.
+ */
+via: ApprovalVia | null, };

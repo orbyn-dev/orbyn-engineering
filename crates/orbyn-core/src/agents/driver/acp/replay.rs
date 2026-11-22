@@ -1,9 +1,24 @@
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use super::{CALL_TIMEOUT, METHOD_NOT_FOUND};
-use crate::agents::driver::rpc::{Inbound, RpcClient};
+use super::{AUTH_REQUIRED, CALL_TIMEOUT, METHOD_NOT_FOUND};
+use crate::agents::driver::rpc::{Inbound, RpcCallError, RpcClient};
 use crate::error::{CoreError, Result};
+
+/// A restore that failed, with whether the agent asked for a sign-in.
+pub(super) struct RestoreFailure {
+    pub(super) error: Box<CoreError>,
+    pub(super) auth_required: bool,
+}
+
+impl From<CoreError> for RestoreFailure {
+    fn from(error: CoreError) -> Self {
+        Self {
+            error: Box::new(error),
+            auth_required: false,
+        }
+    }
+}
 
 /// Loading replays history before its response. Consume it while the call is
 /// outstanding, then start a fresh mapper for the prompt; replay is not a turn.
@@ -13,7 +28,7 @@ pub(super) async fn resume_without_replay(
     method: &str,
     params: Value,
     session: &str,
-) -> Result<Value> {
+) -> std::result::Result<Value, RestoreFailure> {
     tokio::time::timeout(CALL_TIMEOUT, async {
         let resuming = method == "session/resume";
         let call = rpc.call_detailed(method, params, CALL_TIMEOUT);
@@ -25,21 +40,23 @@ pub(super) async fn resume_without_replay(
                 biased;
                 message = inbound.recv() => {
                     let Some(message) = message else {
-                        return finish_restore((&mut call).await.map_err(restore_error)?, bytes, count);
+                        return finish_restore((&mut call).await.map_err(restore_error)?, bytes, count).map_err(RestoreFailure::from);
                     };
                     count += 1;
                     bytes = bytes.checked_add(replay_message_size(&message)?).ok_or_else(replay_limit)?;
                     if count > super::sessions::MAX_MESSAGES || bytes > super::sessions::MAX_BYTES {
-                        return Err(replay_limit());
+                        return Err(RestoreFailure::from(replay_limit()));
                     }
                     discard_replay_message(rpc, message, session, resuming).await?;
                 }
-                result = &mut call => return finish_restore(result.map_err(restore_error)?, bytes, count),
+                result = &mut call => return finish_restore(result.map_err(restore_error)?, bytes, count).map_err(RestoreFailure::from),
             }
         }
     })
     .await
-    .map_err(|_| CoreError::EngineUnavailable("The ACP restore operation timed out.".into()))?
+    .map_err(|_| RestoreFailure::from(CoreError::EngineUnavailable(
+        "The ACP restore operation timed out.".into(),
+    )))?
 }
 
 fn replay_limit() -> CoreError {
@@ -142,11 +159,16 @@ async fn discard_replay_message(
     Ok(())
 }
 
-fn restore_error(error: crate::agents::driver::rpc::RpcCallError) -> CoreError {
-    if error.code == Some(-32002) {
+fn restore_error(error: RpcCallError) -> RestoreFailure {
+    let auth_required = error.code == Some(AUTH_REQUIRED);
+    let error = if error.code == Some(-32002) {
         CoreError::SessionLost
     } else {
         error.error
+    };
+    RestoreFailure {
+        error: Box::new(error),
+        auth_required,
     }
 }
 

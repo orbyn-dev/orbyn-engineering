@@ -17,7 +17,6 @@ import {
 } from "../api";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { SettingsBanner } from "../rows/SettingsBanner";
-import { heading } from "../sections/parts";
 import { PatternDialog } from "./PatternDialog";
 import { ProjectsOffDialog } from "./ProjectsOffDialog";
 import "./Secrets.css";
@@ -59,7 +58,6 @@ export function SecretsSection() {
   if (!settings) {
     return (
       <>
-        {heading("Secrets")}
         {read.error ? (
           <SettingsBanner tone="err" actions={<Button small onClick={read.reload}>Try again</Button>}>
             Secrets could not be read. {read.error.message}
@@ -73,13 +71,12 @@ export function SecretsSection() {
 
   return (
     <>
-      {heading("Secrets")}
       <p className="secrets-intro">
         Orbyn hides values that look like secrets in the Crew ledger and in what Crew stores. Your own patterns also mask
-        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers and review text reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed. Terminal blocks follow later.
+        ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers, review text and attached text files reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed and attached. Terminal blocks follow later.
       </p>
       <SettingsBanner>
-        Hiding in terminal blocks is not applied yet. These choices are saved and take effect when it arrives. Crew already blocks every format, always.
+        Hiding in terminal blocks is not applied yet. These choices are saved and take effect when it arrives. Crew already blocks these formats.
       </SettingsBanner>
       {error ? <SettingsBanner tone="err">{error}</SettingsBanner> : null}
       <SettingGroup title="Where values are hidden">
@@ -96,14 +93,14 @@ export function SecretsSection() {
             onChange={(event) => void quiet(changeSecretSurfaces({ terminal: event.target.checked }))}
           />
         </SettingRow>
-        <SettingRow title="What agents read" description="On by default. Switched off per project. Text you send is masked; files, attachments and what an engine reads on its own are not.">
+        <SettingRow title="What agents read" description="On by default. Switched off per project. Text you send and attached text files (up to 1 MiB) are masked; images, other attachments and what an engine reads on its own are not.">
           <span />
         </SettingRow>
         <SettingRow
           title="Crew ledger and Crew objects"
           description="Locked on. Crew blocks every recognised format, whatever is set here, so a recognised secret cannot be stored in the ledger or in a Crew object. It can’t be switched off, for any project."
         >
-          <span className="secrets-lock"><Lock size={13} aria-hidden />Always on</span>
+          <span className="secrets-lock"><Lock size={13} aria-hidden />On, locked</span>
         </SettingRow>
         <SettingRow
           title="Projects with redaction off"

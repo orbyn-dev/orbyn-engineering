@@ -7,8 +7,12 @@ pub mod instances;
 pub mod known;
 pub mod maintenance;
 pub mod manifest;
+pub mod notice;
 pub mod outcomes;
 pub mod probe;
+#[cfg(any(test, feature = "test-support"))]
+pub mod stand_in;
+pub mod start_issue;
 pub mod vendor_pages;
 pub mod warm;
 
@@ -20,8 +24,9 @@ use std::time::{Duration, Instant};
 
 use orbyn_contracts::{
     AuthState, CustomEngine, EngineCompatibility, EngineFeedbackReceipt, EngineFeedbackRequest,
-    EngineInstalls, EngineModels, EngineStatus, EngineTier, EngineUpdateProgress, InstallKind,
-    InstallOutcome, InstallerKind, ModelSelection, ProviderInstance, VersionSupport,
+    EngineInstalls, EngineModels, EngineStartIssueKind, EngineStatus, EngineTier,
+    EngineUpdateProgress, InstallKind, InstallOutcome, InstallerKind, ModelSelection,
+    ProviderInstance, VersionSupport,
 };
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
@@ -167,13 +172,31 @@ impl EngineManager {
             Some(hub) => hub.wrap("claude", claude, config.claude_program.clone()),
             None => claude,
         };
-        let drivers: Vec<Arc<dyn EngineDriver>> = vec![
+        let mut drivers: Vec<Arc<dyn EngineDriver>> = vec![
             claude,
             Arc::new(CodexDriver::new(
                 config.codex_program.clone(),
                 config.codex_sandbox.clone(),
             )),
         ];
+        // Cursor runs through the host only behind its own flag; off, the known ACP engine is untouched.
+        if let Some(hub) = host.as_ref().filter(|hub| hub.knows("cursor"))
+            && let Some(known) = known_engine("cursor")
+        {
+            let rust: Arc<dyn EngineDriver> = Arc::new(AcpDriver::known(known.as_custom(), known));
+            drivers.push(
+                hub.wrap(
+                    "cursor",
+                    rust,
+                    known
+                        .programs
+                        .first()
+                        .copied()
+                        .unwrap_or("cursor-agent")
+                        .to_owned(),
+                ),
+            );
+        }
         Self {
             catalog: CatalogCache::new(config.cache_dir.clone()),
             store,
@@ -513,7 +536,9 @@ impl EngineManager {
             let lookup = refresh || self.provider_checks_on();
             let mut statuses = Vec::new();
             for driver in self.all_drivers()? {
-                statuses.push(self.status_of(driver.as_ref(), lookup).await);
+                // The cache holds what the probe saw: the start issue is overlaid on
+                // every read, so a start that failed since then still shows at once.
+                statuses.push(self.probe_status(driver.as_ref(), lookup).await);
             }
             *cached = Some(statuses);
         }
@@ -525,7 +550,8 @@ impl EngineManager {
                 status.sign_in_command = crate::agents::driver::acp::known_sign_in(&status.id);
             }
         }
-        Ok(statuses)
+        // A start issue is read fresh on every status, never kept with the probe.
+        Ok(statuses.into_iter().map(Self::with_start_issue).collect())
     }
 
     /// The grouped provider list the Providers page shows, from the same statuses and
@@ -738,9 +764,34 @@ impl EngineManager {
             .await)
     }
 
+    /// The driver's status with the last start issue over it.
+    async fn status_of(
+        &self,
+        driver: &dyn EngineDriver,
+        lookup_latest_version: bool,
+    ) -> EngineStatus {
+        Self::with_start_issue(self.probe_status(driver, lookup_latest_version).await)
+    }
+
+    /// The probe's status with the last start issue, when one is recorded for it. The
+    /// issue is keyed by the status id, the same id the ACP sign-in capture uses.
+    fn with_start_issue(mut status: EngineStatus) -> EngineStatus {
+        let Some(issue) = start_issue::start_issue(&status.id) else {
+            return status;
+        };
+        if issue.kind == EngineStartIssueKind::SignedOut {
+            status.auth = AuthState::LoggedOut;
+        }
+        if status.problem.as_deref().is_none_or(str::is_empty) {
+            status.problem = Some(issue.message.clone());
+        }
+        status.start_issue = Some(issue);
+        status
+    }
+
     /// `lookup_latest_version` is whether the latest version may be asked for over the
     /// network; the installed version is always read locally.
-    async fn status_of(
+    async fn probe_status(
         &self,
         driver: &dyn EngineDriver,
         lookup_latest_version: bool,
@@ -798,7 +849,13 @@ impl EngineManager {
         };
         let (inherited_credentials, endpoint_origin) =
             crate::host::child_env::inherited_login(&family);
+        let (crew_role, crew_role_reason) = notice::crew_role(
+            &descriptor.capabilities.permission_modes,
+            descriptor.capabilities.managed,
+        );
         EngineStatus {
+            crew_role,
+            crew_role_reason,
             instance_of: instance.as_ref().map(|one| one.driver.clone()),
             accent: instance.and_then(|one| one.accent),
             inherited_credentials,
@@ -821,6 +878,8 @@ impl EngineManager {
             updating: false,
             problem: probe.problem,
             account: probe.account,
+            // A start issue is overlaid when a status is read, never kept with the probe.
+            start_issue: None,
         }
     }
 

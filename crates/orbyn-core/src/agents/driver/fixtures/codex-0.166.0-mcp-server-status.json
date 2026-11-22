@@ -1,0 +1,46 @@
+{
+  "data": [
+    {
+      "name": "alpha",
+      "runtimeStatus": null,
+      "pluginId": null,
+      "httpOrigin": null,
+      "serverInfo": {
+        "name": "alpha",
+        "title": null,
+        "version": "1.0.0",
+        "description": null,
+        "icons": null,
+        "websiteUrl": null
+      },
+      "serverCapabilities": {
+        "tools": {
+          "listChanged": false
+        }
+      },
+      "toolListMeta": null,
+      "tools": {
+        "alpha_tool": {
+          "name": "alpha_tool",
+          "description": "alpha_tool from alpha",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ]
+          }
+        }
+      },
+      "toolsError": null,
+      "resources": [],
+      "resourceTemplates": [],
+      "authStatus": "unsupported"
+    }
+  ],
+  "nextCursor": null
+}

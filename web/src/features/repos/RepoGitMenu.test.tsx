@@ -1,15 +1,17 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../api/client";
 import { useWorkspace } from "../../product/state/workspace";
 import { useUi } from "../../product/state/ui";
 import { createReposMock } from "../../../mock/repos";
 import type { ThreadRepo } from "./contract";
 import { RepoGitMenu } from "./RepoGitMenu";
+import { pullsApi } from "../../api/pulls";
+import type { PullRequest } from "../../generated/PullRequest";
 import { setReposApi } from "./api";
 
-afterEach(() => { setReposApi(null); useWorkspace.setState({ threads: {} }); });
+afterEach(() => { setReposApi(null); useWorkspace.setState({ threads: {} }); vi.restoreAllMocks(); });
 
 const planner: ThreadRepo = { repo_id: "orbyn-planner", name: "orbyn-planner", branch: "fix/login", added: 3, deleted: 0, trusted: true };
 const draw = (repo: ThreadRepo = planner, onChanged = () => {}) => {
@@ -29,15 +31,6 @@ it("names the repository and its branch at the top and offers that repository's 
   expect(within(menu).getByText("orbyn-planner · fix/login")).toBeVisible();
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Commit…", "Push", "Create pull request…"]);
   expect(screen.queryByText(/all repositories/i)).toBeNull();
-});
-
-it("says Open pull request when the repository's branch has one", async () => {
-  const { user } = draw({ ...planner, pull_request: { number: 142, url: "https://github.com/orbyn-dev/orbyn-planner/pull/142" } });
-  await openMenu(user);
-  expect(screen.getByRole("menuitem", { name: "Open pull request" })).toBeVisible();
-  expect(screen.queryByRole("menuitem", { name: "Create pull request…" })).toBeNull();
-  expect(screen.getByRole("menuitem", { name: "Merge pull request…" })).toBeVisible();
-  expect(screen.getByRole("menuitem", { name: "Review pull request…" })).toBeVisible();
 });
 
 it("writes nothing on open, and a Push is one write for one click", async () => {
@@ -74,24 +67,6 @@ it("leaves repo_id out for the project's primary repository", async () => {
   await openMenu(user, "orbyn-engineering");
   await user.click(screen.getByRole("menuitem", { name: "Push" }));
   await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:primary:push"]));
-});
-
-it("merges and reviews the repository's own pull request through a dialog, once", async () => {
-  const withPr = { ...planner, pull_request: { number: 142, url: "https://github.com/o/p/pull/142" } };
-  const { mock, user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
-  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
-  expect(mock.writes).toEqual([]);
-  await user.dblClick(within(merge).getByRole("button", { name: "Merge" }));
-  await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge"]));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Review pull request…" }));
-  const review = await screen.findByRole("dialog", { name: "Review the pull request for orbyn-planner" });
-  await user.type(within(review).getByRole("textbox", { name: "Comment" }), "Looks fine");
-  await user.click(within(review).getByRole("button", { name: "Send review" }));
-  await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge", "thread-git:thread-1:orbyn-planner:review"]));
 });
 
 it("offers the shared trust prompt when the service answers repo_untrusted, and trusting it writes the trust route only", async () => {
@@ -131,44 +106,13 @@ it("shows hostile names as text", async () => {
   expect(document.querySelector("img")).toBeNull();
 });
 
-// ---- success notices: a proposal in the Engineer frames; the app showed none before ----
+// ---- notices: a push, commit or pull request shows none (the frames draw none) ----
 const toastTexts = () => useUi.getState().toasts.map((toast) => toast.text);
-const withPr = { ...planner, pull_request: { number: 142, url: "https://github.com/o/p/pull/142" } };
 
-it("says in one plain notice that the pull request was merged, and only after the service answers", async () => {
-  useUi.setState({ toasts: [] });
-  const { mock, user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
-  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
-  expect(toastTexts()).toEqual([]);
-  await user.dblClick(within(merge).getByRole("button", { name: "Merge" }));
-  await waitFor(() => expect(toastTexts()).toEqual(["Merged pull request #142 of orbyn-planner."]));
-  expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:merge"]);
-});
-
-it("says in one plain notice that the review was sent", async () => {
-  useUi.setState({ toasts: [] });
-  const { user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Review pull request…" }));
-  const review = await screen.findByRole("dialog", { name: "Review the pull request for orbyn-planner" });
-  await user.type(within(review).getByRole("textbox", { name: "Comment" }), "Looks fine");
-  await user.click(within(review).getByRole("button", { name: "Send review" }));
-  await waitFor(() => expect(toastTexts()).toEqual(["Sent your review of pull request #142 of orbyn-planner."]));
-});
-
-it("shows no success notice when the merge fails: the dialog stays open with the service's words", async () => {
-  useUi.setState({ toasts: [] });
-  const { mock, user } = draw(withPr);
-  await openMenu(user);
-  await user.click(screen.getByRole("menuitem", { name: "Merge pull request…" }));
-  const merge = await screen.findByRole("dialog", { name: "Merge the pull request for orbyn-planner" });
-  mock.failNext("thread-git");
-  await user.click(within(merge).getByRole("button", { name: "Merge" }));
-  expect(await within(merge).findByRole("alert")).toHaveTextContent("The service could not do that.");
-  expect(toastTexts()).toEqual([]);
-  expect(screen.getByRole("dialog", { name: "Merge the pull request for orbyn-planner" })).toBeVisible();
+it("offers no merge or review item for a repository with no pull request", async () => {
+  const { user } = draw();
+  const menu = await openMenu(user);
+  expect(within(menu).queryByRole("menuitem", { name: /merge|review/i })).toBeNull();
 });
 
 it("shows no notice for a push, commit or pull request: the frames draw none", async () => {
@@ -178,4 +122,80 @@ it("shows no notice for a push, commit or pull request: the frames draw none", a
   await user.click(screen.getByRole("menuitem", { name: "Push" }));
   await waitFor(() => expect(mock.writes).toEqual(["thread-git:thread-1:orbyn-planner:push"]));
   expect(toastTexts()).toEqual([]);
+});
+
+// ---- the repository's own pull request: its state, and review and merge routed with this repository's repo_id ----
+const pull = (number: number, state = "open"): PullRequest => ({ number: BigInt(number), title: "Fix the feed", url: "https://example.test/pr", state, head: "fix/login", base: "main", author: null, draft: false, updated_at: null, labels: [], review_state: null, checks_state: null });
+const withPull = (state = "open", number = 7): ThreadRepo => ({ ...planner, pull_request: pull(number, state) });
+const itemNames = (menu: HTMLElement) => within(menu).getAllByRole("menuitem").map((item) => item.textContent);
+
+it("shows the repository's open pull request and offers review and merge instead of creating another", async () => {
+  const { user } = draw(withPull());
+  const menu = await openMenu(user);
+  expect(itemNames(menu)).toEqual(["Commit…", "Push", "Pull request #7Open", "Review…", "Merge…"]);
+  expect(within(menu).getByRole("menuitem", { name: /Pull request #7/ })).toBeDisabled();
+});
+
+it.each([["merged", "Merged"], ["closed", "Closed"]])("offers a new pull request again once the repository's last one is %s, and says its state", async (state, word) => {
+  const { user } = draw(withPull(state, 3));
+  const menu = await openMenu(user);
+  expect(itemNames(menu)).toEqual(["Commit…", "Push", `Pull request #3${word}`, "Create pull request…"]);
+});
+
+it("reviews with this repository's repo_id, once, and needs a note for requested changes", async () => {
+  const review = vi.spyOn(pullsApi, "threadReview").mockResolvedValue(undefined);
+  vi.spyOn(pullsApi, "refreshLinked").mockResolvedValue([]);
+  let changed = 0;
+  const { user } = draw(withPull(), () => { changed += 1; });
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Review…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Review pull request #7 in orbyn-planner" });
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Review" }), "request_changes");
+  expect(within(dialog).getByRole("button", { name: "Submit review" })).toBeDisabled();
+  await user.type(within(dialog).getByRole("textbox", { name: "Note" }), "Handle the empty feed");
+  await user.dblClick(within(dialog).getByRole("button", { name: "Submit review" }));
+  await waitFor(() => expect(review).toHaveBeenCalledTimes(1));
+  expect(review).toHaveBeenCalledWith("thread-1", 7, "request_changes", "Handle the empty feed", "orbyn-planner");
+  await waitFor(() => expect(changed).toBe(1));
+});
+
+it("merges with this repository's repo_id, with the method and branch choice, and leaves the credits to the account setting", async () => {
+  const merge = vi.spyOn(pullsApi, "threadMerge").mockResolvedValue(undefined);
+  vi.spyOn(pullsApi, "refreshLinked").mockResolvedValue([]);
+  const { user } = draw(withPull());
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Merge…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Merge pull request #7 in orbyn-planner" });
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Merge method" }), "rebase");
+  await user.click(within(dialog).getByRole("checkbox", { name: "Delete the branch" }));
+  await user.dblClick(within(dialog).getByRole("button", { name: "Merge" }));
+  await waitFor(() => expect(merge).toHaveBeenCalledTimes(1));
+  expect(merge).toHaveBeenCalledWith("thread-1", 7, { method: "rebase", auto: false, delete_branch: true, strip_credits: false }, "orbyn-planner");
+});
+
+it("leaves repo_id out of the review and merge of the primary repository", async () => {
+  useWorkspace.setState({ threads: { "thread-1": { id: "thread-1", project_id: "orbyn-engineering" } as never } });
+  const review = vi.spyOn(pullsApi, "threadReview").mockResolvedValue(undefined);
+  vi.spyOn(pullsApi, "refreshLinked").mockResolvedValue([]);
+  const { user } = draw({ ...withPull(), repo_id: "orbyn-engineering", name: "orbyn-engineering" });
+  await openMenu(user, "orbyn-engineering");
+  await user.click(screen.getByRole("menuitem", { name: "Review…" }));
+  await user.click(await screen.findByRole("button", { name: "Submit review" }));
+  await waitFor(() => expect(review).toHaveBeenCalledWith("thread-1", 7, "approve", "", undefined));
+});
+
+it("shows the service's refusal of a merge and keeps the dialog open", async () => {
+  vi.spyOn(pullsApi, "threadMerge").mockRejectedValue(new ApiFailure("not_mergeable", "Checks are still running.", 409));
+  const { user } = draw(withPull());
+  await openMenu(user);
+  await user.click(screen.getByRole("menuitem", { name: "Merge…" }));
+  await user.click(await screen.findByRole("button", { name: "Merge" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Checks are still running.");
+});
+
+it("turns review and merge off on a repository that is not trusted", async () => {
+  const { user } = draw({ ...withPull(), trusted: false });
+  await openMenu(user);
+  expect(screen.getByRole("menuitem", { name: "Review…" })).toBeDisabled();
+  expect(screen.getByRole("menuitem", { name: "Merge…" })).toBeDisabled();
 });

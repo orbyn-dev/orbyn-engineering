@@ -30,6 +30,17 @@ pub(crate) fn now() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
 }
 
+/// An RFC 3339 time for unix seconds.
+pub(crate) fn format_unix(seconds: i64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(seconds)
+        .ok()
+        .and_then(|t| {
+            t.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned())
+}
+
 /// Unix seconds for an RFC 3339 time.
 pub(crate) fn parse_time(text: &str) -> Option<i64> {
     time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
@@ -276,6 +287,19 @@ mod tests {
         assert_eq!(home_from(None, None), None);
         // An empty HOME is returned as it is, not skipped.
         assert_eq!(home_from(os(""), os("/p")), Some(PathBuf::new()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::testing::TempDir::new();
+        let path = dir.path().join("account-keys-default.store");
+        write_private_atomic(&path, b"owner only").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]

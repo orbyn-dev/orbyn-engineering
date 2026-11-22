@@ -1,5 +1,5 @@
 /**
- * MOCKS of the photo-conversion and transcript routes of docs/attachments-transcripts.md (provisional), for tests and the dev-only
+ * MOCKS of the photo-conversion route and the composer's transcript attach route of docs/attachments-transcripts.md (provisional), for tests and the dev-only
  * preview (`#/preview/attachments`), which installs them through `setPhotoConversionApi` and `setTranscriptsApi`. The app's own
  * default is no client at all: nothing here ships. The mocks refuse what the doc says the service refuses, picked by a word in the
  * file name so a person (or a test) can reach every frame: "damaged" and "huge" for a photo; "newer" and "notes" for a transcript.
@@ -50,7 +50,7 @@ export function createTranscriptsMock(init: { delayMs?: number } = {}): Transcri
       await later(init.delayMs ?? 0, signal);
       if (/newer/i.test(file.name)) throw new ApiFailure("transcript_too_new", "Made by a newer Orbyn.", 422);
       if (/notes/i.test(file.name)) throw new ApiFailure("transcript_unreadable", "Not a transcript.", 422);
-      const title = file.name.replace(/\.transcript$/i, "").replace(/[-_]+/g, " ");
+      const title = file.name.replace(/\.orbyn\.json$/i, "").replace(/[-_]+/g, " ");
       return { id: `mock-transcript-${sent.length}`, title: title.charAt(0).toUpperCase() + title.slice(1), message_count: 20 + sent.length * 17 };
     },
   };

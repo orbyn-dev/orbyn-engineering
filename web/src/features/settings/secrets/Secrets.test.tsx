@@ -31,13 +31,13 @@ describe("Settings › Secrets", () => {
     expect(screen.queryByRole("switch", { name: "What agents read" })).toBeNull();
     expect(screen.getByText("What agents read")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Manage" })).toHaveLength(1);
-    expect(screen.getByText(/On by default. Switched off per project. Text you send is masked/)).toBeVisible();
+    expect(screen.getByText(/On by default. Switched off per project. Text you send and attached text files/)).toBeVisible();
     expect(screen.getByText("Crew ledger and Crew objects")).toBeVisible();
     expect(screen.getByText(/Crew blocks every recognised format/)).toBeVisible();
     expect(screen.queryByText(/Reveal/)).toBeNull();
     expect(screen.queryByText(/apply to new output/)).toBeNull();
     expect(screen.getByText(/They apply to the Crew ledger when you read it, old rows included, and to what agents read/)).toBeVisible();
-    expect(screen.getByText("Always on")).toBeVisible();
+    expect(screen.getByText("On, locked")).toBeVisible();
     expect(screen.queryByRole("switch", { name: /Crew ledger/ })).toBeNull();
     expect(screen.getByText("None. Redaction is on in every project.")).toBeVisible();
     // What is not built is said so, not promised.

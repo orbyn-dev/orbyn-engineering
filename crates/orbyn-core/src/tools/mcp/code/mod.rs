@@ -6,6 +6,7 @@ mod declare;
 #[cfg(test)]
 pub(crate) mod fake;
 mod host;
+mod record;
 mod reply;
 mod runs;
 mod search;
@@ -14,10 +15,12 @@ pub(crate) use runs::CodeRuns;
 
 use crate::app::Core;
 use crate::store::AuditRecord;
+use crate::store::code_runs::{NewCodeRun, StoredCodeCall};
 use crate::tools::mcp::McpBinding;
-use orbyn_code_sandbox::RunSeed;
+use orbyn_code_sandbox::{ErrorKind, RunError, RunSeed, Step};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 pub(crate) const SEARCH_TOOL: &str = "orbyn_code_search";
@@ -145,13 +148,12 @@ impl Core {
         let thread = &binding.scope.thread_id;
         let code = args.get("code").and_then(Value::as_str);
         let resume = args.get("run_id").and_then(Value::as_str);
+        if let Some(id) = resume
+            && !record::valid_run_id(id)
+        {
+            return ("That run_id is not a run of this thread.".into(), true);
+        }
         let (run_id, live) = match (code, resume) {
-            (Some(_), Some(_)) => {
-                return (
-                    "Pass `code` to start a run or `run_id` to resume one, not both.".into(),
-                    true,
-                );
-            }
             (None, None) => {
                 return (
                     "Pass `code` to start a run or `run_id` to resume one.".into(),
@@ -159,45 +161,263 @@ impl Core {
                 );
             }
             (None, Some(id)) => match self.code_runs.get(id, thread) {
-                Some(live) => (id.to_owned(), live),
-                None => return (reply::lost(id, LOST).to_string(), false),
+                Some(live) => {
+                    if let Err(error) = self.store.code_run_set_status(id, "running", true) {
+                        tracing::warn!(%error, "could not record a resume");
+                    }
+                    (id.to_owned(), live)
+                }
+                None => return (self.code_resume_without_live(id, thread), false),
             },
-            (Some(code), None) => {
+            (Some(code), resume) => {
                 if code.len() > MAX_SOURCE_BYTES {
                     return (
                         format!("The script is over {MAX_SOURCE_BYTES} bytes."),
                         true,
                     );
                 }
-                let run_id = ulid::Ulid::generate().to_string();
-                self.note_code_run(binding, &run_id, code);
-                let host_core = self.clone();
-                let host_binding = binding.clone();
-                let seed = RunSeed {
-                    start_ms: now_ms(),
-                    seed: (ulid::Ulid::generate().random() & 0xffff_ffff) as u32,
+                let started = match resume {
+                    Some(id) => self.code_replay(binding, id, code).await,
+                    None => self.code_start_new(binding, code).await,
                 };
-                let started = self
-                    .code_runs
-                    .start(&run_id, thread, code, seed, move |pending| {
-                        Arc::new(host::RunHost::new(&host_core, &host_binding, pending))
-                    })
-                    .await;
                 match started {
-                    Ok(live) => (run_id, live),
-                    Err(runs::Refused::Limit(message)) => return (message, true),
-                    Err(runs::Refused::Script(error)) => {
-                        return (reply::failed(&run_id, &error).to_string(), false);
-                    }
+                    Ok(started) => started,
+                    Err(answer) => return answer,
                 }
             }
         };
         let slice = slice_for(self.code_runs.slice());
         let answer = match live.wait(slice).await {
             Some(step) => reply::finished(&run_id, &step, super::MAX_RESULT_BYTES),
-            None => reply::paused(&run_id, &live.pending()),
+            None => {
+                if let Err(error) = self.store.code_run_set_status(&run_id, "paused", false) {
+                    tracing::warn!(%error, "could not record a pause");
+                }
+                reply::paused(&run_id, &live.pending())
+            }
         };
         (answer.to_string(), false)
+    }
+
+    /// A resume of a run that is not in memory: a finished one answers from its record, any other is lost.
+    fn code_resume_without_live(&self, run_id: &str, thread: &str) -> String {
+        let stored = self
+            .store
+            .code_run(run_id)
+            .ok()
+            .flatten()
+            .filter(|run| run.thread_id == thread);
+        let Some(run) = stored else {
+            return reply::lost(run_id, LOST).to_string();
+        };
+        let error: Value = run
+            .error
+            .as_deref()
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null);
+        match run.status.as_str() {
+            "completed" => {
+                let result = run
+                    .result
+                    .as_deref()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or(Value::Null);
+                reply::finished(
+                    run_id,
+                    &Step::Done {
+                        result,
+                        logs: run.logs,
+                        truncated: run.truncated,
+                    },
+                    super::MAX_RESULT_BYTES,
+                )
+                .to_string()
+            }
+            "error" if error["kind"] != "lost" => json!({
+                "status": "error", "runId": run_id, "error": error, "logs": run.logs, "truncated": run.truncated })
+            .to_string(),
+            _ => reply::lost(run_id, LOST).to_string(),
+        }
+    }
+
+    async fn code_start_new(
+        self: &Arc<Self>,
+        binding: &McpBinding,
+        code: &str,
+    ) -> Result<(String, Arc<runs::Live>), (String, bool)> {
+        let thread = &binding.scope.thread_id;
+        let run_id = ulid::Ulid::generate().to_string();
+        self.note_code_run(binding, &run_id, code);
+        let seed = RunSeed {
+            start_ms: now_ms(),
+            seed: (ulid::Ulid::generate().random() & 0xffff_ffff) as u32,
+        };
+        self.code_runs_prune();
+        let record = NewCodeRun {
+            run_id: run_id.clone(),
+            thread_id: thread.clone(),
+            script: code.to_owned(),
+            script_sha256: crate::util::sha256_hex(code.as_bytes()),
+            seed_start_ms: seed.start_ms,
+            seed: seed.seed,
+            started_at: crate::util::now(),
+            crew_worker: self
+                .store
+                .crew_task_for_worker(thread)
+                .ok()
+                .flatten()
+                .is_some(),
+        };
+        if let Err(error) = self.store.code_run_begin(&record) {
+            tracing::warn!(%error, "could not record a script run");
+        }
+        self.code_begin_task(binding, &run_id, code, seed, HashMap::new())
+            .await
+            .map(|live| (run_id, live))
+    }
+
+    /// A lost run picked up again with the same code: its recorded calls answer again and nothing that
+    /// was recorded runs twice.
+    async fn code_replay(
+        self: &Arc<Self>,
+        binding: &McpBinding,
+        run_id: &str,
+        code: &str,
+    ) -> Result<(String, Arc<runs::Live>), (String, bool)> {
+        let thread = &binding.scope.thread_id;
+        if self.code_runs.is_running(run_id) {
+            return Err((
+                "That run is still running. Resume it with run_id alone.".into(),
+                true,
+            ));
+        }
+        let stored = self
+            .store
+            .code_run(run_id)
+            .ok()
+            .flatten()
+            .filter(|run| run.thread_id == *thread);
+        let Some(run) = stored else {
+            return Err((reply::lost(run_id, LOST).to_string(), false));
+        };
+        let lost = run
+            .error
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .is_some_and(|error| error["kind"] == "lost");
+        if run.status != "error" || !lost {
+            return Err((
+                "That run did not end as lost. Start a new run with `code`, or resume it with run_id alone."
+                    .into(),
+                true,
+            ));
+        }
+        if run.script_sha256 != crate::util::sha256_hex(code.as_bytes()) {
+            return Err((reply::lost(run_id, host::NOT_REPEATABLE).to_string(), false));
+        }
+        let calls: HashMap<u32, StoredCodeCall> = match self.store.code_calls(run_id) {
+            Ok(calls) => calls.into_iter().map(|c| (c.idx, c)).collect(),
+            Err(error) => return Err((error.public_message(), true)),
+        };
+        if let Err(error) = self.store.code_run_restart(run_id) {
+            tracing::warn!(%error, "could not record a replay");
+        }
+        let seed = RunSeed {
+            start_ms: run.seed_start_ms,
+            seed: run.seed,
+        };
+        self.code_begin_task(binding, run_id, code, seed, calls)
+            .await
+            .map(|live| (run_id.to_owned(), live))
+    }
+
+    async fn code_begin_task(
+        self: &Arc<Self>,
+        binding: &McpBinding,
+        run_id: &str,
+        code: &str,
+        seed: RunSeed,
+        replay: HashMap<u32, StoredCodeCall>,
+    ) -> Result<Arc<runs::Live>, (String, bool)> {
+        let failure: host::ReplayFailure = Arc::default();
+        let host_core = self.clone();
+        let host_binding = binding.clone();
+        let host_run = run_id.to_owned();
+        let host_script = crate::util::sha256_hex(code.as_bytes());
+        let host_failure = failure.clone();
+        let weak: Weak<Core> = Arc::downgrade(self);
+        let finish_run = run_id.to_owned();
+        let started = self
+            .code_runs
+            .start(
+                run_id,
+                &binding.scope.thread_id,
+                code,
+                seed,
+                move |pending| {
+                    Arc::new(host::RunHost::new(
+                        &host_core,
+                        &host_binding,
+                        pending,
+                        &host_run,
+                        &host_script,
+                        replay,
+                        host_failure,
+                    ))
+                },
+                move |step| {
+                    let message = failure
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
+                    let step = match (message, step) {
+                        (
+                            Some(message),
+                            Step::Done {
+                                logs, truncated, ..
+                            }
+                            | Step::Failed {
+                                logs, truncated, ..
+                            },
+                        ) => Step::Failed {
+                            error: RunError {
+                                kind: ErrorKind::Runtime,
+                                message,
+                                line: None,
+                                code: Some("lost".into()),
+                            },
+                            logs,
+                            truncated,
+                        },
+                        (_, step) => step,
+                    };
+                    if let Some(core) = weak.upgrade() {
+                        core.code_run_finished(&finish_run, &step);
+                    }
+                    step
+                },
+            )
+            .await;
+        match started {
+            Ok(live) => Ok(live),
+            Err(runs::Refused::Limit(message)) => {
+                if let Err(error) = self.store.code_run_forget(run_id) {
+                    tracing::warn!(%error, "could not drop a refused script run");
+                }
+                Err((message, true))
+            }
+            Err(runs::Refused::Script(error)) => {
+                self.code_run_finished(
+                    run_id,
+                    &Step::Failed {
+                        error: error.clone(),
+                        logs: vec![],
+                        truncated: false,
+                    },
+                );
+                Err((reply::failed(run_id, &error).to_string(), false))
+            }
+        }
     }
 
     /// One `code.run` audit record when a run starts: its size and SHA-256, never the script.

@@ -8,6 +8,7 @@ import { LIMITS_WAIT_MS } from "./UsageLimits";
 import { UsagePage } from "./UsagePage";
 import { dataChanged } from "../../api/shell";
 import { COALESCE_MS, startDataRefresh } from "../../lib/dataRefresh";
+import { LIMITS_STALE_MS, engineLimitsKey, limitsAnsweredAt, resetLimitsStore } from "../../lib/limitsStore";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -211,20 +212,54 @@ const openLimits = async () => {
   await userEvent.click(screen.getByRole("tab", { name: "Limits" }));
 };
 
-it("clears an unvalidated account's windows when a refresh fails at the network", async () => {
+it("keeps the last figures and says so when a person's refresh fails", async () => {
   const read = vi.spyOn(api, "limits").mockResolvedValueOnce(limitsOf([
     { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 37 })] },
   ])).mockRejectedValue(new ApiFailure("unavailable", "Limits unavailable.", 503));
   useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
   await openLimits();
   expect(await screen.findByRole("meter")).toHaveAttribute("aria-valuenow", "37");
-  // A CLI account switch may leave the cached status logged_in. Its old report
-  // cannot be used as a fallback without an authoritative account binding.
+  expect(screen.getByText("Checked just now")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Refresh limits" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Limits unavailable.");
-  expect(screen.queryByRole("meter")).toBeNull();
-  expect(screen.queryByText(/37% used/)).toBeNull();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn\u2019t check limits. Showing the answer from just now.");
+  expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "37");
+  expect(screen.getByText("Checked just now")).toBeVisible();
   expect(read).toHaveBeenCalledTimes(2);
+  // The refresh button is now Try again, and pressing it asks again with force.
+  expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(2);
+  await userEvent.click(screen.getAllByRole("button", { name: "Try again" })[0]!);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+  expect(read).toHaveBeenLastCalledWith(true, expect.any(AbortSignal));
+});
+
+it("keeps the figures and reads Checking\u2026 while a refresh is on its way", async () => {
+  const next = deferred<never>();
+  vi.spyOn(api, "limits").mockResolvedValueOnce(limitsOf([
+    { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 37 })] },
+  ])).mockReturnValue(next.promise);
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  await openLimits();
+  await screen.findByRole("meter");
+  await userEvent.click(screen.getByRole("button", { name: "Refresh limits" }));
+  expect(await screen.findByText("Checking\u2026")).toBeVisible();
+  expect(screen.getByRole("meter")).toHaveAttribute("aria-valuenow", "37");
+  expect(screen.getByRole("button", { name: "Refresh limits" })).toBeDisabled();
+});
+
+it("counts the label up every 30 seconds while the page is open", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    vi.spyOn(api, "limits").mockResolvedValue(limitsOf([
+      { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: 37 })] },
+    ]));
+    useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+    await openLimits();
+    expect(await screen.findByText("Checked just now")).toBeVisible();
+    act(() => { vi.advanceTimersByTime(5 * 60_000); });
+    expect(screen.getByText("Checked 5 min ago")).toBeVisible();
+    act(() => { vi.advanceTimersByTime(3 * 60 * 60_000); });
+    expect(screen.getByText("Checked 3 hr ago")).toBeVisible();
+  } finally { vi.useRealTimers(); }
 });
 
 it("does not restore a prior account's session-kept window when Limits remounts", async () => {
@@ -287,7 +322,7 @@ it("reads Not reported for Claude Code even when its driver sends a window, with
   await openLimits();
   expect(await screen.findByRole("heading", { name: "claude \u00b7 Personal" })).toBeVisible();
   expect(screen.getByText("Not reported")).toBeVisible();
-  expect(screen.getByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+  expect(screen.getByText(/claude doesn\u2019t report one\. Usage is on the Usage tab\./)).toBeVisible();
   expect(screen.queryByRole("meter")).toBeNull();
   expect(screen.queryByText(/% used/)).toBeNull();
 });
@@ -360,7 +395,7 @@ it("says a Codex read failed with no last figure, and Try again asks that engine
   expect(screen.queryByRole("meter")).toBeNull();
   expect(screen.queryByText(/boom/)).toBeNull();
   expect(screen.queryByText("Subscription window")).toBeNull();
-  expect(screen.getByText(/Orbyn reads a limit only through the engine\u2019s own CLI/)).toBeVisible();
+  expect(screen.getByText(/Orbyn reads a limit through the engine\u2019s own CLI or a supported session protocol, not from token files/)).toBeVisible();
   expect(screen.getByText("OpenCode Go")).toBeVisible();
   expect(screen.getByText("No supported route yet")).toBeVisible();
   all.mockClear();
@@ -370,13 +405,51 @@ it("says a Codex read failed with no last figure, and Try again asks that engine
   expect(all).not.toHaveBeenCalledWith(true);
 });
 
+it("keeps the retried engine's answer for the panel and details row that show it", async () => {
+  resetLimitsStore();
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([], [{ engine: "codex", reason: "boom" }]));
+  vi.spyOn(api, "engineLimits").mockResolvedValue({
+    engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow()],
+  } as never);
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  await openLimits();
+  await screen.findByText("Couldn\u2019t read the limit.");
+  expect(limitsAnsweredAt(engineLimitsKey("codex"))).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(limitsAnsweredAt(engineLimitsKey("codex"))).not.toBeNull());
+});
+
+it("checks limits again when the app comes back into view, but not while the answer is fresh", async () => {
+  const read = vi.spyOn(api, "limits").mockResolvedValue(limitsOf([
+    { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow()] },
+  ]));
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  const stop = startDataRefresh();
+  try {
+    await openLimits();
+    await screen.findByRole("meter");
+    expect(read).toHaveBeenCalledTimes(1);
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
+    expect(read).toHaveBeenCalledTimes(1);
+    // A person away longer than the window: the click on the window reads again, as one event read.
+    const fresh = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(fresh + LIMITS_STALE_MS);
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    dateNow.mockRestore();
+  } finally {
+    stop();
+  }
+});
+
 for (const used of [62, 100]) {
   it(`keeps the full Claude Code line with Codex at ${used}%`, async () => {
     const claude = { engine: "claude", checked_at: "", limits: {}, plan: null, windows: [] };
     const codex = { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow({ used_percent: used })] };
     vi.spyOn(api, "limits").mockResolvedValue(limitsOf([claude, codex]));
     await openLimits();
-    expect(await screen.findByText(/claude doesn\u2019t report one\. Usage and cost are on the Usage tab\./)).toBeVisible();
+    expect(await screen.findByText(/claude doesn\u2019t report one\. Usage is on the Usage tab\./)).toBeVisible();
   });
 }
 

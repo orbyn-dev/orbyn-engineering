@@ -82,6 +82,14 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   environmentThemeAppliedAt: state.environmentThemeAppliedAt,
   environmentIdentification: state.environmentIdentification,
   welcomeDone: state.welcomeDone,
+  snapshotEnabled: state.snapshotEnabled,
+  snapshotShortcut: state.snapshotShortcut,
+  snapshotIncludeAccessibility: state.snapshotIncludeAccessibility,
+  snapshotPlaySound: state.snapshotPlaySound,
+  snapshotSound: state.snapshotSound,
+  snapshotFlash: state.snapshotFlash,
+  snapshotAnimations: state.snapshotAnimations,
+  snapshotExcludedApps: state.snapshotExcludedApps,
 });
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -163,5 +171,30 @@ export function savedPrefs(): Partial<Prefs> {
     Object.entries(isPlainObject(saved.explorerOpen) ? saved.explorerOpen : {}).filter(([, open]) => typeof open === "boolean"),
   );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout, leftBarView, explorerOpen };
+  return { ...saved, ...cleanSnapshotPrefs(saved), panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout, leftBarView, explorerOpen };
+}
+
+/** Snap Shot settings from a save that may predate them or carry a damaged value (docs/snapshots.md limits). */
+function cleanSnapshotPrefs(saved: Partial<Prefs>): Pick<Prefs,
+  "snapshotEnabled" | "snapshotShortcut" | "snapshotIncludeAccessibility" | "snapshotPlaySound" |
+  "snapshotSound" | "snapshotFlash" | "snapshotAnimations" | "snapshotExcludedApps"> {
+  const chord = saved.snapshotShortcut;
+  const shortcut = isPlainObject(chord)
+    && chord.kind === "chord" && typeof chord.key === "string" && chord.key !== "" && chord.key.length <= 32
+    && (chord.mod === true || chord.shift === true || chord.alt === true || chord.ctrl === true)
+    ? { kind: "chord" as const, key: chord.key, mod: chord.mod === true, shift: chord.shift === true, alt: chord.alt === true, ctrl: chord.ctrl === true }
+    : defaults.snapshotShortcut;
+  const excluded = Array.isArray(saved.snapshotExcludedApps)
+    ? [...new Set(saved.snapshotExcludedApps.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter((id) => id !== "" && id.length <= 255))].slice(0, 64)
+    : [];
+  return {
+    snapshotEnabled: saved.snapshotEnabled === true,
+    snapshotShortcut: shortcut,
+    snapshotIncludeAccessibility: saved.snapshotIncludeAccessibility === true,
+    snapshotPlaySound: saved.snapshotPlaySound !== false,
+    snapshotSound: saved.snapshotSound === "camera-shutter" ? "camera-shutter" : "soft-pop",
+    snapshotFlash: saved.snapshotFlash !== false,
+    snapshotAnimations: saved.snapshotAnimations !== false,
+    snapshotExcludedApps: excluded,
+  };
 }

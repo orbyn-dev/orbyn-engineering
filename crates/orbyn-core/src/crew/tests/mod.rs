@@ -19,6 +19,7 @@ mod autopilot_watch;
 mod background;
 mod background_daily;
 mod background_listeners;
+mod background_review;
 mod background_start;
 mod backtest_api;
 mod backtest_escapes;
@@ -64,6 +65,8 @@ mod model_ids;
 mod overrides;
 mod protect;
 mod provider_facts;
+mod reviewer_only;
+mod unmanaged;
 // The checks are shell commands (`touch`, `rm`, `sleep`, a loop), so these tests run where there is a POSIX shell.
 #[cfg(unix)]
 mod rerun;

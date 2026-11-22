@@ -10,6 +10,8 @@ import { useAsync } from "../../lib/useAsync";
  */
 let current: IssuesApi = createLiveIssuesApi();
 let version = 0;
+/** What this service refused as "no such route" (404 or 405) on first use: those controls go back to Planned for the life of this client. */
+const refused = new Set<"sort" | "edit" | "state">();
 const listeners = new Set<() => void>();
 
 // Dev only: `#/preview/issues` installs the mock so the screens can be seen before the routes exist. In a
@@ -23,6 +25,7 @@ export const issuesApi = (): IssuesApi => current;
 /** Tests and the dev-only preview install the mock here; `null` puts a fresh live client back, which asks the service again. */
 export function setIssuesApi(next: IssuesApi | null): void {
   current = next ?? createLiveIssuesApi();
+  refused.clear();
   version += 1;
   for (const listener of listeners) listener();
 }
@@ -58,3 +61,49 @@ export function useTrackers(): { rows: TrackerRow[] | null; settled: boolean; re
 }
 
 export type { TrackerKind };
+
+const refusedListeners = new Set<() => void>();
+
+/**
+ * A write or the sort answered "no such route": the control goes back to its Planned pill and stays there, so a service that does
+ * not offer it is never shown a success. Called only for a 404 or 405 that is not `not_found` (see `routeAbsent`). It does not
+ * change `useApiVersion`, so no screen reads again and no draft is lost.
+ */
+export function markNotOffered(what: "sort" | "edit" | "state"): void {
+  if (refused.has(what)) return;
+  refused.add(what);
+  for (const listener of refusedListeners) listener();
+}
+
+function useRefused(what: "sort" | "edit" | "state"): boolean {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const listener = () => tick((n) => n + 1);
+    refusedListeners.add(listener);
+    return () => { refusedListeners.delete(listener); };
+  }, []);
+  return refused.has(what);
+}
+
+/**
+ * Whether the Issue writes (update, candidates) are on offer: `true` only once the service has said so (`offers`) and none of them
+ * has since answered "no such route". `false` while it is being asked, so a control never shows live before it is known to be.
+ */
+export function useEditOffered(): boolean {
+  const seen = useApiVersion();
+  const read = useAsync(`issues:offers:${seen}`, (signal) => issuesApi().offers(signal));
+  const refusedNow = useRefused("edit");
+  return read.status === "ready" && read.data === true && !refusedNow;
+}
+
+/** Whether the sort control is live: the same discovery as the writes, and `sort` itself has not been refused. */
+export function useSortOffered(): boolean {
+  const offered = useEditOffered();
+  const sortRefused = useRefused("sort");
+  return offered && !sortRefused;
+}
+
+/** Whether a state change was refused as "no such route" on first use, so the State row goes back to Planned. */
+export function useStateRefused(): boolean {
+  return useRefused("state");
+}

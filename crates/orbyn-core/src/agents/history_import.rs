@@ -37,6 +37,8 @@ fn engine_name(engine: Engine) -> &'static str {
     match engine {
         Engine::Claude => "claude",
         Engine::Codex => "codex",
+        // No Muse provider exists yet, so no Muse session is offered for import.
+        Engine::Muse => "muse",
     }
 }
 
@@ -180,6 +182,8 @@ fn read_head(engine: Engine, path: &Path) -> Option<Head> {
                     _ => {}
                 }
             }
+            // A Muse session log records different entries and no import reads it yet.
+            Engine::Muse => return None,
         }
         if session_id.is_some() && cwd.is_some() && title.is_some() {
             break;

@@ -1,23 +1,54 @@
-import { FolderGit2, Plus, X } from "lucide-react";
+import { Check, Copy, FolderGit2, Plus, X } from "lucide-react";
 import { useState } from "react";
 import type { Thread } from "../../api/types";
 import { toFailure } from "../../lib/useAsync";
 import { useLayoutWidth } from "../../lib/useLayout";
 import { useUi } from "../../product/state/ui";
 import { IconButton, Pill } from "../../ui/controls";
+import { ActionDialog } from "./ActionDialog";
+import { chooseRepo } from "./choice";
 import { Menu } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
 import { ToolbarPopover } from "../pulls";
-import { reposApi, useRepos, useThreadRepos } from "./api";
+import { reposApi, useRepos, useTaskFolder, useThreadRepos } from "./api";
 import type { ThreadRepo } from "./contract";
 import { canJoinThread, plain } from "./model";
 import "./repos.css";
 
+/** The task folder's path as text, with a button that copies it. Nothing here opens it, links it or runs it. */
+function TaskFolderLine({ root, branch, count, max }: { root: string; branch: string; count: number; max: number }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(root);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="repos-task" aria-label="Task folder">
+      <span className="repos-task-label">Task folder</span>
+      <code className="repos-path" title={plain(root)}>{plain(root)}</code>
+      <IconButton label={copied ? "Copied" : "Copy task folder path"} onClick={() => void copy()}>{copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}</IconButton>
+      <span className="field-hint">One branch for every repository: <code className="repos-branch">{plain(branch)}</code></span>
+      <span className="field-hint">{count} of {max} repositories</span>
+    </div>
+  );
+}
+
 function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; reload(): void }) {
   const pushToast = useUi((state) => state.pushToast);
   const { view } = useRepos(thread.project_id);
+  // The folder is read again after an add: its repository count is the service's.
+  const [added, setAdded] = useState(0);
+  const task = useTaskFolder(thread.id, added);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [leaving, setLeaving] = useState<ThreadRepo | null>(null);
+  // The project's own repository is the primary; when the list does not hold it, the first is.
+  const primaryId = (repos.find((entry) => entry.repo_id === thread.project_id) ?? repos[0])?.repo_id;
   const limit = view?.max_per_thread ?? 8;
   const candidates = (view?.repositories ?? []).filter((row) => canJoinThread(row) && !repos.some((entry) => entry.repo_id === row.id));
   const add = async (repoId: string) => {
@@ -25,6 +56,7 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
     setBusy(true);
     try {
       await reposApi().addThreadRepo(thread.id, repoId);
+      setAdded((count) => count + 1);
       reload();
     } catch (failure) {
       pushToast(`Couldn't add it. ${toFailure(failure).message}`);
@@ -35,6 +67,7 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
   return (
     <div className="repos-pop">
       <div className="repos-pop-head">{repos.length === 1 ? "Working in 1 repository" : `Working in ${repos.length} repositories`}</div>
+      {task ? <TaskFolderLine root={task.root} branch={task.branch} count={task.repos.length} max={task.max_per_thread} /> : null}
       <ul>
         {repos.map((entry) => (
           <li key={entry.repo_id} className="repos-pop-row">
@@ -42,6 +75,9 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
             <span className="repos-counts"><span aria-label={`${entry.added} added`}>+{entry.added}</span> <span aria-label={`${entry.deleted} deleted`}>−{entry.deleted}</span></span>
             <code className="repos-branch">{plain(entry.branch)}</code>
             <Pill tone={entry.trusted ? "accent" : "warn"}>{entry.trusted ? "Trusted" : "Not trusted"}</Pill>
+            {entry.repo_id === primaryId ? null : (
+              <IconButton label={`Remove ${plain(entry.name)} from this thread`} onClick={() => setLeaving(entry)}><X size={14} aria-hidden /></IconButton>
+            )}
           </li>
         ))}
       </ul>
@@ -51,6 +87,18 @@ function List({ thread, repos, reload }: { thread: Thread; repos: ThreadRepo[]; 
         <Plus size={14} aria-hidden />Add a repository to this thread…
       </button>
       <p className="field-hint">Each repository has its own branch for this thread</p>
+      {leaving ? (
+        <ActionDialog title={`Remove ${plain(leaving.name)} from this thread?`} confirmLabel="Remove" tone="danger" cancelFocus onClose={() => setLeaving(null)}
+          onConfirm={async () => {
+            await reposApi().removeThreadRepo(thread.id, leaving.repo_id);
+            chooseRepo(thread.id, null);
+            setAdded((count) => count + 1);
+            reload();
+          }}>
+          <p>The thread stops working in {plain(leaving.name)}. The repository stays in the project.</p>
+          <p className="field-hint">If it holds changes, commit or discard them first.</p>
+        </ActionDialog>
+      ) : null}
       <Presence>
         {menu ? <Menu x={menu.x} y={menu.y} origin="bottom left" label="Repositories" items={candidates.map((row) => ({ label: plain(row.name), onSelect: () => { void add(row.id); } }))} onClose={() => setMenu(null)} /> : null}
       </Presence>

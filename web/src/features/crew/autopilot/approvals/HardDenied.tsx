@@ -42,7 +42,7 @@ export function HardDeniedPage({ rules }: { rules: AutopilotRule[] }) {
       </div>
       <section className="ap-box">
         <h4>Why code and not a model</h4>
-        <p>A model that approves requests can be fooled by text it reads. The limits are enforced in code, and the lead sees a structured summary of each action, never raw page or tool text.</p>
+        <p>A model that approves requests can be fooled by text it reads. The limits are enforced in code, and the lead sees a structured summary of each action, not raw page or tool text.</p>
       </section>
     </div>
   );

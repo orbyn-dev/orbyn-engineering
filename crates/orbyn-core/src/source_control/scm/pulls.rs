@@ -19,6 +19,7 @@ use std::time::Instant;
 impl Core {
     pub async fn link_pull(&self, id: &str, number: u64) -> Result<PullRequest> {
         let thread = self.scm_thread(id)?;
+        let repo = self.pull_repo(id)?;
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         // The forge's own "no such pull request" answer is a 404; every other failure stays as it is.
@@ -30,7 +31,7 @@ impl Core {
                 }
                 other => other,
             })?;
-        self.store.link_pull(id, &pull)?;
+        self.store.link_pull(id, &repo, &pull)?;
         Ok(pull)
     }
 
@@ -38,11 +39,12 @@ impl Core {
     /// rules say so; a thread still running or opted out stays as it is.
     pub async fn refresh_pulls(&self, id: &str) -> Result<Vec<PullRequest>> {
         let thread = self.scm_thread(id)?;
+        let repo = self.pull_repo(id)?;
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
-        self.link_branch_pull(id, forge, cwd).await;
+        self.link_branch_pull(id, &repo, forge, cwd).await;
         let mut merged = false;
-        for pull in self.store.linked_pulls(id)? {
+        for pull in self.store.linked_pulls(id, &repo)? {
             if pull.state != "open" {
                 continue;
             }
@@ -62,7 +64,7 @@ impl Core {
                 self.scm_reads.pull_dropped(&thread.project_id, pull.number);
             }
             merged |= fresh.state == "merged";
-            self.store.link_pull(id, &fresh)?;
+            self.store.link_pull(id, &repo, &fresh)?;
         }
         let on_merge = self.preference("auto_settle_on_merge", Some(&thread.project_id))?
             == serde_json::json!(true);
@@ -74,11 +76,11 @@ impl Core {
             };
             self.update_thread(id, &settle, "system:auto-settle")?;
         }
-        self.store.linked_pulls(id)
+        self.store.linked_pulls(id, &repo)
     }
 
     /// Links the open pull request of the checkout's branch, if there is one.
-    pub(super) async fn link_branch_pull(&self, id: &str, forge: Forge, cwd: &Path) {
+    pub(super) async fn link_branch_pull(&self, id: &str, repo: &str, forge: Forge, cwd: &Path) {
         let Ok(branch) = git(cwd, &["branch", "--show-current"]).await else {
             return;
         };
@@ -91,12 +93,12 @@ impl Core {
             head: Some(branch),
             ..PullFilter::default()
         };
-        let linked = self.store.linked_pulls(id).unwrap_or_default();
+        let linked = self.store.linked_pulls(id, repo).unwrap_or_default();
         if let Ok(pulls) = forge::list_pulls(forge, cwd, &filter).await
             && let Some(pull) = pulls.first()
             && pull.state == "open"
             && !linked.iter().any(|known| known.number == pull.number)
-            && let Err(error) = self.store.link_pull(id, pull)
+            && let Err(error) = self.store.link_pull(id, repo, pull)
         {
             tracing::debug!(%error, "could not link the branch's pull request");
         }

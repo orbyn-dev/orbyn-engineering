@@ -36,6 +36,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/enable"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
+    ("POST", "/api/crew/background/{id}/run-now"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
@@ -53,6 +54,7 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
+    ("POST", "/api/crew/profile/apply"),
 ];
 
 /// Reads confer no action authority. The notice projection may record observed
@@ -61,6 +63,7 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/settings/engine-tiers"),
     ("GET", "/api/crew/review/{id}/controls"),
     ("GET", "/api/crew/backtest/estimate"),
+    ("GET", "/api/crew/backtest/start-view"),
     ("GET", "/api/crew/backtest/{id}/report"),
     ("GET", "/api/crew/capacity"),
     ("GET", "/api/crew/capacity/coverage"),

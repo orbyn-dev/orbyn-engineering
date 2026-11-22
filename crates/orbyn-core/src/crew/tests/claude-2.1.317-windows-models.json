@@ -1,0 +1,23 @@
+{
+  "source": "installed Claude Code CLI 2.1.317 on Windows, stream-json initialize control response, models array",
+  "captured_utc": "2026-11-22",
+  "platform": "windows",
+  "request": "The driver's capability probe (crates/orbyn-core/src/agents/driver/claude/args.rs, capability_args): -p --output-format stream-json --input-format stream-json --verbose --no-session-persistence --strict-mcp-config --mcp-config <file> --settings <file>, then {\"type\":\"control_request\",\"request_id\":\"<id>\",\"request\":{\"subtype\":\"initialize\"}} on stdin. One reply; no turn was run.",
+  "completeness": "The CLI lists every model entry it offers the picker in this one reply. Descriptions, account, plan and pricing fields were dropped; each value and displayName is verbatim. An entry is the engine's default when its value is default, as crates/orbyn-core/src/agents/driver/claude/catalog.rs reads it. Dated ids are the same models as the aliases that precede them.",
+  "models": [
+    { "value": "default", "displayName": "Default (recommended)" },
+    { "value": "opus", "displayName": "Opus 5.5" },
+    { "value": "sonnet", "displayName": "Sonnet 5.5" },
+    { "value": "claude-fable-5-2", "displayName": "Fable 5.2" },
+    { "value": "haiku", "displayName": "Haiku 5.5" },
+    { "value": "fable", "displayName": "Fable 5.1" },
+    { "value": "claude-haiku-4-5-20251001", "displayName": "Haiku 4.5" },
+    { "value": "claude-sonnet-5", "displayName": "Sonnet 5" },
+    { "value": "claude-opus-5", "displayName": "Opus 5" },
+    { "value": "claude-fable-5", "displayName": "Fable 5" },
+    { "value": "claude-opus-4-8", "displayName": "Opus 4.8" },
+    { "value": "claude-opus-4-7", "displayName": "Opus 4.7" },
+    { "value": "claude-opus-4-6", "displayName": "Opus 4.6" },
+    { "value": "claude-sonnet-4-6", "displayName": "Sonnet 4.6" }
+  ]
+}

@@ -249,12 +249,12 @@ it("keeps the tracker's order for linked pull requests", async () => {
   expect(within(card).getAllByRole("listitem").map((item) => item.querySelector("a")!.textContent?.slice(0, 1))).toEqual(["C", "A", "B"]);
 });
 
-it("says no pull request is linked when the tracker reports none", async () => {
+it("draws no Linked pull requests card when the tracker reports none", async () => {
   setIssuesApi(createIssuesMock());
   at(ISSUE);
-  const card = await screen.findByRole("group", { name: "Linked pull requests" });
-  expect(within(card).getByText("No pull request is linked to this issue.")).toBeVisible();
-  expect(within(card).queryByRole("list")).toBeNull();
+  await screen.findByRole("group", { name: "Facts" });
+  expect(screen.queryByRole("group", { name: "Linked pull requests" })).toBeNull();
+  expect(screen.queryByText("No pull request is linked to this issue.")).toBeNull();
 });
 
 it("draws a pull request's words as text and opens only a plain https address", async () => {
@@ -295,8 +295,8 @@ it("says the thread links could not be read, offers Retry, and keeps the facts a
   expect(within(threads).queryByRole("button", { name: "Retry" })).toBeNull();
 });
 
-it("shows the description, labels and assignees controls as Planned: present, off, and nothing is sent", async () => {
-  const mock = createIssuesMock();
+it("shows the description, labels and assignees controls as Planned while the service does not offer the writes: present, off, and nothing is sent", async () => {
+  const mock = createIssuesMock({ edits: false });
   setIssuesApi(mock);
   const user = userEvent.setup();
   at(ISSUE);

@@ -144,16 +144,20 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
 | Route | Person | Answers |
 |---|---|---|
 | `GET /api/issues` adds `sort` (`updated` \| `created`, newest first by that date) | no | `IssueList` |
-| `POST /api/issues/item/update` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, title?, body?, labels?, assignees? }` |
-| `POST /api/issues/item/state` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, state }`, `state` one of the issue's `states` |
+| `POST /api/issues/item/update` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, title?, body?, labels?, assignees? }`; `assignees` are candidate `id`s |
+| `POST /api/issues/item/state` | **yes** | `IssueDetail`. Body `{ tracker, scope, key, state, close_reason? }`; `state` is the `name` of one of the issue's `states`, `close_reason` is `completed` or `not_planned` and only for a closed state |
 | `GET /api/issues/candidates` | no | `IssueCandidates`. Query `tracker`, `scope` |
 
 - `update`: every field is optional and only the present ones are written; `labels` (at most 50) and
-  `assignees` (at most 25) are the whole set, as every tracker writes them. A body with none present is
+  `assignees` (at most 25) are the whole set, as every tracker writes them. `labels` are label names;
+  `assignees` are the `id` of a candidate from `candidates`, never a login typed by hand, because `id` is how the
+  tracker addresses a person on a write (an `id` that is not a candidate of the scope is `400 invalid`). A body with none present is
   `400 invalid`. `title` is one line, at most 256 characters; `body` at most 64 KiB. One write covers the
   description pencil and the label and assignee "+" controls: the page sends the full new set.
-- `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category, and for a
-  close the optional `close_reason: not_planned`). A name the issue does not declare is `400 invalid`.
+- `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category). A closed
+  state takes an optional `close_reason`, `completed` (the default) or `not_planned`; a tracker that cannot say
+  `not_planned` closes as completed and the answer's `IssueState.close_reason` says what it stored. A
+  `close_reason` on an open state, or a name the issue does not declare, is `400 invalid`.
 - `sort` defaults to `updated`; an unknown value is `400 invalid`. The `label` (repeat, all must match) and `assignee`
   filters already exist in the read route above and are built; the web side sends T3's `labels[]` as repeated `label`.
 - `candidates` is read when a picker opens, not with every issue: `{ labels: { name, color? }[], assignees:

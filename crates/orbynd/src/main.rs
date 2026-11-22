@@ -186,7 +186,8 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
         engine_host: orbyn_core::agents::driver::host::HostConfig::from_env(
             std::env::var_os("ORBYN_ENGINE_HOST"),
             std::env::var("ORBYN_ENGINE_HOST_CLAUDE").ok().as_deref(),
-        ),
+        )
+        .map(|host| host.with_cursor(std::env::var("ORBYN_ENGINE_HOST_CURSOR").ok().as_deref())),
     };
     if let Ok(seconds) = std::env::var("ORBYN_APPROVAL_TIMEOUT_SECS") {
         let seconds: u64 = seconds
@@ -206,6 +207,7 @@ fn core_config(args: &ServeArgs, base_url: String) -> Result<CoreConfig, String>
     config.crew_preview = env_flag("ORBYN_CREW_PREVIEW");
     config.code_mode = env_flag("ORBYN_CODE_MODE");
     config.issues = env_flag("ORBYN_ISSUES");
+    config.multi_repo = env_flag("ORBYN_MULTI_REPO");
     (
         config.crew_merge_required_checks,
         config.crew_merge_watch_interval,
@@ -337,9 +339,10 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .port();
     let base_url = format!("http://127.0.0.1:{port}");
-    let core = Arc::new(
-        Core::open(core_config(&args, base_url.clone())?).map_err(|error| error.to_string())?,
-    );
+    let config = core_config(&args, base_url.clone())?;
+    // The login shell can take its time; ask it once without holding up start-up.
+    std::thread::spawn(orbyn_core::host::child_env::warm_login_path);
+    let core = Arc::new(Core::open(config).map_err(|error| error.to_string())?);
     core.mcp.bind_host(&core);
     core.engines.bind_host_core(&core);
     core.set_crew_engine_approvers();
@@ -407,6 +410,20 @@ async fn serve(args: ServeArgs) -> Result<(), String> {
     let access = Arc::new(
         access
             .with_desktop(args.parent_stdin)
+            .with_refusal_audit({
+                let core = core.clone();
+                Arc::new(move |refusal: &http::access::PersonRefusal| {
+                    core.record_person_route_refusal(
+                        &refusal.method,
+                        &refusal.route,
+                        refusal.field,
+                        refusal.caller.as_str(),
+                        refusal.code,
+                    )
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+                })
+            })
             // A frame URL carries a capability for one published page instead of the
             // service token, and only core knows which render a token belongs to.
             .with_frames({

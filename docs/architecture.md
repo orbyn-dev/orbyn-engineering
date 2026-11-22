@@ -30,10 +30,19 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    log or an answer. The person can remove it at any time. The routes are
    `/api/settings/engine-credentials/{engine}` (status, `Local`, booleans only; opt-in `PUT`) and
    `.../{engine}/key` (`PUT` save, `DELETE` remove): all writes are `Person` routes and the key travels
-   in the request body only.
+   in the request body only. A second owner-approved keychain use is the **values of personal-library environment
+   sets** (`docs/execution-profiles-and-library.md`, Part 2): `orbyn-core` `credentials::env_sets`, its own service
+   name (`app.orbyn.engineering.env-sets`, `.dev` in an unsigned build), one item per key, written through
+   `PUT /api/library/env-sets/{id}/keys/{key}` (`Person`) and read back only as the environment of one workflow run the
+   person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
+   output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. *Planned*: the SDK path is the default only after
+   the host bundles the SDK and its notices (docs/sdk-default-plan.md); until then the CLI is the only path and the host
+   is opt-in. A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
@@ -168,6 +177,12 @@ archive clears it. With a reset in the future, `auto_resume_limited_threads` sch
 continuation and `snooze_limited_threads` snoozes until then; each can also be chosen on
 the thread. Due continuations start from the lifecycle pass, so an overdue one starts on
 the first pass after a restart, and a held queue stays held until that run ends.
+Automatic continuations are bounded at three per thread, the budget restart recovery
+shares: once they are spent, the schedule is dropped, the limit and its reset stay on
+the thread, and a `limit.retry_exhausted` note records that the automatic continuation
+stopped, so the thread waits for you until your own message or choosing the continuation
+on the thread gives the budget back. A continuation that fails on anything but a limit
+schedules nothing, so a failed run never retries itself.
 
 ## Composer
 
@@ -223,7 +238,16 @@ file. A record exists only once its bytes are in place, and a message naming an
 attachment that is not ready is refused before anything is admitted. Before its engine
 starts, a run logs `CUSTOM user.attachments` with each record's id, name, media type
 and size, so a transcript shows what the message carried without asking the engine.
-`GET /api/attachments/:id/content` returns those bytes while the record lives.
+`GET /api/attachments/:id/content` returns those bytes while the record lives. `PUT /api/attachments/:id/source` keeps a Snap Shot's app name, title, app id and accessible text beside an image before it is sent; it answers `404` for an unknown or already sent attachment, `422 unsupported_type` for a non-image and `413 source_too_large` past a character limit.
+
+A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
+takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
+sends instead. A PNG or JPEG over 10 MiB is written smaller until it fits, and one within
+the limit is written again at its own size, so the stored bytes never carry the original's
+EXIF location. The input is capped at 50 MiB, refused from the declared length before the
+body is read, and at 100 megapixels with a 512 MiB decoder allocation, checked from the
+header before a decoder allocates. A HEIC, HEIF or WebP is refused as `415 unsupported_type`
+until a decoder this build can carry is chosen, and the route reads no path from the request.
 
 The composer edits a fenced code block as plain text: Tab and Shift+Tab move the
 selected block's lines by two spaces, Enter from the block's empty last line closes
@@ -460,10 +484,14 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 ## Usage
 
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
-under `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `sessions/**/*.jsonl` under `~/.codex`
-(or `CODEX_HOME`). It keeps only timestamps, models and token counts, and never opens a
-credential file. Claude rewrites an entry as it streams, so each message counts once.
-Codex repeats its running total, so an unchanged total counts once. Costs come from
+under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
+(or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+and token counts, and never opens a credential file. Claude rewrites an entry as it
+streams, so each message counts once. Codex repeats its running total, so an
+unchanged total counts once. Muse writes one log per session, counts its cached
+input inside its input count and its reasoning inside its output count, and can copy
+an inference into another session's log, so each inference counts once. Costs come from
 configured `model_prices`, after `model_aliases`; a model with no price has an unknown
 cost and is never guessed. History is kept by day, model and service tier (Claude's
 `speed`/`service_tier`, Codex's turn `service_tier`; unknown names are `other`). A
@@ -1362,6 +1390,7 @@ One operation runs per instance: it excludes that instance's run admission, upda
 edits to `provider_instances`. A later run resumes with `session/resume` when offered,
 else `session/load` with its replay discarded; an unknown session ends the run as a lost
 session. The session link is the thread's engine session, so no table or migration exists.
+A cancelled request stops that process and releases the instance for the next request.
 
 A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
@@ -1972,9 +2001,12 @@ in a later `host-context-changed`; a read the service refuses leaves the context
 it rather than guessing. An unknown render, a render that is not an app, or a tool its
 server no longer advertises is a plain `404`; a server that cannot be asked, or whose reply
 names no `tools` object, is `502 engine_unavailable`, never empty metadata. The read
-starts no model turn and reaches no other server. It is evaluated read-only against the
-policy rules as a `tool` action on `mcp_app:<server>:tool_info` before any server starts:
-only an explicit deny refuses it (`403`, with an `action.deny` audit row); the default
+starts no model turn and reaches no other server. Codex 0.166.0 starts only the server it
+is asked about, so with two configured a read started that one alone; a build that ignored
+the name would list the others, and the read ignores the other servers' entries and
+never answers with another server's tool. It is evaluated read-only against the policy rules as a `tool`
+action on `mcp_app:<server>:tool_info` before any server starts: only an explicit deny
+refuses it (`403`, with an `action.deny` audit row); the default
 `ask` and an allow rule pass, and a read that goes through writes no audit row. Each read
 starts a short engine session, so the service holds at most two at once and identical
 concurrent reads of one render share one (single-flight: the answer goes to the callers
@@ -2151,13 +2183,13 @@ and its `EngineDriver` impl and keeps the public paths: `claude/` (`args`, `sett
 `terminal`, `diagnostics`) stay beside them.
 
 `engines/known.rs` lists CLIs that speak ACP from their own binary, with what each needs
-to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, fx, Grok
-Build, Hermes, Kilo, Kimi and OpenCode. One is listed only when its program is found, and
+to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, Factory Droid, fx, GLM,
+Grok Build, Hermes, Kilo, Kimi, Kiro, Mistral Vibe, Oh My Pi and OpenCode. One is listed only when its program is found, and
 a custom engine of the same id wins. A program that resolves into a package known to put a
 different CLI under the same name is not that engine: `@vibe-kit/grok-cli` installs a `grok`
 with no ACP mode. Grok is started with `--permission-mode default` and
 OpenCode with `{"permission":{"*":"ask"}}`, since either can otherwise act without asking.
-DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
+Kiro's arguments are T3 Code's. The commands for Droid (`droid exec --output-format acp`), GLM (`glm-acp-agent`), Mistral Vibe (`vibe-acp`) and Oh My Pi (`omp acp`) come from the vendors' and Zed's guides, are unverified, and a program that rejects them is a failed start. Droid, GLM, Kiro (which starts in autopilot), Mistral Vibe and Oh My Pi are unobserved, so they are labelled unmanaged under rule 8 until a run shows they ask. DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
 until a run shows the mode it starts in, since its automatic mode writes without asking. The
 `fx` JSON viewer from npm or Homebrew is not fx. Each keeps its
 own login, and only the launch has been tested, with the fake agent under those names, except
@@ -2193,6 +2225,11 @@ the method's arguments. The provider card shows it to copy, and a run that fails
 login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and offers no
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
+
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
 
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
@@ -2416,7 +2453,10 @@ The shell rechecks availability before each attempt, including retries; a differ
 for renewed consent and is never substituted into the transfer. Progress reports carry the operation
 and release id, so callbacks from another transfer are ignored. The download-finish callback means
 preparing, not ready: only a successful awaited `Update::download` (after its signature verification)
-permits `app_update_ready`. Byte completion and an unknown total do not establish readiness.
+permits `app_update_ready`, and only when the verified signature names the announced version. The
+endpoint response is not itself signed, so an unsigned release, or one signed for a different
+version, fails visibly instead of staging bytes: `app_update_failed` carries the reason and nothing
+becomes installable. Byte completion and an unknown total do not establish readiness.
 An explicit download releases admission at ready and never installs or restarts.
 
 `POST /api/updates/app/apply` installs only that ready generation. It rechecks active runs and holds
@@ -2741,7 +2781,7 @@ and the text is proven free of the key and of secrets before it is queued (H1). 
 needs a person. A turn that ends with no report is a failed attempt; an engine that fails stops the task (`engine_error`). A task whose
 brief's minutes or turns are spent stops on its next failed attempt with the reason `budget`: the turns are the worker's runs and
 the approvals reserved against the same budget, and a result counts them. A crew's turns are the same tally summed over its tasks:
-a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; no Settings control yet, so it is set only through the settings API) refuses a new task once its crew
+a device-local turn budget (`crew_turn_budget`, whole turns; 0 or unset is no budget; set in Settings › General) refuses a new task once its crew
 has spent them, before anything is stored or sent, and never stops a task already running. A worker's file change is checked
 against its lease at the gate, before the write, and refused with the lease's own refusal; a command it runs is not read.
 After a run ends, member tools refuse (H7), but the core can verify again and add Evidence and Gates; no state reopens.
@@ -3129,7 +3169,9 @@ which agents and the address bar cannot reach. Picking an element reads it and c
 nothing, and what it returns comes from the page, so the UI quotes it into the draft for a
 person to read before sending. A browser that dies is started again on the same profile and
 page, up to three times in 30 seconds after 1, 2 and 4 seconds, and then the tab reports
-`crashed`. This only runs while someone watches. `enable_agent_browser_access`, off
+`crashed`. This only runs while someone watches. A browser that dies by a fault before the
+tab exists is started once more, and a second death fails that open with the browser's
+stderr and startup flags. `enable_agent_browser_access`, off
 globally or for a project, refuses every `orbyn_preview_*` tool.
 
 A previewed page is untrusted, so what crosses between it and the person waits for
@@ -3285,12 +3327,16 @@ engines; a plain shell terminal does not. `EngineStatus` reports inherited crede
 variable name and an endpoint by origin, never a value. No value is read for any other
 purpose, which keeps this inside rule 1.
 
-`PATH` for lookups and for children is the inherited one, then usual install folders
-that exist: Homebrew, `~/.local/bin`, cargo, bun, Volta, asdf, mise, pnpm, fnm's default,
-the newest nvm or `n` Node, and the npm prefix from `NPM_CONFIG_PREFIX` or `~/.npmrc`.
-Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to the script
-it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
-wins, and a shim that points at a shell is refused.
+`PATH` for lookups and for children is the inherited one, then the person's login-shell
+`PATH`, then usual install folders that exist: Homebrew, `~/.local/bin`, cargo, bun,
+Volta, asdf, mise, pnpm, fnm's default, the newest nvm or `n` Node, and the npm prefix
+from `NPM_CONFIG_PREFIX` or `~/.npmrc`. The service runs the person's login shell once,
+interactive login (`$SHELL -ilc`), with one fixed command that contains no user input; it
+reads back only `PATH`, runs with a cleared environment and a 3 second limit, falls back
+silently on any failure, and can be switched off with `ORBYN_NO_LOGIN_SHELL=1`. On Windows
+the login shell is not asked. npm is never run to learn these. A `.cmd` is followed to the
+script it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the
+shim wins, and a shim that points at a shell is refused.
 
 ## Escape log capacity
 
@@ -3654,8 +3700,10 @@ every method, path and which routes need a credential.
 | `POST /api/queue/:id/send-now` | Send next, stopping a running turn for it |
 | `POST /api/threads/:id/steer` | `SteerRun` with an optional `message_id`: add text to the running turn (`422` if unsupported); `SteerResult` echoes the id and says `delivered` or `queued`, the latter with its queue row; a selection applies from the next turn |
 | `GET, POST /api/threads/:id/attachments?name=` | Raw upload body; `Content-Type` is the kind |
+| `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
+| `PUT /api/attachments/:id/source` | `AttachmentSource`: keeps a Snap Shot's app name, title, app id and accessible text beside an image attachment; `404` unknown or already sent, `422 unsupported_type` when it is not an image, `413 source_too_large` over a character limit |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
 | `GET /api/search/messages?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearch`: `MessageHit[]`, newest first, each with `seq` and `message_id` to open at |
 | `GET /api/search/messages/events?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearchEvent[]`: `hit` frames in the read's order, then `done` (`words`, `too_short`, `truncated`) or `failed` |

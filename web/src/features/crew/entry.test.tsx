@@ -249,28 +249,34 @@ describe("Settings › Crew › Review capacity › Coverage (entry-crew-coverag
 });
 
 describe("Settings › Crew › Reviewer backtest (entry-crew-backtest-page and its states)", () => {
-  it("shows the not-approved line first, then the rows from the estimate, and Planned rows as Not shown", async () => {
+  it("shows the not-approved line first, then the rows from the estimate and the last run's lanes and budgets", async () => {
     mock.reset("crew-backtest");
     open("#/settings/crew/backtest");
     expect(await screen.findByText("Crew › Reviewer backtest")).toBeVisible();
     expect(screen.getByText("The live runner is not approved.")).toBeVisible();
     expect(await screen.findByText("64 pull requests")).toBeVisible();
     expect(screen.getByText("Measured")).toBeVisible();
+    expect(await screen.findByText("correctness · claude · sonnet-5-5")).toBeVisible();
+    expect(screen.getByText("1.5M tokens")).toBeVisible();
     for (const title of ["Which lanes", "Run budget", "Last backtest"]) {
       const row = screen.getByText(title).closest(".cx-setrow") as HTMLElement;
-      expect(within(row).getByText("Planned")).toBeInTheDocument();
-      expect(within(row).getByText("Not shown")).toBeInTheDocument();
+      expect(within(row).queryByText("Planned")).toBeNull();
+      expect(within(row).queryByText("Not shown")).toBeNull();
     }
+    expect(within(screen.getByText("Last backtest").closest(".cx-setrow") as HTMLElement).getByText("Finished")).toBeVisible();
     expect(screen.getByText("What this tells you, and what it doesn’t")).toBeVisible();
   });
 
-  it("draws no start and no stop, and opening it sends only the estimate read", async () => {
+  it("draws no start and no stop, and opening it sends only the two reads", async () => {
     mock.reset("crew-backtest");
     open("#/settings/crew/backtest");
     await screen.findByText("64 pull requests");
     expect(screen.queryByRole("button", { name: /start|stop|run a backtest/i })).toBeNull();
     expect(writes()).toEqual([]);
-    expect(reads("/api/crew/backtest").map(([url]) => String(url))).toEqual(["/api/crew/backtest/estimate?project=p-app"]);
+    expect(reads("/api/crew/backtest").map(([url]) => String(url)).sort()).toEqual([
+      "/api/crew/backtest/estimate?project=p-app",
+      "/api/crew/backtest/start-view?project=p-app",
+    ]);
   });
 
   it("Open the estimate goes to the estimate in the app, and the estimate's Settings button returns here", async () => {
@@ -307,7 +313,9 @@ describe("Settings › Crew › Reviewer backtest (entry-crew-backtest-page and 
     answer(/\/api\/crew\/backtest\/estimate/, () => json(200, estimate({ running: "run-live" })));
     open("#/settings/crew/backtest");
     expect(await screen.findByText("A backtest is running.")).toBeVisible();
+    expect(screen.getByText(/Only one runs at a time: it finishes by itself\./)).toBeVisible();
     expect(screen.queryByText("The live runner is not approved.")).toBeNull();
+    expect(screen.queryByText(/stops it on its report/i)).toBeNull();
     expect(screen.getByRole("link", { name: "Open the running backtest" })).toHaveAttribute("href", "#/settings/crew/backtest/report?id=run-live");
   });
 

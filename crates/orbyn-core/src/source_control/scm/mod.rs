@@ -73,7 +73,7 @@ async fn valid_branch(cwd: &Path, name: &str) -> Result<()> {
 
 impl Core {
     fn scm_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.store.thread(id)?;
+        let thread = self.scoped_thread(id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
@@ -124,7 +124,7 @@ impl Core {
             ));
         }
         let cwd = Path::new(&thread.cwd);
-        prepared.check(cwd).await?;
+        prepared.check(cwd, Some(&self.config.data_dir)).await?;
         let action = &prepared.action;
         let mut phases = Vec::new();
         if let Some(message) = &action.commit_message {
@@ -135,7 +135,7 @@ impl Core {
             let outcome = async {
                 self.scm_idle(id)?;
                 git_user(cwd, &["add", "-A"], FORGE_TIMEOUT).await?;
-                prepared.check(cwd).await?;
+                prepared.check(cwd, Some(&self.config.data_dir)).await?;
                 self.scm_idle(id)?;
                 git_user(cwd, &["commit", "-q", "-m", message], FORGE_TIMEOUT).await?;
                 Ok(None)
@@ -212,7 +212,7 @@ impl Core {
                     checks_state: None,
                     checks: None,
                 });
-                self.store.link_pull(id, &pull)?;
+                self.store.link_pull(id, &self.pull_repo(id)?, &pull)?;
             }
             None => tracing::warn!("the forge returned no pull request number"),
         }

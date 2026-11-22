@@ -1,5 +1,5 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete and the runs; nothing fires a trigger or starts an engine), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! delete, the runs and Run now, which starts one run by hand; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
@@ -178,6 +178,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/background/{id}/run-now",
+        "core crew_background_run_now: the manual event. Preview, an enabled crew whose trigger kind can start, no run in progress, a trusted project and a ready engine; starts one run through crew_start as a Low Crew-started task (review capacity may pause it) and returns the run; nothing is stored when it is refused; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "core crew_cancel_task: the person's stop button; the intent audit row before any effect, the worker's engine stopped and confirmed (else the state is kept and a failed-attempt row is written), then the state and its row in one transaction; already cancelled answers already and writes nothing; passed or stopped is a conflict; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
@@ -271,6 +276,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
         "/api/crew/projects/{id}/worker-provider/set",
         "core crew_set_worker_provider: a person's per-project choice of same_as_lead or any, a known project, audited in the same transaction; it changes where later work runs and never an engine a task already has; no agent tool reaches it; local only",
     ),
+    (
+        "POST",
+        "/api/crew/profile/apply",
+        "core apply_profile_to_crew: a person applies an execution profile to a crew, a copy and never a link; a profile that grants full access or Autopilot Full needs its grant codes acknowledged or answers confirm_required and applies nothing; the audit row first in the same transaction; no agent tool reaches it; local only",
+    ),
 ];
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -318,6 +328,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(background_disable),
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
+        .route(
+            "/api/crew/background/{id}/run-now",
+            post(background_run_now),
+        )
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
         .route(
             "/api/crew/projects/{id}/pinned-ref/confirm",
@@ -331,6 +345,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/api/crew/projects/{id}/worker-provider/set",
             post(worker_provider_set),
         )
+        .route("/api/crew/profile/apply", post(apply_profile))
         .route("/api/crew/guard/targets/add", post(guard_add))
         .route("/api/crew/guard/targets/{id}/remove", post(guard_remove))
         .merge(super::crew_areas::routes())
@@ -636,6 +651,14 @@ async fn set_mode(
     Ok(Json(state.core.autopilot_modes()?))
 }
 
+/// Applies an execution profile to a crew (docs/execution-profiles-and-library.md): `Person`, a copy, never a link.
+async fn apply_profile(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<orbyn_contracts::ApplyCrewProfile>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.apply_profile_to_crew(&body).await?))
+}
+
 async fn confirm(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
     state.core.autopilot_confirm()?;
     Ok(Json(state.core.autopilot_modes()?))
@@ -917,6 +940,15 @@ async fn background_delete(
 ) -> ApiResult<impl IntoResponse> {
     state.core.background_delete(&id)?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// The person's Run now: starts one run of an enabled background crew by hand. The core refuses what cannot start, with its
+/// plain reason, and returns the run it opened.
+async fn background_run_now(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_background_run_now(&id, "user").await?))
 }
 
 /// The person's stop button: cancels a task. The body may be empty, or `{ "reason": "..." }`.

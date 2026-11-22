@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 
 use orbyn_contracts::{
-    Attachment, ModelSelection, PullGuide, PullRequest, PullWatch, QueuedMessage, Run, RunState,
-    SteerDelivery, SteerFailed, SteerStateEvent,
+    Attachment, AttachmentSource, ModelSelection, PullGuide, PullRequest, PullWatch, QueuedMessage,
+    Run, RunState, SteerDelivery, SteerFailed, SteerStateEvent,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
@@ -128,6 +128,11 @@ fn pull_row(row: &Row<'_>) -> rusqlite::Result<PullRequest> {
 }
 
 fn attachment_row(row: &Row<'_>) -> rusqlite::Result<(Attachment, String)> {
+    let source: Option<String> = row.get("source")?;
+    let source = source
+        .as_deref()
+        .map(|text| parse_json(0, text))
+        .transpose()?;
     Ok((
         Attachment {
             id: row.get("id")?,
@@ -136,6 +141,7 @@ fn attachment_row(row: &Row<'_>) -> rusqlite::Result<(Attachment, String)> {
             mime: row.get("mime")?,
             size: row.get::<_, i64>("size")? as u64,
             created_at: row.get("created_at")?,
+            source,
         },
         row.get("path")?,
     ))
@@ -392,28 +398,111 @@ impl Store {
 
     pub fn list_attachments(&self, thread_id: &str) -> Result<Vec<(Attachment, String)>> {
         let conn = self.reader();
-        let mut statement =
-            conn.prepare_cached("SELECT * FROM attachments WHERE thread_id = ?1 ORDER BY rowid")?;
+        let mut statement = conn.prepare_cached(
+            "SELECT attachments.*, attachment_sources.source AS source
+             FROM attachments
+             LEFT JOIN attachment_sources ON attachment_sources.attachment_id = attachments.id
+             WHERE attachments.thread_id = ?1 ORDER BY attachments.rowid",
+        )?;
         let rows = statement.query_map([thread_id], attachment_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn attachment(&self, id: &str) -> Result<(Attachment, String)> {
         let conn = self.reader();
-        let mut statement = conn.prepare_cached("SELECT * FROM attachments WHERE id = ?1")?;
+        let mut statement = conn.prepare_cached(
+            "SELECT attachments.*, attachment_sources.source AS source
+             FROM attachments
+             LEFT JOIN attachment_sources ON attachment_sources.attachment_id = attachments.id
+             WHERE attachments.id = ?1",
+        )?;
         statement
             .query_row([id], attachment_row)
             .optional()?
             .ok_or_else(|| CoreError::NotFound("attachment".into()))
     }
 
-    pub fn link_pull(&self, thread_id: &str, pull: &PullRequest) -> Result<()> {
+    /// Replaces the source kept beside an attachment. The attachment must exist.
+    pub fn set_attachment_source(
+        &self,
+        attachment_id: &str,
+        source: &AttachmentSource,
+    ) -> Result<()> {
+        let source = serde_json::to_string(source)?;
+        let stamp = now();
+        self.commit(|tx, _| {
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM attachments WHERE id = ?1)",
+                [attachment_id],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Err(CoreError::NotFound("attachment".into()));
+            }
+            tx.execute(
+                "INSERT INTO attachment_sources (attachment_id, source, created_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (attachment_id) DO UPDATE SET source = excluded.source,
+                    created_at = excluded.created_at",
+                params![attachment_id, source, stamp],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The source `set_attachment_source` kept for an attachment, if any.
+    pub fn attachment_source(&self, attachment_id: &str) -> Result<Option<AttachmentSource>> {
+        let conn = self.reader();
+        let source: Option<String> = conn
+            .query_row(
+                "SELECT source FROM attachment_sources WHERE attachment_id = ?1",
+                [attachment_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        source
+            .as_deref()
+            .map(|text| parse_json(0, text))
+            .transpose()
+            .map_err(CoreError::from)
+    }
+
+    /// Whether the thread's queued messages or a run it admitted already name this attachment.
+    pub fn attachment_is_sent(&self, attachment_id: &str, thread_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM queued_messages q, json_each(q.attachment_ids) item
+                 WHERE q.thread_id = ?1 AND item.value = ?2
+             ) OR EXISTS (
+                 SELECT 1 FROM thread_setup s
+                 WHERE s.thread_id = ?1 AND s.attachment_ids IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM json_each(s.attachment_ids) item WHERE item.value = ?2
+                   )
+             ) OR EXISTS (
+                 SELECT 1 FROM thread_events e
+                 WHERE e.thread_id = ?1
+                   AND json_extract(e.event, '$.type') = 'CUSTOM'
+                   AND json_extract(e.event, '$.name') = 'user.attachments'
+                   AND json_type(e.event, '$.value.attachments') = 'array'
+                   AND EXISTS (
+                       SELECT 1 FROM json_each(e.event, '$.value.attachments') item
+                       WHERE json_extract(item.value, '$.id') = ?2
+                   )
+             )",
+            params![thread_id, attachment_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Links a pull request of one repository of the thread; the thread's own project is its primary repository.
+    pub fn link_pull(&self, thread_id: &str, repo_id: &str, pull: &PullRequest) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
                 "INSERT INTO thread_pull_requests
-                    (thread_id, number, url, title, state, head, base, author)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                 ON CONFLICT (thread_id, number) DO UPDATE SET url = excluded.url,
+                    (thread_id, repo_id, number, url, title, state, head, base, author)
+                 VALUES (?1, ?9, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT (thread_id, repo_id, number) DO UPDATE SET url = excluded.url,
                     title = excluded.title, state = excluded.state, head = excluded.head,
                     base = excluded.base, author = excluded.author",
                 params![
@@ -424,28 +513,31 @@ impl Store {
                     pull.state,
                     pull.head,
                     pull.base,
-                    pull.author
+                    pull.author,
+                    repo_id
                 ],
             )?;
             Ok(())
         })
     }
 
-    pub fn linked_pulls(&self, thread_id: &str) -> Result<Vec<PullRequest>> {
+    /// The pull requests a thread linked in one repository.
+    pub fn linked_pulls(&self, thread_id: &str, repo_id: &str) -> Result<Vec<PullRequest>> {
         let conn = self.reader();
         let mut statement = conn.prepare_cached(
-            "SELECT * FROM thread_pull_requests WHERE thread_id = ?1 ORDER BY number",
+            "SELECT * FROM thread_pull_requests WHERE thread_id = ?1 AND repo_id = ?2 ORDER BY number",
         )?;
-        let rows = statement.query_map([thread_id], pull_row)?;
+        let rows = statement.query_map(params![thread_id, repo_id], pull_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Threads with a pull request not yet known to be finished.
-    pub fn threads_with_open_pulls(&self) -> Result<Vec<String>> {
+    /// The (thread, repository) pairs with a pull request not yet known to be finished.
+    pub fn threads_with_open_pulls(&self) -> Result<Vec<(String, String)>> {
         let conn = self.reader();
-        let mut statement = conn
-            .prepare("SELECT DISTINCT thread_id FROM thread_pull_requests WHERE state = 'open'")?;
-        let rows = statement.query_map([], |row| row.get(0))?;
+        let mut statement = conn.prepare(
+            "SELECT DISTINCT thread_id, repo_id FROM thread_pull_requests WHERE state = 'open'",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -590,15 +682,17 @@ impl Store {
             .optional()?)
     }
 
-    pub fn unlink_pull(&self, thread_id: &str, number: u64) -> Result<()> {
+    /// Drops a link. A watch is of the primary repository only, so it goes with a primary link and no other.
+    pub fn unlink_pull(&self, thread_id: &str, repo_id: &str, number: u64) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
-                "DELETE FROM pull_watches WHERE thread_id = ?1 AND number = ?2",
-                params![thread_id, number as i64],
+                "DELETE FROM pull_watches WHERE thread_id = ?1 AND number = ?2
+                   AND ?3 = (SELECT project_id FROM threads WHERE id = ?1)",
+                params![thread_id, number as i64, repo_id],
             )?;
             let changed = tx.execute(
-                "DELETE FROM thread_pull_requests WHERE thread_id = ?1 AND number = ?2",
-                params![thread_id, number as i64],
+                "DELETE FROM thread_pull_requests WHERE thread_id = ?1 AND repo_id = ?2 AND number = ?3",
+                params![thread_id, repo_id, number as i64],
             )?;
             if changed == 0 {
                 return Err(CoreError::NotFound("pull request".into()));
@@ -630,6 +724,10 @@ impl Store {
                 })
                 .optional()?
                 .ok_or_else(|| CoreError::NotFound("attachment".into()))?;
+            tx.execute(
+                "DELETE FROM attachment_sources WHERE attachment_id = ?1",
+                [id],
+            )?;
             tx.execute("DELETE FROM attachments WHERE id = ?1", [id])?;
             Ok(path)
         })

@@ -12,6 +12,7 @@ import { DigestTime } from "./DigestTime";
 import { BacktestEntry, DashboardEntry, EscapesEntry, OracleEntry } from "./CrewEntries";
 import { PathClasses } from "./PathClasses";
 import { ProductionTargets } from "./ProductionTargets";
+import { ProfilesSettings } from "../../../profiles";
 import { EngineTiers } from "./EngineTiers";
 import { WorkerProvider } from "./WorkerProvider";
 
@@ -24,7 +25,6 @@ export function CrewSettingsSection() {
   const from = route.name === "settings" ? route.from : undefined;
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>Crew</h1>
       <div className="ap-stack">
         {page === "areas" ? (
           <AutonomyAreas />
@@ -52,6 +52,7 @@ export function CrewSettingsSection() {
           <LiveBacktest view="report" id={id} />
         ) : (
           <>
+            <ProfilesSettings />
             <AutopilotSettings />
             <DigestTime />
             <CapacityEntry />

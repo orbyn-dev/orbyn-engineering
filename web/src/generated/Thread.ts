@@ -34,4 +34,12 @@ project_removed?: boolean,
 /**
  * The removed project's name, kept so the archive can still say where it was.
  */
-removed_project_name?: string, };
+removed_project_name?: string, 
+/**
+ * Set on a thread made from a file: `orbyn-transcript`. Absent on a thread made here. The "Imported" pill reads it.
+ */
+source?: string, 
+/**
+ * When the file was imported. Set together with `source`.
+ */
+imported_at?: string, };

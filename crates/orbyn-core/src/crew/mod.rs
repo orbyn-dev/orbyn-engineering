@@ -54,9 +54,9 @@ pub use autopilot::{
     DIGEST_HOURS_MAX, DiffFacts, Grants, HELD_LIFETIME_SECS, IN_A_ROW, IN_A_RUN, MERGE_TOOLS,
     MergeOperation, MergeOutcome, MergeRequest, MergeTarget, Mode, ModeScope, Need, OFFSET_MAX,
     Outcome, PAGE_DEFAULT, PAGE_MAX, Page, RULES, Rate, RecentTotals, Refusal, ReviewAnswer,
-    ReviewItem, Risk, SHOWN_MAX, Scene, Scored, Summary, WatchOutcome, area_of, areas_of,
-    check_words, injection_in, lane_ran, owed_lanes, refuse, review_window, score, sensitive,
-    tier_of, valid_id,
+    ReviewItem, ReviewQueue, Risk, SHOWN_MAX, Scene, Scored, Summary, WatchOutcome, area_of,
+    areas_of, check_words, injection_in, lane_ran, owed_lanes, refuse, review_window, score,
+    sensitive, tier_of, valid_id,
 };
 pub use background::{
     BackgroundEnd, EVERY_HOURS_MAX, MINUTES_MAX, NAME_MAX, SETTING_MAX, TURNS_MAX,
@@ -77,7 +77,7 @@ pub use review::{
 pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};
 pub use stamp::Stamper;
-pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider};
+pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider, tier_model};
 pub use tool::{REPORT_TOOL, ROUTE_TOOL, START_TOOL, is_tool, tool_specs};
 pub use verify::Judgement;
 pub use view::EngineView;

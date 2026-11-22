@@ -82,6 +82,7 @@ fn pending(store: &Store, run: &str) -> orbyn_contracts::Approval {
                 source: "default".into(),
                 reason: "no rule".into(),
             },
+            via: None,
         })
         .unwrap()
 }
@@ -715,6 +716,7 @@ fn finishing_expires_pending_approvals_and_blocks_new_ones() {
             source: "default".into(),
             reason: String::new(),
         },
+        via: None,
     });
     assert!(matches!(late, Err(CoreError::RunClosed)));
 }
@@ -1210,6 +1212,25 @@ fn automatic_continuations_run_out_and_your_message_resets_them() {
     assert!(!f.store.take_resume_try(&f.thread, 3).unwrap());
     let run = running(&f.store, &f.thread);
     f.store.finish_run(&run, RunState::Completed, None).unwrap();
+    assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+}
+
+#[test]
+fn a_refunded_continuation_leaves_the_tries_for_a_start_that_runs() {
+    let f = fixture();
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+        f.store.refund_resume_try(&f.thread).unwrap();
+    }
+    // Three refused starts used nothing: all three tries are still there.
+    for _ in 0..3 {
+        assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
+    }
+    assert!(!f.store.take_resume_try(&f.thread, 3).unwrap());
+    // A refund never goes below zero.
+    let run = running(&f.store, &f.thread);
+    f.store.finish_run(&run, RunState::Completed, None).unwrap();
+    f.store.refund_resume_try(&f.thread).unwrap();
     assert!(f.store.take_resume_try(&f.thread, 3).unwrap());
 }
 

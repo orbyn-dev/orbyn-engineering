@@ -4,7 +4,7 @@
 //! mode runs Supervised, which is also what the composer shows, so a looser mode is
 //! never assumed for an engine that cannot honour it.
 
-use orbyn_contracts::PermissionMode::{self, Auto, AutoEdits, FullAccess, Supervised};
+use orbyn_contracts::PermissionMode::{self, Auto, AutoEdits, FullAccess, NoApprovals, Supervised};
 
 /// The modes a provider offers, by the id its driver family or known engine uses.
 /// Providers with no row here offer every mode.
@@ -19,10 +19,19 @@ pub fn offered(family: &str) -> Vec<PermissionMode> {
     }
 }
 
-/// What a saved mode runs as on an engine offering `modes`.
+/// Whether an engine offers no approvals, the one mode of an engine that never asks (Cursor on the host).
+/// Such an engine refuses a run start in any other saved mode instead of falling back to Supervised.
+pub fn never_asks(modes: &[PermissionMode]) -> bool {
+    modes.contains(&NoApprovals)
+}
+
+/// What a saved mode runs as on an engine offering `modes`. An engine that never asks runs its own mode;
+/// the run start has already refused (or the person has overridden) a saved mode outside it.
 pub fn effective(modes: &[PermissionMode], saved: PermissionMode) -> PermissionMode {
     if modes.contains(&saved) {
         saved
+    } else if never_asks(modes) {
+        NoApprovals
     } else {
         Supervised
     }
@@ -52,5 +61,16 @@ mod tests {
         assert_eq!(effective(&offered("fx"), FullAccess), Supervised);
         assert_eq!(effective(&offered("pi"), FullAccess), FullAccess);
         assert_eq!(effective(&offered("claude"), Auto), Auto);
+    }
+
+    #[test]
+    fn an_engine_that_never_asks_runs_its_one_mode() {
+        let cursor = [NoApprovals];
+        assert!(never_asks(&cursor));
+        assert!(!never_asks(&PermissionMode::ALL));
+        assert_eq!(effective(&cursor, NoApprovals), NoApprovals);
+        // The run start refuses these; the override runs the turn without approvals.
+        assert_eq!(effective(&cursor, Supervised), NoApprovals);
+        assert_eq!(effective(&cursor, AutoEdits), NoApprovals);
     }
 }

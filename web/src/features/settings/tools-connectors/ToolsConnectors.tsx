@@ -83,9 +83,6 @@ export function ToolsConnectorsSection() {
   const current = engines.find((one) => one.id === picked) ?? engines[0];
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Tools and connectors
-      </h1>
       {current ? (
         <>
           <div role="tablist" aria-label="Engine" className="set-tabs" onKeyDown={(event) => tabKeys(event, (at) => setPicked(engines[at]?.id ?? null))}>

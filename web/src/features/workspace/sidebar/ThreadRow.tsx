@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { createPortal } from "react-dom";
 import type { Project, Thread } from "../../../api/types";
 import { compactAge, elapsed } from "../../../lib/format";
+import { isUnmanaged, unmanagedReason } from "../../../product/engines/unmanaged";
 import { runStateLabels } from "../../../product/runs/stateLabels";
 import { useNow } from "../../../lib/useNow";
 import { routeHref } from "../../../product/state/route";
@@ -11,6 +12,7 @@ import { EngineGlyph, ProjectBadge } from "../../../product/ui/badges";
 import type { DropVerb, SidebarSection } from "./groups";
 import { IssueMark } from "../../issues";
 import { createLongPress } from "./longPress";
+import { createSwipeReveal } from "./swipeReveal";
 import { threadRunState } from "./RunState";
 
 const DONE_WINDOW_MS = 5 * 60_000;
@@ -206,7 +208,7 @@ export function ThreadRow({
     (state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null,
   );
   const branch = thread.worktree?.branch ?? projectBranch;
-  const unmanaged = engine?.capabilities.managed === false;
+  const unmanaged = isUnmanaged(engine);
   const projectName = thread.scratch ? "No project" : (project?.name ?? "Unknown project");
   const engineName = engine?.name ?? thread.engine;
   const [hover, setHover] = useState<DOMRect | null>(null);
@@ -243,6 +245,19 @@ export function ThreadRow({
     latest.current.actions.onMenu(at, latest.current.thread);
   }), []);
   useEffect(() => () => longPress.dispose(), [longPress]);
+  // Touch also swipes: left reveals the Snooze and Settle strip, right (or a tap elsewhere) puts it away.
+  const rowEl = useRef<HTMLAnchorElement>(null);
+  const [revealed, setRevealed] = useState(false);
+  const swipe = useMemo(() => createSwipeReveal(setRevealed), []);
+  useEffect(() => () => swipe.dispose(), [swipe]);
+  useEffect(() => {
+    if (!revealed) return;
+    const away = (event: PointerEvent) => {
+      if (!rowEl.current?.querySelector(".row-actions")?.contains(event.target as Node | null)) swipe.close();
+    };
+    window.addEventListener("pointerdown", away, true);
+    return () => window.removeEventListener("pointerdown", away, true);
+  }, [revealed, swipe]);
   const startHover = (rect: DOMRect) => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -397,6 +412,7 @@ export function ThreadRow({
       }}
     >
       <a
+        ref={rowEl}
         className="thread-row"
         title={details}
         aria-describedby={detailsId}
@@ -407,7 +423,13 @@ export function ThreadRow({
         aria-current={selected ? "page" : undefined}
         tabIndex={focusable ? 0 : -1}
         draggable={false}
+        data-revealed={revealed || undefined}
         onClick={(event) => {
+          if (swipe.consumeClick()) {
+            // The swipe that moved the strip is not a click on the row.
+            event.preventDefault();
+            return;
+          }
           if (longPress.consumeClick()) {
             // The press that opened the menu is not a click on the row.
             event.preventDefault();
@@ -418,11 +440,21 @@ export function ThreadRow({
         onPointerDown={(event) => {
           stopHover();
           longPress.down(event);
+          swipe.down(event);
           actions.onPressStart(event, thread, section);
         }}
-        onPointerMove={(event) => longPress.move(event)}
-        onPointerUp={() => longPress.end()}
-        onPointerCancel={() => longPress.end()}
+        onPointerMove={(event) => {
+          longPress.move(event);
+          swipe.move(event);
+        }}
+        onPointerUp={() => {
+          longPress.end();
+          swipe.end();
+        }}
+        onPointerCancel={() => {
+          longPress.end();
+          swipe.end();
+        }}
         onFocus={(event) => {
           actions.onRowFocus(thread.id);
           if (!event.currentTarget.matches(":focus-visible")) return;
@@ -452,7 +484,7 @@ export function ThreadRow({
         {wokeMark}
         {pinMark}
         {unmanaged ? (
-          <span className="thread-row-project">Unmanaged</span>
+          <span className="thread-row-project" title={unmanagedReason(engine)}>Unmanaged</span>
         ) : thread.scratch || showProject || (ledger && !status.reason && !status.running) ? (
           <span className="thread-row-project">{projectName}</span>
         ) : null}

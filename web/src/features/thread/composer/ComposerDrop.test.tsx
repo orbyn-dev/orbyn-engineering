@@ -16,6 +16,7 @@ const thread: Thread = {
 };
 
 beforeEach(() => {
+  setTranscriptsApi(null);
   useComposerChips.setState({ chips: {}, reviewDrafts: {} });
   useUi.setState({ drafts: {} });
   useWorkspace.setState({ approvals: { data: [], error: null, loading: false } });
@@ -55,7 +56,7 @@ it("turns a dropped transcript into a chip, sends the other files as attachments
   const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a1", name: "login-error.log" } as never);
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
   render(<Composer thread={thread} engine={null} showContext />);
-  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "redirect-loop.transcript"), new File(["x"], "login-error.log")] } });
+  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "redirect-loop.orbyn.json"), new File(["x"], "login-error.log")] } });
   expect(await screen.findByText("Redirect loop on logout")).toBeInTheDocument();
   expect(screen.getByText("· 214 messages")).toBeInTheDocument();
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
@@ -69,15 +70,15 @@ it("holds send while a transcript is being read", async () => {
   setTranscriptsApi({ read: vi.fn().mockReturnValue(new Promise(() => {})) });
   const start = vi.spyOn(api, "startRun").mockResolvedValue({ id: "r1" } as Run);
   render(<Composer thread={thread} engine={null} showContext />);
-  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.transcript")] } });
+  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.orbyn.json")] } });
   await userEvent.type(screen.getByRole("textbox"), "hi{Enter}");
   expect(start).not.toHaveBeenCalled();
 });
 
 it("uploads a dropped transcript as an ordinary attachment when no client is installed", async () => {
-  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a1", name: "a.transcript" } as never);
+  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a1", name: "a.orbyn.json" } as never);
   render(<Composer thread={thread} engine={null} showContext />);
-  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.transcript")] } });
+  fireEvent.drop(box(), { dataTransfer: { types: ["Files"], getData: () => "", files: [new File(["x"], "a.orbyn.json")] } });
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
 });
 

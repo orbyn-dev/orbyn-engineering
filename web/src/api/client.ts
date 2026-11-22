@@ -3,6 +3,8 @@ import { serviceUrl } from "./origin";
 import { forgetPersonKey, personKeyHeaders } from "./personKey";
 import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
+import type { CreateBranch } from "../generated/CreateBranch";
+import type { SwitchBranch } from "../generated/SwitchBranch";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -30,7 +32,8 @@ import type {
   KeybindingsView,
   ApplyAllResult,
   Approval,
-  Attachment,
+  AttachmentSource,
+  AttachmentWithSource,
   Checkpoint,
   CloneJob,
   CreateThread,
@@ -319,7 +322,7 @@ export const api = {
     request<JsonValue | null>("GET", `/api/threads/${q(threadId)}/usage`, undefined, signal),
   commands: (threadId: string, signal?: AbortSignal) =>
     request<SlashCommand[]>("GET", `/api/threads/${q(threadId)}/commands`, undefined, signal),
-  uploadAttachment: async (threadId: string, file: File): Promise<Attachment> => {
+  uploadAttachment: async (threadId: string, file: File): Promise<AttachmentWithSource> => {
     let response: Response;
     try {
       response = await fetch(serviceUrl(`/api/threads/${q(threadId)}/attachments?name=${q(file.name)}`), {
@@ -332,8 +335,16 @@ export const api = {
       throw new ApiFailure(NETWORK_ERROR, "Can't reach the Orbyn service.", 0);
     }
     if (!response.ok) throw await failureFrom(response);
-    return (await response.json()) as Attachment;
+    return (await response.json()) as AttachmentWithSource;
   },
+
+  /**
+   * Where a kept attachment came from (docs/snapshots.md, "What the page sends to the service"). The route answers 404 for
+   * another thread's attachment or one already sent, `source_too_large` over a limit, and `unsupported_type` for a file
+   * that is not an image.
+   */
+  attachmentSource: (id: string, source: AttachmentSource) =>
+    request<void>("PUT", `/api/attachments/${q(id)}/source`, source),
 
   usage: (days: number, signal?: AbortSignal) =>
     request<UsageReport>("GET", `/api/usage?days=${days}`, undefined, signal),
@@ -429,8 +440,11 @@ export const api = {
     request<WorkflowScript>("GET", `/api/threads/${q(threadId)}/workflows/${q(callId)}/script`, undefined, signal),
   stopWorkflow: (threadId: string, callId: string) =>
     request<WorkflowStop>("POST", `/api/threads/${q(threadId)}/workflows/${q(callId)}/stop`, {}),
-  diff: (threadId: string, signal?: AbortSignal, scope?: string) =>
-    request<FileDiff[]>("GET", `/api/threads/${q(threadId)}/diff${scope ? `?scope=${scope}` : ""}`, undefined, signal),
+  /** `scope` is the already-encoded query (`turn&run=...`). `repoId` names one repository of a multi-repository thread; left out, the primary one (docs/multi-repo.md). */
+  diff: (threadId: string, signal?: AbortSignal, scope?: string, repoId?: string) => {
+    const query = [scope ? `scope=${scope}` : "", repoId === undefined ? "" : `repo_id=${q(repoId)}`].filter(Boolean).join("&");
+    return request<FileDiff[]>("GET", `/api/threads/${q(threadId)}/diff${query ? `?${query}` : ""}`, undefined, signal);
+  },
   readOutsideFile: (threadId: string, path: string, signal?: AbortSignal) =>
     request<OutsideFile>("GET", `/api/threads/${q(threadId)}/files/outside?path=${q(path)}`, undefined, signal),
   resolveThreadPath: (threadId: string, body: ResolveThreadPath, signal?: AbortSignal) =>
@@ -469,14 +483,16 @@ export const api = {
     request<EngineStatus>("POST", "/api/engines/custom", body),
   removeCustomEngine: (id: string) => request<void>("DELETE", `/api/engines/custom/${q(id)}`),
 
+  /** `body.repo_id` names one repository of a multi-repository thread; absent, the primary one. */
   gitAction: (threadId: string, body: GitAction) =>
     request<GitActionResult>("POST", `/api/threads/${q(threadId)}/git/action`, body),
-  branches: (threadId: string, signal?: AbortSignal) =>
-    request<BranchInfo[]>("GET", `/api/threads/${q(threadId)}/branches`, undefined, signal),
-  createBranch: (threadId: string, name: string) =>
-    request<void>("POST", `/api/threads/${q(threadId)}/branches`, { name }),
-  switchBranch: (threadId: string, name: string) =>
-    request<void>("POST", `/api/threads/${q(threadId)}/branches/switch`, { name }),
+  /** `repo_id` is a query parameter on this read and a body field on the two writes below; absent is the primary repository. */
+  branches: (threadId: string, signal?: AbortSignal, repoId?: string) =>
+    request<BranchInfo[]>("GET", `/api/threads/${q(threadId)}/branches${repoId === undefined ? "" : `?repo_id=${q(repoId)}`}`, undefined, signal),
+  createBranch: (threadId: string, name: string, repoId?: string) =>
+    request<void>("POST", `/api/threads/${q(threadId)}/branches`, { name, ...(repoId === undefined ? {} : { repo_id: repoId }) } satisfies CreateBranch),
+  switchBranch: (threadId: string, name: string, repoId?: string) =>
+    request<void>("POST", `/api/threads/${q(threadId)}/branches/switch`, { name, ...(repoId === undefined ? {} : { repo_id: repoId }) } satisfies SwitchBranch),
   publishProject: (projectId: string, body: PublishProject) =>
     request<void>("POST", `/api/projects/${q(projectId)}/publish`, body),
   restoreWorkspace: (threadId: string, runId: string, point: RestorePoint) =>

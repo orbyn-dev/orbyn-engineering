@@ -48,6 +48,8 @@ pub enum CoreError {
     FileConflict { revision: Option<String> },
     #[error("This file is too large to open here: {size} bytes, over the {limit} byte limit.")]
     FileTooLarge { size: u64, limit: u64 },
+    #[error("The Snap Shot's {field} is over the {limit} character limit.")]
+    SourceTooLarge { field: &'static str, limit: usize },
     #[error("{0} other thread(s) work in this folder, so restoring could lose their work.")]
     SharedDirectory(usize),
     #[error("finish or stop active runs first")]
@@ -64,6 +66,24 @@ pub enum CoreError {
     PullHeadChanged,
     #[error("{0}")]
     Unsupported(String),
+    /// A permission mode the engine does not offer.
+    #[error("{0}")]
+    PermissionModeUnsupported(String),
+    /// A folder that is already a repository of a project.
+    #[error("{0}")]
+    RepoExists(String),
+    /// An untrusted repository was asked to do anything but be trusted.
+    #[error("{0}")]
+    RepoUntrusted(String),
+    /// More repositories than a thread may work in.
+    #[error("{0}")]
+    RepoLimit(String),
+    /// A clone source the service will not run.
+    #[error("{0}")]
+    CloneRefused(String),
+    /// An action that needs Git, on a folder that has none.
+    #[error("{0}")]
+    NotGit(String),
     /// An issue tracker with no connection, or whose tool is missing or signed out.
     #[error("{0}")]
     TrackerNotConnected(String),
@@ -144,6 +164,14 @@ pub enum CoreError {
         message: String,
         detail: serde_json::Value,
     },
+    /// A run start an engine's own rules refuse, with the fields a screen acts on (docs/cursor-thread-contract.md): `code` is
+    /// `engine_mode_refused` or `engine_notice_required`, and `fields` are sent beside `code` and `message`.
+    #[error("{message}")]
+    EngineRefused {
+        code: &'static str,
+        message: String,
+        fields: serde_json::Value,
+    },
     /// An action that only a person at the desktop app may give: the service has no desktop shell (it was started without one, or
     /// as a remote service), so nothing can be approved.
     #[error("Approving a command needs the Orbyn desktop app on this computer.")]
@@ -163,6 +191,16 @@ pub enum CoreError {
     /// A stored record that fails its own checks, or a read that cannot finish: the answer is an error, never a guess (rule 7).
     #[error("{0}")]
     Unreadable(String),
+    /// A refusal that has its own status and stable code, such as an execution profile's `confirm_required`. `detail`
+    /// is `null` or a small object a client reads without parsing the message; it never holds a secret or a value
+    /// the person typed.
+    #[error("{message}")]
+    Refused {
+        status: u16,
+        code: &'static str,
+        message: String,
+        detail: serde_json::Value,
+    },
     #[error("{0}")]
     Internal(String),
     /// A stored row a person can repair (reset it, then enter it again). Server-side data, so `internal` and 500, but unlike
@@ -192,12 +230,19 @@ impl CoreError {
             Self::NotFastForward(_) => "not_fast_forward",
             Self::FileConflict { .. } => "file_conflict",
             Self::FileTooLarge { .. } => "file_too_large",
+            Self::SourceTooLarge { .. } => "source_too_large",
             Self::SharedDirectory(_) => "shared_directory",
             Self::RunsActive => "runs_active",
             Self::Updating => "updating",
             Self::ProjectHasWork { .. } => "project_has_work",
             Self::PullHeadChanged => "pull_head_changed",
             Self::Unsupported(_) => "unsupported",
+            Self::PermissionModeUnsupported(_) => "permission_mode_unsupported",
+            Self::RepoExists(_) => "repo_exists",
+            Self::RepoUntrusted(_) => "repo_untrusted",
+            Self::RepoLimit(_) => "repo_limit",
+            Self::CloneRefused(_) => "clone_refused",
+            Self::NotGit(_) => "not_git",
             Self::TrackerNotConnected(_) => "tracker_not_connected",
             Self::TrackerRateLimited(_) => "rate_limited",
             Self::TrackerForbidden(_) => "forbidden",
@@ -221,7 +266,10 @@ impl CoreError {
             Self::Gone(_) => "gone",
             Self::Stale(_) => "stale",
             Self::TaskEnded => "task_ended",
-            Self::Account { code, .. } | Self::PatternRefused { code, .. } => code,
+            Self::Account { code, .. }
+            | Self::PatternRefused { code, .. }
+            | Self::EngineRefused { code, .. }
+            | Self::Refused { code, .. } => code,
             Self::ProjectExists(_) => "project_exists",
             Self::SessionLost => "session_lost",
             Self::Computer(_) => "computer_failed",
@@ -239,8 +287,8 @@ impl CoreError {
         match self {
             Self::NotFound(_) => 404,
             Self::Updating => 503,
-            Self::Invalid(_) => 400,
-            Self::FileTooLarge { .. } => 413,
+            Self::Invalid(_) | Self::CloneRefused(_) | Self::PermissionModeUnsupported(_) => 400,
+            Self::FileTooLarge { .. } | Self::SourceTooLarge { .. } => 413,
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
             | Self::PolicyDenied(_)
@@ -280,6 +328,10 @@ impl CoreError {
             | Self::RunsActive
             | Self::PullHeadChanged
             | Self::TrackerNotConnected(_)
+            | Self::RepoExists(_)
+            | Self::RepoUntrusted(_)
+            | Self::RepoLimit(_)
+            | Self::NotGit(_)
             | Self::Git(_)
             | Self::ProjectHasWork { .. }
             | Self::EngineBusy(_)
@@ -287,8 +339,10 @@ impl CoreError {
             | Self::RunClosed
             | Self::TaskEnded
             | Self::Stale(_)
+            | Self::EngineRefused { .. }
             | Self::InvalidTransition { .. } => 409,
             Self::Gone(_) => 410,
+            Self::Refused { status, .. } => *status,
             Self::UpdateUnavailable(_)
             | Self::Unsupported(_)
             | Self::UnsupportedOption(_)
@@ -340,6 +394,10 @@ impl CoreError {
                 size: *size,
                 limit: *limit,
             },
+            Self::SourceTooLarge { field, limit } => Self::SourceTooLarge {
+                field,
+                limit: *limit,
+            },
             Self::SharedDirectory(n) => Self::SharedDirectory(*n),
             Self::RunsActive => Self::RunsActive,
             Self::Updating => Self::Updating,
@@ -349,6 +407,12 @@ impl CoreError {
             },
             Self::PullHeadChanged => Self::PullHeadChanged,
             Self::Unsupported(s) => Self::Unsupported(s.clone()),
+            Self::PermissionModeUnsupported(s) => Self::PermissionModeUnsupported(s.clone()),
+            Self::RepoExists(s) => Self::RepoExists(s.clone()),
+            Self::RepoUntrusted(s) => Self::RepoUntrusted(s.clone()),
+            Self::RepoLimit(s) => Self::RepoLimit(s.clone()),
+            Self::CloneRefused(s) => Self::CloneRefused(s.clone()),
+            Self::NotGit(s) => Self::NotGit(s.clone()),
             Self::TrackerNotConnected(s) => Self::TrackerNotConnected(s.clone()),
             Self::TrackerRateLimited(s) => Self::TrackerRateLimited(s.clone()),
             Self::TrackerForbidden(s) => Self::TrackerForbidden(s.clone()),
@@ -390,6 +454,26 @@ impl CoreError {
                 message,
                 detail,
             } => Self::PatternRefused {
+                code,
+                message: message.clone(),
+                detail: detail.clone(),
+            },
+            Self::EngineRefused {
+                code,
+                message,
+                fields,
+            } => Self::EngineRefused {
+                code,
+                message: message.clone(),
+                fields: fields.clone(),
+            },
+            Self::Refused {
+                status,
+                code,
+                message,
+                detail,
+            } => Self::Refused {
+                status: *status,
                 code,
                 message: message.clone(),
                 detail: detail.clone(),

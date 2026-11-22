@@ -1,15 +1,18 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../../api/client";
 import { pullsApi } from "../../../api/pulls";
 import type { PullRequestDetail } from "../../../api/types";
-import { MergeDialog, RowMergeDialog, deleteBranchChoice, rememberDeleteBranch } from "./MergeDialog";
+import { deleteBranchChoice, rememberDeleteBranch, resetMergeOptions, useMergeOptions } from "../model/mergeOptions";
+import { MergeDialog, RowMergeDialog } from "./MergeDialog";
 
 const detail = { pull: { number: 7, base: "main", title: "T" }, body: "Message", head_sha: "abc" } as unknown as PullRequestDetail;
 const flush = () => act(async () => void (await Promise.resolve()));
 
 beforeEach(() => {
   localStorage.clear();
+  resetMergeOptions();
+  vi.spyOn(pullsApi, "creditsSetting").mockResolvedValue(false);
   vi.spyOn(pullsApi, "detail").mockResolvedValue(detail);
   vi.spyOn(pullsApi, "merge").mockResolvedValue(undefined);
 });
@@ -24,22 +27,13 @@ const open = async (props: Partial<Parameters<typeof RowMergeDialog>[0]> = {}) =
   return { onMerged, onClose, onStale };
 };
 
-describe("delete branch after merge", () => {
-  it("is off until chosen and then remembered for that project only", () => {
-    expect(deleteBranchChoice("p")).toBe(false);
-    rememberDeleteBranch("p", true);
-    expect(deleteBranchChoice("p")).toBe(true);
-    expect(deleteBranchChoice("q")).toBe(false);
-  });
-});
-
 describe("the merge dialog from a row", () => {
   it("shows its controls, starts with the delete box off, and does not merge until Merge is pressed", async () => {
     await open();
     expect(screen.getByRole("combobox", { name: "Merge method" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Merge when checks pass" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Delete the branch" })).not.toBeChecked();
-    expect(screen.getByRole("switch", { name: "Remove agent credits" })).toHaveAccessibleDescription("Strips agent credit lines from the commit message.");
+    expect(screen.getByRole("switch", { name: "Remove agent credits" })).toHaveAccessibleDescription("Follows your account setting. Credit lines stay in this merge.");
     expect(pullsApi.merge).not.toHaveBeenCalled();
   });
 
@@ -49,7 +43,7 @@ describe("the merge dialog from a row", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Delete the branch" }));
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     await flush();
-    expect(pullsApi.merge).toHaveBeenCalledWith("p", 7, { method: "rebase", auto: false, delete_branch: true, strip_credits: false, expected_head: "abc" });
+    expect(pullsApi.merge).toHaveBeenCalledWith("p", 7, { method: "rebase", auto: false, delete_branch: true, strip_credits: false, remove_agent_credits: false, expected_head: "abc" });
     expect(deleteBranchChoice("p")).toBe(true);
     expect(onMerged).toHaveBeenCalled();
   });
@@ -115,5 +109,106 @@ describe("the merge dialog from a row", () => {
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     await flush();
     expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
+  });
+});
+
+describe("Remove agent credits", () => {
+  const credits = () => screen.getByRole("switch", { name: "Remove agent credits" });
+
+  it("starts from the account setting: off keeps the credit lines", async () => {
+    await open();
+    expect(credits()).not.toBeChecked();
+    expect(credits()).not.toHaveAttribute("aria-readonly");
+    expect(credits()).not.toHaveAttribute("aria-disabled");
+    expect(pullsApi.creditsSetting).toHaveBeenCalledWith("p", expect.anything());
+  });
+
+  it("shows the setting on, and says the credit lines are stripped, while untouched", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(true);
+    await open();
+    expect(credits()).toBeChecked();
+    expect(credits()).toHaveAccessibleDescription("Follows your account setting. Credit lines are stripped from this merge.");
+  });
+
+  it("with no setting to read, shows it off and says only that it follows the account", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(null);
+    await open();
+    expect(credits()).not.toBeChecked();
+    expect(credits()).toHaveAccessibleDescription("Follows your account setting.");
+  });
+
+  it("toggles, and the hint names the chosen value instead of the account setting", async () => {
+    await open();
+    fireEvent.click(credits());
+    expect(credits()).toBeChecked();
+    expect(credits()).toHaveAccessibleDescription("Credit lines are stripped from this merge.");
+    fireEvent.click(credits());
+    expect(credits()).not.toBeChecked();
+    expect(credits()).toHaveAccessibleDescription("Credit lines stay in this merge.");
+  });
+
+  it("sends the resolved value: the account setting untouched, and the person's choice over it", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(true);
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ strip_credits: false, remove_agent_credits: true });
+  });
+
+  it("sends false when the person turns the account's on setting off", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(true);
+    await open();
+    fireEvent.click(credits());
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ remove_agent_credits: false });
+  });
+
+  it("sends nothing when the setting is unknown and the switch was never touched", async () => {
+    vi.mocked(pullsApi.creditsSetting).mockResolvedValue(null);
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).not.toHaveProperty("remove_agent_credits");
+  });
+});
+
+describe("the options shared with the merge menu", () => {
+  it("starts from the menu's choices and the commit message is the description in four rows", async () => {
+    const { result } = renderHook(() => useMergeOptions("p", 7));
+    act(() => {
+      result.current.setAuto(true);
+      result.current.setDeleteBranch(true);
+    });
+    await open();
+    expect(screen.getByRole("checkbox", { name: "Merge when checks pass" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Delete the branch" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Enable auto-merge" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Commit message" })).toHaveValue("Message");
+    expect(screen.getByRole("textbox", { name: "Commit message" })).toHaveAttribute("rows", "4");
+  });
+
+  it("ticking one in the dialog shows it ticked for the menu, and a merge sends it", async () => {
+    const menu = renderHook(() => useMergeOptions("p", 7));
+    await open();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Merge when checks pass" }));
+    expect(menu.result.current.auto).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Enable auto-merge" }));
+    await flush();
+    expect(vi.mocked(pullsApi.merge).mock.calls[0]?.[2]).toMatchObject({ auto: true });
+  });
+
+  it("another pull request starts afresh", async () => {
+    const { result } = renderHook(() => useMergeOptions("p", 8));
+    act(() => result.current.setAuto(true));
+    await open();
+    expect(screen.getByRole("checkbox", { name: "Merge when checks pass" })).not.toBeChecked();
+  });
+
+  it("hides the message for a rebase, and the method select only where no menu chose the method", async () => {
+    render(<MergeDialog projectId="p" detail={detail} initialMethod="rebase" fixedMethod onClose={vi.fn()} onMerged={vi.fn()} onStale={vi.fn()} />);
+    expect(screen.queryByRole("textbox", { name: "Commit message" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Merge method" })).toBeNull();
+    expect(screen.getByText("Rebase and merge #7 into main.")).toBeInTheDocument();
   });
 });

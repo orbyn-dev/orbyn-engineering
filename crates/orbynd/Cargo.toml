@@ -47,6 +47,8 @@ zeroize.workspace = true
 orbyn-core = { path = "../orbyn-core", features = ["test-support"] }
 base64 = "0.22"
 ed25519-dalek.workspace = true
+# Real photo fixtures for the attachment conversion tests, never committed as binaries.
+image.workspace = true
 rusqlite.workspace = true
 tokio-tungstenite.workspace = true
 windows-sys.workspace = true

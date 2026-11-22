@@ -2,18 +2,31 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{MatchedPath, Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use orbyn_contracts::ModelSelection;
 use orbyn_contracts::{PermissionMode, StartRun, UpdateThread, WorkflowStop};
+use orbyn_core::CoreError;
 use orbyn_core::agents::selection;
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
+    // The one-turn override is the person's, at this computer (docs/cursor-thread-contract.md).
+    let person = Router::new()
+        .route(
+            "/api/threads/{id}/send-without-approvals",
+            post(send_without_approvals),
+        )
+        .route_layer(from_fn_with_state(
+            state,
+            super::engine_credentials::local_only,
+        ));
     Router::new()
+        .merge(person)
         .route("/api/threads/{id}/runs", post(start_run))
         .route("/api/runs/{id}/cancel", post(cancel_run))
         .route("/api/threads/{id}/force-stop", post(force_stop))
@@ -29,6 +42,7 @@ pub fn routes() -> Router<AppState> {
 
 async fn start_run(
     State(state): State<AppState>,
+    matched: MatchedPath,
     Path(id): Path<String>,
     headers: HeaderMap,
     ApiJson(body): ApiJson<StartRun>,
@@ -45,7 +59,12 @@ async fn start_run(
                 lifecycle.permission_mode
             });
         if wanted.looser_than(current) {
-            state.access.person_check(&headers)?;
+            state.access.person_check_field(
+                &headers,
+                "POST",
+                matched.as_str(),
+                "permission_mode",
+            )?;
         }
         Ok(())
     };
@@ -77,6 +96,44 @@ async fn start_run(
         .core
         .runs
         .admit_with(&id, &body.prompt, &body.attachment_ids, LOCAL_USER)?;
+    Ok((StatusCode::ACCEPTED, Json(run)))
+}
+
+/// Runs ONE turn with No approvals on an engine that never asks, and stores nothing: the thread's saved mode stays, so the next
+/// send is refused again. The body is a send's, minus the mode it would have saved. It does not skip the notice.
+async fn send_without_approvals(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<StartRun>,
+) -> ApiResult<impl IntoResponse> {
+    if body.permission_mode.is_some() {
+        return Err(CoreError::Invalid(
+            "This sends once without approvals and saves no mode. Leave the permission mode out."
+                .into(),
+        )
+        .into());
+    }
+    let wanted = ModelSelection {
+        model: body.model.clone(),
+        effort: body.effort.clone(),
+        options: body.options.clone(),
+    };
+    state.core.check_turn(&id, &wanted).await?;
+    if !selection::is_empty(&wanted) {
+        let patch = UpdateThread {
+            model: wanted.model,
+            effort: wanted.effort,
+            options: Some(wanted.options),
+            ..UpdateThread::default()
+        };
+        state.core.update_thread(&id, &patch, LOCAL_USER)?;
+    }
+    let run = state.core.runs.admit_without_approvals(
+        &id,
+        &body.prompt,
+        &body.attachment_ids,
+        LOCAL_USER,
+    )?;
     Ok((StatusCode::ACCEPTED, Json(run)))
 }
 

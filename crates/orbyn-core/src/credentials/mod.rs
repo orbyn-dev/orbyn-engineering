@@ -14,9 +14,17 @@
 //!
 //! No value is ever formatted: [`SpawnSecret`] prints nothing in `Debug`, zeroizes on drop, and the
 //! errors carry no key text. The web page and the routes get [`Status`] only.
+//!
+//! A second keychain use, approved by the owner, sits beside it: [`EnvSets`] keeps the **values of personal-library environment
+//! sets** (docs/execution-profiles-and-library.md, Part 2) under its own service name (`app.orbyn.engineering.env-sets`, with a
+//! `.dev` twin), one item per key, account `<set id>/<KEY>`. It follows the same rules (keychain only, write-only, no value in any
+//! format or answer) and is a separate namespace: the [`ENGINES`] allowlist is untouched, no engine-key call can read a set and no
+//! set call can read an engine key. A set's values reach one place only, the environment of a workflow run the person starts, and
+//! never an engine spawn.
 
 mod app;
 mod backend;
+mod env_sets;
 
 #[cfg(test)]
 mod tests;
@@ -25,12 +33,18 @@ use std::sync::Arc;
 
 use zeroize::Zeroizing;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use backend::MemoryBackend;
 #[cfg(all(
     target_os = "macos",
     any(feature = "engine-client", feature = "engine-credentials")
 ))]
 pub use backend::SystemKeychain;
 pub use backend::{Failure, SecretBackend};
+pub use env_sets::{
+    ENV_DEV_SERVICE, ENV_RELEASE_SERVICE, EnvError, EnvSecret, EnvSets, KeyProblem, MAX_KEY_NAME,
+    MAX_VALUE_BYTES, check_key_name, default_env_service,
+};
 
 /// The keychain service name of a development or unsigned build; a signed release uses its own, so
 /// neither reads the other's items (the same rule as the account device, docs/account.md).

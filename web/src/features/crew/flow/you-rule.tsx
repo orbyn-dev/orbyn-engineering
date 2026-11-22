@@ -154,7 +154,7 @@ export function FlowYouRule() {
                 </div>
                 <div className="cx-fbx">
                   <h6>Where this does not apply</h6>
-                  <p>Bots and agents never merge in the skills library; no rule can change that, so there it always waits for a person.</p>
+                  <p>In the skills library, merging is left to a person, whatever the rules say.</p>
                 </div>
               </div>
               <div className="cx-acts3"><Btn className="cx-btn">Open the PR</Btn><span className="cx-cwpv">Planned</span><Btn className="cx-ghost">Edit the rule</Btn><Btn className="cx-ghost">Turn the rule off</Btn></div>

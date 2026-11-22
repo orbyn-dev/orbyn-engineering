@@ -65,14 +65,27 @@ async fn git_action(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<GitAction>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.git_action(&id, &body, LOCAL_USER).await?))
+    let repo = body.repo_id.clone();
+    Ok(Json(
+        orbyn_core::in_repo(repo, state.core.git_action(&id, &body, LOCAL_USER)).await?,
+    ))
+}
+
+/// A multi-repository thread's repository for a read; absent is the primary one.
+#[derive(Deserialize)]
+struct RepoQuery {
+    #[serde(default)]
+    repo_id: Option<String>,
 }
 
 async fn branches(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.branches(&id).await?))
+    Ok(Json(
+        orbyn_core::in_repo(query.repo_id, state.core.branches(&id)).await?,
+    ))
 }
 
 async fn create_branch(
@@ -80,7 +93,8 @@ async fn create_branch(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<CreateBranch>,
 ) -> ApiResult<StatusCode> {
-    state.core.create_branch(&id, &body, LOCAL_USER).await?;
+    let repo = body.repo_id.clone();
+    orbyn_core::in_repo(repo, state.core.create_branch(&id, &body, LOCAL_USER)).await?;
     Ok(StatusCode::CREATED)
 }
 
@@ -89,10 +103,8 @@ async fn switch_branch(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<SwitchBranch>,
 ) -> ApiResult<StatusCode> {
-    state
-        .core
-        .switch_branch(&id, &body.name, LOCAL_USER)
-        .await?;
+    let repo = body.repo_id.clone();
+    orbyn_core::in_repo(repo, state.core.switch_branch(&id, &body.name, LOCAL_USER)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -140,6 +152,7 @@ struct DiffQuery {
     run: Option<String>,
     base: Option<String>,
     sha: Option<String>,
+    repo_id: Option<String>,
 }
 
 async fn thread_diff(
@@ -147,6 +160,20 @@ async fn thread_diff(
     Path(id): Path<String>,
     Query(query): Query<DiffQuery>,
 ) -> ApiResult<impl IntoResponse> {
+    let repo = query.repo_id.clone();
+    let which = state.core.diff_repo(&id, repo.as_deref())?;
+    let Json(mut files) = orbyn_core::in_repo(repo, thread_diff_in_repo(state, id, query)).await?;
+    for file in &mut files {
+        file.repo_id.clone_from(&which);
+    }
+    Ok(Json(files))
+}
+
+async fn thread_diff_in_repo(
+    state: AppState,
+    id: String,
+    query: DiffQuery,
+) -> ApiResult<Json<Vec<orbyn_contracts::FileDiff>>> {
     let core = &state.core;
     let missing = |what: &str| CoreError::Invalid(format!("This diff needs {what}."));
     let files = match query.scope.as_deref() {
@@ -172,6 +199,9 @@ async fn thread_diff(
 async fn commits(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<RepoQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(state.core.thread_commits(&id).await?))
+    Ok(Json(
+        orbyn_core::in_repo(query.repo_id, state.core.thread_commits(&id)).await?,
+    ))
 }

@@ -1,5 +1,8 @@
+import { pathToFileURL } from "node:url";
 import { runHost } from "./host.mjs";
+import { acpFamily } from "./families/acp.mjs";
 import { claudeFamily } from "./families/claude.mjs";
+import { codexFamily } from "./families/codex.mjs";
 import { cursorFamily, isBenignSdkRejection } from "./families/cursor.mjs";
 import { fake } from "./families/fake.mjs";
 import { museFamily } from "./families/muse.mjs";
@@ -7,28 +10,34 @@ import { opencodeFamily } from "./families/opencode.mjs";
 
 const families = {
   fake,
+  // The person's own `codex app-server`, over its documented JSON-RPC. No SDK or binary is bundled.
+  codex: codexFamily(),
   // MIT SDK, bundled. It drives the person's own `opencode serve`; no binary is shipped.
   opencode: opencodeFamily({ loadSdk: () => import("@opencode/client") }),
   // MIT SDK, bundled. It drives the person's own `muse serve`; no binary is shipped.
   muse: museFamily({ loadSdk: () => import("@muse-code/sdk") }),
+  // The person's own ACP agent. The core resolves the agent and its binary (`open.options.agent`);
+  // the host neither ships nor fetches one, and speaks the protocol in src/families/acp.mjs.
+  acp: acpFamily(),
 };
-// Gated: the Claude SDK path stays off until Anthropic approves in writing. The SDK is not bundled;
-// it loads from node_modules in development and is missing in the single executable.
+// The SDKs are dependencies, loaded from node_modules in development. `ORBYN_CLAUDE_SDK_MODULE` and `ORBYN_CURSOR_SDK_MODULE`
+// name another place to load them from (an absolute path to the package's entry file, used by the app bundle and by the
+// tests that check a missing SDK); a plain name is imported as usual.
+const sdkImport = (override, name) => import(override?.startsWith("/") ? pathToFileURL(override).href : (override ?? name));
+// The Claude SDK path is opt-in until the SDK is bundled (docs/sdk-default-plan.md).
 if (process.env.ORBYN_ENGINE_HOST_CLAUDE === "1") {
   families.claude = claudeFamily({
     loadSdk: () =>
-      import("@anthropic-ai/claude-agent-sdk").catch((cause) => {
+      sdkImport(process.env.ORBYN_CLAUDE_SDK_MODULE, "@anthropic-ai/claude-agent-sdk").catch((cause) => {
         throw new Error("The Claude Agent SDK is not available in this build.", { cause });
       }),
   });
 }
-// Gated: the Cursor SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is neither bundled
-// nor a dependency. In development it loads from node_modules if present; in the single executable it is absent.
-// The key, if any, is only CURSOR_API_KEY in the environment the core passes at spawn.
+// Gated until the SDK is bundled and real-run checked (docs/sdk-default-plan.md). The key, if any, is only CURSOR_API_KEY in the environment the core passes at spawn.
 if (process.env.ORBYN_ENGINE_HOST_CURSOR === "1") {
   families.cursor = cursorFamily({
     loadSdk: () =>
-      import("@cursor/sdk").catch((cause) => {
+      sdkImport(process.env.ORBYN_CURSOR_SDK_MODULE, "@cursor/sdk").catch((cause) => {
         throw Object.assign(new Error("The Cursor SDK is not available in this build.", { cause }), { kind: "unsupported" });
       }),
   });

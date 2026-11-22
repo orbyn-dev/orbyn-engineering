@@ -8,6 +8,7 @@ mod auth;
 mod automations;
 mod checkpoints;
 mod classes;
+mod code_mode;
 mod composer;
 mod crew;
 mod crew_areas;
@@ -24,13 +25,16 @@ mod files;
 mod governance;
 mod interactions;
 mod issues;
+mod library;
 mod mcp_apps;
 mod media;
 mod preview;
+mod profiles;
 mod projects;
 mod pulls;
 mod raw_files;
 mod renders;
+mod repos;
 mod runs;
 mod secrets;
 mod settings;
@@ -92,9 +96,21 @@ mod engine_credentials_tests;
 #[cfg(test)]
 mod engine_host_tests;
 #[cfg(test)]
+mod library_tests;
+#[cfg(test)]
+mod never_asks_tests;
+#[cfg(test)]
+mod photo_conversion_tests;
+#[cfg(test)]
+mod profiles_tests;
+#[cfg(test)]
 mod secrets_tests;
 #[cfg(test)]
+mod snapshot_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcripts_tests;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -121,7 +137,11 @@ pub fn router(state: AppState) -> Router {
         .merge(updates::routes())
         .merge(composer::routes())
         .merge(checkpoints::routes())
+        .merge(code_mode::routes())
         .merge(issues::routes())
+        .merge(profiles::routes())
+        .merge(repos::routes())
+        .merge(library::routes())
         .merge(explorer::routes())
         .merge(files::routes())
         .merge(raw_files::routes())
@@ -130,10 +150,10 @@ pub fn router(state: AppState) -> Router {
         .merge(source_control::routes())
         .merge(pulls::routes())
         .merge(usage::routes())
-        .merge(engines::routes())
+        .merge(engines::routes(state.clone()))
         .merge(automations::routes())
         .merge(preview::routes())
-        .merge(runs::routes())
+        .merge(runs::routes(state.clone()))
         .merge(interactions::routes())
         .merge(skills::routes())
         .merge(governance::routes())

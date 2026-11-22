@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use crate::background::{
+    BackgroundBudget, BackgroundRunState, BackgroundStopReason, BackgroundTemplate,
+};
+
 wire_enum! {
 /// How much Autopilot does: `off`, `on` or `full` (the default).
 pub enum AutopilotMode {
@@ -193,8 +197,46 @@ pub struct AutopilotReviewQueue {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub next_offset: Option<u32>,
+    /// The background runs that stopped without a merge and wait for the person, oldest first, one page. A merge's risk ranks
+    /// the `items`; a background run has no risk, commit or diff, so it is listed beside them and carries its own state.
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<AutopilotBackgroundReviewItem>>")]
+    pub background_runs: Vec<AutopilotBackgroundReviewItem>,
+    /// How many background runs wait in all. `background_runs` is the same `limit` and `offset` window of them as `items` is of
+    /// the merges, and `next_offset` is set while either list has more.
+    #[serde(default)]
+    #[ts(optional, as = "Option<u32>")]
+    pub background_total: u32,
     #[ts(type = "number")]
     pub now_unix: i64,
+}
+}
+
+wire! {
+/// One background run in the Review queue: it stopped without a merge and waits for the person. It has no commit, diff or
+/// risk; the run's state, why it stopped and what it spent are what a person reads. It is not here while running, and not
+/// when the person's own switch stopped it.
+pub struct AutopilotBackgroundReviewItem {
+    pub run_id: String,
+    pub crew_id: String,
+    pub project_id: String,
+    pub crew_name: String,
+    pub template: BackgroundTemplate,
+    pub state: BackgroundRunState,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub stop_reason: Option<BackgroundStopReason>,
+    /// Why the run waits, in the core's plain words. Absent when the reason is the stored stop reason itself.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub review_reason: Option<String>,
+    pub turns_spent: u32,
+    pub minutes_spent: u32,
+    pub budget: BackgroundBudget,
+    pub started_at: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub ended_at: Option<String>,
 }
 }
 

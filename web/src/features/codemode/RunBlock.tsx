@@ -6,14 +6,14 @@ import { useNow } from "../../lib/useNow";
 import { parsed } from "../../product/timeline/toolTrace";
 import type { ToolItem } from "../../product/timeline/types";
 import { CallList } from "./CallList";
-import { boundedLines, callWord, capText, codeToolOf, MAX_SCRIPT_CHARS, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
+import { boundedLines, callWord, capText, codeToolOf, runAnchorId, MAX_SCRIPT_CHARS, LIMITS, readReply, resumedWords, rowSummary, runMs, runView, type RowTone } from "./model";
 import { ScriptBox } from "./ScriptBox";
 import { useCodeRun } from "./useCodeRun";
 import type { RunView } from "./types";
 
 /**
- * The run behind one `orbyn_code_run` call: the run record when it can be read (a dev or test build with the stand-in
- * service), otherwise only what the engine's own reply carried. The call's arguments supply the script when the record does
+ * The run behind one `orbyn_code_run` call: the run record when it can be read (`GET /api/code-runs/{id}`; not when the run is
+ * gone or the service does not offer Code Mode), otherwise only what the engine's own reply carried. The call's arguments supply the script when the record does
  * not; a call that only resumes (`run_id`) has none.
  */
 export function useRunView(item: ToolItem, live: boolean): RunView | null {
@@ -159,7 +159,7 @@ export function CodeRunBlock({ item, live, inspect }: { item: ToolItem; live: bo
     : "";
   const error = view.error;
   return (
-    <div className="cb" data-run-status={view.status}>
+    <div className="cb" data-run-status={view.status} id={runAnchorId(view.runId) ?? undefined} tabIndex={view.runId && runAnchorId(view.runId) ? -1 : undefined}>
       {view.runId ? (
         <div className="cm">
           <span className="pr" aria-hidden />

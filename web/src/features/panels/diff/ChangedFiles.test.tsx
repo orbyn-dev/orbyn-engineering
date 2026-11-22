@@ -73,3 +73,18 @@ it("marks only the picked README.md when two repositories each change one, and p
 it("keys a file with no repository by its path alone", () => {
   expect(fileKey({ path: "a.ts" })).toBe("a.ts");
 });
+
+it("says quietly that a repository's list stopped at the service's cap of 200 files, and not otherwise", () => {
+  const many = Array.from({ length: 200 }, (_, at) => `src/f${at}.ts`);
+  draw([file("src/f1.ts")], [repo("engineering", many), repo("planner", ["calendar/feed.ts"])]);
+  expect(screen.getByText("200 shown")).toBeVisible();
+  expect(screen.getAllByText("200 shown")).toHaveLength(1);
+  const first = screen.getAllByRole("group").find((group) => group.classList.contains("fl-repo"))!;
+  expect(within(first).getByText("200 shown")).toBeVisible();
+});
+
+it("says nothing of a cap for 199 files or an untrusted repository", () => {
+  const files = Array.from({ length: 199 }, (_, at) => `src/f${at}.ts`);
+  draw([file("src/f1.ts")], [repo("engineering", files), { ...repo("planner"), trusted: false, files: null as never }]);
+  expect(screen.queryByText("200 shown")).toBeNull();
+});

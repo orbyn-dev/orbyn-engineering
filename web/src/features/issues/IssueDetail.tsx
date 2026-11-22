@@ -1,5 +1,5 @@
-import { ArrowLeft, ExternalLink as ExternalIcon, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Pencil, Plus } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, ExternalLink as ExternalIcon, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Plus } from "lucide-react";
+import { useRef, useState } from "react";
 import { relativeTime, compactAge } from "../../lib/format";
 import { safeHref } from "../../lib/links";
 import { useWaited } from "../../lib/motion";
@@ -11,10 +11,10 @@ import { PageBar } from "../../product/ui/PageBar";
 import { Button } from "../../ui/controls";
 import { ApiFailure } from "../../api/client";
 import { Markdown } from "../content";
-import { issuesApi, useApiVersion } from "./api";
+import { issuesApi, useApiVersion, useEditOffered } from "./api";
 import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
-import { PlannedControl } from "./Planned";
+import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
 import { IssueStateButton } from "./IssueStateMenu";
 import { reloadIssueLinks, useIssueThreads } from "./links";
@@ -81,25 +81,42 @@ function PullRow({ pull }: { pull: LinkedPullRequest }) {
 
 /** What the tracker reports of its own accord, in its order. No CI or checks status: the contract carries none. */
 function LinkedPullRequests({ pulls }: { pulls: LinkedPullRequest[] }) {
+  // Shown only when the tracker reports a pull request: an empty card on every issue says nothing.
+  if (pulls.length === 0) return null;
   return (
     <section className="iss-card" role="group" aria-label="Linked pull requests">
-      <h2>{pulls.length > 0 ? `Linked pull requests · ${pulls.length}` : "Linked pull requests"}</h2>
-      {pulls.length === 0 ? <p className="iss-quiet">No pull request is linked to this issue.</p> : (
-        <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
-      )}
+      <h2>{`Linked pull requests · ${pulls.length}`}</h2>
+      <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
     </section>
   );
 }
 
-/** `page` is the issue as a page: it adds the Planned description pencil and the linked pull requests after the description; the panel tab does not. */
-export function Body({ issue, page = false }: { issue: Detail; page?: boolean }) {
+function Entry({ issue }: { issue: Detail }) {
+  return (
+    <article className="iss-entry">
+      <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span></header>
+      {/* Escaped Markdown through the app's safe renderer: no HTML, and remote images stay links. */}
+      <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>
+    </article>
+  );
+}
+
+/** The post with the description editor: the header's pencil, and the editor in place of the text while it is open. */
+function EditableEntry({ issue, edit }: { issue: Detail; edit: EditProps }) {
+  const { pencil, editor, editing } = useDescriptionEditor(edit);
+  return (
+    <article className="iss-entry">
+      <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span>{pencil}</header>
+      {editing ? editor : <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>}
+    </article>
+  );
+}
+
+/** `page` is the issue as a page: it adds the description pencil (Planned until the service offers editing) and the linked pull requests after the description; the panel tab does not. */
+export function Body({ issue, page = false, edit }: { issue: Detail; page?: boolean; edit?: EditProps }) {
   return (
     <div className="iss-main">
-      <article className="iss-entry">
-        <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span>{page ? <PlannedControl label="Edit description" what="Editing the description" className="iss-icb"><Pencil size={13} aria-hidden /></PlannedControl> : null}</header>
-        {/* Escaped Markdown through the app's safe renderer: no HTML, and remote images stay links. */}
-        <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>
-      </article>
+      {page && edit ? <EditableEntry issue={issue} edit={edit} /> : <Entry issue={issue} />}
       {page ? <LinkedPullRequests pulls={issue.linked_pull_requests} /> : null}
       {issue.comments.map((comment) => (
         <article key={comment.id} className="iss-entry">
@@ -111,15 +128,15 @@ export function Body({ issue, page = false }: { issue: Detail; page?: boolean })
   );
 }
 
-function Facts({ issue, onChanged }: { issue: Detail; onChanged(): Promise<unknown> | void }) {
+function Facts({ issue, edit }: { issue: Detail; edit: EditProps }) {
   return (
     <section className="iss-card" role="group" aria-label="Facts">
       <dl>
-        <dt>State</dt><dd><IssueStateButton issue={issue} onChanged={onChanged} /></dd>
+        <dt>State</dt><dd><IssueStateButton issue={issue} write={edit.write} writing={edit.writing} /></dd>
         <dt>Tracker</dt><dd>{trackerName(issue.tracker)}</dd>
         <dt>Author</dt><dd>{issue.author?.login ?? "Unknown"}</dd>
-        <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}<PlannedControl label="Change assignees" what="Changing assignees"><Plus size={13} aria-hidden /></PlannedControl></dd>
-        <dt>Labels</dt><dd>{issue.labels.length === 0 ? <span className="iss-quiet">None</span> : issue.labels.map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}<PlannedControl label="Change labels" what="Changing labels"><Plus size={13} aria-hidden /></PlannedControl></dd>
+        <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}<PickerEditor kind="assignees" {...edit} /></dd>
+        <dt>Labels</dt><dd>{issue.labels.length === 0 ? <span className="iss-quiet">None</span> : issue.labels.map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}<PickerEditor kind="labels" {...edit} /></dd>
         <dt>Opened</dt><dd>{relativeTime(issue.created_at).toLowerCase()}</dd>
         {closedWords(issue) ? <><dt>Closed</dt><dd>{relativeTime(issue.closed_at!).toLowerCase()}</dd></> : null}
         <dt>Updated</dt><dd>{relativeTime(issue.updated_at).toLowerCase()}</dd>
@@ -128,16 +145,37 @@ function Facts({ issue, onChanged }: { issue: Detail; onChanged(): Promise<unkno
   );
 }
 
-/** One issue as a page, read only: the tracker is where it is written. The one write is Start a thread, from a click. */
+/** One issue as a page. Start a thread is a click; the state, description, labels and assignees are written only when the service offers them, one write at a time. */
 export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; scope: string; issueKey: string }) {
   const version = useApiVersion();
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
+  const offered = useEditOffered();
   const read = useAsync(`issues:detail:${version}:${tracker}:${scope}:${issueKey}`, async (signal) => {
     if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
     return issuesApi().get({ tracker, scope, key: issueKey }, signal);
   });
   const waited = useWaited(read.status === "loading");
+  // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
+  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the state a write leaves out is kept.
+  const [writing, setWriting] = useState(false);
+  const locked = useRef(false);
+  const shown = useRef(read.data);
+  shown.current = read.data;
+  const write: IssueWriter = async (call) => {
+    if (locked.current) return null;
+    locked.current = true;
+    setWriting(true);
+    try {
+      const next = await call();
+      read.setData({ ...next, states: next.states ?? shown.current?.states });
+      void reloadIssueLinks(version);
+      return next;
+    } finally {
+      locked.current = false;
+      setWriting(false);
+    }
+  };
   const back = <a className="iss-back" href={routeHref({ name: "issues" })}><ArrowLeft size={14} aria-hidden />Back to Issues</a>;
   const issue = read.data;
   const href = issue ? safeHref(issue.url) : null;
@@ -164,10 +202,10 @@ export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; sco
                 {href ? <a className="btn btn-secondary" href={href} target="_blank" rel="noopener noreferrer"><ExternalIcon size={14} aria-hidden />Open on {trackerName(read.data.tracker)}</a> : null}
                 <Button tone="primary" onClick={() => setStarting(true)}>Start a thread</Button>
               </div>
-              <Body issue={read.data} page />
+              <Body issue={read.data} page edit={{ issue: read.data, offered, write, writing }} />
             </div>
             <aside className="iss-right">
-              <Facts issue={read.data} onChanged={async () => { await Promise.all([read.reload(), reloadIssueLinks(version)]); }} />
+              <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} />
               <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
             </aside>
           </div>

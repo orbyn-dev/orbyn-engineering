@@ -55,7 +55,7 @@ export function AddFolderDialog({ projectId, onClose, onDone }: { projectId: str
   );
 }
 
-/** A new folder under the clone directory with `git init`. The name is checked here by the service's rule and again there; the service picks the place. */
+/** A new folder under the clone directory with `git init`. It starts trusted (Orbyn made it empty); `add-folder` and `clone` do not. The name is checked here by the service's rule and again there; the service picks the place. */
 export function CreateDialog({ projectId, projectName, directory, onClose, onDone }: { projectId: string; projectName: string; directory: string | null; onClose(): void; onDone: Done }) {
   const [name, setName] = useState("");
   const [touched, setTouched] = useState(false);
@@ -69,18 +69,18 @@ export function CreateDialog({ projectId, projectName, directory, onClose, onDon
       </Field>
       <p className="field-hint">
         {directory ? <>A new folder is made in <Path path={directory} />, set up with Git, and joins the project <b>{plain(projectName)}</b>.</> : <>A new folder is made and set up with Git, and joins the project <b>{plain(projectName)}</b>.</>}
-        {" "}It is not trusted until you trust it.
+        {" "}It starts trusted, because Orbyn made it empty.
       </p>
     </ActionDialog>
   );
 }
 
-/** Stops a clone that is running; the service removes the partial folder. */
+/** Stops a clone that is running. The service removes the partial folder and keeps the repository listed as failed ("Cancelled.") until it is removed. */
 export function CancelCloneDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
   return (
     <ActionDialog title={`Cancel cloning ${plain(repo.name)}?`} confirmLabel="Cancel clone" cancelLabel="Keep cloning" tone="danger" cancelFocus onClose={onClose}
       onConfirm={async () => { await reposApi().cancelClone(projectId, repo.id); onDone(); }}>
-      <p>The clone stops and its partial folder is removed.</p>
+      <p>The clone stops and its partial folder is removed. The repository stays listed as failed until you remove it from the project.</p>
     </ActionDialog>
   );
 }

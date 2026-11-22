@@ -1,7 +1,7 @@
 import { settingsLabel } from "../settingsSearch";
 import { useUi } from "../../../product/state/ui";
 import { SettingGroup } from "../rows/SettingRow";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 
 export function LabsSection() {
   const multiline = useUi((state) => state.multilineRows);
@@ -9,7 +9,6 @@ export function LabsSection() {
   const setPrefs = useUi((state) => state.setPrefs);
   return (
     <>
-      {heading("Labs")}
       <SettingGroup title="Sidebar">
         <Toggle
           title={settingsLabel("labs-multiline-rows")}

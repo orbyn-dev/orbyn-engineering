@@ -37,7 +37,8 @@ function Phase({ phase }: { phase: GitPhase }) {
   );
 }
 
-export function GitActionDialog({ thread, plan, onClose }: { thread: Thread; plan: Plan; onClose(): void }) {
+/** `repo` names the repository a multi-repository thread acts on: `id` is the `repo_id` to send, `undefined` for the primary. Left out for any other thread. */
+export function GitActionDialog({ thread, plan, repo, onClose }: { thread: Thread; plan: Plan; repo?: { id: string | undefined; name: string }; onClose(): void }) {
   const [message, setMessage] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -45,7 +46,7 @@ export function GitActionDialog({ thread, plan, onClose }: { thread: Thread; pla
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GitActionResult | null>(null);
-  const branches = useAsync(`git-bases:${thread.id}`, (signal) => api.branches(thread.id, signal));
+  const branches = useAsync(`git-bases:${thread.id}${repo?.id === undefined ? "" : `:${repo.id}`}`, (signal) => (repo?.id === undefined ? api.branches(thread.id, signal) : api.branches(thread.id, signal, repo.id)));
   const bases = (branches.data ?? []).filter((branch) => !branch.remote && !branch.current);
   const run = async () => {
     setBusy(true);
@@ -55,6 +56,7 @@ export function GitActionDialog({ thread, plan, onClose }: { thread: Thread; pla
         ...(plan.commit ? { commit_message: message } : {}),
         push: plan.push,
         ...(plan.pull ? { pull_request: { title, body, ...(base ? { base } : {}) } } : {}),
+        ...(repo?.id === undefined ? {} : { repo_id: repo.id }),
       });
       setResult(done);
       useThreadLogs.getState().touchDiff(thread.id);
@@ -95,6 +97,7 @@ export function GitActionDialog({ thread, plan, onClose }: { thread: Thread; pla
         </>
       }
     >
+      {repo ? <p className="field-hint">Acts on {repo.name} only.</p> : null}
       {plan.commit || plan.pull ? <p>Review and confirm your changes. Leave text blank to auto-generate it when your engine supports writing; this uses engine usage. If generation fails, a blank commit message or PR title uses the thread title. Otherwise a blank PR title uses the thread title.</p> : null}
       {plan.commit ? (
         <Field label="Commit message">

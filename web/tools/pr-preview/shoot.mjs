@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 
 export const THEMES = ["light", "dark", "dim"];
@@ -60,11 +61,41 @@ async function route(page, spec) {
   });
 }
 
+const locatorFor = (page, step) =>
+  step.selector
+    ? page.locator(step.selector, step.text ? { hasText: step.text } : {}).first()
+    : page.getByRole(step.role, { name: nameOf(step), exact: step.exact }).first();
+
+/** A file held over a row, or dropped on it, with a real DataTransfer so the page sees a file drag. */
+async function fileDrag(page, step, drop) {
+  await page.locator(step.selector, step.text ? { hasText: step.text } : {}).first().evaluate(
+    (element, { name, mime, content, drop }) => {
+      const dataTransfer = new globalThis.DataTransfer();
+      dataTransfer.items.add(new globalThis.File([content], name, { type: mime }));
+      const rect = element.getBoundingClientRect();
+      const clientX = rect.left + Math.min(80, rect.width / 2);
+      const clientY = rect.top + rect.height / 2;
+      const fire = (type) =>
+        element.dispatchEvent(new globalThis.DragEvent(type, { bubbles: true, cancelable: true, dataTransfer, clientX, clientY }));
+      fire("dragenter");
+      fire("dragover");
+      if (drop) fire("drop");
+    },
+    { name: step.name, mime: step.mime ?? "application/octet-stream", content: step.content ?? "", drop },
+  );
+  await page.waitForTimeout(drop ? 600 : 300);
+}
+
 async function run(page, step) {
   switch (step.do) {
     case "click":
       await (step.within ? page.getByRole("region", { name: step.within }) : page).getByRole(step.role, { name: nameOf(step), exact: step.exact }).first().click();
       await page.waitForTimeout(400);
+      return;
+    case "hover":
+      // Where the pointer rests, for a state that shows only under it: a role and name, or a CSS selector with the text it holds.
+      await (step.selector ? page.locator(step.selector, step.text ? { hasText: step.text } : {}) : page.getByRole(step.role, { name: nameOf(step), exact: step.exact })).first().hover();
+      await page.waitForTimeout(700);
       return;
     case "fill":
       await page.getByLabel(step.label, { exact: step.exact }).fill(step.value);
@@ -82,6 +113,23 @@ async function run(page, step) {
     case "offline":
       await page.context().setOffline(true);
       await page.waitForTimeout(300);
+      return;
+    case "contextmenu":
+      await locatorFor(page, step).click({ button: "right" });
+      await page.waitForTimeout(400);
+      return;
+    case "file":
+      await page
+        .locator(step.selector ?? 'input[data-transcript-file]')
+        .first()
+        .setInputFiles({ name: step.name, mimeType: step.mime ?? "application/json", buffer: Buffer.from(step.content ?? "") });
+      await page.waitForTimeout(600);
+      return;
+    case "drag":
+      await fileDrag(page, step, false);
+      return;
+    case "drop":
+      await fileDrag(page, step, true);
       return;
     default:
       throw new Error(`unknown step ${step.do}`);

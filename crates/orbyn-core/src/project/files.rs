@@ -281,7 +281,7 @@ fn reveal_command(file: &Path) -> (&'static str, Vec<OsString>) {
     }
 }
 
-fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
+fn scope_of(data_dir: &Path, root: &Path, thread: &Thread) -> WriteScope {
     let checkout = PathBuf::from(&thread.cwd);
     WriteScope {
         excluded: if checkout == root {
@@ -291,6 +291,7 @@ fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
         },
         engine_cwd: checkout.clone(),
         checkout,
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 
@@ -611,11 +612,11 @@ impl Core {
 
     /// A thread's checkout, gated on trust like any other work in the folder.
     pub(crate) fn file_scope(&self, thread_id: &str) -> Result<(Thread, WriteScope)> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
-        let scope = scope_of(&self.workspace.root()?, &thread);
+        let scope = scope_of(&self.config.data_dir, &self.workspace.root()?, &thread);
         Ok((thread, scope))
     }
 
@@ -936,6 +937,7 @@ mod tests {
             checkout: root.clone(),
             engine_cwd: root,
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(open_inside(&scope, "image.png", &fifo).is_err());
     }
@@ -956,6 +958,7 @@ mod tests {
             checkout: dir.path().to_path_buf(),
             engine_cwd: dir.path().to_path_buf(),
             excluded: Vec::new(),
+            data_dir: None,
         };
         for bad in [
             ".git/config",
@@ -967,6 +970,25 @@ mod tests {
             assert!(inside(&scope, bad).is_err(), "{bad}");
         }
         assert!(inside(&scope, "src/a.rs").is_ok());
+    }
+
+    #[test]
+    fn protected_account_files_are_refused_by_checkout_reads() {
+        let dir = crate::testing::TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(data.join("workspace/repo/p")).unwrap();
+        let protected = data.join("account-keys-default.store");
+        std::fs::write(&protected, "secret").unwrap();
+        let scope = WriteScope {
+            checkout: crate::util::canonicalize(dir.path()).unwrap(),
+            engine_cwd: crate::util::canonicalize(dir.path()).unwrap(),
+            excluded: Vec::new(),
+            data_dir: Some(data.clone()),
+        };
+        let relative = "data/account-keys-default.store";
+        assert!(inside(&scope, relative).is_err());
+        assert!(open_inside(&scope, relative, &protected).is_err());
+        assert!(inside(&scope, "data/workspace/repo/p/file.txt").is_ok());
     }
 
     #[cfg(unix)]
@@ -982,6 +1004,7 @@ mod tests {
             checkout: root.clone(),
             engine_cwd: root,
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(inside(&scope, "meta/config").is_err());
         assert!(inside(&scope, "cfg").is_err());
@@ -1004,6 +1027,7 @@ mod tests {
             checkout: checkout.clone(),
             engine_cwd: checkout.clone(),
             excluded: vec![checkout.join("repo")],
+            data_dir: None,
         };
         use std::os::unix::fs::symlink;
         // A link out of the checkout, absolute or relative to its own folder.
