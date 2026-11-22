@@ -16,14 +16,22 @@ for (const width of [1280, 1920]) {
     await expect.poll(() => pill.evaluate((element) => element.scrollWidth <= element.clientWidth + 1 && element.scrollHeight <= element.clientHeight + 1)).toBe(true);
     const positions = await rows.evaluateAll((elements) => elements.map((row) => {
       const cells = Array.from(row.children);
-      return { text: row.textContent, positions: [2, 3].map((index) => cells[index]?.getBoundingClientRect().left ?? -1) };
+      return [2, 3].map((index) => {
+        const cell = cells[index]!;
+        const rect = cell.getBoundingClientRect();
+        return { left: rect.left, visible: rect.width > 0 && getComputedStyle(cell).display !== "none" };
+      });
     }));
     const clipped = await table.locator(".set-states").evaluateAll((cells) => cells.some((cell) => cell.scrollWidth > cell.clientWidth + 1 || cell.scrollHeight > cell.clientHeight + 1));
     expect(clipped).toBe(false);
     const header = positions[0]!;
+    expect(header[0]!.visible).toBe(width === 1920);
+    expect(header[1]!.visible).toBe(true);
     for (const row of positions.slice(1)) {
-      expect(Math.abs(row.positions[0]! - header.positions[0]!)).toBeLessThanOrEqual(1);
-      expect(Math.abs(row.positions[1]! - header.positions[1]!)).toBeLessThanOrEqual(1);
+      expect(row[0]!.visible).toBe(width === 1920);
+      expect(row[1]!.visible).toBe(true);
+      if (row[0]!.visible) expect(Math.abs(row[0]!.left - header[0]!.left)).toBeLessThanOrEqual(1);
+      expect(Math.abs(row[1]!.left - header[1]!.left)).toBeLessThanOrEqual(1);
     }
   });
 }
