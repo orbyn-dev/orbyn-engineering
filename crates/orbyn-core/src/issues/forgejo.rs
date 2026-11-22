@@ -423,10 +423,7 @@ fn entry_end(params: &str) -> usize {
 fn link_entries(text: &str) -> Vec<(&str, &str)> {
     let mut entries = Vec::new();
     let mut rest = text;
-    loop {
-        let Some(open) = rest.find('<') else {
-            break;
-        };
+    while let Some(open) = rest.find('<') {
         let after = &rest[open + 1..];
         let close = after.find('>');
         // A second `<` before the `>` means this URL never closed: skip to that later entry.

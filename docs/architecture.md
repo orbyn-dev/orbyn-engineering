@@ -549,15 +549,19 @@ leaves it pending, and until then `/compact` and `/goal`, which reach an engine 
 `422 unsupported`. The log stays whole; a rewind is logged as `CUSTOM
 thread.rewound` for clients to hide what follows.
 
-Each run keeps the engine session and the first turn id it spoke in. No run is admitted
-while a rewind is under way. Rewinding a Codex thread before a run whose session is
-still the thread's, with no handoff waiting and an earlier run in that same session (a
-session's first run may have carried a handoff), loads
-that thread in a short-lived app-server and sends `thread/revert` with that run's turn,
-which keeps only the earlier turns. The session then goes on, nothing is handed off,
-and the event and audit carry `native: true`. Files are restored only by the rewind's
-own checkpoint step. Any refusal, a missing turn id or another engine falls back to the
-handoff above.
+Each run keeps the engine session and the first turn id it spoke in; for the Claude host
+the turn it keeps is the prompt's message id, because the host's own turn id is a counter
+that never appears in the session file. No run is admitted while a rewind is under way.
+Rewinding a Codex thread before a run whose session is still the thread's, with no handoff
+waiting and an earlier run in that same session (a session's first run may have carried a
+handoff), loads that thread in a short-lived app-server and sends `thread/revert` with
+that run's turn, which keeps only the earlier turns. Rewinding a Claude thread whose run
+went through the engine host reads the session file by the stored session id and names the
+last top-level assistant message before the run's prompt; the next run's `open` carries it
+as `resumeAt` once. The session then goes on, nothing is handed off, and the event and
+audit carry `native: true`. Files are restored only by the rewind's own checkpoint step.
+Any refusal, a missing turn id or point, a missing or changed session file, or another
+engine falls back to the handoff above.
 
 ## What a run changed
 
