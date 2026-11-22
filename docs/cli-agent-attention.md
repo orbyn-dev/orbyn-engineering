@@ -1,11 +1,11 @@
 # CLI-agent attention (W10)
 
 What the service must tell the web so that an engine running in a terminal (an engine console) shows a Needs you item and a
-notification when it stops and waits for the person. **Planned**: the web side is built hidden, the detection is not built. In a
-production build the web has no client and draws nothing; a dev-only preview (`#/preview/attention`) installs the mock in
-`web/mock/attention.ts`. Names here change only if the service pull request says so. It extends G14 (engine console, row G14 in
-[parity](parity.md)); the product row is W10 in [crew](crew.md). Frames: `attention-*` in Engineer Designs. Owner of the detection
-and the event: Eng 2.
+notification when it stops and waits for the person. **Built in the service**: detection, redaction and the event on the thread's
+log. **The web side is still built hidden**: in a production build the web has no client and draws nothing; a dev-only preview
+(`#/preview/attention`) installs the mock in `web/mock/attention.ts`. Names here change only if the service pull request says so.
+It extends G14 (engine console, row G14 in [parity](parity.md)); the product row is W10 in [crew](crew.md). Frames: `attention-*` in
+Engineer Designs. Owner of the detection and the event: Eng 2.
 
 ## The one channel
 
@@ -18,6 +18,11 @@ No new channel. The event rides the thread's event log that already exists (`GET
 ```
 
 `run_id` is null: a terminal is not a run. The web ignores a `CUSTOM` event with another name, and ignores `value.v` it does not know.
+
+No new stream carries the wait. When the service appends one of these events it publishes a small
+`ShellEvent::ThreadEvent { thread_id, seq }` on the existing `GET /api/shell/events` stream, with no event payload. A window that
+cares starts following that thread's log from `seq`; threads that never announced anything are not followed. The event itself is
+only in the thread's log.
 
 ## Fields
 
@@ -46,21 +51,31 @@ No new channel. The event rides the thread's event log that already exists (`GET
 The service never records what was typed. The cleared line says "Answered in the terminal" for `input`, "Continued" for `output` and
 "The terminal closed" for `closed`.
 
-## Detection rules (Eng 2)
+## Detection rules (built)
 
 A terminal is waiting when all hold: it is an engine console (G14; a plain shell is never reported), it printed nothing for the
-quiet time (frames: 10 to 120 seconds, proposed 20, a setting), and its last line reads like a question or a choice, or the terminal
+quiet time (10 to 120 seconds, 20 by default, a setting), and its last line reads like a question or a choice, or the terminal
 is in no-echo mode. A long build that is quiet is not waiting. A full-screen engine screen is not split into blocks; the excerpt
 is the last lines of the screen's text.
+
+- The heuristic reads the last non-empty line after ANSI and control characters are stripped. `[y/N]`, `(y/n)`, `[yes/no]` and
+  `(yes/no)`, case-insensitively, are `yes_no`; a trailing `?`, a trailing `:` after prompt-like words (`Password:`, `Enter … :`,
+  `Choose …`), or a numbered or arrow-marked choice list under such a header is `question`.
+- The no-echo check reads the pty master's termios `ECHO` flag with `tcgetattr` on unix. Windows ConPTY has no such mode, so
+  `secret` is never reported there. `kind: "secret"` is decided by the mode, never by the words.
+- `input` comes from `PtySession::write` alone, a count with no bytes kept. `output` is any new pty output. `closed` is the output
+  ending or the terminal being closed.
 
 ## Limits, rate and dedupe
 
 - One active item per terminal. A second `waiting` for a terminal with an active item updates it (same `id`) at most once every 5 s.
 - A new episode on the same terminal needs a `clear` first and at least 10 s since the last `waiting`.
 - At most 8 active items per thread, 32 per service; past that the service drops the oldest and sends its `clear` with `closed`.
+- IDs are service-made ULIDs: opaque, at most 64 characters, and never reused. A terminal that opens again starts a new episode with
+  a new id.
 - The web also keeps at most 64 entries, one notification per terminal per 30 s, and latest `seq` wins per `id`: a `waiting` older than
   the clear of the same `id` is ignored.
-- Event size: at most 4 KiB of `value`.
+- Event size: at most 4 KiB of `value`; the service cuts the oldest excerpt lines until the serialized value is under it.
 
 ## Local or Person-class
 
@@ -79,18 +94,22 @@ reviewed. Nothing in this design types into a terminal on its own, and the web n
   ANSI and control characters (`stripTerminalText`), caps the lines and characters again, and draws it as text in a `pre`, never as
   HTML, never as a link.
 - **The service redacts and the web does not trust that it did.** The service runs its secret rules (the Redactor, `redact-*`
-  frames) over the excerpt before it sends it, through one function `redact(text) -> text`. Until it exists that hook is the identity
-  and **the detection must stay off in a build**.
-- For a `secret` prompt the item has Open terminal alone, and the notification and the toast say "is waiting for a password" and
+  frames) over the excerpt before it appends it, through `Core::redactor(Surface::Terminal)`. The hook exists now, so the detector
+  runs only while `terminal_attention_enabled` is true and a redactor was obtained; an event whose redactor cannot be obtained is
+  not sent. Redact first, then cut: a cut line can never leave the front of a hidden value behind.
+- For a `secret` prompt the item has Open terminal and Dismiss (Dismiss only hides it on this device) and no answer field, and the notification and the toast say "is waiting for a password" and
   never carry the prompt's text. Orbyn takes no password, token or key here.
 - A notification and a toast never carry an answer. Excerpts are not logged; a log line names the terminal id and a byte count.
+  Nothing in this feature writes to a terminal, and no service-side answer route is added.
 - A fake prompt cannot make the web type: Open terminal focuses the terminal, nothing more.
 
 ## Settings
 
 The frames show one device setting, Settings › General: **Terminal agents waiting for you** (on by default) and **Quiet time before it
-counts as waiting** (10 to 120 s, proposed 20). They follow Thread notifications (system notification) and In-app notifications
-(toast). Not built in the web yet (Planned); per-project switches and quiet hours are not in the frames.
+counts as waiting** (10 to 120 s, 20 by default). They follow Thread notifications (system notification) and In-app notifications
+(toast). The service reads two stored device settings: `terminal_attention_enabled` (bool, default `true`) and
+`terminal_attention_quiet_seconds` (whole seconds, 10 to 120, default `20`). The Settings rows are still not built in the web
+(Planned); per-project switches and quiet hours are not in the frames.
 
 ## Web side
 
@@ -100,10 +119,16 @@ subscription, the toast and the notification), `AttentionPreview.tsx` (dev-only)
 (`pushToast`, and `new Notification` only when permission is already granted); no new OS permission. The mock is never in a production
 bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the route appears.
 
-## Questions for Eng 2
+## Decisions
 
-1. Is the event in the thread's event log (replayable, persisted) or live-only? The excerpt is redacted text; if the log persists it,
-   say so and apply the retention rules. The web handles both.
-2. The log is per thread. The web needs these events for every thread, to notify about one the person is not looking at. Does the
-   service fan them out on one stream, or does the web follow each thread's log?
-3. Quiet time, the question heuristic and the no-echo check (terminal mode) belong to the service: confirm the numbers.
+1. **The event is in the thread's event log.** It is persisted, replayable and kept under the same retention as the thread's other
+   events. The excerpt is redacted before the append, through `Core::redactor(Surface::Terminal)`; an event whose redactor cannot be
+   obtained is not sent. The serialized `value` stays under 4 KiB.
+2. **The log stays per thread; no new stream.** `GET /api/shell/events` carries a small `thread_event` notice (thread id and `seq`, no
+   payload) whenever one of these events is appended. The web follows the log only for threads that announced something.
+3. **The numbers are these.** Quiet time is 20 s by default, settable from 10 to 120 whole seconds
+   (`terminal_attention_quiet_seconds`); detection is on by default (`terminal_attention_enabled`). A second waiting for an active
+   terminal updates the same id at most once every 5 s. A new episode needs a clear first and 10 s since the last waiting. The caps
+   are 8 active items per thread and 32 per service, dropping the oldest with `closed`. IDs are service-made, at most 64 characters
+   and never reused. The heuristic and the no-echo check are in the service; unix reads termios `ECHO` with `tcgetattr`, and Windows
+   ConPTY has no such mode, so `secret` is never reported there.
