@@ -7,7 +7,7 @@ use orbyn_contracts::{
 };
 use serde_json::{Value, json};
 
-use super::harness::{Turn, brief, key, world};
+use super::harness::{KEY_MARKER, Turn, brief, key, world};
 use super::review_support::{arc, built, crew, finding, reviewed};
 use crate::crew::Page;
 use crate::store::FindingRepro;
@@ -330,6 +330,76 @@ async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
     if let Some(path) = worktree {
         assert!(!text.contains(&path), "a read holds a path on this machine");
     }
+}
+
+#[tokio::test]
+async fn a_findings_evidence_is_withheld_and_cut_and_keeps_a_path() {
+    // A key's command is a needle: longer than the eight characters `withhold` matches, it is replaced wherever it is
+    // quoted. The absolute path is not: nothing strips one from a text a Flow screen reads, here or in a claim.
+    let command = format!("echo {KEY_MARKER}");
+    let path = "/home/someone/repo/src/lib.rs";
+    let tail = "words ".repeat(200).trim_end().to_owned();
+    let written = format!("The command {command} ran on {path}. {tail}");
+    let mut draft = finding("src/lib.txt", 1, "It wraps on a large value.");
+    draft["evidence"] = json!(written);
+    let w = crew(arc(move |n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![draft.clone()]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let crew_id = w.task(&subject).crew_id;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    w.until_state(&lanes[0], "passed").await;
+
+    // What the reviewer wrote is stored whole; only a read scrubs it.
+    let stored = w.core.store.crew_findings_of(&subject).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].finding.evidence.as_str(), written);
+    let key_id = w
+        .core
+        .store
+        .crew_answer_key(&subject)
+        .unwrap()
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+
+    let detail = w.core.crew_flow_task(&subject).unwrap();
+    let evidence = &detail.findings[0].evidence;
+    assert!(
+        !evidence.contains(&command),
+        "the key's command reached a read: {evidence}"
+    );
+    assert!(
+        evidence.contains("[check]"),
+        "it is withheld, not dropped: {evidence}"
+    );
+    assert!(
+        evidence.contains(path),
+        "an absolute path is not stripped: {evidence}"
+    );
+    assert!(
+        evidence.chars().count() <= 300,
+        "the text is cut at 300: {}",
+        evidence.chars().count()
+    );
+    assert_ne!(
+        evidence, "Withheld.",
+        "withholding happens before the leak check"
+    );
+    // The lane read serves the same scrubbed text, and never the key's id.
+    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    assert_eq!(&one.findings[0].evidence, evidence);
+    assert!(!one.findings[0].evidence.contains(&key_id));
+    // The crew's whole read surface is held to it, the lane read included.
+    let everything = everything(&w, &crew_id, &subject);
+    assert!(
+        !everything.contains(KEY_MARKER),
+        "the key's command reached a read"
+    );
+    assert!(!everything.contains(&key_id), "the key's id reached a read");
 }
 
 #[tokio::test]

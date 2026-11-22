@@ -1,7 +1,8 @@
 //! Crew Flow over HTTP (Preview): what the Flow screens read. Every type is a view the core builds from what it already
-//! stores; none can hold an answer key, a check's text, a repro, a path outside the repository, a thread id or a bus
-//! message (H1). A finding's evidence is the reviewer's own words, not a check: the core redacts it, withholds any of the
-//! crew's keys it quotes and caps it. Free text is redacted and capped before it is put in one. Times are RFC 3339.
+//! stores; no field the core fills from the store can hold an answer key, a check's text, a repro, a thread id or a bus
+//! message (H1). Free text is a looser thing and is treated as such: a claim, a finding's evidence and a gate's reason are
+//! the reviewer's or the core's own words, so they are redacted and capped with the crew's keys withheld, but a path or a
+//! command shorter than the eight characters `withhold` matches is not stripped from them. Times are RFC 3339.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -197,7 +198,8 @@ pub struct FlowFinding {
     pub path: String,
     pub line: u32,
     pub claim: String,
-    /// What the reviewer quoted for it: a snippet, an output or the reasoning behind the claim.
+    /// What the reviewer quoted for it: a snippet, an output or the reasoning behind the claim. The reviewer's own words,
+    /// scrubbed like a claim (see the module doc): redacted and capped, the crew's keys withheld, but no path stripped.
     #[serde(default)]
     pub evidence: String,
     /// `confirmed`, `unconfirmed`, `pending` or `unchecked`.

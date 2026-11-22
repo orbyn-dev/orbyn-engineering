@@ -5,7 +5,8 @@
  */
 export type FlowFinding = { id: string, lane: string, round: number, severity: string, path: string, line: number, claim: string, 
 /**
- * What the reviewer quoted for it: a snippet, an output or the reasoning behind the claim.
+ * What the reviewer quoted for it: a snippet, an output or the reasoning behind the claim. The reviewer's own words,
+ * scrubbed like a claim (see the module doc): redacted and capped, the crew's keys withheld, but no path stripped.
  */
 evidence: string, 
 /**
