@@ -16,13 +16,23 @@ pub struct Registration {
     shortcut: Option<Shortcut>,
 }
 
-pub fn apply(app: &AppHandle, settings: &Settings, registration: &mut Registration) {
+/// A global shortcut exists only where capture is supported and the person turned it on.
+pub fn should_register(settings: &Settings, supported: bool) -> bool {
+    supported && settings.snapshot_enabled
+}
+
+pub fn apply(
+    app: &AppHandle,
+    settings: &Settings,
+    registration: &mut Registration,
+    supported: bool,
+) {
     if let Some(previous) = registration.shortcut.take() {
         let _ = app.global_shortcut().unregister(previous);
     }
     registration.registered = false;
     registration.message = None;
-    if !settings.snapshot_enabled {
+    if !should_register(settings, supported) {
         return;
     }
     let chord = settings.snapshot_shortcut.clone();
@@ -190,6 +200,18 @@ mod tests {
         let shortcut = parse_chord(&chord("F1", false, false, true, true)).unwrap();
         assert_eq!(shortcut.key, Code::F1);
         assert_eq!(shortcut.mods, Modifiers::CONTROL | Modifiers::ALT);
+    }
+
+    #[test]
+    fn no_shortcut_is_registered_where_capture_is_unsupported() {
+        let enabled = Settings {
+            snapshot_enabled: true,
+            ..Settings::default()
+        };
+        assert!(should_register(&enabled, true));
+        assert!(!should_register(&enabled, false));
+        assert!(!should_register(&Settings::default(), true));
+        assert!(!should_register(&Settings::default(), false));
     }
 
     #[test]

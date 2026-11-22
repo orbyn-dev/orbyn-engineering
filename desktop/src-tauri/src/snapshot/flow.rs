@@ -50,16 +50,19 @@ pub struct Gate {
 
 impl Gate {
     pub fn cancel(&self, id: &str) -> bool {
-        let Ok(active) = self.active.lock() else {
+        let Ok(mut active) = self.active.lock() else {
             return false;
         };
-        let Some((current, cancelled)) = active.as_ref() else {
+        let cancelled = match active.as_ref() {
+            Some((current, cancelled)) if current == id => Some(cancelled.clone()),
+            _ => None,
+        };
+        let Some(cancelled) = cancelled else {
             return false;
         };
-        if current != id {
-            return false;
-        }
         cancelled.store(true, Ordering::SeqCst);
+        // Release the slot now, so a fresh start does not reuse the discarded id.
+        *active = None;
         true
     }
 
@@ -155,9 +158,12 @@ impl Flow {
                     return;
                 }
                 Ok(Err(Failure::Excluded { app_name })) => {
+                    let event_id = id.clone();
                     self.gate.settle(&id, move || {
-                        self.events
-                            .emit("snapshot://excluded", json!({ "app_name": app_name }))
+                        self.events.emit(
+                            "snapshot://excluded",
+                            json!({ "id": event_id, "app_name": app_name }),
+                        )
                     });
                     return;
                 }
@@ -335,11 +341,11 @@ mod tests {
         assert!(pending.take(&id).is_none());
 
         let (seen, flow) = set_up(Duration::from_secs(1));
-        let _ = start(&flow, excluded, Duration::ZERO);
+        let id = start(&flow, excluded, Duration::ZERO);
         assert_eq!(names(&seen), "snapshot://started,snapshot://excluded");
         assert_eq!(
             seen.lock().unwrap()[1].1,
-            json!({ "app_name": "1Password" })
+            json!({ "id": id, "app_name": "1Password" })
         );
         assert!(flow.pending.lock().unwrap().is_empty());
     }
@@ -373,6 +379,40 @@ mod tests {
         running.join().unwrap();
         assert_eq!(names(&seen), "snapshot://started");
         assert!(flow.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_capture_can_start_right_after_a_discard() {
+        let (seen, flow) = set_up(Duration::from_secs(1));
+        let running = {
+            let flow = flow.clone();
+            std::thread::spawn(move || start(&flow, ready, Duration::from_millis(500)))
+        };
+        let first = wait_for_id(&seen);
+        assert!(flow.gate.cancel(&first));
+
+        let (second, cancelled) = flow.begin().unwrap();
+        assert_ne!(second, first);
+        let cancelled = cancelled.expect("a discard releases the slot");
+        flow.run(
+            second.clone(),
+            cancelled,
+            Box::new(Fake(ready, Duration::ZERO)),
+            Settings {
+                snapshot_enabled: true,
+                ..Settings::default()
+            },
+            OWN.to_owned(),
+        );
+        running.join().unwrap();
+
+        assert_eq!(
+            names(&seen),
+            "snapshot://started,snapshot://started,snapshot://ready"
+        );
+        let mut pending = flow.pending.lock().unwrap();
+        assert!(pending.take(&second).is_some());
+        assert!(pending.take(&first).is_none());
     }
 
     #[test]

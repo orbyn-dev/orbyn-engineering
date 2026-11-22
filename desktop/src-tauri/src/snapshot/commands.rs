@@ -104,17 +104,22 @@ pub fn snapshot_capture(
 }
 
 #[tauri::command]
-pub fn snapshot_take(
+pub async fn snapshot_take(
+    app: AppHandle,
     window: WebviewWindow,
-    snapshot: State<'_, SnapShot>,
     id: String,
 ) -> Result<Value, &'static str> {
     require_caller(&window)?;
-    let capture = {
-        let mut pending = snapshot.pending.lock().map_err(|_| UNAVAILABLE)?;
-        take_capture(&mut pending, &id)?
-    };
-    Ok(take_answer(&id, capture))
+    tauri::async_runtime::spawn_blocking(move || -> Result<Value, &'static str> {
+        let snapshot = app.state::<SnapShot>();
+        let capture = {
+            let mut pending = snapshot.pending.lock().map_err(|_| UNAVAILABLE)?;
+            take_capture(&mut pending, &id)?
+        };
+        Ok(take_answer(&id, capture))
+    })
+    .await
+    .map_err(|_| UNAVAILABLE)?
 }
 
 #[tauri::command]
@@ -157,7 +162,9 @@ pub async fn snapshot_setup(
 
 #[cfg(test)]
 mod tests {
-    use super::super::pending::PENDING_TTL;
+    use super::super::pending::{
+        MAX_APP_ID_CHARS, MAX_APP_NAME_CHARS, MAX_WINDOW_TITLE_CHARS, PENDING_TTL,
+    };
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
@@ -211,6 +218,59 @@ mod tests {
         assert!(answer["source"].get("accessible_text").is_none());
         let encoded = answer["png_base64"].as_str().unwrap();
         assert_eq!(STANDARD.decode(encoded).unwrap(), b"png bytes");
+    }
+
+    #[test]
+    fn snapshot_take_checks_the_caller_then_encodes_off_the_async_thread() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/snapshot/commands.rs");
+        let source = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
+        let marker = format!("#[tauri::command]{}pub async fn snapshot_take(", '\n');
+        let take = source
+            .split(&marker)
+            .nth(1)
+            .expect("snapshot_take is an async command");
+        let take = take.split("\n}\n").next().unwrap();
+        let caller = take
+            .find("require_caller(&window)?;")
+            .expect("the caller check is first");
+        let blocking = take
+            .find("spawn_blocking")
+            .expect("encoding runs on the blocking pool");
+        assert!(
+            caller < blocking,
+            "the caller check must come before the blocking work"
+        );
+        assert!(
+            take.contains("take_capture"),
+            "the capture is consumed once"
+        );
+    }
+
+    #[test]
+    fn take_answers_cut_the_source_to_the_wire_limits() {
+        let mut pending = Pending::default();
+        let id = pending.insert(Capture::new(
+            b"png".to_vec(),
+            "a".repeat(500),
+            "t".repeat(5_000),
+            "i".repeat(500),
+            "2026-11-22T10:00:00Z".to_owned(),
+        ));
+        let taken = take_capture(&mut pending, &id).unwrap();
+        let answer = take_answer(&id, taken);
+        let source = &answer["source"];
+        assert_eq!(
+            source["app_name"].as_str().unwrap().chars().count(),
+            MAX_APP_NAME_CHARS
+        );
+        assert_eq!(
+            source["window_title"].as_str().unwrap().chars().count(),
+            MAX_WINDOW_TITLE_CHARS
+        );
+        assert_eq!(
+            source["app_id"].as_str().unwrap().chars().count(),
+            MAX_APP_ID_CHARS
+        );
     }
 
     #[test]

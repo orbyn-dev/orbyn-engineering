@@ -8,8 +8,23 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const MAX_PENDING: usize = 5;
 pub const PENDING_TTL: Duration = Duration::from_secs(5 * 60);
+pub const MAX_APP_NAME_CHARS: usize = 255;
+pub const MAX_WINDOW_TITLE_CHARS: usize = 1_000;
+pub const MAX_APP_ID_CHARS: usize = 255;
 
 static FALLBACK_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Cuts at a character boundary, never inside one, to the page's UTF-16 length limit.
+fn clipped(value: String, max_units: usize) -> String {
+    let mut used = 0;
+    for (index, character) in value.char_indices() {
+        used += character.len_utf16();
+        if used > max_units {
+            return value[..index].to_owned();
+        }
+    }
+    value
+}
 
 pub(crate) type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
@@ -31,9 +46,9 @@ impl Capture {
     ) -> Self {
         Self {
             png,
-            app_name,
-            window_title,
-            app_id,
+            app_name: clipped(app_name, MAX_APP_NAME_CHARS),
+            window_title: clipped(window_title, MAX_WINDOW_TITLE_CHARS),
+            app_id: clipped(app_id, MAX_APP_ID_CHARS),
             captured_at,
         }
     }
@@ -107,7 +122,8 @@ impl Pending {
         (self.clock)()
     }
 
-    pub fn insert(&mut self, capture: Capture) -> String {
+    #[cfg(test)]
+    pub(crate) fn insert(&mut self, capture: Capture) -> String {
         let id = new_id();
         self.insert_with_id(id.clone(), capture);
         id
@@ -154,11 +170,13 @@ impl Pending {
             .retain(|entry| now.saturating_duration_since(entry.stored_at) < PENDING_TTL);
     }
 
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 }
@@ -324,6 +342,55 @@ mod tests {
         advance(&clock, PENDING_TTL);
         assert!(pending.take(&fresh).is_none());
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn source_text_is_cut_to_the_wire_limits_by_character() {
+        let capture = Capture::new(
+            b"png".to_vec(),
+            "a".repeat(MAX_APP_NAME_CHARS + 5),
+            "t".repeat(5_000),
+            "i".repeat(MAX_APP_ID_CHARS + 5),
+            "2026-11-22T10:00:00Z".to_owned(),
+        );
+        assert_eq!(capture.app_name().chars().count(), MAX_APP_NAME_CHARS);
+        assert_eq!(
+            capture.window_title().chars().count(),
+            MAX_WINDOW_TITLE_CHARS
+        );
+        assert_eq!(capture.app_id().chars().count(), MAX_APP_ID_CHARS);
+        assert!(
+            capture
+                .window_title()
+                .chars()
+                .all(|character| character == 't')
+        );
+
+        let multibyte = Capture::new(
+            b"png".to_vec(),
+            String::new(),
+            "é".repeat(MAX_WINDOW_TITLE_CHARS + 10),
+            String::new(),
+            "2026-11-22T10:00:00Z".to_owned(),
+        );
+        assert_eq!(
+            multibyte.window_title().chars().count(),
+            MAX_WINDOW_TITLE_CHARS
+        );
+        assert_eq!(multibyte.window_title().chars().last(), Some('é'));
+
+        let astral = Capture::new(
+            b"png".to_vec(),
+            String::new(),
+            "🙂".repeat(MAX_WINDOW_TITLE_CHARS + 10),
+            String::new(),
+            "2026-11-22T10:00:00Z".to_owned(),
+        );
+        assert_eq!(
+            astral.window_title().encode_utf16().count(),
+            MAX_WINDOW_TITLE_CHARS
+        );
+        assert_eq!(astral.window_title().chars().last(), Some('🙂'));
     }
 
     #[test]

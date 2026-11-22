@@ -137,8 +137,9 @@ impl SnapShot {
             Ok(settings) => settings.clone(),
             Err(_) => Settings::default(),
         };
+        let supported = platform::facts().supported;
         if let Ok(mut registration) = self.registration.lock() {
-            shortcut::apply(app, &settings, &mut registration);
+            shortcut::apply(app, &settings, &mut registration, supported);
         }
     }
 
