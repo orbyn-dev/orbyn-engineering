@@ -1,7 +1,7 @@
 import { chooseDraftEngine } from "../../../product/engines/draftEngine";
 import { AlertTriangle, Check, CloudOff, Plus, RefreshCw, X } from "lucide-react";
 import "../ScheduledTasks.css";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { NETWORK_ERROR, deleteScheduledTask, listScheduledTasks, saveScheduledTask, setScheduledTaskEnabled } from "../api";
 import type { ScheduledTask, WebhookFilter } from "../../../api/types";
 import { toFailure, useAsync } from "../../../lib/useAsync";
@@ -49,6 +49,11 @@ const toFilter = ({ path, op, value }: FilterRow): WebhookFilter => ({
   op,
   value: op === "exists" ? null : op === "in" ? value.split(",").map((entry) => entry.trim()) : value,
 });
+
+/** "a", "a and b", "a, b and c": what the save reason names. */
+const spokenList = (items: string[]) =>
+  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
 
 function WebhookFields({
   header,
@@ -150,7 +155,9 @@ function WebhookFields({
 /** Adds a task, or edits one. What this form doesn't show goes back as it came. */
 function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; onClose(): void; onSaved(): void }) {
   const [deleting, setDeleting] = useState(false);
-  const projects = useVisibleProjects() ?? [];
+  /** Null while the workspace read is still out, so the form can say so instead of showing nothing. */
+  const projectList = useVisibleProjects();
+  const projects = useMemo(() => projectList ?? [], [projectList]);
   const engines = useWorkspace((state) => state.engines.data) ?? [];
   const [name, setName] = useState(task?.name ?? "");
   const [touched, setTouched] = useState(false);
@@ -159,7 +166,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
   const [kind, setKind] = useState<TaskKind>((task?.schedule.kind as TaskKind | undefined) ?? "interval");
   const [time, setTime] = useState(task?.schedule.time ?? "09:00");
   const [weekdays, setWeekdays] = useState<number[]>(task?.schedule.weekdays ?? []);
-  const [project, setProject] = useState(task?.project_id ?? projects[0]?.id ?? "");
+  const [project, setProject] = useState(task?.project_id ?? "");
   const [hook, setHook] = useState({
     header: task?.signature?.header ?? "",
     encoding: task?.signature?.encoding ?? "hex",
@@ -176,6 +183,25 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
   const [onlySuccess, setOnlySuccess] = useState(task?.schedule.only_on_success ?? false);
   const [error, setError] = useState<string | null>(null);
   const engine = task?.engine ?? chooseDraftEngine(engines.filter((entry) => entry.installed), null, false)?.id ?? "";
+  // The dialog can open before the workspace read answers, so the list arrives after it: adopt its first project.
+  useEffect(() => {
+    if (project || projects.length === 0) return;
+    setProject(projects[0]?.id ?? "");
+  }, [project, projects]);
+  const readingProjects = projectList === null;
+  const noProjects = projectList !== null && projectList.length === 0;
+  /** The chosen project has to be one this form offers, or Save would post a project the person cannot see. */
+  const projectChosen = project !== "" && projects.some((entry) => entry.id === project);
+  const projectPlaceholder = readingProjects ? "Loading projects…" : noProjects ? "No projects yet" : "Choose a project";
+  /** Why Save is off, in words, so the disabled state is never silent. */
+  const saveReasonId = useId();
+  const missing = [
+    !name.trim() ? "a name" : "",
+    !prompt.trim() ? "what the agent should do" : "",
+    !projectChosen ? "a project" : "",
+    kind === "after_thread" && !after ? "a thread to follow" : "",
+  ].filter(Boolean);
+  const saveReason = missing.length > 0 ? `${task ? "Save changes" : "Save task"} needs ${spokenList(missing)}.` : null;
   const save = async () => {
     try {
       const kept = task ? { thread_id: task.thread_id ?? undefined } : {};
@@ -227,7 +253,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
           <Button tone="quiet" onClick={onClose}>
             Cancel
           </Button>
-          <Button tone="primary" disabled={!name.trim() || !prompt.trim() || !project || (kind === "after_thread" && !after)} onClick={() => void save()}>
+          <Button tone="primary" disabled={missing.length > 0} aria-describedby={saveReason ? saveReasonId : undefined} onClick={() => void save()}>
             {task ? "Save changes" : "Save task"}
           </Button>
         </>
@@ -240,9 +266,10 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
       <Field label="What should the agent do?">
         {(props) => <textarea {...props} rows={3} value={prompt} onChange={(event) => setPrompt(event.target.value)} />}
       </Field>
-      <Field label="Project">
+      <Field label="Project" hint={noProjects ? "No projects yet. Add one in Settings › Projects, then come back." : undefined}>
         {(props) => (
-          <select {...props} value={project} onChange={(event) => setProject(event.target.value)}>
+          <select {...props} required value={projectChosen ? project : ""} onChange={(event) => setProject(event.target.value)}>
+            {projectChosen ? null : <option value="">{projectPlaceholder}</option>}
             {projects.map((entry) => (
               <option key={entry.id} value={entry.id}>
                 {entry.name}
@@ -310,6 +337,11 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
             <span>Only when it succeeds</span>
           </label>
         </>
+      ) : null}
+      {saveReason ? (
+        <p id={saveReasonId} className="field-hint">
+          {saveReason}
+        </p>
       ) : null}
       {error ? (
         <p className="field-error" role="alert">
