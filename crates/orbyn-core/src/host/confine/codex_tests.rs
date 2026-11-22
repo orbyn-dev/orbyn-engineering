@@ -500,4 +500,23 @@ fn an_api_key_login_that_also_holds_chatgpt_tokens_copies_only_the_key() {
     let text = std::fs::read_to_string(home.join("auth.json")).unwrap();
     assert!(text.contains("sk-fake-api-key"));
     assert!(!text.contains("rt-fake-chatgpt") && !text.contains("tokens"));
+    // Nothing in the worker's home, at any depth, may hold anything but an API-key auth.
+    let mut stack = vec![home.clone()];
+    let mut files = 0;
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            files += 1;
+            let body = std::fs::read_to_string(&path).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
+            assert_eq!(keys, ["OPENAI_API_KEY", "auth_mode"], "{}", path.display());
+            assert_eq!(value["auth_mode"], "apikey");
+        }
+    }
+    assert_eq!(files, 1);
 }
