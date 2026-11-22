@@ -8,12 +8,15 @@ export type TranscriptEntry =
   | { key: string; file: File; state: "ready"; id: string; title: string; messageCount: number }
   | { key: string; file: File; state: "refused"; reason: string; canAddAsFile: boolean };
 
+const DESKTOP_ONLY = "This action is only available in the desktop app.";
 const TOO_BIG = "Transcripts can be up to 2 MiB.";
 const REASONS: Record<string, { reason: string; canAddAsFile: boolean }> = {
   transcript_too_new: { reason: "Made by a newer Orbyn. Update Orbyn to read it.", canAddAsFile: false },
   transcript_unreadable: { reason: "This isn’t a transcript Orbyn can read.", canAddAsFile: true },
   file_too_large: { reason: TOO_BIG, canAddAsFile: false },
-  person_required: { reason: "Sign in on this computer to add a transcript.", canAddAsFile: false },
+  // The same sentence as the import sheet, for a request that carries no person key.
+  desktop_required: { reason: DESKTOP_ONLY, canAddAsFile: false },
+  person_required: { reason: DESKTOP_ONLY, canAddAsFile: false },
 };
 
 /**

@@ -38,6 +38,7 @@ export function TranscriptShelf({
           )}
         </ul>
       ) : null}
+      {kept.length > 0 ? <p className="transcript-note">Attached to your next message only.</p> : null}
       {others.length > 0 ? (
         <ul className="attachment-strip" aria-label="Transcript files">
           {others.map((entry) => (
