@@ -169,7 +169,20 @@ impl EngineManager {
                 .with_task_tools(config.claude_task_tools),
         );
         let claude = match &host {
-            Some(hub) => hub.wrap("claude", claude, config.claude_program.clone()),
+            Some(hub) => {
+                let settings = store.clone();
+                // Decided per run, with no restart; a read that fails fails the run rather than picking a path.
+                let path: crate::agents::driver::host::PathSetting = Arc::new(move || {
+                    crate::agents::driver::host::EnginePath::from_preference(
+                        &crate::settings::preferences::stored_preference(
+                            &settings,
+                            crate::settings::preferences::CLAUDE_ENGINE_PATH,
+                            None,
+                        )?,
+                    )
+                });
+                hub.wrap_with("claude", claude, config.claude_program.clone(), path)
+            }
             None => claude,
         };
         let mut drivers: Vec<Arc<dyn EngineDriver>> = vec![
@@ -360,6 +373,15 @@ impl EngineManager {
         })
     }
 
+    /// The name the status list shows for an engine, or its id when none is known.
+    pub(crate) fn display_name(&self, id: &str) -> String {
+        self.driver(id)
+            .ok()
+            .map(|driver| driver.descriptor().name)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| id.to_owned())
+    }
+
     /// Refuses a new run on an instance that was turned off.
     pub fn check_enabled(&self, id: &str) -> Result<()> {
         let off = self
@@ -367,7 +389,10 @@ impl EngineManager {
             .iter()
             .any(|instance| instance.id == id && !instance.enabled);
         if off {
-            return Err(CoreError::Invalid(format!("{id} is turned off.")));
+            return Err(CoreError::Invalid(format!(
+                "{} is turned off.",
+                self.display_name(id)
+            )));
         }
         Ok(())
     }

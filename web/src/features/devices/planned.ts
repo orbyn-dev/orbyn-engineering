@@ -271,3 +271,65 @@ export interface AgentDevicePlannedApi {
   /** Drops the current grant; the device itself keeps running for the person. */
   revokeAgentAccess(): Promise<AgentAccessState | null>;
 }
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* Phase 2 (H22, H23, H27): the live screen stream, its pointer and text input, and the agent that may be driving.  */
+/* docs/devices.md defines none of this yet. The members live on their own typed surface below so this block stays  */
+/* additive: the production default answers `null` and sends nothing, and the dev-only mock supplies the frames.     */
+/* ---------------------------------------------------------------------------------------------------------------- */
+
+/** A point as fractions of the device screen (0 to 1), never a device pixel or a device-chosen selector. */
+export interface DevicePoint {
+  x: number;
+  y: number;
+}
+
+/** Touch, swipe and scroll as normalized screen coordinates. */
+export type DevicePointerInput =
+  | { type: "tap"; x: number; y: number }
+  | { type: "swipe"; from: DevicePoint; to: DevicePoint; durationMs: number }
+  | { type: "scroll"; x: number; y: number; deltaY: number };
+
+/** One live screen frame: a PNG as base64, plus the agent's cursor when it is driving. */
+export interface DeviceLiveFrame {
+  image: string;
+  cursor?: DevicePoint;
+}
+
+/** Who holds the device: the person (off), the agent, or the agent paused by the person. */
+export interface DeviceAgentState {
+  status: "off" | "driving" | "paused";
+  /** The agent's own name, untrusted text: it is drawn capped and escaped, never as markup. */
+  name: string | null;
+}
+
+/** The Planned live members. No production implementation: every call answers `null` and sends nothing. */
+export interface DevicesLivePlannedApi {
+  /** Start the stream. `null` is Planned; `true` means frames may arrive until `signal` aborts. */
+  stream(id: string, onFrame: (frame: DeviceLiveFrame) => void, signal?: AbortSignal): Promise<boolean | null>;
+  /** Send one touch, swipe or scroll. `null` is Planned. */
+  pointer(id: string, input: DevicePointerInput): Promise<boolean | null>;
+  /** Type text into the focused device field; `\n` is Return. `null` is Planned. */
+  typeText(id: string, text: string): Promise<boolean | null>;
+  /** Read the agent's hold on the device, or ask for it (`take_over`) or release it (`hand_back`). `null` is Planned. */
+  agentState(id: string, change?: "take_over" | "hand_back", signal?: AbortSignal): Promise<DeviceAgentState | null>;
+}
+
+const absentLive: DevicesLivePlannedApi = {
+  stream: async () => null,
+  pointer: async () => null,
+  typeText: async () => null,
+  agentState: async () => null,
+};
+
+const liveMembers = (api: DevicesPlannedApi): DevicesLivePlannedApi | null => {
+  const candidate = api as Partial<DevicesLivePlannedApi>;
+  return typeof candidate.stream === "function"
+    && typeof candidate.pointer === "function"
+    && typeof candidate.typeText === "function"
+    && typeof candidate.agentState === "function"
+    ? candidate as DevicesLivePlannedApi
+    : null;
+};
+
+/** The live surface of the installed Planned client, or the production default that sends nothing. */
+export const devicesLivePlannedApi = (): DevicesLivePlannedApi => liveMembers(current) ?? absentLive;

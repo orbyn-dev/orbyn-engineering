@@ -19,7 +19,8 @@ use axum::response::Response;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::{SinkExt, Stream, StreamExt, stream};
 use orbyn_contracts::{
-    CommandOutputEvent, OpenConsole, OpenTerminal, RenameTerminal, RunScript, TerminalScrollback,
+    CommandOutputEvent, OpenConsole, OpenTerminal, RenameTerminal, RunScript,
+    TerminalAttentionOpen, TerminalScrollback,
 };
 use orbyn_core::CoreError;
 use orbyn_core::host::terminal::{
@@ -40,6 +41,7 @@ pub fn routes() -> Router<AppState> {
         .route("/ws/terminal/{thread_id}", get(terminal))
         .route("/ws/terminal/{thread_id}/{terminal}", get(attach))
         .route("/api/threads/{id}/terminals", get(list).post(open))
+        .route("/api/threads/{id}/terminal-attention", get(attention))
         .route("/api/threads/{id}/console", post(console))
         .route(
             "/api/threads/{id}/terminals/{terminal}",
@@ -148,6 +150,17 @@ pub async fn list(
 ) -> ApiResult<impl IntoResponse> {
     state.core.store.thread(&id)?;
     Ok(Json(state.core.terminals.list(&id)))
+}
+
+/// `GET /api/threads/:id/terminal-attention`: the engine consoles waiting for the
+/// person now, from the in-memory registry. Local: the same redacted values the
+/// thread's log already carries.
+pub async fn attention(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    let items = state.core.terminal_attention(&id)?;
+    Ok(Json(TerminalAttentionOpen { items }))
 }
 
 pub async fn open(

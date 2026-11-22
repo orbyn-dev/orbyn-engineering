@@ -1,6 +1,6 @@
 # Terminal input: typed command proposals
 
-Status: proposed for Eng 4 (owner of the engines and the service). The web side is built; the service does not send the field yet.
+Status: the service records the field (built, not verified on a real engine). The web card is built against typed test proposals, but the editor does not send `purpose` yet and the web does not read the `orbyn.proposal` event yet, so no card shows in the real app.
 
 ## Field
 
@@ -32,4 +32,16 @@ The card is the Designer's `english-proposed` frame; the field supplies only the
 
 - The card never runs anything on its own; Run is the person's explicit click.
 - Treat `command` as untrusted text from a model. The limits and the control-character rule keep one proposal to one visible line.
-- Question for Eng 4: Run executes a service-supplied command on a click. Does that need Person-class handling (an explicit person approval recorded by the service) or is the click in the person's own terminal enough? The web does not invent an answer.
+- Run is the person's click writing to their own terminal through the existing terminal input route, which is already
+  Person-class. The service records no extra approval and executes nothing itself; the `proposal` event carries text only.
+
+## Service
+
+A run the terminal editor starts sends `purpose: "terminal_proposal"` on the send body (not with `result_schema`). The core supplies
+the schema `{command: string, note?: string}`, asks the engine for it through the typed turn result (docs/architecture.md, "Typed
+turn result") and, when the value passes the rules above, records one `orbyn.proposal` run event (`CUSTOM`, value
+`{command, note?}`) after the `orbyn.turn_result` event. A value that breaks a rule records no proposal; the result event still says what
+came back. Nothing scrapes tags from the answer text.
+
+Known limits: a preparation retry (the project script failed and the person presses Retry) relaunches the run without its typed
+result request; the raw proposal is stored in the run's events and only the web card masks a secret-looking command.
