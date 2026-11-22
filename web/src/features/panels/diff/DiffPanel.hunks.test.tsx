@@ -100,9 +100,11 @@ it("reverting writes the hunk back through the file route at the revision read, 
   await waitFor(() => expect(save).toHaveBeenCalledWith("t", { path: "auth/redirect.ts", content: BEFORE, base_revision: "r1" }));
   const toast = await screen.findByRole("status");
   expect(toast).toHaveTextContent("Hunk reverted in auth/redirect.ts.");
-  expect(toast).toHaveTextContent("Undo · 10 s");
+  // The message offers Undo and counts down. Which second a loaded machine reads is the clock's business, so wait for the
+  // affordance instead of pinning a second here; the test below reads the count itself under fake timers.
+  const undo = await within(toast).findByRole("button", { name: /^Undo · \d+ s$/ });
   await waitFor(() => expect(diff.mock.calls.length).toBeGreaterThan(1));
-  await user.click(within(toast).getByRole("button", { name: /^Undo/ }));
+  await user.click(undo);
   await waitFor(() => expect(save).toHaveBeenLastCalledWith("t", { path: "auth/redirect.ts", content: DISK, base_revision: "r2" }));
   expect(screen.queryByRole("status")).toBeNull();
 });
