@@ -1,10 +1,10 @@
 # orbyn-engine-host
 
-The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, later Codex, ACP, Pi) for the Rust
+The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, ACP, later Codex, Pi) for the Rust
 core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode` and `muse` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse` and `acp` are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -191,6 +191,57 @@ never ends in the recordings); `stopTask`, `readHistory`, `rollback`, fork; atta
 (Muse's reject choice takes feedback, field unverified); session MCP; a person's message during a held run; the Linux `env`
 trampoline. Windows launchers (`.cmd` and `.bat` under cmd.exe, PATH and PATHEXT) and verbatim turn roots follow T3 and are unit tested
 with injected platform and file checks only; no Windows run.
+
+## ACP family
+
+`src/families/acp.mjs` is the generic Agent Client Protocol family: one agent process per open session, spoken to over
+newline JSON-RPC 2.0 on stdio. It starts with `orbyn-engine-host acp`; no flag. The core resolves which agent to run and
+where its binary is, in `open.options.agent = {command, args, env, id}`; this host never downloads, installs or resolves a
+registry and never fetches the network. `options.agent.id` selects a per-agent quirks entry from
+`src/families/acpAgents.mjs` (`default` only in this task; droid, omp, kimi, kiro and vibe come later).
+
+- **Initialize.** ACP protocol version 2, `clientInfo` "Orbyn", `clientCapabilities` advertising only form elicitation:
+  **no `fs` and no `terminal`**, so the agent keeps using its own tools under the core's confinement. An agent that sends
+  `fs/*` or `terminal/*` anyway gets JSON-RPC method-not-found and a `log` frame naming the method only (T3 advertises
+  and implements both; this family deliberately does not). `authenticate` runs only when session setup says sign-in is
+  required (-32000) and `options.authMethodId` names an advertised method; otherwise `open` fails `kind: "auth"`.
+- **Sessions.** `session/new`, or `session/load` for `resume` (only when the agent advertises `loadSession`, else
+  `kind: "unsupported"`), or `session/fork` for `fork` when the agent advertises it. MCP servers from
+  `options.mcpServers` are sent in the transports the agent advertised; one it does not support is skipped and logged
+  by name. `confinement.argvPrefix` is prepended and `confinement.env` is the whole environment plus the agent's own
+  `env`; a malformed prefix is `invalid_request`. Windows launch resolution follows `acpLaunch` (the same PATH/PATHEXT
+  and `.cmd` handling as `museLaunch`).
+- **Policy stays in Rust.** Every `session/request_permission` is a `permission` frame (`tool` is the tool call's title,
+  `input` the request's own tool call, with fields the `tool_call` update already carried filled in; `options` as
+  received) answered once by `respond`. Allow is only `allow_once`; deny is `reject_once`; an agent offering only an
+  always-allow option is denied. There is no host timeout. Cancel, run end and a crash refuse pending asks. Elicitation
+  forms become `question` frames answered by `respond` `{answers}` (multi-selections comma-joined) or `{behavior:"deny"}`
+  (sent as `action: "cancel"`).
+- **Turns.** `send` writes `session/prompt` with the person's text, plus image or resource blocks only when the agent's
+  `promptCapabilities` allow them, answers when the prompt is on the wire, streams each `session/update`'s `update`
+  object untouched as a `delta`, and ends with exactly one `runDone` from the prompt response (`end_turn` completed,
+  `cancelled` cancelled, `max_tokens`/`max_turn_requests` maxTurns, `refusal` refused, an error failed with a `kind`).
+  A malformed `session/update` is dropped and logged by method only. `steer` cancels the running prompt and sends the new
+  text as the run's next prompt; `cancel` sends `session/cancel` and ends the run cancelled; `closeSession` cancels and
+  stops the process.
+- **Models.** `models` with an open `sessionId` returns the session's catalog; without one it takes `agent`, `cwd` and
+  optional `confinement`, starts a throwaway agent, reads `session/new`, and stops it. The shape is Muse's
+  `{models: [{id, name, isDefault, efforts: [{id, label, description?, isDefault?}], defaultEffort?}]}`, built from
+  ACP `configOptions` (`model`, `thought_level`/`reasoning`, the Mistral Vibe `thinking` quirk, `mode`) with `_meta.reasoningEfforts`
+  winning per model. `options.model`, `options.effort` and `options.mode` at `open` or `send` go through
+  `session/set_config_option`, or `session/set_model` when only a model state is advertised.
+  Capabilities: `steer` and `models`.
+
+Done and tested against replayed T3 Code transcripts of generic ACP agents (MIT, `test/fixtures/NOTICE`):
+simple, multi-turn, queued turn, message steering, a read-only tool call, a permission ask answered once, turn
+interrupt, a todo list, two elicitation forms, a malformed session update and a failed prompt. Nothing here has run
+against a real agent yet.
+
+Not done, so Planned: any run against a real agent or model; per-agent quirk entries; background work, `stopTask`,
+`background`, `rollback`, `readHistory` and a `usage` request (ACP has no background event; usage rides the update
+stream); `session/resume` for agents that do not advertise `loadSession`; `additionalDirectories`; T3's per-agent MCP
+transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never ported); attachments
+against a real agent; Windows.
 
 ## Differences from T3 Code on purpose (Muse and Cursor)
 
