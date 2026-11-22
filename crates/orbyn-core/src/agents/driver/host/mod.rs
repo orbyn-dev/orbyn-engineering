@@ -16,6 +16,7 @@
 mod acp;
 mod confinement;
 mod connection;
+mod cursor_delta;
 mod delta;
 mod driver;
 mod frames;

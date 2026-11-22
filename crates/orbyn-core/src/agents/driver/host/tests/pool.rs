@@ -104,7 +104,11 @@ async fn a_restarting_host_reports_the_try_the_limit_and_the_wait() {
     assert!(rig.pool.acquire().await.is_err());
     let restart = rig.pool.status().await.restart.expect("a restart waits");
     assert_eq!((restart.attempt, restart.limit), (1, 5));
-    assert!(matches!(restart.next_try_seconds, Some(1..=30)), "{:?}", restart.next_try_seconds);
+    assert!(
+        matches!(restart.next_try_seconds, Some(1..=30)),
+        "{:?}",
+        restart.next_try_seconds
+    );
     rig.pool.shutdown().await;
 }
 
