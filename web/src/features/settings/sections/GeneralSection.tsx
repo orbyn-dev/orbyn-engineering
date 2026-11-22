@@ -12,7 +12,7 @@ import { Presence } from "../../../ui/Presence";
 import { DETAIL_ROWS, detailsMenuItems } from "../../../product/ui/details";
 import { DesktopApp } from "./DesktopApp";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 
 function DetailRowsButton() {
   const hidden = useUi((state) => state.detailsHidden);
@@ -84,7 +84,6 @@ export function GeneralSection() {
   const order = [{ value: "updated_at", label: "Last user message" }, { value: "created_at", label: "Created" }] as const;
   return (
     <>
-      {heading("General")}
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "default_thread_env_mode",
         title: settingsLabel("general-new-threads-start-in"),

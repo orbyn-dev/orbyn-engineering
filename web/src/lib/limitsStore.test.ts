@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LIMITS_BACKOFF_MS, LIMITS_STALE_MS, limitsAge, readLimits, resetLimitsStore } from "./limitsStore";
+import { AWAKE, topics, under } from "./dataRefresh";
+import {
+  LIMITS_BACKOFF_MS,
+  LIMITS_STALE_MS,
+  engineLimitsKey,
+  limitsAge,
+  limitsRefreshOn,
+  limitsStale,
+  readLimits,
+  resetLimitsStore,
+} from "./limitsStore";
 
 const MIN = 60_000;
 
@@ -110,5 +120,32 @@ describe("limits store", () => {
     await readLimits("codex", load);
     await expect(readLimits("claude", vi.fn().mockRejectedValue(new Error("x")))).rejects.toThrow();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("coming back into view", () => {
+  const key = engineLimitsKey("codex");
+
+  it("counts an engine read under the engine's own key, whatever screen asked", () => {
+    expect(key).toBe("engine:codex");
+    expect(limitsStale(key)).toBe(true);
+  });
+
+  it("reads again on a wake only once the shared answer is older than the window", async () => {
+    const wake = limitsRefreshOn(topics("limits", `limits:codex`), () => key);
+    expect(wake(AWAKE)).toBe(true);
+    await readLimits(key, vi.fn().mockResolvedValue({}));
+    expect(wake(AWAKE)).toBe(false);
+    vi.advanceTimersByTime(LIMITS_STALE_MS);
+    expect(wake(AWAKE)).toBe(true);
+  });
+
+  it("still reads at once for a service limits event, fresh answer or not", async () => {
+    const wake = limitsRefreshOn(under("limits"), () => key);
+    await readLimits(key, vi.fn().mockResolvedValue({}));
+    expect(wake("limits")).toBe(true);
+    expect(wake("limits:codex")).toBe(true);
+    expect(wake("pulls")).toBe(false);
+    expect(wake(AWAKE)).toBe(false);
   });
 });

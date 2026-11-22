@@ -1,4 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { request } from "../../../api/client";
 import type { KeybindingRule, KeybindingsView } from "../../../api/types";
@@ -89,4 +91,44 @@ it("keeps the raw text for a context it has no phrase for", async () => {
   });
   render(<KeybindingsSection />);
   expect((await screen.findByText(/Toggle sidebar and Toggle Changes both use/)).textContent).toContain("when a || b.");
+});
+
+/** The minimum width of each track of a grid template, in order. */
+function trackMins(template: string): number[] {
+  return (template.match(/minmax\([^)]*\)|\S+/g) ?? []).map((track) =>
+    Number(/minmax\(\s*([\d.]+)px/.exec(track)?.[1] ?? /^([\d.]+)px$/.exec(track)?.[1]),
+  );
+}
+
+// A narrow window (1024 px with the sidebar open, 830 px with it closed, the 375 px phone
+// preset) used to squeeze the Action track to nothing, so its label drew over the When
+// column. jsdom has no layout, so this pins the rule that prevents it: a minimum width on
+// the Action and When tracks, and a scroller for a table narrower than those minimums.
+it("gives Action and When their own minimum widths and scrolls the table below them", async () => {
+  vi.mocked(request).mockReset().mockResolvedValue({
+    ...initial,
+    rules: [
+      { key: "mod+b", command: "sidebar.toggle", when: "!terminalFocus", remove: false },
+      { key: "mod+shift+b", command: "terminal.split", when: "terminalFocus", remove: false },
+      { key: "mod+enter", command: "composer.sendAlternate", when: "composerFocus && turnRunning", remove: false },
+    ],
+  });
+  render(<KeybindingsSection />);
+  const table = await screen.findByRole("table", { name: "Keybindings" });
+  const rows = within(table).getAllByRole("row");
+  expect(rows).toHaveLength(4);
+  const template = (row: HTMLElement) => /grid-template-columns:\s*([^;]+)/.exec(row.getAttribute("style") ?? "")?.[1]?.trim() ?? "";
+  // One template for the header and every row, so a row cannot drift from the header.
+  expect(new Set(rows.map(template)).size).toBe(1);
+  // No track may collapse to zero width; that is what let the Action label draw over When.
+  const mins = trackMins(template(rows[0]!));
+  expect(mins).toHaveLength(4);
+  expect(mins.every((min) => min > 0)).toBe(true);
+  expect(mins[0]).toBeGreaterThanOrEqual(120);
+  expect(mins[1]).toBeGreaterThanOrEqual(120);
+  // Below the room those minimums need, the table scrolls sideways instead of overlapping.
+  expect(table.parentElement).toHaveClass("kb-scroll");
+  const css = readFileSync(join(process.cwd(), "src/features/settings/pages/keybindings.css"), "utf8");
+  expect(css).toMatch(/\.kb-scroll\s*\{[^}]*overflow-x:\s*auto/);
+  expect(css).toMatch(/\.kb-table \.set-tr > \*\s*\{[^}]*min-width:\s*0[^}]*overflow-wrap:\s*anywhere/);
 });

@@ -250,6 +250,49 @@ fn a_turn_that_stopped_early_or_without_a_reason_is_not_success() {
     }
 }
 
+/// OpenCode 1.15.10 against a database a newer OpenCode already migrated fails inside
+/// its own prompt handler and still answers the call: `end_turn`, no updates, no `usage`.
+/// A turn that really ran reports its tokens, so a silent one without them is a failure
+/// to name, not a reply to ask the person to resend.
+#[test]
+fn a_silent_turn_that_reports_no_usage_fails_plainly() {
+    use super::permissions::stop_outcome_after;
+    const AGENT: &str = "OpenCode (/opt/homebrew/bin/opencode 1.15.10)";
+    let broken = json!({"stopReason":"end_turn","_meta":{}});
+    let EngineOutcome::Failed(message) = stop_outcome_after(&broken, 0, AGENT) else {
+        panic!("a turn that sent nothing and used nothing must fail");
+    };
+    assert_eq!(
+        message,
+        "OpenCode (/opt/homebrew/bin/opencode 1.15.10) ended the turn without running it. Check its log or update it."
+    );
+    // The same reply after the agent sent something is an ordinary turn.
+    assert_eq!(
+        stop_outcome_after(&broken, 1, AGENT),
+        EngineOutcome::Completed
+    );
+    // A turn that ran reports its tokens even when it said nothing: the run pump's "No reply".
+    let ran = json!({"stopReason":"end_turn","usage":{"inputTokens":124,"outputTokens":0,"totalTokens":8969},"_meta":{}});
+    assert_eq!(stop_outcome_after(&ran, 0, AGENT), EngineOutcome::Completed);
+    // Other endings keep their own words.
+    assert_eq!(
+        stop_outcome_after(&json!({"stopReason":"cancelled"}), 0, AGENT),
+        EngineOutcome::Cancelled
+    );
+}
+
+#[test]
+fn the_agent_is_named_with_its_program_and_version() {
+    let label = |name: &str, version: &str| {
+        super::agent_label_for(&(name.into(), version.into()), "/opt/homebrew/bin/opencode")
+    };
+    assert_eq!(
+        label("OpenCode", "1.15.10"),
+        "OpenCode (/opt/homebrew/bin/opencode 1.15.10)"
+    );
+    assert_eq!(label("", ""), "The agent (/opt/homebrew/bin/opencode)");
+}
+
 fn grok_driver(target: &str) -> AcpDriver {
     let known = crate::agents::engines::known::known_engine("grok").unwrap();
     let mut engine = known.as_custom();

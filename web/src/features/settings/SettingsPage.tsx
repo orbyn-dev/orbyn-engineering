@@ -266,6 +266,8 @@ function SettingsPageContent({ section, sub, unknown, row: addressRow, onClose }
         </nav>
       </div>
       <div className="settings-main">
+        {/* The page owns the only h1; its sections start at h2. */}
+        <h1 className="sr-only" tabIndex={-1} data-page-title>{open ? SUBPAGES[open].label : labels[current]}</h1>
         <SettingsCrumbs section={current} label={labels[current]} sub={open} narrow={narrow} labelOf={(entry) => labels[entry]} />
         <header className="settings-head">
           <span className="settings-title" aria-hidden>{open ? SUBPAGES[open].label : labels[current]}</span>

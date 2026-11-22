@@ -17,7 +17,6 @@ import {
 } from "../api";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { SettingsBanner } from "../rows/SettingsBanner";
-import { heading } from "../sections/parts";
 import { PatternDialog } from "./PatternDialog";
 import { ProjectsOffDialog } from "./ProjectsOffDialog";
 import "./Secrets.css";
@@ -59,7 +58,6 @@ export function SecretsSection() {
   if (!settings) {
     return (
       <>
-        {heading("Secrets")}
         {read.error ? (
           <SettingsBanner tone="err" actions={<Button small onClick={read.reload}>Try again</Button>}>
             Secrets could not be read. {read.error.message}
@@ -73,7 +71,6 @@ export function SecretsSection() {
 
   return (
     <>
-      {heading("Secrets")}
       <p className="secrets-intro">
         Orbyn hides values that look like secrets in the Crew ledger and in what Crew stores. Your own patterns also mask
         ledger text when you read it, old rows included. What agents read is hidden too: your messages, follow-ups, steers, review text and attached text files reach the engine with each value as “[hidden: …]”, while your thread keeps what you typed and attached. Terminal blocks follow later.

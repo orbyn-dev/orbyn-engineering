@@ -18,7 +18,7 @@ import { IconButton } from "../../../ui/controls";
 import { useDismissDetails as useDismiss } from "./DetailsDismiss";
 import { usageShare } from "../composer/ComposerExtras";
 import { pluralize } from "../toolCalls";
-import { limitsKey, readLimits } from "../../../lib/limitsStore";
+import { limitsKey, limitsRefreshOn, readLimits } from "../../../lib/limitsStore";
 import { useLimitsChecked } from "../../../lib/limitsChecked";
 import { LimitsRefresh } from "../../../product/ui/LimitsChecked";
 
@@ -259,7 +259,7 @@ function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: str
   const limits = useAsync(
     `details-limits:${threadId}:${engine}`,
     (signal, context) => readLimits(limitsKey(engine, threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }),
-    { fresh: true, keepOnManual: true, refreshOn: topics("limits", `limits:${engine}`) },
+    { fresh: true, keepOnManual: true, refreshOn: limitsRefreshOn(topics("limits", `limits:${engine}`), () => limitsKey(engine, threadId)) },
   );
   const checked = useLimitsChecked(limitsKey(engine, threadId), limits);
   const windows = limits.data?.windows ?? [];
