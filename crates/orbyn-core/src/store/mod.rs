@@ -6,6 +6,9 @@ mod account_sync;
 mod agent_projects;
 mod approvals;
 mod automations;
+mod billed_events;
+#[cfg(test)]
+mod billed_events_tests;
 mod catalog;
 mod changes;
 mod checkpoints;
@@ -109,6 +112,7 @@ mod setup;
 mod tests;
 mod threads;
 
+pub use billed_events::{BilledEvent, BilledTotal, parse_billed_events};
 pub use changes::{KeptChange, Snapshot};
 pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};

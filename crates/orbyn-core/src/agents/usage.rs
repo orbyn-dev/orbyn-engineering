@@ -50,6 +50,9 @@ type FileTotals = BTreeMap<(String, String, String), Tokens>;
 
 pub const STANDARD_TIER: &str = "standard";
 
+/// The engine whose spend is billed to its account instead of written to a local history.
+pub(crate) const CURSOR: &str = "cursor";
+
 /// The tiers history names. Anything else is counted as `other`, never dropped.
 fn tier_of(name: Option<&str>) -> String {
     match name.map(str::trim).filter(|name| !name.is_empty()) {
@@ -547,9 +550,22 @@ fn period_start(days: u32) -> String {
     (today - time::Duration::days(i64::from(days.max(1)) - 1)).to_string()
 }
 
-fn summarize(
+/// One row of a history, before it is priced and summed.
+struct Entry {
+    day: String,
+    model: String,
+    tier: String,
+    tokens: Tokens,
+    /// The account's own billed amount for this row, when it reports one.
+    billed: Option<f64>,
+}
+
+fn summarize_entries(
     engine: &str,
-    (status, scanned, skipped, totals): (String, u32, u32, FileTotals),
+    status: String,
+    scanned: u32,
+    skipped: u32,
+    entries: impl Iterator<Item = Entry>,
     settings: &ServerSettings,
     since: Option<&str>,
 ) -> EngineUsage {
@@ -563,13 +579,22 @@ fn summarize(
     let mut models: BTreeMap<String, BTreeMap<String, Tokens>> = BTreeMap::new();
     let mut model_days: BTreeMap<String, BTreeMap<String, Day>> = BTreeMap::new();
     let mut days: BTreeMap<String, Day> = BTreeMap::new();
-    for ((day, model, tier), tokens) in totals {
+    for Entry {
+        day,
+        model,
+        tier,
+        tokens,
+        billed,
+    } in entries
+    {
         if since.is_some_and(|since| day.as_str() < since) {
             continue;
         }
         let model = resolve(&model);
-        let cost =
-            price_for(settings, &model, &tier).map(|price| split_total(&cost_split(tokens, price)));
+        // An account's own bill is not an estimate, so it stands where it is reported.
+        let cost = billed.or_else(|| {
+            price_for(settings, &model, &tier).map(|price| split_total(&cost_split(tokens, price)))
+        });
         model_days
             .entry(model.clone())
             .or_default()
@@ -600,6 +625,53 @@ fn summarize(
     }
 }
 
+fn summarize(
+    engine: &str,
+    (status, scanned, skipped, totals): (String, u32, u32, FileTotals),
+    settings: &ServerSettings,
+    since: Option<&str>,
+) -> EngineUsage {
+    let entries = totals
+        .into_iter()
+        .map(|((day, model, tier), tokens)| Entry {
+            day,
+            model,
+            tier,
+            tokens,
+            billed: None,
+        });
+    summarize_entries(engine, status, scanned, skipped, entries, settings, since)
+}
+
+/// Cursor reports no local history: its spend is billed to the account, and the account's billed
+/// events are what the store holds. Its counters arrive separate, so nothing is folded together,
+/// and the account's own billed amount is the day's cost where it reports one.
+fn summarize_billed(
+    engine: &str,
+    totals: Vec<crate::store::BilledTotal>,
+    settings: &ServerSettings,
+    since: Option<&str>,
+) -> EngineUsage {
+    let status = if totals.is_empty() {
+        "no_history"
+    } else {
+        "scanned"
+    };
+    let entries = totals.into_iter().map(|total| Entry {
+        billed: total.reported_cents.map(|cents| cents as f64 / 100.0),
+        tokens: Tokens {
+            input: total.input,
+            output: total.output,
+            cache_read: total.cache_read,
+            cache_write: total.cache_write,
+        },
+        day: total.day,
+        model: total.model,
+        tier: STANDARD_TIER.to_owned(),
+    });
+    summarize_entries(engine, status.to_owned(), 0, 0, entries, settings, since)
+}
+
 pub struct UsageCenter {
     host_id: String,
     cache: Arc<Mutex<ScanCache>>,
@@ -627,8 +699,11 @@ impl UsageCenter {
 
     /// Scans off the async threads, since history can run to gigabytes. Unchanged
     /// files come from memory, so a scan is cheap and a price change shows at once.
+    /// `store` holds the engines whose spend only their account reports; without one
+    /// their history is simply empty.
     pub async fn report(
         &self,
+        store: Option<&crate::store::Store>,
         settings: &ServerSettings,
         days: Option<u32>,
     ) -> Result<UsageReport> {
@@ -646,13 +721,21 @@ impl UsageCenter {
         .await
         .map_err(|error| CoreError::Internal(error.to_string()))?;
         let since = days.map(period_start);
+        let mut engines: Vec<EngineUsage> = scans
+            .into_iter()
+            .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
+            .collect();
+        // Cursor's account reports its own billed events, which the store keeps; a store
+        // that never recorded one answers no history, never an error.
+        let billed = match store {
+            Some(store) => store.billed_totals(CURSOR, since.as_deref())?,
+            None => Vec::new(),
+        };
+        engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
         Ok(UsageReport {
             host_id: self.host_id.clone(),
             scanned_at: now(),
-            engines: scans
-                .into_iter()
-                .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
-                .collect(),
+            engines,
         })
     }
 
