@@ -1,8 +1,8 @@
 # Third-party notices for the engine host
 
 The engine host depends on two proprietary SDKs. They are used as published, unmodified, as dependencies; none of their code is
-copied into this repository. Their licence files are reproduced here as they ship in the packages; the app bundle carries this file
-(docs/sdk-default-plan.md, step 4). The permissions Orbyn Engineering relies on are not reproduced here.
+copied into this repository. Their licence files are reproduced here as they ship in the packages; the app bundle carries this file in
+`Contents/Resources/sdk` beside the SDKs (docs/sdk-default-plan.md, step 4). The permissions Orbyn Engineering relies on are not reproduced here.
 
 ## @anthropic-ai/claude-agent-sdk 0.3.321
 
