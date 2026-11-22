@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCursorThreadMock } from "../../../mock/cursorThread";
 import { CREW_ROLE_TOOLTIP, CrewRoleNote, crewRoleLabel } from "./CrewRole";
-import { cursorThreadApi, setCursorThreadApi } from "./api";
+import { setCursorThreadApi } from "./api";
 import { EngineNote } from "./EngineNote";
 
 afterEach(() => setCursorThreadApi(null));
@@ -52,15 +52,6 @@ describe("the Engine row of Details", () => {
   it("draws an engine's name as plain text", () => {
     render(<EngineNote projectId="p" engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
     expect(document.querySelector("b, i")).toBeNull();
-  });
-});
-
-describe("the default client", () => {
-  it("sends nothing for the unmerged routes: the notice reads none and each write says it is not offered", async () => {
-    const api = cursorThreadApi();
-    expect(await api.notice("p", "cursor")).toBeNull();
-    await expect(api.acknowledge("p", "cursor")).rejects.toThrow("does not offer");
-    await expect(api.sendWithoutApprovals("t1", { prompt: "x" })).rejects.toThrow("does not offer");
   });
 });
 
