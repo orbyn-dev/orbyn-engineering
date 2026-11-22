@@ -1,17 +1,10 @@
 # Photo conversion, transcript import and earlier messages
 
-<<<<<<< HEAD
 What the web composer and thread need from the service for three Beta frame groups. Transcript export and import, the two routes
 under B43, are built and wired in the web (`web/src/features/thread/transcriptFile/`); the composer's transcript drop still uses
-its hidden client and the mock, and a file dropped there is an ordinary attachment. Photo conversion and the earlier-messages read
-stay planned. A dev-only preview (`#/preview/attachments`, `#/preview/earlier`) installs those hidden clients from
-`web/mock/attachments.ts` and `web/mock/earlier.ts`; the transcript export and import mock lives in `web/mock/api.ts`. A name here
-=======
-What the web composer and thread need from the service for three Beta frame groups. **Partly built**: the photo
-conversion route exists (below); transcript import and export and the earlier-messages read are still planned. In a
-production build the web has no client for any of them and sends nothing; a dev-only preview
-(`#/preview/attachments`, `#/preview/earlier`) installs the mocks in `web/mock/attachments.ts` and `web/mock/earlier.ts`. A name here
->>>>>>> origin/main
+its hidden client and the mock, and a file dropped there is an ordinary attachment. The photo conversion route exists (below) and
+the earlier-messages read stays planned. A dev-only preview (`#/preview/attachments`, `#/preview/earlier`) installs the hidden
+clients from `web/mock/attachments.ts` and `web/mock/earlier.ts`; the transcript export and import mock lives in `web/mock/api.ts`. A name here
 changes only if the service pull request says so. Rows: B8, B43, K36 in [parity](parity.md).
 
 | Group | Frames | Owner of the service side |
