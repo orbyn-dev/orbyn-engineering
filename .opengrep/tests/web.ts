@@ -24,6 +24,16 @@ createServer((req, res) => {
   // ok: orbyn-js-reflected-html-from-url
   res.end("<p>static</p>");
 });
+export function escape(selector: string) {
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const a = selector.replace(/[.[\]]/g, "\\$&");
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const b = selector.replace(/[.[\\\]]/g, "\\$&");
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const c = selector.replace(/[.[\]]/g, "_");
+  return [a, b, c];
+}
+
 export function names(name: string, text: string) {
   // ruleid: orbyn-js-replace-string-literal-first-only
   const a = name.replace("@", "%40");
