@@ -25,7 +25,6 @@ export function CrewSettingsSection() {
   const from = route.name === "settings" ? route.from : undefined;
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>Crew</h1>
       <div className="ap-stack">
         {page === "areas" ? (
           <AutonomyAreas />
