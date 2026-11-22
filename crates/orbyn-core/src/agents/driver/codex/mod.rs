@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::pipes::{one_shot_cli, resolve_engine, spawn_engine_with};
+use super::pipes::{one_shot_cli, resolve_engine, spawn_engine_confined};
 use super::worker_identity::{with_identity, worker_env};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, ModelCatalog, RunHandle, RunSpec,
@@ -384,20 +384,45 @@ impl EngineDriver for CodexDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
-        // Codex starts its own profile for each command, which cannot nest inside a
-        // restriction (see `host::confine::CODEX_WORKERS_ALLOWED`): never run it unrestricted.
-        if spec.confine.is_some() {
-            return Err(CoreError::EngineUnavailable(
-                "Crew workers on Codex are not available yet.".into(),
-            ));
-        }
+        self.start_run_with(spec, events, crate::host::confine::CODEX_WORKERS_ALLOWED)
+            .await
+    }
+}
+
+impl CodexDriver {
+    /// The launch path with the Codex worker gate as a parameter, so the behaviour behind the
+    /// constant is reachable by tests without flipping it.
+    async fn start_run_with(
+        &self,
+        spec: RunSpec,
+        events: mpsc::Sender<EngineEvent>,
+        codex_workers_allowed: bool,
+    ) -> Result<RunHandle> {
+        let codex_home =
+            confined_home(&spec, codex_workers_allowed)?.map(std::path::Path::to_path_buf);
         let command = resolve_engine(&self.program)?;
         let args = [OsString::from("app-server")];
         let identity = spec.crew_task.as_deref().map_or_else(Vec::new, |task| {
             worker_env(task, "codex", spec.model.as_deref())
         });
+        let home = match codex_home.as_ref() {
+            Some(home) => Some(home.to_str().map(str::to_owned).ok_or_else(|| {
+                CoreError::EngineUnavailable(
+                    "A crew worker could not be restricted: its Codex home is not valid UTF-8."
+                        .into(),
+                )
+            })?),
+            None => None,
+        };
+        let mut base: Vec<(&str, &str)> = Vec::new();
+        if let Some(home) = &home {
+            base.push(("CODEX_HOME", home.as_str()));
+        }
+        let env = with_identity(&base, &identity);
+        // A worker's process never starts unrestricted: the spawn path fails if it cannot
+        // put the profile in front of it.
         let process =
-            spawn_engine_with(&command, &args, &spec.cwd, &with_identity(&[], &identity))?;
+            spawn_engine_confined(&command, &args, &spec.cwd, &env, spec.confine.as_ref())?;
         let cancel = CancellationToken::new();
         let (input, steering) = mpsc::unbounded_channel();
         let task = tokio::spawn(run_protocol(
@@ -417,6 +442,28 @@ impl EngineDriver for CodexDriver {
     }
 }
 
+/// The private home a confined Codex worker starts with, or the gate's refusal. A confined
+/// run with no private home is an error, never an unrestricted one.
+fn confined_home<'a>(
+    spec: &'a RunSpec,
+    codex_workers_allowed: bool,
+) -> Result<Option<&'a std::path::Path>> {
+    let Some(confinement) = spec.confine.as_ref() else {
+        if spec.crew_task.is_some() {
+            return Err(CoreError::EngineUnavailable(
+                "A crew worker could not be restricted: its rules are missing.".into(),
+            ));
+        }
+        return Ok(None);
+    };
+    if !codex_workers_allowed {
+        return Err(CoreError::EngineUnavailable(
+            crate::host::confine::CODEX_REFUSED.into(),
+        ));
+    }
+    confinement.codex_home().map(Some)
+}
+
 fn parse_login(status: i32, stdout: &str) -> AuthState {
     if status == 0 && stdout.to_ascii_lowercase().contains("logged in") {
         AuthState::LoggedIn
@@ -431,5 +478,7 @@ fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
+#[cfg(test)]
+mod confined_tests;
 #[cfg(test)]
 mod tests;

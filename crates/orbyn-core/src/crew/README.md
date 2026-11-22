@@ -29,6 +29,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
+| `codex_homes` | A Codex crew task's private `CODEX_HOME`: made before its first turn with only an API-key `auth.json`, reused by its later turns, removed when the task ends and swept at core start when its task is not live |
 | `protect` | Records the key's protected files (type, executable bit, SHA-256 of the exact bytes, links not followed) before the worker exists, and compares at verify time. Git is not asked, so nothing the worker can write in `.git` hides a change |
 | `recover` | After a restart: clears dead verification claims, verifies a task left `verifying`, stops one whose worker is gone, sets the budget timers again |
 | [`bus`](bus/README.md) | The Crew bus: `crew_post`, `crew_ask`, the board, steering delivery and the guards for hops, posts, sizes and the end of a run |
