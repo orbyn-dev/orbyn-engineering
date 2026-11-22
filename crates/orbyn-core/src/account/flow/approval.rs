@@ -278,13 +278,16 @@ impl AccountCenter {
         session: SessionInfo,
     ) -> Result<Option<AccountApprovalView>> {
         let _one_at_a_time = self.cancelling.lock().await;
-        let inner = self.inner.lock().await;
+        let mut inner = self.inner.lock().await;
         if inner
             .approval
             .as_ref()
-            .is_some_and(|approval| approval.serial != serial)
+            .is_some_and(|approval| approval.serial != serial && approval.answer.is_none())
         {
-            // A later sign-in reused the id and is still open: its answer is its own.
+            // A later sign-in reused the id and is still open: its answer is its own, and
+            // ending this session now would wipe the Engine's state for it. The Engine may
+            // already hold this session, so it is ended when that sign-in ends without one.
+            inner.owed_sign_out = true;
             return Ok(None);
         }
         // Another look at the same allowed request may have signed in first: that session
@@ -312,6 +315,18 @@ impl AccountCenter {
             .approval
             .as_ref()
             .map(|approval| approval.serial)
+    }
+
+    /// Whether a sign-out for a late answer is still owed, so a test can see it settled.
+    #[cfg(test)]
+    pub(crate) async fn owed_sign_out(&self) -> bool {
+        self.inner.lock().await.owed_sign_out
+    }
+
+    /// Marks a sign-out as owed, so a test can see the person's own sign-out settle it.
+    #[cfg(test)]
+    pub(crate) async fn owe_sign_out(&self) {
+        self.inner.lock().await.owed_sign_out = true;
     }
 
     /// Ends this computer's own request on the service and closes it with `state`, one cancel
@@ -342,7 +357,7 @@ impl AccountCenter {
                 .map(|a| self.approval_view(a));
         }
         let _ = backend.account.cancel_approval(id).await;
-        self.close_approval(id, serial, state).await
+        self.close_approval_held(backend, id, serial, state).await
     }
 
     /// The request ended without signing in: this computer is signed out, and the screen
@@ -354,15 +369,34 @@ impl AccountCenter {
         serial: u64,
         state: AccountApprovalState,
     ) -> Option<AccountApprovalView> {
-        let shown = {
+        let backend = self.backend().ok()?.clone();
+        let _one_at_a_time = self.cancelling.lock().await;
+        self.close_approval_held(&backend, id, serial, state).await
+    }
+
+    /// [`Self::close_approval`] for a caller that already holds the one-at-a-time gate. When a
+    /// late answer left a session in the Engine meanwhile, it is ended now: nothing needs the
+    /// Engine's state any more.
+    async fn close_approval_held(
+        &self,
+        backend: &super::Backend,
+        id: &str,
+        serial: u64,
+        state: AccountApprovalState,
+    ) -> Option<AccountApprovalView> {
+        let (shown, owed) = {
             let mut inner = self.inner.lock().await;
             let approval = inner
                 .approval
                 .as_mut()
                 .filter(|approval| approval.request_id == id && approval.serial == serial)?;
             approval.answer = Some(state);
-            self.approval_view(approval)
+            let shown = self.approval_view(approval);
+            (shown, std::mem::take(&mut inner.owed_sign_out))
         };
+        if owed {
+            let _ = backend.account.sign_out().await;
+        }
         self.status
             .update(|s| s.state = SyncState::SignedOut { reason: None });
         Some(shown)

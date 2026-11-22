@@ -1090,3 +1090,124 @@ async fn a_cancel_that_finds_the_sign_in_finished_does_not_sign_this_computer_ou
         SyncState::SignedOut { .. }
     ));
 }
+
+fn late_session() -> crate::account::SessionInfo {
+    crate::account::SessionInfo {
+        email: "late@example.com".into(),
+        device_id: "dev-this".into(),
+        device_name: "This computer".into(),
+    }
+}
+
+/// Request A is given up, request B reuses the id and is still open, and then A's answer
+/// arrives late: A's session may already sit in the Engine.
+async fn a_late_answer_for_an_older_request(core: &crate::Core) {
+    asking(core, "late@example.com").await;
+    let older = core.account.approval_serial().await.unwrap();
+    core.account.cancel_second_factor().await.unwrap();
+    asking(core, "late@example.com").await;
+    assert_eq!(
+        core.account
+            .finish_approval("req-mine", older, late_session())
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        core.account.stand_in().sign_outs(),
+        0,
+        "B still needs the Engine's state, so nothing is ended yet"
+    );
+}
+
+#[tokio::test]
+async fn a_late_answer_is_ended_once_the_newer_request_is_cancelled() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "owed-cancel");
+    a_late_answer_for_an_older_request(&core).await;
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(core.account.stand_in().sign_outs(), 1);
+    // Leaving again ends nothing more.
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(core.account.stand_in().sign_outs(), 1);
+}
+
+#[tokio::test]
+async fn a_late_answer_is_ended_once_the_newer_request_is_denied() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "owed-deny");
+    a_late_answer_for_an_older_request(&core).await;
+    core.account.stand_in().answer(Answer::Deny);
+    let shown = core.account.poll_approval().await.unwrap().unwrap();
+    assert_eq!(shown.state, AccountApprovalState::Denied);
+    assert_eq!(core.account.stand_in().sign_outs(), 1);
+    core.account.poll_approval().await.unwrap();
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(core.account.stand_in().sign_outs(), 1);
+}
+
+#[tokio::test]
+async fn a_late_answer_is_ended_once_the_newer_request_times_out() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "owed-expire");
+    core.account.set_approval_life(Duration::from_millis(20));
+    a_late_answer_for_an_older_request(&core).await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    let shown = core.account.poll_approval().await.unwrap().unwrap();
+    assert_eq!(shown.state, AccountApprovalState::TimedOut);
+    assert_eq!(core.account.stand_in().sign_outs(), 1);
+}
+
+#[tokio::test]
+async fn a_late_answer_does_not_end_the_session_of_the_newer_request_that_signs_in() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "owed-signs-in");
+    a_late_answer_for_an_older_request(&core).await;
+    core.account.stand_in().answer(Answer::Allow);
+    core.account.poll_approval().await.unwrap();
+    let done = core
+        .account
+        .submit_digits(typed(&shown(&core)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(done.state, AccountApprovalState::Approved);
+    assert_eq!(core.account.stand_in().sign_outs(), 0);
+    assert!(core.account.stand_in().signed_in());
+    assert!(core.account.view("macos").await.session.is_some());
+    assert!(!core.account.owed_sign_out().await);
+}
+
+#[tokio::test]
+async fn a_late_answer_with_no_newer_request_is_ended_at_once() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "owed-none");
+    asking(&core, "late@example.com").await;
+    let serial = core.account.approval_serial().await.unwrap();
+    core.account.cancel_second_factor().await.unwrap();
+    assert_eq!(
+        core.account
+            .finish_approval("req-mine", serial, late_session())
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(core.account.stand_in().sign_outs(), 1);
+    assert!(!core.account.owed_sign_out().await);
+}
+
+#[tokio::test]
+async fn the_persons_own_sign_out_clears_a_sign_out_still_owed() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "owed-own");
+    let a = &core.account;
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    a.owe_sign_out().await;
+    a.sign_out(false).await.unwrap();
+    assert!(!a.owed_sign_out().await);
+    assert_eq!(a.stand_in().sign_outs(), 1);
+    // A later request that ends does not end a session a second time.
+    asking(&core, "late@example.com").await;
+    a.cancel_second_factor().await.unwrap();
+    assert_eq!(a.stand_in().sign_outs(), 1);
+}
