@@ -51,3 +51,10 @@ it("changes nothing on a detail page while no host is reported", () => {
   expect(screen.queryByRole("group", { name: "Engine host" })).toBeNull();
   expect(screen.queryByText("API key storage")).toBeNull();
 });
+
+it("draws the provider-list banner, which is a note rather than a live status", async () => {
+  render(<ProvidersSection />);
+  const banner = await screen.findByText(/Orbyn lists an engine when it finds its program/);
+  expect(banner.closest("[role=note]")).not.toBeNull();
+  expect(banner.closest("[role=status]")).toBeNull();
+});
