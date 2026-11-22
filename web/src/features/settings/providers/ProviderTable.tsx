@@ -1,4 +1,4 @@
-import { Check, Plus, RefreshCw } from "lucide-react";
+import { Check, ChevronRight, Plus, RefreshCw } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { listProviders, queryPreferences, updatePreferences } from "../api";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
@@ -130,7 +130,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
         <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
         <span role="cell">
           {openable
-            ? <button type="button" className="set-row-open name" aria-label={accessibleName} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{title}</button>
+            ? <button type="button" className="set-row-open name" aria-label={accessibleName} onClick={(event) => { event.stopPropagation(); onOpen(engine.id); }}>{title}<ChevronRight className="set-chev" size={12} aria-hidden /></button>
             : <span className="name">{title}</span>}
           {note ? <><br /><span className="sub">{note}</span></> : null}
           {variant && !isChosenPath ? (
