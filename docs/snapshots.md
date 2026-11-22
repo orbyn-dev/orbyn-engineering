@@ -86,9 +86,9 @@ At send time the core adds the attachment to the run as it adds any image, and, 
 - Global shortcut registration: the plugin used, that the chord only raises the same flow as the button, and that a capture cannot start from a page other than the shell's own.
 - `snapshot_*` commands only in the main capability.
 
-## Open for the lead
+## Rulings (lead, 2026-11-22)
 
-1. The global-shortcut plugin (`tauri-plugin-global-shortcut`) is a new dependency: yes or a native call of our own?
-2. `snapshot_include_accessibility` default false (this doc) against T3's true.
-3. Default chord `Cmd/Ctrl+Shift+9`.
-4. Both-shift and modifier-pair shortcuts are after the beta.
+1. **Shortcut mechanism:** the official `tauri-plugin-global-shortcut`, pinned to an exact version, with its capability scoped to the one chord from `snapshot_shortcut` (no wildcard registration, no other shortcut). No native code of our own for the shortcut. It gets its own security queue row when built.
+2. **Accessible text stays off by default** (`snapshot_include_accessibility: false`): it can capture text from other apps, so the privacy cost is too high for a default. This differs from T3, which defaults it on; the difference is noted in [parity](parity.md) at H33.
+3. **Default chord** is `Cmd+Shift+9` (`Ctrl+Shift+9` on Windows), changeable in the K49 settings.
+4. **Both-Shift and modifier-pair shortcuts** come after the beta.
