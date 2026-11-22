@@ -243,6 +243,7 @@ const handlers = {
     return { engineSessionId: r.engineSessionId ?? `eng-${r.sessionId}` };
   },
   send: (r) => {
+    if (env.STANDIN_SDK_MISSING) throw new Error("The Claude Agent SDK is not available in this build.");
     const text = String(r.message);
     if (family === "acp") {
       const engineSessionId = `acp-${r.sessionId}`;
@@ -329,8 +330,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     taskId: request.taskId,
     text: request.text,
     messageId: request.messageId,
+    operation: request.operation,
+    engineSessionId: request.engineSessionId,
+    resumeAt: request.resumeAt,
     confinement: Boolean(request.confinement),
-    ...(family === "acp" ? { operation: request.operation, options: request.options, sessionId: request.sessionId, agent: request.agent, cwd: request.cwd } : {}),
+    ...(family === "acp" ? { options: request.options, sessionId: request.sessionId, agent: request.agent, cwd: request.cwd } : {}),
   });
   const handler = handlers[request.type];
   try {

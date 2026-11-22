@@ -53,7 +53,7 @@ export interface NeedsItem {
   risk: Risk | null;
   /** Reversibility is stated by no route: only the frames carry it. */
   undo: "easy" | "hard" | null;
-  /** Who asked and what it is, after the tags: "Claude Code · Sonnet 5.5 · approval". */
+  /** Who asked and what it is, after the tags: "claude · approval". */
   from: string;
   /** What waiting costs, in the designs' sentence for the kind; null when no source says. */
   cost: string | null;

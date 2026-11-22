@@ -1,5 +1,13 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use super::*;
-use crate::agents::driver::host::{CrashInfo, CrashKind, ExitRecord};
+use crate::agents::driver::EngineDriver;
+use crate::agents::driver::claude::ClaudeDriver;
+use crate::agents::driver::host::{
+    CrashInfo, CrashKind, ExitRecord, HostConfig, HostHub, HostRestart, HostSdk, HostSpec, Pool,
+    Timings,
+};
 
 fn status(state: HostState) -> HostStatus {
     HostStatus {
@@ -10,6 +18,14 @@ fn status(state: HostState) -> HostStatus {
         last_crash: None,
         threads: Vec::new(),
         last_error: None,
+        since: None,
+        sdk: None,
+        capabilities: None,
+        pooled: false,
+        restart: None,
+        stops_in_window: None,
+        has_driver: false,
+        sdk_missing: false,
     }
 }
 
@@ -157,6 +173,110 @@ fn the_threads_working_and_the_last_error_kind_are_on_the_wire_and_absent_when_t
         serde_json::to_value(wire.last_error_kind).unwrap(),
         serde_json::json!("session_lost")
     );
+}
+
+#[test]
+fn a_running_host_reports_when_it_started_its_sdk_and_what_it_can_do() {
+    let mut running = status(HostState::Ready);
+    running.since = Some(1_700_000_000);
+    running.sdk = Some(HostSdk {
+        name: "@anthropic-ai/claude-agent-sdk".into(),
+        version: "0.3.321".into(),
+    });
+    running.capabilities = Some(vec!["steer".into(), "fork".into()]);
+    let wire = contract(&running);
+    assert_eq!(wire.since.as_deref(), Some("2023-11-14T22:13:20Z"));
+    let sdk = wire.sdk.as_ref().unwrap();
+    assert_eq!(
+        (sdk.name.as_str(), sdk.version.as_str()),
+        ("@anthropic-ai/claude-agent-sdk", "0.3.321")
+    );
+    assert_eq!(wire.capabilities, Some(vec!["steer".into(), "fork".into()]));
+    let json = serde_json::to_value(&wire).unwrap();
+    assert_eq!(json["since"], "2023-11-14T22:13:20Z");
+    assert_eq!(json["sdk"]["name"], "@anthropic-ai/claude-agent-sdk");
+    assert_eq!(json["capabilities"][1], "fork");
+}
+
+#[tokio::test]
+async fn a_wrapped_rust_driver_is_reported_and_a_bare_pool_is_not() {
+    let config = HostConfig {
+        program: "/nonexistent/orbyn-engine-host".into(),
+        claude: true,
+        cursor: false,
+        acp: false,
+        timings: Timings::default(),
+    };
+    let hub = HostHub::new(&config);
+    let inner: Arc<dyn EngineDriver> =
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1)));
+    let _hosted = hub.wrap("claude", inner, "claude".into());
+    let statuses = hub.statuses().await;
+    let claude = statuses
+        .into_iter()
+        .find(|status| status.family == "claude")
+        .expect("claude is in the hub");
+    assert!(contract(&claude).has_driver);
+
+    let spec = HostSpec {
+        program: "/nonexistent/orbyn-engine-host".into(),
+        args: Vec::new(),
+        env: Vec::new(),
+        instance: "test".into(),
+    };
+    let bare = Pool::new("claude", spec, Timings::default(), None);
+    assert!(!contract(&bare.status().await).has_driver);
+}
+
+#[test]
+fn a_missing_sdk_is_reported_and_absent_when_the_sdk_is_there() {
+    let quiet = contract(&status(HostState::Ready));
+    assert!(!quiet.sdk_missing);
+    assert!(
+        serde_json::to_value(&quiet)
+            .unwrap()
+            .get("sdk_missing")
+            .is_none()
+    );
+    let mut missing = status(HostState::Ready);
+    missing.sdk_missing = true;
+    let wire = contract(&missing);
+    assert!(wire.sdk_missing);
+    assert_eq!(serde_json::to_value(&wire).unwrap()["sdk_missing"], true);
+}
+
+#[test]
+fn a_restarting_host_reports_the_try_the_limit_and_the_wait() {
+    let mut restarting = status(HostState::Restarting {
+        attempt: 3,
+        last_error: "x".into(),
+    });
+    restarting.restart = Some(HostRestart {
+        attempt: 3,
+        limit: 5,
+        next_try_seconds: Some(4),
+    });
+    let restart = contract(&restarting).restart.unwrap();
+    assert_eq!(
+        (restart.attempt, restart.limit, restart.next_try_seconds),
+        (3, 5, Some(4))
+    );
+}
+
+#[test]
+fn a_family_that_gave_up_reports_its_stops_in_the_window() {
+    let mut failed = status(HostState::Unavailable { reason: "x".into() });
+    failed.stops_in_window = Some(5);
+    assert_eq!(contract(&failed).stops_in_window, Some(5));
+}
+
+#[test]
+fn a_pooled_host_says_it_serves_every_thread() {
+    let mut running = status(HostState::Ready);
+    running.pooled = true;
+    let wire = contract(&running);
+    assert!(wire.pooled);
+    assert_eq!(serde_json::to_value(&wire).unwrap()["pooled"], true);
 }
 
 #[test]

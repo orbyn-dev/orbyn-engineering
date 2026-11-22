@@ -1,4 +1,4 @@
-import { describeFrames } from "../shared/test-support";
+import { describeFrames, describeInboxLabel } from "../shared/test-support";
 import { ESCAPE_LIVE_FRAMES } from "./live/screens";
 import { ESCAPE_FRAMES } from "./names";
 
@@ -17,3 +17,4 @@ const SHOWS: Record<string, string[]> = {
 const DRAWN: readonly string[] = ESCAPE_FRAMES.filter((name) => !(ESCAPE_LIVE_FRAMES as readonly string[]).includes(name));
 
 describeFrames("Escape frames still drawn (Crew Designs v20 and v79)", DRAWN, SHOWS);
+describeInboxLabel(DRAWN);

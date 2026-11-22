@@ -3,6 +3,7 @@
 #![cfg(target_os = "macos")]
 
 use std::ffi::{c_char, c_int, c_void};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use objc2::AnyThread;
@@ -17,13 +18,19 @@ use screencapturekit::screenshot_manager::{CGImage, CGImageExt, SCScreenshotMana
 use screencapturekit::shareable_content::SCShareableContentInfo;
 
 use super::flow::{Captured, Capturer, Failure};
+use super::setup::SetupPlatform;
 use super::state::{Permissions, PlatformFacts};
 
 const NEEDS_MACOS_14: &str = "Snap Shot needs macOS 14 or newer.";
+const SCREEN_RECORDING_SETTINGS: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
+    // SAFETY: takes no arguments, touches no memory, and only asks macOS to show the one
+    // Screen Recording prompt for this process.
+    fn CGRequestScreenCaptureAccess() -> bool;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -79,6 +86,36 @@ fn screen_recording_granted() -> bool {
 fn accessibility_granted() -> bool {
     // SAFETY: the function takes nothing and only reads the Accessibility grant.
     unsafe { AXIsProcessTrusted() }
+}
+
+pub fn setup_platform() -> impl SetupPlatform {
+    MacSetup
+}
+
+struct MacSetup;
+
+impl SetupPlatform for MacSetup {
+    fn screen_recording_granted(&self) -> bool {
+        screen_recording_granted()
+    }
+
+    fn request_screen_recording(&self) {
+        // SAFETY: the function takes nothing and touches no memory; it only asks macOS to
+        // show the Screen Recording prompt for this process.
+        unsafe {
+            CGRequestScreenCaptureAccess();
+        }
+    }
+
+    fn open_screen_recording_settings(&self) {
+        // Best effort: the state answer still reports the grant. The argument is fixed here,
+        // never built from page input, and there is no shell.
+        let _ = Command::new("/usr/bin/open")
+            .arg(SCREEN_RECORDING_SETTINGS)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
 pub fn facts() -> PlatformFacts {

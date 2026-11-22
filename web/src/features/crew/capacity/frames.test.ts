@@ -1,4 +1,4 @@
-import { describeFrames } from "../shared/test-support";
+import { describeFrames, describeInboxLabel } from "../shared/test-support";
 import { CAPACITY_FRAMES } from "./names";
 
 /** What each frame must show: text taken from its design. */
@@ -24,3 +24,4 @@ const SHOWS: Record<string, string[]> = {
 };
 
 describeFrames("Review capacity frames (Crew Designs v21, with the settings and coverage frames at v77)", CAPACITY_FRAMES, SHOWS);
+describeInboxLabel(CAPACITY_FRAMES);

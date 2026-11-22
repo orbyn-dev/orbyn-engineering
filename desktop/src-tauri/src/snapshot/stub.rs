@@ -4,6 +4,7 @@
 #![cfg(not(target_os = "macos"))]
 
 use super::flow::{Captured, Capturer, Failure};
+use super::setup::SetupPlatform;
 use super::state::{Permissions, PlatformFacts};
 
 pub fn facts() -> PlatformFacts {
@@ -16,6 +17,22 @@ pub fn facts() -> PlatformFacts {
             accessibility: false,
         },
     }
+}
+
+pub fn setup_platform() -> impl SetupPlatform {
+    StubSetup
+}
+
+struct StubSetup;
+
+impl SetupPlatform for StubSetup {
+    fn screen_recording_granted(&self) -> bool {
+        false
+    }
+
+    fn request_screen_recording(&self) {}
+
+    fn open_screen_recording_settings(&self) {}
 }
 
 pub fn capturer(_own_bundle_id: &str) -> Box<dyn Capturer> {
@@ -35,6 +52,9 @@ impl Capturer for StubCapturer {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
+    use super::super::SnapShot;
     use super::*;
 
     #[test]
@@ -51,5 +71,22 @@ mod tests {
             capturer.capture_frontmost(&|_, _| false),
             Err(Failure::CaptureError)
         ));
+    }
+
+    #[test]
+    fn the_stub_setup_does_nothing_and_answers_the_unsupported_state() {
+        let platform = setup_platform();
+        assert!(!platform.screen_recording_granted());
+        platform.request_screen_recording();
+        platform.open_screen_recording_settings();
+        assert!(!platform.screen_recording_granted());
+
+        let snapshot = SnapShot::default();
+        let state = snapshot
+            .allow_screen_recording_with(&platform, facts, Instant::now())
+            .expect("the setup lock is free");
+        assert!(!state.supported);
+        assert!(!state.permissions.screen_recording);
+        assert!(!state.permissions.accessibility);
     }
 }

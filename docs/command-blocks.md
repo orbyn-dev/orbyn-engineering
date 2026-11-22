@@ -1,9 +1,10 @@
 # Command blocks (W1)
 
-What the terminal drawer needs from the service to show one block per command. **Service built, web hidden**: the service keeps,
-redacts and serves blocks through the two routes below; the web side is built hidden and in a production build has no client, so the
-terminal is unchanged. A dev-only preview (`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here
-change only if the service pull request says so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
+What the terminal drawer needs from the service to show one block per command. **Service built, web client wired**: the service keeps,
+redacts and serves blocks through the two routes below, and `blocksClient.ts` reads them in production. A shell that emits no marks
+answers an empty list, and the drawer then draws the terminal exactly as it does without blocks. A dev-only preview
+(`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here change only if the service pull request says
+so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
 
 ## What the service keeps
 
@@ -83,18 +84,21 @@ terminal output stream does. Neither writes. There is **no** service-side run, r
 | Copy command | The web | The block's `command`, as text. Disabled when it is null. |
 | Run again | The web, over the terminal socket | **A click writes the command text into the terminal's input and nothing more.** No newline is added, so the shell shows the line and waits; the person presses Enter in the terminal. It is the same write path the terminal already has (`/ws/terminal/{thread}/{terminal}`, the Person-class connection that carries typing). It never calls a service route, and the service never runs a block's command on its own. A command that is empty, longer than 4096 characters or holds a newline or control character is not written. |
 | Stop | The web, over the terminal socket | Writes Ctrl-C, as the drawer's Stop does today. |
+| Filter output | The web, per block | A bar under the block's header keeps the lines of the text the block already holds that contain the typed text (plain text, case-insensitive, never a pattern) and says how many of the block's lines remain, such as `1 of 7 lines`; the block's own line numbers are not shown. Show all and Esc clear it, and collapsing the block drops it. It calls no route; a running block filters only the text its live view holds. |
+| Find in output | The web, per block | A bar under the block's header marks every match in the held output, with the current one filled, and shows a count, Previous and Next. Enter goes to the next match and Shift+Enter to the previous; with no match the bar says `No matches` and keeps the field's text. It binds no global shortcut. It calls no route; a running block sees only the text its live view holds. |
 
 The service cannot tell a rerun from typing, which is the point: the line is the person's to run.
 
-Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Filter, Find, Run again in a new tab, Clear
-all blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
+Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Run again in a new tab, Clear all
+blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
 Products Research, not something the web invents.
 
 ## Security
 
 - **Output is untrusted terminal text.** A program can print anything: markup, escape sequences, a fake prompt, a link. The web draws
   it as text in a `pre`, never as HTML, never as a link, never evaluates it. It strips escape sequences and control characters before
-  drawing and before copying, and caps what it keeps in memory (see `web/src/features/panels/terminal/blocks/blockText.ts`).
+  drawing and before copying, and caps what it keeps in memory (see `web/src/features/panels/terminal/blocks/blockText.ts`). Find marks
+  are built from string offsets as React text nodes and `<mark>` elements; no HTML is parsed, inserted or evaluated.
 - **The service redacts, the web does not trust that it did.** The service runs its secret rules (the Redactor, per the `redact-*`
   frames) over both `command` and the output text **before** it stores them and again before it answers, so a secret printed by a
   command is never in the list or the output. The hook is a single function in the block store, `redact(text) -> text`, so the rule set
@@ -103,9 +107,9 @@ Products Research, not something the web invents.
   terminal's own output, so any program or `cat file` can forge them: a failing build can show exit 0 and a Run again line can be
   chosen by a file's content. The web shows the command before Run again and never sends Enter; treat `exit_code` as advisory until
   the shell integration passes a nonce (not built). A flood of forged `C` marks can fill the 500-block cap and evict real history.
-- **Live output lags one line.** The last line of a running block is held back until its newline or the block's end, so a command that
-  prints "Compiling..." and waits shows it only with the next line; `output_bytes` does not count it either. A prompt with no newline
-  does not show in the block until the command ends.
+- **Only a partial last line is held back.** A complete line of a running block is readable as soon as its newline arrives, and
+  `output_bytes` counts it, so a command that prints "Compiling..." and then waits shows that line before it ends. A last line with no
+  newline yet (a prompt, a progress line) stays pending until its newline arrives or the command ends.
 - The working directory (`cwd`) is redacted like the command.
 - **A terminal that carries a workflow run's env values keeps no blocks.** Those values are masked on the output stream after the block
   parser reads it, so the parser never records such a terminal (tested: `a_terminal_with_run_secrets_keeps_no_command_blocks`).
@@ -118,16 +122,25 @@ Products Research, not something the web invents.
 
 ## Web side
 
-`web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the typed client interface, `blocksApi()` is null in production),
-`blockText.ts` (cleaning, caps, durations), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks), `CommandBlocksPreview.tsx`
-(the dev-only screen). The mock, `web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the
-build if its marker or the route appears.
+`web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the client contract and default: `blocksApi()` answers the
+production client, and `setBlocksApi(null)` puts it back), `blocksTypes.ts` (the block, page and limit shapes), `blocksClient.ts` (the
+production client for both routes: every path segment and cursor encoded, the session header and no person key, `410` as
+`cursor_expired`, and a `404` list as an empty list),
+`readOutput.ts` (every output page, started again from the top once after `410`), `blockText.ts` (cleaning, caps, durations, the
+case-insensitive plain-text line filter and match finder), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks, the filter and
+find bars of `block-filter` and `block-find`, and their header controls), `CommandBlocksPreview.tsx` (the dev-only screen). Filter and
+Find run in the web over the text `readBlockOutput` already returned: they call no route, draw matches as text nodes and `<mark>`
+elements, and the preview mock exercises both. The real client draws
+nothing until it has blocks: an empty list, a `404` and any other list failure leave the terminal exactly as it was, with no empty state
+and no error. Only the preview mock (and tests that install a client) shows the loading, empty and error frames. The mock,
+`web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the
+route appears.
 
 ## Decisions
 
 The service side of #974 is built in `crates/orbyn-core/src/host/blocks/` (parser, store, text) and
-`crates/orbynd/src/routes/blocks.rs`, with module tests and a service test in `crates/orbynd/tests/command_blocks.rs`. The web stays
-hidden.
+`crates/orbynd/src/routes/blocks.rs`, with module tests and a service test in `crates/orbynd/tests/command_blocks.rs`. The web reads
+them through the production client above.
 
 1. **Routes stay as written.** `GET /api/threads/{id}/terminals/{terminal}/blocks?before=&limit=` and
    `GET .../blocks/{block_id}/output?after=&limit=` are both Local reads, like the neighbouring terminal reads. Neither writes. There
