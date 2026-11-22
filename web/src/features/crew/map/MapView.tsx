@@ -134,7 +134,7 @@ function CrewMap({ crew }: { crew: string }) {
               </svg>
               talking to
             </span>
-            <span>“live” means handed to a turn in progress (not for an engine that can’t be steered mid-turn); “next turn” means queued, or sent with the next prompt</span>
+            <span>“live” means handed to a turn in progress or to a waiting crew_ask call; “next turn” means queued, or sent with the next prompt</span>
           </div>
         </div>
         )}

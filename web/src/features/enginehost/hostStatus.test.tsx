@@ -160,7 +160,7 @@ it("an unknown state is only a chip: no line and no action on the list, only the
   for (const left of ["Host", "Engine SDK", "It can", "Last error", "Action"]) expect(within(card).queryByText(left)).toBeNull();
 });
 
-it("says how many times a host restarted from the count the service sends, and reads no try number or limit", async () => {
+it("reads the try, limit and wait the service sends for a restarting host", () => {
   const one = toHostRow(status({ family: "codex", state: "restarting", restart_count: 1 }))!;
   const two = toHostRow(status({ family: "codex", state: "restarting", restart_count: 2 }))!;
   const none = toHostRow(status({ family: "codex", state: "restarting" }))!;
@@ -169,7 +169,27 @@ it("says how many times a host restarted from the count the service sends, and r
   expect(stateLine(two)).toBe("Waiting to start it again. Restarted 2 times since Orbyn started.");
   expect(stateLine(none)).toBe("Waiting to start it again.");
   expect(processLine(two, Date.now())).toBe("Restarting · restarted 2 times");
-  // A service that sent a try and a limit in the future is not read until the contract has them.
-  const sent = toHostRow({ ...status({ family: "codex", state: "restarting", restart_count: 2 }), restart: { attempt: 3, limit: 5 } } as never)!;
-  expect(stateLine(sent)).toBe("Waiting to start it again. Restarted 2 times since Orbyn started.");
+  const sent = toHostRow({ ...status({ family: "codex", state: "restarting", restart_count: 2 }), restart: { attempt: 3, limit: 5, next_try_seconds: 4 } } as never)!;
+  expect(sent.restart).toEqual({ attempt: 3, limit: 5, next_try_seconds: 4 });
+  expect(stateLine(sent)).toBe("Restart 3 of 5 · next try in 4 s");
+  expect(processLine(sent, Date.now())).toBe("Restarting · try 3 of 5 · next try in 4 s");
+});
+
+it("maps the host hello and the run fallback the service now sends", () => {
+  const local = (hours: number, minutes: number) => new Date(2026, 10, 21, hours, minutes).toISOString();
+  const row = toHostRow(status({
+    family: "claude", state: "running", since: local(9, 12), pooled: true,
+    sdk: { name: "@anthropic-ai/claude-agent-sdk", version: "0.3.321" },
+    capabilities: ["steer", "fork"], has_driver: true,
+  }))!;
+  expect(row).toMatchObject({
+    since: local(9, 12), pooled: true, has_driver: true,
+    sdk: { name: "@anthropic-ai/claude-agent-sdk", version: "0.3.321" },
+    capabilities: ["steer", "fork"],
+  });
+  expect(stateLine(row, new Date(local(10, 0)))).toBe("Since 09:12 today");
+  expect(processLine(row, Date.parse(local(9, 22)))).toBe("Running 10 min · shared by every Claude Code thread");
+  expect(toHostRow(status({ family: "cursor", state: "cant_start", sdk_missing: true, stops_in_window: 5 }))).toMatchObject({
+    sdk_missing: true, stops_in_window: 5,
+  });
 });

@@ -243,6 +243,7 @@ const handlers = {
     return { engineSessionId: r.engineSessionId ?? `eng-${r.sessionId}` };
   },
   send: (r) => {
+    if (env.STANDIN_SDK_MISSING) throw new Error("The Claude Agent SDK is not available in this build.");
     const text = String(r.message);
     if (family === "acp") {
       const engineSessionId = `acp-${r.sessionId}`;

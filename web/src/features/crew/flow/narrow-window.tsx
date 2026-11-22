@@ -15,9 +15,9 @@ export function FlowNarrowWindow() {
               <b style={{ fontWeight: 500, color: "var(--color-text)", fontSize: "15px" }}>Use next in the auth redirect</b>
               <span className="cx-fbadge">Round 1</span>
               <span className="cx-fbadge">verifying</span>
-              <span className="cx-end" style={{ marginLeft: "auto", display: "flex", gap: "8px" }}><Btn className="cx-ghost" style={{ height: "26px", padding: "0 10px", color: "var(--color-muted)" }} title="Available when the write route ships">Cancel</Btn><Btn className="cx-ghost" style={{ height: "26px", padding: "0 10px", color: "var(--color-muted)" }} title="Available when the write route ships">Re-run checks</Btn></span>
+              {/* A task’s own Cancel is on and Re-run checks off while it verifies; both are built and each asks first. The preview keeps every control disabled. */}
+              <span className="cx-end" style={{ marginLeft: "auto", display: "flex", gap: "8px" }}><Btn className="cx-ghost" style={{ height: "26px", padding: "0 10px", opacity: 1 }}>Cancel</Btn><Btn className="cx-ghost" style={{ height: "26px", padding: "0 10px" }}>Re-run checks</Btn></span>
             </div>
-            <div style={{ padding: "6px 14px 0", color: "var(--color-muted)", fontSize: "11.5px", flex: "none" }}>Cancel and Re-run checks: Available when the write route ships</div>
             <div className="cx-fsm cx-c" style={{ flex: "none" }}>
               <div className="cx-row">
                 <Ic n="right" sm />

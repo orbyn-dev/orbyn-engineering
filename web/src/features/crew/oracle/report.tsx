@@ -32,10 +32,11 @@ export function OracleReport() {
                 <b>Claims</b>
                 <span>5 claims · 4 verified · 1 unverified</span>
                 <span className="cx-le">
-                  <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}><Ic n="refresh" sm />Run all again</Btn>
+                  <Btn className="cx-ghost" style={{ height: "26px", fontSize: "12px" }}><Ic n="refresh" sm />Run all again<span className="cx-cwpv">Planned</span></Btn>
                   <Btn className="cx-btn" style={{ height: "26px", fontSize: "12px" }}><Ic n="plus" sm />Add a check</Btn>
                 </span>
               </div>
+              <div style={{ padding: "0 14px 8px", color: "var(--color-muted)", fontSize: "11.5px" }}>The app has no Report page yet; a task’s Re-run checks is built and asks first.</div>
               <div className="cx-clm">
                 <span className="cx-cmi cx-cok"><Ic n="ok" sm /></span>
                 <div className="cx-cmt">

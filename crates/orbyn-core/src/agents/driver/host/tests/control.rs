@@ -188,6 +188,16 @@ async fn the_status_names_the_threads_working_and_the_kind_of_the_last_failure()
 }
 
 #[tokio::test]
+async fn a_host_that_answers_the_sdk_is_missing_is_reported_on_the_status() {
+    let Some(rig) = standin(&[("STANDIN_SDK_MISSING", "1")], fast()) else {
+        return;
+    };
+    assert!(start(&rig.driver(), spec("hi")).await.is_err());
+    assert!(rig.pool.status().await.sdk_missing);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_run_the_person_cancelled_leaves_the_last_error_alone_whatever_the_engine_called_its_end()
 {
     use crate::agents::driver::host::ErrorKind;
