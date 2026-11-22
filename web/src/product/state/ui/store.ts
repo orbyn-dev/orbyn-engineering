@@ -15,6 +15,7 @@ import {
   type ThreadNavigationOrigin,
   type ToastAction,
   type ToastKind,
+  type ToastOptions,
 } from "./types";
 import { fileTabId, type FileTarget } from "./fileTab";
 import { PREFS_KEY, currentLayout, defaults, layoutDefaults, withLayout } from "./defaults";
@@ -45,8 +46,8 @@ interface UiState extends Prefs {
   palette: PaletteStart | null;
   setPalette(palette: PaletteStart | null): void;
   lastThreadId: string | null;
-  toasts: { id: number; text: string; kind?: ToastKind; action?: ToastAction }[];
-  pushToast(text: string, kind?: ToastKind, action?: ToastAction): void;
+  toasts: { id: number; text: string; kind?: ToastKind; action?: ToastAction; busy?: boolean }[];
+  pushToast(text: string, kind?: ToastKind, action?: ToastAction, options?: ToastOptions): number;
   dismissToast(id: number): void;
   /** The open welcome step, or null; not saved, so it lasts while the app runs. */
   welcomeStep: number | null;
@@ -149,10 +150,12 @@ export const useUi = create<UiState>((set, get) => {
     },
     lastThreadId: null,
     toasts: [],
-    pushToast(text, kind, action) {
+    pushToast(text, kind, action, options) {
       const id = ++toastCounter;
-      set((state) => ({ toasts: [...state.toasts, { id, text, kind, ...(action ? { action } : {}) }] }));
-      setTimeout(() => get().dismissToast(id), TOAST_MS);
+      const busy = options?.busy === true;
+      set((state) => ({ toasts: [...state.toasts, { id, text, kind, ...(action ? { action } : {}), ...(busy ? { busy } : {}) }] }));
+      if (!busy) setTimeout(() => get().dismissToast(id), options?.durationMs ?? TOAST_MS);
+      return id;
     },
     dismissToast(id) {
       set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) }));

@@ -10,6 +10,7 @@
 .rp-banner { border: 1px solid var(--color-dangerBorder); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .rp-sec { display: flex; flex-direction: column; gap: 6px; }
 .rp-sec h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--color-text); }
+.rp-sec h4 { margin: 4px 0 0; font-size: 13px; font-weight: 500; color: var(--color-text); }
 .rp-sec p, .rp-sec li, .rp-sec dd { margin: 0; font-size: 13px; }
 .rp-sec ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
 .rp-sec dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }

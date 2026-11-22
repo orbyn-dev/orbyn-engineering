@@ -652,14 +652,14 @@ describe("App against the mock API", () => {
     render(<App />);
     expect(await screen.findByText("Couldn't load providers")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("button", { name: "Claude Code" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Claude (SDK)" })).toBeInTheDocument();
   });
 
   it("confirms an engine update and refuses during an active run", async () => {
     const user = userEvent.setup();
     go("#/settings/providers");
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Claude Code" }));
+    await user.click(await screen.findByRole("button", { name: "Claude (SDK)" }));
     await user.click(await screen.findByRole("button", { name: "Update to 2.1.20" }));
     const dialog = await screen.findByRole("dialog", { name: "Update Claude Code?" });
     expect(within(dialog).getByText("npm install -g @anthropic-ai/claude-code")).toBeInTheDocument();
@@ -862,6 +862,8 @@ describe("App against the mock API", () => {
     const behind = container.querySelector(".main-view");
     expect(behind).not.toBeNull();
     expect(behind).toHaveAttribute("hidden");
+    // Not inert: the theme editor's element picker shows this page again and cannot point at inert content.
+    expect(behind).not.toHaveAttribute("inert");
     expect(behind?.childElementCount).toBeGreaterThan(0);
   });
 

@@ -10,6 +10,10 @@
 //! For a Claude worker it also denies reading and writing Claude's saved conversations
 //! (`<config>/projects`) except the worker's own session, so the lead's transcript is closed.
 //!
+//! A Codex worker gets its own Codex home under the data folder, holding only a copy of the
+//! API-key login. The real Codex home (`CODEX_HOME` or `~/.codex`) is a closed folder, so a
+//! worker cannot read the person's own sessions or credentials there.
+//!
 //! What this does not cover is listed in `docs/crew.md`: the network and the loopback service,
 //! the OS keychain, the engine's own login folders, other engines' saved conversations, and
 //! other same-user files.
@@ -22,6 +26,10 @@ use orbyn_contracts::EngineTier;
 use super::process::ResolvedCommand;
 use crate::error::{CoreError, Result};
 
+mod codex;
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use codex::home_path;
+pub(crate) use codex::{remove_codex_home, sweep_codex_homes};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -32,17 +40,16 @@ mod unsupported;
 #[cfg(not(target_os = "macos"))]
 use unsupported as platform;
 
-/// Whether a Codex engine may run a crew worker. Codex starts its own Seatbelt profile for
-/// each command, and a profile cannot be started inside another, so until that is checked
-/// the core refuses it. Flip this one constant once it is, and once Codex's own saved
-/// conversations are closed: its `thread/start` writes rollout files under `sessions/` only on
-/// the first turn (so a worker's own file cannot be named at launch), and 0.166 keeps threads
-/// and logs in SQLite files under its home too, which a path rule cannot split per thread.
+/// Whether a Codex engine may run a crew worker. While false, both the router and the run
+/// start refuse Codex workers. The design is built and tested behind this constant: a
+/// confined Codex worker gets its own home per task (`<data>/crew/codex-homes/<task>`), the
+/// real Codex home is closed in the profile, and Codex's own sandbox is turned off inside
+/// Orbyn's (it cannot nest). Flip this one line only after the real-Mac probe passes.
 pub const CODEX_WORKERS_ALLOWED: bool = false;
 
 /// The one line a person sees when a worker is refused because no restriction can be applied.
 pub const UNSUPPORTED_PLATFORM: &str = "Crew runs on macOS in the beta; Windows later.";
-const CODEX_REFUSED: &str = "Crew workers on Codex are not available yet.";
+pub(crate) const CODEX_REFUSED: &str = "Crew workers on Codex are not available yet.";
 const TERMINAL_REFUSED: &str =
     "A terminal engine cannot take a crew task, because Orbyn cannot restrict it.";
 
@@ -62,6 +69,12 @@ pub struct Confinement {
     pub allow_exec: Vec<PathBuf>,
     /// The engine's saved conversations, when the engine is one Orbyn can close them for.
     pub transcripts: Option<Transcripts>,
+    /// Other folders closed whole, such as the real Codex home. Denied after every allowance,
+    /// and every folder above them is protected from a rename, as for the data folder.
+    pub closed: Vec<PathBuf>,
+    /// The worker's own Codex home, when this is a Codex worker: inside `data`, writable, and
+    /// the only Codex home the engine may see.
+    pub codex_home: Option<PathBuf>,
 }
 
 /// Where an engine keeps its saved conversations, and the one session the worker owns. Every
@@ -103,6 +116,8 @@ impl Confinement {
             allow_write: Vec::new(),
             allow_exec: Vec::new(),
             transcripts: None,
+            closed: Vec::new(),
+            codex_home: None,
         };
         for path in allow_read {
             let path = inside(&confinement.data, canonical(path)?)?;
@@ -146,6 +161,61 @@ impl Confinement {
     /// a link); one that exists resolves as for a Claude worker.
     pub fn with_closed_claude_folder(self, projects: &Path) -> Result<Self> {
         self.with_transcripts(Transcripts::closed(projects)?)
+    }
+
+    /// Closes another folder whole. The real Codex home is one: the worker's own home is
+    /// elsewhere, so nothing there needs an allowance.
+    pub fn with_closed_folder(mut self, folder: &Path) -> Result<Self> {
+        let folder = canonical(folder)?;
+        if self.data.starts_with(&folder) || folder.starts_with(&self.data) {
+            return Err(CoreError::EngineUnavailable(format!(
+                "A crew worker could not be restricted: {} overlaps Orbyn's data folder.",
+                folder.display()
+            )));
+        }
+        if !self.closed.contains(&folder) {
+            self.closed.push(folder);
+        }
+        Ok(self)
+    }
+
+    /// Gives a Codex worker its own home under `data`, copies the API-key login into it, and
+    /// closes the real Codex home. The auth rule runs before any folder is made, so a
+    /// ChatGPT sign-in leaves only the refusal.
+    pub fn with_codex_worker_home(self, task: &str) -> Result<Self> {
+        let (real, others) = codex::real_codex_homes()?;
+        let mut rules = self;
+        for folder in &others {
+            rules = rules.with_closed_folder(folder)?;
+        }
+        rules.with_codex_worker_home_at(task, &real)
+    }
+
+    /// [`Self::with_codex_worker_home`] with the real home given, for tests and for a caller
+    /// that already resolved it.
+    pub fn with_codex_worker_home_at(mut self, task: &str, real_home: &Path) -> Result<Self> {
+        // Validate the closed folder before the auth copy, so a real home inside the data
+        // folder leaves no home behind.
+        self = self.with_closed_folder(real_home)?;
+        let home = codex::prepare_home(&self.data, task, real_home)?;
+        if !self.allow_write.contains(&home) {
+            self.allow_write.push(home.clone());
+        }
+        codex::check_private_home(&self.data, &home, &self.closed)?;
+        self.codex_home = Some(home);
+        Ok(self)
+    }
+
+    /// The private Codex home this worker may use. A Codex worker never starts without one,
+    /// and a home that escaped its private folder is an error, never a run.
+    pub fn codex_home(&self) -> Result<&Path> {
+        let home = self.codex_home.as_deref().ok_or_else(|| {
+            CoreError::EngineUnavailable(
+                "A Codex worker cannot start without its private Codex home.".into(),
+            )
+        })?;
+        codex::check_private_home(&self.data, home, &self.closed)?;
+        Ok(home)
     }
 
     fn with_transcripts(mut self, transcripts: Transcripts) -> Result<Self> {
@@ -454,5 +524,7 @@ pub fn worker_refusal(tier: EngineTier, family: &str) -> Option<WorkerRefusal> {
     })
 }
 
+#[cfg(test)]
+mod codex_tests;
 #[cfg(test)]
 mod tests;

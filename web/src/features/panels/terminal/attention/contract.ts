@@ -1,12 +1,16 @@
 /**
- * CLI-agent attention (parity G14 extended, W10), built hidden. The service does not detect a waiting engine console yet; the event it
- * will send is written in docs/cli-agent-attention.md. `attentionApi()` answers `null` in a production build, so nothing subscribes,
- * no Needs you item is drawn and no notification is raised. The mock lives in web/mock/attention.ts and is installed only by the
- * dev-only preview page (`#/preview/attention`).
+ * CLI-agent attention (parity G14 extended, W10). The service detects an engine console that waits for the person and writes a `CUSTOM`
+ * event on the thread's log (docs/cli-agent-attention.md). In the app `attentionApi()` is the service client (`client.ts`), which
+ * reads the open items once for the threads with a terminal open in this window and once before following a thread after the shell
+ * stream announced it. The mock lives in web/mock/attention.ts and is installed only by the dev-only preview page
+ * (`#/preview/attention`) and by tests.
  */
 
-/** The AG-UI `CUSTOM` event name the service uses on the thread's event log. */
-export const ATTENTION_EVENT = "orbyn.terminal_attention";
+import { createServiceAttentionApi } from "./client";
+import { ATTENTION_EVENT, MAX_OPEN_ITEMS, type AttentionApi } from "./types";
+
+export type { AttentionApi, AttentionDelivery } from "./types";
+export { ATTENTION_EVENT };
 
 export const ATTENTION_KINDS = ["question", "yes_no", "secret"] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
@@ -23,7 +27,7 @@ export interface AttentionWaiting {
   /** Engine family id, such as `claude` or `codex`. */
   engine: string;
   kind: AttentionKind;
-  /** When the terminal last printed (epoch milliseconds, parsed from RFC 3339). */
+  /** When the terminal last printed (epoch milliseconds, parsed from the RFC 3339 string on the wire). */
   since: number;
   /** The last lines, cleaned and capped. For a secret, only the prompt's label. Text, never markup. */
   excerpt: string[];
@@ -37,16 +41,8 @@ export interface AttentionClear {
 
 export type TerminalAttentionEvent = AttentionWaiting | AttentionClear;
 
-/** One thread-log event as the stream delivers it. `event` is untrusted until `parseAttention` accepts it. */
-export interface AttentionDelivery {
-  seq: number;
-  ts: string;
-  thread_id: string;
-  event: unknown;
-}
-
 /** Limits, in step with docs/cli-agent-attention.md. */
-export const LIMITS = { idChars: 64, titleChars: 80, engineChars: 40, lines: 6, lineChars: 200, excerptChars: 1000, labelChars: 80, entries: 64 } as const;
+export const LIMITS = { idChars: 64, titleChars: 80, engineChars: 40, lines: 6, lineChars: 200, excerptChars: 1000, labelChars: 80, entries: 64, openItems: MAX_OPEN_ITEMS } as const;
 
 /** One waiting episode of one terminal, as the web keeps it. */
 export interface AttentionEntry {
@@ -67,16 +63,16 @@ export interface AttentionEntry {
   cleared: { reason: ClearReason; at: number } | null;
 }
 
-export interface AttentionApi {
-  /** Events for every thread the person can open. Returns the function that stops them. Reads only. */
-  subscribe(onEvent: (delivery: AttentionDelivery) => void): () => void;
+let current: AttentionApi | null = null;
+let service: AttentionApi | null = null;
+
+/** The installed test or preview client, else the service client. */
+export function attentionApi(): AttentionApi {
+  service ??= createServiceAttentionApi();
+  return current ?? service;
 }
 
-let current: AttentionApi | null = null;
-
-export const attentionApi = (): AttentionApi | null => current;
-
-/** Tests and the dev-only preview install a client here; `null` puts back the production default, which sends nothing. */
+/** Tests and the dev-only preview install a client here; `null` puts back the service client. */
 export function setAttentionApi(next: AttentionApi | null): void {
   current = next;
 }

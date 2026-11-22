@@ -21,6 +21,13 @@ describe("the dev-only route", () => {
 });
 
 describe("the preview page", () => {
+  it("provides the mock's open-items fixture, secret text as its label only", async () => {
+    const { createAttentionMock } = await import("../../../../../mock/attention");
+    const many = await createAttentionMock({ scenario: "many" }).openItems("preview");
+    expect(many.items).toHaveLength(3);
+    const secret = await createAttentionMock({ scenario: "secret" }).openItems("preview");
+    expect(secret.items).toEqual([expect.objectContaining({ op: "waiting", kind: "secret", excerpt: ["Password:"] })]);
+  });
   it("shows the default item from the mock and types nothing", async () => {
     window.location.hash = "#/preview/attention";
     render(<AttentionPreview />);

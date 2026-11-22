@@ -6,7 +6,8 @@
  * schema (MIT, 9168ca73d, names only) in snake_case.
  *
  * The thread Git actions send the existing thread routes with an optional `repo_id` (`GitAction.repo_id`). Removing a repository from
- * a thread is not in the beta, so there is no call for it. Pull request routes take no `repo_id` yet, so no merge or review is offered here.
+ * a thread is `removeThreadRepo`. The thread pull request routes take an optional `repo_id` too (`pullsApi`), so each repository's pull request,
+ * review and merge are offered in its own Git menu.
  *
  * Nothing here can carry a secret. Names, paths, URLs and branch names are text from the disk or a remote: untrusted. Render
  * them as text only, never as a link, a command or markup.
@@ -48,7 +49,7 @@ export interface PublishInput {
 /**
  * One Git action on ONE repository of a thread; no action spans repositories. Each is `POST .../git/action`, whose body (`GitAction`)
  * takes an optional `repo_id` (docs/multi-repo.md, "As built: repo_id on Git and file calls"). Merge and review are NOT here: the
- * pull request routes take no `repo_id` yet and act on the primary repository, so a menu for another repository must not offer them.
+ * Git menu runs them through the pull request routes (`?repo_id=`, `RepoPullDialogs.tsx`), which answer errors in their own dialog.
  * There is no pull (fetch) action: the document defines none.
  */
 export type ThreadGitAction =
@@ -90,6 +91,11 @@ export interface ReposApi {
   taskFolder(threadId: string, signal?: AbortSignal): Promise<TaskFolder | null>;
   /** Adds one trusted repository of the project to the thread. */
   addThreadRepo(threadId: string, repoId: string): Promise<ThreadRepo>;
+  /**
+   * Takes one repository out of the thread (`DELETE /api/threads/{id}/repos/{repo_id}`, Person-class, `204`). Never the primary
+   * repository. `400` "Commit or discard its changes first" when its worktree holds changes; the message is the person's to read.
+   */
+  removeThreadRepo(threadId: string, repoId: string): Promise<void>;
   /**
    * One Git action in one repository of the thread. `repoId` is `null` for the project's primary repository: `repo_id` is then left
    * out and the service uses the primary. A repository that is not the thread's is `404 not_found`; an untrusted one is `409 repo_untrusted`.

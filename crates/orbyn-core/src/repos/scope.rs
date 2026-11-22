@@ -28,9 +28,30 @@ fn wanted() -> Option<String> {
 const MAX_FILES: usize = 200;
 
 impl Core {
+    /// The repository a pull request link of this thread belongs to: the one asked for, else the thread's own
+    /// project, which is its primary repository. `scoped_thread` is what checks the repository exists.
+    pub fn pull_repo(&self, thread_id: &str) -> Result<String> {
+        match wanted() {
+            Some(repo_id) => Ok(repo_id),
+            None => Ok(self.store.thread(thread_id)?.project_id),
+        }
+    }
+
+    /// The repository id a diff of this thread names on its files: the one asked for, else the primary. `None` for
+    /// an ordinary thread, whose files name no repository.
+    pub fn diff_repo(&self, thread_id: &str, asked: Option<&str>) -> Result<Option<String>> {
+        if !self.config.multi_repo || self.store.thread_repos(thread_id)?.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(match asked {
+            Some(id) => id.to_owned(),
+            None => self.store.thread(thread_id)?.project_id,
+        }))
+    }
+
     /// The thread as stored, with `cwd` set to the worktree of the repository asked for. An untrusted repository
     /// is refused here, so no new entry point can reach one.
-    pub(crate) fn scoped_thread(&self, id: &str) -> Result<Thread> {
+    pub fn scoped_thread(&self, id: &str) -> Result<Thread> {
         let mut thread = self.store.thread(id)?;
         let asked = wanted();
         if asked.is_some() && !self.config.multi_repo {
@@ -86,6 +107,11 @@ impl Core {
             } else {
                 (0, 0, None)
             };
+            let pull_request = self
+                .store
+                .linked_pulls(thread_id, &record.repo_id)?
+                .into_iter()
+                .max_by_key(|pull| (pull.state == "open", pull.number));
             out.push(ThreadRepo {
                 repo_id: record.repo_id,
                 name: record.name,
@@ -94,6 +120,7 @@ impl Core {
                 deleted,
                 trusted,
                 files,
+                pull_request,
             });
         }
         Ok(out)

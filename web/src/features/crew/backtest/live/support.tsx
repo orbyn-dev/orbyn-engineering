@@ -3,6 +3,9 @@ import type { Project } from "../../../../api/types";
 import type { BacktestEstimate } from "../../../../generated/BacktestEstimate";
 import type { BacktestLaneRun } from "../../../../generated/BacktestLaneRun";
 import type { BacktestRun } from "../../../../generated/BacktestRun";
+import type { BacktestStartLane } from "../../../../generated/BacktestStartLane";
+import type { BacktestStartRun } from "../../../../generated/BacktestStartRun";
+import type { BacktestStartView } from "../../../../generated/BacktestStartView";
 
 /** The project every backtest read names, as the mock's first project. */
 export const project = { id: "p-app", name: "orbyn-engineering", trusted: true, is_git: true, path: "/fixture/app" } as Project;
@@ -25,6 +28,7 @@ export const lane = (over: Partial<BacktestLaneRun> = {}): BacktestLaneRun => ({
   lane: "correctness",
   engine: "claude",
   model: "sonnet-5-5",
+  kind: "review",
   state: "done",
   tokens_used: 1_280_000,
   outcome: "scored",
@@ -54,11 +58,36 @@ export const run = (over: Partial<BacktestRun> = {}): BacktestRun => ({
   ...over,
 });
 
-export type Answer = { status: number; body?: unknown } | "never";
+export const startLane = (over: Partial<BacktestStartLane> = {}): BacktestStartLane => ({
+  lane: "correctness",
+  engine: "claude",
+  model: "sonnet-5-5",
+  kind: "review",
+  ...over,
+});
 
-const json = (answer: Answer): Response => {
-  if (answer === "never") return new Promise<Response>(() => undefined) as unknown as Response;
-  return new Response(answer.body === undefined ? null : JSON.stringify(answer.body), { status: answer.status });
+/** The run `start-view` reads back: the design's three review lanes and a budget for every engine. */
+export const startRun = (over: Partial<BacktestStartRun> = {}): BacktestStartRun => ({
+  id: "run-4n",
+  state: "finished",
+  lanes: [startLane(), startLane({ engine: "codex", model: "gpt-5-5" }), startLane({ lane: "security", engine: "opencode", model: "deepseek-v4" })],
+  budgets: [
+    { engine: "claude", tokens: 1_500_000 },
+    { engine: "codex", tokens: 1_000_000 },
+    { engine: "opencode", tokens: 500_000 },
+  ],
+  ...over,
+});
+
+export const startView = (over: Partial<BacktestStartView> = {}): BacktestStartView => ({ project: "p-app", run: startRun(), ...over });
+
+export type AnswerBody = { status: number; body?: unknown };
+export type Answer = AnswerBody | "never" | Promise<AnswerBody>;
+
+const json = async (answer: Answer): Promise<Response> => {
+  const settled = await answer;
+  if (settled === "never") return new Promise<Response>(() => undefined);
+  return new Response(settled.body === undefined ? null : JSON.stringify(settled.body), { status: settled.status });
 };
 
 /** The calls the screens made, with the request init, so a test can say which write was sent. */
@@ -66,7 +95,15 @@ export type Call = { url: string; init?: RequestInit };
 
 /** One fetch stub for the backtest screens: answer each route from `answers` and record every call. */
 export function stubFetch(
-  answers: { preview: Answer; projects: Answer; estimate?: Answer; report?: Answer; reportById?: Record<string, Answer> },
+  answers: {
+    preview: Answer;
+    projects: Answer;
+    estimate?: Answer;
+    startView?: Answer;
+    startViewById?: Record<string, Answer>;
+    report?: Answer;
+    reportById?: Record<string, Answer>;
+  },
   calls: Call[],
 ) {
   vi.stubGlobal(
@@ -76,6 +113,11 @@ export function stubFetch(
       calls.push({ url, init });
       if (url.startsWith("/api/projects")) return json(answers.projects);
       if (url.includes("/api/crew/preview")) return json(answers.preview);
+      const view = /\/api\/crew\/backtest\/start-view\?project=([^&]+)/.exec(url);
+      if (view) {
+        const byProject = answers.startViewById?.[decodeURIComponent(view[1] ?? "")];
+        return json(byProject ?? answers.startView ?? { status: 404, body: { code: "not_found", message: "No such route." } });
+      }
       const report = /\/api\/crew\/backtest\/([^/?]+)\/report/.exec(url);
       if (report) {
         const byId = answers.reportById?.[decodeURIComponent(report[1] ?? "")];

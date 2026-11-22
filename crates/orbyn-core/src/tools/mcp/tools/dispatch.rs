@@ -236,7 +236,7 @@ impl Core {
                 })
             }
             "orbyn_pull_list" => json!({
-                "linked": self.store.linked_pulls(&own.id)?,
+                "linked": self.store.linked_pulls(&own.id, &own.project_id)?,
                 "watched": self.thread_watches(&own.id)?,
             }),
             "orbyn_schedule_list" => {
@@ -579,7 +579,8 @@ impl Core {
             }
             "orbyn_pull_link" => json!(self.link_pull(&own.id, number(args, "number")?).await?),
             "orbyn_pull_unlink" => {
-                self.store.unlink_pull(&own.id, number(args, "number")?)?;
+                self.store
+                    .unlink_pull(&own.id, &own.project_id, number(args, "number")?)?;
                 json!({ "unlinked": true })
             }
             "orbyn_pull_watch" => json!(self.watch_pull(&own.id, number(args, "number")?)?),

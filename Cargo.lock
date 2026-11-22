@@ -2310,6 +2310,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
+ "image",
  "orbyn-contracts 0.1.0",
  "orbyn-core",
  "reqwest",

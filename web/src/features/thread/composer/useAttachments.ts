@@ -4,7 +4,7 @@ import type { Thread } from "../../../api/types";
 import { formatBytes } from "../../../lib/format";
 import { toFailure } from "../../../lib/useAsync";
 import type { ShownAttachment } from "./AttachmentStrip";
-import { conversionKindOf, photoConversionApi, type ConversionKind } from "./photoConversion";
+import { conversionKindOf, photoConversionApi, type ConversionKind, type ConvertedPhoto } from "./photoConversion";
 
 const REFUSALS: Record<string, string> = {
   unreadable_image: "Couldn’t convert this photo. It may be damaged.",
@@ -13,6 +13,14 @@ const REFUSALS: Record<string, string> = {
 
 const workingNote = (kind: ConversionKind, file: File) =>
   kind === "convert" ? "Converting photo…" : `Shrinking photo · ${formatBytes(file.size)}…`;
+
+/** What was done to a kept photo. `none` is not reached for a file this composer flags, but the contract allows it. */
+const doneNote = (done: Pick<ConvertedPhoto, "action" | "size" | "original_size">) =>
+  done.action === "converted"
+    ? `Converted to JPEG · ${formatBytes(done.size)}`
+    : done.action === "shrunk"
+      ? `Shrunk from ${formatBytes(done.original_size)} to ${formatBytes(done.size)}`
+      : `Ready · ${formatBytes(done.size)}`;
 
 /** The files on the shelf, each uploaded on its own. */
 export function useAttachments(thread: Thread, setError: (message: string | null) => void) {
@@ -44,9 +52,7 @@ export function useAttachments(thread: Thread, setError: (message: string | null
             conversion: {
               kind,
               phase: "converted",
-              note: done.action === "converted"
-                ? `Converted to JPEG · ${formatBytes(done.size)}`
-                : `Shrunk from ${formatBytes(done.original_size)} to ${formatBytes(done.size)}`,
+              note: doneNote(done),
             },
           });
         },

@@ -14,6 +14,7 @@ use tokio::sync::{broadcast, watch};
 
 use crate::credentials::EnvSecret;
 use crate::error::{CoreError, Result};
+use crate::host::blocks::{BlockStore, TerminalBlocks};
 use crate::host::process::ProcessTree;
 use crate::redaction::LiteralMasker;
 
@@ -96,11 +97,27 @@ pub struct PtySession {
     scrollback: Mutex<Scrollback>,
     exit: watch::Sender<Option<i32>>,
     output_state: watch::Sender<PtyOutputState>,
+    blocks: Option<Arc<TerminalBlocks>>,
+    /// The spec ran a coding engine, never a plain shell. W10 reads this so only an
+    /// engine console can report a wait.
+    engine: bool,
+    /// Counts writes to the child, never the bytes. A watcher uses it as the only
+    /// signal that the person wrote something, without reading what was written.
+    writes: watch::Sender<u64>,
     tree: ProcessTree,
 }
 
 impl PtySession {
     pub fn write(&self, bytes: &[u8]) -> Result<()> {
+        self.write_raw(bytes)?;
+        self.writes
+            .send_modify(|count| *count = count.wrapping_add(1));
+        Ok(())
+    }
+
+    /// Writes without telling the write watchers. `write` counts the person's input;
+    /// the cursor reply to ConPTY must not read as the person answering a prompt.
+    fn write_raw(&self, bytes: &[u8]) -> Result<()> {
         let mut writer = lock(&self.writer);
         writer.write_all(bytes)?;
         writer.flush()?;
@@ -132,6 +149,18 @@ impl PtySession {
         lock(&self.scrollback).bytes.iter().copied().collect()
     }
 
+    /// This terminal's command blocks, or `None` when the service keeps none.
+    pub fn blocks(&self) -> Option<Arc<TerminalBlocks>> {
+        self.blocks.clone()
+    }
+
+    /// The last `max` bytes of the scrollback, without copying the rest.
+    pub fn scrollback_tail(&self, max: usize) -> Vec<u8> {
+        let scrollback = lock(&self.scrollback);
+        let start = scrollback.bytes.len().saturating_sub(max);
+        scrollback.bytes.range(start..).copied().collect()
+    }
+
     pub fn clear(&self) {
         *lock(&self.scrollback) = Scrollback::default();
     }
@@ -148,6 +177,40 @@ impl PtySession {
     /// close may stop observation without waiting for inherited descriptors.
     pub fn output_state(&self) -> watch::Receiver<PtyOutputState> {
         self.output_state.subscribe()
+    }
+
+    /// Whether this terminal runs a coding engine, not a plain shell.
+    pub fn engine(&self) -> bool {
+        self.engine
+    }
+
+    /// Changes when `write` is called. It carries a count, not the bytes.
+    pub fn writes(&self) -> watch::Receiver<u64> {
+        self.writes.subscribe()
+    }
+
+    /// Whether the pty's termios has `ECHO` off, so a prompt is in no-echo mode. Only
+    /// unix has the mode to read; a ConPTY has none, so Windows never reports a secret.
+    #[cfg(unix)]
+    pub fn echo_off(&self) -> bool {
+        let master = lock(&self.master);
+        let Some(master) = master.as_ref() else {
+            return false;
+        };
+        let Some(fd) = master.as_raw_fd() else {
+            return false;
+        };
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
+            return false;
+        }
+        termios.c_lflag & libc::ECHO == 0
+    }
+
+    /// ConPTY has no echo flag, so no pty on Windows is in a no-echo mode.
+    #[cfg(not(unix))]
+    pub fn echo_off(&self) -> bool {
+        false
     }
 
     pub fn attached_clients(&self) -> usize {
@@ -196,6 +259,9 @@ type Key = (String, String);
 #[derive(Default)]
 pub struct TerminalManager {
     sessions: Mutex<HashMap<Key, Entry>>,
+    /// The command-block store shared by every terminal; `None` in tests that
+    /// only exercise PTY output.
+    blocks: Option<Arc<BlockStore>>,
 }
 
 /// What a new terminal is called and where it sits.
@@ -221,6 +287,14 @@ fn current(entry: &Entry) -> TerminalInfo {
 }
 
 impl TerminalManager {
+    /// A manager whose terminals keep command blocks, redacted by the store's rules.
+    pub fn with_blocks(blocks: Arc<BlockStore>) -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            blocks: Some(blocks),
+        }
+    }
+
     /// Returns the thread's live main terminal, or starts one from `spec`.
     pub fn open(&self, thread_id: &str, spec: PtySpec) -> Result<Arc<PtySession>> {
         let mut sessions = lock(&self.sessions);
@@ -234,7 +308,11 @@ impl TerminalManager {
             title: Some("Terminal".to_owned()),
             ..TerminalLabel::default()
         };
-        let session = spawn(spec, None)?;
+        let blocks = self
+            .blocks
+            .as_ref()
+            .map(|blocks| blocks.terminal(thread_id, MAIN_TERMINAL));
+        let session = spawn(spec, None, blocks)?;
         insert(
             &mut sessions,
             thread_id,
@@ -284,7 +362,11 @@ impl TerminalManager {
         if let Some(entry) = sessions.remove(&key(thread_id, id)) {
             entry.session.kill();
         }
-        let session = spawn(spec, secrets)?;
+        let blocks = self
+            .blocks
+            .as_ref()
+            .map(|blocks| blocks.terminal(thread_id, id));
+        let session = spawn(spec, secrets, blocks)?;
         let info = insert(&mut sessions, thread_id, id, label, session);
         Ok(info)
     }
@@ -399,7 +481,14 @@ fn fish_features(program: &std::path::Path) -> Option<String> {
     ))
 }
 
-fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> {
+fn spawn(
+    spec: PtySpec,
+    secrets: Option<RunSecrets>,
+    blocks: Option<Arc<TerminalBlocks>>,
+) -> Result<Arc<PtySession>> {
+    // A workflow run's env values are masked on the way out, and blocks read the stream before that
+    // mask: a terminal that carries run secrets keeps no command blocks, so no value can sit in one.
+    let blocks = if secrets.is_some() { None } else { blocks };
     fn failed(error: impl std::fmt::Display) -> CoreError {
         CoreError::Internal(format!("PTY failed: {error}"))
     }
@@ -439,6 +528,8 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
     let (output, _) = broadcast::channel(256);
     let (exit, _) = watch::channel(None);
     let (output_state, _) = watch::channel(PtyOutputState::Reading);
+    let recorder = blocks.clone();
+    let (writes, _) = watch::channel(0);
     let session = Arc::new(PtySession {
         writer: Mutex::new(writer),
         master: Mutex::new(Some(pty.master)),
@@ -446,6 +537,9 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
         scrollback: Mutex::new(Scrollback::default()),
         exit,
         output_state,
+        blocks,
+        engine: spec.engine,
+        writes,
         tree: tree_for(pid),
     });
     // PTY reads block, and a blocking thread must not hold a strong reference
@@ -464,7 +558,11 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
             let mut chunk = buffer[..read].to_vec();
             if awaiting_cursor_query && take_cursor_query(&mut chunk) {
                 awaiting_cursor_query = false;
-                let _ = session.write(CURSOR_REPLY);
+                let _ = session.write_raw(CURSOR_REPLY);
+            }
+            // The block parser reads the unmasked stream, before the workflow mask below.
+            if let Some(recorder) = &recorder {
+                recorder.push(&chunk);
             }
             // A workflow run's output passes its mask before any byte reaches the saved output or a frame.
             if let Some(mask) = masker.as_mut() {
@@ -476,6 +574,9 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
             let mut scrollback = lock(&session.scrollback);
             scrollback.push(&chunk, SCROLLBACK_BYTES, SCROLLBACK_LINES);
             let _ = session.output.send(chunk);
+        }
+        if let Some(recorder) = &recorder {
+            recorder.finish();
         }
         // What the mask kept back in case a value was still arriving is shown, masked, now the output has ended.
         if let Some(mask) = masker.as_mut() {
@@ -619,6 +720,30 @@ mod tests {
         assert_eq!(drops.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_terminal_with_run_secrets_keeps_no_command_blocks() {
+        let dir = crate::testing::TempDir::new();
+        let spec = |engine| PtySpec {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), "true".into()],
+            cwd: dir.path().to_owned(),
+            cols: 80,
+            rows: 24,
+            engine,
+        };
+        let blocks = || Some(Arc::new(TerminalBlocks::new(None, "t", "main")));
+        let masker = crate::redaction::LiteralMasker::new(&[("KEY", "value-1")]).unwrap();
+        let secrets = RunSecrets {
+            env: Vec::new(),
+            mask: masker,
+        };
+        let plain = spawn(spec(false), None, blocks()).unwrap();
+        assert!(plain.blocks().is_some());
+        let masked = spawn(spec(false), Some(secrets), blocks()).unwrap();
+        assert!(masked.blocks().is_none());
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn conpty_child_exit_releases_control_and_drains_output_to_eof() {
@@ -637,6 +762,7 @@ mod tests {
                 rows: 24,
                 engine: false,
             },
+            None,
             None,
         )
         .unwrap();

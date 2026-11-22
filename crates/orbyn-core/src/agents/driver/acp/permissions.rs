@@ -11,7 +11,8 @@ use crate::governance::approvals::Verdict;
 /// How the turn that answered our prompt ended. `stopReason` is required by the
 /// protocol, so a reply without a known one is not proof of success: the run fails
 /// plainly instead of looking finished. A reply with no output at all is
-/// the run pump's to report ("No reply"), never hidden here.
+/// the run pump's to report ("No reply"), never hidden here, unless it also used
+/// no tokens: see `stop_outcome_after`.
 pub(super) fn stop_outcome(reply: &Value) -> EngineOutcome {
     match reply.get("stopReason").and_then(Value::as_str) {
         Some("end_turn") => EngineOutcome::Completed,
@@ -21,6 +22,23 @@ pub(super) fn stop_outcome(reply: &Value) -> EngineOutcome {
         Some("refusal") => stopped("it refused to continue"),
         Some(reason) => stopped(&format!("it gave the reason \"{reason}\"")),
         None => stopped("it did not say why"),
+    }
+}
+
+/// `stop_outcome`, told how many events the agent sent during the turn and which program it
+/// is. An `end_turn` that sent nothing and reports no `usage` never ran: OpenCode 1.15.10
+/// answers that way when a newer OpenCode already migrated its database and its own prompt
+/// handler fails. Asking the person to send again cannot help, so name the program and
+/// version. A turn that ran reports its tokens even when it said nothing, and stays the run
+/// pump's "No reply".
+pub(super) fn stop_outcome_after(reply: &Value, sent: usize, agent: &str) -> EngineOutcome {
+    match stop_outcome(reply) {
+        EngineOutcome::Completed if sent == 0 && reply.get("usage").is_none() => {
+            EngineOutcome::Failed(format!(
+                "{agent} ended the turn without running it. Check its log or update it."
+            ))
+        }
+        outcome => outcome,
     }
 }
 

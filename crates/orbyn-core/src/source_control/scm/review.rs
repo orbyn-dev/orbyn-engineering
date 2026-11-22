@@ -162,8 +162,9 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         self.scm_audit(actor, "git.merge", &number.to_string(), None)?;
         let mut options = options.clone();
-        options.strip_credits |=
+        let setting =
             self.preference("remove_agent_credits_on_merge", Some(project_id))? == json!(true);
+        options.strip_credits = strips_credits(&options, setting);
         let outcome = forge::merge(forge, Path::new(&project.path), number, &options).await;
         self.scm_reads.pull_changed(project_id, number);
         outcome
@@ -224,5 +225,47 @@ impl Core {
         self.store.project(project_id)?;
         self.store
             .set_files_viewed(project_id, number, paths, viewed)
+    }
+}
+
+/// Whether this merge removes agent credit lines: the merge's own `remove_agent_credits` when it has one, else the
+/// account setting or the older `strip_credits` flag.
+fn strips_credits(options: &MergePull, setting: bool) -> bool {
+    options
+        .remove_agent_credits
+        .unwrap_or(setting || options.strip_credits)
+}
+
+#[cfg(test)]
+mod credit_tests {
+    use super::*;
+
+    fn merge(own: Option<bool>, old: bool) -> MergePull {
+        MergePull {
+            method: "squash".into(),
+            auto: false,
+            delete_branch: false,
+            subject: None,
+            body: None,
+            strip_credits: old,
+            remove_agent_credits: own,
+            expected_head: None,
+        }
+    }
+
+    #[test]
+    fn the_merges_own_choice_wins_over_the_account_setting_in_both_directions() {
+        // Setting on, switch off: the credits stay.
+        assert!(!strips_credits(&merge(Some(false), false), true));
+        assert!(!strips_credits(&merge(Some(false), true), true));
+        // Setting off, switch on: they go.
+        assert!(strips_credits(&merge(Some(true), false), false));
+    }
+
+    #[test]
+    fn without_a_choice_the_setting_and_the_older_flag_apply_as_before() {
+        assert!(strips_credits(&merge(None, false), true));
+        assert!(strips_credits(&merge(None, true), false));
+        assert!(!strips_credits(&merge(None, false), false));
     }
 }

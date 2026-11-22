@@ -5,7 +5,7 @@ import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import type { Can } from "../writes/TaskWrite";
 
-const AFTER = "After the beta";
+const AFTER = "Planned";
 
 const inert = (label: string, note: string): MenuItem => ({
   label,
@@ -26,7 +26,7 @@ function write(label: string, can: Can, ask: () => void): MenuItem {
 
 /**
  * What the card's menu draws. Cancel and Re-run checks are drawn only for a task they could apply to (the card's advisory flags: the
- * service decides) and, chosen, open a confirm first. The rest are target design: After the beta, and inert.
+ * service decides) and, chosen, open a confirm first. The rest are target design: Planned, and inert.
  */
 export function cardItems(
   card: Pick<FlowCard, "can_cancel" | "can_rerun" | "state">,

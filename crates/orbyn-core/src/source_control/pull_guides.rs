@@ -92,7 +92,8 @@ impl Core {
                 options: Default::default(),
             })
             .await?;
-        self.store.link_pull(&thread.id, &detail.pull)?;
+        self.store
+            .link_pull(&thread.id, &thread.project_id, &detail.pull)?;
         self.runs.enqueue(&thread.id, &prompt, &[])?;
         self.store.thread(&thread.id)
     }

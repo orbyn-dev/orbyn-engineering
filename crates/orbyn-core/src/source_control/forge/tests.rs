@@ -109,6 +109,7 @@ fn the_head_the_person_saw_goes_to_the_forge() {
         subject: None,
         body: None,
         strip_credits: false,
+        remove_agent_credits: None,
         expected_head: Some("abc123".into()),
     };
     let github = merge_args(Forge::GitHub, "7", &options, None);

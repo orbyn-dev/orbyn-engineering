@@ -88,6 +88,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
+    ("POST", "/api/crew/background/{id}/run-now"),
     ("POST", "/api/crew/background/{id}/update"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
@@ -110,6 +111,10 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
+    ("POST", "/api/code-runs/{id}/cancel"),
+    // Devices: every action is a Person write (docs/devices.md).
+    ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
     ("POST", "/api/engine-host/{family}/restart"),
@@ -204,6 +209,8 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
     ("POST", "/api/threads/import"),
+    ("POST", "/api/threads/{id}/transcripts"),
+    ("PUT", "/api/attachments/{id}/source"),
     ("POST", "/api/issues/trackers/{tracker}/connect"),
     ("POST", "/api/issues/trackers/{tracker}/disconnect"),
     ("POST", "/api/issues/start-thread"),
@@ -242,6 +249,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/projects/{id}/library/suggestions/copy"),
     ("POST", "/api/projects/{id}/repo-threads"),
     ("POST", "/api/threads/{id}/repos"),
+    ("DELETE", "/api/threads/{id}/repos/{repo_id}"),
 ];
 
 /// Routes that stay `Local` as a whole but check the key in their handler for part of the request body (docs/worker-token-isolation.md,
@@ -530,6 +538,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/background/{id}/enable",
         "Crew write behind local_only: enables a background worker",
+    ),
+    (
+        "POST",
+        "/api/crew/background/{id}/run-now",
+        "Crew write behind local_only: the person starts one run of a background worker",
     ),
     (
         "POST",
@@ -908,6 +921,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/threads/{id}/transcripts",
+        "attaches a file the person picked as untrusted context for the thread's next message",
+    ),
+    (
+        "PUT",
+        "/api/attachments/{id}/source",
+        "sets the app name, title and window text that go into the next prompt as untrusted text, so a service-token agent cannot rewrite a Snap Shot the person has already reviewed",
+    ),
+    (
+        "POST",
         "/api/threads/{id}/branches",
         "creates a branch and switches the person's checkout to it",
     ),
@@ -1185,6 +1208,21 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/repos",
         "the person adds a repository to a thread, which creates a worktree and a branch in it",
+    ),
+    (
+        "DELETE",
+        "/api/threads/{id}/repos/{repo_id}",
+        "the person removes a repository from a thread, which removes its worktree",
+    ),
+    (
+        "POST",
+        "/api/devices/{id}/actions",
+        "controls a local device and can expose its screen; every action is a Person write (docs/devices.md)",
+    ),
+    (
+        "POST",
+        "/api/code-runs/{id}/cancel",
+        "the person stops a live Code Mode run and denies the approval it waits on; no engine or worker stops another's work (docs/code-mode.md)",
     ),
 ];
 

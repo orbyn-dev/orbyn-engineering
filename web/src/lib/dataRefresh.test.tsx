@@ -1,7 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dataChanged } from "../api/shell";
-import { COALESCE_MS, registerRefresh, startDataRefresh, topics, under } from "./dataRefresh";
+import { AWAKE, COALESCE_MS, registerRefresh, startDataRefresh, topics, under } from "./dataRefresh";
+import { LIMITS_STALE_MS, limitsRefreshOn, readLimits, resetLimitsStore } from "./limitsStore";
 import { useAsync, type LoadContext } from "./useAsync";
 import { forgetKept } from "./keptData";
 
@@ -134,6 +135,67 @@ describe("a read that shows a topic", () => {
     expect(contexts.at(-1)).toEqual({ background: false, force: true });
     await act(async () => { await result.current.reload(); });
     expect(contexts.at(-1)).toEqual({ background: false, force: false });
+  });
+});
+
+describe("coming back into view", () => {
+  it("reads a screen that asked to notice, once for a return", async () => {
+    const run = vi.fn();
+    const off = registerRefresh(topics(AWAKE, "limits"), run);
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]?.[0]).toEqual([AWAKE]);
+    off();
+  });
+
+  it("says nothing while the window is still hidden", async () => {
+    const run = vi.fn();
+    const off = registerRefresh(topics(AWAKE, "limits"), run);
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      delete (document as unknown as Record<string, unknown>).hidden;
+    }
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    expect(run).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("stops hearing the app come back once the app has stopped", async () => {
+    const run = vi.fn();
+    registerRefresh(topics(AWAKE, "limits"), run);
+    stop();
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not re-ask a fresh limits answer on a return, and asks once the window has passed", async () => {
+    resetLimitsStore();
+    const read = vi.fn().mockResolvedValue({ windows: [] });
+    const { result } = renderHook(() =>
+      useAsync("overview", () => readLimits("overview", read), {
+        fresh: true,
+        refreshOn: limitsRefreshOn(under("limits"), () => "overview"),
+      }),
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(read).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new Event("focus"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(COALESCE_MS); });
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(LIMITS_STALE_MS); });
+    window.dispatchEvent(new Event("focus"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(COALESCE_MS); });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(result.current.data).toEqual({ windows: [] });
   });
 });
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyAttention, emptyAttention, parseAttention, useAttention, type AttentionState } from "./store";
+import { applyAttention, emptyAttention, parseAttention, useAttention, waitingTerminalIds, type AttentionState } from "./store";
 
 const waiting = (over: Record<string, unknown> = {}) => ({
   v: 1, op: "waiting", id: "a1", terminal_id: "tm1", terminal_title: "dev", engine: "claude", kind: "yes_no",
@@ -87,6 +87,15 @@ describe("applyAttention", () => {
     expect(next.entries.size).toBeLessThanOrEqual(64);
     expect(next.entries.has("a69")).toBe(true);
   });
+  it("a value read from the open-items route is not fresh, and a later clear stops it waiting", () => {
+    const read = applyAttention(state, { seq: 0, ts: "", thread_id: "t1", source: "open", event: { type: "CUSTOM", name: "orbyn.terminal_attention", value: waiting() } });
+    expect(read.fresh).toBeNull();
+    expect([...waitingTerminalIds(read.state.entries, "t1")]).toEqual(["tm1"]);
+    const cleared = applyAttention(read.state, at(4, { v: 1, op: "clear", id: "a1", reason: "input" }));
+    expect(cleared.fresh).toBeNull();
+    expect(cleared.state.entries.get("a1")?.cleared?.reason).toBe("input");
+    expect([...waitingTerminalIds(cleared.state.entries, "t1")]).toEqual([]);
+  });
 });
 
 describe("the store", () => {
@@ -96,5 +105,21 @@ describe("the store", () => {
     useAttention.getState().dismiss("a1");
     useAttention.getState().receive(at(2, waiting({ excerpt: ["again"] })));
     expect(useAttention.getState().entries.get("a1")?.dismissed).toBe(true);
+  });
+});
+
+describe("waitingTerminalIds", () => {
+  const state = (...values: [number, unknown, string?][]): AttentionState =>
+    values.reduce((now, [seq, value, thread]) => applyAttention(now, { ...at(seq, value), thread_id: thread ?? "t1" }).state, emptyAttention());
+  it("names the terminals of one thread that wait now", () => {
+    const now = state([1, waiting()], [2, waiting({ id: "a2", terminal_id: "tm2" })], [3, waiting({ id: "a3", terminal_id: "tm3" }), "other"]);
+    expect([...waitingTerminalIds(now.entries, "t1")].sort()).toEqual(["tm1", "tm2"]);
+  });
+  it("drops a terminal that was cleared or dismissed", () => {
+    const now = state([1, waiting()], [2, waiting({ id: "a2", terminal_id: "tm2" })], [3, { v: 1, op: "clear", id: "a1", reason: "output" }]);
+    useAttention.getState().reset();
+    expect([...waitingTerminalIds(now.entries, "t1")]).toEqual(["tm2"]);
+    const entry = now.entries.get("a2");
+    expect([...waitingTerminalIds(new Map([["a2", { ...(entry as NonNullable<typeof entry>), dismissed: true }]]), "t1")]).toEqual([]);
   });
 });

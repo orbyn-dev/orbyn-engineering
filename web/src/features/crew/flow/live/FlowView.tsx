@@ -12,7 +12,7 @@ import { FlowZoom } from "./FlowZoom";
 import { useFlowCrews, useFlowTasks, useRefresh } from "./useFlow";
 import "./flow-live.css";
 
-const AFTER_THE_BETA = "After the beta: no route yet. The beta has a Cancel on each task, when it is wired.";
+const PLANNED_NOTE = "Planned: no route yet. A task’s Cancel and Re-run checks are built, and each asks first.";
 
 /**
  * The Flow tab of the Crew view on the real Flow routes. Nothing is drawn while Crew Preview is off (a service with it off
@@ -68,11 +68,11 @@ function Flow({ initialCrew }: { initialCrew: string | null }) {
           ))}
         </select>
         <span className="fv-spacer" />
-        {/* No Flow route pauses or stops a crew: the design draws both After the beta. */}
+        {/* No Flow route pauses or stops a crew: the design draws both Planned. */}
         {["Pause crew", "Stop crew"].map((name) => (
-          <button key={name} type="button" className="fv-off" disabled aria-description={AFTER_THE_BETA} title={AFTER_THE_BETA}>
+          <button key={name} type="button" className="fv-off" disabled aria-description={PLANNED_NOTE} title={PLANNED_NOTE}>
             {name}
-            <span className="fv-label">After the beta</span>
+            <span className="fv-label">Planned</span>
           </button>
         ))}
       </div>

@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::Thread;
+use crate::{Attachment, Thread};
 
 /// The `format` member of every transcript file.
 pub const TRANSCRIPT_FORMAT: &str = "orbyn-transcript";
@@ -66,6 +66,18 @@ pub struct TranscriptImportAnswer {
     pub dry_run: bool,
     pub thread: Option<Thread>,
     pub title: String,
+    pub message_count: u32,
+    pub dropped: u32,
+    pub problems: Vec<TranscriptProblem>,
+}
+}
+
+wire! {
+/// `POST /api/threads/{id}/transcripts`. `attachment` is absent on a dry run. The thread itself is unchanged: the attachment
+/// rides on the thread's next message like any other.
+pub struct TranscriptAttachAnswer {
+    pub dry_run: bool,
+    pub attachment: Option<Attachment>,
     pub message_count: u32,
     pub dropped: u32,
     pub problems: Vec<TranscriptProblem>,

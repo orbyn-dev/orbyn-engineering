@@ -56,7 +56,7 @@ pub(super) fn shown(reason: &str, needles: &[String]) -> String {
 }
 
 /// `shown` with the person's patterns applied before the text is cut.
-pub(super) fn shown_masked(reason: &str, needles: &[String], person: &Redactor) -> String {
+pub(in crate::crew) fn shown_masked(reason: &str, needles: &[String], person: &Redactor) -> String {
     let text = person.labelled(withhold(&redact(reason), needles).trim());
     let text = cut_safely(&text, 300);
     if text.is_empty() || refuse_leak(&json!(text), needles).is_err() {

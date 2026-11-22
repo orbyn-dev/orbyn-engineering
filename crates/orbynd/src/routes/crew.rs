@@ -1,5 +1,5 @@
 //! Crew (Preview) over HTTP: the Preview flag, background crews' state (`/api/crew/background`: list, read, create, update, on, off,
-//! delete and the runs; nothing fires a trigger or starts an engine), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
+//! delete, the runs and Run now, which starts one run by hand; nothing fires a trigger on its own), Autopilot's modes, trust, risk, the Review queue, the merge queue, the watch on
 //! main, the digest, the approval ledger, the trip wires and the guards, and three reads of the repository's data classes (`/api/crew/classes`,
 //! `/api/crew/classes/test`, `/api/crew/route/{task}`). Transport only: `orbyn_core::crew` builds every view and
 //! owns every rule.
@@ -178,6 +178,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/background/{id}/run-now",
+        "core crew_background_run_now: the manual event. Preview, an enabled crew whose trigger kind can start, no run in progress, a trusted project and a ready engine; starts one run through crew_start as a Low Crew-started task (review capacity may pause it) and returns the run; nothing is stored when it is refused; local only",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "core crew_cancel_task: the person's stop button; the intent audit row before any effect, the worker's engine stopped and confirmed (else the state is kept and a failed-attempt row is written), then the state and its row in one transaction; already cancelled answers already and writes nothing; passed or stopped is a conflict; optional reason 1 to 200 characters, redacted; no agent tool reaches it; local only",
     ),
@@ -323,6 +328,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(background_disable),
         )
         .route("/api/crew/background/{id}/delete", post(background_delete))
+        .route(
+            "/api/crew/background/{id}/run-now",
+            post(background_run_now),
+        )
         .route("/api/crew/tasks/{id}/cancel", post(cancel_task))
         .route(
             "/api/crew/projects/{id}/pinned-ref/confirm",
@@ -375,6 +384,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
+        .route("/api/crew/dashboard", get(dashboard))
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
@@ -459,6 +469,19 @@ fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
 
 fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
+}
+
+/// The person's UTC offset in minutes, as the daily digest takes it. Absent means UTC.
+fn offset_minutes(query: &QueryMap) -> Result<i32, CoreError> {
+    query
+        .0
+        .get("utc_offset_minutes")
+        .map(|text| {
+            text.parse::<i32>()
+                .map_err(|_| CoreError::Invalid("utc_offset_minutes is a whole number".into()))
+        })
+        .transpose()
+        .map(|offset| offset.unwrap_or(0))
 }
 
 /// The repository's data classes at the commit a task started in this thread would start from, or at the project's own checkout
@@ -664,6 +687,17 @@ async fn trust(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl
     Ok(Json(state.core.autopilot_trust(
         unix_now(),
         query.0.get("project").map(String::as_str),
+    )?))
+}
+
+/// One repository's dashboard figures over a window: `project`, `days` (30, 60 or 90, 60 by default) and the person's
+/// `utc_offset_minutes`, which the weekly bars count their local Mondays from. Read-only.
+async fn dashboard(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_dashboard(
+        &required(&query, "project")?,
+        number(&query, "days")?,
+        offset_minutes(&query)?,
+        unix_now(),
     )?))
 }
 
@@ -931,6 +965,15 @@ async fn background_delete(
 ) -> ApiResult<impl IntoResponse> {
     state.core.background_delete(&id)?;
     Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// The person's Run now: starts one run of an enabled background crew by hand. The core refuses what cannot start, with its
+/// plain reason, and returns the run it opened.
+async fn background_run_now(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_background_run_now(&id, "user").await?))
 }
 
 /// The person's stop button: cancels a task. The body may be empty, or `{ "reason": "..." }`.

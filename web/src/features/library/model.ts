@@ -151,30 +151,43 @@ const SOURCE_LABEL = new Map<string, string>([["import", "Imported"], ["repo", "
 /** The pill text for where an entry came from. `null` for a local entry and for a word this app does not know: the raw value is never shown. */
 export const sourceLabel = (source: unknown): string | null => (typeof source === "string" ? (SOURCE_LABEL.get(source) ?? null) : null);
 
-/** What a `409 confirm_required` on a run asks the person to confirm: the grant codes exactly as the service listed them, and env set names. */
-export interface RunConfirmation { grants: string[]; envSets: string[] }
+/** One environment set the run applies: its name and the key names it will set, never a value. */
+export interface RunEnvSet { name: string; keys: string[] }
+
+/** What a `409 confirm_required` on a run asks the person to confirm: the grant codes exactly as the service listed them, and env sets. */
+export interface RunConfirmation { grants: string[]; envSets: RunEnvSet[] }
 
 const MAX_GRANTS = 8;
 const MAX_SETS = 8;
+const MAX_KEYS = 20;
+const MAX_KEY_CHARS = 80;
 
 /**
  * Reads the `detail` of a `409 confirm_required` defensively. `grants` keeps every code the service listed, once each (the ack must match
- * exactly: no extra, none fewer), cut to a sane length; `env_sets` yields names only, whether the service sends names or `{ name, keys }`
- * (key names are not shown here). `null` when no grant is named, so the caller never shows an empty sheet or sends an empty ack.
+ * exactly: no extra, none fewer), cut to a sane length; `env_sets` yields each set's name and key names, whether the service sends a bare
+ * name or `{ name, keys }`. A set name keeps the same rules as before (non-empty, once each, at most 8). A key name is kept only as a
+ * non-empty string up to 80 characters, once each, at most 20 per set; a value-shaped field is never read. `null` when no grant is named,
+ * so the caller never shows an empty sheet or sends an empty ack.
  */
 export function confirmFromFailure(detail: unknown): RunConfirmation | null {
   const body = typeof detail === "object" && detail !== null && !Array.isArray(detail) ? (detail as Record<string, unknown>) : {};
   const listed = Array.isArray(body.grants) ? body.grants : [];
   const grants = [...new Set(listed.filter((code): code is string => typeof code === "string" && code.length > 0 && code.length <= 40))].slice(0, MAX_GRANTS);
   if (grants.length === 0) return null;
-  const sets = Array.isArray(body.env_sets) ? body.env_sets : [];
-  const names: string[] = [];
-  for (const one of sets) {
-    const name = typeof one === "string" ? one : typeof one === "object" && one !== null && typeof (one as { name?: unknown }).name === "string" ? (one as { name: string }).name : "";
-    if (name !== "" && !names.includes(name)) names.push(name);
-    if (names.length >= MAX_SETS) break;
+  const listedSets = Array.isArray(body.env_sets) ? body.env_sets : [];
+  const envSets: RunEnvSet[] = [];
+  const names = new Set<string>();
+  for (const one of listedSets) {
+    const record = typeof one === "object" && one !== null ? (one as Record<string, unknown>) : null;
+    const name = typeof one === "string" ? one : typeof record?.name === "string" ? record.name : "";
+    if (name === "" || names.has(name)) continue;
+    names.add(name);
+    const listedKeys = Array.isArray(record?.keys) ? record.keys : [];
+    const keys = [...new Set(listedKeys.filter((key): key is string => typeof key === "string" && key.length > 0 && key.length <= MAX_KEY_CHARS))].slice(0, MAX_KEYS);
+    envSets.push({ name, keys });
+    if (envSets.length >= MAX_SETS) break;
   }
-  return { grants, envSets: names };
+  return { grants, envSets };
 }
 
 const RUN_GRANT_TEXT = new Map<string, string>([
