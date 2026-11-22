@@ -68,6 +68,12 @@ pub(super) fn profile(confinement: &Confinement) -> String {
             text.push_str(OWN_SESSION);
         }
     }
+    // Closed folders come after every allowance, so a stray allowance cannot reopen them.
+    for index in 0..confinement.closed.len() {
+        text.push_str(&format!(
+            "(deny file-read* file-write* (subpath (param \"C{index}\")))\n"
+        ));
+    }
     // The folders on the way down to an allowance may be looked at (not listed or read), so
     // a path through them can be walked, such as `cd` into the checkout.
     for index in 0..route(confinement).len() {
@@ -125,8 +131,9 @@ fn proof_profile(confinement: &Confinement, secrets: usize) -> String {
 /// the rules do not cover.
 fn above(confinement: &Confinement) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
-    let roots =
-        std::iter::once(&confinement.data).chain(confinement.transcripts.iter().map(|t| &t.root));
+    let roots = std::iter::once(&confinement.data)
+        .chain(confinement.transcripts.iter().map(|t| &t.root))
+        .chain(confinement.closed.iter());
     for root in roots {
         for folder in root.ancestors() {
             if !found.iter().any(|f| f == folder) {
@@ -196,6 +203,13 @@ fn parameters(confinement: &Confinement) -> Vec<(String, PathBuf)> {
         }
         all.push(("TH".to_owned(), transcripts.history.clone()));
     }
+    all.extend(
+        confinement
+            .closed
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (format!("C{index}"), path.clone())),
+    );
     for (prefix, paths) in [("M", route(confinement)), ("A", above(confinement))] {
         all.extend(
             paths
@@ -339,7 +353,7 @@ fn linked_targets(folder: &Path, home: &Path) -> Option<Vec<PathBuf>> {
 }
 
 /// The account's home folder from the user database (not the environment).
-fn account_home() -> Option<PathBuf> {
+pub(super) fn account_home() -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
     let mut buffer = vec![0u8; 16 * 1024];
     // SAFETY: `passwd` is plain data; the buffer outlives the call and its size is passed; `pw_dir` is read only on success, while

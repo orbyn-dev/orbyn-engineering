@@ -372,6 +372,9 @@ impl Core {
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
+        // A Codex worker's home outlives no task. Anything left from the last process whose
+        // task is not live is removed before a new worker can use the folder.
+        core.sweep_crew_codex_homes();
         core.crew_backtest_recover();
         core.code_runs_recover();
         core.repos_recover();
