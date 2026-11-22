@@ -26,7 +26,8 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
 | `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
-| `checks` | The check runners: command kinds, `file_scope`, `diff_size`. Any other kind is `skipped` |
+| `checks` | The check runners: command kinds, `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required`. Any other kind is `skipped` |
+| `http_probe` | The `http_probe` runner: one GET to the key's loopback URL, compared with its `expect_status`. No redirect followed and no retry; no answer is an error, never a pass |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
 | `protect` | Records the key's protected files (type, executable bit, SHA-256 of the exact bytes, links not followed) before the worker exists, and compares at verify time. Git is not asked, so nothing the worker can write in `.git` hides a change |

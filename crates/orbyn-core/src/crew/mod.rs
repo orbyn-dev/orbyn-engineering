@@ -22,6 +22,7 @@ pub mod fixtures;
 mod flow;
 mod gather;
 mod guard;
+mod http_probe;
 mod index_flags;
 mod leases;
 pub(crate) mod lifecycle;

@@ -58,6 +58,7 @@ mod forge_merge;
 mod forge_resolve;
 mod hardening;
 mod harness;
+mod http_probe;
 mod issues;
 mod lifecycle;
 mod merging_recovery;
