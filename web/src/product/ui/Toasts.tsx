@@ -1,4 +1,4 @@
-import { Check, Copy, X } from "lucide-react";
+import { Check, Copy, Loader2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useUi, type ToastKind } from "../state/ui";
 import { Button } from "../../ui/controls";
@@ -27,7 +27,7 @@ export function Toasts({ lead }: { lead?: ReactNode }) {
       {lead}
       {toasts.map((toast) => (
         <div key={toast.id} className="toast">
-          <ToastIcon kind={toast.kind} />
+          {toast.busy ? <Loader2 size={13} className="spin" aria-hidden /> : <ToastIcon kind={toast.kind} />}
           <span>{toast.text}</span>
           {toast.action ? (
             <Button small tone="quiet" className="toast-action" onClick={() => { toast.action?.run(); useUi.getState().dismissToast(toast.id); }}>{toast.action.label}</Button>

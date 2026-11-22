@@ -206,3 +206,28 @@ function LimitCountdown({ limit, now }: { limit: { stopped_at: string; resets_at
     </span>
   );
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The import date from the service, drawn as the frame says: 22 Nov. */
+function importedDate(at: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(at);
+  if (!match) return new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return `${Number(match[3])} ${MONTHS[Number(match[2]) - 1] ?? ""}`.trim();
+}
+
+/** The header's small Imported pill on a thread made from a transcript file. */
+export function ImportedThreadPill({ thread }: { thread: Thread }) {
+  if (thread.source !== "orbyn-transcript") return null;
+  return <span className="page-sub-item transcript-imported-pill">Imported</span>;
+}
+
+/** The one line after imported history: when it came in, and that the next message starts a fresh session. */
+export function ImportedThreadMarker({ thread }: { thread: Thread }) {
+  if (thread.source !== "orbyn-transcript" || !thread.imported_at) return null;
+  return (
+    <p className="imported-marker" role="note">
+      Imported {importedDate(thread.imported_at)} · new messages start a fresh session
+    </p>
+  );
+}

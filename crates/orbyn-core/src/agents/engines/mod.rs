@@ -819,8 +819,10 @@ impl EngineManager {
         };
         let (inherited_credentials, endpoint_origin) =
             crate::host::child_env::inherited_login(&family);
-        let (crew_role, crew_role_reason) =
-            notice::crew_role(&descriptor.capabilities.permission_modes);
+        let (crew_role, crew_role_reason) = notice::crew_role(
+            &descriptor.capabilities.permission_modes,
+            descriptor.capabilities.managed,
+        );
         EngineStatus {
             crew_role,
             crew_role_reason,

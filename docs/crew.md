@@ -1410,7 +1410,9 @@ change; workers write into the person's own checkout, and only the path knows wh
 - **Background crews:** budget set at creation. Hitting it means Stopped, reason "budget", and the run goes to the
   Review queue. Each engine also has a daily budget for the crew (runs and turns, set at creation, reset at the person's
   midnight): a run in flight is cancelled at the cap with what the engine spent shown, and a new event is refused, never
-  queued, with an audit row naming the engine and the time the day turns.
+  queued, with an audit row naming the engine and the time the day turns. The Background create form now sets the daily
+  budget: Runs a day (2 by default) and Turns a day (80 by default), sent with the person's clock, and each says its
+  range under the field while the value is out of range.
 
 ## What keeps us ahead
 
