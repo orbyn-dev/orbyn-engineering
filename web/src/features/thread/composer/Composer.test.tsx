@@ -482,6 +482,7 @@ describe("Composer", () => {
     const chip = await screen.findByRole("button", { name: "Auto" });
     expect(within(chip).getByText("Unmanaged")).toBeVisible();
     expect(screen.getAllByText("Unmanaged").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
     expect(screen.queryByRole("button", { name: /^Permissions:/ })).toBeNull();
   });
 });

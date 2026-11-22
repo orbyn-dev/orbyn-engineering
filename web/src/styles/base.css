@@ -361,6 +361,13 @@ input[type="checkbox"][role="switch"][aria-readonly="true"] {
   font-size: var(--text-meta);
   font-weight: 600;
 }
+.unmanaged-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
 .count {
   display: inline-grid;
   place-items: center;
