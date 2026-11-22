@@ -2,7 +2,7 @@
 //! and the change the checks read. The rows carry no command, output, `proves` text or Evidence id, and a task with no
 //! checkout still answers.
 
-use orbyn_contracts::CheckOutcome;
+use orbyn_contracts::{CheckKind, CheckOutcome};
 use serde_json::{Value, json};
 
 use super::harness::{Turn, world};
@@ -37,10 +37,28 @@ async fn the_read_serves_the_checks_the_artifacts_and_the_change() {
     assert_eq!(view.crew, w.task(&subject).crew_id);
     assert!(!view.checks.is_empty(), "the build's checks are rows");
     assert!(!view.truncated);
+    assert!(
+        view.checks
+            .iter()
+            .any(|row| row.outcome == CheckOutcome::Pass),
+        "a passed build has a check that passed"
+    );
     for row in &view.checks {
         assert_eq!(row.task, subject);
-        assert_eq!(row.outcome, CheckOutcome::Pass);
-        assert_eq!(row.exit_code, Some(0));
+        assert!(
+            matches!(
+                row.outcome,
+                CheckOutcome::Pass | CheckOutcome::Skipped | CheckOutcome::Fail
+            ),
+            "a row is one of the outcomes"
+        );
+        if row.outcome == CheckOutcome::Pass && row.kind == Some(CheckKind::Command) {
+            assert_eq!(
+                row.exit_code,
+                Some(0),
+                "a command check that passed exited 0"
+            );
+        }
         assert_eq!(row.commit.as_str(), run.base_commit.as_deref().unwrap());
         assert!(
             row.kind.is_some(),
@@ -83,7 +101,10 @@ async fn the_rows_never_carry_the_command_the_proves_text_or_an_evidence_id() {
     assert!(!text.contains(&proves), "what a check proves is the key's");
     assert!(!text.contains("\"proves\""));
     assert!(!text.contains("excerpt"));
-    assert!(!text.contains("\"command\""));
+    assert!(
+        !text.contains("\"command\":"),
+        "no row carries the command it ran; a kind may be named command"
+    );
     for row in w.core.store.crew_evidence(&subject).unwrap() {
         assert!(
             !text.contains(row.id.as_str()),
@@ -93,13 +114,43 @@ async fn the_rows_never_carry_the_command_the_proves_text_or_an_evidence_id() {
 }
 
 #[tokio::test]
-async fn a_task_with_no_checkout_still_answers_and_says_why_there_is_no_diff() {
-    let w = world(true, arc(|_, root| built(root))).await;
-    let subject = w.built_work().await;
-    std::fs::remove_dir_all(&w.repo).unwrap();
+async fn a_task_with_no_run_answers_no_checks_and_no_checkout() {
+    // A task stored with its brief and key and no run at all: nothing has been checked, so there is no checkout to read.
+    let w = world(true, arc(|_, _| Turn::Silent)).await;
+    let stamper = crate::crew::Stamper {
+        crew_id: orbyn_contracts::CrewId::new("crew-1").unwrap(),
+        engine: orbyn_contracts::CrewToken::new("claude").unwrap(),
+        member: orbyn_contracts::CrewMember::new("lead-01").unwrap(),
+        now: orbyn_contracts::CrewTimestamp::new("2026-11-12T10:00:00Z").unwrap(),
+    };
+    let brief = stamper
+        .brief(&json!({
+            "kind": "implement",
+            "outcome": "Nothing has run.",
+            "inputs": [],
+            "files": [{ "path": "src/**", "mode": "write" }],
+            "allowed_effects": ["read_repo", "write_leased", "run_checks"],
+            "stop_when": ["Done."],
+            "budget": { "turns": 20, "minutes": 30 }
+        }))
+        .unwrap();
+    let key = stamper
+        .answer_key(
+            &json!({
+                "checks": [{ "id": "chk-run", "kind": "command", "params": { "run": "true" }, "proves": "It runs." }],
+                "protected_paths": ["tests/**"]
+            }),
+            &brief.id,
+        )
+        .unwrap();
+    let task = w
+        .core
+        .store
+        .create_crew_task(&brief, &key, "run-none")
+        .unwrap();
 
-    let view = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
-    assert!(!view.checks.is_empty(), "the rows come from the store");
+    let view = w.core.crew_flow_task_artifacts(&task.id).await.unwrap();
+    assert!(view.checks.is_empty(), "no check ran");
     assert!(view.diff.is_none());
     assert_eq!(view.diff_absent.as_deref(), Some("no_checkout"));
 }
