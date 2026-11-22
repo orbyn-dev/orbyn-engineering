@@ -391,6 +391,8 @@ export const api = {
 
   projects: (signal?: AbortSignal) => request<Project[]>("GET", "/api/projects", undefined, signal),
   trustProject: (id: string) => request<Project>("POST", `/api/projects/${q(id)}/trust`),
+  /** Starts Git in an added project's folder; the service refuses one that is untrusted, already a repository or gone. */
+  initProjectGit: (id: string) => request<Project>("POST", `/api/projects/${q(id)}/git/init`),
   browse: (path: string | null, signal?: AbortSignal) =>
     request<FsListing>("GET", `/api/fs/browse${path ? `?path=${q(path)}` : ""}`, undefined, signal),
 
