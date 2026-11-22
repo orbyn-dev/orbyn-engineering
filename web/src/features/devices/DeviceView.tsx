@@ -7,10 +7,11 @@ import { devicesApi, useApiVersion } from "./api";
 import { HINGE_MAX, HINGE_MIN, type ButtonName, type Device, type DeviceAction, type HingePreset } from "./contract";
 import { clampAngle, controlsFor, hingeLabel, nextOrientation, orientationLabel, plain, postureLabel, screenshotSrc, stateLabel } from "./model";
 import { devicesPlannedApi, restartLabel } from "./planned";
+import { DeviceToolsButton } from "./tools/DeviceTools";
 
 const PRESETS: readonly { preset: HingePreset; label: string }[] = [{ preset: "closed", label: "Closed" }, { preset: "half_open", label: "Half open" }, { preset: "open", label: "Open" }];
-/** What the frames draw that no code can do yet: the live view (H22/H23), Record, typing and the tools drawer (H26). */
-const PLANNED = ["Live screen", "Record", "Type text", "Device tools"];
+/** What the frames draw that no code can do yet: the live view (H22/H23), Record and typing. The tools drawer (H26) opens but is Planned without its service route. */
+const PLANNED = ["Live screen", "Record", "Type text"];
 
 interface Failure { text: string; again(): void }
 
@@ -173,7 +174,7 @@ export function DeviceView({ device, onChanged, onGone, onRestart }: {
       {failure ? (
         <div className="dev-fail" role="alert"><span>{failure.text}</span><Button small tone="quiet" disabled={busy} onClick={failure.again}>Try again</Button></div>
       ) : null}
-      <p className="dev-planned">{PLANNED.map((name) => <Pill key={name}>{name} · Planned</Pill>)}</p>
+      <p className="dev-planned">{PLANNED.map((name) => <Pill key={name}>{name} · Planned</Pill>)}<DeviceToolsButton device={device} /></p>
     </div>
   );
 }

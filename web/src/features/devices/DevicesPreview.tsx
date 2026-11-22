@@ -8,6 +8,7 @@ import { DevicesPanel } from "./DevicesPanel";
 import { SetupHub } from "./setup/SetupHub";
 import { ToolVersions } from "./setup/ToolVersions";
 import { setDevicesPlannedApi } from "./planned";
+import { DevicesToolsPreview, TOOLS_FRAMES } from "./DevicesToolsPreview";
 import "./devices.css";
 
 /**
@@ -33,6 +34,7 @@ const FRAMES = [
   ...SETUP,
   ...VERSIONS,
   ...STATES,
+  ...TOOLS_FRAMES,
   "device-none",
   "device-panel-list",
   "device-panel-list-narrow",
@@ -209,6 +211,8 @@ function Frame({ frame }: { frame: string }) {
           <p className="dev-note">The thread stays usable under the floating device.</p>
           <DevicesFloat threadId="preview-thread" />
         </div>
+      ) : (TOOLS_FRAMES as readonly string[]).includes(frame) ? (
+        <DevicesToolsPreview frame={frame} />
       ) : panel}
     </div>
   );
