@@ -13,6 +13,8 @@ pub(crate) struct Seen {
     pub line: String,
     pub target: String,
     pub headers: Vec<(String, String)>,
+    /// The request body, when it sent a `content-length` that named one.
+    pub body: String,
 }
 
 impl Seen {
@@ -107,26 +109,44 @@ impl Server {
                 tokio::spawn(async move {
                     let mut raw = Vec::new();
                     let mut chunk = [0u8; 2048];
-                    while !raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let header_end = loop {
+                        if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break at + 4;
+                        }
                         let read = stream.read(&mut chunk).await.unwrap_or(0);
                         if read == 0 {
                             return;
                         }
                         raw.extend_from_slice(&chunk[..read]);
-                    }
-                    let text = String::from_utf8_lossy(&raw).into_owned();
-                    let mut lines = text.split("\r\n");
+                    };
+                    let head = String::from_utf8_lossy(&raw[..header_end]).into_owned();
+                    let mut lines = head.split("\r\n");
                     let line = lines.next().unwrap_or_default().to_owned();
                     let target = line.split(' ').nth(1).unwrap_or_default().to_owned();
-                    let headers = lines
+                    let headers: Vec<(String, String)> = lines
                         .take_while(|l| !l.is_empty())
                         .filter_map(|l| l.split_once(':'))
                         .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_owned()))
                         .collect();
+                    let length = headers
+                        .iter()
+                        .find(|(k, _)| k == "content-length")
+                        .and_then(|(_, v)| v.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    while raw.len() < header_end + length {
+                        let read = stream.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            break;
+                        }
+                        raw.extend_from_slice(&chunk[..read]);
+                    }
+                    let end = (header_end + length).min(raw.len());
+                    let body = String::from_utf8_lossy(&raw[header_end..end]).into_owned();
                     let request = Seen {
                         line,
                         target,
                         headers,
+                        body,
                     };
                     log.lock()
                         .unwrap_or_else(PoisonError::into_inner)

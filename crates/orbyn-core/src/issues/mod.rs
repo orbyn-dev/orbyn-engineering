@@ -2,6 +2,7 @@
 //! a thread's links to issues and a thread started from one. Beta, read-only against the tracker. Everything a
 //! tracker returns is untrusted text and is never fed to an engine except in the framed first message.
 
+mod azure;
 #[cfg(test)]
 pub(crate) mod fake_http;
 mod forgejo;
@@ -11,6 +12,8 @@ mod gitlab;
 mod host;
 mod query;
 
+#[cfg(test)]
+pub(crate) use azure::Azure;
 #[cfg(test)]
 pub(crate) use forgejo::Forgejo;
 #[cfg(test)]
@@ -67,6 +70,9 @@ pub(crate) struct IssueDesk {
     /// Tests send the reader Forgejo builds to a local fake server instead of the stored host.
     #[cfg(test)]
     forgejo_test_base: Mutex<Option<String>>,
+    /// Tests send the reader Azure DevOps builds to a local fake server instead of the stored host.
+    #[cfg(test)]
+    azure_test_base: Mutex<Option<String>>,
 }
 
 impl IssueDesk {
@@ -79,6 +85,8 @@ impl IssueDesk {
             gitlab_test_base: Mutex::new(None),
             #[cfg(test)]
             forgejo_test_base: Mutex::new(None),
+            #[cfg(test)]
+            azure_test_base: Mutex::new(None),
         }
     }
 
@@ -138,6 +146,23 @@ impl IssueDesk {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
+
+    /// A local plain-http server the Azure DevOps source built by `azure_source` talks to, in tests only.
+    #[cfg(test)]
+    pub(crate) fn set_azure_test_base(&self, base: &str) {
+        *self
+            .azure_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(base.trim_end_matches('/').to_owned());
+    }
+
+    #[cfg(test)]
+    fn azure_test_base(&self) -> Option<String> {
+        self.azure_test_base
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 fn credential_error(error: CredentialError) -> CoreError {
@@ -192,6 +217,7 @@ impl Core {
                 cwd: self.config.data_dir.clone(),
             })),
             TrackerKind::Gitlab => self.gitlab_source(),
+            TrackerKind::AzureDevops => self.azure_source(),
             TrackerKind::Forgejo => self.forgejo_source(),
             other => Err(CoreError::Unsupported(format!(
                 "Reading {} issues arrives in a later update.",
@@ -271,17 +297,59 @@ impl Core {
         Ok(Arc::new(forgejo::Forgejo::new(host, token)?))
     }
 
-    /// The scopes a tracker is read in: for GitHub, GitLab and Forgejo the projects of this machine's git
-    /// remotes (for GitLab and Forgejo only those on the connection's host), then any the connection names; for
-    /// the others the connection's own.
+    /// The Azure DevOps reader of the stored connection: its https host and the token from the keychain.
+    pub(crate) fn azure_source(&self) -> Result<Arc<dyn IssueSource>> {
+        let not_connected = |why: &str| CoreError::TrackerNotConnected(why.to_owned());
+        let connection = self
+            .store
+            .tracker_connections()?
+            .into_iter()
+            .find(|c| c.tracker == TrackerKind::AzureDevops)
+            .ok_or_else(|| not_connected("Azure DevOps is not connected."))?;
+        let token = self
+            .issues
+            .creds()
+            .tracker_token(tracker_name(TrackerKind::AzureDevops))
+            .map_err(|error| match error {
+                CredentialError::Unavailable => not_connected("There is no usable keychain here"),
+                CredentialError::Blocked => {
+                    not_connected("The keychain refused for now. Unlock it and try again.")
+                }
+                _ => not_connected("The saved Azure DevOps token could not be read."),
+            })?
+            .ok_or_else(|| not_connected("No token is saved"))?;
+        let host = connection
+            .host
+            .as_deref()
+            .ok_or_else(|| not_connected("Azure DevOps has no host saved."))?;
+        #[cfg(test)]
+        if let Some(base) = self.issues.azure_test_base() {
+            validate_host(host)?;
+            return Ok(Arc::new(azure::Azure::for_test(
+                &base,
+                token.as_str(),
+                Duration::from_secs(10),
+            )));
+        }
+        Ok(Arc::new(azure::Azure::new(host, token)?))
+    }
+
+    /// The scopes a tracker is read in: the scopes the connection names, then for GitHub, GitLab, Azure DevOps
+    /// and Forgejo the projects of this machine's git remotes (for the last three only those on the connection's
+    /// host); for the others only the connection's own.
     async fn issue_scopes(&self, connection: &TrackerConnection) -> Vec<String> {
         let mut scopes = connection.scopes.clone();
         if matches!(
             connection.tracker,
-            TrackerKind::Github | TrackerKind::Gitlab | TrackerKind::Forgejo
+            TrackerKind::Github
+                | TrackerKind::Gitlab
+                | TrackerKind::AzureDevops
+                | TrackerKind::Forgejo
         ) {
             let host = match connection.tracker {
-                TrackerKind::Forgejo => connection.host.as_deref().unwrap_or_default(),
+                TrackerKind::Forgejo | TrackerKind::AzureDevops => {
+                    connection.host.as_deref().unwrap_or_default()
+                }
                 _ => connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST),
             };
             for project in self.store.list_projects().unwrap_or_default() {
@@ -298,6 +366,7 @@ impl Core {
                 let path = match connection.tracker {
                     TrackerKind::Github => github_repo_of_remote(&remote),
                     TrackerKind::Gitlab => gitlab::gitlab_path_of_remote(&remote, host),
+                    TrackerKind::AzureDevops => azure::azure_scope_of_remote(&remote, host),
                     _ => forgejo::forgejo_path_of_remote(&remote, host),
                 };
                 if let Some(path) = path
@@ -394,6 +463,15 @@ impl Core {
                 })?)?)
             }
         };
+        if kind == TrackerKind::AzureDevops {
+            let host = host
+                .as_deref()
+                .ok_or_else(|| CoreError::Invalid("This tracker needs a host.".into()))?;
+            azure::check_connect_host(host)?;
+            if let Some(scope) = scope {
+                azure::check_connect_scope(scope)?;
+            }
+        }
         if kind != TrackerKind::Github {
             let token = input
                 .token

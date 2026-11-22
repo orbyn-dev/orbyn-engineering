@@ -335,17 +335,21 @@ turn heads, and the core opens a new host session for every run), so the core do
 - The core chooses the uuid itself. The host's `turnId` is its own counter (`turn-<sendId>`), not a value in the session
   file, so the core keeps the prompt's `messageId` as the run's engine turn on this path. `HostDriver::revert_session`
   reads the session JSONL from the Claude history root by the session id the store holds (`CLAUDE_CONFIG_DIR`, else
-  `~/.claude`), finds the top-level user message whose uuid is that prompt id, and takes the last top-level assistant
-  message before it. Subagent messages (`isSidechain` or a parent tool use) and tool-result user messages are skipped.
-  It remembers the uuid in the host pool for that engine session; the next run's `open` takes it once, for
-  `operation: "resume"` only, and a create or another family never carries it. A failed `open` or the run's `session`
-  frame leaves nothing for a later run.
-- With no earlier top-level assistant message, a missing, unreadable or changed session file, an unknown prompt uuid, or
-  any error, `revert_session` fails and the rewind leaves the handoff as before. Runs stored before this change (their
-  engine turn is the synthetic host id) fall back the same way.
+  `~/.claude`), finds the top-level user message whose uuid is that prompt id, and walks its `parentUuid` chain to the
+  nearest top-level assistant ancestor. Subagent messages (`isSidechain` or a parent tool use) and tool-result user
+  messages are skipped. A prompt with no `parentUuid` field, or a chain that leaves the file before an assistant, falls
+  back to the last top-level assistant before the prompt in file order; a chain that reaches the root with no assistant
+  names no point.
+- It remembers the uuid in the host pool for that engine session for two minutes; the next run's `open` takes it once,
+  for `operation: "resume"` only, and a create or another family never carries it. A create, a resume of a different
+  session, or a thread whose session id changed drops the waiting point. A failed `open` or the run's `session` frame
+  leaves nothing for a later run.
+- With no earlier top-level assistant message, a missing, unreadable or changed session file, an unknown prompt uuid, a
+  file that is not a regular file or is over the read cap, or any error, `revert_session` fails and the rewind leaves the
+  handoff as before. Runs stored before this change (their engine turn is the synthetic host id) fall back the same way.
 
 Tested against a fake SDK only; not yet against a real `claude`. The core side is built and tested against the stand-in
-host; a real provider rewind is unverified.
+host, and a real rewind was observed on 22 November 2026 on the packaged service (build 2be1fb834, SDK path, signed-in `claude`, no tools): after a rewind through the second run, a third run knew only the first run's code word, twice. Not checked: `restore_files`, a rewind to the first run, threads older than the host.
 
 `readSubagent` is announced and gated in the core (`GATED`), but the core has no method that sends it yet. It gets one after the
 beta, with a subagent transcript panel.

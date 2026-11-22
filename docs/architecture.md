@@ -557,8 +557,10 @@ waiting and an earlier run in that same session (a session's first run may have 
 handoff), loads that thread in a short-lived app-server and sends `thread/revert` with
 that run's turn, which keeps only the earlier turns. Rewinding a Claude thread whose run
 went through the engine host reads the session file by the stored session id and names the
-last top-level assistant message before the run's prompt; the next run's `open` carries it
-as `resumeAt` once. The session then goes on, nothing is handed off, and the event and
+nearest top-level assistant ancestor of the run's prompt, falling back to the last one
+before it in file order when the file has no parent links; the next run's `open` carries it
+as `resumeAt` once, within two minutes, and a create, a different session or a changed
+thread session drops it. The session then goes on, nothing is handed off, and the event and
 audit carry `native: true`. Files are restored only by the rewind's own checkpoint step.
 Any refusal, a missing turn id or point, a missing or changed session file, or another
 engine falls back to the handoff above.
