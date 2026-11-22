@@ -33,9 +33,9 @@ when it has one, else the task), or a result that names a newer round, and only 
 shows the newest round only. Repro and finding evidence is not a check on the page, whether the review wrote it under the
 task or a fix ran it as part of its key.
 
-The round's `CrewResult` supplies the page's commit and not-verified lines too, so after a fix round the checks, commit and
-not-verified text are the fix's, not the original task's. At most 50 checks and 20 not-verified lines are shown; the newest
-checks are kept, and a cut sets `truncated`.
+The round's `CrewResult`, when it wrote one, supplies the page's commit and not-verified lines too, so after a fix
+round the checks, commit and not-verified text are the fix's, not the original task's. At most 50 checks and 20
+not-verified lines are shown; the newest checks are kept, and a cut sets `truncated`.
 
 Every other text passes the core's own redaction first: the crew's answer keys are withheld, then the secret scan of every
 built-in format, then the person's patterns; a text that still holds the key is replaced, never shown. The web cleans it

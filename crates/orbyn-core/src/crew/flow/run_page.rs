@@ -32,8 +32,8 @@ const PROMPT_MAX: usize = 2000;
 const CHECK_TEXT_MAX: usize = 200;
 
 impl Core {
-    /// One work task's Run page: its prompt, the checks that decided it, what was not verified and the pull request it
-    /// made. A read: no state changes, so Autopilot's rule refuses nothing here.
+    /// One work task's Run page: its prompt, the checks of its latest verification round, what was not verified and the
+    /// pull request it made. A read: no state changes, so Autopilot's rule refuses nothing here.
     pub fn crew_flow_run(&self, id: &str) -> Result<wire::FlowRunPage> {
         self.crew_preview_only()?;
         valid_id(id)?;
@@ -74,19 +74,14 @@ impl Core {
             })
         });
         let latest_index = results.iter().rposition(|result| !result.checks.is_empty());
-        let gate_is_newer = match (round_gate.as_ref(), latest_index) {
-            (Some(gate), Some(latest)) => {
-                gate.created_at.as_str() > results[latest].created_at.as_str()
-            }
-            (Some(_), None) => true,
-            _ => false,
-        };
-        let (result, from_result) = if gate_is_newer {
-            (gate_index.map(|gate| &results[gate]), false)
-        } else if let Some(latest) = latest_index {
-            (Some(&results[latest]), true)
-        } else {
-            (results.last(), false)
+        // A gate whose evidence no result names is a round whose result is missing (or a test's later gate): its checks are
+        // the only record. Otherwise the newest result with checks wins when it comes after the gate's own result.
+        let (result, from_result) = match (gate_index, latest_index) {
+            (Some(gate), Some(latest)) if latest > gate => (Some(&results[latest]), true),
+            (Some(gate), _) => (Some(&results[gate]), false),
+            (None, _) if round_gate.is_some() => (None, false),
+            (None, Some(latest)) => (Some(&results[latest]), true),
+            (None, None) => (results.last(), false),
         };
 
         // A repro and a finding's comparison are core-written evidence too, but they are as secret as a key and are not
@@ -177,10 +172,12 @@ impl Core {
             }
         }
 
-        // The commit and branch the round published: the same result the checks came from, never another round's.
+        // The commit and branch the round published: the same result the checks came from, never another round's. A round
+        // whose result is not readable still has the commit its own checks ran on.
         let commit = result
             .and_then(|result| result.commit.as_ref())
-            .map(|commit| commit.as_str().to_owned());
+            .map(|commit| commit.as_str().to_owned())
+            .or_else(|| checks.last().map(|check| check.commit.clone()));
         let branch = result
             .and_then(|result| result.branch.as_ref())
             .map(|branch| branch.as_str().to_owned());
