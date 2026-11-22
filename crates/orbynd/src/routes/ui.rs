@@ -165,6 +165,19 @@ fn is_asset_path(path: &str) -> bool {
     component == b"assets"
 }
 
+// `tokio::fs::read` uses a blocking worker as well. Keeping this operation in
+// one helper lets the concurrency test observe actual handler file reads.
+async fn read_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        #[cfg(test)]
+        read_observer::entered(&path);
+        std::fs::read(path)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
 pub async fn serve(State(state): State<AppState>, request: Request) -> Response {
     let path = request.uri().path().to_owned();
     if SERVICE_PREFIXES
@@ -188,45 +201,57 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
         }
         None => root.join("index.html"),
     };
-    match tokio::fs::read(&target).await {
-        Ok(bytes) => {
-            let (gzip_quality, identity_quality) = encoding_qualities(request.headers());
-            if gzip_quality == 0 && identity_quality == 0 {
-                let mut response = StatusCode::NOT_ACCEPTABLE.into_response();
-                response
-                    .headers_mut()
-                    .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
-                return response;
+    let (gzip_quality, identity_quality) = encoding_qualities(request.headers());
+    if gzip_quality == 0 && identity_quality == 0 {
+        let mut response = StatusCode::NOT_ACCEPTABLE.into_response();
+        response
+            .headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        return response;
+    }
+    let try_gzip = gzip_quality > 0
+        && (identity_quality == 0 || (gzip_quality >= identity_quality && compressible(&target)));
+    #[cfg(test)]
+    read_observer::attempted(&target);
+    let loaded = if try_gzip {
+        #[cfg(test)]
+        if COMPRESS_SLOTS.available_permits() == 0 {
+            read_observer::waiting(&target);
+        }
+        let Ok(permit) = COMPRESS_SLOTS.acquire().await else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        let file = target.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            // A cancelled request cannot release the slot while the read or
+            // compression is still running in this blocking worker.
+            let _permit = permit;
+            #[cfg(test)]
+            read_observer::entered(&file);
+            let original = std::fs::read(file)?;
+            if original.len() < 1024 && identity_quality > 0 {
+                return Ok((original, None));
             }
-            let try_gzip = gzip_quality > 0
-                && (identity_quality == 0
-                    || (gzip_quality >= identity_quality
-                        && bytes.len() >= 1024
-                        && compressible(&target)));
-            let (bytes, compressed) = if try_gzip {
-                let Ok(permit) = COMPRESS_SLOTS.acquire().await else {
-                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                };
-                let result = tokio::task::spawn_blocking(move || {
-                    let _permit = permit;
-                    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-                    let encoded = encoder.write_all(&bytes).and_then(|()| encoder.finish());
-                    (bytes, encoded)
-                })
-                .await;
-                let Ok((original, encoded)) = result else {
-                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                };
-                match encoded {
-                    Ok(encoded) if identity_quality == 0 || encoded.len() < original.len() => {
-                        (encoded, true)
-                    }
-                    Ok(_) | Err(_) if identity_quality > 0 => (original, false),
-                    _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                }
-            } else {
-                (bytes, false)
-            };
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            let encoded = encoder.write_all(&original).and_then(|()| encoder.finish());
+            Ok::<_, std::io::Error>((original, Some(encoded)))
+        })
+        .await;
+        match result {
+            Ok(Ok((original, Some(Ok(encoded)))))
+                if identity_quality == 0 || encoded.len() < original.len() =>
+            {
+                Ok((encoded, true))
+            }
+            Ok(Ok((original, _))) if identity_quality > 0 => Ok((original, false)),
+            Ok(Err(error)) => Err(error),
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    } else {
+        read_file(&target).await.map(|bytes| (bytes, false))
+    };
+    match loaded {
+        Ok((bytes, compressed)) => {
             let digest = Sha256::digest(&bytes)
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
@@ -289,6 +314,54 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
 }
 
 #[cfg(test)]
+mod read_observer {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Condvar, Mutex};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    pub(super) struct Hook {
+        pub root: PathBuf,
+        pub attempts: UnboundedSender<()>,
+        pub entries: UnboundedSender<()>,
+        pub waiting: UnboundedSender<()>,
+        pub gate: (Mutex<bool>, Condvar),
+    }
+
+    pub(super) static HOOK: Mutex<Option<Arc<Hook>>> = Mutex::new(None);
+
+    fn matching(path: &Path) -> Option<Arc<Hook>> {
+        HOOK.lock()
+            .unwrap()
+            .as_ref()
+            .filter(|hook| path == hook.root)
+            .cloned()
+    }
+
+    pub(super) fn attempted(path: &Path) {
+        if let Some(hook) = matching(path) {
+            let _ = hook.attempts.send(());
+        }
+    }
+
+    pub(super) fn entered(path: &Path) {
+        if let Some(hook) = matching(path) {
+            let _ = hook.entries.send(());
+            let (released, ready) = &hook.gate;
+            let mut released = released.lock().unwrap();
+            while !*released {
+                released = ready.wait(released).unwrap();
+            }
+        }
+    }
+
+    pub(super) fn waiting(path: &Path) {
+        if let Some(hook) = matching(path) {
+            let _ = hook.waiting.send(());
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -330,5 +403,105 @@ mod tests {
             );
             assert_eq!(encoding_qualities(&headers), expected, "{value}");
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gzip_file_reads_wait_for_admission_even_after_request_cancel() {
+        use crate::http::access::Access;
+        use orbyn_core::{Core, CoreConfig};
+        use std::sync::{Arc, Condvar, Mutex};
+        use std::time::Duration;
+        use tokio::sync::mpsc;
+
+        let root = std::env::temp_dir().join(format!("orbyn-ui-read-limit-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("assets/app.js"), vec![b'a'; 4096]).unwrap();
+        std::fs::write(root.join("assets/plain.js"), b"identity").unwrap();
+        let mut config = CoreConfig::new(root.join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let state = AppState {
+            core: Arc::new(Core::open(config).unwrap()),
+            access: Arc::new(Access::new("token", vec![], None)),
+            remote: false,
+            ui_dir: Some(root.clone()),
+            images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
+        };
+        let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
+        let (entry_tx, mut entry_rx) = mpsc::unbounded_channel();
+        let (waiting_tx, mut waiting_rx) = mpsc::unbounded_channel();
+        let hook = Arc::new(read_observer::Hook {
+            root: root.join("assets/app.js"),
+            attempts: attempt_tx,
+            entries: entry_tx,
+            waiting: waiting_tx,
+            gate: (Mutex::new(false), Condvar::new()),
+        });
+        struct ReleaseOnDrop(Arc<read_observer::Hook>);
+        impl Drop for ReleaseOnDrop {
+            fn drop(&mut self) {
+                let (released, ready) = &self.0.gate;
+                *released.lock().unwrap() = true;
+                ready.notify_all();
+                *read_observer::HOOK.lock().unwrap() = None;
+            }
+        }
+        let _release = ReleaseOnDrop(hook.clone());
+        *read_observer::HOOK.lock().unwrap() = Some(hook.clone());
+        let request = || {
+            Request::builder()
+                .uri("/assets/app.js")
+                .header("accept-encoding", "gzip")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let first = tokio::spawn(serve(State(state.clone()), request()));
+        let second = tokio::spawn(serve(State(state.clone()), request()));
+        for _ in 0..2 {
+            tokio::time::timeout(Duration::from_secs(10), entry_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        let third = tokio::spawn(serve(State(state.clone()), request()));
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(10), attempt_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(10), waiting_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let identity = Request::builder()
+            .uri("/assets/plain.js")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let identity =
+            tokio::time::timeout(Duration::from_secs(10), serve(State(state), identity)).await;
+        let entered_while_full =
+            tokio::time::timeout(Duration::from_millis(200), entry_rx.recv()).await;
+        first.abort();
+        let entered_after_cancel =
+            tokio::time::timeout(Duration::from_millis(200), entry_rx.recv()).await;
+        let (released, ready) = &hook.gate;
+        *released.lock().unwrap() = true;
+        ready.notify_all();
+        // Release the test hook even when the assertions reveal a regression.
+        *read_observer::HOOK.lock().unwrap() = None;
+        assert!(
+            entered_while_full.is_err(),
+            "third read began while both slots were busy"
+        );
+        assert!(
+            entered_after_cancel.is_err(),
+            "cancelling a request released its in-flight read slot"
+        );
+        let identity = identity.expect("identity request should not wait for compression");
+        assert_eq!(identity.status(), StatusCode::OK);
+        assert!(!identity.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(second.await.unwrap().status(), StatusCode::OK);
+        assert_eq!(third.await.unwrap().status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(root);
     }
 }
