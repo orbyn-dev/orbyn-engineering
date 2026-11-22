@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 import type { EngineStatus } from "../../../api/types";
 import type { ProviderEntry } from "../../../generated/ProviderEntry";
+import type { ClaudeEnginePath } from "../../../product/engines/claudePath";
 import { useHostFor } from "../../enginehost";
 import { HostChip } from "../engineHost/HostParts";
 
@@ -12,6 +13,8 @@ export interface ClaudePathRow {
   key: string;
   name: string;
   note: string;
+  /** The path this row stands for: only its row carries the In use switch. */
+  path: ClaudeEnginePath;
   /** The SDK row's host state; the CLI row has none. */
   chip?: ReactNode;
 }
@@ -28,9 +31,10 @@ export function claudePathRows(
       key: "claude-sdk",
       name: "Claude (SDK)",
       note: CLAUDE_SDK_NOTE,
+      path: "sdk",
       chip: <ClaudeHostChip engineId={engine.id} />,
     }),
-    render(engine, entry, { key: "claude-cli", name: "Claude (CLI)", note: CLAUDE_CLI_NOTE }),
+    render(engine, entry, { key: "claude-cli", name: "Claude (CLI)", note: CLAUDE_CLI_NOTE, path: "cli" }),
   ];
 }
 
