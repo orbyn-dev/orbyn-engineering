@@ -444,10 +444,7 @@ impl CodexDriver {
 
 /// The private home a confined Codex worker starts with, or the gate's refusal. A confined
 /// run with no private home is an error, never an unrestricted one.
-fn confined_home<'a>(
-    spec: &'a RunSpec,
-    codex_workers_allowed: bool,
-) -> Result<Option<&'a std::path::Path>> {
+fn confined_home(spec: &RunSpec, codex_workers_allowed: bool) -> Result<Option<&std::path::Path>> {
     let Some(confinement) = spec.confine.as_ref() else {
         if spec.crew_task.is_some() {
             return Err(CoreError::EngineUnavailable(

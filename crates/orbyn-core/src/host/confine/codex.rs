@@ -242,7 +242,7 @@ fn read_auth(real_home: &Path) -> Result<Vec<u8>> {
     if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > AUTH_MAX_BYTES {
         return Err(CoreError::EngineUnavailable(AUTH_UNREADABLE.to_owned()));
     }
-    let mut file = open_read_only(&path)
+    let file = open_read_only(&path)
         .map_err(|_| CoreError::EngineUnavailable(AUTH_UNREADABLE.to_owned()))?;
     let mut document = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
     file.take(AUTH_MAX_BYTES + 1)
