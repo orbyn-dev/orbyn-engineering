@@ -5,14 +5,15 @@
  * `not_foldable`, `action_unsupported` (iOS rotate and buttons) and `device_busy`. The posture it answers for a hinge angle is the
  * mock's own guess (the doc leaves open what Android reports at 130); the panel must render whatever comes back.
  *
- * `createDevicesPlannedMock` covers the pieces docs/devices.md does not define (tools, their versions, the one Orbyn install,
- * the agent-access toggle, the H26 device-tools drawer and the H27 permission flow). The production client for those answers
- * nothing; only this mock makes the setup, tools and agent frames interactive.
+ * `createDevicesPlannedMock` covers the pieces docs/devices.md does not define (tools, their versions, the one Orbyn install, the
+ * agent-access toggle, the H26 device-tools drawer, the H27 permission flow, the live screen stream and its pointer/typing input,
+ * and the driving agent's hold). The production client for those answers nothing; only this mock makes the setup, tools, agent and
+ * live frames interactive.
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { ActionResult, ActionType, Device, DeviceAction, DeviceDetail, DeviceList, DeviceState, DevicesApi, Fold, PlatformStatus } from "../src/features/devices/contract.ts";
-import type { DeviceTool, DevicesPlannedApi, InstallProgress, ToolSnapshot, ToolVersions } from "../src/features/devices/planned.ts";
-import type { AgentAccessState, AgentDeviceGrant, AgentDeviceRequest, DeviceToolsState, DeviceToolChange, PushOutcome } from "../src/features/devices/planned.ts";
+import type { AgentAccessState, AgentDeviceGrant, AgentDeviceRequest, DeviceAgentState, DeviceLiveFrame, DevicePoint, DevicePointerInput, DeviceToolChange, DeviceToolsState, DeviceTool, DevicesLivePlannedApi, DevicesPlannedApi, InstallProgress, PushOutcome, ToolSnapshot, ToolVersions } from "../src/features/devices/planned.ts";
+
 
 /** A 1 by 1 PNG, as base64. */
 export const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -225,7 +226,7 @@ function defaultToolsState(): DeviceToolsState {
   };
 }
 
-export interface DevicesPlannedMock extends DevicesPlannedApi {
+export interface DevicesPlannedMock extends DevicesPlannedApi, DevicesLivePlannedApi {
   /** How many times a version check ran. */
   checks: number;
   /** Every agent-access write, in order. */
@@ -242,6 +243,16 @@ export interface DevicesPlannedMock extends DevicesPlannedApi {
   toolState(id: string): DeviceToolsState | null;
   /** Make the next push answer the platform's failure line. */
   failNextPush(on: boolean): void;
+  /** How many live screen streams started. */
+  liveStarts: number;
+  /** How many live screen frames were sent. */
+  framesSent: number;
+  /** Every pointer sent, in order. */
+  pointers: DevicePointerInput[];
+  /** Every typed string, in order; `\n` is Return. */
+  typed: string[];
+  /** Every agent control change, in order. */
+  agentChanges: ("take_over" | "hand_back")[];
   /** Make the next install fail with the frame's connection-reset line. */
   failInstall(on: boolean): void;
   setOffline(offline: boolean): void;
@@ -262,6 +273,14 @@ export function createDevicesPlannedMock(init: {
   agentRequest?: AgentDeviceRequest | null;
   agentGrant?: AgentDeviceGrant | null;
   agentReason?: string;
+  /** The Planned live screen. Omitted or `false` means the service has no live stream (`null`, Planned). */
+  live?: {
+    screen?: string;
+    cursor?: DevicePoint;
+    agent?: "off" | "driving" | "paused";
+    agentName?: string;
+    delayMs?: number;
+  } | false;
 } = {}): DevicesPlannedMock {
   const tools = new Map<"android" | "ios", DeviceTool[]>([
     ["ios", init.iosTools ?? iosTools(init.iosMissing === true)],
@@ -329,6 +348,11 @@ export function createDevicesPlannedMock(init: {
   };
   const toolWrites: string[] = [];
   const pushWrites: string[] = [];
+  const live = init.live === false || init.live === undefined ? null : init.live;
+  let hold: DeviceAgentState = {
+    status: live?.agent ?? "off",
+    name: live && (live.agent === "driving" || live.agent === "paused") ? live.agentName ?? "Claude Code" : null,
+  };
   const ready = (list: DeviceTool[]): DeviceTool[] => list.map((tool) => ({ ...tool }));
   const snapshot = (platform: "android" | "ios"): ToolSnapshot => ({
     platform,
@@ -350,6 +374,11 @@ export function createDevicesPlannedMock(init: {
       return held ? { ...held } : null;
     },
     failNextPush: (on) => { failPush = on; },
+    liveStarts: 0,
+    framesSent: 0,
+    pointers: [],
+    typed: [],
+    agentChanges: [],
     failInstall: (on) => { failInstall = on; },
     setOffline: (next) => { offline = next; },
     setTools: (platform, list) => { tools.set(platform, list); },
@@ -470,6 +499,46 @@ export function createDevicesPlannedMock(init: {
       await wait();
       agent = { ...agent, grant: null };
       return { ...agent };
+    },
+    async stream(_id, onFrame: (frame: DeviceLiveFrame) => void, signal?: AbortSignal) {
+      if (!live) return null;
+      this.liveStarts += 1;
+      const frame: DeviceLiveFrame = {
+        image: live.screen ?? PIXEL_PNG,
+        ...(live.cursor ? { cursor: live.cursor } : {}),
+      };
+      const send = () => {
+        if (signal?.aborted) return;
+        this.framesSent += 1;
+        onFrame(frame);
+      };
+      const delay = live.delayMs ?? init.delayMs ?? 0;
+      if (delay > 0) setTimeout(send, delay);
+      else send();
+      return true;
+    },
+    async pointer(_id, input: DevicePointerInput) {
+      if (!live) return null;
+      this.pointers.push(input);
+      // Touching the device takes control from the agent (device-agent-paused).
+      if (hold.status === "driving") hold = { ...hold, status: "paused" };
+      return true;
+    },
+    async typeText(_id, text: string) {
+      if (!live) return null;
+      this.typed.push(text);
+      return true;
+    },
+    async agentState(_id, change?: "take_over" | "hand_back") {
+      if (!live) return null;
+      if (change === "take_over") {
+        this.agentChanges.push("take_over");
+        hold = { ...hold, status: "paused" };
+      } else if (change === "hand_back") {
+        this.agentChanges.push("hand_back");
+        hold = { ...hold, status: "driving", name: hold.name ?? live.agentName ?? "Claude Code" };
+      }
+      return { ...hold };
     },
   };
 }
