@@ -220,14 +220,15 @@ fn merged(own: &[KeybindingRule]) -> Vec<KeybindingRule> {
 fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
     let mut found: Vec<KeybindingConflict> = Vec::new();
     for rule in rules {
+        let when = rule.when.as_ref().filter(|when| !when.trim().is_empty());
         match found
             .iter_mut()
-            .find(|known| known.key == rule.key && known.when == rule.when)
+            .find(|known| known.key == rule.key && known.when.as_ref() == when)
         {
             Some(known) => known.commands.push(rule.command.clone()),
             None => found.push(KeybindingConflict {
                 key: rule.key.clone(),
-                when: rule.when.clone(),
+                when: when.cloned(),
                 commands: vec![rule.command.clone()],
             }),
         }
@@ -499,6 +500,22 @@ mod tests {
         assert_eq!(rules[0].command, "a // not a comment");
         assert_eq!(issues.len(), 2);
         assert_eq!(parse("{ nope").1.len(), 1);
+    }
+
+    #[test]
+    fn unconditional_context_variants_collide() {
+        let rules = [
+            rule("mod+q", "one", None),
+            rule("mod+q", "two", Some("")),
+            rule("mod+q", "three", Some("  ")),
+        ];
+        let clashes = conflicts(&merged(&rules));
+        let clash = clashes
+            .iter()
+            .find(|clash| clash.key == "mod+q")
+            .expect("unconditional rules overlap");
+        assert_eq!(clash.when, None);
+        assert_eq!(clash.commands, ["one", "two", "three"]);
     }
 
     #[test]
