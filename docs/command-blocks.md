@@ -99,6 +99,8 @@ Products Research, not something the web invents.
   frames) over both `command` and the output text **before** it stores them and again before it answers, so a secret printed by a
   command is never in the list or the output. The hook is a single function in the block store, `redact(text) -> text`, so the rule set
   can change without touching the routes. If the rules cannot be read, that terminal keeps nothing and the list answers empty.
+- **A terminal that carries a workflow run's env values keeps no blocks.** Those values are masked on the output stream after the block
+  parser reads it, so the parser never records such a terminal (tested: `a_terminal_with_run_secrets_keeps_no_command_blocks`).
 - Redaction applies to what the web copies too: the web copies what the service sent. A copy therefore never holds more than the drawer
   showed.
 - A block's `command` and `cwd` are labels. The web never opens a path from them, never builds a URL from them and never puts them in a
