@@ -305,3 +305,15 @@ fn a_remote_reference_is_refused_before_any_io() {
     let loader = NoLoader;
     assert!(boon::UrlLoader::load(&loader, "http://127.0.0.1:9/never").is_err());
 }
+
+#[test]
+fn a_bare_scalar_and_a_fence_inside_a_string_are_read() {
+    let string = ResultRequest::from_body(Some(json!({ "type": "string" })), None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(string.read("\"done\"").unwrap(), json!("done"));
+    assert_eq!(
+        string.read("```json\n\"a ``` b\"\n```").unwrap(),
+        json!("a ``` b")
+    );
+}

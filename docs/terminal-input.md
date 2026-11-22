@@ -1,6 +1,6 @@
 # Terminal input: typed command proposals
 
-Status: the service sends the field (built, not verified on a real engine). The web side is built.
+Status: the service records the field (built, not verified on a real engine). The web card is built against typed test proposals, but the editor does not send `purpose` yet and the web does not read the `orbyn.proposal` event yet, so no card shows in the real app.
 
 ## Field
 
@@ -42,3 +42,6 @@ the schema `{command: string, note?: string}`, asks the engine for it through th
 turn result") and, when the value passes the rules above, records one `orbyn.proposal` run event (`CUSTOM`, value
 `{command, note?}`) after the `orbyn.turn_result` event. A value that breaks a rule records no proposal; the result event still says what
 came back. Nothing scrapes tags from the answer text.
+
+Known limits: a preparation retry (the project script failed and the person presses Retry) relaunches the run without its typed
+result request; the raw proposal is stored in the run's events and only the web card masks a secret-looking command.

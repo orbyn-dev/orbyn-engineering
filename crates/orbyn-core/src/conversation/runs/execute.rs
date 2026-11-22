@@ -1,7 +1,10 @@
 use super::*;
 
 impl RunManager {
-    #[allow(clippy::too_many_arguments, reason = "a run is started from the values admission already holds; a struct would only rename them")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a run is started from the values admission already holds; a struct would only rename them"
+    )]
     pub(super) async fn execute(
         self: Arc<Self>,
         thread: Thread,
@@ -19,8 +22,12 @@ impl RunManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&run_id)
         {
-            Some(request) => request.instructed(&prompt),
-            None => prompt,
+            // Only an ordinary message gets the instruction: a slash command or goal action is classified from the
+            // person's own words and must reach the engine as written.
+            Some(request) if matches!(RunKind::parse(&prompt), RunKind::Turn) => {
+                request.instructed(&prompt)
+            }
+            _ => prompt,
         };
         let lifecycle = thread.lifecycle.clone();
         let driver = self.engines.driver(&thread.engine).ok();

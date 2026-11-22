@@ -564,8 +564,11 @@ impl RunManager {
         {
             let text = answer.finish().unwrap_or_default();
             let events = request.events(&text);
-            tracing::debug!(run = %scope.run_id, bytes = text.len(), "recorded a typed turn result");
-            let _ = self.write_events(scope, events);
+            if self.write_events(scope, events).is_none() {
+                tracing::debug!(run = %scope.run_id, bytes = text.len(), "recorded a typed turn result");
+            } else {
+                tracing::warn!(run = %scope.run_id, "could not record a typed turn result");
+            }
         }
         // Blocked engines hear a denial even when the engine ended on its own.
         if let Err(error) = self

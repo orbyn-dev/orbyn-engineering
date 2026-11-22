@@ -190,16 +190,18 @@ impl ResultRequest {
     }
 }
 
-/// The text of the last fenced `json` block, else the whole trimmed message when it reads as JSON.
+/// The text of the last fenced `json` block, else the whole trimmed message when it reads as JSON (an object, array,
+/// string, number, boolean or null).
 fn extract(text: &str) -> std::result::Result<&str, Reason> {
     if let Some(start) = text.rfind("```json") {
         let after = &text[start + "```json".len()..];
         let after = after.strip_prefix(['\r', '\n']).unwrap_or(after);
-        let end = after.find("```").unwrap_or(after.len());
+        // The last fence closes the last block, so a fence inside a JSON string does not cut the value.
+        let end = after.rfind("```").unwrap_or(after.len());
         return Ok(after[..end].trim());
     }
     let whole = text.trim();
-    if whole.starts_with(['{', '[']) {
+    if serde_json::from_str::<Value>(whole).is_ok() {
         Ok(whole)
     } else {
         Err(Reason::NoJson)

@@ -47,6 +47,10 @@ async fn start_run(
     headers: HeaderMap,
     ApiJson(body): ApiJson<StartRun>,
 ) -> ApiResult<impl IntoResponse> {
+    let result = orbyn_core::conversation::runs::result::ResultRequest::from_body(
+        body.result_schema.clone(),
+        body.purpose,
+    )?;
     // A run may ask for a looser permission mode. Raising it grants an engine more, so it needs the person key (#441,
     // docs/worker-token-isolation.md); keeping or lowering the mode stays `Local`.
     let needs_key = |wanted: PermissionMode| -> ApiResult<()> {
@@ -92,10 +96,6 @@ async fn start_run(
         };
         state.core.update_thread(&id, &patch, LOCAL_USER)?;
     }
-    let result = orbyn_core::conversation::runs::result::ResultRequest::from_body(
-        body.result_schema.clone(),
-        body.purpose,
-    )?;
     let run = state.core.runs.admit_with_result(
         &id,
         &body.prompt,
