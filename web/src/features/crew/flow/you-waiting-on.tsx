@@ -32,7 +32,7 @@ export function FlowYouWaitingOn() {
               <span className="cx-fh" style={{ left: "904px", top: "22px", width: "93px" }}><Ic n="git" sm />Main</span>
               <span className="cx-fh" style={{ left: "1017px", top: "22px", width: "93px" }}><Ic n="user" sm />You</span>
               <span className="cx-fg" style={{ left: "113px", top: "0", width: "206px" }}>Build</span>
-              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs, no limit</span>
+              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs</span>
               <span className="cx-fg" style={{ left: "791px", top: "0", width: "206px" }}>Land: no human wait</span>
               <span className="cx-fg" style={{ left: "1017px", top: "0", width: "93px" }}>You</span>
               <svg className="cx-fe" width="1110" height="216" aria-hidden="true">

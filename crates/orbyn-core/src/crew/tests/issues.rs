@@ -729,3 +729,201 @@ mod gitlab {
         );
     }
 }
+
+mod forgejo {
+    use super::*;
+    use crate::issues::Forgejo;
+    use crate::issues::fake_http::{Reply, Seen, Server};
+    use serde_json::{Value, json};
+    use std::time::Duration;
+
+    fn row(req: &Seen, number: u64) -> Value {
+        json!({ "number": number, "title": format!("Issue {number}"), "state": "open",
+            "html_url": format!("http://{}/team/app/issues/{number}", req.header("host").unwrap_or_default()),
+            "created_at": "2026-11-01T00:00:00Z", "updated_at": format!("2026-11-0{number}T00:00:00Z"),
+            "user": { "login": "ann" }, "labels": [], "assignees": [], "comments": 0, "body": "Body" })
+    }
+
+    /// A Forgejo connection whose reader talks to the fake server. The stored host is https, as it must be.
+    async fn connected(server: &Server) -> super::super::harness::World {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core.issues.set_source(
+            TrackerKind::Forgejo,
+            Arc::new(Forgejo::for_test(
+                &server.base,
+                "fj-secret456",
+                Duration::from_secs(5),
+            )),
+        );
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Forgejo,
+                connect(Some("https://forgejo.example.test"), Some("fj-secret456")),
+            )
+            .await
+            .unwrap();
+        w
+    }
+
+    fn key(scope: &str) -> IssueKey {
+        IssueKey {
+            tracker: TrackerKind::Forgejo,
+            scope: scope.into(),
+            key: "1".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scope_outside_the_connection_is_refused_with_no_request_sent() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/comments") {
+                Reply::json(&json!([]))
+            } else if req.path().ends_with("/issues") {
+                Reply::json(&json!([row(req, 1)]))
+            } else {
+                Reply::json(&row(req, 1))
+            }
+        })
+        .await;
+        let w = connected(&server).await;
+        let outside = w.core.issue(&key("other/proj")).await;
+        assert!(matches!(outside, Err(CoreError::Invalid(_))), "{outside:?}");
+        let link = w.core.issue_draft(&key("team/other")).await;
+        assert!(matches!(link, Err(CoreError::Invalid(_))));
+        assert!(server.seen().is_empty(), "nothing was sent");
+        let detail = w.core.issue(&key("team/app")).await.unwrap();
+        assert_eq!(detail.summary.display_key, "#1");
+        assert!(
+            server
+                .seen()
+                .iter()
+                .any(|r| r.path() == "/api/v1/repos/team/app/issues/1")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_forgejo_is_reported_with_fixed_copy_and_a_wait_when_rate_limited() {
+        let server = Server::start(|_| Reply::status(500)).await;
+        let w = connected(&server).await;
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.issues.is_empty());
+        assert_eq!(list.failed.len(), 1);
+        assert_eq!(list.failed[0].tracker, TrackerKind::Forgejo);
+        assert_eq!(list.failed[0].message, "Forgejo did not answer.");
+        let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
+        w.core.issues.set_source(
+            TrackerKind::Forgejo,
+            Arc::new(Forgejo::for_test(
+                &limited.base,
+                "fj-secret456",
+                Duration::from_secs(5),
+            )),
+        );
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let text = format!("{list:?}");
+        assert!(!text.contains("secret"), "{text}");
+        let one = w.core.issue(&key("team/app")).await;
+        assert!(matches!(one, Err(CoreError::TrackerRateLimited(_))));
+    }
+
+    #[tokio::test]
+    async fn a_forged_forgejo_cursor_is_a_listing_error_not_a_failed_tracker() {
+        let server = Server::start(|req| Reply::json(&json!([row(req, 1)]))).await;
+        let w = connected(&server).await;
+        let before = server.seen().len();
+        let forged = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::Forgejo),
+                cursors: [(
+                    "forgejo team/app".to_owned(),
+                    "2.0000000000000000".to_owned(),
+                )]
+                .into(),
+                ..IssueQuery::default()
+            })
+            .await;
+        assert!(
+            matches!(&forged, Err(CoreError::Invalid(_))),
+            "a cursor we did not issue is a 400, not a failed tracker: {forged:?}"
+        );
+        assert_eq!(server.seen().len(), before, "nothing was sent");
+        let unnamed = w
+            .core
+            .list_issues(&IssueQuery {
+                tracker: Some(TrackerKind::Forgejo),
+                cursors: [("forgejo team/elsewhere".to_owned(), "2.x".to_owned())].into(),
+                ..IssueQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(unnamed.issues.is_empty() && unnamed.failed.is_empty());
+        assert_eq!(server.seen().len(), before, "an unnamed scope is not read");
+    }
+
+    #[tokio::test]
+    async fn forgejo_source_needs_a_connection_and_refuses_a_stored_plain_http_host() {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        let missing = w.core.forgejo_source().err().expect("no connection");
+        assert!(
+            matches!(missing, CoreError::TrackerNotConnected(_)),
+            "{missing:?}"
+        );
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Forgejo,
+                connect(Some("https://forgejo.example.test"), Some("fj-secret456")),
+            )
+            .await
+            .unwrap();
+        w.core
+            .store
+            .put_tracker(
+                &TrackerConnection {
+                    tracker: TrackerKind::Forgejo,
+                    host: Some("http://forgejo.example.test".into()),
+                    scopes: vec!["team/app".into()],
+                },
+                "2026-11-01T00:00:00Z",
+            )
+            .unwrap();
+        let plain = w.core.forgejo_source().err().expect("a plain http host");
+        assert!(matches!(plain, CoreError::Invalid(_)), "{plain:?}");
+    }
+
+    #[tokio::test]
+    async fn forgejo_source_sends_the_keychain_token_to_the_stored_connection_host() {
+        let server = Server::start(|_| Reply::json(&json!([]))).await;
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Forgejo,
+                connect(Some("https://forgejo.example.test"), Some("fj-secret456")),
+            )
+            .await
+            .unwrap();
+        w.core.issues.set_forgejo_test_base(&server.base);
+        let source = w.core.forgejo_source().expect("a Forgejo source");
+        source
+            .list("team/app", &IssueQuery::default())
+            .await
+            .unwrap();
+        let seen = server.seen();
+        assert!(!seen.is_empty(), "the source sent a request");
+        assert!(
+            seen.iter()
+                .all(|r| r.header("authorization") == Some("token fj-secret456")),
+            "{seen:?}"
+        );
+    }
+}

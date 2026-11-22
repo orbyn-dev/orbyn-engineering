@@ -1,9 +1,10 @@
 # Command blocks (W1)
 
-What the terminal drawer needs from the service to show one block per command. **Service built, web hidden**: the service keeps,
-redacts and serves blocks through the two routes below; the web side is built hidden and in a production build has no client, so the
-terminal is unchanged. A dev-only preview (`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here
-change only if the service pull request says so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
+What the terminal drawer needs from the service to show one block per command. **Service built, web client wired**: the service keeps,
+redacts and serves blocks through the two routes below, and `blocksClient.ts` reads them in production. A shell that emits no marks
+answers an empty list, and the drawer then draws the terminal exactly as it does without blocks. A dev-only preview
+(`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here change only if the service pull request says
+so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
 
 ## What the service keeps
 
@@ -118,16 +119,22 @@ Products Research, not something the web invents.
 
 ## Web side
 
-`web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the typed client interface, `blocksApi()` is null in production),
-`blockText.ts` (cleaning, caps, durations), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks), `CommandBlocksPreview.tsx`
-(the dev-only screen). The mock, `web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the
-build if its marker or the route appears.
+`web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the client contract and default: `blocksApi()` answers the
+production client, and `setBlocksApi(null)` puts it back), `blocksTypes.ts` (the block, page and limit shapes), `blocksClient.ts` (the
+production client for both routes: every path segment and cursor encoded, the session header and no person key, `410` as
+`cursor_expired`, and a `404` list as an empty list),
+`readOutput.ts` (every output page, started again from the top once after `410`), `blockText.ts` (cleaning, caps, durations),
+`CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks), `CommandBlocksPreview.tsx` (the dev-only screen). The real client draws
+nothing until it has blocks: an empty list, a `404` and any other list failure leave the terminal exactly as it was, with no empty state
+and no error. Only the preview mock (and tests that install a client) shows the loading, empty and error frames. The mock,
+`web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the
+route appears.
 
 ## Decisions
 
 The service side of #974 is built in `crates/orbyn-core/src/host/blocks/` (parser, store, text) and
-`crates/orbynd/src/routes/blocks.rs`, with module tests and a service test in `crates/orbynd/tests/command_blocks.rs`. The web stays
-hidden.
+`crates/orbynd/src/routes/blocks.rs`, with module tests and a service test in `crates/orbynd/tests/command_blocks.rs`. The web reads
+them through the production client above.
 
 1. **Routes stay as written.** `GET /api/threads/{id}/terminals/{terminal}/blocks?before=&limit=` and
    `GET .../blocks/{block_id}/output?after=&limit=` are both Local reads, like the neighbouring terminal reads. Neither writes. There

@@ -370,10 +370,24 @@ impl EngineDriver for HostDriver {
         )
         .await
         {
-            Ok(pair) => pair,
+            Ok(pair) => {
+                // The SDK loaded before the host accepted the turn, so this build carries it.
+                self.pool.note_sdk_present();
+                pair
+            }
             Err(error) => {
+                let sdk_missing = error.sdk_missing();
+                if sdk_missing {
+                    self.pool.note_sdk_missing();
+                }
                 let error = begin_failed(&family, spec.resume.is_some(), &engine, error);
                 connection.fire("closeSession", json!({ "sessionId": spec.run_id }));
+                if sdk_missing {
+                    // Say what is wrong: the SDK is not in this build, not that the run could not be restricted.
+                    return Err(CoreError::EngineUnavailable(
+                        "This build does not include the engine's SDK.".into(),
+                    ));
+                }
                 return Err(error);
             }
         };
