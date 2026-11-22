@@ -103,9 +103,9 @@ Products Research, not something the web invents.
   terminal's own output, so any program or `cat file` can forge them: a failing build can show exit 0 and a Run again line can be
   chosen by a file's content. The web shows the command before Run again and never sends Enter; treat `exit_code` as advisory until
   the shell integration passes a nonce (not built). A flood of forged `C` marks can fill the 500-block cap and evict real history.
-- **Live output lags one line.** The last line of a running block is held back until its newline or the block's end, so a command that
-  prints "Compiling..." and waits shows it only with the next line; `output_bytes` does not count it either. A prompt with no newline
-  does not show in the block until the command ends.
+- **Only a partial last line is held back.** A complete line of a running block is readable as soon as its newline arrives, and
+  `output_bytes` counts it, so a command that prints "Compiling..." and then waits shows that line before it ends. A last line with no
+  newline yet (a prompt, a progress line) stays pending until its newline arrives or the command ends.
 - The working directory (`cwd`) is redacted like the command.
 - **A terminal that carries a workflow run's env values keeps no blocks.** Those values are masked on the output stream after the block
   parser reads it, so the parser never records such a terminal (tested: `a_terminal_with_run_secrets_keeps_no_command_blocks`).

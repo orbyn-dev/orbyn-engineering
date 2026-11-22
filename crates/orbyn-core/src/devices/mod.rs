@@ -770,7 +770,7 @@ enum ToolSource {
 impl ToolSource {
     fn get(&self) -> Option<Tool> {
         match self {
-            Self::Named(name) => resolve(*name).map(|resolved| Tool {
+            Self::Named(name) => resolve(name).map(|resolved| Tool {
                 program: resolved.program,
                 prefix: resolved.prefix,
             }),
