@@ -35,7 +35,7 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
    that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`). The Claude and Cursor SDK gates were lifted
    on 2026-11-22 on the condition that Orbyn Engineering is open source for public use; both are used as dependencies only
-   and ship with the notices their licences ask for. Neither is bundled yet (Planned, docs/sdk-default-plan.md).
+   and ship with the notices their licences ask for. Both are exact-pinned dependencies in `package.json` (`@anthropic-ai/claude-agent-sdk` 0.3.321, `@cursor/sdk` 1.4.2) with their licence texts in `THIRD_PARTY_NOTICES.md`; neither is bundled into the single executable yet (Planned, docs/sdk-default-plan.md step 4).
 7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
    `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
    and write each test so it fails before the code. State in the PR what has not run against the real engine.
@@ -90,9 +90,10 @@ for the prompt's uuid before the result. A leftover turn has not been seen on a 
 
 `src/families/cursor.mjs` runs the public surface of `@cursor/sdk` (`Agent.create`/`Agent.resume`, `agent.send` with `onDelta`,
 `run.wait`/`steer`/`cancel`, `agent.close`). It starts only with `ORBYN_ENGINE_HOST_CURSOR=1`; without it `cursor` is an unknown
-family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is **not bundled and not a
-dependency** (not even optional): esbuild `external`, loaded with a dynamic import that fails with "The Cursor SDK is not
-available in this build." (`kind: "unsupported"`). In the single executable it is therefore absent.
+family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is an exact-pinned **dependency**, not
+bundled into the single executable (esbuild `external`). The host loads it with a dynamic import, or from the file named by
+`ORBYN_CURSOR_SDK_MODULE`; if it cannot, `open` fails with "The Cursor SDK is not available in this build." (`kind: "unsupported"`).
+The app bundle ships it as a `node_modules` folder beside the host (Planned, docs/sdk-default-plan.md step 4).
 
 - **Pooled.** One host process serves every Cursor session (T3's single worker, keyed by `sessionId`). A pooled host cannot take a
   per-run argv prefix, so `open` with `confinement.argvPrefix` fails with `kind: "unsupported"` and starts nothing; the core
