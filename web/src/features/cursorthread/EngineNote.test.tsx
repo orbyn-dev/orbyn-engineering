@@ -71,8 +71,9 @@ describe("Reviewer only", () => {
   });
 
   it("falls back to Crew's own words when the service sends no reason", () => {
+    expect(CREW_ROLE_TOOLTIP).toBe("Orbyn cannot ask before it acts");
     render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: null }} />);
-    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
+    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", "Orbyn cannot ask before it acts");
   });
 
   it("draws nothing for any, and the reason is plain text", () => {

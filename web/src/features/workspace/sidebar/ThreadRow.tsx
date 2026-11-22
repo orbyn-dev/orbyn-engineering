@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { createPortal } from "react-dom";
 import type { Project, Thread } from "../../../api/types";
 import { compactAge, elapsed } from "../../../lib/format";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { runStateLabels } from "../../../product/runs/stateLabels";
 import { useNow } from "../../../lib/useNow";
 import { routeHref } from "../../../product/state/route";
@@ -207,7 +208,7 @@ export function ThreadRow({
     (state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null,
   );
   const branch = thread.worktree?.branch ?? projectBranch;
-  const unmanaged = engine?.capabilities.managed === false;
+  const unmanaged = isUnmanaged(engine);
   const projectName = thread.scratch ? "No project" : (project?.name ?? "Unknown project");
   const engineName = engine?.name ?? thread.engine;
   const [hover, setHover] = useState<DOMRect | null>(null);

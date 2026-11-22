@@ -47,6 +47,7 @@ import type { EngineStatus, Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useConnectionKind } from "../../../product/state/connection";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { useDraftStore } from "../../../product/state/draftStore";
 import { navigate } from "../../../product/state/route";
 import { useThreadLogs } from "../../../product/state/threadLogs";
@@ -371,7 +372,7 @@ export function Composer({
     [approvals, thread.id],
   );
 
-  const unmanaged = engine !== null && !engine.capabilities.managed;
+  const unmanaged = isUnmanaged(engine);
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
   const accessView = accessViewOf(!unmanaged && neverAsks(engine), engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
@@ -536,7 +537,6 @@ export function Composer({
           narrowBar={narrowBar}
           contextMeter={contextMeter}
           showContext={showContext}
-          unmanaged={unmanaged}
           access={access}
           accessView={accessView}
           busy={busy}
@@ -558,7 +558,7 @@ export function Composer({
         hidden={!showContext && !persistentContext}
         branch={branch}
         branchPending={branchPending}
-        unmanaged={unmanaged}
+        engine={engine}
         access={access}
         accessView={accessView}
         busy={busy}

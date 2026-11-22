@@ -99,6 +99,11 @@ export const FRAMES = {
   "shell-home": { route: "#/" },
   "update-sources": { route: "#/", scenario: "updates-unconfigured" },
   "shell-new-thread": { route: "#/new" },
+  // The engine picker's visible Unmanaged label, and Crew's Reviewer only chip for an engine the service limits.
+  "engine-picker-closed": { route: "#/threads/t-unmanaged" },
+  "engine-picker-new-thread": { route: "#/new", scenario: "crew-engine-picker" },
+  "engine-picker-crew-tiers": { route: "#/settings/crew", scenario: "crew-engine-picker" },
+  "engine-picker-crew-tiers-narrow": { route: "#/settings/crew", scenario: "crew-engine-picker", width: 640 },
   // The sidebar: the strip over a thread row under the pointer, and a project row with its hover controls.
   "shell-thread-row-actions": { route: "#/threads/t-done", steps: [{ do: "hover", selector: ".thread-row", text: "Keep the checks running" }] },
   "shell-project-controls": { route: "#/threads/t-done", steps: [{ do: "hover", selector: ".folder-head" }] },
