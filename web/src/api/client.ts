@@ -5,6 +5,7 @@ import { readToken } from "./token";
 import { inBackground, inLane, laneFor } from "./lanes";
 import type { CreateBranch } from "../generated/CreateBranch";
 import type { SwitchBranch } from "../generated/SwitchBranch";
+import type { StartRun } from "../generated/StartRun";
 import type { SteerResult } from "../generated/SteerResult";
 import type { SkillPackStatus } from "../generated/SkillPackStatus";
 import type { EngineUpdateOutcome } from "../generated/EngineUpdateOutcome";
@@ -50,7 +51,6 @@ import type {
   LibraryUpdateResult,
   LimitsOverview,
   Mentions,
-  PermissionMode,
   PreviewTab,
   Project,
   ProjectRemoval,
@@ -428,12 +428,7 @@ export const api = {
     threadId: string,
     prompt: string,
     attachmentIds: string[] = [],
-    turn: {
-      model?: string;
-      effort?: string;
-      permission_mode?: PermissionMode;
-      options?: Record<string, string>;
-    } = {},
+    turn: Pick<StartRun, "model" | "effort" | "permission_mode" | "options" | "purpose"> = {},
   ) =>
     request<Run>("POST", `/api/threads/${q(threadId)}/runs`, {
       prompt,

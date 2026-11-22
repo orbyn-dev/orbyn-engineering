@@ -345,11 +345,21 @@ impl EngineDriver for HostDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
+        let cli = (self.path)()? == EnginePath::Cli;
+        let family = self.pool.family.clone();
+        let engine = self.inner.descriptor().id;
+        // A run that is not the rewound resume makes a waiting point stale: a create starts
+        // a new session, and any other session is not the one the point names.
+        if family == "claude" {
+            match spec.resume.as_deref() {
+                Some(session) if !cli => self.pool.clear_resume_at_except(&engine, session),
+                _ => self.pool.clear_resume_at(&engine),
+            }
+        }
         // The person chose the CLI: the run is the Rust driver's, as if no host were here. Never a fallback.
-        if (self.path)()? == EnginePath::Cli {
+        if cli {
             return self.inner.start_run(spec, events).await;
         }
-        let family = self.pool.family.clone();
         let mapper = DeltaMapper::for_family(&family).ok_or_else(|| {
             CoreError::EngineUnavailable("This engine has no engine host mapping yet.".into())
         })?;
@@ -369,7 +379,6 @@ impl EngineDriver for HostDriver {
                     "The engine host is stopping. Send your message again.".into(),
                 )
             })?;
-        let engine = self.inner.descriptor().id;
         let message_id = crate::agents::driver::claude::prompt_uuid();
         // A rewind is one open, on the Claude family and a resume only. Taking it here
         // consumes it, so a failed open or a later run never sends it again.
@@ -557,12 +566,11 @@ impl EngineDriver for HostDriver {
                 before_turn,
                 Some(cwd),
             )?;
-            self.pool.note_resume_at(&engine, session, &at);
+            self.pool.note_resume_at(&engine, session, &at)?;
             return Ok(());
         }
         let at = crate::agents::claude_history::resume_point(session, before_turn, Some(cwd))?;
-        self.pool.note_resume_at(&engine, session, &at);
-        Ok(())
+        self.pool.note_resume_at(&engine, session, &at)
     }
 
     async fn catalog_key(&self) -> Option<String> {

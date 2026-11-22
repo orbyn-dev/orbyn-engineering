@@ -84,18 +84,21 @@ terminal output stream does. Neither writes. There is **no** service-side run, r
 | Copy command | The web | The block's `command`, as text. Disabled when it is null. |
 | Run again | The web, over the terminal socket | **A click writes the command text into the terminal's input and nothing more.** No newline is added, so the shell shows the line and waits; the person presses Enter in the terminal. It is the same write path the terminal already has (`/ws/terminal/{thread}/{terminal}`, the Person-class connection that carries typing). It never calls a service route, and the service never runs a block's command on its own. A command that is empty, longer than 4096 characters or holds a newline or control character is not written. |
 | Stop | The web, over the terminal socket | Writes Ctrl-C, as the drawer's Stop does today. |
+| Filter output | The web, per block | A bar under the block's header keeps the lines of the text the block already holds that contain the typed text (plain text, case-insensitive, never a pattern) and says how many of the block's lines remain, such as `1 of 7 lines`; the block's own line numbers are not shown. Show all and Esc clear it, and collapsing the block drops it. It calls no route; a running block filters only the text its live view holds. |
+| Find in output | The web, per block | A bar under the block's header marks every match in the held output, with the current one filled, and shows a count, Previous and Next. Enter goes to the next match and Shift+Enter to the previous; with no match the bar says `No matches` and keeps the field's text. It binds no global shortcut. It calls no route; a running block sees only the text its live view holds. |
 
 The service cannot tell a rerun from typing, which is the point: the line is the person's to run.
 
-Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Filter, Find, Run again in a new tab, Clear
-all blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
+Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Run again in a new tab, Clear all
+blocks, and the full-screen frame while the program runs. Clear all would need a delete route; that is a decision for Eng 2 and
 Products Research, not something the web invents.
 
 ## Security
 
 - **Output is untrusted terminal text.** A program can print anything: markup, escape sequences, a fake prompt, a link. The web draws
   it as text in a `pre`, never as HTML, never as a link, never evaluates it. It strips escape sequences and control characters before
-  drawing and before copying, and caps what it keeps in memory (see `web/src/features/panels/terminal/blocks/blockText.ts`).
+  drawing and before copying, and caps what it keeps in memory (see `web/src/features/panels/terminal/blocks/blockText.ts`). Find marks
+  are built from string offsets as React text nodes and `<mark>` elements; no HTML is parsed, inserted or evaluated.
 - **The service redacts, the web does not trust that it did.** The service runs its secret rules (the Redactor, per the `redact-*`
   frames) over both `command` and the output text **before** it stores them and again before it answers, so a secret printed by a
   command is never in the list or the output. The hook is a single function in the block store, `redact(text) -> text`, so the rule set
@@ -123,8 +126,11 @@ Products Research, not something the web invents.
 production client, and `setBlocksApi(null)` puts it back), `blocksTypes.ts` (the block, page and limit shapes), `blocksClient.ts` (the
 production client for both routes: every path segment and cursor encoded, the session header and no person key, `410` as
 `cursor_expired`, and a `404` list as an empty list),
-`readOutput.ts` (every output page, started again from the top once after `410`), `blockText.ts` (cleaning, caps, durations),
-`CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks), `CommandBlocksPreview.tsx` (the dev-only screen). The real client draws
+`readOutput.ts` (every output page, started again from the top once after `410`), `blockText.ts` (cleaning, caps, durations, the
+case-insensitive plain-text line filter and match finder), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks, the filter and
+find bars of `block-filter` and `block-find`, and their header controls), `CommandBlocksPreview.tsx` (the dev-only screen). Filter and
+Find run in the web over the text `readBlockOutput` already returned: they call no route, draw matches as text nodes and `<mark>`
+elements, and the preview mock exercises both. The real client draws
 nothing until it has blocks: an empty list, a `404` and any other list failure leave the terminal exactly as it was, with no empty state
 and no error. Only the preview mock (and tests that install a client) shows the loading, empty and error frames. The mock,
 `web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the

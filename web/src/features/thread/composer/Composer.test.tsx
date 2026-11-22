@@ -220,6 +220,7 @@ describe("Composer", () => {
     setup();
     await userEvent.type(box(), "hello{Enter}");
     expect(start).toHaveBeenCalledExactlyOnceWith("t1", "hello", []);
+    expect(start.mock.calls[0]).toHaveLength(3);
     await waitFor(() => expect(box()).toHaveValue(""));
     expect(useThreadLogs.getState().prompts.t1).toEqual([{ runId: "r1", text: "hello" }]);
     start.mockRestore();
