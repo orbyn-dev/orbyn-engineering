@@ -34,7 +34,7 @@ async function open() {
 
 it("shows only models while the service reports no engine host", async () => {
   const { picker } = await open();
-  expect(within(picker).getAllByRole("option")).toHaveLength(5);
+  expect(within(picker).getAllByRole("option")).toHaveLength(6);
   expect(within(picker).queryByText("Starting the engine host")).toBeNull();
 });
 
@@ -52,8 +52,9 @@ it("puts one state row in place of the models of an engine whose host is not rea
   expect(within(picker).getByText("Restart 3 of 5 · next try in 4 s. Your work in the project is kept.")).toBeVisible();
   expect(within(picker).getByText("The engine host stopped 5 times in 5 minutes. Last error: the engine host closed its output.")).toBeVisible();
   expect(within(picker).getByText("The engine host does not match this app version.")).toBeVisible();
-  // The running family keeps its model; the others offer none, so nothing can be picked from a state row.
-  expect(within(picker).getAllByRole("option")).toHaveLength(1);
+  // The running family keeps its models on both paths; the others offer none, so nothing can be picked from a state row.
+  expect(within(picker).getAllByRole("option")).toHaveLength(2);
+  expect(within(picker).getAllByRole("group")).toHaveLength(6);
   expect(within(picker).getByRole("button", { name: "Try again" })).toBeVisible();
   // No app update is ready here, so Update Orbyn is not offered and nothing dead is drawn.
   expect(within(picker).queryByRole("button", { name: "Update Orbyn" })).toBeNull();
@@ -67,7 +68,7 @@ it("Try again is one write, however fast the clicks", async () => {
   await waitFor(() => expect(mock.writes).toEqual(["retry:opencode"]));
 });
 
-it("names SDK missing, not installed and sign in again, and offers no model for them", async () => {
+it("names SDK missing, not installed and sign in again; the CLI path still offers its model", async () => {
   const list = [engine("claude", "Claude Code"), engine("cursor", "Cursor", { installed: false }), engine("muse", "Muse Code")];
   useModelStore.setState({ byEngine: Object.fromEntries(list.map((e) => [e.id, models(e.id)])), loading: {}, errors: {} });
   setEngineHostApi(createEngineHostMock({ hosts: [row("claude", { sdk_missing: true, has_driver: true }), row("muse", { last_error: { kind: "auth", message: "401", causes: [] } })] }));
@@ -75,12 +76,14 @@ it("names SDK missing, not installed and sign in again, and offers no model for 
   render(<ModelPickerTrigger engines={list} selected={{ engine: "claude", model: "claude-m" }} onPick={vi.fn()} />);
   await user.click(screen.getByRole("button", { name: "claude model" }));
   const picker = await screen.findByRole("dialog", { name: "Choose a model" });
-  expect(await within(picker).findByText("This build does not include the Claude Code SDK. Claude Code runs through its claude program.")).toBeVisible();
+  expect(await within(picker).findByText("This build does not include the Claude Code SDK, so a run on Claude Code fails with that message. Choose Claude (CLI) in Claude path to run it.")).toBeVisible();
   expect(within(picker).getByText("cursor isn’t installed on this computer.")).toBeVisible();
-  expect(within(picker).getByText("Not found")).toBeVisible();
+  expect(within(picker).getAllByText("Not found").length).toBeGreaterThan(0);
   expect(within(picker).getByText("Your sign-in expired. Sign in with muse.")).toBeVisible();
   expect(within(picker).getByRole("button", { name: "Sign in again" })).toBeVisible();
-  expect(within(picker).queryAllByRole("option")).toHaveLength(0);
+  // The SDK row has no models, but the CLI path still runs the same installed claude.
+  expect(within(picker).getAllByRole("option")).toHaveLength(1);
+  expect(within(picker).getByRole("group", { name: "Claude (CLI)" })).toHaveTextContent("claude model");
 });
 
 it("does not show a state row while searching", async () => {

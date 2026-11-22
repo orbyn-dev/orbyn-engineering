@@ -351,6 +351,26 @@ impl Registry {
             .remove(&(thread_id.to_owned(), terminal_id.to_owned()));
     }
 
+    /// The items waiting now in one thread, oldest first, as the state machine
+    /// holds them: already redacted, never re-read from a terminal.
+    pub(crate) fn open_items(&self, thread_id: &str) -> Vec<Notice> {
+        let mut open: Vec<(i64, u64, Notice)> = self
+            .episodes
+            .iter()
+            .filter(|(key, _)| key.0 == thread_id)
+            .filter_map(|(key, episode)| {
+                let active = episode.active.as_ref()?;
+                Some((
+                    active.waiting_ms,
+                    active.order,
+                    waiting_notice(&key.0, &key.1, active),
+                ))
+            })
+            .collect();
+        open.sort_by_key(|(waiting_ms, order, _)| (*waiting_ms, *order));
+        open.into_iter().map(|(_, _, notice)| notice).collect()
+    }
+
     fn clear(
         &mut self,
         thread_id: &str,
@@ -513,6 +533,10 @@ impl AttentionHub {
     pub(crate) fn closed(&self, thread_id: &str, terminal_id: &str) -> Vec<Notice> {
         lock(&self.registry).closed(thread_id, terminal_id)
     }
+
+    pub(crate) fn open_items(&self, thread_id: &str) -> Vec<Notice> {
+        lock(&self.registry).open_items(thread_id)
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -536,6 +560,32 @@ struct Watch {
 }
 
 impl Core {
+    /// The items waiting now in a thread: the `waiting` values its log announced and
+    /// has not cleared, at most 8. Read from the registry in memory; no terminal is
+    /// read and nothing is written. An unknown thread is not found.
+    pub fn terminal_attention(&self, thread_id: &str) -> Result<Vec<TerminalAttentionEvent>> {
+        let thread = self.store.thread(thread_id)?;
+        let titles: HashMap<String, String> = self
+            .terminals
+            .list(thread_id)
+            .into_iter()
+            .map(|info| (info.id, info.title))
+            .collect();
+        Ok(self
+            .attention
+            .open_items(thread_id)
+            .iter()
+            .take(MAX_PER_THREAD)
+            .map(|notice| {
+                let title = notice
+                    .terminal_id()
+                    .and_then(|id| titles.get(id))
+                    .map_or("", String::as_str);
+                notice.value(title, &thread.engine)
+            })
+            .collect())
+    }
+
     /// Starts the one watcher for the thread's engine console. It runs only while
     /// the setting is on and a redactor was obtained; a plain shell never comes here.
     pub(crate) fn watch_engine_console(self: &Arc<Self>, thread_id: &str, info: &TerminalInfo) {

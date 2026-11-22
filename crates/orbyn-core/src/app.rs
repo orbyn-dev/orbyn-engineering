@@ -17,6 +17,7 @@ use crate::conversation::runs::{RunManager, RunServices};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::ApprovalGate;
 use crate::governance::computer::{ComputerBackend, ComputerConfig, ComputerGateway, LocalBackend};
+use crate::host::blocks::BlockStore;
 use crate::host::shell::ShellBridge;
 use crate::host::terminal::TerminalManager;
 use crate::operations::updates::UpdateCenter;
@@ -159,6 +160,8 @@ pub struct Core {
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
+    /// Local AVDs and simulators, their actions and one writer per device (`devices`).
+    pub devices: Arc<crate::devices::Devices>,
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
@@ -236,7 +239,9 @@ impl Core {
         }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
-        let terminals = Arc::new(TerminalManager::default());
+        let terminals = Arc::new(TerminalManager::with_blocks(Arc::new(BlockStore::new(
+            store.clone(),
+        ))));
         let setups = Arc::new(SetupManager::new(store.clone())?);
         let http = reqwest::Client::builder()
             .user_agent(concat!("orbyn/", env!("CARGO_PKG_VERSION")))
@@ -323,6 +328,7 @@ impl Core {
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
+            devices: Arc::new(crate::devices::Devices::new()),
             http,
             recovery,
             keybinding_writer,
@@ -369,6 +375,9 @@ impl Core {
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
+        // A Codex worker's home outlives no task. Anything left from the last process whose
+        // task is not live is removed before a new worker can use the folder.
+        core.sweep_crew_codex_homes();
         core.crew_backtest_recover();
         core.code_runs_recover();
         core.repos_recover();

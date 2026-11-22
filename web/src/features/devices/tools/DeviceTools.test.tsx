@@ -84,12 +84,30 @@ it("names the current text step and steps it with −, Default and +", async () 
   await waitFor(() => expect(mock.toolWrites).toContain("ios:7C2D-0001:bold:true"));
 });
 
-it("shows the accessibility switch and the element rows an agent can read", async () => {
-  const mock = createDevicesPlannedMock();
-  setDevicesPlannedApi(mock);
+it("keeps Show elements disabled with its reason and hides the elements when no screen is live", async () => {
+  setDevicesPlannedApi(createDevicesPlannedMock());
   render(<DeviceToolsDrawer device={iphone()} onClose={() => {}} initialTab="accessibility" />);
   const toggle = await screen.findByRole("switch", { name: "Show elements" });
+  expect(toggle).toBeDisabled();
+  expect(toggle).toHaveAttribute("title", "Outlines need a live screen.");
+  expect(screen.getByText("Outlines need a live screen.")).toBeVisible();
+  expect(screen.getByText("No screen is live.")).toBeVisible();
+  expect(screen.queryByText("Outline every element the device exposes")).toBeNull();
+  expect(screen.queryByText("Sign in · Button")).toBeNull();
+  expect(screen.queryByText("Email · Text field")).toBeNull();
+});
+
+it("enables Show elements and lists the element rows when a screen is live", async () => {
+  const mock = createDevicesPlannedMock({ live: {} });
+  setDevicesPlannedApi(mock);
+  render(<DeviceToolsDrawer device={iphone()} onClose={() => {}} initialTab="accessibility" live />);
+  const toggle = await screen.findByRole("switch", { name: "Show elements" });
+  expect(toggle).toBeEnabled();
   expect(toggle).toHaveAttribute("aria-checked", "true");
+  expect(toggle).not.toHaveAttribute("title");
+  expect(screen.getByText("Outline every element the device exposes")).toBeVisible();
+  expect(screen.queryByText("Outlines need a live screen.")).toBeNull();
+  expect(screen.queryByText("No screen is live.")).toBeNull();
   expect(screen.getByText("Sign in · Button")).toBeVisible();
   expect(screen.getByText("Label “Sign in”, enabled, 192 × 32")).toBeVisible();
   expect(screen.getByText("Email · Text field")).toBeVisible();
@@ -99,6 +117,21 @@ it("shows the accessibility switch and the element rows an agent can read", asyn
   expect(row).toHaveAttribute("aria-pressed", "true");
   await user.click(toggle);
   await waitFor(() => expect(mock.toolWrites).toContain("ios:7C2D-0001:show_elements:false"));
+});
+
+it("turns Show elements off once when the live screen goes away", async () => {
+  const mock = createDevicesPlannedMock({ live: {} });
+  setDevicesPlannedApi(mock);
+  const view = render(<DeviceToolsDrawer device={iphone()} onClose={() => {}} initialTab="accessibility" live />);
+  expect(await screen.findByRole("switch", { name: "Show elements" })).toHaveAttribute("aria-checked", "true");
+  view.rerender(<DeviceToolsDrawer device={iphone()} onClose={() => {}} initialTab="accessibility" live={false} />);
+  await waitFor(() => expect(mock.toolWrites).toEqual(["ios:7C2D-0001:show_elements:false"]));
+  expect(await screen.findByText("No screen is live.")).toBeVisible();
+  expect(screen.getByRole("switch", { name: "Show elements" })).toBeDisabled();
+  expect(screen.getByRole("switch", { name: "Show elements" })).toHaveAttribute("aria-checked", "false");
+  view.rerender(<DeviceToolsDrawer device={iphone()} onClose={() => {}} initialTab="accessibility" live={false} />);
+  await waitFor(() => expect(screen.getByText("No screen is live.")).toBeVisible());
+  expect(mock.toolWrites).toEqual(["ios:7C2D-0001:show_elements:false"]);
 });
 
 it("sets a simulated place and typed coordinates", async () => {

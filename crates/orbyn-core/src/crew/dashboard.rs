@@ -223,7 +223,7 @@ fn local_week_start(unix: i64, offset_minutes: i32) -> i64 {
 /// The median of a sorted, non-empty list.
 fn median(sorted: &[i64]) -> i64 {
     let middle = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[middle - 1] + sorted[middle]) / 2
     } else {
         sorted[middle]
