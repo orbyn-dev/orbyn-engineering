@@ -24,6 +24,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "=2.8.4"
+tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-updater = "2"
@@ -34,6 +35,8 @@ url = "2"
 windows-sys = { version = "0.61", features = ["Win32_System_Power"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Snap Shot window capture (docs/snapshots.md, security queue row 30). Exact pin; no default features, so no async or version flags beyond macOS 14.
+screencapturekit = { version = "=11.1.2", default-features = false, features = ["macos_14_0"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSThread"] }
