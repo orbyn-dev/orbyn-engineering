@@ -32,3 +32,12 @@ it("serves a thread's linked pull requests, and their refresh, as arrays", () =>
   expect(refreshed.status).toBe(200);
   expect(Array.isArray(refreshed.body)).toBe(true);
 });
+
+it("serves the linked pull request's forge comments with one unresolved and one resolved thread", () => {
+  const api = createMockApi();
+  const response = api.handle("GET", "/api/projects/orbyn-engineering-app/pulls/42/comments");
+  expect(response.status).toBe(200);
+  const threads = (response.body as { comments: unknown[]; threads: { resolved: boolean; comments: unknown[] }[] }).threads;
+  expect(threads.map((thread) => thread.resolved)).toEqual([false, true]);
+  expect(threads.every((thread) => thread.comments.length > 0)).toBe(true);
+});

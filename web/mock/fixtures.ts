@@ -1231,6 +1231,27 @@ export const pageFiles = () => [
   { path: "auth/redirect.test.ts", previous_path: null, status: "modified", additions: 2, deletions: 2, patch: "@@ -1,2 +1,2 @@\n-old\n+new", viewed: false },
 ];
 
+/** The linked pull request's forge comments: one unresolved review thread and one resolved. */
+export const pullConversation = () => ({
+  comments: [],
+  threads: [
+    {
+      id: "th-redirect", resolved: false, path: "auth/redirect.ts", line: 15,
+      comments: [{
+        id: "c-redirect", kind: "review", author: "sam-reyes", body: "Does inside() reject //evil.com?",
+        created_at: iso(-420), path: "auth/redirect.ts", line: 15,
+      }],
+    },
+    {
+      id: "th-test", resolved: true, path: "auth/redirect.test.ts", line: 8,
+      comments: [{
+        id: "c-test", kind: "review", author: "riley-chen", body: "Added the case for a protocol-relative next value.",
+        created_at: iso(-360), path: "auth/redirect.test.ts", line: 8,
+      }],
+    },
+  ],
+});
+
 export const pullList = () => [
   listed(142, "Return to the page people came from", {
     updated_at: iso(-240),
