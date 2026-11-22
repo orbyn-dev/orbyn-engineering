@@ -416,3 +416,25 @@ fn reads_and_fetches_keep_their_gate_paths() {
     let (kind, _, _) = classify(&read);
     assert!(gate_paths(&read, kind).is_empty());
 }
+
+#[test]
+fn an_engine_that_cannot_ask_offers_no_approvals_and_nothing_else() {
+    use crate::agents::driver::EngineDriver;
+    use crate::agents::engines::known::KNOWN_ENGINES;
+    for known in KNOWN_ENGINES {
+        let modes = super::AcpDriver::known(known.as_custom(), known)
+            .descriptor()
+            .capabilities
+            .permission_modes;
+        if known.asks {
+            assert!(modes.len() > 1, "{}", known.id);
+        } else {
+            assert_eq!(
+                modes,
+                vec![orbyn_contracts::PermissionMode::NoApprovals],
+                "{}",
+                known.id
+            );
+        }
+    }
+}

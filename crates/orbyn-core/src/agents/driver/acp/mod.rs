@@ -108,7 +108,13 @@ impl AcpDriver {
             engine,
             env: known.env,
             asks: known.asks,
-            modes: crate::agents::permission_modes::offered(known.id),
+            // An engine that cannot ask before it acts has one mode: no approvals. Supervised and Auto edits
+            // would tell a person they have approvals Orbyn cannot enforce (rule 8).
+            modes: if known.asks {
+                crate::agents::permission_modes::offered(known.id)
+            } else {
+                vec![orbyn_contracts::PermissionMode::NoApprovals]
+            },
             known: Some(known),
         }
     }
