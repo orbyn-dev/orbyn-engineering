@@ -11,8 +11,9 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { DETAIL_ROWS, detailsMenuItems } from "../../../product/ui/details";
 import { DesktopApp } from "./DesktopApp";
+import { SnapshotSettingsSection } from "../../snapshot";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 
 function DetailRowsButton() {
   const hidden = useUi((state) => state.detailsHidden);
@@ -84,7 +85,6 @@ export function GeneralSection() {
   const order = [{ value: "updated_at", label: "Last user message" }, { value: "created_at", label: "Created" }] as const;
   return (
     <>
-      {heading("General")}
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "default_thread_env_mode",
         title: settingsLabel("general-new-threads-start-in"),
@@ -121,7 +121,7 @@ export function GeneralSection() {
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "quit_confirmation",
         title: settingsLabel("general-quit-confirmation"),
-        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item always quits.",
+        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
         segmented: true,
         options: [
           { value: "direct", label: "Quit at once" },
@@ -179,6 +179,7 @@ export function GeneralSection() {
         render: (value, save, control) => <BaseDirectory value={value} save={save} disabled={control.disabled} /> },
       ] }]} />
       <DesktopApp />
+      <SnapshotSettingsSection />
       <p className="set-grp">Ask before</p>
       <SettingGroup>
         <Toggle title={settingsLabel("general-unpin-confirmation")} on={confirmUnpin} set={(on) => setPrefs({ confirmUnpin: on })} />

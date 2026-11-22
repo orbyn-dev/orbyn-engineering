@@ -83,7 +83,7 @@ export function RouteClassCard({ view, onCheck }: { view: CrewRouteView; onCheck
             </section>
             <section className="ap-box">
               <h4>What Orbyn does</h4>
-              <p>It can’t tell which engines the rules allow, so it blocks every engine until the file is valid. It never guesses and never falls back to an engine.</p>
+              <p>It can’t tell which engines the rules allow, so it blocks every engine until the file is valid. It does not guess and does not fall back to an engine.</p>
             </section>
           </div>
           <Considered rejected={view.refusal?.rejected ?? row.rejected} row={row} />

@@ -862,6 +862,8 @@ describe("App against the mock API", () => {
     const behind = container.querySelector(".main-view");
     expect(behind).not.toBeNull();
     expect(behind).toHaveAttribute("hidden");
+    // Not inert: the theme editor's element picker shows this page again and cannot point at inert content.
+    expect(behind).not.toHaveAttribute("inert");
     expect(behind?.childElementCount).toBeGreaterThan(0);
   });
 

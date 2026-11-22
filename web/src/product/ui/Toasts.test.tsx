@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { act } from "react";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { useUi } from "../state/ui";
 import { Toasts } from "./Toasts";
 
@@ -24,4 +24,22 @@ it("runs a toast's action and closes the toast", () => {
   act(() => screen.getByRole("button", { name: "View" }).click());
   expect(ran).toBe(1);
   expect(screen.queryByText(/Nightly review/)).toBeNull();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it("keeps a busy toast with its spinner until the work ends", () => {
+  vi.useFakeTimers();
+  render(<Toasts />);
+  act(() => {
+    useUi.getState().pushToast("Exporting transcript…", undefined, undefined, { busy: true });
+  });
+  const toast = screen.getByText("Exporting transcript…").parentElement!;
+  expect(toast.querySelector(".spin")).not.toBeNull();
+  act(() => vi.advanceTimersByTime(10_000));
+  expect(screen.getByText("Exporting transcript…")).toBeVisible();
+  act(() => useUi.getState().dismissToast(useUi.getState().toasts[0]!.id));
+  expect(screen.queryByText("Exporting transcript…")).toBeNull();
 });

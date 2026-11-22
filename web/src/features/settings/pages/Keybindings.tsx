@@ -9,6 +9,7 @@ import { IconButton } from "../../../ui/controls";
 import { Menu } from "../../../ui/Menu";
 import { useUi } from "../../../product/state/ui";
 import { ErrorState, Loading } from "../../../product/ui/states";
+import "./keybindings.css";
 
 const CAP_GLYPHS: Record<string, string> = { Enter: "↵", Backspace: "⌫" };
 
@@ -21,6 +22,14 @@ function keyCaps(rule: string): string[] {
 }
 
 const load = (signal?: AbortSignal) => readKeybindings(signal);
+
+/**
+ * One template for the header and every row, so a body row cannot drift from the header.
+ * Action and When each keep a minimum width: a bare `minmax(0, 1fr)` let the Action track
+ * collapse to nothing on a narrow window and its label drew over the When column. When
+ * wraps inside its own track, and past the room these minimums need, `.kb-scroll` scrolls.
+ */
+const COLUMNS = "minmax(150px, 1fr) minmax(120px, 230px) 150px 72px";
 
 export function KeybindingsSection() {
   const view = useAsync("keybindings", load, { keep: true });
@@ -50,9 +59,6 @@ export function KeybindingsSection() {
 
   return (
     <>
-      <h1 className="sr-only" tabIndex={-1} data-page-title>
-        Keybindings
-      </h1>
       <label className="set-find">
         <Search size={13} aria-hidden />
         <input aria-label="Filter keybindings" placeholder="Find a shortcut" value={filter} onChange={(event) => setFilter(event.target.value)} />
@@ -90,39 +96,41 @@ export function KeybindingsSection() {
               {conflict.commands.map(commandLabel).join(" and ")} both use {keyCaps(conflict.key).join("")}{whenClause(conflict.when) ? ` ${whenClause(conflict.when)}` : ""}.
             </p>
           ))}
-          <div className="set-tbl" role="table" aria-label="Keybindings">
-            <div className="set-tr h" role="row" style={{ gridTemplateColumns: "minmax(0, 1fr) 230px 150px 72px" }}>
-              <span role="columnheader">Action</span><span role="columnheader">When</span><span role="columnheader">Shortcut</span><span role="columnheader" />
+          <div className="kb-scroll">
+            <div className="set-tbl kb-table" role="table" aria-label="Keybindings">
+              <div className="set-tr h" role="row" style={{ gridTemplateColumns: COLUMNS }}>
+                <span role="columnheader">Action</span><span role="columnheader">When</span><span role="columnheader">Shortcut</span><span role="columnheader" />
+              </div>
+              {view.data.rules
+                .filter((rule) => !rule.remove && `${commandLabel(rule.command)} ${rule.command} ${whenPhrase(rule.when)} ${rule.key}`.toLowerCase().includes(filter.toLowerCase()))
+                .map((rule) => {
+                  const id = `${rule.command}:${rule.key}:${rule.when ?? ""}`;
+                  const clash = view.data.conflicts.find((conflict) => conflict.key === rule.key && (conflict.when ?? "") === (rule.when ?? "") && conflict.commands.includes(rule.command));
+                  return (
+                    <div key={id} role="row" className="set-tr" style={{ gridTemplateColumns: COLUMNS }}>
+                      <span role="cell" title={rule.command}>{commandLabel(rule.command)}</span>
+                      <span role="cell" className="t3" title={rule.when ?? undefined}>{whenPhrase(rule.when)}</span>
+                      <span role="cell">
+                        {editing === id ? <button type="button" className="btn btn-small" onKeyDown={(event) => capture(event, rule.command, rule.when)} ref={(element) => element?.focus()}>Press keys…</button>
+                          : <span className="keycaps" aria-label={formatShortcut(rule.key)}>{keyCaps(rule.key).map((cap, at) => <span key={at} className={clash ? "kc warn" : "kc"} aria-hidden>{cap}</span>)}</span>}
+                      </span>
+                      <span role="cell">
+                        <IconButton label={`Change shortcut for ${commandLabel(rule.command)}`} onClick={() => setEditing(id)}><Pencil size={13} aria-hidden /></IconButton>
+                        <IconButton
+                          label={`More for ${commandLabel(rule.command)}`}
+                          aria-haspopup="menu"
+                          onClick={(event) => {
+                            const box = event.currentTarget.getBoundingClientRect();
+                            setMenu({ x: box.left, y: box.bottom + 4, command: rule.command });
+                          }}
+                        >
+                          <MoreHorizontal size={13} aria-hidden />
+                        </IconButton>
+                      </span>
+                    </div>
+                  );
+                })}
             </div>
-            {view.data.rules
-              .filter((rule) => !rule.remove && `${commandLabel(rule.command)} ${rule.command} ${whenPhrase(rule.when)} ${rule.key}`.toLowerCase().includes(filter.toLowerCase()))
-              .map((rule) => {
-                const id = `${rule.command}:${rule.key}:${rule.when ?? ""}`;
-                const clash = view.data.conflicts.find((conflict) => conflict.key === rule.key && (conflict.when ?? "") === (rule.when ?? "") && conflict.commands.includes(rule.command));
-                return (
-                  <div key={id} role="row" className="set-tr" style={{ gridTemplateColumns: "minmax(0, 1fr) 230px 150px 72px" }}>
-                    <span role="cell" title={rule.command}>{commandLabel(rule.command)}</span>
-                    <span role="cell" className="t3" title={rule.when ?? undefined}>{whenPhrase(rule.when)}</span>
-                    <span role="cell">
-                      {editing === id ? <button type="button" className="btn btn-small" onKeyDown={(event) => capture(event, rule.command, rule.when)} ref={(element) => element?.focus()}>Press keys…</button>
-                        : <span className="keycaps" aria-label={formatShortcut(rule.key)}>{keyCaps(rule.key).map((cap, at) => <span key={at} className={clash ? "kc warn" : "kc"} aria-hidden>{cap}</span>)}</span>}
-                    </span>
-                    <span role="cell">
-                      <IconButton label={`Change shortcut for ${commandLabel(rule.command)}`} onClick={() => setEditing(id)}><Pencil size={13} aria-hidden /></IconButton>
-                      <IconButton
-                        label={`More for ${commandLabel(rule.command)}`}
-                        aria-haspopup="menu"
-                        onClick={(event) => {
-                          const box = event.currentTarget.getBoundingClientRect();
-                          setMenu({ x: box.left, y: box.bottom + 4, command: rule.command });
-                        }}
-                      >
-                        <MoreHorizontal size={13} aria-hidden />
-                      </IconButton>
-                    </span>
-                  </div>
-                );
-              })}
           </div>
           {menu ? (
             <Menu

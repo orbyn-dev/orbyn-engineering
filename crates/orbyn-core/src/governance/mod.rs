@@ -5,3 +5,4 @@ pub mod audit;
 pub mod computer;
 pub mod network;
 pub mod policy;
+pub mod protected_files;

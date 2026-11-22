@@ -46,7 +46,7 @@ import { runningTools } from "../../product/timeline/timeline";
 import { SideChatPanel } from "./SideChatPanel";
 import { openSideChat } from "./sideChat";
 import { SubagentBar } from "./SubagentBar";
-import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
+import { ImportedThreadMarker, ImportedThreadPill, LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 import { ConnectionStatus, ServiceDownBanner } from "./ConnectionStatus";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { ThreadFind } from "./ThreadFind";
@@ -101,6 +101,7 @@ export function TopBar({
               {project.name}
             </span>
           ) : null}
+          <ImportedThreadPill thread={thread} />
           <FamilyLine thread={thread} />
           {connection ? <ConnectionStatus /> : chip ?? (thread.active_run && state ? <span className="page-sub-item">{runStateLabels[state]}</span> : null)}
         </span>
@@ -469,6 +470,7 @@ export function ThreadView({ id }: { id: string }) {
                 }
             />
           )}
+          <ImportedThreadMarker thread={thread} />
           <WorktreeSetupCard thread={thread} />
           <ThreadErrorBanner thread={thread} />
           <LimitBanner thread={thread} />

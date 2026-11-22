@@ -1,11 +1,12 @@
-// The reviewer backtest client (slice 4n): the estimate and the report are Local reads, so a load, a refresh and a retry
-// may all send them. The start and the stop are Person-only and are never sent by a load, a refresh or a retry of a read:
-// only a person's own click may call them, and no screen sends one yet (a start needs the lane list and the per-engine
-// budgets, and no route serves them before a run exists; a start is also refused until a live replay engine is connected).
+// The reviewer backtest client (slice 4n): the estimate, the project's start input and the report are Local reads, so a
+// load, a refresh and a retry may all send them. The start and the stop are Person-only and are never sent by a load, a
+// refresh or a retry of a read: only a person's own click may call them, and no screen sends one yet (a start needs the
+// lane list and the per-engine budgets, and a start is also refused until a live replay engine is connected).
 import { ApiFailure, request } from "../../../../api/client";
 import type { BacktestEstimate } from "../../../../generated/BacktestEstimate";
 import type { BacktestRun } from "../../../../generated/BacktestRun";
 import type { BacktestStartInput } from "../../../../generated/BacktestStartInput";
+import type { BacktestStartView } from "../../../../generated/BacktestStartView";
 
 /** The same shape the service's every crew id check accepts. */
 const validRunId = (id: string): boolean => id.length <= 96 && /^[A-Za-z0-9:_-][A-Za-z0-9:_.-]*$/.test(id);
@@ -21,6 +22,10 @@ export const backtestApi = {
    *  progress. Reads only; nothing runs and nothing is stored to make it. */
   estimate: (project: string, signal?: AbortSignal) =>
     request<BacktestEstimate>("GET", `/api/crew/backtest/estimate?${query(project)}`, undefined, signal),
+  /** The input a start would need, as far as the service can serve it: the most recent run's lanes, their kinds and the
+   *  per-engine budgets. `run: null` when the project never ran a backtest. Reads only; nothing is defaulted. */
+  startView: (project: string, signal?: AbortSignal) =>
+    request<BacktestStartView>("GET", `/api/crew/backtest/start-view?${query(project)}`, undefined, signal),
   /** One run with each lane's state, findings, tokens and score (or why it has none). Reads only. */
   report: (id: string, signal?: AbortSignal) => request<BacktestRun>("GET", `${path(id)}/report`, undefined, signal),
   /** A person starts a backtest. Their own click sends it; no screen can compose the body yet. */

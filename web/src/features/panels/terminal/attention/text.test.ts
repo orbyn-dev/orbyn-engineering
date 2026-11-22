@@ -17,10 +17,19 @@ describe("copy", () => {
   it("a notification for a question carries the question, and for a secret never the prompt", () => {
     expect(notificationText(entry(), "Fix login")).toContain("Overwrite? (y/N)");
     const secret = notificationText(entry({ kind: "secret", excerpt: ["Password:"] }), "Fix login");
-    expect(secret).toBe("Claude Code is waiting for a password in “dev”");
+    expect(secret).toBe("Claude Code is waiting for a password");
     expect(secret).not.toContain("Password:");
-    expect(toastText(entry({ kind: "secret", excerpt: ["Password:"] }), "Fix login")).not.toContain("Password:");
+    const toast = toastText(entry({ kind: "secret", excerpt: ["Password:"] }), "Fix login");
+    expect(toast).toBe("Claude Code is waiting for a password");
+    expect(toast).not.toContain("Password:");
     expect(toastText(entry(), "Fix login")).toBe("Claude Code needs you in “dev” · Fix login");
+  });
+  it("a secret's toast and notification carry no excerpt, label, terminal title or thread title", () => {
+    const hostile = entry({ kind: "secret", excerpt: ["[sudo] password for dev:"], terminalTitle: "ssh root@prod: enter token" });
+    for (const text of [toastText(hostile, "Fix login"), notificationText(hostile, "Fix login")]) {
+      expect(text).toBe("Claude Code is waiting for a password");
+      expect(text).not.toMatch(/sudo|dev:|ssh|prod|token|Fix login/);
+    }
   });
   it("says why, in seconds, and never invents more", () => {
     expect(whyLine(entry({ since: 1000 }), 39_000)).toBe("It stopped printing 38 s ago, and its last line reads like a question.");
