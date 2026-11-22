@@ -368,7 +368,7 @@ export function DeviceView({ device, onChanged, onGone, onRestart, initialTyping
       {failure ? (
         <div className="dev-fail" role="alert"><span>{failure.text}</span><Button small tone="quiet" disabled={busy} onClick={failure.again}>Try again</Button></div>
       ) : null}
-      <p className="dev-planned">{PLANNED.map((name) => <Pill key={name}>{name} · Planned</Pill>)}<DeviceToolsButton device={device} /></p>
+      <p className="dev-planned">{PLANNED.map((name) => <Pill key={name}>{name} · Planned</Pill>)}<DeviceToolsButton device={device} live={streaming} /></p>
     </div>
   );
 }
