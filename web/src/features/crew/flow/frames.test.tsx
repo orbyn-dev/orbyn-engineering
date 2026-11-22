@@ -9,8 +9,8 @@ const SHOWS: Record<string, string[]> = {
   "flow-task": ["Tracing the next parameter into the redirect response", "Reading auth/redirect.ts and its 3 callers", "Codex · GPT-5.5 · lead tier", "OpenCode · DeepSeek V4"],
   "flow-task-loop": ["1 confirmed finding", "After the fix", "1 confirmed"],
   "flow-check-failed": ["Check 3 of 3 failed: Tests (auth)", "Sent to Build", "The failed check’s name and the failing commit, as the retry reason.", "After checks"],
-  "flow-artifact-diff": ["Diff · Build → Checks", "2 files · +18 −4", "crew/redirect-impl", "Open the diff"],
-  "flow-artifacts": ["auth/redirect.test.ts:12 · the example uses //evil.com", "Check 1 of 3", "Tests (auth) · passed", "Typecheck · passed", "Use next when it points inside the app", "2 lanes · comments link back here", "Planned"],
+  "flow-artifact-diff": ["Diff · Build → Checks", "2 files · +18 −4", "crew/redirect-impl", "Open the diff", "Prove: separate runs"],
+  "flow-artifacts": ["auth/redirect.test.ts:12 · the example uses //evil.com", "Check 1 of 3", "Tests (auth) · passed", "Typecheck · passed", "Use next when it points inside the app", "2 lanes · comments link back here", "3 checks", "Planned"],
   "flow-gates": ["A finding was reproduced with a test that fails (exit 1) on a41c9e2.", "3 of 3 checks ran on commit a41c9e2 and exited 0.", "A confirmed finding. Nothing blocks without one.", "You. Under Full, the queue decides by code."],
   "flow-replay": ["Correctness has read 6 of 9 changed hunks. This is a replay: nothing here can be changed.", "Lane Correctness started on Codex · GPT-5.5 · read-only checkout a41c9e2", "3 of 3 passed on a41c9e2 · decided by code", "Replay · 18:40 of 41:06", "Planned"],
   "flow-running": ["Findings so far", "Different engine from the author", "Open the run", "Stop this lane"],
@@ -25,7 +25,7 @@ const SHOWS: Record<string, string[]> = {
   "flow-you-waiting-on": ["High risk: waiting for you before the merge", "Not verified: key rotation under load.", "Autopilot is On for this repo", "auth/login.ts, keys/rotate.ts", "Planned"],
   "flow-you-off": ["A documentation change. Shown so you can review quickly; it does not change what waits.", "Every change waits for you before the merge", "Autopilot is Off for this repo", "Approve, don’t merge", "before merge", "Planned"],
   "flow-narrow-panel": ["Open in Crew", "Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode"],
-  "flow-narrow-window": ["Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode", "Cancel and Re-run checks: Available when the write route ships", "auth/redirect.ts, auth/redirect.test.ts"],
+  "flow-narrow-window": ["Performance · OpenCode", "Correctness · Codex", "Docs · OpenCode", "Cancel", "Re-run checks", "auth/redirect.ts, auth/redirect.test.ts"],
   "flow-artifact-pruned": ["Check log · Tests (auth) · a41c9e2", "Wed 28 Oct 2026 (example)", "Preview only: no retention window yet", "Passed · commit a41c9e2"],
   "flow-empty-crews": ["No crews running"],
   "flow-empty-tasks": ["Login redirect crew · 0 tasks, 0 finished", "0 of 0 shown", "No tasks yet"],
@@ -50,6 +50,7 @@ describe("Flow frames (Crew Designs)", () => {
   it.each(FLOW_FRAMES)("#/preview/crew/%s draws its state and makes no request", async (name) => {
     const { container, fetchSpy } = await openFrame(name);
     for (const text of SHOWS[name] ?? []) expect(container.textContent).toContain(text);
+    expect(container.textContent).not.toMatch(/Inbox\s*(?:·\s*\d+|\d+)/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -108,7 +109,7 @@ describe("Flow frames (Crew Designs)", () => {
     expect(container.textContent).toContain("Add reviewerPlanned");
   });
 
-  it("follows Crew Designs v41: the PR parts are Planned and the re-run buttons say when the write route ships", async () => {
+  it("follows Crew Designs v41 and pass 114: the PR parts are Planned, a task’s Cancel and Re-run checks are built, and a re-run the app lacks is Planned", async () => {
     for (const name of ["flow-task", "flow-artifact-diff", "flow-lanes-many", "flow-offline", "flow-pr-review", "flow-artifact-pruned"]) {
       const view = await openFrame(name);
       expect(view.container.textContent, name).toContain("PRPlanned");
@@ -118,10 +119,58 @@ describe("Flow frames (Crew Designs)", () => {
     expect(skipped.container.textContent).toContain("Optional by defaultPlanned");
     skipped.unmount();
     const artifacts = await openFrame("flow-artifacts");
-    expect(artifacts.container.textContent).toContain("Re-run all: Available when the write route ships");
+    expect(artifacts.container.textContent).toContain("Re-run allPlanned");
+    expect(artifacts.container.textContent).toContain("The app has no Report page or artifact view");
+    expect(artifacts.container.textContent).not.toContain("Available when the write route ships");
     artifacts.unmount();
     const pruned = await openFrame("flow-artifact-pruned");
-    expect(pruned.container.textContent).toContain("Re-run the check: Available when the write route ships");
+    expect(pruned.container.textContent).toContain("Re-run the checkPlanned");
+    expect(pruned.container.textContent).toContain("The app has no Report page or artifact view");
+    expect(pruned.container.textContent).not.toContain("Available when the write route ships");
+    pruned.unmount();
+    for (const name of ["flow-narrow-panel", "flow-narrow-window"]) {
+      const view = await openFrame(name);
+      expect(view.container.textContent, name).not.toContain("Available when the write route ships");
+      expect(view.container.textContent, name).not.toContain("Cancel and Re-run checks:");
+      for (const label of ["Cancel", "Re-run checks"]) {
+        const button = [...view.container.querySelectorAll("button")].find((one) => one.textContent === label);
+        expect(button, `${name}: ${label}`).toBeDefined();
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute("aria-description", UNAVAILABLE_REASON);
+        expect(button?.getAttribute("title")).toBe(UNAVAILABLE_REASON);
+        // Cancel is on and Re-run checks off while the task verifies, as the live Flow zoom header draws them.
+        if (label === "Cancel") expect(button).toHaveStyle({ opacity: "1" });
+        else expect(button?.style.opacity).toBe("");
+      }
+      view.unmount();
+    }
+  });
+
+  it("follows pass 114: Pause crew and Stop crew stay Planned and say a task’s Cancel and Re-run checks are built", async () => {
+    const view = await openFrame("flow-task");
+    const pills = [...view.container.querySelectorAll<HTMLElement>(".cx-acts .cx-cwpv")];
+    expect(pills).toHaveLength(2);
+    for (const pill of pills) {
+      expect(pill.textContent).toBe("Planned");
+      expect(pill.getAttribute("title")).toContain("A task’s Cancel and Re-run checks are built");
+      expect(pill.getAttribute("title")).toContain("each asks first");
+      expect(pill.getAttribute("title")).not.toContain("when it is wired");
+    }
+  });
+
+  it("follows pass 114: the band says separate runs only and no frame claims no limit", async () => {
+    for (const name of [
+      "flow-task", "flow-task-loop", "flow-check-failed", "flow-artifact-diff", "flow-replay", "flow-running", "flow-lanes-many", "flow-skipped", "flow-offline",
+      "flow-pr-review", "flow-you-ready", "flow-you-rule", "flow-you-blocked", "flow-you-waiting-on", "flow-you-off", "flow-artifact-pruned", "flow-long-loop",
+    ]) {
+      const view = await openFrame(name);
+      expect(view.container.textContent, name).toContain("Prove: separate runs");
+      expect(view.container.textContent, name).not.toContain("no limit");
+      view.unmount();
+    }
+    const artifacts = await openFrame("flow-artifacts");
+    expect(artifacts.container.textContent).toContain("3 checks");
+    expect(artifacts.container.textContent).not.toContain("no limit");
   });
 
   it("follows Crew Designs v43: Pause crew and Stop crew are Planned, the usage line and the wide graph are Planned", async () => {

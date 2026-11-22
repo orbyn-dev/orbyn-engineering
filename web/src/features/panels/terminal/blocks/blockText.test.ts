@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capTail, cleanCommand, durationWords, lastLines, rerunText, runningClock, stripTerminalText } from "./blockText";
+import { capTail, cleanCommand, durationWords, filterBlockLines, findTextMatches, lastLines, rerunText, runningClock, stripTerminalText } from "./blockText";
 
 describe("stripTerminalText", () => {
   it("removes colour, cursor and title sequences and keeps the words", () => {
@@ -82,5 +82,68 @@ describe("lastLines", () => {
     expect(lastLines("a\nb\nc\n", 2)).toEqual({ text: "b\nc", total: 3, cut: true });
     expect(lastLines("a\nb", 6)).toEqual({ text: "a\nb", total: 2, cut: false });
     expect(lastLines("", 6)).toEqual({ text: "", total: 0, cut: false });
+  });
+});
+
+describe("filterBlockLines", () => {
+  const seven = "line one\nFAIL here\nline three\nline four\nline five\nline six\nline seven";
+
+  it("keeps only the lines that contain the typed text, ignoring case", () => {
+    expect(filterBlockLines(seven, "fail")).toEqual({ text: "FAIL here", total: 7, kept: 1 });
+    expect(filterBlockLines(seven, "FAIL")).toEqual({ text: "FAIL here", total: 7, kept: 1 });
+  });
+
+  it("keeps every line for an empty query, and counts the seven-line example", () => {
+    expect(filterBlockLines(seven, "")).toEqual({ text: seven, total: 7, kept: 7 });
+  });
+
+  it("treats regex characters as plain text", () => {
+    expect(filterBlockLines("a.b\naxb\n[a]\na+b", "a.b")).toEqual({ text: "a.b", total: 4, kept: 1 });
+    expect(filterBlockLines("a.b\naxb\n[a]\na+b", "[a]")).toEqual({ text: "[a]", total: 4, kept: 1 });
+    expect(filterBlockLines("a.b\naxb\n[a]\na+b", "a+b")).toEqual({ text: "a+b", total: 4, kept: 1 });
+  });
+
+  it("keeps the last line as a line and does not count one final newline", () => {
+    expect(filterBlockLines("a\nb\n", "b")).toEqual({ text: "b", total: 2, kept: 1 });
+    expect(filterBlockLines("a\nb\n", "")).toEqual({ text: "a\nb", total: 2, kept: 2 });
+    expect(filterBlockLines("", "x")).toEqual({ text: "", total: 0, kept: 0 });
+  });
+
+  it("says none remain when nothing matches", () => {
+    expect(filterBlockLines(seven, "absent")).toEqual({ text: "", total: 7, kept: 0 });
+  });
+});
+
+describe("findTextMatches", () => {
+  it("finds every match, ignoring case", () => {
+    expect(findTextMatches("Next next NEXT", "next")).toEqual([
+      { start: 0, end: 4 },
+      { start: 5, end: 9 },
+      { start: 10, end: 14 },
+    ]);
+  });
+
+  it("finds adjacent matches without counting one overlapping match twice", () => {
+    expect(findTextMatches("abab", "ab")).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 4 },
+    ]);
+    expect(findTextMatches("aaa", "aa")).toEqual([{ start: 0, end: 2 }]);
+    expect(findTextMatches("aaaa", "aa")).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 4 },
+    ]);
+  });
+
+  it("gives nothing for an empty query or text that is not there", () => {
+    expect(findTextMatches("any text", "")).toEqual([]);
+    expect(findTextMatches("any text", "absent")).toEqual([]);
+    expect(findTextMatches("", "x")).toEqual([]);
+  });
+
+  it("treats regex characters as plain text", () => {
+    expect(findTextMatches("a.b axb a+b", ".")).toEqual([{ start: 1, end: 2 }]);
+    expect(findTextMatches("a[b] c", "[")).toEqual([{ start: 1, end: 2 }]);
+    expect(findTextMatches("a[b] c", "a[b]")).toEqual([{ start: 0, end: 4 }]);
   });
 });

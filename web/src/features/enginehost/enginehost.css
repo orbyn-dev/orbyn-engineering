@@ -91,3 +91,8 @@
   cursor: default;
   opacity: 0.6;
 }
+/* The host is coming back by itself: the same line, in the blue the frames use for a wait. */
+.eh-line.info {
+  background: var(--color-blueSoft);
+  color: var(--color-blue);
+}

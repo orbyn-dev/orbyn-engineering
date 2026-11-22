@@ -60,3 +60,11 @@ export function describeFrames(title: string, ids: readonly string[], shows: Rec
     });
   });
 }
+
+/** The frame tab strips and panel labels print Inbox without a count, as the live Crew page does. */
+export function describeInboxLabel(ids: readonly string[]) {
+  it.each(ids)("#/preview/crew/%s: the Inbox label carries no count", async (name) => {
+    const { container } = await openFrame(name);
+    expect(container.textContent).not.toMatch(/Inbox\s*(?:·\s*\d+|\d+)/);
+  });
+}
