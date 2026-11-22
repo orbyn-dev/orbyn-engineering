@@ -56,6 +56,8 @@ describe("assert-no-previews", () => {
     ["the Repositories mock", `module.createReposMock({delayMs:300})`],
     ["the Devices preview route", `location.hash.startsWith("#/preview/devices")`],
     ["the Devices mock", `module.createDevicesMock({delayMs:300})`],
+    ["the Devices Planned live mock", `module.createDevicesPlannedMock({live:{screen:"iVBOR"}})`],
+    ["a Devices live frame id", `["device-input-touch"]`],
     ["the attachments preview route", `location.hash.startsWith("#/preview/attachments")`],
     ["the photo conversion mock", `module.createPhotoConversionMock({delayMs:1200})`],
     ["the transcripts mock", `module.createTranscriptsMock({delayMs:800})`],

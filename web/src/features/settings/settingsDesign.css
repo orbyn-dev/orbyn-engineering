@@ -160,6 +160,39 @@
   gap: 6px;
 }
 
+/* The Providers table owns its grid: Version is the first column to go when the table is narrow. */
+.set-tbl.prov {
+  container-type: inline-size;
+  --prov-columns: 28px minmax(120px, 1fr) 90px minmax(130px, auto) 60px 72px;
+}
+.set-tbl.prov .set-tr {
+  grid-template-columns: var(--prov-columns);
+}
+/* Budget at 528, 628, 852px: 28 mark + 60 Edit + 72 In use = 160px fixed, four 12px gaps = 48px,
+   and 8px row padding. Status keeps 130px. At 528px the name gets 182px; at 628px 282px; at 852px
+   506px. Both the name (min 120px) and Status keep at least 120px at 528px; Version's 90px only
+   exists above 900px. */
+@container (max-width: 900px) {
+  .set-tbl.prov .set-tr {
+    --prov-columns: 28px minmax(120px, 1fr) minmax(130px, auto) 60px 72px;
+  }
+  .set-tbl.prov .set-tr > :nth-child(3) {
+    display: none;
+  }
+}
+/* Status is safety text: it wraps in its track rather than clipping to nothing. */
+.set-tbl.prov .set-states {
+  min-width: 0;
+  white-space: normal;
+}
+.set-tbl.prov .set-states > * {
+  min-width: 0;
+}
+.set-tbl.prov .set-states .set-pill {
+  max-width: 100%;
+  white-space: normal;
+}
+
 /* Key caps */
 .kc {
   display: inline-flex;

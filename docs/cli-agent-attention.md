@@ -52,6 +52,14 @@ only in the thread's log.
 The service never records what was typed. The cleared line says "Answered in the terminal" for `input`, "Continued" for `output` and
 "The terminal closed" for `closed`.
 
+## Open items read
+
+`GET /api/threads/{id}/terminal-attention` (Local) answers `{ "items": [...] }`: the items waiting now in that thread, each shaped
+exactly as the `waiting` value above, oldest first, at most 8 (`TerminalAttentionOpen`). A window that opens after an item began reads
+it once, then follows the log as before. It reads the service's in-memory registry only: the stored, already redacted excerpt (a
+`secret` item carries only its label), never the terminal's text, and it writes nothing. Cleared and closed items are gone; an
+unknown thread is a 404.
+
 ## Detection rules (built)
 
 A terminal is waiting when all hold: it is an engine console (G14; a plain shell is never reported), it printed nothing for the

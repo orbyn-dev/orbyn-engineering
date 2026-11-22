@@ -77,8 +77,10 @@ itself, so a `--release` check would flag them), other platforms.
 ## Claude family (behind a flag)
 
 `src/families/claude.mjs` runs `query()` from `@anthropic-ai/claude-agent-sdk` over the person's own
-`claude` (`options.claudePath`). It starts only with `ORBYN_ENGINE_HOST_CLAUDE=1`, and the Rust side keeps
-the CLI driver as the default for subscription sign-in until Anthropic approves the SDK path in writing.
+`claude` (`options.claudePath`). The host itself starts the family only with `ORBYN_ENGINE_HOST_CLAUDE=1`, which the Rust side sets in the host's environment.
+On the service the flag is opt-out: a missing or empty `ORBYN_ENGINE_HOST_CLAUDE` means on and only `0` turns it off (`1` stays valid).
+The person's `claude_engine_path` setting (`sdk`, the default, or `cli`) is read at the start of each run; `cli` runs through the Rust CLI driver and
+the host is not touched. Nothing falls back on its own. Both paths resume the same transcript files.
 The SDK is **not bundled into the executable** (esbuild `external`); it is an exact-pinned dependency. In development it loads from
 `node_modules`; in the app it loads from the `sdk` folder beside the host (see Single executable below); with neither, the family fails with a plain message.
 
