@@ -25,6 +25,11 @@ impl Seen {
             .map(|(_, v)| v.as_str())
     }
 
+    /// The body as JSON, when the request carried one.
+    pub fn json(&self) -> Option<Value> {
+        serde_json::from_str(&self.body).ok()
+    }
+
     /// The path of the request target, still percent-encoded.
     pub fn path(&self) -> &str {
         self.target.split('?').next().unwrap_or_default()
