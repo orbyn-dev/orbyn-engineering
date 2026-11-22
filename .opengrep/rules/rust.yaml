@@ -100,7 +100,6 @@ rules:
               - pattern: $S.client_secret
               - pattern: $S.private_key
               - pattern: $S.bearer
-          - focus-metavariable: $S
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -117,19 +116,20 @@ rules:
               - pattern: tracing::info!(..., $X, ...)
               - pattern: tracing::warn!(..., $X, ...)
               - pattern: tracing::error!(..., $X, ...)
+              - pattern: tracing::debug!(..., $X, ...)
+              - pattern: tracing::trace!(..., $X, ...)
               - pattern: log::info!(..., $X, ...)
               - pattern: log::warn!(..., $X, ...)
               - pattern: log::error!(..., $X, ...)
+              - pattern: log::debug!(..., $X, ...)
+              - pattern: log::trace!(..., $X, ...)
           - focus-metavariable: $X
     pattern-sanitizers:
-      - patterns:
-          - pattern-either:
-              - pattern: redact(...)
-              - pattern: redacted_tail(...)
-              - pattern: $X.len()
-              - pattern: $X.is_empty()
-              - pattern: $X.chars().count()
-          - focus-metavariable: $X
+      - pattern: redact(...)
+      - pattern: redacted_tail(...)
+      - pattern: $X.len()
+      - pattern: $X.is_empty()
+      - pattern: $X.chars().count()
     metadata: {category: security, subcategory: [vuln], confidence: MEDIUM, cwe: ["CWE-532: Insertion of Sensitive Information into Log File"], references: ["CodeQL rust/cleartext-logging"]}
   - id: orbyn-rust-tls-verify-off
     languages: [rust]
