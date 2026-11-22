@@ -19,6 +19,51 @@ use crate::util::{canonicalize, new_id, now};
 
 const WORKTREE_SUFFIX: &str = "-wt";
 
+/// The characters a project folder name may use besides a letter or a number.
+const NAME_PUNCTUATION: [char; 4] = [' ', '-', '_', '.'];
+
+/// Windows keeps these names for its devices, so no folder can be called one.
+const RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Refuses a project name the file system cannot hold as written. The New project
+/// dialog's Name becomes the folder's own name, and [`slug_of`] would turn
+/// `bad:name` into `bad-name` without saying so, so the name is checked before a
+/// folder is made: a name with a separator would put the folder somewhere other than
+/// its name says, and one Windows reserves cannot be a folder at all.
+fn check_project_name(name: &str) -> Result<()> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(CoreError::Invalid("Name the project.".into()));
+    }
+    if trimmed
+        .chars()
+        .any(|c| !(c.is_alphanumeric() || NAME_PUNCTUATION.contains(&c)))
+    {
+        return Err(CoreError::Invalid(
+            "A project name cannot contain / \\ : * ? \" < > |.".into(),
+        ));
+    }
+    if trimmed.starts_with('.') {
+        return Err(CoreError::Invalid(
+            "A project name cannot start with a dot.".into(),
+        ));
+    }
+    if trimmed.ends_with('.') {
+        return Err(CoreError::Invalid(
+            "A project name cannot end with a dot.".into(),
+        ));
+    }
+    if RESERVED_NAMES.contains(&trimmed.to_ascii_uppercase().as_str()) {
+        return Err(CoreError::Invalid(
+            "Windows reserves that project name.".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn slug_of(name: &str) -> Result<String> {
     let lowered: String = name
         .trim()
@@ -396,6 +441,15 @@ impl Core {
         readme: bool,
         chosen: Option<&str>,
     ) -> Result<Project> {
+        check_project_name(name)?;
+        // A chosen folder is made under its own name, so that name is checked too:
+        // the caller's path must not smuggle a folder the name above would refuse.
+        if let Some(leaf) = chosen
+            .and_then(|chosen| Path::new(chosen).file_name())
+            .and_then(|leaf| leaf.to_str())
+        {
+            check_project_name(leaf)?;
+        }
         let (slug, path) = self.slot(name, chosen).await?;
         self.audit_project("project.create", &slug, serde_json::Value::Null)?;
         let parent = path

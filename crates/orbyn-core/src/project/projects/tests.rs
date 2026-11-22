@@ -76,6 +76,62 @@ fn slugs_are_plain_and_never_a_worktree_root() {
 }
 
 #[tokio::test]
+async fn a_project_name_the_folder_cannot_hold_is_refused_before_anything_is_made() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let repo = core.workspace.repo_dir().unwrap();
+    for (name, expected) in [
+        (
+            "bad:name*?<x",
+            "A project name cannot contain / \\ : * ? \" < > |.",
+        ),
+        ("../x|y", "A project name cannot contain / \\ : * ? \" < > |."),
+        (r"a\b", "A project name cannot contain / \\ : * ? \" < > |."),
+        ("a/b", "A project name cannot contain / \\ : * ? \" < > |."),
+        (".hidden", "A project name cannot start with a dot."),
+        ("trailing.", "A project name cannot end with a dot."),
+        ("nul", "Windows reserves that project name."),
+        ("  ", "Name the project."),
+    ] {
+        match core.new_project(name, false, None).await {
+            Err(CoreError::Invalid(message)) => assert_eq!(message, expected, "name {name:?}"),
+            Err(other) => panic!("{name:?} was refused for another reason: {other}"),
+            Ok(project) => panic!("{name:?} was accepted as {}", project.path),
+        }
+        assert!(!repo.join(name).exists(), "{name:?} made a folder");
+    }
+    // The names a folder can hold still work, so the check is not a blanket refusal.
+    assert!(core.new_project("My Project", false, None).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_chosen_base_directory_keeps_the_new_project_inside_it() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    // A folder outside the skills library, which is where a base directory points.
+    let outside = TempDir::new();
+    let base = outside.path().join("base");
+    std::fs::create_dir_all(&base).unwrap();
+    let escaping = base.join("../x|y");
+    assert!(
+        core.new_project("../x|y", false, escaping.to_str())
+            .await
+            .is_err(),
+        "a name cannot step out of the base directory"
+    );
+    assert!(
+        !outside.path().join("x|y").exists(),
+        "nothing was made beside the base directory"
+    );
+    let chosen = base.join("Notes");
+    let project = core
+        .new_project("Notes", false, chosen.to_str())
+        .await
+        .unwrap();
+    assert_eq!(PathBuf::from(&project.path), chosen, "the name is the folder");
+}
+
+#[tokio::test]
 async fn create_makes_a_nested_repository() {
     let dir = TempDir::new();
     let core = core(&dir).await;

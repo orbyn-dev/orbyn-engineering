@@ -415,6 +415,34 @@ describe("App against the mock API", () => {
     expect(await screen.findByRole("heading", { name: /What should we build in/ })).toBeInTheDocument();
   });
 
+  it("refuses a new project name the folder cannot hold, and keeps Create off", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const palette = await openAddProject(user);
+    await user.click(within(palette).getByRole("button", { name: /New project/ }));
+    const dialog = await screen.findByRole("dialog", { name: "New project" });
+    const name = within(dialog).getByLabelText("Name");
+    const create = within(dialog).getByRole("button", { name: "Create project" });
+
+    await user.type(name, "bad:name*?<x");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent('A project name cannot contain / \\ : * ? " < > |.');
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(create).toBeDisabled();
+    // Enter cannot get past a Create that is off: the dialog is still the New project one.
+    await user.type(name, "{Enter}");
+    expect(screen.getByRole("dialog", { name: "New project" })).toBeVisible();
+
+    await user.clear(name);
+    await user.type(name, "../x|y");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent('A project name cannot contain / \\ : * ? " < > |.');
+    expect(create).toBeDisabled();
+
+    await user.clear(name);
+    await user.type(name, "fresh-idea");
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(create).toBeEnabled();
+  });
+
   it("adds a local folder where it is, then asks for trust", async () => {
     const user = userEvent.setup();
     render(<App />);

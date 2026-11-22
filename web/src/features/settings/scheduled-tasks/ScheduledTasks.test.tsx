@@ -343,6 +343,37 @@ it("names what Save still needs instead of disabling silently", async () => {
   expect(within(dialog).queryByText(/^Save task needs/)).toBeNull();
 });
 
+it("keeps Save off, and says why, for an interval below the field's own min", async () => {
+  ready();
+  installMockFetch();
+  const { user, dialog } = await openNewTask();
+  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Nightly triage");
+  await user.type(within(dialog).getByRole("textbox", { name: "What should the agent do?" }), "Triage new issues.");
+  const save = within(dialog).getByRole("button", { name: "Save task" });
+  const every = within(dialog).getByRole("spinbutton", { name: "Every (minutes)" });
+  expect(every).toHaveAttribute("min", "1");
+  expect(save).toBeEnabled();
+
+  // A pasted value below the min, not just a typed one.
+  await user.click(every);
+  await user.clear(every);
+  await user.paste("-3");
+  expect(every).toHaveValue(-3);
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription("Save task needs a time of at least 1 minute.");
+
+  // A spinner step lands on the same change, so a stepped 0 is refused the same way.
+  await user.clear(every);
+  await user.type(every, "0");
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription("Save task needs a time of at least 1 minute.");
+
+  await user.clear(every);
+  await user.type(every, "1");
+  expect(save).toBeEnabled();
+  expect(within(dialog).queryByText(/^Save task needs/)).toBeNull();
+});
+
 it("shows New task once while the list is empty (the empty state's) and in the header once tasks exist", async () => {
   ready();
   window.location.hash = "#/settings/tasks";

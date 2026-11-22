@@ -36,13 +36,19 @@ function DetailRowsButton() {
 }
 
 /** A whole number with its unit beside it, kept within `min` and `max` and saved when the field loses focus. */
-function NumberWithUnit({ value, unit, label, save, disabled, min = 1, max }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean; min?: number; max?: number }) {
+export function NumberWithUnit({ value, unit, label, save, disabled, min = 1, max }: { value: unknown; unit: string; label: string; save(next: number): void; disabled: boolean; min?: number; max?: number }) {
   return (
     <span className="unit-field">
       <input type="number" min={min} max={max} aria-label={label} disabled={disabled} defaultValue={typeof value === "number" ? value : ""}
         onBlur={(event) => {
-          const typed = Number(event.target.value);
-          if (!Number.isFinite(typed) || event.target.value === "") return;
+          const text = event.target.value.trim();
+          const typed = Number(text);
+          // An emptied field goes back to the stored value: saving nothing would leave
+          // the row reading differently from what the service holds.
+          if (text === "" || !Number.isFinite(typed)) {
+            event.target.value = typeof value === "number" ? String(value) : "";
+            return;
+          }
           const next = Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min, typed));
           event.target.value = String(next);
           if (next !== value) save(next);

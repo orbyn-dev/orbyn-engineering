@@ -9,6 +9,7 @@ import { Button } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 import { FolderBrowser } from "../../../product/ui/FolderBrowser";
 import { dropTrailingSlash, expandHome, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
+import { projectNameProblem } from "./projectName";
 import { trackClone } from "../app-chrome/CloneJobs";
 import "../addProject.css";
 
@@ -242,6 +243,7 @@ function AddDialog({
   confirm,
   mono,
   hint,
+  check,
   submit,
   onCancel,
 }: {
@@ -250,12 +252,15 @@ function AddDialog({
   confirm: string;
   mono?: boolean;
   hint: ReactNode;
+  /** Why this value cannot be submitted, or null; the same words the service refuses it with. */
+  check?(value: string): string | null;
   submit(value: string): Promise<void>;
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const problem = check ? check(value) : null;
   const live = useRef(true);
   useEffect(
     () => () => {
@@ -265,7 +270,7 @@ function AddDialog({
   );
   const send = async () => {
     const text = value.trim();
-    if (!text || busy) return;
+    if (!text || busy || problem) return;
     setBusy(true);
     setError(null);
     try {
@@ -287,7 +292,7 @@ function AddDialog({
           <Button onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button tone="primary" busy={busy} disabled={!value.trim()} onClick={() => void send()}>
+          <Button tone="primary" busy={busy} disabled={!value.trim() || problem !== null} onClick={() => void send()}>
             {confirm}
           </Button>
         </>
@@ -310,11 +315,12 @@ function AddDialog({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
+          aria-invalid={problem ? true : undefined}
           onChange={(event) => setValue(event.target.value)}
         />
-        {error ? (
+        {problem ?? error ? (
           <p className="field-error" role="alert">
-            {error}
+            {problem ?? error}
           </p>
         ) : hint ? (
           <span className="add-project-note">{hint}</span>
@@ -368,6 +374,7 @@ export function AddProjectPalette({
           title="New project"
           label="Name"
           confirm="Create project"
+          check={projectNameProblem}
           hint={
             <>
               {base ? (
