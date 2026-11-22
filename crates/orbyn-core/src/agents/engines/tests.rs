@@ -1238,3 +1238,52 @@ async fn provider_checks_off_skips_the_latest_lookup_until_a_refresh() {
     );
     assert_eq!(lookups.load(SeqCst), 1, "a refresh still looks up");
 }
+
+#[test]
+fn a_turned_off_engine_is_refused_by_the_name_the_status_list_shows() {
+    let dir = TempDir::new();
+    let engines = manager(&dir);
+    engines
+        .store
+        .save_custom_engine(
+            &CustomEngine {
+                id: "own".into(),
+                name: String::new(),
+                tier: EngineTier::Acp,
+                target: "agent-command".into(),
+                args: Vec::new(),
+            },
+            "test",
+        )
+        .unwrap();
+    let instances = serde_json::json!([
+        { "id": "kiro-work", "driver": "kiro", "enabled": false },
+        { "id": "own-work", "driver": "own", "enabled": false }
+    ]);
+    engines
+        .store
+        .change_settings(|_| {
+            Ok((
+                (),
+                vec![crate::store::scoped_settings::SettingWrite::Global {
+                    key: "pref:provider_instances".into(),
+                    value: Some(instances.to_string()),
+                }],
+            ))
+        })
+        .unwrap();
+    assert_eq!(
+        engines
+            .check_enabled("kiro-work")
+            .unwrap_err()
+            .public_message(),
+        "Kiro is turned off."
+    );
+    assert_eq!(
+        engines
+            .check_enabled("own-work")
+            .unwrap_err()
+            .public_message(),
+        "own-work is turned off."
+    );
+}

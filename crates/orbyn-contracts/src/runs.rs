@@ -189,6 +189,23 @@ pub struct StartRun {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[ts(optional, as = "Option<BTreeMap<String, String>>")]
     pub options: BTreeMap<String, String>,
+    /// A JSON Schema for the run's result (M20). The run ends with a `turn_result` event: the engine's answer parsed and
+    /// checked against it, or why it could not be. At most 16 KiB, local `$ref` only. Not with `purpose`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub result_schema: Option<Value>,
+    /// What the run is for, when Orbyn supplies the schema itself. Not with `result_schema`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub purpose: Option<RunPurpose>,
+}
+}
+
+wire_enum! {
+/// A run whose result schema Orbyn supplies.
+pub enum RunPurpose {
+    /// A command for the terminal, reported as a `proposal` event the person runs with one click.
+    TerminalProposal,
 }
 }
 

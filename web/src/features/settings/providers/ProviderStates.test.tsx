@@ -92,6 +92,37 @@ it("puts a known-broken engine under Found, can’t start and still opens it", a
   expect(open).toHaveBeenCalledWith("claude");
 });
 
+it("shows Can’t start once for an installed Codex that cannot start, with no Ready", async () => {
+  show([engine({ id: "codex", name: "Codex" })], [
+    entry({ id: "codex", name: "Codex", group: "cant_start", labels: ["cant_start"], note: "Codex is installed, but it cannot start." }),
+  ]);
+  await switches();
+  const row = rowOf("Codex");
+  expect(within(row).getAllByText("Can’t start")).toHaveLength(1);
+  expect(within(row).queryByText("Ready")).toBeNull();
+});
+
+it("keeps the Version column in the DOM on a narrow table, where CSS alone hides it", async () => {
+  show([engine({})], [entry({})]);
+  await switches();
+  expect(screen.getByRole("table", { name: "Providers" })).toHaveClass("set-tbl", "prov");
+  expect(screen.getByRole("columnheader", { name: "Version" })).toBeInTheDocument();
+  const row = rowOf("Claude Code");
+  const cells = within(row).getAllByRole("cell");
+  expect(cells).toHaveLength(6);
+  expect(cells[2]).toHaveTextContent("2.1.318");
+  expect(cells[2]).not.toHaveStyle({ display: "none" });
+});
+
+it("keeps the In use inheritance popover out of the table's width container", async () => {
+  show([engine({})], [entry({})]);
+  await switches();
+  await userEvent.click(screen.getByRole("button", { name: "Default" }));
+  const popup = screen.getByRole("dialog", { name: "Providers in use" });
+  expect(popup.closest(".set-tbl.prov")).toBeNull();
+  expect(document.body.contains(popup)).toBe(true);
+});
+
 it("keeps an engine whose program was not found, with its switch and Edit", async () => {
   const instance = engine({ id: "mine", name: "Claude Code · Mine", instance_of: "claude", installed: false, path: null, version: null });
   vi.mocked(request).mockResolvedValue({ catalog: { version: "1", selection: { kind: "all_projects" } }, rows: [] } as never);

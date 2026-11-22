@@ -54,6 +54,8 @@ function Status({ engine, labelled, entry }: { engine: EngineStatus; labelled: b
   if (engine.auth === "logged_out" || engine.start_issue?.kind === "signed_out" || entry?.labels.includes("signed_out")) {
     return <><span className="set-pill dot">Signed out</span>{engine.sign_in_command ? <span className="mono t3">{engine.sign_in_command}</span> : null}</>;
   }
+  // Found but unable to start beats Ready and Update; its chip is not drawn a second time (see `Labels`).
+  if (entry?.labels.includes("cant_start")) return <span className="set-pill warn">{LABEL_TEXT.cant_start}</span>;
   if (engine.latest && engine.version && engine.latest !== engine.version) return <span className="set-pill">Update {engine.latest}</span>;
   return <span className="set-pill"><Check size={13} aria-hidden />Ready</span>;
 }
@@ -72,9 +74,9 @@ const subtitle = (engine: EngineStatus, note?: string | null) => {
 };
 
 /** The labels the service gives a provider: what Orbyn has not seen or cannot control. */
-function Labels({ entry }: { entry: ProviderEntry | undefined }) {
-  // Signed out and Start failed are the Status cell's words, so they are not repeated as chips.
-  return <>{entry?.labels.filter((label) => label !== "signed_out" && label !== "start_failed").map((label) => <span key={label} className={label === "planned" ? "set-pill planned" : "set-pill dot"}>{LABEL_TEXT[label]}</span>)}</>;
+function Labels({ entry, showsCantStart = false }: { entry: ProviderEntry | undefined; showsCantStart?: boolean }) {
+  // Signed out, Start failed and Can’t start are the Status cell's words where it draws them, so they are not repeated as chips.
+  return <>{entry?.labels.filter((label) => label !== "signed_out" && label !== "start_failed" && !(showsCantStart && label === "cant_start")).map((label) => <span key={label} className={label === "planned" ? "set-pill planned" : "set-pill dot"}>{LABEL_TEXT[label]}</span>)}</>;
 }
 
 /** The grouped list, read again whenever the engines change. `null` until the service answers or when it cannot. */
@@ -84,8 +86,6 @@ export function useProviderList(engines: EngineStatus[]) {
   const list = useAsync(`provider-list:${key}`, (signal) => listProviders(signal), { keep: true });
   return { catalog: list.data, reload: list.reload };
 }
-
-const COLUMNS = "28px minmax(0, 1fr) 90px minmax(130px, auto) 60px 72px";
 
 /** One row per provider and provider instance. A row opens its detail; Edit and In use belong to instances. */
 export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }: {
@@ -100,7 +100,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
   const row = inUse.row;
   const all = inUse.scope?.catalog?.selection.kind === "all_projects";
   const head = (
-    <div role="row" className="set-tr h" style={{ gridTemplateColumns: COLUMNS }}>
+    <div role="row" className="set-tr h">
       <span /><span role="columnheader">Provider</span><span role="columnheader">Version</span><span role="columnheader">Status</span><span />
       <span role="columnheader" className="set-inuse-head">In use{row?.project_scoped ? (
         <PreferenceInheritance row={{ key: KEY, title: "Providers in use" }} view={row.members[0]?.view ?? row.environment} global={row.environment}
@@ -109,7 +109,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
           onOpenOverride={(id) => {
             const group = inUse.scope?.catalog?.groups.find((entry) => entry.members.some((member) => member.project_id === id));
             if (group) inUse.scope?.select({ kind: "checkout", group_key: group.key, project_id: id });
-          }} />
+          }} portal />
       ) : null}</span>
     </div>
   );
@@ -118,7 +118,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
     const instance = store.instances.find((candidate) => candidate.id === engine.id);
     const openable = hasProviderDetail(engine) && (entry?.openable ?? true);
     return (
-      <div key={engine.id} role="row" className={openable ? "set-tr set-tr-open" : "set-tr"} style={{ gridTemplateColumns: COLUMNS }} onClick={openable ? () => onOpen(engine.id) : undefined}>
+      <div key={engine.id} role="row" className={openable ? "set-tr set-tr-open" : "set-tr"} onClick={openable ? () => onOpen(engine.id) : undefined}>
         <span role="cell"><span className="set-mark" style={engine.accent ? { background: engine.accent, color: "#fff" } : undefined}>{engine.name.charAt(0).toUpperCase()}</span></span>
         <span role="cell">
           {openable
@@ -127,7 +127,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
           {note ? <><br /><span className="sub">{note}</span></> : null}
         </span>
         <span role="cell" className="t3">{engine.version ?? ""}</span>
-        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} entry={entry} /><Labels entry={entry} /></span>
+        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} entry={entry} /><Labels entry={entry} showsCantStart={engine.installed} /></span>
         <span role="cell">{instance ? <Button small aria-label={`Edit ${engine.name}`} onClick={(event) => { event.stopPropagation(); onEdit(engine.id); }}>Edit</Button> : null}</span>
         <span role="cell" onClick={(event) => event.stopPropagation()}>
           {row ? <input type="checkbox" role="switch" aria-label={`Use ${engine.name}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}
@@ -139,7 +139,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
   };
   // A row with no engine behind it has nothing to open, sign in to or switch: only its words.
   const plainRow = (entry: ProviderEntry) => (
-    <div key={entry.id} role="row" className="set-tr" style={{ gridTemplateColumns: COLUMNS }}>
+    <div key={entry.id} role="row" className="set-tr">
       <span role="cell"><span className="set-mark">{entry.name.charAt(0).toUpperCase()}</span></span>
       <span role="cell"><span className="name">{entry.name}</span>{entry.note ? <><br /><span className="sub">{entry.note}</span></> : null}</span>
       <span role="cell" /><span role="cell" className="set-states"><Labels entry={entry} /></span><span role="cell" /><span role="cell" />
@@ -163,7 +163,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
   })();
   return (
     <>
-      <div className="set-tbl" role="table" aria-label="Providers">
+      <div className="set-tbl prov" role="table" aria-label="Providers">
         {head}
         {places ? GROUPS.map(({ place, heading, note }) => ({ heading, note, nodes: places.filter((one) => one.place === place).map((one) => one.node) })).filter((part) => part.nodes.length > 0).map(({ heading, note, nodes }) => (
           <div key={heading} role="rowgroup" aria-label={heading}>

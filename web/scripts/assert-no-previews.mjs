@@ -41,9 +41,11 @@ const markers = [
   // Repositories design preview (features/repos): the dev-only hash route and its mock.
   "preview/repos",
   "createReposMock",
-  // Devices design preview (features/devices): the dev-only hash route and its mock.
+  // Devices design preview (features/devices): the dev-only hash route, its mock and its live frames.
   "preview/devices",
   "createDevicesMock",
+  "createDevicesPlannedMock",
+  "device-input-touch",
   // Photo conversion, transcript drop and earlier-messages design previews (features/thread/composer, features/thread/earlier): the dev-only hash routes and their mocks.
   "preview/attachments",
   "createPhotoConversionMock",

@@ -311,6 +311,14 @@ export const api = {
     request<KeybindingsView>("GET", "/api/keybindings", undefined, signal),
   threadItem: (threadId: string, itemId: string, signal?: AbortSignal) =>
     request<unknown>("GET", `/api/threads/${q(threadId)}/items/${q(itemId)}`, undefined, signal),
+  /** The engine consoles waiting for the person in one thread now (docs/cli-agent-attention.md). Local, read-only. */
+  terminalAttention: (threadId: string, signal?: AbortSignal) =>
+    request<import("../generated/TerminalAttentionOpen").TerminalAttentionOpen>(
+      "GET",
+      `/api/threads/${q(threadId)}/terminal-attention`,
+      undefined,
+      signal,
+    ),
   regenerateTitle: (id: string) => request<Thread>("POST", `/api/threads/${q(id)}/title`),
   reorderThreads: (ids: string[]) => request<void>("POST", "/api/threads/order", { ids }),
   /** Every archived thread, including those of a project that was removed. */
