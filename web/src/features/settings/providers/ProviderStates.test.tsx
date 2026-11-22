@@ -179,3 +179,40 @@ it("opens beta instances but keeps other families closed before catalog loading"
   expect(open).toHaveBeenCalledExactlyOnceWith("work");
   expect(screen.queryByRole("button", { name: "Cline" })).toBeNull();
 });
+
+it("writes the program alone as an ACP row's line, with Unmanaged for the ones Orbyn cannot ask", async () => {
+  const acp = (id: string, name: string): EngineStatus => engine({ id, name, tier: "acp", installed: true, auth: "not_applicable", path: `/usr/local/bin/${id}`, version: null });
+  show([acp("kiro", "Kiro"), acp("kimi", "Kimi Code")], [
+    entry({ id: "kiro", name: "Kiro", group: "more", labels: ["unmanaged", "not_verified"], note: "kiro-cli", openable: false }),
+    entry({ id: "kimi", name: "Kimi Code", group: "more", labels: ["not_verified"], note: "kimi", openable: false }),
+  ], ["kiro", "kimi"]);
+
+  await waitFor(() => expect(tables()).toEqual(["More engines"]));
+  const kiro = rowOf("Kiro");
+  expect(within(kiro).getByText("kiro-cli")).toBeVisible();
+  expect(within(kiro).queryByText("via ACP")).toBeNull();
+  expect(within(kiro).getByText("Unmanaged")).toBeVisible();
+  expect(within(kiro).getByText("Not verified")).toBeVisible();
+  const kimi = rowOf("Kimi Code");
+  expect(within(kimi).getByText("kimi")).toBeVisible();
+  expect(within(kimi).queryByText("Unmanaged")).toBeNull();
+});
+
+it("lists the six ACP engines not installed as via ACP and Not found alone, with nothing to open (frame acp-status-list-not-installed-narrow)", async () => {
+  const acp = (id: string, name: string): EngineStatus => engine({ id, name, tier: "acp", installed: false, auth: "not_applicable", path: null, version: null });
+  const rows = [["kiro", "Kiro"], ["droid", "Factory Droid"], ["omp", "Oh My Pi"], ["mistral-vibe", "Mistral Vibe"], ["glm", "GLM"], ["kimi", "Kimi Code"]] as const;
+  show(rows.map(([id, name]) => acp(id, name)), rows.map(([id, name]) => entry({ id, name, group: "not_found", labels: ["not_found"], registered: true, openable: false })));
+
+  await waitFor(() => expect(tables()).toEqual(["Not found"]));
+  for (const [, name] of rows) {
+    const row = rowOf(name);
+    expect(within(row).getByText("via ACP")).toBeVisible();
+    expect(within(row).getAllByText("Not found")).toHaveLength(1);
+    expect(within(row).queryByText("Unmanaged")).toBeNull();
+    expect(within(row).queryByText("Not verified")).toBeNull();
+    expect(within(row).queryByText("kiro-cli")).toBeNull();
+    expect(within(row).queryByRole("button", { name })).toBeNull();
+    expect(within(row).getByRole("switch", { name: `Use ${name}` })).toBeVisible();
+    expect(row.querySelector(`[aria-label="Use ${name}"]`)).not.toBeNull();
+  }
+});
