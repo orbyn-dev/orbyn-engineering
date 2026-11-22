@@ -17,14 +17,14 @@ export const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 
 export function deviceFixtures(): Device[] {
   return [
-    { id: "android:Pixel_Fold_API_35", name: "Pixel Fold", platform: "android", state: "booted", version: "15", foldable: true, fold: { posture: "opened", hinge_angle: 180 } },
-    { id: "android:Pixel_8_API_35", name: "Pixel 8", platform: "android", state: "booted", version: "15", foldable: false },
+    { id: "android:Pixel_Fold_API_35", name: "Pixel Fold", platform: "android", state: "booted", version: "15", foldable: true, orientation: "portrait", fold: { posture: "opened", hinge_angle: 180 } },
+    { id: "android:Pixel_8_API_35", name: "Pixel 8", platform: "android", state: "booted", version: "15", foldable: false, orientation: "portrait" },
     { id: "android:Pixel_9_Pro_Fold_API_35", name: "Pixel 9 Pro Fold", platform: "android", state: "shutdown", version: "15", foldable: true },
-    { id: "ios:7C2D-0001", name: "iPhone 17 Pro", platform: "ios", state: "booted", version: "26.1", foldable: false },
+    { id: "ios:7C2D-0001", name: "iPhone 17 Pro", platform: "ios", state: "booted", version: "26.1", foldable: false, orientation: "portrait" },
   ];
 }
 
-/** The state frames' own devices (device-booting, device-running, device-frozen, device-crashed, device-shutdown). */
+/** The state frames' own devices (device-running, device-frozen, device-crashed, device-shutdown). */
 export function stateFixture(state: DeviceState, platform: "android" | "ios" = "ios"): Device {
   return {
     id: platform === "ios" ? "ios:7C2D-0001" : "android:Pixel_8_API_35",
@@ -33,6 +33,7 @@ export function stateFixture(state: DeviceState, platform: "android" | "ios" = "
     state,
     version: platform === "ios" ? "18.2" : "15",
     foldable: false,
+    ...(state === "booted" ? { orientation: "portrait" as const } : {}),
   };
 }
 
@@ -50,14 +51,22 @@ export interface DevicesMock extends DevicesApi {
 }
 
 const STATUS: Record<string, [number, string]> = {
-  device_not_found: [404, "That device is not in the list any more."],
+  invalid_action: [400, "That action is not valid."],
+  device_not_found: [404, "That device is no longer there."],
   device_busy: [409, "Another action is running on this device."],
-  tool_failed: [502, "The device tool did not finish."],
-  tool_timeout: [504, "The device tool did not answer in time."],
+  tool_missing: [409, "Android tools were not found. Install Android platform-tools and the emulator."],
+  device_not_booted: [409, "Start the device first."],
   not_foldable: [422, "This device does not fold."],
   action_unsupported: [422, "This device cannot do that."],
-  device_not_booted: [409, "The device is not running."],
+  tool_failed: [502, "The device tool could not do that. Try again."],
+  tool_timeout: [504, "The device did not answer in time."],
+  tool_output_too_large: [413, "The device sent more than Orbyn can read."],
 };
+
+const TOOL_MISSING = {
+  android: "Android tools were not found. Install Android platform-tools and the emulator.",
+  ios: "Xcode was not found. Install Xcode, then try again.",
+} as const;
 
 const refuse = (code: string): never => {
   const [status, message] = STATUS[code] ?? [502, "The service could not do that."];
@@ -104,20 +113,25 @@ export function createDevicesMock(init: { devices?: Device[] | null; platforms?:
       const value = "value" in action ? `:${action.value}` : "angle" in action ? `:${action.angle}` : "preset" in action ? `:${action.preset}` : "";
       writes.push(`${id}:${action.type}${value}`);
       await wait();
+      const device = find(id);
       if (fail !== null) {
         const code = fail;
         fail = null;
+        if (code === "tool_missing") throw new ApiFailure(code, TOOL_MISSING[device.platform], 409);
         refuse(code);
       }
-      const device = find(id);
       if (!supported(device).includes(action.type)) refuse(device.foldable || !action.type.match(/fold|hinge/) ? "action_unsupported" : "not_foldable");
       if (device.state !== "booted") refuse("device_not_booted");
       if (action.type === "power_off") {
-        const { fold: _gone, ...off } = device;
+        const { fold: _gone, orientation: _unread, ...off } = device;
         devices.set(id, { ...off, state: "shutdown" });
         return { ok: true, device: devices.get(id)! };
       }
       if (action.type === "screenshot") return { ok: true, device, image: PIXEL_PNG };
+      if (action.type === "rotate") {
+        devices.set(id, { ...device, orientation: action.value });
+        return { ok: true, device: devices.get(id)! };
+      }
       if (action.type === "fold" || action.type === "unfold" || action.type === "hinge" || action.type === "hinge_preset") {
         const angle = action.type === "fold" ? 0 : action.type === "unfold" ? 180 : action.type === "hinge" ? action.angle : { closed: 0, half_open: 130, open: 180 }[action.preset];
         const guess = angle === 0 ? "closed" : angle >= 180 ? "opened" : "half_opened";

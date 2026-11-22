@@ -617,3 +617,24 @@ async fn the_redactor_runs_before_the_event_is_appended() {
         }
     );
 }
+
+/// Where no echo mode can be read (Windows ConPTY), a `Password:` line is a plain question and
+/// its last lines are shown. They are redacted first, so a secret printed above it never leaves.
+#[test]
+fn a_password_line_read_as_a_question_still_hides_secret_text() {
+    let redactor = Redactor::only(vec![Custom {
+        name: "token",
+        regex: Regex::new("hunter2").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    let reading = evaluate(
+        &redactor,
+        "token is hunter2\nhunter2 again\nPassword:",
+        false,
+    )
+    .unwrap();
+    assert_eq!(reading.kind, TerminalAttentionKind::Question);
+    let text = reading.excerpt.join("\n");
+    assert!(!text.contains("hunter2"), "{text}");
+    assert!(text.contains("[hidden: token]"), "{text}");
+}

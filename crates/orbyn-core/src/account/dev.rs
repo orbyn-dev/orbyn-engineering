@@ -95,6 +95,9 @@ struct State {
     session: Option<String>,
     removed: Vec<String>,
     wrong_passwords: u8,
+    /// How many times the Engine was told to end this device's session.
+    #[cfg(test)]
+    sign_outs: usize,
 }
 
 /// An account created at the password step, waiting for its emailed code.
@@ -240,6 +243,12 @@ impl DevAccount {
     #[cfg(test)]
     pub fn signed_in(&self) -> bool {
         self.lock().session.is_some()
+    }
+
+    /// How many times the Engine was told to end this device's session.
+    #[cfg(test)]
+    pub fn sign_outs(&self) -> usize {
+        self.lock().sign_outs
     }
 
     #[cfg(test)]
@@ -701,7 +710,12 @@ impl AccountApi for DevAccount {
     }
 
     async fn sign_out(&self) -> Result<(), DeviceError> {
-        self.lock().session = None;
+        let mut state = self.lock();
+        state.session = None;
+        #[cfg(test)]
+        {
+            state.sign_outs += 1;
+        }
         Ok(())
     }
 }
