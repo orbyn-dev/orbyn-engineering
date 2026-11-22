@@ -5,6 +5,10 @@
  */
 export type FlowFinding = { id: string, lane: string, round: number, severity: string, path: string, line: number, claim: string, 
 /**
+ * What the reviewer quoted for it: a snippet, an output or the reasoning behind the claim.
+ */
+evidence: string, 
+/**
  * `confirmed`, `unconfirmed`, `pending` or `unchecked`.
  */
 check: string, 

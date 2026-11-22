@@ -73,11 +73,20 @@ fn everything(w: &super::harness::World, crew_id: &str, task: &str) -> String {
         .unwrap();
     let detail = w.core.crew_flow_task(task).unwrap();
     let crews = w.core.crew_flow_crews(page()).unwrap();
+    // Each lane on its own, named as the zoom shows it.
+    let lanes: Vec<String> = detail
+        .lanes
+        .iter()
+        .map(|lane| {
+            serde_json::to_string(&w.core.crew_flow_lane(task, &lane.lane).unwrap()).unwrap()
+        })
+        .collect();
     format!(
-        "{} {} {}",
+        "{} {} {} {}",
         serde_json::to_string(&list).unwrap(),
         serde_json::to_string(&detail).unwrap(),
-        serde_json::to_string(&crews).unwrap()
+        serde_json::to_string(&crews).unwrap(),
+        lanes.join(" ")
     )
 }
 
@@ -196,6 +205,50 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
     assert_eq!(detail.brief.purpose, "Add a parse_duration function.");
     // A reviewer's task is not a task to zoom into.
     assert!(w.core.crew_flow_task(&lanes[0]).is_err());
+
+    // A lane is read on its own: the row the zoom shows, what it was given, and the finding it filed with the
+    // reviewer's own evidence.
+    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    assert_eq!(one.task, subject);
+    assert_eq!(one.crew, crew_id);
+    assert_eq!(
+        (one.lane.lane.as_str(), one.lane.group.as_str()),
+        ("correctness", "code")
+    );
+    assert_eq!(one.lane.findings, 1);
+    assert_eq!(one.lane.confirmed, 0, "the finding is unchecked");
+    assert!(one.lane.commit.is_some(), "the commit the lane read");
+    assert!(one.lane.task != subject, "the lane's own task is named");
+    assert_eq!(one.given.purpose, "Add a parse_duration function.");
+    assert!(one.given.checks_of.is_some_and(|of| of >= 1));
+    assert!(one.given.checks_passed.is_some());
+    assert_eq!(one.given.commit, one.lane.commit);
+    assert_eq!(one.findings.len(), 1);
+    let filed = &one.findings[0];
+    assert_eq!(
+        (filed.lane.as_str(), filed.path.as_str(), filed.line),
+        ("correctness", "src/lib.txt", 1)
+    );
+    assert_eq!(filed.claim, "It wraps on a large value.");
+    assert_eq!(filed.evidence, "Reading the code shows it.");
+    assert_eq!(filed.severity, "high");
+    assert!(!one.truncated);
+    // The security lane is read for itself and does not carry the code lane's finding.
+    let security = w.core.crew_flow_lane(&subject, "security").unwrap();
+    assert_eq!(security.lane.group, "security");
+    assert!(security.findings.iter().all(|f| f.lane == "security"));
+    // A lane that did not run, a reviewer's own task and a name that is not a lane are refused.
+    for (task, lane) in [
+        (&subject, "nope"),
+        (&lanes[0], "correctness"),
+        (&subject, "Correctness"),
+        (&subject, "a lane"),
+    ] {
+        assert!(
+            w.core.crew_flow_lane(task, lane).is_err(),
+            "{lane} answered for {task}"
+        );
+    }
 
     // Filters: nothing needs the person, so that filter is empty and the counts still say all.
     let none = w

@@ -1,6 +1,7 @@
 //! Crew Flow over HTTP (Preview): what the Flow screens read. Every type is a view the core builds from what it already
-//! stores; none can hold an answer key, a check, a repro, a path outside the repository, a thread id or a bus message
-//! (H1). Free text is redacted and capped before it is put in one. Times are RFC 3339.
+//! stores; none can hold an answer key, a check's text, a repro, a path outside the repository, a thread id or a bus
+//! message (H1). A finding's evidence is the reviewer's own words, not a check: the core redacts it, withholds any of the
+//! crew's keys it quotes and caps it. Free text is redacted and capped before it is put in one. Times are RFC 3339.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -196,6 +197,9 @@ pub struct FlowFinding {
     pub path: String,
     pub line: u32,
     pub claim: String,
+    /// What the reviewer quoted for it: a snippet, an output or the reasoning behind the claim.
+    #[serde(default)]
+    pub evidence: String,
     /// `confirmed`, `unconfirmed`, `pending` or `unchecked`.
     pub check: String,
     /// `open`, `fixed`, `regressed`, `superseded` or `unreported`.
@@ -288,6 +292,40 @@ pub struct FlowTaskDetail {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub you: Option<FlowYou>,
+    // A list was cut at its cap.
+    pub truncated: bool,
+}
+}
+
+wire! {
+/// What one reviewer lane was given: the work's purpose, the commit it read and the checks its brief named.
+pub struct FlowLaneGiven {
+    pub purpose: String,
+    /// The commit the lane read, when its latest round recorded one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub commit: Option<String>,
+    /// Checks that passed out of those that ran in the work's final verification; `None` when it has none.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub checks_passed: Option<u32>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub checks_of: Option<u32>,
+}
+}
+
+wire! {
+/// One reviewer lane in full: the row the task zoom shows, what it was given and the findings it filed.
+pub struct FlowLaneDetail {
+    // Stored crew identity, including for a task outside the bounded crew list.
+    pub crew: String,
+    /// The work task the lane reviewed.
+    pub task: String,
+    pub lane: FlowLane,
+    pub given: FlowLaneGiven,
+    /// Every finding this lane filed, in every round.
+    pub findings: Vec<FlowFinding>,
     // A list was cut at its cap.
     pub truncated: bool,
 }

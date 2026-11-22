@@ -3,6 +3,9 @@
 //! through the store's read connection, starts no process and takes no lock beyond it. It approves, merges and reverts
 //! nothing; the person's answers are `autopilot`'s.
 //!
+//! One reviewer lane can also be read on its own: the row the zoom shows, what it was given (the work's purpose, the
+//! commit it read, the checks its brief named) and the findings it filed, with the reviewer's own evidence.
+//!
 //! What it never returns: the answer key or any part of a check (command, output, what it proves), a repro, a thread
 //! id, a path on this machine, a bus message. A text is redacted, the key's text withheld and the length cut
 //! ([`scrub`]). A gate's reason is read only once the task is final, so a running task shows no check text at all (H1).
@@ -288,6 +291,16 @@ impl Core {
 
         let text =
             |f: &Value, key: &str, max: usize| scrub.text(f[key].as_str().unwrap_or(""), max);
+        // The review's derived JSON keeps each finding's standing, not the reviewer's own evidence: read that once.
+        let written = self.store.crew_findings_of(&facts.task.id)?;
+        let evidence = |f: &Value| {
+            written
+                .iter()
+                .find(|s| s.finding.id.as_str() == f["id"].as_str().unwrap_or(""))
+                .map_or_else(String::new, |s| {
+                    scrub.text(s.finding.evidence.as_str(), TEXT_MAX)
+                })
+        };
         let mut findings: Vec<wire::FlowFinding> = findings_all
             .iter()
             .map(|f| wire::FlowFinding {
@@ -298,6 +311,7 @@ impl Core {
                 path: text(f, "path", TEXT_MAX),
                 line: u32::try_from(f["line"].as_u64().unwrap_or(0)).unwrap_or(0),
                 claim: text(f, "claim", TEXT_MAX),
+                evidence: evidence(f),
                 check: text(f, "check", 20),
                 status: text(f, "status", 20),
                 blocks: f["blocks"] == true,
@@ -400,6 +414,48 @@ impl Core {
             }),
             row,
             truncated,
+        })
+    }
+
+    /// One reviewer lane of a work task: the row the task zoom shows, what the lane was given (the work's purpose, the
+    /// commit it read and the checks its brief named) and the findings it filed in every round, with the reviewer's own
+    /// evidence. `lane` is the lane's own name, as the zoom shows it. A lane that did not run on this work is not found.
+    pub fn crew_flow_lane(&self, id: &str, lane: &str) -> Result<wire::FlowLaneDetail> {
+        self.crew_preview_only()?;
+        valid_id(id)?;
+        if wire::CrewToken::new(lane).is_err() {
+            return Err(CoreError::Invalid("that is not a lane name".into()));
+        }
+        // The zoom already builds the row, the checks cell and every finding, so a lane reads the same values it shows.
+        let detail = self.crew_flow_task(id)?;
+        let row = detail
+            .lanes
+            .into_iter()
+            .find(|row| row.lane == lane)
+            .ok_or_else(|| CoreError::NotFound("lane".into()))?;
+        let (checks_passed, checks_of) = detail
+            .row
+            .cells
+            .iter()
+            .find(|cell| cell.stage == wire::FlowStage::Checks)
+            .map_or((None, None), |cell| (cell.passed, cell.of));
+        let findings = detail
+            .findings
+            .into_iter()
+            .filter(|finding| finding.lane == lane)
+            .collect();
+        Ok(wire::FlowLaneDetail {
+            crew: detail.crew,
+            task: detail.row.id,
+            given: wire::FlowLaneGiven {
+                purpose: detail.brief.purpose,
+                commit: row.commit.clone(),
+                checks_passed,
+                checks_of,
+            },
+            lane: row,
+            findings,
+            truncated: detail.truncated,
         })
     }
 }
