@@ -57,6 +57,18 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+it.each([
+  ["MacIntel", "⌘F", "⌘G"],
+  ["Win32", "Ctrl+F", "Ctrl+G"],
+])("labels editor shortcuts for %s", async (platform, find, goToLine) => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  serve();
+  open();
+  await editor();
+  expect(screen.getByRole("button", { name: `Find ${find}` })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: `Go to line ${goToLine}` })).toBeInTheDocument();
+});
+
 it("opens a text file as an editor: crumb, text, cursor, language, and Saved (editor-default)", async () => {
   serve();
   open();
@@ -159,7 +171,7 @@ it("finds, counts and steps through matches, and says No matches (editor-find)",
   serve();
   open();
   await editor();
-  const find = screen.getByRole("button", { name: "Find ⌘F" });
+  const find = screen.getByRole("button", { name: /^Find (?:⌘|Ctrl\+)F$/ });
   expect(find).toHaveAttribute("aria-pressed", "false");
   await userEvent.click(find);
   expect(find).toHaveAttribute("aria-pressed", "true");
@@ -193,7 +205,7 @@ it("goes to a line, says how many there are, and clamps a number outside them (e
   serve();
   open();
   const box = await editor();
-  const goto = screen.getByRole("button", { name: "Go to line ⌘G" });
+  const goto = screen.getByRole("button", { name: /^Go to line (?:⌘|Ctrl\+)G$/ });
   await userEvent.click(goto);
   expect(goto).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByText("1 to 6")).toBeInTheDocument();

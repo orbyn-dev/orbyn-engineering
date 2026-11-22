@@ -209,8 +209,8 @@ it("says a binary file has no text to show, with its size, and leaves the editor
   expect(screen.getByText(/image\.bin is a binary file \(64 B\)/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Open in editor" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Save file" })).toHaveAttribute("href", expect.stringContaining("/files/raw?"));
-  expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Find (?:⌘|Ctrl\+)F$/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Go to line (?:⌘|Ctrl\+)G$/ })).toBeDisabled();
   expect(isLocked(useEditorSessions.getState().locked, "t", "tab")).toBe(true);
 });
 

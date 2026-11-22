@@ -1,3 +1,4 @@
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { ChevronDown, ChevronRight, ChevronUp, Folder, Hash, Lock, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Button, IconButton } from "../../../ui/controls";
@@ -140,10 +141,10 @@ export function EditorSurface({
         ))}
         <b title={path}>{name}</b>
         <span className="ed-sp" />
-        <IconButton label="Find ⌘F" pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
+        <IconButton label={`Find ${formatShortcut("mod+f")}`} pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
           <Search size={14} aria-hidden />
         </IconButton>
-        <IconButton label="Go to line ⌘G" pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
+        <IconButton label={`Go to line ${formatShortcut("mod+g")}`} pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
           <Hash size={14} aria-hidden />
         </IconButton>
       </div>

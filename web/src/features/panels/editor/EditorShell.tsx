@@ -1,3 +1,4 @@
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { ChevronRight, Folder, Hash, Search } from "lucide-react";
 import type { ReactNode } from "react";
 import { useWaited } from "../../../lib/motion";
@@ -18,10 +19,10 @@ function EditorCrumb({ path, disabled }: { path: string; disabled?: boolean }) {
       ))}
       <b title={path}>{name}</b>
       <span className="ed-sp" />
-      <IconButton label="Find ⌘F" disabled={disabled}>
+      <IconButton label={`Find ${formatShortcut("mod+f")}`} disabled={disabled}>
         <Search size={14} aria-hidden />
       </IconButton>
-      <IconButton label="Go to line ⌘G" disabled={disabled}>
+      <IconButton label={`Go to line ${formatShortcut("mod+g")}`} disabled={disabled}>
         <Hash size={14} aria-hidden />
       </IconButton>
     </div>
