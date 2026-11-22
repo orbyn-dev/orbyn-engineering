@@ -73,6 +73,21 @@ fn slug_of(name: &str) -> Result<String> {
     Ok(slug)
 }
 
+/// Check the component that will actually be created on Windows.
+fn validate_new_project_destination(name: &str, chosen: Option<&str>, windows: bool) -> Result<()> {
+    validate_new_project_name(name, windows)?;
+    if windows {
+        if let Some(chosen) = chosen {
+            if let Some(leaf) = Path::new(chosen).file_name() {
+                validate_new_project_name(&leaf.to_string_lossy(), true)?;
+            }
+        } else {
+            validate_new_project_name(&slug_of(name)?, true)?;
+        }
+    }
+    Ok(())
+}
+
 /// The last segment of a clone URL or local path, without `.git`. A local path on
 /// Windows uses backslashes and a drive letter.
 fn name_from_url(url: &str) -> Option<&str> {
@@ -430,7 +445,7 @@ impl Core {
         readme: bool,
         chosen: Option<&str>,
     ) -> Result<Project> {
-        validate_new_project_name(name, cfg!(windows))?;
+        validate_new_project_destination(name, chosen, cfg!(windows))?;
         let (slug, path) = self.slot(name, chosen).await?;
         self.audit_project("project.create", &slug, serde_json::Value::Null)?;
         let parent = path

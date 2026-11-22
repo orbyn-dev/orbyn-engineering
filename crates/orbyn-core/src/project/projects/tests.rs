@@ -95,6 +95,21 @@ fn project_name_checks_host_specific_rules() {
     assert!(validate_new_project_name("bad:name", false).is_ok());
 }
 
+#[test]
+fn new_project_destination_checks_windows_folder_name_after_normalization() {
+    for name in [" CON", "CON!", "😺CON", "lpt1!"] {
+        assert!(
+            validate_new_project_destination(name, None, true).is_err(),
+            "{name:?}"
+        );
+    }
+    assert!(validate_new_project_destination("Café Notes", None, true).is_ok());
+    assert!(validate_new_project_destination(" CON", Some("/tmp/safe"), true).is_ok());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), true).is_err());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON!"), true).is_ok());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), false).is_ok());
+}
+
 #[tokio::test]
 async fn new_project_rejects_path_components_before_any_creation() {
     let dir = TempDir::new();
