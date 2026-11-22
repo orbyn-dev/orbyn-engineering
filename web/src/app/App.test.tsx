@@ -913,4 +913,22 @@ describe("App against the mock API", () => {
     expect(window.history.length).not.toBe(length + 2);
     expect(window.history.state).not.toMatchObject({ orbynSettings: true });
   });
+
+  it("says a thread id no thread has is not there, in the known thread route", async () => {
+    go("#/threads/does-not-exist");
+    render(<App />);
+    expect(await screen.findByText("Thread not found")).toBeInTheDocument();
+    // The negative: the draft is not drawn under it, and the thread page is the one showing.
+    expect(screen.queryByRole("heading", { name: /What should we build in/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to workspace" })).toBeInTheDocument();
+  });
+
+  it("still renders a known route as itself", async () => {
+    go("#/threads/t-done");
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Show side panel" })).toBeInTheDocument();
+    // The negative: a route with a real subject draws neither not-found state.
+    expect(screen.queryByText("Thread not found")).toBeNull();
+    expect(screen.queryByText("Page not found")).toBeNull();
+  });
 });
