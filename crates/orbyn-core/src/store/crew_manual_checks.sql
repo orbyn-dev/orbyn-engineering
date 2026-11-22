@@ -1,4 +1,4 @@
--- Migration 75: the check a person makes (issue #794). A `manual` check of an answer key is not something code can run: it waits for a
+-- Migration 74: the check a person makes (issue #794). A `manual` check of an answer key is not something code can run: it waits for a
 -- person's decision. `crew_manual_checks` holds that wait: one row per (task, check), `awaiting` until a person passes or denies it, then
 -- `passed` or `failed` with the person's note and when they decided. The table holds no command, no output and no key text, and a task's
 -- row goes when the task does.

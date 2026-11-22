@@ -168,7 +168,13 @@ async fn a_decision_whose_gate_and_resume_were_lost_is_finished_by_the_repeat() 
     // The stored half of a crash between the steps: the check is decided, and neither its gate nor the resume happened.
     w.core
         .store
-        .decide_manual_check(&id, "chk-manual", true, Some("looked"), crate::util::unix_now())
+        .decide_manual_check(
+            &id,
+            "chk-manual",
+            true,
+            Some("looked"),
+            crate::util::unix_now(),
+        )
         .unwrap();
     assert!(
         w.core
