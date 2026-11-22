@@ -133,7 +133,8 @@ pub fn parse_billed_events(engine: &str, report: &Value) -> Vec<BilledEvent> {
             Some(_) => continue,
         };
         // An event with no tokens and no billed amount proves no spend.
-        if input + output + cache_read + cache_write == 0 && reported_cents.is_none() {
+        let billed = reported_cents.is_some_and(|cents| cents > 0);
+        if input + output + cache_read + cache_write == 0 && !billed {
             continue;
         }
         let session = event

@@ -496,7 +496,17 @@ standard rate, so its tokens stay unpriced. Each estimate is also split by token
 the same period's figures and chart during an explicit local refresh, dimming them
 after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
-replace the new period or clear its pending state. Subscription
+replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core
+keeps the account's billed events in `billed_events`, one row per event, keyed by a content
+identity because Cursor sends no event id, and `/api/usage` reports `cursor` from there. An
+event a later read reports again counts once. A record that cannot be read as a billed event
+— no usage block, no timestamp or model that names a day, a negative counter — is dropped
+rather than counted as zero, and a store with no rows is no history rather than an error.
+The account's counters are separate, not inclusive: `inputTokens` is the uncached input, and
+cached input and cache writes are their own counters. Where the account reports its own
+billed amount in cents, that amount is the day's cost instead of an estimate.
+
+Subscription
 limits appear only where an engine reports them itself, as Codex does through
 `account/rateLimits/read`. Subscription reports are read fresh on every request:
 the supported drivers do not expose an authoritative current account/workspace binding

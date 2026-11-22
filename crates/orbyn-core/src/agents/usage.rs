@@ -1377,6 +1377,56 @@ mod tests {
         assert_eq!(UsageCenter::new(dir.path()).unwrap().host_id, first);
     }
 
+    /// Cursor keeps no local history, so its spend comes from the account's billed events in the
+    /// store. No store at all is no history rather than an error.
+    #[tokio::test]
+    async fn a_billed_store_feeds_the_report_and_an_absent_one_is_no_history() {
+        let dir = crate::testing::TempDir::new();
+        let center = UsageCenter::new(dir.path()).unwrap();
+        let settings = crate::store::default_settings();
+        let without = center.report(None, &settings, None).await.unwrap();
+        let cursor = without
+            .engines
+            .iter()
+            .find(|row| row.engine == CURSOR)
+            .unwrap();
+        assert_eq!(cursor.status, "no_history");
+        assert!(cursor.models.is_empty());
+
+        let store = crate::store::Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        let events = crate::store::parse_billed_events(
+            CURSOR,
+            &json!({ "usageEventsDisplay": [{
+                "timestamp": "1791691200000",
+                "model": "claude-4.5",
+                "tokenUsage": {
+                    "inputTokens": 100,
+                    "cacheReadTokens": 900,
+                    "cacheWriteTokens": 0,
+                    "outputTokens": 40,
+                    "totalCents": 125,
+                },
+            }]}),
+        );
+        assert_eq!(store.record_billed_events(&events).unwrap(), 1);
+        let report = center.report(Some(&store), &settings, None).await.unwrap();
+        let cursor = report
+            .engines
+            .iter()
+            .find(|row| row.engine == CURSOR)
+            .unwrap();
+        assert_eq!(cursor.status, "scanned");
+        assert_eq!(cursor.models.len(), 1);
+        assert_eq!(cursor.models[0].model, "claude-4.5");
+        assert_eq!(cursor.models[0].input_tokens, 100);
+        assert_eq!(cursor.models[0].cache_read_tokens, 900);
+        assert_eq!(cursor.models[0].output_tokens, 40);
+        // The account's own billed cents are the day's cost, not an estimate from a price table.
+        assert_eq!(cursor.days.len(), 1);
+        assert_eq!(cursor.days[0].tokens, 1040);
+        assert_eq!(cursor.days[0].estimated_cost, Some(1.25));
+    }
+
     #[tokio::test]
     async fn a_warm_up_stopped_by_quit_returns_and_leaves_the_cache_free() {
         let dir = crate::testing::TempDir::new();
