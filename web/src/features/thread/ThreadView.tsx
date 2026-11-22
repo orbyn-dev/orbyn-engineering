@@ -458,7 +458,7 @@ export function ThreadView({ id }: { id: string }) {
               readUpTo={lastVisit}
               header={
                 <>
-                  <EarlierMessages threadId={id} />
+                  <EarlierMessages threadId={id} imported={thread.imported_at !== undefined} />
                   <LedgerPin threadId={id} />
                 </>
               }

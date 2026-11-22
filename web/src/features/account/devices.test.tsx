@@ -139,6 +139,22 @@ describe("the devices", () => {
 });
 
 describe("sign out", () => {
+  it("focuses Cancel in the sign-out dialogs, so Enter does not sign out", async () => {
+    const user = await signedInPage();
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    const dialog = await screen.findByRole("dialog", { name: "Sign out of this computer?" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Sign out of this computer?" })).toBeNull());
+    expect(screen.queryByText(/^Signed out\./)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Sign out everywhere…" }));
+    const everywhere = await screen.findByRole("dialog", { name: "Sign out everywhere?" });
+    expect(within(everywhere).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Sign out everywhere?" })).toBeNull());
+    expect(screen.queryByRole("dialog", { name: "Confirm it’s you" })).toBeNull();
+  });
+
   it("signs out of this computer only and says what stayed", async () => {
     const user = await signedInPage();
     await user.click(screen.getByRole("button", { name: "Sign out" }));

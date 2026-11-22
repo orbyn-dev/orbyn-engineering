@@ -104,3 +104,33 @@ it("pauses a driving agent when the person touches the screen", async () => {
   expect(await screen.findByText("Paused. You are in control.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Hand back" })).toBeVisible();
 });
+
+it("passes the running stream to the tools drawer so outlines stay enabled", async () => {
+  renderDevice();
+  setDevicesPlannedApi(createDevicesPlannedMock({ live: { screen: IOS_LOGIN } }));
+  await screen.findByRole("img", { name: "Live screen of iPhone 16" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /Device tools/ }));
+  const drawer = await screen.findByRole("region", { name: "Device tools" });
+  await user.click(within(drawer).getByRole("tab", { name: "Accessibility" }));
+  const toggle = await within(drawer).findByRole("switch", { name: "Show elements" });
+  expect(toggle).toBeEnabled();
+  expect(within(drawer).getByText("Sign in · Button")).toBeVisible();
+});
+
+it("keeps outlines disabled when the production client has no live screen", async () => {
+  renderDevice();
+  const toolsOnly = { ...createDevicesPlannedMock() };
+  delete (toolsOnly as { stream?: unknown }).stream;
+  setDevicesPlannedApi(toolsOnly);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /Device tools/ }));
+  const drawer = await screen.findByRole("region", { name: "Device tools" });
+  await user.click(within(drawer).getByRole("tab", { name: "Accessibility" }));
+  const toggle = await within(drawer).findByRole("switch", { name: "Show elements" });
+  expect(toggle).toBeDisabled();
+  expect(toggle).toHaveAttribute("title", "Outlines need a live screen.");
+  expect(within(drawer).getByText("Outlines need a live screen.")).toBeVisible();
+  expect(within(drawer).getByText("No screen is live.")).toBeVisible();
+  expect(within(drawer).queryByText("Sign in · Button")).toBeNull();
+});

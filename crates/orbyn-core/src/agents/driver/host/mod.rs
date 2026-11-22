@@ -37,7 +37,9 @@ use std::sync::{Arc, OnceLock, Weak};
 
 pub use driver::{EnginePath, HostDriver, PathSetting};
 pub use frames::{ErrorKind, PROTOCOL};
-pub use outcome::HOST_STOPPED;
+#[cfg(test)]
+pub(crate) use outcome::host_stopped;
+pub use outcome::{HOST_STOPPED, HOST_STOPPED_CODE};
 pub use pool::{HostStatus, Pool, Refusal, SecretSource};
 pub use process::HostSpec;
 pub use state::{CrashInfo, CrashKind, ExitRecord, HostState, NotUsed, Timings};
