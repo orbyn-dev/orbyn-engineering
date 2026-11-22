@@ -60,7 +60,7 @@ function Item({ threadId, chip, sent, waiting }: { threadId: string; chip: Revie
 
 /**
  * Every line comment on this thread's changes. Drafts are the review chips waiting above the composer (file and diff
- * comments alike); Open ones were sent this session. Send all to engine sends the drafts as one message. The linked
+ * comments alike); Open ones were sent this session. Send all to engine sends the drafts the file filter shows as one message, and says how many when the filter hides some. The linked
  * pull request's forge threads follow under their own groups.
  */
 export function ReviewPanel({ threadId }: { threadId: string }) {
@@ -92,7 +92,11 @@ export function ReviewPanel({ threadId }: { threadId: string }) {
     {drafts.length > 0 ? <section aria-label="Drafts">
       <div className="review-group-head">
         <h4>Drafts · {drafts.length}</h4>
-        <Button small tone="primary" icon={<FileDiff size={13} aria-hidden />} onClick={() => setConfirming(drafts)}>Send all to engine</Button>
+        {shown(drafts).length > 0 ? (
+          <Button small tone="primary" icon={<FileDiff size={13} aria-hidden />} onClick={() => setConfirming(shown(drafts))}>
+            {shown(drafts).length === drafts.length ? "Send all to engine" : `Send ${shown(drafts).length} to engine`}
+          </Button>
+        ) : null}
       </div>
       <ul className="review-list">{shown(drafts).map((chip) => <Item key={chip.id} {...{ threadId, chip }} sent={false} waiting={false} />)}</ul>
     </section> : null}

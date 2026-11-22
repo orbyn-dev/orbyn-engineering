@@ -15,6 +15,7 @@ pub mod changes;
 mod checks;
 mod classes;
 mod codex_homes;
+mod dashboard;
 mod draft;
 pub mod escapes;
 mod filters;

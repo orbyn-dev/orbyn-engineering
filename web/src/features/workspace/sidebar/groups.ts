@@ -68,9 +68,12 @@ export function waitingOnDelegates(threads: readonly Thread[]): ReadonlySet<stri
   return waiting;
 }
 
-/** How urgently a thread wants the person: 0 needs them now, 1 failed, 2 anything else. */
-export function attentionRank(thread: Thread): number {
-  if (thread.active_run?.state === "awaiting_approval" || thread.lifecycle?.limit) return 0;
+/**
+ * How urgently a thread wants the person: 0 needs them now, 1 failed, 2 anything else. A terminal waiting for the person
+ * (`terminalWaiting`, from the attention store) needs them as much as an approval does.
+ */
+export function attentionRank(thread: Thread, terminalWaiting = false): number {
+  if (terminalWaiting || thread.active_run?.state === "awaiting_approval" || thread.lifecycle?.limit) return 0;
   if (!thread.active_run && thread.last_run_state === "failed") return 1;
   return 2;
 }
@@ -79,10 +82,12 @@ export type LedgerKey = "needs" | "failed" | "running" | "done";
 const LEDGER_ORDER: LedgerKey[] = ["needs", "failed", "running", "done"];
 
 /** The Ledger section a thread sits in. */
-export function ledgerKey(thread: Thread): LedgerKey {
-  const rank = attentionRank(thread);
+export function ledgerKey(thread: Thread, terminalWaiting = false): LedgerKey {
+  const rank = attentionRank(thread, terminalWaiting);
   return rank === 0 ? "needs" : rank === 1 ? "failed" : thread.active_run ? "running" : "done";
 }
+
+const NO_WAITING: ReadonlySet<string> = new Set();
 
 const LEDGER_SECTIONS: { key: LedgerKey; label: string; tone: "warn" | "danger" | "ink" }[] = [
   { key: "needs", label: "Needs you", tone: "warn" },
@@ -92,10 +97,10 @@ const LEDGER_SECTIONS: { key: LedgerKey; label: string; tone: "warn" | "danger" 
 ];
 
 /** Ledger's sections, in the order they are drawn. */
-export function ledgerGroupsOf(active: readonly Thread[]) {
+export function ledgerGroupsOf(active: readonly Thread[], waiting: ReadonlySet<string> = NO_WAITING) {
   return LEDGER_SECTIONS.map((section) => ({
     ...section,
-    rows: active.filter((thread) => ledgerKey(thread) === section.key),
+    rows: active.filter((thread) => ledgerKey(thread, waiting.has(thread.id)) === section.key),
   }));
 }
 
@@ -105,6 +110,8 @@ export function arrangeThreads(
   workingSection = true,
   /** The Ledger layout lists what needs the person first; the saved order breaks ties. */
   needsYouFirst = false,
+  /** Threads whose terminal is waiting for the person: they sit in "Needs you" too. */
+  waiting: ReadonlySet<string> = NO_WAITING,
 ): ThreadSections {
   const sections: ThreadSections = { pinned: [], active: [], working: [], snoozed: [], settled: [] };
   const shelf = { enabled: workingSection, waiting: waitingOnDelegates(threads) };
@@ -116,7 +123,9 @@ export function arrangeThreads(
   // Ledger draws its sections in this order, so a drop position in `active` is a position on screen.
   sections.active.sort(
     needsYouFirst
-      ? (a, b) => LEDGER_ORDER.indexOf(ledgerKey(a)) - LEDGER_ORDER.indexOf(ledgerKey(b)) || savedOrder(a, b)
+      ? (a, b) =>
+          LEDGER_ORDER.indexOf(ledgerKey(a, waiting.has(a.id))) - LEDGER_ORDER.indexOf(ledgerKey(b, waiting.has(b.id))) ||
+          savedOrder(a, b)
       : savedOrder,
   );
   sections.working.sort(newest);
@@ -285,6 +294,7 @@ export function foldersOf(
 export function drawnOrder(input: {
   sections: ThreadSections;
   ledger: boolean;
+  waiting?: ReadonlySet<string>;
   folders: readonly ProjectFolder[] | null;
   strays: readonly Thread[];
   folderOpen(folder: ProjectFolder): boolean;
@@ -293,7 +303,7 @@ export function drawnOrder(input: {
 }): Thread[] {
   const { sections } = input;
   const active = input.ledger
-    ? ledgerGroupsOf(sections.active).flatMap((group) => group.rows)
+    ? ledgerGroupsOf(sections.active, input.waiting).flatMap((group) => group.rows)
     : input.folders
       ? [
           ...input.folders.flatMap((folder) => (input.folderOpen(folder) ? folder.threads : [])),
