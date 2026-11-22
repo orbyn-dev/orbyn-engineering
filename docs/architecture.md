@@ -490,7 +490,12 @@ fresh once, logging `CUSTOM engine.session_lost`. A second loss fails the run.
 `UsageCenter` reads local session history and nothing else: `projects/**/*.jsonl`
 under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `sessions/**/*.jsonl` under `~/.codex`
 (or `CODEX_HOME`), and `sessions/**/session.jsonl` under Muse's home
-(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). It keeps only timestamps, models
+(`$XDG_DATA_HOME/muse`, else `~/.local/share/muse`). Each launch reads its own profile
+and not one it inherited: the person's home is the account's own home from the user
+database, and the smoke harness's sandbox is read only by the launch that declares it
+(`ORBYN_LAUNCH_PROFILE=smoke` alongside its `ORBYN_SMOKE_SANDBOX` root). A build that
+merely inherits those variables reads the person's own history, so a personal build
+never reports the harness's empty sandbox. It keeps only timestamps, models
 and token counts, and never opens a credential file. Claude rewrites an entry as it
 streams, so each message counts once. Codex repeats its running total, so an
 unchanged total counts once. Muse writes one log per session, counts its cached

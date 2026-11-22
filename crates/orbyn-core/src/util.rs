@@ -20,6 +20,67 @@ fn home_from(home: Option<OsString>, profile: Option<OsString>) -> Option<PathBu
     home.or(profile).map(PathBuf::from)
 }
 
+/// The account's own home folder from the operating system, never from `HOME` or
+/// `USERPROFILE`: a launcher can relocate those, so a path that decides which profile the
+/// app reads is not taken from an environment it may have inherited (#1105).
+#[cfg(unix)]
+pub fn account_home() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut buffer = vec![0u8; 16 * 1024];
+    // SAFETY: `passwd` is plain data; the buffer outlives the call and its size is passed; `pw_dir` is read only on success, while
+    // the buffer is alive, and copied out.
+    unsafe {
+        let mut entry: libc::passwd = std::mem::zeroed();
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let status = libc::getpwuid_r(
+            libc::getuid(),
+            &mut entry,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut found,
+        );
+        if status != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return None;
+        }
+        let dir = std::ffi::CStr::from_ptr(entry.pw_dir).to_bytes().to_vec();
+        (!dir.is_empty()).then(|| PathBuf::from(OsString::from_vec(dir)))
+    }
+}
+
+/// The account's profile folder from the shell's known-folder database, for the same
+/// reason as the Unix branch.
+#[cfg(windows)]
+pub fn account_home() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Profile, SHGetKnownFolderPath};
+    let mut raw: *mut u16 = std::ptr::null_mut();
+    // SAFETY: the known-folder id is a valid constant; the call either fails or writes one null-terminated string allocated with
+    // `CoTaskMemAlloc`, which is copied out before it is freed.
+    unsafe {
+        if SHGetKnownFolderPath(&FOLDERID_Profile, 0, std::ptr::null_mut(), &mut raw) < 0
+            || raw.is_null()
+        {
+            return None;
+        }
+        let mut len = 0usize;
+        while *raw.add(len) != 0 {
+            len += 1;
+        }
+        let text = std::slice::from_raw_parts(raw, len).to_vec();
+        CoTaskMemFree(raw.cast());
+        let home = PathBuf::from(OsString::from_wide(&text));
+        (!home.as_os_str().is_empty()).then_some(home)
+    }
+}
+
+/// A platform without a user database the app can ask reports no account home, and the
+/// caller then keeps the home its environment names.
+#[cfg(not(any(unix, windows)))]
+pub fn account_home() -> Option<PathBuf> {
+    None
+}
+
 pub fn new_id() -> String {
     ulid::Ulid::generate().to_string().to_lowercase()
 }
