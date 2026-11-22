@@ -37,17 +37,17 @@ const finished = (): BacktestRun => ({
   finished_unix: T + 29 * 60,
   lanes: [
     {
-      lane: "correctness", engine: "claude", model: "sonnet-5-5", state: "done", tokens_used: 1_280_000,
+      lane: "correctness", engine: "claude", model: "sonnet-5-5", kind: "review", state: "done", tokens_used: 1_280_000,
       outcome: "scored", findings_n: 21, unresolved_n: 2,
       score: { recall: { numerator: 6, denominator: 9, permille: 666 }, precision: { numerator: 6, denominator: 21, permille: 285 }, escapes_n: 9, findings_n: 21, unmatched_n: 15 },
     },
     {
-      lane: "correctness", engine: "codex", model: "gpt-5-5", state: "done", tokens_used: 896_000,
+      lane: "correctness", engine: "codex", model: "gpt-5-5", kind: "review", state: "done", tokens_used: 896_000,
       outcome: "scored", findings_n: 17, unresolved_n: 0,
       score: { recall: { numerator: 5, denominator: 9, permille: 555 }, precision: { numerator: 5, denominator: 17, permille: 294 }, escapes_n: 9, findings_n: 17, unmatched_n: 12 },
     },
     {
-      lane: "security", engine: "opencode", model: "deepseek-v4", state: "done", tokens_used: 396_000,
+      lane: "security", engine: "opencode", model: "deepseek-v4", kind: "review", state: "done", tokens_used: 396_000,
       outcome: "not_measured", findings_n: 9, unresolved_n: null, score: null,
     },
   ],
