@@ -270,6 +270,52 @@ it("clamps an interval below one minute on blur and when saving without blur", a
   });
 });
 
+it("restores the last valid interval when editing clears or enters a fractional value", async () => {
+  ready();
+  window.location.hash = "#/settings/tasks?task=task-review&edit=1";
+  installMockFetch();
+  render(<ScheduledTasksSection />);
+  const dialog = await screen.findByRole("dialog", { name: "Edit scheduled task" });
+  const interval = within(dialog).getByRole("spinbutton", { name: "Every (minutes)" });
+  expect(interval).toHaveValue(30);
+  fireEvent.change(interval, { target: { value: "" } });
+  fireEvent.blur(interval);
+  expect(interval).toHaveValue(30);
+  fireEvent.change(interval, { target: { value: "15" } });
+  fireEvent.change(interval, { target: { value: "1.5" } });
+  fireEvent.blur(interval);
+  expect(interval).toHaveValue(15);
+  fireEvent.change(interval, { target: { value: "4294967296" } });
+  fireEvent.blur(interval);
+  expect(interval).toHaveValue(4294967295);
+  fireEvent.change(interval, { target: { value: "" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith("/api/tasks/task-review") && init?.method === "PUT");
+    expect(call).toBeDefined();
+    const body = JSON.parse(String(call![1]?.body));
+    expect(body.schedule.every_minutes).toBe(4294967295);
+  });
+});
+
+it.each([["", 30], ["1.5", 30], ["4294967296", 4294967295]])(
+  "saves a safe interval for %s without relying on blur",
+  async (value, expected) => {
+    ready();
+    window.location.hash = "#/settings/tasks?task=task-review&edit=1";
+    installMockFetch();
+    render(<ScheduledTasksSection />);
+    const dialog = await screen.findByRole("dialog", { name: "Edit scheduled task" });
+    fireEvent.change(within(dialog).getByRole("spinbutton", { name: "Every (minutes)" }), { target: { value } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith("/api/tasks/task-review") && init?.method === "PUT");
+      expect(call).toBeDefined();
+      expect(JSON.parse(String(call![1]?.body)).schedule.every_minutes).toBe(expected);
+    });
+  },
+);
+
 it("offers the projects the rest of the app lists, choosing the first", async () => {
   installMockFetch();
   await useWorkspace.getState().refreshAll();
