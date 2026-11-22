@@ -3,7 +3,7 @@
 What the web composer and thread need from the service for three Beta frame groups. Transcript export, import and the composer
 attach, the routes under B43, are built and wired in the web (`web/src/features/thread/transcriptFile/` and
 `web/src/features/thread/composer/transcriptsClient.ts`): a file dropped on the composer posts the real attach route and becomes a
-transcript chip. The photo conversion route exists (below) and the earlier-messages read stays planned. A dev-only preview
+transcript chip. The photo conversion route exists (below) and the earlier-messages read is built, with its web wiring still pending. A dev-only preview
 (`#/preview/attachments`, `#/preview/earlier`) installs the clients from `web/mock/attachments.ts` and `web/mock/earlier.ts`; the
 transcript export and import mock lives in `web/mock/api.ts`. A name here changes only if the service pull request says so. Rows:
 B8, B43, K36 in [parity](parity.md).
@@ -165,8 +165,17 @@ creates an attachment**, as `POST /api/threads/{id}/attachments` does, and answe
 
 - An absolute path typed into free text other than the project's and home folders is not rewritten (export) and stays as written.
 - A key pasted into a message has no redactor pattern, so only a recognised format or one of the person's own patterns hides it.
+- The native import stores the session id, not the session file's path, size or mtime. The earlier read resolves the file again by
+  that id with the import's scan, so a file moved inside the history folder is found at its new path; a file written after the
+  import is refused, while an in-place edit that keeps a mtime before the import and the same size is not detected. Cursors catch
+  a file that changes between pages.
+- A native thread imported before `imported_at` was recorded on import has no import record, so this read answers `not_imported`;
+  no migration backfills it.
 
 ## Earlier messages of an imported thread (K36)
+
+Built: `GET /api/threads/{id}/earlier?before=<cursor>` with the read in `orbyn-core`'s `agents/earlier.rs`, the route in
+`orbynd`'s `routes/threads.rs` and class `local`. The web client is not wired in production yet.
 
 `GET /api/threads/{id}/earlier?before=<cursor>` (the cursor is optional).
 
@@ -183,14 +192,17 @@ creates an attachment**, as `POST /api/threads/{id}/attachments` does, and answe
 - `422 history_unreadable` when the provider's history has moved, changed or is too new for Orbyn: the web shows one line at the top
   with "Try again", and the thread works as it does today (the agent resumes from its own session).
 - Read only: nothing is changed in the provider's own history and nothing is copied into Orbyn's thread log. The service reads only the
-  session file the import recorded, never a path from the request, with the scan limits the import already has (file size, line
-  count). The earlier messages are not editable, rewindable or searchable in this version.
+  session file the import's recorded session id resolves to through the import's own scan, never a path from the request, with
+  bounded file size and line count. The earlier messages are not editable, rewindable or searchable in this version.
+- The cursor is opaque. A malformed one is `422 bad_cursor`; one whose file size or mtime no longer matches is
+  `422 history_unreadable`. The page itself carries `next_before`, or `null` at the start of the history.
 - The "Imported" pill in the thread header and its date line need `imported_at` and `source` on the thread itself; the web shows them
-  from this answer only.
+  from this answer only. The native import records the engine session id and `imported_at` on the thread; `source` is derived from
+  the engine for this answer.
 
 ## What the web does with these routes
 
 The export, import and composer attach routes are wired in production: the two menus save a file under the thread title plus
 `.orbyn.json`, the sheet creates the thread and opens it, and a transcript dropped on the composer becomes an attachment of that
-thread. Photo conversion is not offered, and the earlier messages of an imported thread are not read. An imported thread still
+thread. Photo conversion is not offered, and the earlier-messages read has a service route but no production client yet (`earlierApi()` answers `null`). An imported thread still
 carries its `source` and `imported_at`, so its marker shows and its history keeps the imported messages.
