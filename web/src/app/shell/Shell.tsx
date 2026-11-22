@@ -18,6 +18,7 @@ import { tabbables } from "../../ui/focusReturn";
 import { Button } from "../../ui/controls";
 import { useEscapeClose } from "../../ui/useEscapeClose";
 import { PreviewFloat, useTerminalAttention } from "../../features/panels";
+import { DevicesFloat } from "../../features/devices";
 import { startAppDataRefresh } from "./dataRefresh";
 import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
 import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
@@ -158,6 +159,7 @@ export function Shell() {
       <QuitConfirmation />
       <TranscriptImportHost />
       <PreviewFloat threadId={route.name === "thread" ? route.id : null} />
+      <DevicesFloat threadId={route.name === "thread" ? route.id : null} />
       <Toasts
         lead={
           <>

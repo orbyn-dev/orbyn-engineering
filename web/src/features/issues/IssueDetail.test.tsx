@@ -249,12 +249,12 @@ it("keeps the tracker's order for linked pull requests", async () => {
   expect(within(card).getAllByRole("listitem").map((item) => item.querySelector("a")!.textContent?.slice(0, 1))).toEqual(["C", "A", "B"]);
 });
 
-it("says no pull request is linked when the tracker reports none", async () => {
+it("draws no Linked pull requests card when the tracker reports none", async () => {
   setIssuesApi(createIssuesMock());
   at(ISSUE);
-  const card = await screen.findByRole("group", { name: "Linked pull requests" });
-  expect(within(card).getByText("No pull request is linked to this issue.")).toBeVisible();
-  expect(within(card).queryByRole("list")).toBeNull();
+  await screen.findByRole("group", { name: "Facts" });
+  expect(screen.queryByRole("group", { name: "Linked pull requests" })).toBeNull();
+  expect(screen.queryByText("No pull request is linked to this issue.")).toBeNull();
 });
 
 it("draws a pull request's words as text and opens only a plain https address", async () => {

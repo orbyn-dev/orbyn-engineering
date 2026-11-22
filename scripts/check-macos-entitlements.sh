@@ -5,7 +5,8 @@
 #   orbyn-engine-host (a Node single executable): may carry only allow-jit, allow-unsigned-executable-memory and
 #     disable-library-validation. V8 needs the first two to run; the third lets the injected Node runtime load its own
 #     code. Without them the host crashes at start (engine-host/README.md).
-#   every other Mach-O (orbynd, orbyn, the app executable, frameworks): no entitlement at all. Above all not
+#   every other Mach-O (orbynd, orbyn, the app executable, frameworks, and the native files of the engine SDKs under
+#     Contents/Resources/sdk): no entitlement at all. Above all not
 #     get-task-allow or disable-library-validation, which would let a same-user process read orbynd's memory.
 #   get-task-allow: never, on any binary.
 #
@@ -64,7 +65,7 @@ while IFS= read -r -d '' file; do
     grep -Eq 'flags=0x[0-9a-f]+\(([a-z,]*,)?runtime(,[a-z,]*)?\)' <<<"$details" \
       || fail "$name has no hardened runtime flag"
   fi
-done < <(find "$app/Contents/MacOS" "$app/Contents/Frameworks" -type f -print0 2>/dev/null)
+done < <(find "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/sdk" -type f -print0 2>/dev/null)
 
 # Control 7: the bundle's signature must verify as a whole, so a replaced or edited binary fails. Where the app sits
 # (not a folder a process of the same user can rewrite) is the OS's rule, App Management, and is not checked here.

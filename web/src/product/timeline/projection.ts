@@ -27,6 +27,15 @@ function record(value: JsonValue | undefined): { [key in string]?: JsonValue } |
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : null;
 }
 
+/** The optional Snap Shot source on a sent attachment (docs/snapshots.md), read defensively. */
+function isWireSource(value: JsonValue | undefined): boolean {
+  const source = record(value);
+  return source?.kind === "snap_shot"
+    && typeof source.captured_at === "string"
+    && typeof source.app_name === "string"
+    && typeof source.window_title === "string";
+}
+
 const ACTION_KINDS: readonly string[] = [
   "command",
   "file_change",
@@ -350,7 +359,13 @@ function applyEvent(fold: Fold, wire: WireThreadEvent): void {
             typeof file.name === "string" &&
             typeof file.mime === "string" &&
             typeof file.size === "number"
-            ? [{ id: file.id, name: file.name, mime: file.mime, size: file.size }]
+            ? [{
+              id: file.id,
+              name: file.name,
+              mime: file.mime,
+              size: file.size,
+              ...(isWireSource(file.source) ? { source: file.source as SentAttachment["source"] } : {}),
+            }]
             : [];
         });
         if (wire.run_id) fold.sent[wire.run_id] = sent;

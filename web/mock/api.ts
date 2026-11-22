@@ -98,6 +98,8 @@ export type Scenario =
   | "browser-profiles-empty"
   /** The first thread on Cursor: the first send answers 409 engine_notice_required, every later one 409 engine_mode_refused (use with #/preview/cursor-thread). */
   | "cursor-thread"
+  /** A thread on Kiro, an engine the service says Orbyn cannot gate, for the unmanaged-thread screens: the one mode, the notice and its labels. */
+  | "unmanaged-thread"
   /** Transcript import: a project default engine, so the sheet can preview; `transcript-imported` adds a thread made from a file. */
   | "transcript-import"
   | "transcript-import-no-default"
@@ -181,6 +183,31 @@ export function createMockApi(options: MockOptions = {}) {
   const reviewControlsMock = createReviewControlsMock();
   const secretsMock = createSecretsMock(() => projects.map((project) => ({ id: project.id, name: project.name })));
 
+  /** Kiro, an ACP engine the service says Orbyn cannot gate, for the engine picker and unmanaged-thread screens. */
+  const addKiro = (permission_modes: EngineStatus["capabilities"]["permission_modes"]) => {
+    const cursor = engines.find((engine) => engine.id === "cursor");
+    if (!cursor) return;
+    engines.push({
+      ...structuredClone(cursor),
+      id: "kiro",
+      name: "Kiro",
+      tier: "acp",
+      capabilities: { ...cursor.capabilities, managed: false, approvals: false, permission_modes },
+      path: "/usr/local/bin/kiro-cli",
+      version: null,
+      auth: "unknown",
+      installer: "unknown",
+      latest: null,
+      support: "unknown",
+      update_command: null,
+      manual_hint: null,
+      sign_in_command: "kiro-cli login",
+      updating: false,
+      problem: null,
+      crew_role: "reviewer_only",
+    });
+  };
+
   function reset(next: Scenario = "default") {
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
@@ -192,7 +219,7 @@ export function createMockApi(options: MockOptions = {}) {
     escapesMock.reset(next);
     backtestMock.reset(next);
     backgroundMock.reset(next);
-    reviewControlsMock.reset();
+    reviewControlsMock.reset(next);
     secretsMock.reset();
     signedIn = false;
     idCounter = 0;
@@ -254,6 +281,25 @@ export function createMockApi(options: MockOptions = {}) {
       preferenceValues = { ...preferenceValues, default_engine: "claude", default_model: "", default_effort: "", default_model_options: {}, disabled_engines: [] };
     }
     if (next === "transcript-import-no-default") preferenceValues = { ...preferenceValues, disabled_engines: [] };
+    // The engine picker's Unmanaged label, on an ACP engine the service says it cannot gate.
+    if (next === "crew-engine-picker") {
+      addKiro(["supervised", "auto", "full_access"]);
+      preferenceValues = {
+        ...preferenceValues,
+        default_engine: "kiro",
+        default_model: "",
+        default_effort: "",
+        default_model_options: {},
+        disabled_engines: [],
+      };
+    }
+    // The unmanaged thread's one mode, notice and labels, on a thread the service says Orbyn cannot gate.
+    if (next === "unmanaged-thread") {
+      addKiro(["no_approvals"]);
+      threads = threads.map((thread) => thread.id === "t-empty"
+        ? { ...thread, project_id: "p-app", engine: "kiro", model: "sonnet", lifecycle: { ...(thread.lifecycle ?? fixtures.lifecycle()), permission_mode: "auto" } }
+        : thread);
+    }
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
@@ -303,6 +349,10 @@ export function createMockApi(options: MockOptions = {}) {
       return cursorSends === 1
         ? err(409, "engine_notice_required", "Cursor does not ask before acting.")
         : err(409, "engine_mode_refused", "Cursor cannot run in Supervised mode.");
+    }
+    // The notice is the only unmanaged-thread state the service sends for a non-Cursor engine today; the mode refusal is planned.
+    if (scenario === "unmanaged-thread" && thread.engine === "kiro") {
+      return err(409, "engine_notice_required", "Orbyn cannot ask before Kiro acts.");
     }
     const runId = nextId("run");
     const run = {
@@ -781,6 +831,10 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
       case "GET /api/settings":
         return { status: 200, body: settings };
+      // Where a kept attachment came from (docs/snapshots.md): the service answers for a Local image route.
+      case "PUT /api/attachments":
+        if (seg[3] !== "source") break;
+        return { status: 204 };
       // The editor's save: it writes only over the revision it started from, as the service does.
       case "PUT /api/threads": {
         if (seg[3] !== "files" || seg[4] !== "content") break;
@@ -1192,7 +1246,11 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 202 };
       }
       if (seg[1] === "threads" && seg[3] === "attachments") {
-        return { status: 201, body: { id: nextId("att"), thread_id: seg[2], name: query.get("name") ?? "file", mime: "", size: 1, created_at: now() } };
+        const name = query.get("name") ?? "file";
+        const snap = /snap shot/i.test(name)
+          ? { source: { kind: "snap_shot", captured_at: now(), app_name: "Safari", window_title: "Acme · Sign in", app_id: "com.apple.Safari", width: 1280, height: 800 } }
+          : {};
+        return { status: 201, body: { id: nextId("att"), thread_id: seg[2], name, mime: "", size: 1, created_at: now(), ...snap } };
       }
       if (seg[1] === "threads" && seg[3] === "runs") {
         const thread = threads.find((t) => t.id === seg[2]);

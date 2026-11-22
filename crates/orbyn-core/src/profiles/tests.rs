@@ -51,6 +51,7 @@ fn status(id: &str, installed: bool, modes: &[PermissionMode]) -> EngineStatus {
         instance_of: None,
         accent: None,
         account: None,
+        start_issue: None,
         crew_role: EngineCrewRole::Any,
         crew_role_reason: None,
     }

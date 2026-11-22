@@ -131,7 +131,7 @@ async fn a_version_mismatch_stays_until_an_update() {
 
 #[tokio::test]
 async fn the_hub_names_a_family_that_does_not_use_the_host_or_does_not_exist() {
-    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), None).unwrap();
+    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), Some("0")).unwrap();
     let hub = HostHub::new(&config);
     assert_eq!(
         hub.stop("claude", false).await.unwrap_err(),

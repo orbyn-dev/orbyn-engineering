@@ -1,5 +1,6 @@
 import { Lock, PenLine, ShieldOff, Sparkles, type LucideIcon } from "lucide-react";
 import type { EngineStatus, PermissionMode } from "../../api/types";
+import { askBeforeFollowOn } from "../engines/unmanaged";
 
 export const ACCESS: Record<PermissionMode, { label: string; description: string; icon: LucideIcon }> = {
   supervised: { label: "Supervised", description: "Ask before commands and file changes.", icon: Lock },
@@ -42,7 +43,8 @@ export function refusalModeName(mode: PermissionMode): string {
 
 /** What an engine that never asks shows in the mode pick: its one mode, never the saved one. */
 export const oneModeLabel = (engineName: string) => `No approvals (${engineName})`;
-export const oneModeReason = (engineName: string) => `${engineName} does not ask before acting, so this thread has one mode.`;
+export const oneModeReason = (engineId: string, engineName: string) =>
+  askBeforeFollowOn(engineId, engineName, "so this thread has one mode.", "This thread has one mode.");
 
 /** The modes a thread on this engine cannot run in, in menu order: drawn dimmed with the reason, never hidden. */
 export function refusedModes(engine: Pick<EngineStatus, "capabilities"> | null): PermissionMode[] {
@@ -51,10 +53,16 @@ export function refusedModes(engine: Pick<EngineStatus, "capabilities"> | null):
 }
 
 /** The one sentence that says why, in the app's own mode names. */
-export function refusalSentence(engineName: string, refused: PermissionMode[]): string {
+export function refusalSentence(engineId: string, engineName: string, refused: PermissionMode[]): string {
   const names = refused.map((mode) => ACCESS[mode].label);
   const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? "");
-  return `${engineName} does not ask before acting, so ${list} ${names.length > 1 ? "are" : "is"} not available here.`;
+  const isMany = names.length > 1;
+  return askBeforeFollowOn(
+    engineId,
+    engineName,
+    `so ${list} ${isMany ? "are" : "is"} not available here.`,
+    `${list} ${isMany ? "are" : "is"} not available here.`,
+  );
 }
 
 /** The modes an engine offers, in menu order. An older service that does not say offers all. */
