@@ -47,6 +47,7 @@ import type { EngineStatus, Thread } from "../../../api/types";
 import { useLayoutWidth } from "../../../lib/useLayout";
 import { toFailure, useAsync } from "../../../lib/useAsync";
 import { useConnectionKind } from "../../../product/state/connection";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { useDraftStore } from "../../../product/state/draftStore";
 import { navigate } from "../../../product/state/route";
 import { useThreadLogs } from "../../../product/state/threadLogs";
@@ -67,6 +68,8 @@ import { useComposerChips } from "../../../product/state/composerChipStore";
 import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
 import { MAX_PROMPT_CHARS, charactersOver, promptWithChips } from "../../../product/composer/composerContext";
+import { SnapshotCapturingChip } from "../../snapshot";
+import { useComposerSnapshot } from "./useComposerSnapshot";
 
 /** Commands go to the thread's own composer; a side chat's stays out of their way. */
 const useOwnCommand = (side: boolean, command: string, handler: () => boolean | void) =>
@@ -102,6 +105,7 @@ export function Composer({
   const [highlight, setHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const { attachments, setAttachments, filePicker, uploading, startUpload, upload, cancel } = useAttachments(thread, setError);
+  const { flow: snapshot, removeText: removeSnapshotText } = useComposerSnapshot(thread, setAttachments, setError);
   const { transcripts, boxProps, layer } = useComposerDrop(thread, upload, (mentioned) => {
     setDraft(thread.id, `${draft.trimEnd()}${draft.trim() ? " " : ""}@${mentioned} `);
     field.current?.focus();
@@ -371,10 +375,10 @@ export function Composer({
     [approvals, thread.id],
   );
 
-  const unmanaged = engine !== null && !engine.capabilities.managed;
+  const unmanaged = isUnmanaged(engine);
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
-  const accessView = accessViewOf(!unmanaged && neverAsks(engine), engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
+  const accessView = accessViewOf(!unmanaged && neverAsks(engine), engine?.id ?? thread.engine, engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
   const allEngines = useWorkspace((state) => state.engines.data);
   const installed = useMemo(() => (allEngines ?? []).filter((entry) => entry.installed), [allEngines]);
   const models = useEngineModels(thread.engine);
@@ -493,8 +497,9 @@ export function Composer({
         />
         {layer}
         {fence ? <CodeBar thread={thread} draft={draft} fence={fence} setDraft={setDraft} /> : null}
+        {snapshot.capturing ? <SnapshotCapturingChip onCancel={snapshot.cancel} /> : null}
         {attachments.length > 0 ? (
-          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} cancel={cancel} />
+          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} cancel={cancel} onRemoveSnapshotText={removeSnapshotText} />
         ) : null}
         {overBy > 0 ? (
           <p className="composer-over" role="alert">
@@ -536,7 +541,6 @@ export function Composer({
           narrowBar={narrowBar}
           contextMeter={contextMeter}
           showContext={showContext}
-          unmanaged={unmanaged}
           access={access}
           accessView={accessView}
           busy={busy}
@@ -551,6 +555,7 @@ export function Composer({
           pickModel={pickModel}
           stop={stop}
           setError={setError}
+          snapshotButton={snapshot.button}
         />
       </div>
       <ComposerContext
@@ -558,7 +563,7 @@ export function Composer({
         hidden={!showContext && !persistentContext}
         branch={branch}
         branchPending={branchPending}
-        unmanaged={unmanaged}
+        engine={engine}
         access={access}
         accessView={accessView}
         busy={busy}

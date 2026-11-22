@@ -217,6 +217,8 @@ export const PERSON_ROUTES: readonly (readonly [method: string, pattern: string]
   ["POST", "/api/threads/import"],
   // Transcript attach (docs/attachments-transcripts.md): an untrusted file becomes context for the thread's next message.
   ["POST", "/api/threads/{id}/transcripts"],
+  // Snap Shot source (docs/snapshots.md): the window text that reaches the next prompt as untrusted text.
+  ["PUT", "/api/attachments/{id}/source"],
 ];
 
 /**

@@ -46,9 +46,12 @@ function useProvidersInUse() {
 }
 
 /** The status cell: what the person has to do, else that the provider is ready. A listed engine that was not found says so through its label. */
-function Status({ engine, labelled }: { engine: EngineStatus; labelled: boolean }) {
+function Status({ engine, labelled, entry }: { engine: EngineStatus; labelled: boolean; entry?: ProviderEntry }) {
   if (!engine.installed) return labelled ? null : <span className="set-pill warn">Not found</span>;
-  if (engine.auth === "logged_out") {
+  // A failed start the service reported beats "Ready"; the label chip for it is not drawn a second time (see `Labels`).
+  const startFailed = engine.start_issue?.kind === "failed" || entry?.labels.includes("start_failed");
+  if (startFailed) return <span className="set-pill warn">Start failed</span>;
+  if (engine.auth === "logged_out" || engine.start_issue?.kind === "signed_out" || entry?.labels.includes("signed_out")) {
     return <><span className="set-pill dot">Signed out</span>{engine.sign_in_command ? <span className="mono t3">{engine.sign_in_command}</span> : null}</>;
   }
   if (engine.latest && engine.version && engine.latest !== engine.version) return <span className="set-pill">Update {engine.latest}</span>;
@@ -70,7 +73,8 @@ const subtitle = (engine: EngineStatus, note?: string | null) => {
 
 /** The labels the service gives a provider: what Orbyn has not seen or cannot control. */
 function Labels({ entry }: { entry: ProviderEntry | undefined }) {
-  return <>{entry?.labels.map((label) => <span key={label} className={label === "planned" ? "set-pill planned" : "set-pill dot"}>{LABEL_TEXT[label]}</span>)}</>;
+  // Signed out and Start failed are the Status cell's words, so they are not repeated as chips.
+  return <>{entry?.labels.filter((label) => label !== "signed_out" && label !== "start_failed").map((label) => <span key={label} className={label === "planned" ? "set-pill planned" : "set-pill dot"}>{LABEL_TEXT[label]}</span>)}</>;
 }
 
 /** The grouped list, read again whenever the engines change. `null` until the service answers or when it cannot. */
@@ -123,7 +127,7 @@ export function ProviderTable({ engines, store, onOpen, onEdit, catalog = null }
           {note ? <><br /><span className="sub">{note}</span></> : null}
         </span>
         <span role="cell" className="t3">{engine.version ?? ""}</span>
-        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} /><Labels entry={entry} /></span>
+        <span role="cell" className="set-states"><Status engine={engine} labelled={entry?.labels.includes("not_found") ?? false} entry={entry} /><Labels entry={entry} /></span>
         <span role="cell">{instance ? <Button small aria-label={`Edit ${engine.name}`} onClick={(event) => { event.stopPropagation(); onEdit(engine.id); }}>Edit</Button> : null}</span>
         <span role="cell" onClick={(event) => event.stopPropagation()}>
           {row ? <input type="checkbox" role="switch" aria-label={`Use ${engine.name}`} aria-checked={row.mixed ? "mixed" : !inUse.off.includes(engine.id)}

@@ -14,6 +14,10 @@
 .review-badge[data-tone="warn"] { color: var(--color-warnText); border-color: var(--color-warn); }
 .review-comment { margin: 6px 0 0; white-space: pre-wrap; }
 .review-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.review-forge-error { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--color-muted); }
+.review-forge-error p { margin: 0; }
+.review-disclosure { display: inline-flex; align-items: center; gap: 4px; margin: 0; padding: 0; border: 0; background: none; color: var(--color-muted); font: inherit; font-size: var(--text-meta); cursor: pointer; }
+.review-disclosure:hover { color: var(--color-text); }
 .review-send { max-width: min(560px, 92vw); }
 .review-send-list, .review-send-list ul { list-style: none; margin: 0; padding: 0; }
 .review-send-list ul { margin: 4px 0 8px 12px; }

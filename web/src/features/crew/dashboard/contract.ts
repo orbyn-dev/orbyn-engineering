@@ -3,13 +3,14 @@
  *
  * - `trust` is `GET /api/crew/trust?project=`: merges and reverts of one repository over the service's window, by engine and by area.
  * - `areas`, `thresholds` and `areaHistory` are the Autopilot by area reads the Settings page already uses.
- * - `history` is `GET /api/crew/dashboard?project=&days=`, written in docs/crew-dashboard.md (Eng 2) and not served yet. The production
- *   client has none (`history: null`): it sends nothing, and the page draws Planned where only that read could answer. The mock in
- *   web/mock/crewDashboard.ts exists for tests and the dev-only Preview frames, which hand it to the page directly.
+ * - `history` is `GET /api/crew/dashboard?project=&days=&utc_offset_minutes=`, written in docs/crew-dashboard.md (Eng 2). The production
+ *   client sends it; a service without the route answers `404` and the page falls back to the trust record (`readModel`), drawing Planned
+ *   where only the history could answer. The mock in web/mock/crewDashboard.ts is for tests and the dev-only Preview frames.
  *
  * Every string here is text from the disk, a pull request or an engine: untrusted. The screens draw it as text, capped, never as markup or a link.
  */
 import { request } from "../../../api/client";
+import type { CrewDashboard } from "../../../generated/CrewDashboard";
 import type { AutopilotAreaHistory } from "../../../generated/AutopilotAreaHistory";
 import type { AutopilotAreas } from "../../../generated/AutopilotAreas";
 import type { AutopilotThresholds } from "../../../generated/AutopilotThresholds";
@@ -93,24 +94,49 @@ export interface DashboardClient {
   areas(project: string, signal: AbortSignal): Promise<AutopilotAreas>;
   thresholds(signal: AbortSignal): Promise<AutopilotThresholds>;
   areaHistory(project: string, area: string, signal: AbortSignal): Promise<AutopilotAreaHistory>;
-  /** The planned history read. `null`: the service does not serve it yet, so nothing is sent. */
+  /** The history read. `null` in a test client that has none: only the trust record is read then. */
   history: ((query: { project: string; days: Period }, signal: AbortSignal) => Promise<DashboardHistory>) | null;
 }
 
-/** The production client: the existing reads, and no history read at all. */
+/** The service's answer with its omitted fields made explicit: the page reads `null` for "not measured", never a missing key. */
+export function fromService(answer: CrewDashboard): DashboardHistory {
+  const cycle = answer.cycle;
+  return {
+    ...answer,
+    cycle: cycle ? { median_s: cycle.median_s ?? null, p90_s: cycle.p90_s ?? null, fastest_s: cycle.fastest_s ?? null, slowest_s: cycle.slowest_s ?? null } : null,
+    engines: answer.engines.map((engine) => ({ ...engine, model: engine.model ?? null, cost: engine.cost ?? null })),
+    reverts: answer.reverts.map((revert) => ({ ...revert, certain: revert.certain ?? null })),
+  };
+}
+
+/** The person's own offset from UTC in minutes, as the service takes it: it decides which Monday a week starts on. */
+const utcOffsetMinutes = (): number => {
+  const offset = -new Date().getTimezoneOffset();
+  return Number.isFinite(offset) && offset >= -840 && offset <= 840 ? offset : 0;
+};
+
+/** The production client: the existing reads and the dashboard history read. */
 const production: DashboardClient = {
   trust: (project, signal) => request<AutopilotTrust>("GET", `/api/crew/trust?${new URLSearchParams({ project })}`, undefined, signal),
   areas: (project, signal) => crewApi.areas(project, signal),
   thresholds: (signal) => crewApi.thresholds(signal),
   areaHistory: (project, area, signal) => crewApi.areaHistory(project, area, signal),
-  history: null,
+  history: async (query, signal) =>
+    fromService(
+      await request<CrewDashboard>(
+        "GET",
+        `/api/crew/dashboard?${new URLSearchParams({ project: query.project, days: String(query.days), utc_offset_minutes: String(utcOffsetMinutes()) })}`,
+        undefined,
+        signal,
+      ),
+    ),
 };
 
 let current: DashboardClient = production;
 
 export const dashboardClient = (): DashboardClient => current;
 
-/** Tests install a client here; `null` puts back the production default, which sends no history read. */
+/** Tests install a client here; `null` puts back the production default. */
 export function setDashboardClient(next: DashboardClient | null): void {
   current = next ?? production;
 }

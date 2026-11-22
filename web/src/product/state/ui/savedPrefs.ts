@@ -1,6 +1,6 @@
 import { canonicalFileTab } from "./fileTab";
 import { readJson } from "../../../lib/storage";
-import { DEFAULT_SIDEBAR_WIDTH, LAYOUT_CHOICES, cleanTabs, isPanelTab, type LayoutChoice, type Prefs, type ThreadLayout } from "./types";
+import { DEFAULT_SIDEBAR_WIDTH, LAYOUT_CHOICES, cleanTabs, isPanelTab, type DevicesPrefs, type LayoutChoice, type Prefs, type ThreadLayout } from "./types";
 import { PREFS_KEY, defaults } from "./defaults";
 
 const MIGRATED_KEY = "orbyn.prefs.migrated";
@@ -20,6 +20,7 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   panelMaximized: state.panelMaximized,
   panelWidth: state.panelWidth,
   sideChat: state.sideChat,
+  devices: state.devices,
   layouts: state.layouts,
   layoutKey: state.layoutKey,
   sidebarCollapsed: state.sidebarCollapsed,
@@ -82,6 +83,14 @@ export const prefsOf = (state: Prefs & { desktopPanelOpen?: boolean | null }): P
   environmentThemeAppliedAt: state.environmentThemeAppliedAt,
   environmentIdentification: state.environmentIdentification,
   welcomeDone: state.welcomeDone,
+  snapshotEnabled: state.snapshotEnabled,
+  snapshotShortcut: state.snapshotShortcut,
+  snapshotIncludeAccessibility: state.snapshotIncludeAccessibility,
+  snapshotPlaySound: state.snapshotPlaySound,
+  snapshotSound: state.snapshotSound,
+  snapshotFlash: state.snapshotFlash,
+  snapshotAnimations: state.snapshotAnimations,
+  snapshotExcludedApps: state.snapshotExcludedApps,
 });
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -133,6 +142,44 @@ function cleanLayouts(layouts: unknown): Record<string, ThreadLayout> {
   );
 }
 
+/**
+ * Devices tabs, labels, last device and float are per-person UI state. A saved value may be damaged, name a
+ * device the service no longer lists, or carry a window off the screen: only what can be drawn again is kept.
+ */
+function cleanDevices(value: unknown): DevicesPrefs {
+  const raw = isPlainObject(value) ? value : {};
+  const ids = (list: unknown): string[] =>
+    Array.isArray(list)
+      ? [...new Set(list.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 256))].slice(0, 12)
+      : [];
+  const open = ids(raw.open);
+  const active = typeof raw.active === "string" && raw.active.length <= 256 ? raw.active : null;
+  if (active !== null && !open.includes(active)) {
+    open.unshift(active);
+    if (open.length > 12) open.pop();
+  }
+  const names: Record<string, string> = {};
+  if (isPlainObject(raw.names)) {
+    for (const [id, name] of Object.entries(raw.names)) {
+      const label = typeof name === "string" ? name.trim().slice(0, 60) : "";
+      if (label !== "" && id.length > 0 && id.length <= 256 && Object.keys(names).length < 12) names[id] = label;
+    }
+  }
+  const place = isPlainObject(raw.float) ? raw.float : null;
+  const number = (value: unknown, fallback: number, min: number, max: number) =>
+    typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
+  const floating = place && typeof place.id === "string" && place.id.length > 0 && place.id.length <= 256
+    ? {
+        id: place.id,
+        x: number(place.x, 24, 0, 4000),
+        y: number(place.y, 80, 0, 4000),
+        width: number(place.width, 360, 280, 720),
+      }
+    : null;
+  if (floating && !open.includes(floating.id)) open.push(floating.id);
+  return { open: open.slice(0, 12), active, names, float: floating };
+}
+
 /** Saved preferences may predate a field or carry a removed value. */
 export function savedPrefs(): Partial<Prefs> {
   const stored = readJson<unknown>(PREFS_KEY);
@@ -163,5 +210,30 @@ export function savedPrefs(): Partial<Prefs> {
     Object.entries(isPlainObject(saved.explorerOpen) ? saved.explorerOpen : {}).filter(([, open]) => typeof open === "boolean"),
   );
   const workspaceLayout = LAYOUT_CHOICES.includes(saved.workspaceLayout as LayoutChoice) ? saved.workspaceLayout : defaults.workspaceLayout;
-  return { ...saved, panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout, leftBarView, explorerOpen };
+  return { ...saved, ...cleanSnapshotPrefs(saved), panelOpen: saved.panelOpen === true, panelTab, panelTabOrder: tabs.order, panelTabsClosed: tabs.closed, devices: cleanDevices(saved.devices), layouts: cleanLayouts(saved.layouts),  projectGrouping, projectGroupingOverrides, workspaceLayout, leftBarView, explorerOpen };
+}
+
+/** Snap Shot settings from a save that may predate them or carry a damaged value (docs/snapshots.md limits). */
+function cleanSnapshotPrefs(saved: Partial<Prefs>): Pick<Prefs,
+  "snapshotEnabled" | "snapshotShortcut" | "snapshotIncludeAccessibility" | "snapshotPlaySound" |
+  "snapshotSound" | "snapshotFlash" | "snapshotAnimations" | "snapshotExcludedApps"> {
+  const chord = saved.snapshotShortcut;
+  const shortcut = isPlainObject(chord)
+    && chord.kind === "chord" && typeof chord.key === "string" && chord.key !== "" && chord.key.length <= 32
+    && (chord.mod === true || chord.shift === true || chord.alt === true || chord.ctrl === true)
+    ? { kind: "chord" as const, key: chord.key, mod: chord.mod === true, shift: chord.shift === true, alt: chord.alt === true, ctrl: chord.ctrl === true }
+    : defaults.snapshotShortcut;
+  const excluded = Array.isArray(saved.snapshotExcludedApps)
+    ? [...new Set(saved.snapshotExcludedApps.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter((id) => id !== "" && id.length <= 255))].slice(0, 64)
+    : [];
+  return {
+    snapshotEnabled: saved.snapshotEnabled === true,
+    snapshotShortcut: shortcut,
+    snapshotIncludeAccessibility: saved.snapshotIncludeAccessibility === true,
+    snapshotPlaySound: saved.snapshotPlaySound !== false,
+    snapshotSound: saved.snapshotSound === "camera-shutter" ? "camera-shutter" : "soft-pop",
+    snapshotFlash: saved.snapshotFlash !== false,
+    snapshotAnimations: saved.snapshotAnimations !== false,
+    snapshotExcludedApps: excluded,
+  };
 }

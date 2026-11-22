@@ -37,8 +37,13 @@ only on generated types and the HTTP API. Nothing in `web` may import Tauri APIs
    person starts, never an engine spawn. They are in no SQLite row, log, audit row, answer or export, and a run's terminal
    output is masked for them by exact match.
 2. The Codex driver never calls `account/login/*`. It reads `account/read` only.
-3. Claude uses the CLI, never the Agent SDK. `--bare` is forbidden on subscription
-   sessions because it ignores OAuth login.
+3. Claude runs through the person's own installed `claude`. The default path is the engine host with the Claude Agent SDK
+   (a dependency used as shipped, never copied or modified); the CLI driver stays a path the person can choose. Both
+   run the unmodified `claude` binary, never collect, read or store Claude.ai credentials (the engine keeps its own
+   login), and never use `--bare`, which ignores subscription login. The person's `claude_engine_path` setting (`sdk`,
+   the default, or `cli`, a device-local preference) is read at the start of each run; `ORBYN_ENGINE_HOST_CLAUDE` is opt-out
+   (only `0` turns the host off). The core default is on; the settings picker for `claude_engine_path` is *Planned* (Engineering 1), and a packaged turn on the SDK path is not yet observed
+   (docs/sdk-default-plan.md). A person's choice is never switched silently: when the host is down the person sees why and may pick the CLI.
 4. Orbyn writes nothing into target repositories or engine user config: no skills,
    instructions, excludes or context maps. The project file is read-only to Orbyn.
 5. A folder must be trusted before an engine, project script or terminal runs in
@@ -234,7 +239,7 @@ file. A record exists only once its bytes are in place, and a message naming an
 attachment that is not ready is refused before anything is admitted. Before its engine
 starts, a run logs `CUSTOM user.attachments` with each record's id, name, media type
 and size, so a transcript shows what the message carried without asking the engine.
-`GET /api/attachments/:id/content` returns those bytes while the record lives.
+`GET /api/attachments/:id/content` returns those bytes while the record lives. `PUT /api/attachments/:id/source` keeps a Snap Shot's app name, title, app id and accessible text beside an image before it is sent; it answers `404` for an unknown or already sent attachment, `422 unsupported_type` for a non-image and `413 source_too_large` past a character limit.
 
 A photo can be converted before it is stored: `POST /api/threads/:id/attachments/convert?name=`
 takes the photo as its body and answers `ConvertedPhoto`, the stored attachment the run
@@ -2180,13 +2185,13 @@ and its `EngineDriver` impl and keeps the public paths: `claude/` (`args`, `sett
 `terminal`, `diagnostics`) stay beside them.
 
 `engines/known.rs` lists CLIs that speak ACP from their own binary, with what each needs
-to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, fx, Grok
-Build, Hermes, Kilo, Kimi and OpenCode. One is listed only when its program is found, and
+to start: Antigravity, Cline, Command Code, GitHub Copilot, Cursor, DeepSeek, Devin, Factory Droid, fx, GLM,
+Grok Build, Hermes, Kilo, Kimi, Kiro, Mistral Vibe, Oh My Pi and OpenCode. One is listed only when its program is found, and
 a custom engine of the same id wins. A program that resolves into a package known to put a
 different CLI under the same name is not that engine: `@vibe-kit/grok-cli` installs a `grok`
 with no ACP mode. Grok is started with `--permission-mode default` and
 OpenCode with `{"permission":{"*":"ask"}}`, since either can otherwise act without asking.
-DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
+Kiro's arguments are T3 Code's. The commands for Droid (`droid exec --output-format acp`), GLM (`glm-acp-agent`), Mistral Vibe (`vibe-acp`) and Oh My Pi (`omp acp`) come from the vendors' and Zed's guides, are unverified, and a program that rejects them is a failed start. Droid, GLM, Kiro (which starts in autopilot), Mistral Vibe and Oh My Pi are unobserved, so they are labelled unmanaged under rule 8 until a run shows they ask. DeepSeek cannot ask before an edit, so it is labelled unmanaged under rule 8, and so is fx
 until a run shows the mode it starts in, since its automatic mode writes without asking. The
 `fx` JSON viewer from npm or Homebrew is not fx. Each keeps its
 own login, and only the launch has been tested, with the fake agent under those names, except
@@ -2196,8 +2201,8 @@ OpenCode 2.2.5, which ran real turns through `orbynd` on macOS.
 instance can still be edited or removed), an installed app such as Antigravity that holds no ACP server, a
 program refused for being another CLI (Grok), and the engines not built. Each row has a group (In use, Found,
 More engines, Can't start, Not found, Planned; the page puts a startable engine under In use when its per-project
-switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today only
-OpenCode 2.2.5 has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
+switch is on) and labels: Not verified (a known ACP engine that has not run on a real install; today
+OpenCode 2.2.5 is the only one that has), Unmanaged (the engine cannot be gated or cannot ask), Limited support (the signed manifest's
 `Unsupported` or `Graceful` version), Can't start (a `Broken` version, or an app with no ACP server), Not found
 and Planned (Pi, Muse Code, ZCode, and Cline's effort flag). Not found, Unmanaged and a `Broken` Can't start come
 from the same `ProviderFacts` the crew router's hard filters read. The Windows and Linux places an app is looked
@@ -2222,6 +2227,11 @@ the method's arguments. The provider card shows it to copy, and a run that fails
 login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and offers no
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
+
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
 
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
@@ -3602,7 +3612,9 @@ for older shells. Environment: `ORBYN_DATA_DIR`, `ORBYN_ACP_REGISTRY_URL`, `ORBY
 
 All bodies are JSON and errors are `ApiError` with a stable `code`. A body that cannot be
 read as the route's JSON is `400 invalid_input`; its message names the field that refused and never
-the value that was sent (an account body can carry a password or a sign-in code). Auth is
+the value that was sent (an account body can carry a password or a sign-in code). A wrong-typed
+value under a key in a map field names that field and never repeats the caller's key, which the
+path library renders like a field. Auth is
 `Authorization: Bearer <token>`, or the session cookie. SSE, WebSocket and
 `files/raw` and the exact GET/HEAD `/api/media/image` route also accept `?token=`
 because browsers cannot set headers on them.
@@ -3695,6 +3707,7 @@ every method, path and which routes need a credential.
 | `POST /api/threads/:id/attachments/convert?name=` | Raw photo body; `ConvertedPhoto`: the stored attachment, its size and what was done (`converted`, `shrunk` or `none`); `415 unsupported_type`, `422 unreadable_image` or `still_too_large`, `413 file_too_large` |
 | `DELETE /api/attachments/:id` | Remove an attachment |
 | `GET /api/attachments/:id/content` | The stored bytes with their recorded `Content-Type`; `404` once gone |
+| `PUT /api/attachments/:id/source` | `AttachmentSource`: keeps a Snap Shot's app name, title, app id and accessible text beside an image attachment; `404` unknown or already sent, `422 unsupported_type` when it is not an image, `413 source_too_large` over a character limit |
 | `GET /api/threads/:id/mentions?q=` | `Mentions`: profile skills, ranked unignored files, this project's threads |
 | `GET /api/search/messages?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearch`: `MessageHit[]`, newest first, each with `seq` and `message_id` to open at |
 | `GET /api/search/messages/events?q=&project_id=&thread_id=&archived=&limit=` | `MessageSearchEvent[]`: `hit` frames in the read's order, then `done` (`words`, `too_short`, `truncated`) or `failed` |
@@ -3802,7 +3815,7 @@ every method, path and which routes need a credential.
 | `GET /api/engines/:id/limits?force=`, `GET /api/threads/:id/limits?force=` | `EngineLimits`; `422 unsupported` if the engine reports none |
 | `GET /api/engines/:id/models?refresh=` | `EngineModels`: models with their options, engine-wide options, agents, output styles, `remembered` |
 | `GET, POST /api/policy/rules`, `DELETE /api/policy/rules/:id` | Internal: diagnostics only, no client uses these |
-| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this |
+| `GET /api/audit?thread_id=&limit=` | Internal: diagnostics only, no client uses this. Each row's stored `detail` and `target` are masked with the person's redaction patterns on the read, values and keys alike; the actor, action, target, decision, source, thread and run fields are as stored |
 | `GET /api/computer`, `POST /api/threads/:id/computer` | Status, and a governed action |
 | `GET /api/account` | `AccountView`: `available` (the sign-in gate is on and a backend answers; false means the window shows nothing of the account), the session's email and device name, the sync line, `confirmed` and `deletion_scheduled`. The only account route that answers under the `Off` gate |
 | `POST /api/account/sign-up/{invite,start,resend,code}` | Sign-up in five steps (invite, email, password, emailed code, done); only the invite check, the password step, the resend and the code send anything. The email step sends nothing. `start` is the password step: it carries the invite, the email and the password once, creates the account and emails the code (the device check and the retry limit are here; a password under twelve characters is `422 weak_password`). `code` signs in; five wrong codes in a row refuse every code (`422 invalid_code`, the same answer) until `resend`. The invite and emailed code normalise case, hyphens and spaces. There is no `register` route |

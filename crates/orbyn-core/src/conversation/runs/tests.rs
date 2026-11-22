@@ -2,6 +2,7 @@
 //! Wire-format behavior is covered against the fake engine in `orbynd/tests`.
 
 mod follow_ups;
+mod snapshot;
 #[cfg(unix)]
 mod update;
 

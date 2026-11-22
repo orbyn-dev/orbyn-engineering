@@ -236,7 +236,7 @@ function WhatCounts({ log }: { log: EscapeLog }) {
       <div className="cx-fkv">
         <span>A possible escape</span>
         <b>
-          Found by Crew and never confirmed by itself: a revert (at once), a later fix on a line the merge added, or a
+          Found by Crew and left for you to confirm: a revert (at once), a later fix on a line the merge added, or a
           repository check that failed on this device after the merge. A forge’s CI status is not read{" "}
           <Planned why={WHY.forge} />. It is not counted until you confirm it
         </b>

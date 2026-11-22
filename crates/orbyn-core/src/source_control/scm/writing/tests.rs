@@ -93,7 +93,7 @@ async fn candidate_reads_untracked_and_tracked_changes_without_staging() {
     run_git(cwd, &["commit", "-qm", "initial"]);
     std::fs::write(cwd.join("one.txt"), "after\n").unwrap();
     std::fs::write(cwd.join("new space.txt"), "new é\n").unwrap();
-    let before = candidate(cwd).await.unwrap();
+    let before = candidate(cwd, None).await.unwrap();
     assert!(before.context.contains("+after"));
     assert!(before.context.contains("new é"));
     assert!(
@@ -103,10 +103,13 @@ async fn candidate_reads_untracked_and_tracked_changes_without_staging() {
             .is_empty()
     );
     run_git(cwd, &["add", "-A"]);
-    let staged = candidate(cwd).await.unwrap();
+    let staged = candidate(cwd, None).await.unwrap();
     assert_eq!(before.identity, staged.identity);
     std::fs::write(cwd.join("one.txt"), "newer\n").unwrap();
-    assert_ne!(staged.identity, candidate(cwd).await.unwrap().identity);
+    assert_ne!(
+        staged.identity,
+        candidate(cwd, None).await.unwrap().identity
+    );
 }
 
 #[tokio::test]
@@ -130,13 +133,19 @@ async fn diff_reads_disable_clean_filters_and_refuse_local_info_attributes() {
         ],
     );
     run_git(cwd, &["config", "filter.unavailable.required", "true"]);
-    assert!(candidate(cwd).await.unwrap().context.contains("+after"));
+    assert!(
+        candidate(cwd, None)
+            .await
+            .unwrap()
+            .context
+            .contains("+after")
+    );
     std::fs::write(
         cwd.join(".git/info/attributes"),
         "*.txt filter=unavailable\n",
     )
     .unwrap();
-    assert!(candidate(cwd).await.is_err());
+    assert!(candidate(cwd, None).await.is_err());
 }
 
 #[tokio::test]
@@ -146,12 +155,15 @@ async fn only_a_missing_symbolic_target_is_an_unborn_head() {
     run_git(cwd, &["init", "-q", "-b", "main"]);
     assert_eq!(head(cwd).await.unwrap(), None);
     std::fs::write(cwd.join("new.txt"), "new content\n").unwrap();
-    let before = candidate(cwd).await.unwrap();
+    let before = candidate(cwd, None).await.unwrap();
     run_git(cwd, &["add", "-A"]);
-    assert_eq!(before.identity, candidate(cwd).await.unwrap().identity);
+    assert_eq!(
+        before.identity,
+        candidate(cwd, None).await.unwrap().identity
+    );
     std::fs::write(cwd.join(".git/refs/heads/main"), "malformed reference\n").unwrap();
     assert!(head(cwd).await.is_err());
-    assert!(candidate(cwd).await.is_err());
+    assert!(candidate(cwd, None).await.is_err());
 }
 
 #[tokio::test]
@@ -166,22 +178,31 @@ async fn git_effective_modes_are_part_of_the_candidate_on_every_platform() {
     run_git(cwd, &["add", "."]);
     run_git(cwd, &["commit", "-qm", "initial"]);
     std::fs::write(cwd.join("one.txt"), "pending content\n").unwrap();
-    let before = candidate(cwd).await.unwrap();
+    let before = candidate(cwd, None).await.unwrap();
     run_git(cwd, &["update-index", "--chmod=+x", "one.txt"]);
-    let changed = candidate(cwd).await.unwrap();
+    let changed = candidate(cwd, None).await.unwrap();
     assert_ne!(before.identity, changed.identity);
     assert!(changed.context.contains("mode 100755"));
     run_git(cwd, &["update-index", "--chmod=-x", "one.txt"]);
-    assert_eq!(before.identity, candidate(cwd).await.unwrap().identity);
+    assert_eq!(
+        before.identity,
+        candidate(cwd, None).await.unwrap().identity
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(cwd.join("one.txt"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
         // Git deliberately ignores native execute bits in this control.
-        assert_eq!(before.identity, candidate(cwd).await.unwrap().identity);
+        assert_eq!(
+            before.identity,
+            candidate(cwd, None).await.unwrap().identity
+        );
         run_git(cwd, &["config", "core.filemode", "true"]);
-        assert_ne!(before.identity, candidate(cwd).await.unwrap().identity);
+        assert_ne!(
+            before.identity,
+            candidate(cwd, None).await.unwrap().identity
+        );
     }
 }
 
@@ -208,7 +229,7 @@ async fn raw_names_preserve_deletions_renames_untracked_and_ignored_controls() {
     std::fs::write(cwd.join("new untracked.txt"), "new é content\n").unwrap();
     std::fs::write(cwd.join("tracked.tmp"), "tracked changed\n").unwrap();
     std::fs::write(cwd.join("ignored.tmp"), "ignored outside candidate\n").unwrap();
-    let before = candidate(cwd).await.unwrap();
+    let before = candidate(cwd, None).await.unwrap();
     for expected in [
         "deleted.txt",
         "old name.txt",
@@ -220,12 +241,21 @@ async fn raw_names_preserve_deletions_renames_untracked_and_ignored_controls() {
     }
     assert!(!before.context.contains("ignored outside candidate"));
     std::fs::write(cwd.join("ignored.tmp"), "changed but still ignored\n").unwrap();
-    assert_eq!(before.identity, candidate(cwd).await.unwrap().identity);
+    assert_eq!(
+        before.identity,
+        candidate(cwd, None).await.unwrap().identity
+    );
     std::fs::write(cwd.join("new untracked.txt"), "newer user data\n").unwrap();
-    assert_ne!(before.identity, candidate(cwd).await.unwrap().identity);
+    assert_ne!(
+        before.identity,
+        candidate(cwd, None).await.unwrap().identity
+    );
     std::fs::write(cwd.join("new untracked.txt"), "new é content\n").unwrap();
     run_git(cwd, &["add", "-A"]);
-    assert_eq!(before.identity, candidate(cwd).await.unwrap().identity);
+    assert_eq!(
+        before.identity,
+        candidate(cwd, None).await.unwrap().identity
+    );
 }
 
 #[tokio::test]
@@ -239,10 +269,10 @@ async fn detached_head_is_a_stable_candidate_marker_not_an_error() {
     run_git(cwd, &["add", "."]);
     run_git(cwd, &["commit", "-qm", "initial"]);
     std::fs::write(cwd.join("one.txt"), "after\n").unwrap();
-    let attached = candidate(cwd).await.unwrap().identity;
+    let attached = candidate(cwd, None).await.unwrap().identity;
     run_git(cwd, &["checkout", "-q", "--detach"]);
-    let first = candidate(cwd).await.unwrap();
-    assert_eq!(first.identity, candidate(cwd).await.unwrap().identity);
+    let first = candidate(cwd, None).await.unwrap();
+    assert_eq!(first.identity, candidate(cwd, None).await.unwrap().identity);
     assert_eq!(symbolic_head(cwd).await.unwrap(), b"detached HEAD");
     assert_ne!(attached, first.identity);
 }

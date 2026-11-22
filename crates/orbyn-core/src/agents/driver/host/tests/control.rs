@@ -131,7 +131,7 @@ async fn a_version_mismatch_stays_until_an_update() {
 
 #[tokio::test]
 async fn the_hub_names_a_family_that_does_not_use_the_host_or_does_not_exist() {
-    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), None).unwrap();
+    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), Some("0")).unwrap();
     let hub = HostHub::new(&config);
     assert_eq!(
         hub.stop("claude", false).await.unwrap_err(),
@@ -238,5 +238,21 @@ async fn a_stop_while_the_host_waits_to_restart_ends_the_restarts() {
     // The wait is over and nothing started the host.
     tokio::time::sleep(Duration::from_millis(900)).await;
     assert_eq!(rig.pool.state(), HostState::Stopped);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_claude_host_keeps_native_rewind_unsupported_so_a_rewind_leaves_a_handoff() {
+    let Some(rig) = standin(&[], fast()) else {
+        return;
+    };
+    let driver = rig.driver();
+    let refusal = driver
+        .revert_session(std::path::Path::new("."), "engine-session", "turn-1")
+        .await
+        .unwrap_err();
+    assert!(matches!(refusal, crate::error::CoreError::Unsupported(_)));
+    // Nothing was asked of the host: its own `rollback` only works inside one live host session.
+    assert!(rig.log().iter().all(|frame| frame["type"] != "rollback"));
     rig.pool.shutdown().await;
 }

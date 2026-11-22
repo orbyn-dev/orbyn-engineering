@@ -12,6 +12,8 @@ import { upgradeToast } from "../product/state/healthToasts";
 import { AttentionPreview, attentionPreviewRoute, CommandBlocksPreview, commandBlocksPreviewRoute, PreviewWindow, previewWindowRoute } from "../features/panels";
 import { CrewPreview, crewPreviewRoute } from "../features/crew";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
+import { SnapshotPreview, SnapshotRuntime, snapshotPreviewRoute } from "../features/snapshot";
+import { DevicesPreview, devicesPreviewRoute } from "../features/devices";
 
 type Boot =
   | { state: "loading" }
@@ -30,10 +32,26 @@ export function App() {
   const hash = useSyncExternalStore(subscribeHash, readHash);
   const screen = previewScreenRoute(hash);
   const crewScreen = crewPreviewRoute(hash);
+  const snapshotScreen = snapshotPreviewRoute(hash);
+  const devicesScreen = devicesPreviewRoute(hash);
+  if (snapshotScreen && SnapshotPreview) {
+    return (
+      <Suspense fallback={null}>
+        <SnapshotPreview />
+      </Suspense>
+    );
+  }
   if (crewScreen && CrewPreview) {
     return (
       <Suspense fallback={null}>
         <CrewPreview name={crewScreen} />
+      </Suspense>
+    );
+  }
+  if (devicesScreen && DevicesPreview) {
+    return (
+      <Suspense fallback={null}>
+        <DevicesPreview />
       </Suspense>
     );
   }
@@ -145,7 +163,7 @@ function BootedApp() {
       );
     case "ready": {
       const preview = previewWindowRoute(window.location.hash);
-      return preview ? <PreviewWindow {...preview} /> : <Shell />;
+      return <><SnapshotRuntime />{preview ? <PreviewWindow {...preview} /> : <Shell />}</>;
     }
   }
 }

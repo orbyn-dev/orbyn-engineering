@@ -41,7 +41,7 @@ export function trackerFixtures(): TrackerRow[] {
   const connected: Partial<Record<TrackerKind, string>> = { github: REPO, forgejo: "orbyn/orbyn", linear: "Orbyn team" };
   return TRACKER_KINDS.map((tracker): TrackerRow => ({
     tracker, connected: tracker in connected, scope: connected[tracker] ?? null,
-    host: tracker === "forgejo" ? "https://git.orbyn.dev" : null,
+    host: tracker === "forgejo" ? "https://git.orbyn.dev" : tracker === "linear" ? "https://api.linear.app" : null,
     detail: tracker in connected ? null : tracker === "github" ? null : "No connection yet.",
   }));
 }
@@ -73,10 +73,13 @@ export interface IssuesMock extends IssuesApi {
   writes: string[];
   /** The first message of every thread started, exactly as the screen sent it. */
   messages: string[];
-  /** Make the next call of that kind fail: `reject` is a token the tracker does not accept, `unreachable` a host that does not answer, `token` a locked keychain. */
+  /**
+   * Make the next call of that kind fail: `reject` is a token the tracker does not accept, `unreachable` a host that does not
+   * answer, `host` an address the service refuses, `token` a locked keychain, `keychain` a keychain that cannot be used.
+   */
   /** Every list read, in order: the query and the `cursors` it carried (`undefined` for the first page). */
   listed: { query: IssueQuery; cursors: Record<string, string> | undefined }[];
-  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "token" | "reject" | "unreachable" | null): void;
+  failNext(what: "list" | "get" | "links" | "start" | "find" | "state" | "draft" | "update" | "candidates" | "token" | "keychain" | "host" | "reject" | "unreachable" | null): void;
   /** Every candidates read, as `<tracker> <scope>`. */
   candidatesRead: string[];
 }
@@ -240,9 +243,11 @@ export function createIssuesMock(init: {
       writes.push(`connect:${tracker}:${input.host ?? ""}`);
       await wait();
       if (fail === "unreachable") { fail = null; throw new ApiFailure("tracker_unavailable", `Orbyn could not reach ${(input.host ?? "that address").replace(/^https:\/\//, "")}. Check the address, or try again.`, 502); }
-      if (fail === "token") { fail = null; throw new ApiFailure("keychain_locked", "The keychain is locked. Unlock it, then try again.", 503); }
+      if (fail === "host") { fail = null; throw new ApiFailure("invalid", "That host is not allowed: it must start with https://.", 400); }
+      if (fail === "token") { fail = null; throw new ApiFailure("keychain_locked", "The keychain refused for now. Unlock it and try again.", 503); }
+      if (fail === "keychain") { fail = null; throw new ApiFailure("keychain_unavailable", "There is no usable keychain here, so a token cannot be saved.", 503); }
       if (fail === "reject") { fail = null; throw new ApiFailure("forbidden", "The tracker did not accept the token.", 403); }
-      const row: TrackerRow = { tracker, connected: true, scope: input.scope ?? (tracker === "linear" ? "Orbyn team" : null), host: input.host ?? null, detail: null };
+      const row: TrackerRow = { tracker, connected: true, scope: input.scope ?? null, host: input.host ?? (tracker === "linear" ? "https://api.linear.app" : null), detail: null };
       trackers = (trackers ?? []).map((one) => (one.tracker === tracker ? row : one));
       return row;
     },

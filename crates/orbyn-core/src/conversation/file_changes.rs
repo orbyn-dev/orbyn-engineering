@@ -38,8 +38,10 @@ fn relative_in(scope: &WriteScope, path: &str) -> Option<String> {
 
 fn checkout_scope(scope: &WriteScope) -> WriteScope {
     WriteScope {
+        checkout: scope.checkout.clone(),
         engine_cwd: scope.checkout.clone(),
-        ..scope.clone()
+        excluded: scope.excluded.clone(),
+        data_dir: scope.data_dir.clone(),
     }
 }
 
@@ -131,7 +133,7 @@ pub(crate) async fn finished(store: &Store, scope: &RunScope, paths: &[String]) 
     }
 }
 
-fn file_scope_of(checkout: &Path, root: &Path) -> WriteScope {
+fn file_scope_of(checkout: &Path, root: &Path, data_dir: &Path) -> WriteScope {
     WriteScope {
         checkout: checkout.to_path_buf(),
         engine_cwd: checkout.to_path_buf(),
@@ -140,6 +142,7 @@ fn file_scope_of(checkout: &Path, root: &Path) -> WriteScope {
         } else {
             Vec::new()
         },
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 
@@ -238,7 +241,7 @@ impl Core {
         self.run_in_thread(thread_id, run_id)?;
         let thread = self.idle_thread(thread_id)?;
         let root = self.workspace.root()?;
-        let scope = file_scope_of(Path::new(&thread.cwd), &root);
+        let scope = file_scope_of(Path::new(&thread.cwd), &root, &self.config.data_dir);
         let mut changes = self.store.kept_changes(run_id)?;
         if let Some(wanted) = &request.paths {
             if let Some(unknown) = wanted
@@ -284,6 +287,7 @@ mod tests {
             checkout: real.clone(),
             engine_cwd: real,
             excluded: Vec::new(),
+            data_dir: None,
         }
     }
 
