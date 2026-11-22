@@ -49,6 +49,9 @@ mod crew_merge_corrections;
 mod crew_merge_forge;
 pub(crate) use crew_merge_corrections::ForgeCorrection;
 pub(crate) mod code_runs;
+mod crew_manual_checks;
+#[cfg(test)]
+mod crew_manual_checks_tests;
 mod crew_merges;
 mod crew_paused_starts;
 #[cfg(test)]
@@ -135,6 +138,7 @@ pub use crew_escapes::{
 pub(crate) use crew_flow::last_events_sql;
 pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
+pub use crew_manual_checks::{ManualCheck, ManualCheckState, NOTE_MAX as MANUAL_CHECK_NOTE_MAX};
 pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};

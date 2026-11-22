@@ -349,6 +349,7 @@ fn judged(failures: Vec<crate::crew::verify::Failed>) -> crate::crew::Judgement 
         evidence: Vec::new(),
         failures,
         not_verified: Vec::new(),
+        awaiting: Vec::new(),
         passes: 0,
     }
 }

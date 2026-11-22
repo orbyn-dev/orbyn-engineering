@@ -263,6 +263,16 @@ impl Core {
         let Ok(Some(task)) = self.store.crew_task(task_id) else {
             return;
         };
+        // A check only a person can make: the task holds for that person and never passes on the checks around it.
+        if judged.waiting() {
+            let waits = judged.awaiting.join(", ");
+            self.crew_needs_person(
+                task_id,
+                &format!("This task's checks include one a person makes ({waits}), so it waits for their decision."),
+                true,
+            );
+            return;
+        }
         if judged.passed() {
             let ids: Vec<String> = judged
                 .evidence

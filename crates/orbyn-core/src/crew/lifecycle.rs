@@ -25,7 +25,8 @@ pub fn next_states(from: &str) -> &'static [&'static str] {
         "verifying" => &["passed", "failed", "needs_person", "stopped", "cancelled"],
         "failed" => &["running", "changed_approach", "stopped", "cancelled"],
         "changed_approach" => &["running", "stopped", "cancelled"],
-        "needs_person" => &["running", "routed", "stopped", "cancelled"],
+        // `verifying` is the person's decision resuming the checks: a `manual` check they answered lets the verifier run again.
+        "needs_person" => &["running", "routed", "verifying", "stopped", "cancelled"],
         _ => &[],
     }
 }
