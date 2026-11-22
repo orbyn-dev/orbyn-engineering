@@ -106,3 +106,17 @@ fn a_stopped_host_is_unknown_and_says_what_is_kept() {
     assert_eq!(failure.disposition, ThreadDisposition::Unknown);
     assert_eq!(failure.message, HOST_STOPPED);
 }
+
+#[test]
+fn a_stopped_host_carries_its_stable_code() {
+    let failure = failure(host_stopped());
+    assert_eq!(failure.code, Some(HOST_STOPPED_CODE));
+}
+
+#[test]
+fn an_ordinary_failure_has_no_code() {
+    let (outcome, _) = map(&done(
+        r#"{"type":"runDone","sendId":1,"ok":false,"result":{"reason":"failed"}}"#,
+    ));
+    assert_eq!(failure(outcome).code, None);
+}

@@ -1,42 +1,47 @@
 /**
- * The messages an imported thread had before it was imported (parity K36), built hidden. An import resumes the agent's own session and
- * copies no messages, so core has nothing to read them from yet; `earlierApi()` answers `null` in a production build and the thread
- * opens as it does today. The route is written in docs/attachments-transcripts.md; the mock lives in web/mock/earlier.ts.
+ * The messages an imported thread had before it was imported (parity K36). The read is Local and answers `null` for a thread that
+ * was not imported, so the screen draws nothing; every other failure reaches the screen, which keeps the thread usable. The route is
+ * written in docs/attachments-transcripts.md; the mock lives in web/mock/earlier.ts and is installed only by the dev preview.
  */
+import { ApiFailure, request } from "../../../api/client";
+import type { EarlierMessage } from "../../../generated/EarlierMessage";
+import type { EarlierPage } from "../../../generated/EarlierPage";
 
-export interface EarlierMessage {
-  role: "user" | "assistant" | "tool";
-  /** Plain text. Never markup: the screen draws it as text. */
-  text: string;
-}
-
-export interface EarlierPage {
-  /** The provider the history came from, such as `Claude Code`. */
-  source: string;
-  /** How many messages the history holds in all. */
-  total: number;
-  imported_at: string;
-  /** The newest messages first read are the last of `messages`; this is the cursor for the ones before them, or `null` at the start. */
-  next_before: string | null;
-  /** Oldest first. */
-  messages: EarlierMessage[];
-}
+export type { EarlierMessage, EarlierPage };
 
 export interface EarlierApi {
   /**
    * The last page, or the page before `before`. Resolves `null` for a thread that was not imported. Rejects with `history_unreadable`
-   * when the provider's history has moved, changed or is too new.
+   * when the provider's history has moved, changed or is too new, and with `bad_cursor` when the page cursor is stale.
    */
   read(threadId: string, page: { before?: string }, signal: AbortSignal): Promise<EarlierPage | null>;
 }
 
-let current: EarlierApi | null = null;
+const real: EarlierApi = {
+  async read(threadId, page, signal) {
+    const before = page.before === undefined ? "" : `?before=${encodeURIComponent(page.before)}`;
+    try {
+      return await request<EarlierPage>(
+        "GET",
+        `/api/threads/${encodeURIComponent(threadId)}/earlier${before}`,
+        undefined,
+        signal,
+      );
+    } catch (failure) {
+      // Not imported, or a service that does not have this route yet: both mean there is nothing to draw.
+      if (failure instanceof ApiFailure && failure.status === 404) return null;
+      throw failure;
+    }
+  },
+};
 
-export const earlierApi = (): EarlierApi | null => current;
+let current: EarlierApi = real;
 
-/** Tests and the dev-only preview install a client here; `null` puts back the production default, which sends nothing. */
+export const earlierApi = (): EarlierApi => current;
+
+/** Tests and the dev-only preview install a client here; `null` puts the real client back. */
 export function setEarlierApi(next: EarlierApi | null): void {
-  current = next;
+  current = next ?? real;
 }
 
 if (__ORBYN_PREVIEWS__ && typeof location !== "undefined" && location.hash.startsWith("#/preview/earlier")) {

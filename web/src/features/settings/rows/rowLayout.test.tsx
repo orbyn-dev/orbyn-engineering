@@ -42,7 +42,7 @@ describe("a setting row in a narrow settings pane", () => {
     expect([...settings.matchAll(/container-type:\s*[^;]+/g)]).toHaveLength(1);
     expect(rule(settings, ".set-tbl.prov")).toMatch(/container-type:\s*inline-size/);
     expect([...settings.matchAll(/@container/g)]).toHaveLength(1);
-    expect(settings).toMatch(/@container \(max-width: 900px\)/);
+    expect(settings).toMatch(/@container \(max-width: 799px\)/);
   });
 
   it("wraps a segmented control's choices inside the width it has, instead of under the description", () => {

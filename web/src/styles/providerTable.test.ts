@@ -57,8 +57,8 @@ it("keeps the six-column Providers template by default, with a readable name col
   ]);
 });
 
-it("hides the Version cell and drops its 90px column below 900px, keeping Status and In use", () => {
-  const narrow = container(900);
+it("hides the Version cell and drops its 90px column below 800px, keeping Status and In use", () => {
+  const narrow = container(799);
   expect(narrow).toMatch(/\.set-tbl\.prov \.set-tr > :nth-child\(3\)\s*\{\s*display:\s*none;/);
   const template = templateOf(narrow);
   expect(template).not.toBe("");
@@ -66,6 +66,14 @@ it("hides the Version cell and drops its 90px column below 900px, keeping Status
   expect(tracks(template)).toEqual([
     "28px", "minmax(120px, 1fr)", "minmax(130px, auto)", "60px", "72px",
   ]);
+});
+
+it("keeps Version on every wide window: the settings body caps the table at 864px, above the 800px threshold", () => {
+  // 920px body minus 28px padding on each side; the threshold must sit below it or Version never shows.
+  const widest = 920 - 2 * 28;
+  const threshold = Number(/@container\s*\(max-width:\s*(\d+)px\)/.exec(css)?.[1]) + 1;
+  expect(threshold).toBe(800);
+  expect(threshold).toBeLessThanOrEqual(widest);
 });
 
 it("lets the Status cell wrap and never squeezes it below its minimum", () => {

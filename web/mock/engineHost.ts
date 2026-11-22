@@ -78,7 +78,7 @@ export function createEngineHostMock(init: { hosts?: HostRow[] | null; crashes?:
     hosts: async () => hosts,
     crashes: async () => init.crashes ?? crashFixtures(),
     storage: async () => storage,
-    retry: async (id, options) => { writes.push(options?.stopBackground ? `retry:${id}:background` : `retry:${id}`); await wait(); refuseBackground(id, options?.stopBackground); hosts = (hosts ?? []).map((row) => (row.id === id ? { ...row, state: "starting", can_retry: false, last_error: null } : row)); },
+    retry: async (id, options) => { writes.push(options?.stopBackground ? `retry:${id}:background` : `retry:${id}`); await wait(); refuseBackground(id, options?.stopBackground); hosts = (hosts ?? []).map((row) => (row.id === id ? { ...row, state: "starting", can_retry: false, last_error: null, detail: null, action: null } : row)); },
     stop: async (id, options) => { writes.push(options?.stopBackground ? `stop:${id}:background` : `stop:${id}`); await wait(); refuseBackground(id, options?.stopBackground); hosts = (hosts ?? []).map((row) => (row.id === id ? { ...row, state: "stopped", stopped_at: new Date().toISOString(), restart: null } : row)); },
     decline: async (id) => { writes.push(`decline:${id}`); await wait(); return put(id, "declined", { saved_at: null }); },
     // The key is dropped here on purpose: a mock that kept it would be a second place a secret lives.

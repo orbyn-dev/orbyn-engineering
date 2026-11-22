@@ -5,11 +5,12 @@ import { toFailure } from "../../lib/useAsync";
 import { navigate } from "../../product/state/route";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
-import type { HostRow } from "./contract";
+import type { HostRow, HostState } from "./contract";
 import "./enginehost.css";
 import { cannotSend, sendsWithoutHost, type Gap, type GapAction } from "./gaps";
 import { engineHostApi, hostWritable, useEngineHosts } from "./hostApi";
 import { plain } from "./hostText";
+import { isClaudeEngine, useClaudeEnginePath } from "../../product/engines/claudePath";
 
 /** The host row for an engine, or null while the service reports none. */
 export function useHostFor(engineId: string | null): HostRow | null {
@@ -35,8 +36,8 @@ function useOnce(run: () => Promise<unknown>) {
 }
 
 /** The downloaded app update, when one is ready to apply; null when there is nothing to offer. */
-function useUpdateOrbyn(): (() => Promise<void>) | null {
-  const app = useWorkspace((state) => state.updates.data?.app);
+export function useAppUpdateOrbyn(): (() => Promise<void>) | null {
+  const app = useWorkspace((state) => state.updates?.data?.app);
   if (!app || app.phase !== "ready" || !app.can_apply || !app.release_id) return null;
   const release = app.release_id;
   const operation = app.operation ?? 0;
@@ -47,7 +48,7 @@ const LABELS: Partial<Record<GapAction, string>> = { try_again: "Try again", upd
 
 /** The one live part of a picker row: Try again, Update Orbyn or Sign in again. Nothing else in the row can be pressed. */
 function GapButton({ gap, host }: { gap: Gap; host: HostRow | null }) {
-  const update = useUpdateOrbyn();
+  const update = useAppUpdateOrbyn();
   const action = gap.action;
   const once = useOnce(async () => {
     if (action === "try_again" && host) await engineHostApi().retry(host.id);
@@ -95,6 +96,33 @@ export function useHostLine(engineId: string | null, engineName: string): { line
 }
 
 export interface HostLine { host: HostRow; engineName: string; fallback: boolean }
+
+/** The host states where the SDK path can still run; anything else is not "fine" and gets no quiet switch. */
+const HEALTHY_HOST = new Set<HostState>(["not_started", "starting", "running", "stopped"]);
+
+/**
+ * The one quiet line above the composer when the person chose Claude (CLI) and the engine host is fine: the choice is
+ * theirs and nothing is wrong, so this only offers the way back. It writes the app-only setting for the next message;
+ * there is no notice and no dialog, and it is absent for every other engine and for a host that is down.
+ */
+export function ClaudePathLine({ engineId, instanceOf }: { engineId: string; instanceOf?: string | null }) {
+  const { path, loaded, choose } = useClaudeEnginePath();
+  const host = useHostFor(instanceOf ?? engineId);
+  const [switching, setSwitching] = useState(false);
+  if (!loaded || path !== "cli" || !isClaudeEngine(engineId, instanceOf) || !host || !HEALTHY_HOST.has(host.state)) return null;
+  const switchToSdk = async () => {
+    if (switching) return;
+    setSwitching(true);
+    await choose("sdk");
+    setSwitching(false);
+  };
+  return (
+    <div className="eh-cli-line">
+      <span>Claude (CLI) · </span>
+      <button type="button" className="eh-cli-switch" disabled={switching} onClick={() => void switchToSdk()}>Switch to Claude (SDK)</button>
+    </div>
+  );
+}
 
 /**
  * The red line above the composer after five restarts in five minutes. With a Rust driver Send still works (the run falls back to
