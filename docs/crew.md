@@ -1816,22 +1816,43 @@ unable to run as a worker until it can take a `--session-id`. The core makes `pr
 session. A configuration folder, `projects` or `history.jsonl` that goes through a link, or a start folder whose Claude
 name is not certain (non-ASCII, very long), refuses the worker.
 
-Limits on this, by ruling: a worker on any other engine (an ACP agent; Codex is refused) gets Claude's `projects/` and
+A Codex worker runs inside Orbyn's profile: Codex's own sandbox is turned off (`danger-full-access` on the
+thread and each turn), because a Seatbelt profile cannot start inside another. The saved approval policy is
+unchanged, so Codex's command and file approvals still reach Orbyn's ApprovalGate and the crew write-scope rule.
+Each crew task gets a private Codex home at `<data>/crew/codex-homes/<task id>`, mode 0700, at launch holding only a
+mode-0600 copy of `auth.json` from the real Codex home; no config, history, sessions or SQLite file is copied.
+Its later turns reuse the home, so its own session continues, and the home is removed when the task ends and
+swept at core start when its task is not live. The real Codex home (`CODEX_HOME` or `~/.codex`, plus the
+account's home from the user database when it differs) is closed to the worker. The beta allows this only
+when the login is an API key: a ChatGPT sign-in, or an unknown or malformed auth document, is refused with
+"Codex workers need an API key; your ChatGPT sign-in would be shared with the worker." and no private home is
+made. A separate worker login is post-beta.
+
+Limits on this, by ruling: a worker on any other engine (an ACP agent) gets Claude's `projects/` and
 `history.jsonl` denied with no allowance, so an ACP adapter wrapping Claude Code cannot be a worker for now; auto memory
 is closed to workers, which start without it; a start folder that does not resolve, is non-ASCII or 200 or more characters,
 or a symlinked `~/.claude`, `CLAUDE_CONFIG_DIR` or any folder above it refuses the worker with a plain line. Codex's own
-session files (`~/.codex/sessions`, the SQLite state and logs under `~/.codex`) are not covered, which is acceptable
-only because `CODEX_WORKERS_ALLOWED` is false and stays so until a separate probe is done. A confined Claude worker can create its own `<own id>.jsonl` and `<own id>/` in any existing project folder, not only its own project's, so a session it wrote can appear in another project's resume list. The claim is narrow: the Claude
+saved conversations are covered by the closed real home, and a worker's own home holds only its own task's session;
+other engines' saved conversations are not covered. A confined Claude worker can create its own `<own id>.jsonl` and `<own id>/` in any existing project folder, not only its own project's, so a session it wrote can appear in another project's resume list. The claim is narrow: the Claude
 lead's transcript is denied to confined Claude workers, and nothing is said about other leads.
 
-Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex, terminal
-engines), the Claude transcript denial and tests that run the real tool. Not built: a Windows or Linux restriction,
-and a denial of other engines' saved conversations. Not covered: an ACP agent's or Codex's saved conversations (Codex
-also keeps them in SQLite files), Claude's other per-session files (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do
+Built: the macOS profile, the refusals (other platforms, missing tool, nested restriction, Codex while
+`CODEX_WORKERS_ALLOWED` is false, terminal engines), the Claude transcript denial, and the Codex design behind
+that one constant: nested sandbox off, a private API-key home per task, the real home closed, and tests that run
+the real tool. Not built: a Windows or Linux restriction, and a denial of other engines' saved conversations. Not
+covered: an ACP agent's saved conversations, Claude's other per-session files (`plans/`, which can hold the lead's plan text, `paste-cache/`, `session-env/`, to-do
 lists, file history, debug logs, shell snapshots, `sessions/`), the network, the loopback service, the keychain, `~/.claude.json`, other same-user files
 and processes a worker leaves running. A worker can learn which project folder names exist under `projects` (their metadata may be read), not what is in them. The lead's Claude transcript is closed for a Claude worker; the answer key as a
-whole is not claimed safe. Codex workers are refused until the nested-profile question is answered, and Codex's
-conversation files are a second reason to keep it so.
+whole is not claimed safe. Codex workers stay refused (`CODEX_WORKERS_ALLOWED` is false) until the real-Mac
+probe passes; the design above is built and tested behind that one line.
+
+**Codex probe, macOS (2026-11-22, codex-cli 0.166.0, Mac OS 27.2.1 arm64).** Run by hand:
+`cargo test -p orbyn-core --lib codex_app_server_starts_under_the_profile -- --ignored --nocapture`. Observed: the real
+`codex app-server`, started under the worker profile with only its private `CODEX_HOME`, answers `initialize` and reports
+that private folder as its `codexHome`; the real home and its files are untouched; the sandbox-exec tests show the real home,
+another task's home and the data folder unreadable from inside the profile while the worker's own home is readable and
+writable. **Not observed:** a model turn that runs a command with Codex's own sandbox off (needs an API key and the network),
+so that Codex starts no nested Seatbelt of its own is still unproven, and no Linux or Windows run exists.
 
 ## As built (cancel)
 
