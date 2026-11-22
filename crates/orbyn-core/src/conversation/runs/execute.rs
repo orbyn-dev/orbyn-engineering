@@ -15,6 +15,20 @@ impl RunManager {
         write_scope: WriteScope,
         stops: Stops,
     ) {
+        // A run that asked for a typed result gets Orbyn's fixed instruction after the person's text (M20).
+        let prompt = match self
+            .results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&run_id)
+        {
+            // Only an ordinary message gets the instruction: a slash command or goal action is classified from the
+            // person's own words and must reach the engine as written.
+            Some(request) if matches!(RunKind::parse(&prompt), RunKind::Turn) => {
+                request.instructed(&prompt)
+            }
+            _ => prompt,
+        };
         let lifecycle = thread.lifecycle.clone();
         let driver = self.engines.driver(&thread.engine).ok();
         let saved = lifecycle
@@ -116,6 +130,10 @@ impl RunManager {
             ),
         };
         self.limit_signals().remove(&run_id);
+        self.results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&run_id);
         let closed = self.close_run(&run_id, state, message.as_deref(), sign_in_note.as_ref());
         let completed = closed
             .as_ref()

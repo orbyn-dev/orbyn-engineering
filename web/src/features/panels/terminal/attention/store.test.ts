@@ -87,6 +87,15 @@ describe("applyAttention", () => {
     expect(next.entries.size).toBeLessThanOrEqual(64);
     expect(next.entries.has("a69")).toBe(true);
   });
+  it("a value read from the open-items route is not fresh, and a later clear stops it waiting", () => {
+    const read = applyAttention(state, { seq: 0, ts: "", thread_id: "t1", source: "open", event: { type: "CUSTOM", name: "orbyn.terminal_attention", value: waiting() } });
+    expect(read.fresh).toBeNull();
+    expect([...waitingTerminalIds(read.state.entries, "t1")]).toEqual(["tm1"]);
+    const cleared = applyAttention(read.state, at(4, { v: 1, op: "clear", id: "a1", reason: "input" }));
+    expect(cleared.fresh).toBeNull();
+    expect(cleared.state.entries.get("a1")?.cleared?.reason).toBe("input");
+    expect([...waitingTerminalIds(cleared.state.entries, "t1")]).toEqual([]);
+  });
 });
 
 describe("the store", () => {
