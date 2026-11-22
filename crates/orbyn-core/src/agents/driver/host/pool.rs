@@ -4,6 +4,7 @@
 //! until the person asks again. The idle timeout lives in the connection; the pool only
 //! notices that it ended.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -75,6 +76,9 @@ pub struct Pool {
     /// What the latest finished run failed with. Apart from `inner`, so a run that ends never
     /// waits on a start or a stop.
     last_error: std::sync::Mutex<Option<ErrorKind>>,
+    /// The resumable session of each open run, by engine and thread, for a catalog read
+    /// that can use the live session instead of starting a throwaway agent.
+    sessions: std::sync::Mutex<HashMap<(String, String), String>>,
     shutdown: CancellationToken,
     connections: AtomicU64,
 }
@@ -102,6 +106,7 @@ impl Pool {
                 last_crash: None,
             }),
             last_error: std::sync::Mutex::new(None),
+            sessions: std::sync::Mutex::new(HashMap::new()),
             shutdown: CancellationToken::new(),
             connections: AtomicU64::new(0),
         })
@@ -146,6 +151,45 @@ impl Pool {
             .last_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = error;
+    }
+
+    /// Records the session a run opened, so a catalog read can name it.
+    pub fn note_session(&self, engine: &str, thread: &str, session: &str) {
+        if session.is_empty() {
+            return;
+        }
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.insert((engine.to_owned(), thread.to_owned()), session.to_owned());
+        }
+    }
+
+    /// A run ended: its session is no longer open to name. Only its own session is
+    /// removed, so a newer run on the same thread keeps the one it just recorded.
+    pub fn forget_session(&self, engine: &str, thread: &str, session: Option<&str>) {
+        let Some(session) = session else {
+            return;
+        };
+        if let Ok(mut sessions) = self.sessions.lock() {
+            let key = (engine.to_owned(), thread.to_owned());
+            if sessions.get(&key).is_some_and(|id| id.as_str() == session) {
+                sessions.remove(&key);
+            }
+        }
+    }
+
+    /// One open session of `engine`, when a run on it is still live.
+    pub fn open_session(&self, engine: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .ok()?
+            .iter()
+            .find_map(|((session_engine, _), id)| {
+                if session_engine.as_str() == engine {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
     }
 
     fn set(&self, state: HostState) {
