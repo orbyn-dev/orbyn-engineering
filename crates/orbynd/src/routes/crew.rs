@@ -384,6 +384,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
+        .route("/api/crew/dashboard", get(dashboard))
         .route("/api/crew/background", get(background_list))
         .route("/api/crew/background/{id}", get(background_get))
         .route("/api/crew/background/{id}/runs", get(background_runs))
@@ -468,6 +469,19 @@ fn number(query: &QueryMap, name: &str) -> Result<Option<u32>, CoreError> {
 
 fn page(query: &QueryMap) -> Result<Page, CoreError> {
     Page::new(number(query, "limit")?, number(query, "offset")?)
+}
+
+/// The person's UTC offset in minutes, as the daily digest takes it. Absent means UTC.
+fn offset_minutes(query: &QueryMap) -> Result<i32, CoreError> {
+    query
+        .0
+        .get("utc_offset_minutes")
+        .map(|text| {
+            text.parse::<i32>()
+                .map_err(|_| CoreError::Invalid("utc_offset_minutes is a whole number".into()))
+        })
+        .transpose()
+        .map(|offset| offset.unwrap_or(0))
 }
 
 /// The repository's data classes at the commit a task started in this thread would start from, or at the project's own checkout
@@ -673,6 +687,17 @@ async fn trust(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl
     Ok(Json(state.core.autopilot_trust(
         unix_now(),
         query.0.get("project").map(String::as_str),
+    )?))
+}
+
+/// One repository's dashboard figures over a window: `project`, `days` (30, 60 or 90, 60 by default) and the person's
+/// `utc_offset_minutes`, which the weekly bars count their local Mondays from. Read-only.
+async fn dashboard(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_dashboard(
+        &required(&query, "project")?,
+        number(&query, "days")?,
+        offset_minutes(&query)?,
+        unix_now(),
     )?))
 }
 
