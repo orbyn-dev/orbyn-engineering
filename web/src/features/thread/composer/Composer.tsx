@@ -67,6 +67,8 @@ import { useComposerChips } from "../../../product/state/composerChipStore";
 import { openFenceAt } from "./composerCodeBlock";
 import { ComposerChipShelf, copyChips } from "./ComposerChips";
 import { MAX_PROMPT_CHARS, charactersOver, promptWithChips } from "../../../product/composer/composerContext";
+import { SnapshotCapturingChip } from "../../snapshot";
+import { useComposerSnapshot } from "./useComposerSnapshot";
 
 /** Commands go to the thread's own composer; a side chat's stays out of their way. */
 const useOwnCommand = (side: boolean, command: string, handler: () => boolean | void) =>
@@ -102,6 +104,7 @@ export function Composer({
   const [highlight, setHighlight] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const { attachments, setAttachments, filePicker, uploading, startUpload, upload, cancel } = useAttachments(thread, setError);
+  const { flow: snapshot, removeText: removeSnapshotText } = useComposerSnapshot(thread, setAttachments, setError);
   const { transcripts, boxProps, layer } = useComposerDrop(thread, upload, (mentioned) => {
     setDraft(thread.id, `${draft.trimEnd()}${draft.trim() ? " " : ""}@${mentioned} `);
     field.current?.focus();
@@ -493,8 +496,9 @@ export function Composer({
         />
         {layer}
         {fence ? <CodeBar thread={thread} draft={draft} fence={fence} setDraft={setDraft} /> : null}
+        {snapshot.capturing ? <SnapshotCapturingChip onCancel={snapshot.cancel} /> : null}
         {attachments.length > 0 ? (
-          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} cancel={cancel} />
+          <AttachmentStrip attachments={attachments} setAttachments={setAttachments} startUpload={startUpload} cancel={cancel} onRemoveSnapshotText={removeSnapshotText} />
         ) : null}
         {overBy > 0 ? (
           <p className="composer-over" role="alert">
@@ -551,6 +555,7 @@ export function Composer({
           pickModel={pickModel}
           stop={stop}
           setError={setError}
+          snapshotButton={snapshot.button}
         />
       </div>
       <ComposerContext

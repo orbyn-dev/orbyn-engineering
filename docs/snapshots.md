@@ -1,6 +1,6 @@
 # Snap Shot contract
 
-Capture the window the person is looking at, put it in the composer as a draft image with the app's name and title, and let the person send it. **Planned**: nothing is built (rows H33 and H34 in [parity](parity.md) stay open until the desktop side lands; Eng 1 builds the settings page K49 against a mock of this contract and flips it when the shell answers). Eng 3 owns the shell and service side. A name here changes only if the shell PR says so.
+Capture the window the person is looking at, put it in the composer as a draft image with the app's name and title, and let the person send it. **Planned**: nothing is built (rows H33 and H34 in [parity](parity.md) stay open until the desktop side lands; Eng 1 builds the settings page K49 against a mock of this contract and flips it when the shell answers). The web side (K49 and the draft flow) is built against the mock and flips when the shell answers. Eng 3 owns the shell and service side. A name here changes only if the shell PR says so.
 
 Source: T3 Code at `9168ca73d` (MIT), ideas and field names only, no code copied: `apps/desktop/src/snapShot/` (`DesktopSnapShot.ts`, `MacSnapShot.ts`, `SnapShotAccessibility.ts`), `packages/contracts/src/ipc.ts` (`DesktopSnapShotState`, `DesktopPendingSnapShot`, `DesktopSnapShotEvent`), `chatAttachment.ts` (`SnapShotSource`) and the client settings in `settings.ts`.
 

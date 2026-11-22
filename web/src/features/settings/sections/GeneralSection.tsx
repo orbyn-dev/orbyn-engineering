@@ -11,6 +11,7 @@ import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { DETAIL_ROWS, detailsMenuItems } from "../../../product/ui/details";
 import { DesktopApp } from "./DesktopApp";
+import { SnapshotSettingsSection } from "../../snapshot";
 import { PreferenceGroups } from "../rows/PreferenceRows";
 import { Toggle } from "./parts";
 
@@ -178,6 +179,7 @@ export function GeneralSection() {
         render: (value, save, control) => <BaseDirectory value={value} save={save} disabled={control.disabled} /> },
       ] }]} />
       <DesktopApp />
+      <SnapshotSettingsSection />
       <p className="set-grp">Ask before</p>
       <SettingGroup>
         <Toggle title={settingsLabel("general-unpin-confirmation")} on={confirmUnpin} set={(on) => setPrefs({ confirmUnpin: on })} />

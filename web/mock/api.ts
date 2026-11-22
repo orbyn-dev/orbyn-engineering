@@ -781,6 +781,10 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 200, body: query.get("dry_run") === "true" ? cleanupPreview(Date.now()) : { ...cleanupPreview(Date.now()), dry_run: false } };
       case "GET /api/settings":
         return { status: 200, body: settings };
+      // Where a kept attachment came from (docs/snapshots.md): the service answers for a Local image route.
+      case "PUT /api/attachments":
+        if (seg[3] !== "source") break;
+        return { status: 204 };
       // The editor's save: it writes only over the revision it started from, as the service does.
       case "PUT /api/threads": {
         if (seg[3] !== "files" || seg[4] !== "content") break;
@@ -1192,7 +1196,11 @@ export function createMockApi(options: MockOptions = {}) {
         return { status: 202 };
       }
       if (seg[1] === "threads" && seg[3] === "attachments") {
-        return { status: 201, body: { id: nextId("att"), thread_id: seg[2], name: query.get("name") ?? "file", mime: "", size: 1, created_at: now() } };
+        const name = query.get("name") ?? "file";
+        const snap = /snap shot/i.test(name)
+          ? { source: { kind: "snap_shot", captured_at: now(), app_name: "Safari", window_title: "Acme · Sign in", app_id: "com.apple.Safari", width: 1280, height: 800 } }
+          : {};
+        return { status: 201, body: { id: nextId("att"), thread_id: seg[2], name, mime: "", size: 1, created_at: now(), ...snap } };
       }
       if (seg[1] === "threads" && seg[3] === "runs") {
         const thread = threads.find((t) => t.id === seg[2]);

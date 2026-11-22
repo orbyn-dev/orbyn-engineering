@@ -3,6 +3,7 @@
  * adjustments here describe what JSON actually delivers.
  */
 import type { Approval as ApprovalWire } from "../generated/Approval";
+import type { Attachment } from "../generated/Attachment";
 import type { EngineLimits as EngineLimitsWire } from "../generated/EngineLimits";
 import type { EngineTools as EngineToolsWire } from "../generated/EngineTools";
 import type { EngineUsage as EngineUsageWire } from "../generated/EngineUsage";
@@ -52,6 +53,30 @@ export type { ApplyAllResult } from "../generated/ApplyAllResult";
 export type { Approval } from "../generated/Approval";
 export type { ApprovalState } from "../generated/ApprovalState";
 export type { Attachment } from "../generated/Attachment";
+
+/**
+ * Where an attachment came from (docs/snapshots.md, "What the page sends to the service"). The service adds it to the
+ * Attachment answer; the generated type does not carry it yet, so it is read defensively.
+ */
+export interface AttachmentSource {
+  kind: "snap_shot";
+  captured_at: string;
+  /** At most 255 characters. */
+  app_name: string;
+  /** At most 1000 characters. */
+  window_title: string;
+  /** At most 255 characters. */
+  app_id?: string;
+  /** At most 32,000 characters. */
+  accessible_text?: string;
+  /** Whether the capture carried accessible text, without sending the text in a list. */
+  has_accessible_text?: boolean;
+  width?: number;
+  height?: number;
+  size_bytes?: number;
+}
+
+export type AttachmentWithSource = Attachment & { source?: AttachmentSource };
 export type { AuthState } from "../generated/AuthState";
 export type { CreateThread } from "../generated/CreateThread";
 export type { CustomEngine } from "../generated/CustomEngine";
