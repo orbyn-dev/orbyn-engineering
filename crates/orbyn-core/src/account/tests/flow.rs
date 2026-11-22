@@ -221,6 +221,34 @@ async fn an_unreachable_service_does_not_count_as_a_wrong_code() {
 }
 
 #[tokio::test]
+async fn codes_entered_at_once_share_the_last_try() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "tries-race");
+    let a = &core.account;
+    a.start_sign_up(INVITE, "new@example.com", new_password())
+        .await
+        .unwrap();
+    // One code more than there are tries, every one of them entered before any answer came back.
+    // The try is reserved under the lock that counts them, so the server is asked exactly as many
+    // times as there were tries and the code over the limit never leaves this computer.
+    let tried = tokio::join!(
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+        a.verify_email_code("ZZZZ-ZZZZ"),
+    );
+    for result in [tried.0, tried.1, tried.2, tried.3, tried.4, tried.5] {
+        assert_eq!(code(result.unwrap_err()), "invalid_code");
+    }
+    assert_eq!(
+        core.account.stand_in().code_calls(),
+        u32::from(crate::account::flow::EMAIL_CODE_TRIES)
+    );
+}
+
+#[tokio::test]
 async fn sign_in_answers_one_message_for_wrong_password_and_unknown_email() {
     let dir = TempDir::new();
     let core = dev(&dir, "in");

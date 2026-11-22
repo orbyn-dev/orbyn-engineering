@@ -322,8 +322,17 @@ impl AccountCenter {
         let backend = self.backend()?;
         let code = normalize_email_code(code)
             .ok_or_else(|| invalid("invalid_code", "That code isn't right."))?;
-        if self.inner.lock().await.email_code_wrong >= EMAIL_CODE_TRIES {
-            return Err(invalid("invalid_code", "That code isn't right."));
+        // The try is reserved under the lock that enforces the limit, as a digits entry is
+        // ([`super::AccountCenter::submit_digits`]): two codes entered at once cannot both read a
+        // free try and both spend the last one. A reserve that is refused takes nothing, so a
+        // failed reserve leaves no try behind, and the code below gives a reserved try back only
+        // once and only when the code never left this computer.
+        {
+            let mut inner = self.inner.lock().await;
+            if inner.email_code_wrong >= EMAIL_CODE_TRIES {
+                return Err(invalid("invalid_code", "That code isn't right."));
+            }
+            inner.email_code_wrong = inner.email_code_wrong.saturating_add(1);
         }
         match backend.account.verify_email_code(&code).await {
             Ok(session) => {
@@ -333,9 +342,11 @@ impl AccountCenter {
                 self.established(session, true).await
             }
             Err(error) => {
-                if error == DeviceError::InvalidCode {
+                // A wrong code was counted by the server, and a 5xx or a rate limit reached it, so
+                // those keep the try they reserved: the server's count is the one that applies.
+                if !error.reached_the_server() {
                     let mut inner = self.inner.lock().await;
-                    inner.email_code_wrong = inner.email_code_wrong.saturating_add(1);
+                    inner.email_code_wrong = inner.email_code_wrong.saturating_sub(1);
                 }
                 Err(refusal(&error))
             }

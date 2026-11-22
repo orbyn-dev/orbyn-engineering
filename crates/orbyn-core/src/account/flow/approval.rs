@@ -106,7 +106,15 @@ impl AccountCenter {
                 .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
                 .await);
         }
-        match backend.account.approval_status(&id).await {
+        let status = backend.account.approval_status(&id).await;
+        // The server ended the request on its own clock: it closes here as expired too, rather than
+        // as one a trusted device refused.
+        if let Err(DeviceError::ApprovalExpired) = &status {
+            return Ok(self
+                .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
+                .await);
+        }
+        match status {
             Ok(ApprovalStatus::Waiting) => {}
             Ok(ApprovalStatus::Allowed) => {
                 let mut inner = self.inner.lock().await;
@@ -220,15 +228,44 @@ impl AccountCenter {
             Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {
                 Ok(self.close_approval(&id, AccountApprovalState::Denied).await)
             }
+            // The request's own ten minutes ran out on the server's clock: it ends as expired, not
+            // as one a person or a trusted device ended, so the screen does not say "Denied or
+            // cancelled".
+            Err(DeviceError::ApprovalExpired) => Ok(self
+                .end_request(&backend, &id, serial, AccountApprovalState::TimedOut)
+                .await),
             Err(error) => {
-                // Nothing reached the server, so the try was not used.
-                let mut inner = self.inner.lock().await;
-                if let Some(approval) = inner.approval.as_mut().filter(|a| a.request_id == id) {
-                    approval.spent_tries = approval.spent_tries.saturating_sub(1);
+                // A try is reserved under the lock that enforces the limit, and given back at most
+                // once, by the request that reserved it and only while that request is still open.
+                // An error the server answered keeps the try: a 5xx, a rate limit and a timeout it
+                // may have taken all reached it, and its `tries_left` is the count that applies. Only
+                // an error that never left this computer gives the try back, and a reservation that
+                // was refused took nothing, so a failed reserve leaves no try to give back.
+                if !error.reached_the_server() {
+                    let mut inner = self.inner.lock().await;
+                    if let Some(approval) = inner.approval.as_mut().filter(|approval| {
+                        approval.request_id == id
+                            && approval.serial == serial
+                            && approval.answer.is_none()
+                    }) {
+                        approval.spent_tries = approval.spent_tries.saturating_sub(1);
+                    }
                 }
                 Err(refusal(&error))
             }
         }
+    }
+
+    /// The tries this computer has sent to the server for its own request, so a test can check the
+    /// count the app keeps itself.
+    #[cfg(test)]
+    pub(crate) async fn spent_digit_tries(&self) -> Option<u8> {
+        self.inner
+            .lock()
+            .await
+            .approval
+            .as_ref()
+            .map(|approval| approval.spent_tries)
     }
 
     /// Signs in on an allowed request, under one lock: if the person gave the request up
