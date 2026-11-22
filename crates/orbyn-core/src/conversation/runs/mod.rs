@@ -10,8 +10,9 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use orbyn_contracts::{
-    AgUiEvent, Attachment, EngineTier, ForcedStop, ModelSelection, PermissionMode, QueuedMessage,
-    Run, RunState, SteerDelivery, SteerResult, SteerState, SteerStateEvent, Thread, ThreadGoal,
+    AgUiEvent, Attachment, AttachmentSource, EngineTier, ForcedStop, ModelSelection,
+    PermissionMode, QueuedMessage, Run, RunState, SteerDelivery, SteerResult, SteerState,
+    SteerStateEvent, Thread, ThreadGoal,
 };
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
