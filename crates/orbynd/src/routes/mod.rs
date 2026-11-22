@@ -6,6 +6,7 @@ pub mod account;
 mod agent_mcp;
 mod auth;
 mod automations;
+mod blocks;
 mod checkpoints;
 mod classes;
 mod code_mode;
@@ -152,6 +153,7 @@ pub fn router(state: AppState) -> Router {
         .merge(usage::routes())
         .merge(engines::routes(state.clone()))
         .merge(automations::routes())
+        .merge(blocks::routes())
         .merge(preview::routes())
         .merge(runs::routes(state.clone()))
         .merge(interactions::routes())
