@@ -441,9 +441,10 @@ impl Inner {
     }
 }
 
-/// Appends the redacted part of a block's pending text that is safe to keep. The
-/// last line stays pending until it is complete or the command ends, so a secret
-/// printed across two reads is seen whole; spans that touch the end wait too.
+/// Appends the redacted part of a block's pending text that is safe to keep. Every
+/// complete line goes in at once; a partial last line waits for its newline or the
+/// command's end, so a secret printed across two reads is seen whole. A span that
+/// crosses the commit point, or runs to the pending end, holds that part back too.
 fn flush_pending(block: &mut Block, redactor: &Redactor, force: bool) -> usize {
     if block.pending.is_empty() {
         return 0;
@@ -451,7 +452,11 @@ fn flush_pending(block: &mut Block, redactor: &Redactor, force: bool) -> usize {
     let commit = if force {
         block.pending.len()
     } else {
-        let mut candidate = last_line_start(&block.pending);
+        let mut candidate = if block.pending.ends_with('\n') {
+            block.pending.len()
+        } else {
+            last_line_start(&block.pending)
+        };
         for span in redactor.spans(&block.pending) {
             if span.end == block.pending.len() {
                 candidate = candidate.min(span.start);
@@ -474,15 +479,10 @@ fn flush_pending(block: &mut Block, redactor: &Redactor, force: bool) -> usize {
     redacted.len()
 }
 
-/// Where the last line starts, so it can stay pending for a cross-chunk secret.
-/// A trailing newline still belongs to the line before it.
+/// Where the unfinished last line starts: it stays pending for a cross-chunk
+/// secret, while the complete lines before it can be committed.
 fn last_line_start(text: &str) -> usize {
-    let end = if text.ends_with('\n') {
-        text.len() - 1
-    } else {
-        text.len()
-    };
-    text[..end].rfind('\n').map_or(0, |at| at + 1)
+    text.rfind('\n').map_or(0, |at| at + 1)
 }
 
 /// Drops the top of a block's text at a line boundary when it is over the cap.
@@ -791,6 +791,30 @@ mod tests {
             .unwrap();
         assert!(!output.text.contains(&secret));
         assert!(output.text.contains('\u{2022}'));
+    }
+
+    #[test]
+    fn a_complete_line_is_readable_before_the_running_block_ends() {
+        let blocks = plain();
+        blocks.push(b"\x1b]133;C\x07Compiling...\n");
+        let list = blocks.list(None, 10).unwrap();
+        let block = &list.blocks[0];
+        assert!(block.ended_at.is_none(), "the command is still running");
+        assert_eq!(block.output_bytes, "Compiling...\n".len());
+        let output = blocks.output(&block.id, None, MAX_OUTPUT_BYTES).unwrap();
+        assert_eq!(output.text, "Compiling...\n");
+        assert_eq!(output.total_lines, None);
+
+        blocks.push(b"still compiling");
+        let output = blocks.output(&block.id, None, MAX_OUTPUT_BYTES).unwrap();
+        assert_eq!(
+            output.text, "Compiling...\n",
+            "a partial last line stays out of the block until it ends"
+        );
+
+        blocks.push(b"\n");
+        let output = blocks.output(&block.id, None, MAX_OUTPUT_BYTES).unwrap();
+        assert_eq!(output.text, "Compiling...\nstill compiling\n");
     }
 
     #[test]
