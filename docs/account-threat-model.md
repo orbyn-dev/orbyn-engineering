@@ -192,7 +192,7 @@ An engine that finds `service.json` holds the service token and can call any `/a
 Controls (decision D12 and Engineering 1's answer):
 
 - **Confirm it's you.** Removing a device, signing out every session, turning two-factor off and changing protection
-  each need the password typed again within the last 10 minutes, as account deletion already does. The Engine side is
+  (the last two are **Planned** in this app: it has no route for either yet) each need the password typed again within the last 10 minutes, as account deletion already does. The Engine side is
   orbyn-engine#120 and is needed before real-account sign-in (not for the local end-to-end test). The app asks with a
   "Confirm it's you" password prompt on every platform, and the check is in `orbynd`, not only in the page. Approving
   a device keeps its two-sided digits plus the password. Signing out **this device only** stays open.
@@ -238,6 +238,15 @@ unless the app carries `get-task-allow` or `disable-library-validation`. Control
 - *Release check:* `codesign -d --entitlements - <orbynd>` on the built sidecar must show neither
   `com.apple.security.get-task-allow` nor `com.apple.security.cs.disable-library-validation`, and `codesign -dv` must
   show the `runtime` flag. It runs where the release is verified (parity row P35).
+  **Built as a script:** `scripts/check-macos-entitlements.sh [--release] <App.app>` (tested by
+  `scripts/check-macos-entitlements.test.mjs`) walks every Mach-O in the bundle and fails on anything not listed: the engine
+  host may carry only `allow-jit`, `allow-unsigned-executable-memory` and `disable-library-validation`; every other binary
+  (`orbynd` included) carries none; `get-task-allow` is never allowed; `--release` also requires the `runtime` flag on each.
+  Signing is blocked until there is an Apple Developer ID, so today it can only run against an ad hoc build, where it passes
+  without `--release` and fails with it (an ad hoc build has no hardened runtime). **Known conflict, not fixed yet:**
+  `desktop/src-tauri/tauri.conf.json` sets one `entitlements` file, which Tauri applies to the app and every sidecar, so a
+  release signed that way would give `orbynd` the host's entitlements and fail this check. The release signing step has to sign
+  each binary with its own entitlements; that step is Planned with Developer ID signing.
 - Secrets are zeroed on drop (the Engine's secret types) and held only as long as a call needs.
 - **On Windows memory is as open as Credential Manager**: there is no equivalent of hardened runtime that stops a
   same-user process reading it.
