@@ -686,7 +686,7 @@ button.folder-row:hover {
     grid-template-rows: auto minmax(0, 1fr);
   }
   .settings-side {
-    max-height: 132px;
+    max-height: 140px;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
@@ -695,7 +695,13 @@ button.folder-row:hover {
   }
   .settings-nav {
     flex-direction: row;
+    flex-shrink: 0;
     overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .settings-nav::-webkit-scrollbar {
+    display: none;
   }
   .settings-group-list {
     flex: none;
