@@ -69,6 +69,7 @@ when a manifest or a source file names another one, or when the lock holds more 
     `last_seen`).
   - `status()` is a watch of signed out, signing in, online, `offline { since }` and `paused { reason }`. Live notices
     come over a websocket the client keeps alive and reconnects.
+  - A signed-in session is not restored at startup: a restart signs the person out (the session is only set by sign-up, sign-in and the second factor), so a Pause sync choice does not survive one and a fresh sign-in starts sync again.
   - Errors: `Offline`, `Unauthorized`, `InviteRequired`, `WrongPassword`, `RateLimited { retry_after }`, `Conflict`,
     `TooLarge`, `InvalidKey`, `Server { retryable }`, `InvalidCode`, `DeletionScheduled`, `ProtectionAdvanced` and
     `AccountGone`.
