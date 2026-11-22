@@ -44,12 +44,13 @@ Returns ranked tool paths for a short natural-language query. A path is the tool
 `orbyn_thread_send`. There is no second naming scheme to learn. `detail` says how much comes back per hit:
 the path only, the path with its description, or the path with its TypeScript signature. Ranking is a plain
 term match over name, description and argument names; it needs no model. Hits are filtered to the tools the
-caller may call (see "Who may call what"), so search never leaks a name the caller cannot use.
+caller may call (see "Who may call what"), so search never lists or describes a name the caller cannot use.
 
 ### `orbyn_code_describe`
 
 `{ paths: string[] }` (up to 16). Returns TypeScript declarations for those tools, generated from the tool
-definitions (see "Typed tool API"). An unknown or not-allowed path is listed under `unknown`, not an error.
+definitions (see "Typed tool API"). An unknown or not-allowed path is listed under `unknown`, exactly as the
+caller sent it, not an error: describe never adds a name the caller did not send.
 
 ### `orbyn_code_run`
 
@@ -86,7 +87,9 @@ The reply is one JSON object:
 
 ## What a script sees
 
-One global, `tools`, with one async function per allowed tool, named exactly as on the MCP server:
+One global, `tools`. It is a proxy, not a generated function per allowed tool: any function name can be
+called, and `RunHost` is the only filter. A name the caller may not use is refused when it is called, so a
+script can name a tool it was not shown and still gets the refusal. Names are exactly as on the MCP server:
 
 ```ts
 const status = await tools.orbyn_worktree_status({});
@@ -177,8 +180,8 @@ the audit row.
 
 Calls that are **not** routed through `call_orbyn_tool` today are **not** reachable from a script in this
 version: `crew_*` tools (they have their own dispatch, `crew_tool_text`), `computer_*` (they drive the
-screen), `skill_load`, `approve`, and the three Code Mode tools themselves (no nesting). A later change that
-adds one routes it through its own gate first and updates this list.
+screen), `skill_load`/`skill_search`, `approve`, and the three Code Mode tools themselves (no nesting). A
+later change that adds one routes it through its own gate first and updates this list.
 
 ### Approvals show the script
 
@@ -215,8 +218,16 @@ take minutes to approve. So a run does not live inside the outer call.
 - The outer call's budget is `TOOL_BUDGET`. It is never `GATED_BUDGET`, because an engine that gives up at
   about 60 s would cut a 240 s call and lose the run's reply.
 
-Only the run's own thread may resume it (the run record names the thread). A thread has at most 4 live
-runs and the core 16; a start over the limit is refused with the limit named.
+Only the run's own thread may resume it (the run record names the thread); another thread's id answers as
+lost, live or finished, and never confirms that the id exists. A thread has at most 4 live runs, the core 16,
+and Crew worker runs across all worker threads at most 8, so workers cannot take the lead's last slots.
+A start over a limit is refused with the limit named, and the slot is reserved before the script is prepared
+so concurrent starts cannot exceed it. The thread filter is tested by
+[`crew/tests/code_mode.rs::a_run_is_resumed_by_its_thread_only`](../crates/orbyn-core/src/crew/tests/code_mode.rs);
+the caps and the reservation by
+[`tools/mcp/code/tests.rs::many_concurrent_starts_respect_the_thread_and_core_caps`](../crates/orbyn-core/src/tools/mcp/code/tests.rs)
+and
+[`tools/mcp/code/tests.rs::crew_workers_together_are_capped_and_leave_room_for_the_lead`](../crates/orbyn-core/src/tools/mcp/code/tests.rs).
 
 ### Restart and replay
 
@@ -228,7 +239,9 @@ code: the core then replays the script from the start with the recorded results.
   (the script is not deterministic, or it changed).
 - A call recorded as finished returns its recorded result or error and **runs nothing again**, so a side
   effect is never repeated. A recorded call without a stored full result (over 256 KiB) ends the replay
-  as `lost`.
+  as `lost`. Before a recorded answer is returned the allow list is checked again, so a tightened list
+  refuses the call instead of answering it (tested by
+  [`crew/tests/code_mode.rs::a_replay_rechecks_the_allow_list_before_answering_from_the_record`](../crates/orbyn-core/src/crew/tests/code_mode.rs)).
 - A call that was in flight at the crash and has an effect ends the replay as `lost`: the core cannot know
   whether it happened. A read in flight is run again.
 - Past the last recorded call the script runs live, through the gate as usual.
@@ -256,18 +269,36 @@ The callable set for a run is computed per call, from the binding:
 
 - **Lead and ordinary threads:** the `orbyn_*` tools (the same set `tools/list` shows) except the ones listed under "Not in a script".
 - **Crew worker:** only what `crew::workers::allowed` permits: its preview tabs, worktree and environment
-  tools, and its own attachments. `orbyn_code_search` and `orbyn_code_describe` list only those, so a worker
-  never reads the name of a tool it cannot call. The three Code Mode tools are added to the worker allow
-  list on purpose, one by one in the same change that adds them, with a test per tool. Every inner call is
-  checked again by `refuse_for_crew_worker`, so a script cannot reach past the list by calling a name it
-  was not shown.
+  tools, its own attachments, and the three Code Mode tools. Each of the three is one explicit entry in the
+  list, never a prefix rule. The list is checked when the worker calls the tool and again on every inner call
+  by `refuse_for_crew_worker` inside `call_orbyn_tool`, so a script cannot reach past it by naming a tool it
+  was not shown. `orbyn_code_search` and `orbyn_code_describe` never list or declare a tool the worker may
+  not call, and their descriptions, signatures and declarations never name one (a name found in a string says
+  "another tool"). That is the search-and-describe claim only: `tools/list` is separate, unchanged, and not
+  filtered by the worker allow list, so it still shows a worker names it cannot call. Claim A (per call,
+  including a name never listed) is tested by
+  [`crew/tests/code_mode.rs::a_workers_script_is_held_to_the_allow_list_on_every_call`](../crates/orbyn-core/src/crew/tests/code_mode.rs);
+  claim B (search and describe) by
+  [`crew/tests/code_mode.rs::a_workers_search_lists_only_tools_it_may_call`](../crates/orbyn-core/src/crew/tests/code_mode.rs)
+  and
+  [`crew/tests/code_mode.rs::a_workers_describe_declares_only_tools_it_may_call`](../crates/orbyn-core/src/crew/tests/code_mode.rs).
+  The redaction of nested strings is tested by
+  [`tools/mcp/code/tests.rs::redaction_covers_values_but_not_keys_and_matches_whole_names`](../crates/orbyn-core/src/tools/mcp/code/tests.rs).
+  Nesting and the attachment own-thread scope are covered by
+  [`crew/tests/code_mode.rs::a_workers_script_cannot_nest_code_mode_tools`](../crates/orbyn-core/src/crew/tests/code_mode.rs)
+  and
+  [`crew/tests/code_mode.rs::an_attachment_tool_in_a_workers_script_stays_on_its_own_thread`](../crates/orbyn-core/src/crew/tests/code_mode.rs).
 - **Not in a script, ever:** `approve`, the three Code Mode tools, and anything that reads or answers the
   approval queue as the person.
-- **Not in a script in v1 (a v2 item):** `crew_*`, `computer_*` and `skill_load`. Each needs its own gate
-  path first.
+- **Not in a script in v1 (a v2 item):** `crew_*`, `computer_*`, `skill_load` and `skill_search`. Each
+  needs its own gate path first.
 
-A tool added later is refused to a worker by default, as today, and reaches a script only through the same
-table `tools/list` reads. There is no second list to forget.
+A tool added later is refused to a worker by default; the existing exceptions are the `orbyn_preview_*`
+prefix, the bus tools and `crew_finding`. A worker's direct calls are filtered by `crew::workers::ALLOWED`
+and those exceptions; a script's inner calls are filtered by the host table (`RunHost`) to the same
+`tools/list` tools, then by that worker list on every call. These are two lists, not none: a tool reaches a
+worker only by being named in the worker list, and reaches a script only by being in the host table and
+admitted by the worker list.
 
 ## Typed tool API
 
@@ -294,8 +325,8 @@ declare function orbyn_thread_send(args: {
 - Results are typed `Promise<unknown>` until a tool has an output schema; a tool that gets one returns its
   declared type. The declarations never promise a shape the tool does not return.
 
-A test checks that every tool in `tools/list` has a declaration and that a declaration's required arguments
-match its `inputSchema`, so the two cannot drift.
+A test checks that every Orbyn tool in `tool_specs()` has a declaration and that a declaration's required
+arguments match its `inputSchema`, so the two cannot drift.
 
 ## Error texts
 
@@ -320,19 +351,24 @@ calls with their 4 KiB previews, and a call's full result is fetched on its own.
   server, so their calls pass the same gate. Until then a script reaches only Orbyn's tools.
 - Saving a script as a skill needs the person's approval each time and is not part of the first version.
 
-## Invariants (each has a test)
+## Invariants
 
 1. A script holds no token, path, environment variable or handle; there is no network or file access.
-2. Every inner call passes `refuse_for_crew_worker`, the effect gate and `note_tool`, in that order, as a
-   direct call does. A Crew worker's script cannot call a tool the worker cannot call directly.
+2. An inner call naming a tool outside the script table is refused before anything else. A live inner call
+   in the table is written by `note_tool`, then held to `refuse_for_crew_worker`, then the effect gate, in
+   that order; a direct call is recorded first the same way. A Crew worker's script cannot call a tool the
+   worker cannot call directly.
 3. A refusal is never turned into an allow: a denied inner call throws, and nothing in the run retries it
    behind the person's back.
 4. An approval created by an inner call is answered by the person for that tool and arguments, and its
    decision does not change the rules for the script as a whole.
 5. A limit ends the run as `error: limit`; it never hangs the core, and a dropped outer call never expires a
    held approval.
-6. Replay never repeats a recorded effect.
+6. Replay never repeats a recorded effect, and re-checks the allow list before answering from the record.
 7. A run is readable and resumable only from its own thread.
+
+The tests named in this document cover the worker, replay and search/describe claims; the sandbox crate's
+tests cover the capability limits.
 
 ## Build order
 
@@ -388,7 +424,7 @@ route below answers `404`.
   approval it creates; `call` is the call's index in the run, `script_sha256` the hash of the script that is running. The card reads the
   script and the calls from the run record by `code_run`. No rule, decision or audit row reads it; a script's call asks exactly what a
   direct call asks. The wire type is `ApprovalVia` in `orbyn-contracts`.
-- **Not built.** Cancelling a run, and the worker allow-list entries for the three tools (a worker's call is refused in v1).
+- **Not built.** Cancelling a run.
 
 ## As built: web UI
 
