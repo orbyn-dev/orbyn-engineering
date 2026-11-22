@@ -13,8 +13,10 @@ are `GET /api/devices`, `GET /api/devices/{id}` and `POST /api/devices/{id}/acti
 The list is rebuilt from the tools on every read. A missing tool is a platform
 status (`tool_missing`), never an error for the other platform; a failing or
 timed-out list is `tool_failed` with fixed copy. Device ids are matched as a whole
-against the list from the same call, and only the service's own stored platform id
-reaches argv. One action per device; a second is `device_busy`.
+against the list from the same call, and only the service's own stored tool id
+reaches argv: an Android id is the AVD name, while its tool id is the booted
+emulator serial (`emulator-5554`); an iOS tool id is the simulator UDID. One action
+per device; a second is `device_busy`.
 
 ## Verified and not
 

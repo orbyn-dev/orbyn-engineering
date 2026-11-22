@@ -16,17 +16,18 @@ pub(super) struct Commands {
     pub(super) argv: Vec<Vec<String>>,
 }
 
-/// The only way an action becomes argv. `screenshot_file` is the service's own
-/// temporary path, used by `xcrun simctl io`; it is never client text.
+/// The only way an action becomes argv. `tool_id` is the stored adb serial or
+/// simulator UDID, and `screenshot_file` is the service's own temporary path,
+/// used by `xcrun simctl io`; neither is ever client text.
 pub(super) fn action_commands(
     platform: DevicePlatform,
     action: &DeviceActionInput,
-    platform_id: &str,
+    tool_id: &str,
     screenshot_file: Option<&Path>,
 ) -> Option<Commands> {
     match platform {
-        DevicePlatform::Android => android_commands(action, platform_id),
-        DevicePlatform::Ios => ios_commands(action, platform_id, screenshot_file),
+        DevicePlatform::Android => android_commands(action, tool_id),
+        DevicePlatform::Ios => ios_commands(action, tool_id, screenshot_file),
     }
 }
 

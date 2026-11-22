@@ -66,6 +66,19 @@ pub struct Devices {
     busy: Mutex<HashSet<String>>,
 }
 
+/// One row of the list with the id the platform tool itself uses. Android's wire
+/// id is the AVD name, but `adb -s` needs the booted serial (for example
+/// `emulator-5554`), so the two are kept apart until argv is built.
+struct ListedDevice {
+    device: Device,
+    tool_id: String,
+}
+
+struct Listed {
+    devices: Vec<ListedDevice>,
+    platforms: Vec<PlatformStatus>,
+}
+
 impl Default for Devices {
     fn default() -> Self {
         Self::new()
@@ -83,7 +96,7 @@ impl Devices {
     }
 
     #[cfg(test)]
-    pub(super) fn for_tests(tools: Tools, timeouts: Timeouts, avd_home: Option<PathBuf>) -> Self {
+    fn for_tests(tools: Tools, timeouts: Timeouts, avd_home: Option<PathBuf>) -> Self {
         Self {
             tools,
             timeouts,
@@ -95,6 +108,18 @@ impl Devices {
     /// The list rebuilt from the platform tools. A missing or failing tool is a
     /// platform status, never an error for the other platform or for the route.
     pub async fn list(&self) -> DeviceList {
+        let listed = self.listed().await;
+        DeviceList {
+            devices: listed
+                .devices
+                .into_iter()
+                .map(|listed| listed.device)
+                .collect(),
+            platforms: listed.platforms,
+        }
+    }
+
+    async fn listed(&self) -> Listed {
         let (android, ios) = tokio::join!(self.android_devices(), self.ios_devices());
         let mut devices = Vec::new();
         let mut platforms = Vec::new();
@@ -126,27 +151,27 @@ impl Devices {
                 }),
             }
         }
-        DeviceList { devices, platforms }
+        Listed { devices, platforms }
     }
 
     /// One device and the actions it supports now.
     pub async fn detail(&self, id: &str) -> Result<DeviceDetail> {
         let reference = DeviceRef::parse(id).ok_or_else(device_not_found)?;
-        let list = self.list().await;
-        if let Some(error) = unavailable_error(&list, reference.platform) {
+        let listed = self.listed().await;
+        if let Some(error) = unavailable_error(&listed.platforms, reference.platform) {
             return Err(error);
         }
-        let device = list
+        let ListedDevice { device, .. } = listed
             .devices
             .into_iter()
-            .find(|device| device.id == reference.id)
+            .find(|listed| listed.device.id == reference.id)
             .ok_or_else(device_not_found)?;
         let actions = actions_for(&device);
         Ok(DeviceDetail { device, actions })
     }
 
     /// One action. The device id must be in the list this call builds; the only
-    /// platform id that reaches argv is the one the tool just reported.
+    /// tool id that reaches argv is the adb serial or UDID the tool just reported.
     pub async fn act(&self, id: &str, input: DeviceActionInput) -> Result<DeviceActionOutput> {
         let started = Instant::now();
         let action = input.action_type();
@@ -200,14 +225,14 @@ impl Devices {
         input: &DeviceActionInput,
         exit: &mut Option<i32>,
     ) -> Result<DeviceActionOutput> {
-        let list = self.list().await;
-        if let Some(error) = unavailable_error(&list, reference.platform) {
+        let listed = self.listed().await;
+        if let Some(error) = unavailable_error(&listed.platforms, reference.platform) {
             return Err(error);
         }
-        let device = list
+        let ListedDevice { device, tool_id } = listed
             .devices
             .into_iter()
-            .find(|device| device.id == reference.id)
+            .find(|listed| listed.device.id == reference.id)
             .ok_or_else(device_not_found)?;
         if device.state != DeviceState::Booted {
             return Err(device_not_booted());
@@ -240,14 +265,10 @@ impl Devices {
             DevicePlatform::Ios => self.tools.xcrun.get(),
         }
         .ok_or_else(|| tool_missing(device.platform))?;
-        let platform_id = device
-            .id
-            .split_once(':')
-            .map_or_else(|| device.id.clone(), |(_, raw)| raw.to_owned());
 
         if matches!(input, DeviceActionInput::Screenshot { .. }) {
             let bytes = self
-                .capture_screenshot(&tool, &device, &platform_id, exit)
+                .capture_screenshot(&tool, &device, &tool_id, exit)
                 .await?;
             let image = base64::engine::general_purpose::STANDARD.encode(&bytes);
             let device = self.read_back(reference, &device, false).await?;
@@ -258,7 +279,7 @@ impl Devices {
             });
         }
 
-        let commands = tools::action_commands(device.platform, input, &platform_id, None)
+        let commands = tools::action_commands(device.platform, input, &tool_id, None)
             .ok_or_else(action_unsupported)?;
         self.execute(
             &tool,
@@ -289,16 +310,16 @@ impl Devices {
         before: &Device,
         power_off: bool,
     ) -> Result<Device> {
-        let list = self.list().await;
-        if let Some(error) = unavailable_error(&list, reference.platform) {
+        let listed = self.listed().await;
+        if let Some(error) = unavailable_error(&listed.platforms, reference.platform) {
             return Err(error);
         }
-        if let Some(device) = list
+        if let Some(device) = listed
             .devices
             .into_iter()
-            .find(|device| device.id == reference.id)
+            .find(|listed| listed.device.id == reference.id)
         {
-            return Ok(device);
+            return Ok(device.device);
         }
         if power_off {
             let mut device = before.clone();
@@ -314,14 +335,14 @@ impl Devices {
         &self,
         tool: &Tool,
         device: &Device,
-        platform_id: &str,
+        tool_id: &str,
         exit: &mut Option<i32>,
     ) -> Result<Vec<u8>> {
         if device.platform == DevicePlatform::Android {
             let commands = tools::action_commands(
                 device.platform,
                 &DeviceActionInput::Screenshot {},
-                platform_id,
+                tool_id,
                 None,
             )
             .ok_or_else(action_unsupported)?;
@@ -348,7 +369,7 @@ impl Devices {
         let commands = tools::action_commands(
             device.platform,
             &DeviceActionInput::Screenshot {},
-            platform_id,
+            tool_id,
             Some(&path),
         )
         .ok_or_else(action_unsupported)?;
@@ -434,7 +455,7 @@ impl Devices {
         }
     }
 
-    async fn android_devices(&self) -> std::result::Result<Vec<Device>, PlatformFailure> {
+    async fn android_devices(&self) -> std::result::Result<Vec<ListedDevice>, PlatformFailure> {
         let Some(adb) = self.tools.adb.get() else {
             return Err(PlatformFailure::Missing);
         };
@@ -456,11 +477,11 @@ impl Devices {
         &self,
         adb: &Tool,
         emulator: &Tool,
-    ) -> std::result::Result<Vec<Device>, PlatformFailure> {
+    ) -> std::result::Result<Vec<ListedDevice>, PlatformFailure> {
         let attached = self.required(adb, &["devices"]).await?;
         let listed = self.required(emulator, &["-list-avds"]).await?;
         let avds = parse::avd_names(&listed);
-        let mut devices: Vec<Device> = Vec::new();
+        let mut devices: Vec<ListedDevice> = Vec::new();
         let mut positions: HashMap<String, usize> = HashMap::new();
         for name in avds {
             let id = format!("android:{name}");
@@ -468,15 +489,19 @@ impl Devices {
                 continue;
             }
             positions.insert(name.clone(), devices.len());
-            devices.push(Device {
-                id,
-                name: name.clone(),
-                platform: DevicePlatform::Android,
-                state: DeviceState::Shutdown,
-                version: String::new(),
-                foldable: self.avd_foldable(&name),
-                fold: None,
-                orientation: None,
+            devices.push(ListedDevice {
+                device: Device {
+                    id,
+                    name: name.clone(),
+                    platform: DevicePlatform::Android,
+                    state: DeviceState::Shutdown,
+                    version: String::new(),
+                    foldable: self.avd_foldable(&name),
+                    fold: None,
+                    orientation: None,
+                },
+                // Unused while shutdown; the booted row replaces it with the serial.
+                tool_id: name.clone(),
             });
         }
 
@@ -510,15 +535,18 @@ impl Devices {
                 .await
                 .and_then(|text| parse::surface_orientation(&text));
             let (foldable, fold) = self.android_fold(adb, &serial).await;
-            let device = Device {
-                id,
-                name: name.clone(),
-                platform: DevicePlatform::Android,
-                state: DeviceState::Booted,
-                version,
-                foldable,
-                fold,
-                orientation,
+            let device = ListedDevice {
+                device: Device {
+                    id,
+                    name: name.clone(),
+                    platform: DevicePlatform::Android,
+                    state: DeviceState::Booted,
+                    version,
+                    foldable,
+                    fold,
+                    orientation,
+                },
+                tool_id: serial.clone(),
             };
             if let Some(index) = positions.get(&name).copied() {
                 devices[index] = device;
@@ -562,7 +590,7 @@ impl Devices {
         (true, parse::fold_from_states(&states, current, angle))
     }
 
-    async fn ios_devices(&self) -> std::result::Result<Vec<Device>, PlatformFailure> {
+    async fn ios_devices(&self) -> std::result::Result<Vec<ListedDevice>, PlatformFailure> {
         let Some(xcrun) = self.tools.xcrun.get() else {
             return Err(PlatformFailure::Missing);
         };
@@ -570,7 +598,20 @@ impl Devices {
             let text = self
                 .required(&xcrun, &["simctl", "list", "devices", "--json"])
                 .await?;
-            parse::simctl_devices(&text).ok_or(PlatformFailure::Failed)
+            parse::simctl_devices(&text)
+                .ok_or(PlatformFailure::Failed)
+                .map(|devices| {
+                    devices
+                        .into_iter()
+                        .map(|device| {
+                            let tool_id = device
+                                .id
+                                .split_once(':')
+                                .map_or_else(|| device.id.clone(), |(_, raw)| raw.to_owned());
+                            ListedDevice { device, tool_id }
+                        })
+                        .collect()
+                })
         })
         .await
         {
@@ -755,9 +796,8 @@ fn owned(argv: &[&str]) -> Vec<String> {
     argv.iter().map(|part| (*part).to_owned()).collect()
 }
 
-fn unavailable_error(list: &DeviceList, platform: DevicePlatform) -> Option<CoreError> {
-    let status = list
-        .platforms
+fn unavailable_error(platforms: &[PlatformStatus], platform: DevicePlatform) -> Option<CoreError> {
+    let status = platforms
         .iter()
         .find(|status| status.platform == platform)?;
     if status.available {

@@ -109,7 +109,7 @@ array with `available: false` platforms shows the platform message, not a hidden
 | --- | --- |
 | Argv only | Every platform command is spawned as an argv array. No shell, no `sh -c`, no string interpolation, no `adb shell` with composed strings. |
 | Command allowlist | A fixed table maps each action `type` to its exact `adb`, `emulator` or `xcrun simctl` argv. Anything else is `action_unsupported`. No client text becomes a command name, subcommand or flag. |
-| Device ids | `{id}` is matched, as a whole string, against the list the service itself produced in the same call. Unlisted ids are `device_not_found`, and the client's text is never passed to a command; the service passes its own stored platform id. |
+| Device ids | `{id}` is matched, as a whole string, against the list the service itself produced in the same call. Unlisted ids are `device_not_found`, and the client's text is never passed to a command; the service passes its own stored tool id: the booted AVD's adb serial (`emulator-5554`) for Android, the simulator UDID for iOS. |
 | Values | `angle` is an integer 1 to 179; enums are matched against the fixed sets above; the body is decoded against the typed schema before any process starts. |
 | Timeouts | List: 10 s. Action: 12 s (T3's fold request uses 12 s). Screenshot: 15 s. On timeout the process is killed (whole process group) and the code is `tool_timeout`. |
 | Output caps | Tool stdout and stderr are capped at 1 MiB each, screenshots at 16 MiB. Over the cap: kill and `tool_output_too_large`. |

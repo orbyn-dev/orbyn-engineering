@@ -7,6 +7,7 @@ mod support;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use serde_json::{Value, json};
 use support::{Options, Service, TempDir};
 
@@ -311,7 +312,11 @@ async fn a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image() {
     assert_eq!(answer["ok"], true);
     assert_eq!(answer["device"]["id"], "android:Pixel_8");
     let image = answer["image"].as_str().unwrap().to_owned();
-    assert!(image.starts_with("iVBORw0KGgo"), "{image}");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&image)
+        .expect("the image is base64");
+    let expected = [b"\x89PNG\r\n\x1a\n".as_slice(), PNG_CANARY.as_bytes()].concat();
+    assert_eq!(bytes, expected);
 
     // A refused body that carries a canary must not reach the log either.
     let (status, _) = service

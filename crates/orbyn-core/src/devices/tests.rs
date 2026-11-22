@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
 use orbyn_contracts::{
     DeviceActionInput, DeviceActionType, DeviceButton, DeviceOrientation, DevicePlatform,
     DeviceState, FoldPosture, HingePreset,
@@ -53,6 +54,7 @@ const action = (args) =>
   || (args.includes('input') && args.includes('keyevent'));
 const maybeAction = () => {
   if (!action(args)) return false;
+  write('action_started', process.pid);
   if (read('action_timeout', '0') === '1') {
     write('pid', process.pid);
     sleep(30000);
@@ -222,6 +224,19 @@ impl Fake {
         })
     }
 
+    /// Wait for the fake tool to have entered the first action. The marker is
+    /// written before its delay, so this is not a guess about scheduling.
+    async fn wait_for_action(&self) {
+        let marker = self.dir.path().join("action_started");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the first action never started");
+    }
+
     fn node() -> PathBuf {
         crate::host::process::resolve("node")
             .map(|resolved| resolved.program)
@@ -292,6 +307,24 @@ fn find<'a>(list: &'a DeviceList, id: &str) -> &'a Device {
         .iter()
         .find(|device| device.id == id)
         .unwrap_or_else(|| panic!("{id} is in {:?}", names(list)))
+}
+
+/// The fake tool's PNG for `size` bytes: the magic, then `A`s.
+fn fake_png(size: usize) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    if size > bytes.len() {
+        bytes.resize(size, b'A');
+    }
+    bytes
+}
+
+fn call_args(call: &Value) -> Vec<&str> {
+    call["args"]
+        .as_array()
+        .expect("the fake tool logs an argv array")
+        .iter()
+        .map(|arg| arg.as_str().expect("argv entries are strings"))
+        .collect()
 }
 
 // Parsers.
@@ -760,8 +793,20 @@ async fn screenshot_answers_base64_png_and_reads_the_device_back() {
         output.device.orientation,
         Some(DeviceOrientation::LandscapeLeft)
     );
-    assert!(output.image.unwrap().starts_with("iVBORw0KGgo"));
-    assert!(fake.called("adb", "exec-out"));
+    let image = output.image.expect("a screenshot answers an image");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&image)
+        .expect("the image is base64");
+    assert_eq!(bytes, fake_png(64));
+    let call = fake
+        .calls()
+        .into_iter()
+        .find(|call| call_args(call).ends_with(&["exec-out", "screencap", "-p"]))
+        .expect("the screenshot command ran");
+    assert_eq!(
+        call_args(&call),
+        ["-s", "emulator-5554", "exec-out", "screencap", "-p"]
+    );
 }
 
 #[tokio::test]
@@ -922,10 +967,10 @@ async fn hinge_presets_use_their_fixed_values() {
     let fake = Fake::new();
     fake.set("android_mode", "foldable");
     let devices = fake.devices();
-    for (preset, command) in [
-        (HingePreset::Closed, "fold"),
-        (HingePreset::HalfOpen, "hinge-angle0"),
-        (HingePreset::Open, "unfold"),
+    for preset in [
+        HingePreset::Closed,
+        HingePreset::HalfOpen,
+        HingePreset::Open,
     ] {
         fake.clear_calls();
         devices
@@ -935,14 +980,40 @@ async fn hinge_presets_use_their_fixed_values() {
             )
             .await
             .unwrap();
-        assert!(fake.called("adb", command), "{preset:?} -> {command}");
-        if preset == HingePreset::HalfOpen {
-            let call = fake
-                .calls()
-                .into_iter()
-                .find(|call| call["args"].to_string().contains("hinge-angle0"))
-                .unwrap();
-            assert!(call["args"].to_string().contains("130"));
+        match preset {
+            HingePreset::Closed => assert!(
+                fake.calls()
+                    .iter()
+                    .any(|call| call_args(call).ends_with(&["emu", "fold"])),
+                "closed sends fold"
+            ),
+            HingePreset::HalfOpen => {
+                let call = fake
+                    .calls()
+                    .into_iter()
+                    .find(|call| {
+                        call_args(call).ends_with(&["emu", "sensor", "set", "hinge-angle0", "130"])
+                    })
+                    .expect("half_open sends the fixed 130");
+                assert_eq!(
+                    call_args(&call),
+                    [
+                        "-s",
+                        "emulator-5554",
+                        "emu",
+                        "sensor",
+                        "set",
+                        "hinge-angle0",
+                        "130"
+                    ]
+                );
+            }
+            HingePreset::Open => assert!(
+                fake.calls()
+                    .iter()
+                    .any(|call| call_args(call).ends_with(&["emu", "unfold"])),
+                "open sends unfold"
+            ),
         }
     }
 }
@@ -1116,14 +1187,7 @@ async fn a_second_action_on_one_device_is_device_busy() {
                 .await
         })
     };
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while !fake.called("adb", "KEYCODE_HOME") {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the first action never started"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    fake.wait_for_action().await;
     let error = devices
         .act(
             "android:Pixel_8",
@@ -1281,8 +1345,26 @@ async fn ios_screenshot_writes_a_temporary_file_and_answers_png() {
         .act("ios:UDID-1", DeviceActionInput::Screenshot {})
         .await
         .unwrap();
-    assert!(output.image.unwrap().starts_with("iVBORw0KGgo"));
-    assert!(fake.called("xcrun", "--type=png"));
+    let image = output.image.expect("a screenshot answers an image");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&image)
+        .expect("the image is base64");
+    assert_eq!(bytes, fake_png(64));
+    let call = fake
+        .calls()
+        .into_iter()
+        .find(|call| {
+            let args = call_args(call);
+            args.starts_with(&["simctl", "io", "UDID-1", "screenshot", "--type=png"])
+        })
+        .expect("the screenshot command ran");
+    let args = call_args(&call);
+    assert_eq!(
+        &args[..5],
+        ["simctl", "io", "UDID-1", "screenshot", "--type=png"]
+    );
+    assert_eq!(args.len(), 6);
+    assert!(args[5].ends_with(".png"));
 }
 
 #[test]
