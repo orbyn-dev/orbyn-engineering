@@ -5,9 +5,10 @@ import { Button, IconButton } from "../../../ui/controls";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { CommentForm, CommentList, type LineSelection } from "../files/FileComments";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
+import { editorPlatform } from "./editorPlatform";
 import { endingLabel, endingsOf, toLF, findMatches, indentOf, languageOf, lineCount, lineStart } from "./editorModel";
 
-const isMac = () => /mac/i.test(navigator.platform || navigator.userAgent);
+const isMac = () => /mac/i.test(editorPlatform());
 
 export type Standing = "saved" | "unsaved" | "read-only";
 
@@ -141,10 +142,10 @@ export function EditorSurface({
         ))}
         <b title={path}>{name}</b>
         <span className="ed-sp" />
-        <IconButton label={`Find ${formatShortcut("mod+f")}`} pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
+        <IconButton label={`Find ${formatShortcut("mod+f", editorPlatform())}`} pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
           <Search size={14} aria-hidden />
         </IconButton>
-        <IconButton label={`Go to line ${formatShortcut("mod+g")}`} pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
+        <IconButton label={`Go to line ${formatShortcut("mod+g", editorPlatform())}`} pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
           <Hash size={14} aria-hidden />
         </IconButton>
       </div>

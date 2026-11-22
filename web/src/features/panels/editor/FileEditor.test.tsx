@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Viewer } from "../files/FileViewer";
 import { EditorTitleExtras } from "./EditorTitleExtras";
+import { EditorLoading } from "./EditorShell";
 import { SaveChangesDialog } from "./SaveChangesDialog";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { fileTabId, useUi } from "../../../product/state/ui";
@@ -67,6 +68,26 @@ it.each([
   await editor();
   expect(screen.getByRole("button", { name: `Find ${find}` })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: `Go to line ${goToLine}` })).toBeInTheDocument();
+});
+
+it("uses the Mac user agent when platform is empty for labels and keyboard handling", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  serve();
+  open();
+  const box = await editor();
+  expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeInTheDocument();
+  fireEvent.keyDown(box, { key: "f", metaKey: true });
+  expect(await screen.findByRole("textbox", { name: "Find in file" })).toBeInTheDocument();
+});
+
+it("uses the Mac user agent for loading-shell labels when platform is empty", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  render(<EditorLoading path="auth/redirect.ts" />);
+  expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeInTheDocument();
 });
 
 it("opens a text file as an editor: crumb, text, cursor, language, and Saved (editor-default)", async () => {
