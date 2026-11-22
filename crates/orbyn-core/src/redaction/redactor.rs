@@ -13,6 +13,7 @@ use super::custom;
 /// The class a person's own pattern reports.
 const CUSTOM_CLASS: &str = "custom pattern";
 
+#[derive(Clone)]
 struct Detector {
     label: String,
     class: &'static str,
@@ -39,6 +40,8 @@ pub struct Custom<'a> {
 #[derive(Default)]
 pub struct Redactor {
     detectors: Vec<Detector>,
+    /// Says in one pass which detectors can match, so the ones that cannot skip their own pass.
+    prefilter: super::prefilter::Prefilter,
 }
 
 /// The start of what `Redactor::labelled` writes in place of a hidden value.
@@ -106,7 +109,18 @@ impl Redactor {
                 env_only: pattern.applies_to == PatternScope::EnvironmentValues,
             });
         }
-        Redactor { detectors }
+        // The same patterns, in one set, so a text costs one pass before the detectors that can
+        // match it run. A set that cannot be compiled leaves every detector to run its own pass.
+        let prefilter = super::prefilter::Prefilter::new(
+            detectors
+                .iter()
+                .enumerate()
+                .map(|(at, detector)| (at, detector.regex.as_str(), detector.env_only)),
+        );
+        Redactor {
+            detectors,
+            prefilter,
+        }
     }
 
     /// Only the given patterns, no recognised format: to try one pattern on its own.
@@ -118,6 +132,22 @@ impl Redactor {
     /// Nothing is hidden by this set.
     pub fn is_empty(&self) -> bool {
         self.detectors.is_empty()
+    }
+
+    /// The same set with no one-pass filter: every detector runs its own pass. A test uses it to
+    /// prove the filter changes no output.
+    #[cfg(test)]
+    pub(crate) fn unfiltered(&self) -> Redactor {
+        Redactor {
+            detectors: self.detectors.clone(),
+            prefilter: self.prefilter.uncompiled(),
+        }
+    }
+
+    /// The one-pass filter, for the tests that prove it changes no output.
+    #[cfg(test)]
+    pub(crate) fn prefilter(&self) -> &super::prefilter::Prefilter {
+        &self.prefilter
     }
 
     /// The class of the first detector that matches `text`, if any. Never the match.
@@ -159,39 +189,44 @@ impl Redactor {
                 }
             }
         };
-        for (index, detector) in self.detectors.iter().enumerate() {
-            if detector.env_only {
-                // An assignment sits on one line: read from the line that holds `start`.
-                let line = hay[..start].rfind('\n').map_or(0, |at| at + 1);
-                for values in assignments().captures_iter(&hay[line..]) {
-                    let Some(value) = values.get(1) else { continue };
-                    let base = line + value.start();
-                    for hit in detector.regex.find_iter(value.as_str()) {
+        // The values of the assignments once, for every pattern that reads only a value: the
+        // assignment pattern used to run again for each of them.
+        if self.prefilter.reads_values() {
+            // An assignment sits on one line: read from the line that holds `start`.
+            let line = hay[..start].rfind('\n').map_or(0, |at| at + 1);
+            for values in assignments().captures_iter(&hay[line..]) {
+                let Some(value) = values.get(1) else { continue };
+                let base = line + value.start();
+                for index in self.prefilter.values(value.as_str()) {
+                    for hit in self.detectors[index].regex.find_iter(value.as_str()) {
                         keep(index, base + hit.start(), base + hit.end());
                     }
                 }
-            } else {
-                let mut at = start;
-                while at <= hay.len() {
-                    let Some(hit) = detector.regex.find_at(hay, at) else {
-                        break;
-                    };
-                    keep(index, hit.start(), hit.end());
-                    at = if hit.end() > hit.start() {
-                        hit.end()
-                    } else {
-                        hay[hit.end()..]
-                            .chars()
-                            .next()
-                            .map_or(hay.len() + 1, |c| hit.end() + c.len_utf8())
-                    };
-                }
+            }
+        }
+        // The text itself: the set names in one pass the detectors that can match it, and only
+        // those run their own pass. The rest would find nothing.
+        for index in self.prefilter.anywhere(hay) {
+            let mut at = start;
+            while at <= hay.len() {
+                let Some(hit) = self.detectors[index].regex.find_at(hay, at) else {
+                    break;
+                };
+                keep(index, hit.start(), hit.end());
+                at = if hit.end() > hit.start() {
+                    hit.end()
+                } else {
+                    hay[hit.end()..]
+                        .chars()
+                        .next()
+                        .map_or(hay.len() + 1, |c| hit.end() + c.len_utf8())
+                };
             }
         }
     }
 
-    /// The stretches to hide: empty matches dropped, overlaps merged under the first detector that
-    /// found them.
+    /// The stretches to hide: empty matches dropped, overlaps merged under the lowest-numbered
+    /// detector that found them (in detector order, whatever order the passes ran in).
     ///
     /// Text over `MAX_APPLY_BYTES` is read in windows of that size, each seeing the text before it.
     /// The next window starts `WINDOW_OVERLAP` (64 KiB) before the end of the last, or at the start
@@ -220,7 +255,12 @@ impl Redactor {
             // A match as long as the window itself is cut here; its rest is found from this point on.
             start = if next > start { next } else { end };
         }
-        found.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+        found.sort_by(|a, b| {
+            a.start
+                .cmp(&b.start)
+                .then(b.end.cmp(&a.end))
+                .then(a.detector.cmp(&b.detector))
+        });
         let mut merged: Vec<Span> = Vec::new();
         for span in found {
             match merged.last_mut() {
