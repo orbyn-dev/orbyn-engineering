@@ -48,31 +48,24 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// must revalidate them; otherwise a new shell would never reach a stale tab.
 const REVALIDATE: &str = "no-cache";
 
-/// Vite writes build output as `assets/<name>-<hash>.<ext>`; only a hashed name
-/// under `assets/` is safe to pin, because anything else can change in place.
+/// Vite writes every chunk and asset into `assets/` with its content hash in the
+/// name, and copies unhashed `public/` files to the root, so the build-output
+/// directory is the contract: a file under it cannot change under that URL.
+///
+/// The name cannot be matched instead of the directory: hashes use the base64url
+/// alphabet, so they contain `-` themselves (`amphora-DCKmTK--.js`,
+/// `align-horizontal-justify-center-CW-XBPgq.js`), and no suffix rule separates
+/// the hash from the name it follows.
 fn cache_control(relative: &Path) -> &'static str {
-    let under_assets = relative
+    let is_build_output = relative
         .components()
         .next()
         .is_some_and(|part| part.as_os_str() == "assets");
-    let hashed = relative
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .and_then(|stem| stem.rsplit_once('-'))
-        .is_some_and(|(_, token)| is_content_hash(token));
-    if under_assets && hashed {
+    if is_build_output {
         IMMUTABLE
     } else {
         REVALIDATE
     }
-}
-
-/// Vite's default content hash is eight base64url characters; it may be longer.
-fn is_content_hash(token: &str) -> bool {
-    (8..=32).contains(&token.len())
-        && token.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        })
 }
 
 fn percent_decode(text: &str) -> Option<String> {
@@ -161,12 +154,17 @@ mod tests {
     }
 
     #[test]
-    fn only_hashed_build_output_is_cached_forever() {
+    fn build_output_is_cached_forever() {
         for pinned in [
-            "assets/index-B4xQ1k9t.js",
-            "assets/index-B4xQ1k9t.css",
+            // The 8-character hashes this build writes.
+            "assets/index-3hrPZ_u3.js",
+            "assets/elk-XV6XMXQE-BHy9YIXy.js",
+            // A 7-character hash, which a fixed-length rule would miss.
+            "assets/index--td0G00Q.css",
+            // Hashes that contain `-` themselves, which no suffix rule can split.
+            "assets/amphora-DCKmTK--.js",
+            "assets/align-horizontal-justify-center-CW-XBPgq.js",
             "assets/fonts/inter-B4xQ1k9t.woff2",
-            "assets/logo_2-a1b2c3d4.svg",
         ] {
             assert_eq!(cache_control(Path::new(pinned)), IMMUTABLE, "{pinned}");
         }
@@ -175,20 +173,14 @@ mod tests {
     #[test]
     fn anything_that_can_change_in_place_must_revalidate() {
         for revalidated in [
-            // No content hash: the name survives a deploy, so the body may change.
-            "assets/app.js",
-            "assets/index-main.js",
-            "assets/style.css",
             // The shell points at the current hashes and must never be reused.
             "index.html",
             "favicon.ico",
-            // A hash is only trustworthy inside the build-output directory.
+            "manifest.webmanifest",
+            // A hash outside the build-output directory proves nothing.
             "index-B4xQ1k9t.js",
             "assets-B4xQ1k9t/index.js",
-            // Too short or not a base64url token, so it is a name, not a hash.
-            "assets/chunk-abc.js",
-            "assets/chunk-abcdefghijklmnopqrstuvwxyz0123456.js",
-            "assets/chunk-abc.def.gh.js",
+            "assetsx/app-2.js",
         ] {
             assert_eq!(
                 cache_control(Path::new(revalidated)),

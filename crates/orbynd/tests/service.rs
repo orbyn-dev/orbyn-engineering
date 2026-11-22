@@ -933,16 +933,16 @@ async fn static_ui_has_csp_and_spa_fallback() {
 }
 
 #[tokio::test]
-async fn static_assets_cache_by_content_hash_and_never_pin_the_shell() {
+async fn static_build_output_is_pinned_and_the_shell_revalidates() {
     const IMMUTABLE: &str = "public, max-age=31536000, immutable";
     const REVALIDATE: &str = "no-cache";
     let dir = TempDir::new();
     let ui = dir.path().join("ui");
     write(&ui.join("index.html"), "<!doctype html><title>app</title>");
-    write(&ui.join("assets/index-B4xQ1k9t.js"), "console.log(1)");
-    write(&ui.join("assets/index-B4xQ1k9t.css"), "body{color:red}");
-    // No content hash in the name, so the body may change under the same URL.
-    write(&ui.join("assets/app.js"), "console.log(2)");
+    write(&ui.join("assets/index-3hrPZ_u3.js"), "console.log(1)");
+    // Real build names: a 7-character hash, and hashes that contain `-`.
+    write(&ui.join("assets/index--td0G00Q.css"), "body{color:red}");
+    write(&ui.join("assets/amphora-DCKmTK--.js"), "console.log(2)");
     write(&ui.join("favicon.ico"), "icon");
     let service = Service::start(
         &dir.path().join("data"),
@@ -952,14 +952,22 @@ async fn static_assets_cache_by_content_hash_and_never_pin_the_shell() {
         },
     );
     let client = reqwest::Client::new();
+    let cache_control = |response: &reqwest::Response| {
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
     for (path, pinned) in [
-        ("/assets/index-B4xQ1k9t.js", true),
-        ("/assets/index-B4xQ1k9t.css", true),
-        ("/assets/app.js", false),
+        ("/assets/index-3hrPZ_u3.js", true),
+        ("/assets/index--td0G00Q.css", true),
+        ("/assets/amphora-DCKmTK--.js", true),
         ("/", false),
         ("/threads/abc", false),
         ("/favicon.ico", false),
     ] {
+        let expected = if pinned { IMMUTABLE } else { REVALIDATE };
         let response = client
             .get(format!("{}{path}", service.url))
             .send()
@@ -967,10 +975,18 @@ async fn static_assets_cache_by_content_hash_and_never_pin_the_shell() {
             .unwrap();
         assert_eq!(response.status(), 200, "{path}");
         assert_eq!(
-            response.headers()["cache-control"],
-            if pinned { IMMUTABLE } else { REVALIDATE },
+            cache_control(&response).as_deref(),
+            Some(expected),
             "{path}"
         );
+        // The shell must never be pinned, or a deploy could not reach a stale tab.
+        if !pinned {
+            assert_ne!(
+                cache_control(&response).as_deref(),
+                Some(IMMUTABLE),
+                "{path}"
+            );
+        }
         // HEAD carries the same policy, since a browser may probe before a GET.
         let head = client
             .head(format!("{}{path}", service.url))
@@ -978,8 +994,8 @@ async fn static_assets_cache_by_content_hash_and_never_pin_the_shell() {
             .await
             .unwrap();
         assert_eq!(
-            head.headers()["cache-control"],
-            if pinned { IMMUTABLE } else { REVALIDATE },
+            cache_control(&head).as_deref(),
+            Some(expected),
             "HEAD {path}"
         );
     }
@@ -990,13 +1006,7 @@ async fn static_assets_cache_by_content_hash_and_never_pin_the_shell() {
         .send()
         .await
         .unwrap();
-    assert_ne!(
-        missing
-            .headers()
-            .get("cache-control")
-            .and_then(|value| value.to_str().ok()),
-        Some(IMMUTABLE)
-    );
+    assert_ne!(cache_control(&missing).as_deref(), Some(IMMUTABLE));
 }
 
 #[tokio::test]
