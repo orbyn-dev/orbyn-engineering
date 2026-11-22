@@ -163,7 +163,7 @@ describe("the shortcut recorder", () => {
     expect(screen.getByRole("button", { name: "Both Shift keys" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Modifier pair" })).toBeDisabled();
     expect(screen.getAllByText("Planned").length).toBeGreaterThan(0);
-    expect(screen.getByText("Both Shift keys, or one modifier pair. Planned, after the beta.")).toBeVisible();
+    expect(screen.getByText("Both Shift keys, or one modifier pair. Planned.")).toBeVisible();
   });
 });
 

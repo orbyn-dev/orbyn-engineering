@@ -118,6 +118,8 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
   };
   const install = useInstallView(engine);
   const failed = install.shown !== null && !install.shown.ok;
+  // The service's own sentence for a failed or signed-out start already says what happened: it is shown alone, not after the path.
+  const issue = engine.start_issue?.message ? engine.start_issue.message.slice(0, 300) : null;
   const signIn = engine.sign_in_command && (engine.auth === "logged_out" || engine.tier === "acp");
   return (
     <>
@@ -126,8 +128,8 @@ export function ProviderDetail({ engine, store, onBack, onEdit }: {
         <h2 className="set-back-title">{engine.name}</h2>
         {instance && !opencode ? <Button small className="set-back-end" onClick={onEdit}>Edit</Button> : null}
       </div>
-      {engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
-        {engine.path ? `Couldn’t run ${engine.path}. ` : ""}{engine.problem}
+      {issue || engine.problem ? <SettingsBanner tone="err" actions={<Button small busy={checking} onClick={() => void recheck()}>Check again</Button>}>
+        {issue ?? `${engine.path ? `Couldn’t run ${engine.path}. ` : ""}${engine.problem}`}
       </SettingsBanner> : null}
       <EngineHostBanner engineId={engine.id} />
       {failure ? <p className="field-error" role="alert">{failure}</p> : null}

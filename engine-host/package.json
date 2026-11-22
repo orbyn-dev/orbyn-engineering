@@ -9,7 +9,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "build:sea": "node scripts/build-sea.mjs"
+    "build:sea": "node scripts/build-sea.mjs",
+    "prepare:sdks": "node scripts/prepare-sdks.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

@@ -389,6 +389,35 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// One project's merges merged at or after `since_unix`, oldest first.
+    ///
+    /// Bounded in SQL rather than filtered afterwards, so a long-lived repository does not hand
+    /// back its whole merge history for a thirty-day answer.
+    pub fn crew_merges_of_project_since(
+        &self,
+        project_id: &str,
+        since_unix: i64,
+    ) -> Result<Vec<MergeRecord>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT m.* FROM crew_merges m
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE t.project_id = ?1 AND m.merged_unix >= ?2 ORDER BY m.id",
+        )?;
+        Ok(statement
+            .query_map((project_id, since_unix), merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Makes the dashboard's window query fail, as a damaged table would. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn break_crew_dashboard_for_test(&self) {
+        self.writer()
+            .execute_batch("ALTER TABLE crew_runs RENAME TO crew_runs_broken")
+            .unwrap();
+    }
+
     /// One page of merges, newest first, and the number of merges in all.
     pub fn crew_merges_page(&self, limit: u32, offset: u32) -> Result<(Vec<MergeRecord>, u32)> {
         let conn = self.reader();
