@@ -362,7 +362,7 @@ One shape everywhere an error crosses the wire:
 ## Host status (core to UI)
 
 Not a host frame: this is what the core's `GET /api/engine-host` route returns (Local read), one entry per family. The contract is
-`crates/orbyn-contracts/src/engine_host.rs` with the generated `EngineHost*.ts` in `web/src/generated` (HostDriver slices 1 and 2: #941, merged, and this change). The host sends none of these fields; the core builds them from the host's `hello`, its own restart
+`crates/orbyn-contracts/src/engine_host.rs` with the generated `EngineHost*.ts` in `web/src/generated` (HostDriver slices 1 and 2: #941, merged; slice 3 is this change). The host sends none of these fields; the core builds them from the host's `hello`, its own restart
 bookkeeping and its own checks. No entry carries an environment, arguments, a key, a path, a token or a stack.
 
 **Slice 1 (the contract above).** `EngineHostStatus`:
@@ -396,8 +396,25 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
 - **Spawn secret.** A host's spawn environment gets an engine's key only from `Core::engine_spawn_secret(engine)`, which honours the person's per-engine opt-in. The key goes
   in the child's environment and nowhere else: not argv, not a frame, not a log line or an error. No key and no core bound yet mean no key.
 
+**Slice 3 (built).** Optional and ignorable, no host frame and no protocol bump; the pool already holds these:
+
+- `since?`: RFC 3339 time the live host started running, from the moment the pool adopted it. Absent while no host is live.
+- `sdk?`: `{name, version}` from the live host's `hello`. Absent unless the hello names both halves, and while no host is live.
+- `capabilities?`: the request names the live host's `hello` lists. Absent while no host is live; an empty list is a host that lists none.
+- `pooled?`: true, because one host process serves every thread of the family. Absent on a `not_used` family, which has no pool.
+- `restart?`: while the state is `restarting`, `{attempt, limit, next_try_seconds}`. `attempt` is the restart being waited for, `limit` is the pool's `max_restarts` (five by
+  default), and `next_try_seconds` counts to the next try (at least 1). Absent in every other state.
+- `stops_in_window?`: for a `cant_start` family, the restarts inside the pool's restart window: the count that reaches the five-in-five rule. Absent in every other state.
+- `has_driver?`: true when the family's host wraps a Rust driver, so a run has another path. Claude is wrapped today; Cursor is when its flag is on. Absent when nothing is
+  wrapped.
+- `sdk_missing?`: true when the host answered a run with its fixed sentence that the family's SDK is not available in this build. The pool keeps it until a later turn gets
+  past the SDK load, which clears it. It is the only SDK-availability source the core has: it does not read the SDK folder, so a build whose folder is empty but where no run
+  has tried yet shows no flag. That build-time check remains Planned.
+
 **Planned (not built).** Names are proposals:
 
+- A build-time SDK-availability check, so `sdk_missing` can be true before the first refused run. The core has no resource path today, which is why slice 3 reads only the
+  host's answer.
 - `threads[].state` of `starting`, `restarting` and `unavailable`, and `threads[].last_error` (`{kind?, message}`, only for `unavailable`), so the UI can show a thread
   whose host is coming up or gone. A pooled host (Cursor) lists every thread it serves.
 - `signin?`: `"signed_in" | "signed_out" | "unknown" | "key_in_keychain"` per engine. A state word only: `key_in_keychain` means an API key is saved in the OS
@@ -406,7 +423,7 @@ bookkeeping and its own checks. No entry carries an environment, arguments, a ke
   `unsupported_platform`) covers `flag_off`; the host driver does not fall back to the CLI when a host is `cant_start` (the run is refused), so `unavailable` would be
   untrue today, and a build with no host has no entry to attach `not_installed` to.
 
-The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). The `HostRow` fields for the Planned items above, and for stop, restart and retry, are filled only by the dev mock: the real client leaves them empty, and the screens draw nothing for them (no Stop, Restart or Try again button until the Person routes of slice 2 exist).
+The web client reads this route with the generated types (`web/src/features/enginehost/hostStatus.ts`; a 404 means nothing is reported) and turns each entry into the `HostRow` the Settings screens draw (`contract.ts`). Slice 3's fields are mapped from the service. `running_threads` and `failed_threads` are still mock-only guesses; the screens draw a field only when the service sends it.
 
 ## Crash and recovery
 
