@@ -497,7 +497,10 @@ fn the_engines_errors_become_the_apps_with_nothing_attached() {
         ),
         (dc::DeviceError::LoginFailed, DeviceError::WrongPassword),
         (dc::DeviceError::StoreNotEmpty, DeviceError::AlreadySignedIn),
-        (dc::DeviceError::ApprovalExpired, DeviceError::ApprovalExpired),
+        (
+            dc::DeviceError::ApprovalExpired,
+            DeviceError::ApprovalExpired,
+        ),
         (
             dc::DeviceError::ApprovalMismatch,
             DeviceError::ApprovalRefused,

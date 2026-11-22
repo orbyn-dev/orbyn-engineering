@@ -37,7 +37,7 @@ use super::api::{
     PendingApproval, SessionInfo, SignInOutcome,
 };
 use super::device_api::DeviceError;
-use super::digits::{self, Check, Issued};
+use super::digits::{Check, Issued};
 use super::fake::FakeDeviceApi;
 
 pub const INVITE: &str = "K7QM2XWH9QXA3C2D";
@@ -293,7 +293,7 @@ impl DevAccount {
             && let Some(old) = mine.issued.take()
         {
             let digits = old.shown().map(str::to_owned).unwrap_or_default();
-            mine.issued = Some(Issued::new(digits, digits::LIFETIME));
+            mine.issued = Some(Issued::new(digits, super::digits::LIFETIME));
         }
     }
 
