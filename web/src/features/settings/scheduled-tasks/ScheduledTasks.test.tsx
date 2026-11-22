@@ -271,6 +271,20 @@ it("leaves the skills library and scratch projects out of the Project list, as e
   );
 });
 
+it("keeps an edited task's own project, and Save, even when that project is not in the list", async () => {
+  const hidden: Project = { ...fixtures.projects[0]!, id: "p-app", name: "Skills library", library: true };
+  useWorkspace.setState({
+    projects: { data: [hidden, ...fixtures.projects.slice(1).filter((entry) => entry.id !== "p-app")], error: null, loading: false },
+    engines: { data: fixtures.engines, error: null, loading: false },
+  });
+  window.location.hash = "#/settings/tasks?task=task-review&edit=1";
+  installMockFetch();
+  render(<ScheduledTasksSection />);
+  const dialog = await screen.findByRole("dialog", { name: "Edit scheduled task" });
+  expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeEnabled();
+  expect(within(dialog).getByRole("combobox", { name: "Project" })).toHaveValue("p-app");
+});
+
 it("uses the projects when the workspace read answers after the dialog opens, and says it is still reading until then", async () => {
   useWorkspace.setState({
     projects: { data: null, error: null, loading: true },

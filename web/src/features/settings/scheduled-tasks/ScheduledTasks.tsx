@@ -190,8 +190,9 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
   }, [project, projects]);
   const readingProjects = projectList === null;
   const noProjects = projectList !== null && projectList.length === 0;
-  /** The chosen project has to be one this form offers, or Save would post a project the person cannot see. */
-  const projectChosen = project !== "" && projects.some((entry) => entry.id === project);
+  /** The chosen project has to be one this form offers, or Save would post a project the person cannot see. A task being edited keeps its own project even when it is not in the list. */
+  const ownProject = task?.project_id && project === task.project_id && !projects.some((entry) => entry.id === project);
+  const projectChosen = project !== "" && (ownProject || projects.some((entry) => entry.id === project));
   const projectPlaceholder = readingProjects ? "Loading projects…" : noProjects ? "No projects yet" : "Choose a project";
   /** Why Save is off, in words, so the disabled state is never silent. */
   const saveReasonId = useId();
@@ -270,6 +271,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
         {(props) => (
           <select {...props} required value={projectChosen ? project : ""} onChange={(event) => setProject(event.target.value)}>
             {projectChosen ? null : <option value="">{projectPlaceholder}</option>}
+            {ownProject ? <option value={project}>This task's project</option> : null}
             {projects.map((entry) => (
               <option key={entry.id} value={entry.id}>
                 {entry.name}
