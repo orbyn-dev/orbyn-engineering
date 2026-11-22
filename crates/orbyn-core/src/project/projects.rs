@@ -43,7 +43,11 @@ fn validate_new_project_name(name: &str, windows: bool) -> Result<()> {
                     )
                 })
             });
-        reserved || name.ends_with(['.', ' ']) || name.contains(['<', '>', ':', '"', '|', '?', '*'])
+        reserved
+            || name.eq_ignore_ascii_case("CONIN$")
+            || name.eq_ignore_ascii_case("CONOUT$")
+            || name.ends_with(['.', ' '])
+            || name.contains(['<', '>', ':', '"', '|', '?', '*'])
     };
     if invalid || invalid_windows {
         return Err(CoreError::Invalid(

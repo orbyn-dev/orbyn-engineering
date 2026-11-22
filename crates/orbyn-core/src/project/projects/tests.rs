@@ -79,6 +79,8 @@ fn slugs_are_plain_and_never_a_worktree_root() {
 fn project_name_checks_host_specific_rules() {
     for name in [
         "bad:name*?<x",
+        "CONIN$",
+        "conout$",
         "CON",
         "con.txt",
         "COM1",
@@ -106,6 +108,8 @@ fn new_project_destination_checks_windows_folder_name_after_normalization() {
     assert!(validate_new_project_destination("Café Notes", None, true).is_ok());
     assert!(validate_new_project_destination(" CON", Some("/tmp/safe"), true).is_ok());
     assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), true).is_err());
+    assert!(validate_new_project_destination("safe", Some("/tmp/conin$"), true).is_err());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CONOUT$"), true).is_err());
     assert!(validate_new_project_destination("safe", Some("/tmp/CON!"), true).is_ok());
     assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), false).is_ok());
 }
