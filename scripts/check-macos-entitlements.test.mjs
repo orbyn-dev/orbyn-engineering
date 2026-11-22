@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,7 @@ function app(binaries, { runtime = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "orbyn-entitlements-"));
   const macosDirectory = join(directory, "Orbyn Engineering.app", "Contents", "MacOS");
   mkdirSync(macosDirectory, { recursive: true });
+  binaries = { "orbyn-engineering": [], ...binaries };
   for (const [name, keys] of Object.entries(binaries)) {
     const file = join(macosDirectory, name);
     copyFileSync("/usr/bin/true", file);
@@ -37,7 +38,16 @@ function app(binaries, { runtime = false } = {}) {
     const signed = spawnSync("codesign", [...args, file], { encoding: "utf8" });
     assert.equal(signed.status, 0, signed.stderr);
   }
-  return { directory, path: join(directory, "Orbyn Engineering.app") };
+  // A real bundle: an Info.plist, then the bundle's own seal over the binaries signed above (no --deep, so each
+  // binary keeps its own entitlements). The main executable is the bundle's, so it takes the bundle's signature.
+  const path = join(directory, "Orbyn Engineering.app");
+  writeFileSync(
+    join(path, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>orbyn-engineering</string><key>CFBundleIdentifier</key><string>test.orbyn.entitlements</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`,
+  );
+  const seal = ["--force", "--sign", "-", ...(runtime ? ["--options", "runtime"] : []), path];
+  assert.equal(spawnSync("codesign", seal, { encoding: "utf8" }).status, 0);
+  return { directory, path };
 }
 
 function check(path, ...flags) {
@@ -90,6 +100,20 @@ test("an ad hoc build without the hardened runtime passes by default and fails -
 test("--release passes when every binary has the hardened runtime and only its allowed entitlements", { skip: !macos }, () => {
   const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [] }, { runtime: true }, "--release");
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("a binary changed after signing fails the signature check", { skip: !macos }, () => {
+  const built = app({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [] });
+  try {
+    const file = join(built.path, "Contents", "MacOS", "orbynd");
+    const signedBytes = readFileSync(file);
+    writeFileSync(file, Buffer.concat([signedBytes, Buffer.from("tampered")]));
+    const result = check(built.path);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /signature does not verify/);
+  } finally {
+    rmSync(built.directory, { recursive: true, force: true });
+  }
 });
 
 test("a path that is not an app bundle is a usage error", { skip: !macos }, () => {

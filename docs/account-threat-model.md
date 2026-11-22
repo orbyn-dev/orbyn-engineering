@@ -261,7 +261,7 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
 - **Windows per-user install is fully exposed** to this, since the install folder belongs to the user. It is fixed
   only by a machine-wide install (the package's per-machine option, parity row P32), which needs administrator rights.
 - The Account page could say this for Windows; it is a design request.
-- *Check:* the release verification confirms the signature and the install location of the packaged app.
+- *Check:* the release verification confirms the signature and the install location of the packaged app. The signature half is built: `scripts/check-macos-entitlements.sh` runs `codesign --verify --deep --strict` on the bundle, so a binary changed after signing fails (tested). The install location is the OS's rule (App Management, and a machine-wide install on Windows, row P32), has no test, and stays a manual check on a signed build.
 
 ## What this cannot defend
 
