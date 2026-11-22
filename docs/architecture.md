@@ -2226,6 +2226,11 @@ login names it. Orbyn never runs it, never calls `authenticate` or `logout`, and
 `env_var` method, since that means collecting a key. A method that sets variables, or a word
 a Windows or Unix shell would read differently, gives no command.
 
+The provider status also keeps the last start's issue: the ACP driver records `signed_out` when
+a handshake or session open is refused with ACP's auth-required code, and `failed` when it
+fails any other way. A successful open or model handshake clears it, so a signed-out engine
+reports the login again only until it next starts cleanly.
+
 Skills come from the workspace, in place. Nothing is copied, packed or signed.
 
 - Claude starts in the selected checkout, so the project's own instructions are the
