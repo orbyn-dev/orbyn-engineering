@@ -375,7 +375,7 @@ export function Composer({
   const unmanaged = isUnmanaged(engine);
   const access = shownAccess(engine, thread.lifecycle?.permission_mode ?? "supervised");
   const engineName = engine?.name ?? thread.engine;
-  const accessView = accessViewOf(!unmanaged && neverAsks(engine), engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
+  const accessView = accessViewOf(!unmanaged && neverAsks(engine), engine?.id ?? thread.engine, engineName, thread.lifecycle?.permission_mode ?? "supervised", access, gate.refused);
   const allEngines = useWorkspace((state) => state.engines.data);
   const installed = useMemo(() => (allEngines ?? []).filter((entry) => entry.installed), [allEngines]);
   const models = useEngineModels(thread.engine);

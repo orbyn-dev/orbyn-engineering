@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { createPortal } from "react-dom";
 import type { Project, Thread } from "../../../api/types";
 import { compactAge, elapsed } from "../../../lib/format";
-import { isUnmanaged } from "../../../product/engines/unmanaged";
+import { isUnmanaged, unmanagedReason } from "../../../product/engines/unmanaged";
 import { runStateLabels } from "../../../product/runs/stateLabels";
 import { useNow } from "../../../lib/useNow";
 import { routeHref } from "../../../product/state/route";
@@ -484,7 +484,7 @@ export function ThreadRow({
         {wokeMark}
         {pinMark}
         {unmanaged ? (
-          <span className="thread-row-project">Unmanaged</span>
+          <span className="thread-row-project" title={unmanagedReason(engine)}>Unmanaged</span>
         ) : thread.scratch || showProject || (ledger && !status.reason && !status.running) ? (
           <span className="thread-row-project">{projectName}</span>
         ) : null}

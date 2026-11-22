@@ -74,5 +74,6 @@ it("shows the visible Unmanaged word on the draft's engine chip and in place of 
   render(<DraftView projectId="a" />);
   expect(screen.getByRole("button", { name: "Kiro" })).toHaveTextContent("Unmanaged");
   expect(screen.getAllByText("Unmanaged").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^Permissions:/ })).toBeNull();
 });

@@ -12,7 +12,7 @@ import type { ModelChoice } from "./draftHelpers";
 /** The new-thread dialog's Permission control: the composer's own permission menu, with the modes the engine refuses dimmed. */
 function PermissionControl({ engine, access, onAccess }: { engine: EngineStatus; access: PermissionMode; onAccess(mode: PermissionMode): void }) {
   const refused = refusedModes(engine);
-  const sentence = refusalSentence(engine.name, refused);
+  const sentence = refusalSentence(engine.id, engine.name, refused);
   const [pressed, setPressed] = useState(false);
   const traits = useTraitsMenu({
     model: null, effort: null, extras: {}, access, modes: offeredModes(engine),
@@ -63,7 +63,7 @@ export function RepoStart({ project, engines, engine, model, access, onModel, on
           <NewThreadDialog projectId={project.id} projectName={project.name} start={{ engine: engine.id, model, permission_mode: access }}
             engineControl={<ModelPickerTrigger engines={engines} selected={{ engine: engine.id, model }} onPick={onModel} />}
             permissionControl={unmanaged ? <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} /> : <PermissionControl engine={engine} access={access} onAccess={onAccess} />}
-            note={refused.length > 0 ? refusalSentence(engine.name, refused) : null}
+            note={refused.length > 0 ? refusalSentence(engine.id, engine.name, refused) : null}
             onClose={() => setOpen(false)} />
         ) : null}
       </dd>
