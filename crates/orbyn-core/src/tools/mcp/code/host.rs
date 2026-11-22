@@ -60,7 +60,7 @@ impl RunHost {
 }
 
 /// A tool a script may name: an Orbyn tool, never Code Mode itself.
-pub(super) fn is_inner_tool(name: &str) -> bool {
+pub(crate) fn is_inner_tool(name: &str) -> bool {
     !name.starts_with("orbyn_code_") && crate::tools::mcp_tools::is_tool(name)
 }
 
@@ -155,10 +155,15 @@ impl ToolHost for RunHost {
             return Err(failure("lost", message));
         }
         let digest = crate::util::sha256_hex(args.to_string().as_bytes());
-        if let Some(recorded) = self.replay.get(&index)
-            && let Replayed::Answer(answer) = self.replayed(recorded, name, &digest)
-        {
-            return answer;
+        if let Some(recorded) = self.replay.get(&index) {
+            // A replay answers from the record, but a tightened allow list still wins: the recorded
+            // answer is never returned for a tool the caller may no longer use.
+            if let Err(error) = core.refuse_for_crew_worker(&self.binding, name, &args) {
+                return Err(failure(code_of(&error), error.public_message()));
+            }
+            if let Replayed::Answer(answer) = self.replayed(recorded, name, &digest) {
+                return answer;
+            }
         }
         let effect = crate::tools::mcp_tools::has_effect(name);
         if let Err(error) = core

@@ -77,14 +77,15 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 ```
 
 - **Filters** are `state` (`open | closed | all`), `label` (every one must match), `assignee` (`any | me | none`
-  or a login) and `q` (text the tracker itself matches). Nothing else; no sort option (newest update first).
+  or a login; for Linear, the person's name) and `q` (text the tracker itself matches). Nothing else; no sort option
+  (newest update first).
 - **Paging.** `next_cursors` maps `"<tracker> <scope>"` to an opaque cursor (one per tracker and scope that has
   more). To carry on, send `cursors` once, as that same object encoded as JSON and then URL-encoded
   (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. The service applies the
   same limit to what it emits: at most 50 cursors and 4 KiB of them as that JSON, with any further scopes dropped in
   key order. Only the scopes named in `cursors` are read, one page each, and the answer holds just those pages and
   their next cursors. The cursor is opaque: the page never builds or edits one, and the service refuses one it did
-  not issue for that scope and filter (`400 invalid`). Built for GitLab, Forgejo and Azure DevOps; GitHub
+  not issue for that scope and filter (`400 invalid`). Built for GitLab, Forgejo, Azure DevOps and Linear; GitHub
   gives one page and no cursor. The beta UI may leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
@@ -319,6 +320,91 @@ DevOps (Planned).
   (`text` as plain text, `createdBy`, `createdDate`, `id` or `commentId`, `$top=50` and `order=asc`, and whether it
   pages), and the `dev.azure.com` / `visualstudio.com` path shapes are UNVERIFIED: they are from the API as
   understood, and a version, a process template or a proxy may differ.
+
+## Linear as built
+
+`linear` reads issues in `crates/orbyn-core/src/issues/linear.rs`, behind the same `ORBYN_ISSUES` flag. List and
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
+`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for Linear (Planned).
+
+- **Requests.** `POST https://api.linear.app/graphql` with a JSON body of `{ query, variables }`. The list query is
+  `issues(filter: { team: { key: { eq: $team } }, state: { type: { in: $state } }, assignee: ..., labels: ..., or:
+  [{ title: { containsIgnoreCase: $text } }, { description: { containsIgnoreCase: $text } }] }, first: $first, after:
+  $after, orderBy: updatedAt)` with `pageInfo { hasNextPage endCursor }`, and a label filter is one
+  `{ labels: { name: { eq: $labelN } } }` condition per label inside `and: [...]`. Only the filters that are set are
+  in the filter object. The list reads `identifier title url createdAt updatedAt completedAt canceledAt state { name
+  type } creator { name displayName } assignee { name displayName } labels(first: 100) { nodes { name } }`, and
+  never selects `description` or comments (the text filter may test `description`), so 100 issues cannot push the
+  answer past 2 MiB. The detail is `issue(id: $id)` with the same fields, `description`, and `comments(first: 50)`.
+  A connection with no scope first reads `teams(first: 20) { nodes { key } }`. Every query is a fixed string and a
+  filter or key is only a GraphQL variable, so no user text is ever spliced into the query. Reads only: every
+  request body holds a query, never a mutation. `first` is at most 100.
+- **Credentials and host.** The token is read from the keychain for each source (`tracker:linear`) and sent only as the
+  `Authorization` header, with the personal API key itself (no `Bearer` prefix), to `https://api.linear.app/graphql`.
+  The connection's host is fixed to that origin: `connect` refuses a host, the reader re-checks it when built (a stored
+  plain `http` host or any other host is `400 invalid`), and the HTTP client itself refuses plain `http`. No proxy, no
+  referer, 10 second timeout, an answer over 2 MiB is refused, and a redirect is followed only within the same scheme,
+  host and port (at most three); any other redirect ends the request as `tracker_unavailable`. The token is in no log
+  line, address or error.
+- **Scope.** A Linear scope is a team key (`^[A-Z][A-Z0-9]{1,9}$`): a git remote cannot reveal one, so no remote is
+  read. `connect` refuses a scope that is not a team key, before it saves the token or the connection. The scopes of a
+  connection are the team keys stored with it; a connection made in the UI stores none, so the reader then reads
+  `teams(first: 20) { nodes { key } }` with the same key and uses the valid, distinct keys (at most 20; when the key
+  can see more, only those first 20 teams are read). That teams read is cached for the same 30 seconds as a listing
+  and cleared by connect and disconnect. Nothing outside those keys is read: a listing drops a row whose identifier
+  belongs to another team, and a detail for another team's identifier is `not_found` before the lookup; a UUID is
+  checked against the team in the issue that comes back. A scope outside the connection is `400 invalid` and nothing
+  is sent. A stored team key needs no teams read.
+- **Mapping.** `key` and `display_key` are the identifier (`ENG-123`), `title` is `title`, `author` and `assignees` are
+  the creator's and assignee's `displayName` (falling back to `name`, cut to 100 characters), labels are
+  `labels.nodes[].name`, `url` is `url` when it is an `https://linear.app` address with no user info or port (otherwise
+  `https://linear.app/issue/<identifier>`), and `comment_count` is the number of comments the detail read returned (at
+  most 50), not Linear's total; a listing reads none and reports `0`. `state.type` `completed`, `canceled` and
+  `duplicate` are category `closed`, every other type is `open`; the name is the tracker's own `state.name` (cut to
+  200 characters); `close_reason` is always `null`; `closed_at` is `completedAt` for a `completed` issue and
+  `canceledAt` for a `canceled` or `duplicate` one. `description` is the body, cut to 64 KiB. The answer's 50 newest
+  comments are kept, each body cut to 16 KiB, and shown oldest first by `createdAt`.
+- **Filters.** `state` `open` sends `triage`, `backlog`, `unstarted` and `started`, `closed` sends `completed`,
+  `canceled` and `duplicate`, and `all` leaves the state filter out. `assignee` `me` is `isMe: { eq: true }`, `none`
+  is `null: true`, any other value is the person's name as Linear shows it (`name: { eq: $assignee }`), and `any`
+  leaves it out. A label filter is one `{ labels: { name: { eq: $labelN } } }` condition per label inside `and:
+  [...]`, so every named label must be on the issue. An empty label name, one over 200 characters (counted in
+  characters, not bytes), one with a control character, or more than 20 names is `400 invalid` before anything is
+  sent.
+- **Paging.** The listing carries `next_cursors["linear <team>"]` while `pageInfo.hasNextPage` is true, as Linear's
+  `endCursor` and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is
+  sent. `hasNextPage` must be a boolean, and when it is true `endCursor` must be a non-empty string with no control
+  characters; anything else is `tracker_unavailable` ("Linear answered something unreadable."). The tag is not signed
+  with a secret, so it proves "made for these filters", not "made by this service". A cursor longer than the 200 bytes
+  `query.rs` accepts back is not emitted. With `cursors` present only the scopes it names are read (this applies to
+  every tracker; GitHub issues no cursor and refuses any).
+- **Failures.** `401` is `tracker_not_connected` ("Linear did not accept the saved token"), `403` is `forbidden`,
+  `404` is `not_found` ("issue not found"), `429` is `rate_limited` with the wait from an integer `Retry-After` in
+  seconds or `X-RateLimit-Requests-Reset` in UTC epoch milliseconds (an HTTP-date `Retry-After` is not read), and
+  everything else (including a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
+  `tracker_unavailable` ("Linear did not answer."). A GraphQL answer with a non-empty `errors` array is a failure
+  too, even at HTTP 200: `extensions.type` is read before `extensions.code`, and case, spaces, underscores and
+  hyphens are ignored; authentication is `tracker_not_connected`, forbidden is `forbidden`, ratelimited is
+  `rate_limited` with the headers, and on a detail `invalid input`, `not found` or `entity not found` is `not_found`;
+  everything else is `tracker_unavailable`. The message is always the service's sentence, never Linear's `message`.
+  A detail whose `data.issue` is null is `not_found`. A list that fails for any other reason goes in
+  `IssueList.failed` while other trackers answer; an invalid cursor, scope or label filter is the usual `400 invalid`
+  and no list at all.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, names to 100, the state
+  name to 200, a comment id to 100, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for
+  instructions and the draft framing above is unchanged.
+- **Planned, not built.** Linked pull requests (`linked_pull_requests` stays empty), close reasons (`close_reason`
+  stays `null`), the list's open and closed totals (`counts` stays `null`), a comment count in a listing
+  (`comment_count` is `0` there), the T3 writes `update` and `state`, the `candidates` read, and the T3 list `sort`
+  option (the reader always asks for newest update first). Thread link, start-thread, draft and find already work
+  through list and detail. `find` parses only `https://github.com/.../issues/<n>` links: a pasted Linear link or a
+  bare `ENG-123` is search text, not a lookup by identifier. A bare number is looked up as the key in every connected
+  scope, which Linear's identifier check refuses.
+- **Not verified.** No real Linear workspace was contacted and no real tracker token was used. The reader is tested
+  against a local fake server; the query and field names, the filter comparators, `comments(first: 50)`,
+  `teams(first: 20)`, the `extensions.type` and `extensions.code` values, and the `Retry-After`/
+  `X-RateLimit-Requests-Reset` headers are UNVERIFIED: they are from Linear's public GraphQL schema and developer
+  documentation as understood, and a workspace, API version or proxy may differ.
 
 ## Issue text is untrusted
 

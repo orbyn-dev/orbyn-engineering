@@ -11,6 +11,7 @@ mod reply;
 mod runs;
 mod search;
 
+pub(crate) use host::is_inner_tool;
 pub(crate) use runs::CodeRuns;
 
 use crate::app::Core;
@@ -78,7 +79,7 @@ impl Core {
         if let Err(error) = self.note_tool(binding, tool) {
             tracing::warn!(%error, "could not record a tool call");
         }
-        // A crew worker gets these only once the allow list names them.
+        // The same allow list runs here and on every inner call (`call_orbyn_tool`).
         if let Err(error) = self.refuse_for_crew_worker(binding, tool, args) {
             return (error.public_message(), true);
         }
@@ -89,14 +90,26 @@ impl Core {
         }
     }
 
-    /// The specs a script of this caller may call: never Code Mode, and for a Crew worker only its allow list.
+    /// The specs a script of this caller may call: never Code Mode, and for a Crew worker only its
+    /// allow list. For a worker every string in a spec is redacted of names it may not use, so search
+    /// and describe never name one; for anything else the specs come back unmodified.
     fn code_callable(&self, binding: &McpBinding) -> Vec<Value> {
-        let own = json!({ "thread_id": binding.scope.thread_id });
-        crate::tools::mcp_tools::tool_specs()
+        let specs = crate::tools::mcp_tools::tool_specs()
+            .filter(|spec| spec["name"].as_str().is_some_and(is_inner_tool));
+        if !self.is_crew_worker(binding).unwrap_or(true) {
+            return specs.collect();
+        }
+        let own = binding.scope.thread_id.as_str();
+        let args = json!({ "thread_id": own });
+        let hidden = hidden_names(own);
+        specs
             .filter(|spec| {
                 let name = spec["name"].as_str().unwrap_or_default();
-                host::is_inner_tool(name)
-                    && self.refuse_for_crew_worker(binding, name, &own).is_ok()
+                crate::crew::worker_refusal(name, &args, own).is_none()
+            })
+            .map(|mut spec| {
+                redact_tool_names(&mut spec, &hidden);
+                spec
             })
             .collect()
     }
@@ -135,6 +148,7 @@ impl Core {
         for path in paths.iter().filter_map(Value::as_str) {
             match callable.iter().find(|spec| spec["name"] == path) {
                 Some(spec) => known.push(declare::declaration(spec)),
+                // The caller's own input: describe never adds a name the caller did not send.
                 None => unknown.push(path.to_owned()),
             }
         }
@@ -253,6 +267,7 @@ impl Core {
             seed: (ulid::Ulid::generate().random() & 0xffff_ffff) as u32,
         };
         self.code_runs_prune();
+        let crew_worker = self.is_crew_worker(binding).unwrap_or(true);
         let record = NewCodeRun {
             run_id: run_id.clone(),
             thread_id: thread.clone(),
@@ -261,17 +276,12 @@ impl Core {
             seed_start_ms: seed.start_ms,
             seed: seed.seed,
             started_at: crate::util::now(),
-            crew_worker: self
-                .store
-                .crew_task_for_worker(thread)
-                .ok()
-                .flatten()
-                .is_some(),
+            crew_worker,
         };
         if let Err(error) = self.store.code_run_begin(&record) {
             tracing::warn!(%error, "could not record a script run");
         }
-        self.code_begin_task(binding, &run_id, code, seed, HashMap::new())
+        self.code_begin_task(binding, &run_id, code, seed, HashMap::new(), crew_worker)
             .await
             .map(|live| (run_id, live))
     }
@@ -285,7 +295,9 @@ impl Core {
         code: &str,
     ) -> Result<(String, Arc<runs::Live>), (String, bool)> {
         let thread = &binding.scope.thread_id;
-        if self.code_runs.is_running(run_id) {
+        // Filter by owner first: another thread's live run answers like an unknown id, not with the
+        // news that it exists.
+        if self.code_runs.get(run_id, thread).is_some() && self.code_runs.is_running(run_id) {
             return Err((
                 "That run is still running. Resume it with run_id alone.".into(),
                 true,
@@ -326,7 +338,8 @@ impl Core {
             start_ms: run.seed_start_ms,
             seed: run.seed,
         };
-        self.code_begin_task(binding, run_id, code, seed, calls)
+        let crew_worker = self.is_crew_worker(binding).unwrap_or(true);
+        self.code_begin_task(binding, run_id, code, seed, calls, crew_worker)
             .await
             .map(|live| (run_id.to_owned(), live))
     }
@@ -338,6 +351,7 @@ impl Core {
         code: &str,
         seed: RunSeed,
         replay: HashMap<u32, StoredCodeCall>,
+        crew_worker: bool,
     ) -> Result<Arc<runs::Live>, (String, bool)> {
         let failure: host::ReplayFailure = Arc::default();
         let host_core = self.clone();
@@ -352,6 +366,7 @@ impl Core {
             .start(
                 run_id,
                 &binding.scope.thread_id,
+                crew_worker,
                 code,
                 seed,
                 move |pending| {
@@ -406,6 +421,7 @@ impl Core {
                 }
                 Err((message, true))
             }
+            Err(runs::Refused::Duplicate(message)) => Err((message, true)),
             Err(runs::Refused::Script(error)) => {
                 self.code_run_finished(
                     run_id,
@@ -436,6 +452,83 @@ impl Core {
             tracing::warn!(%error, "could not record a code run");
         }
     }
+}
+
+/// Every name a worker may not use in a script, from the whole tool universe, longest first.
+fn hidden_names(own: &str) -> Vec<String> {
+    let args = json!({ "thread_id": own });
+    let mut names: Vec<String> = super::tool_list(false)
+        .into_iter()
+        .chain(crate::tools::mcp::code::specs())
+        .chain(crate::crew::tool_specs())
+        .filter_map(|spec| spec["name"].as_str().map(str::to_owned))
+        .collect();
+    names.push("approve".to_owned());
+    names.retain(|name| {
+        !is_inner_tool(name) || crate::crew::worker_refusal(name, &args, own).is_some()
+    });
+    names.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    names.dedup();
+    names
+}
+
+/// Replaces hidden tool names in every string value of a spec, including nested schema strings.
+/// Object keys are untouched: they are schema structure, not text a reader sees.
+fn redact_tool_names(value: &mut Value, hidden: &[String]) {
+    let mut hidden: Vec<&str> = hidden.iter().map(String::as_str).collect();
+    hidden.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    redact_value(value, &hidden);
+}
+
+fn redact_value(value: &mut Value, hidden: &[&str]) {
+    match value {
+        Value::String(text) => {
+            let mut redacted = text.clone();
+            for name in hidden {
+                redacted = replace_identifier(&redacted, name, "another tool");
+            }
+            *text = redacted;
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_value(item, hidden);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                redact_value(item, hidden);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Replaces `name` only when both neighbours are outside `[A-Za-z0-9_]`, so a name that is a prefix
+/// of a longer allowed name does not corrupt it.
+fn replace_identifier(text: &str, name: &str, replacement: &str) -> String {
+    if name.is_empty() {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(name) {
+        let after = at + name.len();
+        let before_edge = rest[..at].chars().next_back().is_none_or(|c| !is_ident(c));
+        let after_edge = rest[after..].chars().next().is_none_or(|c| !is_ident(c));
+        if before_edge && after_edge {
+            out.push_str(&rest[..at]);
+            out.push_str(replacement);
+        } else {
+            out.push_str(&rest[..after]);
+        }
+        rest = &rest[after..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn is_ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
 }
 
 /// The slice, kept under the outer call's own deadline when it has one.

@@ -50,6 +50,8 @@ mod workers;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use workers::worker_refusal;
+
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
     APPROVAL_LIFETIME_SECS, Answer, Answering, Approver, Approvers, Autopilot, COMMENT_MAX,
