@@ -190,7 +190,7 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
       {total === 0 && !needle ? (
         <div className="lib-empty">
           <b>{tab === "repo" ? "No team items in this repo" : "Nothing saved on this computer"}</b>
-          <p className="field-hint">{tab === "repo" ? <>Orbyn shows the workflows, prompts and env sets your team already keeps in <code>.orbyn/</code>. It only reads them and never creates or changes anything in the repo. Save your own in Personal.</> : "Save a command you repeat, a prompt you reuse or a set of variables. They are not in the repo and stay on this computer."}</p>
+          <p className="field-hint">{tab === "repo" ? <>Orbyn shows the workflows, prompts and env sets your team already keeps in <code>.orbyn/</code>. It reads them; it does not create or change anything in the repo. Save your own in Personal.</> : "Save a command you repeat, a prompt you reuse or a set of variables. They are not in the repo and stay on this computer."}</p>
           <Button onClick={() => setOpen({ what: "form", kind: null, item: null })}>{tab === "repo" ? "New personal item" : "New item"}</Button>
         </div>
       ) : (

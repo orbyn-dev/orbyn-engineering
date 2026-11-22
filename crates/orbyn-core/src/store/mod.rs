@@ -5,6 +5,8 @@
 mod account_sync;
 mod agent_projects;
 mod approvals;
+#[cfg(test)]
+mod attachment_sources_tests;
 mod automations;
 mod billed_events;
 #[cfg(test)]

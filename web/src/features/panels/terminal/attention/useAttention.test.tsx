@@ -5,7 +5,7 @@ import { setAttentionApi, type AttentionApi, type AttentionDelivery } from "./co
 import { useAttention } from "./store";
 import { useTerminalAttention } from "./useAttention";
 
-function Host() { useTerminalAttention(null); return null; }
+function Host({ open = null }: { open?: string | null }) { useTerminalAttention(open); return null; }
 const waiting = (over: Record<string, unknown> = {}) => ({ v: 1, op: "waiting", id: "a1", terminal_id: "tm1", terminal_title: "dev", engine: "claude", kind: "question", since: "2026-11-22T14:12:00Z", excerpt: ["Which test command?"], ...over });
 const at = (seq: number, value: unknown, thread = "t1"): AttentionDelivery => ({ seq, ts: "2026-11-22T14:12:03Z", thread_id: thread, event: { type: "CUSTOM", name: "orbyn.terminal_attention", value } });
 
@@ -28,6 +28,18 @@ describe("useTerminalAttention", () => {
     render(<Host />);
     expect(useUi.getState().toasts).toHaveLength(0);
     expect(Notice).not.toHaveBeenCalled();
+  });
+  it("keeps its subscription when the open thread changes, and a toast for the open thread is left to its item", () => {
+    const subscribe = vi.fn(api.subscribe);
+    setAttentionApi({ subscribe });
+    const view = render(<Host open="t1" />);
+    view.rerender(<Host open="t2" />);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+    act(() => push(at(1, waiting(), "t2")));
+    expect(useUi.getState().toasts).toHaveLength(0);
+    act(() => push(at(2, waiting({ id: "a2", terminal_id: "tm2" }), "t1")));
+    expect(useUi.getState().toasts).toHaveLength(1);
   });
   it("raises one toast and one notification for a new waiting item, none for an update", () => {
     setAttentionApi(api);

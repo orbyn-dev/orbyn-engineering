@@ -95,6 +95,8 @@ const DEFINITIONS: &[Definition] = defs![
     "warm_next_turn" Kind::Bool, false, false;
     "app_update_mode" Kind::OneOf(&["automatic", "notify", "off"]), "notify", false;
     "keep_awake_during_runs" Kind::Bool, true, false;
+    "terminal_attention_enabled" Kind::Bool, true, false;
+    "terminal_attention_quiet_seconds" Kind::Number, 20, false;
     "quit_confirmation" Kind::OneOf(QUIT), "direct", false;
     "default_engine" Kind::Text, "", true;
     "default_effort" Kind::Text, "", true;
@@ -232,6 +234,17 @@ fn check(definition: &Definition, value: &Value) -> Result<()> {
         return Err(CoreError::Invalid(
             "A crew turn budget is a whole number of turns, or 0 for no budget.".into(),
         ));
+    }
+    if fits && definition.key == crate::agents::attention::QUIET_PREFERENCE {
+        let allowed = value.as_u64().is_some_and(|seconds| {
+            (crate::agents::attention::QUIET_MIN_SECS..=crate::agents::attention::QUIET_MAX_SECS)
+                .contains(&seconds)
+        });
+        if !allowed {
+            return Err(CoreError::Invalid(
+                "Quiet time is a whole number of seconds from 10 to 120.".into(),
+            ));
+        }
     }
     if fits {
         Ok(())

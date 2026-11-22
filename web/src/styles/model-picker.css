@@ -15,9 +15,14 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.composer-control span:last-child {
+.composer-control > span:not(.unmanaged-label):not(.engine-glyph) {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.composer-control span.unmanaged-label {
+  overflow: visible;
+  text-overflow: clip;
 }
 .composer-control:hover:not(:disabled) {
   background: var(--color-hover);
@@ -166,6 +171,16 @@
   outline: 2px solid var(--color-focus);
   outline-offset: 1px;
 }
+/* The frame's chip mark: the visible word after the engine, not a second pill inside the chip. */
+.unmanaged-label-chip {
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid var(--color-divider);
+  color: var(--color-muted);
+  font-size: var(--text-caption);
+  font-weight: 400;
+  white-space: nowrap;
+}
 /* The chips continue to the right: the last one is cut by a fade rather than wrapped. */
 .model-chips-row {
   position: relative;
@@ -221,6 +236,10 @@
   scrollbar-width: thin;
 }
 .model-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   padding: 10px 9px 3px;
   color: var(--color-muted);
   font-size: var(--text-caption);

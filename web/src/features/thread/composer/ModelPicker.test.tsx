@@ -7,6 +7,7 @@ import { api } from "../../../api/client";
 import type { EngineModels, EngineStatus } from "../../../api/types";
 import { ModelPickerTrigger } from "./ModelPicker";
 import { useModelStore } from "../../../product/state/modelStore";
+import { setViewportWidth } from "../../../test-support";
 
 vi.mock("../../../api/client", async (original) => {
   const actual = await original<typeof import("../../../api/client")>();
@@ -239,4 +240,67 @@ it("a chip click clears the search and lists that provider's models", async () =
   await user.click(within(picker).getByRole("button", { name: "Claude Code" }));
   expect(search).toHaveValue("");
   expect(within(picker).getAllByRole("option").map((option) => option.querySelector("b")?.textContent)).toEqual(["Opus 5.5", "Sonnet 5.5"]);
+});
+
+const kiro: EngineStatus = {
+  id: "kiro",
+  name: "Kiro",
+  installed: true,
+  capabilities: { managed: false },
+} as EngineStatus;
+const guarded: EngineStatus = {
+  id: "codex",
+  name: "Codex",
+  installed: true,
+  capabilities: { managed: true },
+} as EngineStatus;
+const unknown: EngineStatus = {
+  id: "mystery",
+  name: "Mystery",
+  installed: true,
+  capabilities: {},
+} as EngineStatus;
+const kiroCatalog: EngineModels = { ...catalog, engine: "kiro", models: [
+  { id: "default", label: "Kiro Default", description: null, is_default: true, custom: false, options: [] },
+] };
+const mysteryCatalog: EngineModels = { ...catalog, engine: "mystery" };
+
+async function openWith(engines: EngineStatus[], selected: { engine: string; model: string | null }) {
+  const user = userEvent.setup();
+  render(<ModelPickerTrigger engines={engines} selected={selected} onPick={vi.fn()} />);
+  const trigger = screen.getByRole("button", { name: selected.model === "default" ? "Kiro Default" : "Small model" });
+  await user.click(trigger);
+  const picker = await screen.findByRole("dialog", { name: "Choose a model" });
+  return { picker, trigger };
+}
+
+it("shows the visible Unmanaged word on the trigger, the engine's chip and its list heading, and keeps the chip's accessible name", async () => {
+  useModelStore.setState({ byEngine: { kiro: kiroCatalog, codex: catalog }, loading: {}, errors: {} });
+  const { picker, trigger } = await openWith([guarded, kiro], { engine: "kiro", model: "default" });
+  expect(within(trigger).getByText("Unmanaged")).toBeVisible();
+  const chip = within(picker).getByRole("button", { name: "Kiro (Unmanaged)" });
+  expect(chip).toHaveTextContent("Unmanaged");
+  expect(within(picker).getByRole("group", { name: "Kiro" })).toHaveTextContent("Unmanaged");
+  expect(within(picker).getByRole("button", { name: "Codex" })).not.toHaveTextContent("Unmanaged");
+});
+
+it("draws no visible Unmanaged word for a managed engine or one whose service omits the flag", async () => {
+  useModelStore.setState({ byEngine: { codex: catalog, mystery: mysteryCatalog }, loading: {}, errors: {} });
+  const { picker, trigger } = await openWith([guarded, unknown], { engine: "codex", model: "small" });
+  expect(within(trigger).queryByText("Unmanaged")).toBeNull();
+  expect(within(picker).queryByText("Unmanaged")).toBeNull();
+  expect(within(picker).getByRole("button", { name: "Codex" })).toBeInTheDocument();
+  expect(within(picker).getByRole("button", { name: "Mystery" })).toBeInTheDocument();
+});
+
+it("keeps the visible Unmanaged word at phone width, where the trigger ellipsis gives way to it", async () => {
+  setViewportWidth(320);
+  useModelStore.setState({ byEngine: { kiro: kiroCatalog, codex: catalog }, loading: {}, errors: {} });
+  const { picker, trigger } = await openWith([guarded, kiro], { engine: "kiro", model: "default" });
+  expect(within(trigger).getByText("Unmanaged")).toBeVisible();
+  expect(within(picker).getByRole("button", { name: "Kiro (Unmanaged)" })).toHaveTextContent("Unmanaged");
+  const pickerCss = readFileSync(join(process.cwd(), "src/styles/model-picker.css"), "utf8");
+  const baseCss = readFileSync(join(process.cwd(), "src/styles/base.css"), "utf8");
+  expect(`${pickerCss}\n${baseCss}`).toMatch(/\.unmanaged-label\s*\{[^}]*flex:\s*none/);
+  expect(pickerCss).toMatch(/\.unmanaged-label-chip\s*\{[^}]*white-space:\s*nowrap/);
 });

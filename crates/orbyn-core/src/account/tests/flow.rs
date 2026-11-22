@@ -596,6 +596,24 @@ async fn sign_out_keeps_unsynced_changes_unless_asked_to_discard_them() {
 }
 
 #[tokio::test]
+async fn a_sign_out_with_nothing_to_end_does_not_wait_behind_a_cancel() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "out-early");
+    // A cancel is on its way and holds the one-at-a-time gate.
+    let _cancel = core.account.cancelling.lock().await;
+    let done = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        core.account.sign_out(false),
+    )
+    .await;
+    assert!(
+        done.is_ok(),
+        "a sign-out with no session waited for a cancel to finish"
+    );
+    done.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn pause_and_resume_move_the_sync_line_and_resume_restarts_the_worker() {
     let dir = TempDir::new();
     let core = dev(&dir, "pause");

@@ -16,6 +16,7 @@ const thread: Thread = {
 };
 
 beforeEach(() => {
+  setTranscriptsApi(null);
   useComposerChips.setState({ chips: {}, reviewDrafts: {} });
   useUi.setState({ drafts: {} });
   useWorkspace.setState({ approvals: { data: [], error: null, loading: false } });

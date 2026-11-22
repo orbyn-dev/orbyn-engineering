@@ -44,6 +44,7 @@ mod confined;
 mod core;
 mod could_not_start;
 mod crew_refusal;
+mod dashboard;
 mod draft;
 mod escape_check;
 mod escape_scan;
@@ -66,6 +67,7 @@ mod overrides;
 mod protect;
 mod provider_facts;
 mod reviewer_only;
+mod unmanaged;
 // The checks are shell commands (`touch`, `rm`, `sleep`, a loop), so these tests run where there is a POSIX shell.
 #[cfg(unix)]
 mod rerun;
@@ -78,6 +80,7 @@ mod review_publication_repair;
 mod review_publication_support;
 mod review_rules;
 mod review_support;
+mod run_page;
 mod runs;
 mod scoring;
 mod stamp;
