@@ -3,7 +3,7 @@ import { Button } from "../../../ui/controls";
 import type { TranscriptEntry } from "./useTranscripts";
 
 /**
- * Transcripts dropped on the composer (B43, hidden). A kept one is a 24 px chip like a thread chip; one being read or refused is
+ * Transcripts dropped on the composer (B43). A kept one is a 24 px chip like a thread chip; one being read or refused is
  * the 40 px chip of a photo, in red with its reason when refused. Names and titles come from a file and are drawn as text.
  */
 export function TranscriptShelf({
