@@ -2,6 +2,7 @@
 //! file or database implementation, on purpose.
 
 use std::sync::Arc;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zeroize::Zeroizing;

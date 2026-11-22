@@ -20,6 +20,7 @@ const GATED: &[&str] = &[
     "background",
     "rollback",
     "readHistory",
+    "readSubagent",
     "usage",
     "models",
     "probe",
