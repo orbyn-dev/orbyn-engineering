@@ -53,7 +53,7 @@ export function FlowGates() {
               </div>
               <div className="cx-fbx" style={{ maxWidth: "1040px" }}>
                 <h6>What a model can and can’t do at a gate</h6>
-                <p>A model’s review is shown as a finding. It never passes or fails a gate. A finding blocks after a separate check confirms it: a code repro, or an independent second run. Unconfirmed findings stay visible, marked “unconfirmed”.</p>
+                <p>A model’s review is shown as a finding. It does not pass or fail a gate. A finding blocks after a separate check confirms it: a code repro, or an independent second run. Unconfirmed findings stay visible, marked “unconfirmed”.</p>
               </div>
             </div>
       </div>

@@ -33,7 +33,9 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 5. Apply `open.confinement` (argv prefix, env allowlist) to every process the family starts; a family that cannot must
    fail `open` with `kind: "unsupported"`. Log env keys you add before the engine starts.
 6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
-   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`).
+   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`). The Claude and Cursor SDK gates were lifted
+   on 2026-11-22 on the condition that Orbyn Engineering is open source for public use; both are used as dependencies only
+   and ship with the notices their licences ask for. Both are exact-pinned dependencies in `package.json` (`@anthropic-ai/claude-agent-sdk` 0.3.321, `@cursor/sdk` 1.4.2) with their licence texts in `THIRD_PARTY_NOTICES.md`; neither is bundled into the single executable: both ship as a `node_modules` folder beside it (see Single executable below).
 7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
    `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
    and write each test so it fails before the code. State in the PR what has not run against the real engine.
@@ -53,13 +55,32 @@ Not checked: launching the ad hoc signed host from inside the ad hoc signed app 
 Linux, Intel macOS (T3 found SEA crashes there, so Intel keeps the Rust drivers).
 The Tauri `externalBin` wiring and `scripts/check-desktop-assets.mjs` entry come with the first real family.
 
+### SDK folder
+
+The two SDKs cannot live in the single file (native files, webpack chunks), so `npm run prepare:sdks`
+(`scripts/prepare-sdks.mjs`) builds `dist/sdk/`: a production `node_modules` with only `@anthropic-ai/claude-agent-sdk`,
+`@cursor/sdk` and what they need at run time, at the versions `package-lock.json` records (a trimmed lockfile, `npm ci --omit=dev
+--ignore-scripts`, so no install script runs), plus `THIRD_PARTY_NOTICES.md`. Anthropic's `@anthropic-ai/claude-agent-sdk-<platform>`
+packages (the `claude` binary) are left out, because the host runs the person's own `claude`; the Cursor SDK's package for the build
+platform is in. `scripts/prepare-bundle.mjs` copies it to `build/sdk`, which `tauri.conf.json` ships as `Contents/Resources/sdk`
+(macOS arm64 only, like the host; other targets get an empty folder).
+
+`src/sdkLocation.mjs` picks where the host imports an SDK from: `ORBYN_CLAUDE_SDK_MODULE` / `ORBYN_CURSOR_SDK_MODULE` first, then
+`<dir of the executable>/sdk/node_modules/<pkg>`, then `<dir>/../Resources/sdk/node_modules/<pkg>`, else the bare package name
+(development; note that a built executable also resolves it from the `node_modules` it was built next to). The entry is read from the
+package's `exports`/`main` and imported by file URL. `scripts/sign-adhoc-macos.sh` signs the Mach-O files in `Resources/sdk` with no
+entitlements and `scripts/check-macos-entitlements.sh` walks them. Checked: the SEA built on macOS arm64 loads the Cursor SDK and the
+Claude SDK from a `sdk/` folder beside it and from `../Resources/sdk` in a `Contents/MacOS` layout, and reports the plain message with
+neither. Not checked: a real `tauri build` bundle, a real SDK turn, a Developer ID signed bundle (Tauri does not sign `Resources` files
+itself, so a `--release` check would flag them), other platforms.
+
 ## Claude family (behind a flag)
 
 `src/families/claude.mjs` runs `query()` from `@anthropic-ai/claude-agent-sdk` over the person's own
 `claude` (`options.claudePath`). It starts only with `ORBYN_ENGINE_HOST_CLAUDE=1`, and the Rust side keeps
 the CLI driver as the default for subscription sign-in until Anthropic approves the SDK path in writing.
-The SDK is **not bundled** (esbuild `external`, no dependency in `package.json`): in development it loads from
-`node_modules`, in the single executable it is absent and the family fails with a plain message.
+The SDK is **not bundled into the executable** (esbuild `external`); it is an exact-pinned dependency. In development it loads from
+`node_modules`; in the app it loads from the `sdk` folder beside the host (see Single executable below); with neither, the family fails with a plain message.
 
 Done and tested against replayed transcripts (T3 Code, MIT, `test/fixtures/NOTICE`): multi-turn session on
 one query, permission frames with once-only allow and deny, cancel through `interrupt()`, session and turn
@@ -88,9 +109,10 @@ for the prompt's uuid before the result. A leftover turn has not been seen on a 
 
 `src/families/cursor.mjs` runs the public surface of `@cursor/sdk` (`Agent.create`/`Agent.resume`, `agent.send` with `onDelta`,
 `run.wait`/`steer`/`cancel`, `agent.close`). It starts only with `ORBYN_ENGINE_HOST_CURSOR=1`; without it `cursor` is an unknown
-family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is **not bundled and not a
-dependency** (not even optional): esbuild `external`, loaded with a dynamic import that fails with "The Cursor SDK is not
-available in this build." (`kind: "unsupported"`). In the single executable it is therefore absent.
+family (exit 2). The SDK (licence "SEE LICENSE IN LICENSE.md", about 20 MB with native binaries) is an exact-pinned **dependency**, not
+bundled into the single executable (esbuild `external`). The host loads it with a dynamic import, or from the file named by
+`ORBYN_CURSOR_SDK_MODULE`; if it cannot, `open` fails with "The Cursor SDK is not available in this build." (`kind: "unsupported"`).
+The app bundle ships it in the `sdk` folder beside the host (see Single executable).
 
 - **Pooled.** One host process serves every Cursor session (T3's single worker, keyed by `sessionId`). A pooled host cannot take a
   per-run argv prefix, so `open` with `confinement.argvPrefix` fails with `kind: "unsupported"` and starts nothing; the core
@@ -345,7 +367,7 @@ Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`), `packages/pr
 `CursorAgentSdkWorker.ts`, `adapter.ts`) and `packages/effect-codex-app-server` plus the Codex adapter files named in the section above,
 commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking (`promptUnmatched`, `:ask-me`) where T3 maps full
 access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability (no session MCP yet); Cursor has no approvals; the pooled
-Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind `ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only
+Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled into the executable (it ships in the `sdk` folder) and is behind `ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only
 `CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key. Codex keeps T3's asking shape (`on-request`, read-only or
 workspace-write), never T3's full-access `never`/`dangerFullAccess`, and one app-server per confinement group rather than one per provider.
 

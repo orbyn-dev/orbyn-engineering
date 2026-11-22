@@ -68,9 +68,12 @@ export function waitingOnDelegates(threads: readonly Thread[]): ReadonlySet<stri
   return waiting;
 }
 
-/** How urgently a thread wants the person: 0 needs them now, 1 failed, 2 anything else. */
-export function attentionRank(thread: Thread): number {
-  if (thread.active_run?.state === "awaiting_approval" || thread.lifecycle?.limit) return 0;
+/**
+ * How urgently a thread wants the person: 0 needs them now, 1 failed, 2 anything else. A terminal waiting for the person
+ * (`terminalWaiting`, from the attention store) needs them as much as an approval does.
+ */
+export function attentionRank(thread: Thread, terminalWaiting = false): number {
+  if (terminalWaiting || thread.active_run?.state === "awaiting_approval" || thread.lifecycle?.limit) return 0;
   if (!thread.active_run && thread.last_run_state === "failed") return 1;
   return 2;
 }
@@ -79,8 +82,8 @@ export type LedgerKey = "needs" | "failed" | "running" | "done";
 const LEDGER_ORDER: LedgerKey[] = ["needs", "failed", "running", "done"];
 
 /** The Ledger section a thread sits in. */
-export function ledgerKey(thread: Thread): LedgerKey {
-  const rank = attentionRank(thread);
+export function ledgerKey(thread: Thread, terminalWaiting = false): LedgerKey {
+  const rank = attentionRank(thread, terminalWaiting);
   return rank === 0 ? "needs" : rank === 1 ? "failed" : thread.active_run ? "running" : "done";
 }
 

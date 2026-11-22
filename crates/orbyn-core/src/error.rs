@@ -395,7 +395,7 @@ impl CoreError {
                 limit: *limit,
             },
             Self::SourceTooLarge { field, limit } => Self::SourceTooLarge {
-                field: *field,
+                field,
                 limit: *limit,
             },
             Self::SharedDirectory(n) => Self::SharedDirectory(*n),

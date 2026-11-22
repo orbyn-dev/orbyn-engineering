@@ -488,7 +488,7 @@ test("without ORBYN_ENGINE_HOST_CURSOR=1 the family is unknown and the host exit
 });
 
 test("with the flag the host says hello, and a missing SDK fails open with a plain message", async () => {
-  const child = startMain({ ORBYN_ENGINE_HOST_CURSOR: "1" });
+  const child = startMain({ ORBYN_ENGINE_HOST_CURSOR: "1", ORBYN_CURSOR_SDK_MODULE: "/nonexistent/cursor-sdk.mjs" });
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const hello = JSON.parse((await lines.next()).value);
   assert.equal(hello.family, "cursor");
@@ -503,9 +503,10 @@ test("with the flag the host says hello, and a missing SDK fails open with a pla
   assert.equal(await exited(child), 0);
 });
 
-test("package.json does not depend on @cursor/sdk, even optionally", () => {
+test("@cursor/sdk is an exact-pinned dependency and stays out of the single-file bundle", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  for (const key of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+  assert.match(pkg.dependencies["@cursor/sdk"], /^\d+\.\d+\.\d+$/);
+  for (const key of ["devDependencies", "optionalDependencies", "peerDependencies"]) {
     assert.equal(Object.keys(pkg[key] ?? {}).includes("@cursor/sdk"), false, key);
   }
   const build = readFileSync(new URL("../scripts/build-sea.mjs", import.meta.url), "utf8");

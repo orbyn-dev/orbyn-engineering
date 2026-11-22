@@ -194,6 +194,15 @@ impl ShellBridge {
         })
     }
 
+    /// Tells the windows that a thread's log grew at `seq`, so a window that follows
+    /// that thread can read it. The event itself stays in the log.
+    pub(crate) fn thread_event(&self, thread_id: &str, seq: i64) {
+        self.publish(ShellEvent::ThreadEvent {
+            thread_id: thread_id.to_owned(),
+            seq,
+        });
+    }
+
     fn publish(&self, event: ShellEvent) {
         let mut held = lock(&self.held);
         if self.events.send(event.clone()).is_err() {

@@ -474,6 +474,9 @@ input.welcome-radio:checked {
 .draft-stage .composer-context > span:empty {
   display: none;
 }
+.draft-stage .composer-context > .unmanaged-label-text {
+  color: var(--color-warnText);
+}
 .draft-stage .composer-context dd .context-action {
   padding: 0;
   background: transparent;

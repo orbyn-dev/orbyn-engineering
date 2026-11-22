@@ -16,6 +16,7 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
   const [refused, setRefused] = useState(false);
   const [overriding, setOverriding] = useState(false);
   const writing = useRef(false);
+  const engineId = engine?.id ?? thread.engine;
   const engineName = engine?.name ?? thread.engine;
   const savedMode = thread.lifecycle?.permission_mode ?? "supervised";
 
@@ -90,10 +91,10 @@ export function useEngineGate(thread: Thread, engine: EngineStatus | null, setEr
   const cards = (resend: () => void, runWithout: () => Promise<boolean>) => (
     <>
       {refused && !choosing && !noticeOpen ? (
-        <ModeRefusedCard engineName={engineName} modeName={refusalModeName(savedMode)} busy={overriding} onRun={() => void override(runWithout)} onChoose={choose} />
+        <ModeRefusedCard engineId={engineId} engineName={engineName} modeName={refusalModeName(savedMode)} busy={overriding} onRun={() => void override(runWithout)} onChoose={choose} />
       ) : null}
       {noticeOpen && !choosing ? (
-        <NoticeCard engineName={engineName} busy={acknowledging} onContinue={() => void acknowledge(resend)} onChoose={choose} />
+        <NoticeCard engineId={engineId} engineName={engineName} busy={acknowledging} onContinue={() => void acknowledge(resend)} onChoose={choose} />
       ) : null}
     </>
   );
