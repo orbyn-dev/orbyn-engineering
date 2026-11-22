@@ -45,13 +45,18 @@ export function whyLine(entry: AttentionEntry, now: number): string {
   return `It stopped printing ${seconds} s ago, and its last line reads like a question.`;
 }
 
-/** The toast: names the engine and where, never the prompt and never an answer. */
+/** What a secret prompt says outside the terminal: the engine and nothing else, never the prompt, its label or the terminal's title. */
+const secretText = (entry: AttentionEntry): string => `${engineName(entry.engine)} is waiting for a password`;
+
+/** The toast: names the engine and where, never the prompt and never an answer. A secret names only the engine. */
 export const toastText = (entry: AttentionEntry, threadTitle: string): string =>
-  `${engineName(entry.engine)} needs you in “${entry.terminalTitle}”${threadTitle === "" ? "" : ` · ${oneLine(threadTitle, 80)}`}`;
+  entry.kind === "secret"
+    ? secretText(entry)
+    : `${engineName(entry.engine)} needs you in “${entry.terminalTitle}”${threadTitle === "" ? "" : ` · ${oneLine(threadTitle, 80)}`}`;
 
 /** The system notification's body. For a secret it never carries the prompt. */
 export function notificationText(entry: AttentionEntry, threadTitle: string): string {
-  if (entry.kind === "secret") return `${engineName(entry.engine)} is waiting for a password in “${entry.terminalTitle}”`;
+  if (entry.kind === "secret") return secretText(entry);
   const question = entry.excerpt.at(-1) ?? "";
   const where = `${engineName(entry.engine)} in “${entry.terminalTitle}”${threadTitle === "" ? "" : ` · ${oneLine(threadTitle, 80)}`}`;
   return question === "" ? `${where} is waiting for an answer` : `${where}: ${question}`;
