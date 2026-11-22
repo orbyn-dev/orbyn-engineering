@@ -434,8 +434,11 @@ Failure text is cleaned before anyone sees it: terminal codes go, and a line tha
 like a credential, by key name, vendor prefix or shape, is dropped whole. A run that
 failed for want of a login says so and names the vendor's command, such as `claude auth
 login`, and logs `CUSTOM engine.sign_in_required`. Orbyn only names the command, under
-rule 1. Status commands are bounded by time and to 256 KiB, and `claude auth status` is
-read for its logged-in flag alone.
+rule 1. A run that failed because its engine host stopped carries the stable `RUN_ERROR`
+code `engine_host_stopped` beside its unchanged message, so a client can show the
+host-stopped banner from the code rather than matching the words. Status commands are
+bounded by time and to 256 KiB, and `claude auth status` is read for its logged-in flag
+alone.
 
 Mode is stated on every launch: Claude's `--permission-mode`, and Codex's approval policy
 and sandbox on `thread/start`, `thread/resume` and `turn/start`, because a saved session
