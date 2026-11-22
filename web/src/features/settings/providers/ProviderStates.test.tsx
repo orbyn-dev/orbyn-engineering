@@ -107,7 +107,7 @@ it("keeps the Version column in the DOM on a narrow table, where CSS alone hides
   await switches();
   expect(screen.getByRole("table", { name: "Providers" })).toHaveClass("set-tbl", "prov");
   expect(screen.getByRole("columnheader", { name: "Version" })).toBeInTheDocument();
-  const row = rowOf("Claude Code");
+  const row = rowOf("Claude (SDK)");
   const cells = within(row).getAllByRole("cell");
   expect(cells).toHaveLength(6);
   expect(cells[2]).toHaveTextContent("2.1.318");
