@@ -242,7 +242,7 @@ describe("the You stage of Flow", () => {
     expect(panel).toHaveTextContent("Merged under a standing ruleMergedRule: docs-direct");
     expect(panel).toHaveTextContent("Set byAnh, in .orbyn/crew.json");
     expect(panel).toHaveTextContent("Required stagesChecks, Code review");
-    expect(panel).toHaveTextContent("Bots and agents never merge in the skills library");
+    expect(panel).toHaveTextContent("In the skills library, merging is left to a person");
     // The rule editor is not built, so Edit and Turn off are not drawn.
     expect(screen.queryByRole("button", { name: "Edit the rule" })).toBeNull();
     expect(screen.getByRole("button", { name: "Open the PR" })).toBeVisible();

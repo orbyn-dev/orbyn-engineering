@@ -1,6 +1,7 @@
 import { Image as ImageIcon, RotateCcw, X } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ConversionKind } from "./photoConversion";
+import { SnapshotDraftChip, useSnapshot, type SnapShotSource } from "../../snapshot";
 
 /** A photo the service is converting or shrinking (parity B8, hidden until core does it): what it is doing and the line to say so. */
 export interface PhotoConversion {
@@ -20,6 +21,8 @@ export interface ShownAttachment {
   id: string | null;
   failure: string | null;
   conversion?: PhotoConversion;
+  /** A Snap Shot draft: where it came from, and the shell's id for a discard when the person removes it. */
+  snapshot?: { source: SnapShotSource; captureId: string };
 }
 
 function PhotoChip({
@@ -80,18 +83,35 @@ export function AttachmentStrip({
   setAttachments,
   startUpload,
   cancel,
+  onRemoveSnapshotText,
 }: {
   attachments: ShownAttachment[];
   setAttachments: Dispatch<SetStateAction<ShownAttachment[]>>;
   startUpload(entry: ShownAttachment): void;
   /** Ends a conversion in flight and drops its chip. Without it a converting chip can only be removed. */
   cancel?(entry: ShownAttachment): void;
+  /** Drops the accessible text from a capture, on the service when it is already kept. */
+  onRemoveSnapshotText?(entry: ShownAttachment): void;
 }) {
   const remove = (key: string) => setAttachments(attachments.filter((entry) => entry.key !== key));
   return (
     <ul className="attachment-strip" aria-label="Attachments">
       {attachments.map((file) =>
-        file.conversion ? (
+        file.snapshot ? (
+          <li key={file.key} className="attachment-snapshot">
+            <SnapshotDraftChip
+              name={file.name}
+              preview={file.preview}
+              source={file.snapshot.source}
+              onRemove={() => {
+                void useSnapshot.getState().discard(file.snapshot!.captureId);
+                if (file.preview) URL.revokeObjectURL(file.preview);
+                remove(file.key);
+              }}
+              onRemoveText={() => onRemoveSnapshotText?.(file)}
+            />
+          </li>
+        ) : file.conversion ? (
           <PhotoChip
             key={file.key}
             file={{ ...file, conversion: file.conversion }}

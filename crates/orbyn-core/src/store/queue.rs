@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 
 use orbyn_contracts::{
-    Attachment, ModelSelection, PullGuide, PullRequest, PullWatch, QueuedMessage, Run, RunState,
-    SteerDelivery, SteerFailed, SteerStateEvent,
+    Attachment, AttachmentSource, ModelSelection, PullGuide, PullRequest, PullWatch, QueuedMessage,
+    Run, RunState, SteerDelivery, SteerFailed, SteerStateEvent,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
@@ -128,6 +128,11 @@ fn pull_row(row: &Row<'_>) -> rusqlite::Result<PullRequest> {
 }
 
 fn attachment_row(row: &Row<'_>) -> rusqlite::Result<(Attachment, String)> {
+    let source: Option<String> = row.get("source")?;
+    let source = source
+        .as_deref()
+        .map(|text| parse_json(0, text))
+        .transpose()?;
     Ok((
         Attachment {
             id: row.get("id")?,
@@ -136,6 +141,7 @@ fn attachment_row(row: &Row<'_>) -> rusqlite::Result<(Attachment, String)> {
             mime: row.get("mime")?,
             size: row.get::<_, i64>("size")? as u64,
             created_at: row.get("created_at")?,
+            source,
         },
         row.get("path")?,
     ))
@@ -392,19 +398,101 @@ impl Store {
 
     pub fn list_attachments(&self, thread_id: &str) -> Result<Vec<(Attachment, String)>> {
         let conn = self.reader();
-        let mut statement =
-            conn.prepare_cached("SELECT * FROM attachments WHERE thread_id = ?1 ORDER BY rowid")?;
+        let mut statement = conn.prepare_cached(
+            "SELECT attachments.*, attachment_sources.source AS source
+             FROM attachments
+             LEFT JOIN attachment_sources ON attachment_sources.attachment_id = attachments.id
+             WHERE attachments.thread_id = ?1 ORDER BY attachments.rowid",
+        )?;
         let rows = statement.query_map([thread_id], attachment_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn attachment(&self, id: &str) -> Result<(Attachment, String)> {
         let conn = self.reader();
-        let mut statement = conn.prepare_cached("SELECT * FROM attachments WHERE id = ?1")?;
+        let mut statement = conn.prepare_cached(
+            "SELECT attachments.*, attachment_sources.source AS source
+             FROM attachments
+             LEFT JOIN attachment_sources ON attachment_sources.attachment_id = attachments.id
+             WHERE attachments.id = ?1",
+        )?;
         statement
             .query_row([id], attachment_row)
             .optional()?
             .ok_or_else(|| CoreError::NotFound("attachment".into()))
+    }
+
+    /// Replaces the source kept beside an attachment. The attachment must exist.
+    pub fn set_attachment_source(
+        &self,
+        attachment_id: &str,
+        source: &AttachmentSource,
+    ) -> Result<()> {
+        let source = serde_json::to_string(source)?;
+        let stamp = now();
+        self.commit(|tx, _| {
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM attachments WHERE id = ?1)",
+                [attachment_id],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Err(CoreError::NotFound("attachment".into()));
+            }
+            tx.execute(
+                "INSERT INTO attachment_sources (attachment_id, source, created_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (attachment_id) DO UPDATE SET source = excluded.source,
+                    created_at = excluded.created_at",
+                params![attachment_id, source, stamp],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The source `set_attachment_source` kept for an attachment, if any.
+    pub fn attachment_source(&self, attachment_id: &str) -> Result<Option<AttachmentSource>> {
+        let conn = self.reader();
+        let source: Option<String> = conn
+            .query_row(
+                "SELECT source FROM attachment_sources WHERE attachment_id = ?1",
+                [attachment_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        source
+            .as_deref()
+            .map(|text| parse_json(0, text))
+            .transpose()
+            .map_err(CoreError::from)
+    }
+
+    /// Whether the thread's queued messages or a run it admitted already name this attachment.
+    pub fn attachment_is_sent(&self, attachment_id: &str, thread_id: &str) -> Result<bool> {
+        Ok(self.reader().query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM queued_messages q, json_each(q.attachment_ids) item
+                 WHERE q.thread_id = ?1 AND item.value = ?2
+             ) OR EXISTS (
+                 SELECT 1 FROM thread_setup s
+                 WHERE s.thread_id = ?1 AND s.attachment_ids IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM json_each(s.attachment_ids) item WHERE item.value = ?2
+                   )
+             ) OR EXISTS (
+                 SELECT 1 FROM thread_events e
+                 WHERE e.thread_id = ?1
+                   AND json_extract(e.event, '$.type') = 'CUSTOM'
+                   AND json_extract(e.event, '$.name') = 'user.attachments'
+                   AND json_type(e.event, '$.value.attachments') = 'array'
+                   AND EXISTS (
+                       SELECT 1 FROM json_each(e.event, '$.value.attachments') item
+                       WHERE json_extract(item.value, '$.id') = ?2
+                   )
+             )",
+            params![thread_id, attachment_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// Links a pull request of one repository of the thread; the thread's own project is its primary repository.
@@ -636,6 +724,10 @@ impl Store {
                 })
                 .optional()?
                 .ok_or_else(|| CoreError::NotFound("attachment".into()))?;
+            tx.execute(
+                "DELETE FROM attachment_sources WHERE attachment_id = ?1",
+                [id],
+            )?;
             tx.execute("DELETE FROM attachments WHERE id = ?1", [id])?;
             Ok(path)
         })

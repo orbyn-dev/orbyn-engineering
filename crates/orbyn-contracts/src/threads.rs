@@ -239,6 +239,25 @@ pub struct SteerRun {
 }
 
 wire! {
+/// Where an attachment came from, when the page knows more than the upload did.
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AttachmentSource {
+    /// A Snap Shot the desktop shell captured (docs/snapshots.md).
+    SnapShot {
+        captured_at: String,
+        app_name: String,
+        window_title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        app_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        accessible_text: Option<String>,
+    },
+}
+}
+
+wire! {
 pub struct Attachment {
     pub id: String,
     pub thread_id: String,
@@ -246,6 +265,10 @@ pub struct Attachment {
     pub mime: String,
     pub size: u64,
     pub created_at: String,
+    /// Absent for an ordinary upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<AttachmentSource>,
 }
 }
 
@@ -525,4 +548,78 @@ pub struct CreateThread {
     #[ts(optional, as = "Option<BTreeMap<String, String>>")]
     pub options: BTreeMap<String, String>,
 }
+}
+
+#[cfg(test)]
+mod attachment_source_tests {
+    use super::*;
+
+    fn attachment(source: Option<AttachmentSource>) -> Attachment {
+        Attachment {
+            id: "a".into(),
+            thread_id: "t".into(),
+            name: "shot.png".into(),
+            mime: "image/png".into(),
+            size: 3,
+            created_at: "2026-11-22T10:00:00Z".into(),
+            source,
+        }
+    }
+
+    fn snap_shot() -> AttachmentSource {
+        AttachmentSource::SnapShot {
+            captured_at: "2026-11-22T10:00:00Z".into(),
+            app_name: "Notes".into(),
+            window_title: "Weekly plan".into(),
+            app_id: Some("com.apple.Notes".into()),
+            accessible_text: Some("buy milk".into()),
+        }
+    }
+
+    #[test]
+    fn an_attachment_without_a_source_serializes_as_before() {
+        let value = serde_json::to_value(attachment(None)).unwrap();
+        assert!(value.get("source").is_none());
+        let decoded: Attachment = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.source, None);
+    }
+
+    #[test]
+    fn a_snap_shot_source_round_trips_and_keeps_its_wire_name() {
+        let source = snap_shot();
+        let value = serde_json::to_value(&source).unwrap();
+        assert_eq!(value["kind"], "snap_shot");
+        assert_eq!(value["app_name"], "Notes");
+        assert_eq!(
+            serde_json::from_value::<AttachmentSource>(value).unwrap(),
+            source
+        );
+        let without_optional = serde_json::json!({
+            "kind": "snap_shot",
+            "captured_at": "2026-11-22T10:00:00Z",
+            "app_name": "Notes",
+            "window_title": "Weekly plan",
+        });
+        assert_eq!(
+            serde_json::from_value::<AttachmentSource>(without_optional).unwrap(),
+            AttachmentSource::SnapShot {
+                captured_at: "2026-11-22T10:00:00Z".into(),
+                app_name: "Notes".into(),
+                window_title: "Weekly plan".into(),
+                app_id: None,
+                accessible_text: None,
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_kind_or_field_is_a_deserialization_error() {
+        assert!(
+            serde_json::from_value::<AttachmentSource>(serde_json::json!({"kind": "future"}))
+                .is_err()
+        );
+        let mut unknown = serde_json::to_value(snap_shot()).unwrap();
+        unknown["app_icon"] = serde_json::json!("icon.png");
+        assert!(serde_json::from_value::<AttachmentSource>(unknown).is_err());
+    }
 }

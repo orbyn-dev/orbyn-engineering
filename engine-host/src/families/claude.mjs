@@ -15,6 +15,7 @@ const SUBAGENT_LIMIT_MAX = 5000;
 
 const hostError = (name, message, kind) => Object.assign(new Error(message), { name, ...(kind ? { kind } : {}) });
 const historyTooLarge = () => hostError("HistoryTooLarge", "This conversation is too large to read in one piece.", "host");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const invalidRequest = (message) => hostError("InvalidRequest", message, "invalid_request");
 const unsupportedSdkMethod = (method) => Object.assign(new Error(`${method} is not available in this SDK`), { name: "UnsupportedRequest" });
 
@@ -193,7 +194,19 @@ export function claudeFamily({ loadSdk }) {
                 const forked = await forkSession(request.engineSessionId, { dir: cwd });
                 resume = forked.sessionId;
               }
-              sessions.set(sessionId, { id: sessionId, cwd, options, confinement, resume, engineSessionId: resume, turnHeads: new Map(), run: null });
+              let resumeAt;
+              if (request.resumeAt !== undefined) {
+                if (request.operation !== "resume" || typeof request.resumeAt !== "string" || !UUID.test(request.resumeAt)) {
+                  throw invalidRequest("resumeAt needs operation resume and the uuid of an assistant message.");
+                }
+                const api = await sdk();
+                if (typeof api.getSessionMessages !== "function") throw unsupportedSdkMethod("getSessionMessages");
+                const known = await api.getSessionMessages(resume, { dir: cwd });
+                const found = Array.isArray(known) && known.some((m) => m?.type === "assistant" && m.uuid === request.resumeAt && !m.parent_tool_use_id);
+                if (!found) throw invalidRequest("resumeAt is not a top-level assistant message of this session.");
+                resumeAt = request.resumeAt;
+              }
+              sessions.set(sessionId, { id: sessionId, cwd, options, confinement, resume, resumeAt, engineSessionId: resume, turnHeads: new Map(), run: null });
               return { engineSessionId: resume ?? null };
             }
             case "send": {

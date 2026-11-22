@@ -49,7 +49,7 @@ export interface PublishInput {
 /**
  * One Git action on ONE repository of a thread; no action spans repositories. Each is `POST .../git/action`, whose body (`GitAction`)
  * takes an optional `repo_id` (docs/multi-repo.md, "As built: repo_id on Git and file calls"). Merge and review are NOT here: the
- * pull request routes take no `repo_id` yet and act on the primary repository, so a menu for another repository must not offer them.
+ * Git menu runs them through the pull request routes (`?repo_id=`, `RepoPullDialogs.tsx`), which answer errors in their own dialog.
  * There is no pull (fetch) action: the document defines none.
  */
 export type ThreadGitAction =
