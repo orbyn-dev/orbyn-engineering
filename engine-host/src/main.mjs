@@ -1,4 +1,3 @@
-import { pathToFileURL } from "node:url";
 import { runHost } from "./host.mjs";
 import { acpFamily } from "./families/acp.mjs";
 import { claudeFamily } from "./families/claude.mjs";
@@ -7,6 +6,7 @@ import { cursorFamily, isBenignSdkRejection } from "./families/cursor.mjs";
 import { fake } from "./families/fake.mjs";
 import { museFamily } from "./families/muse.mjs";
 import { opencodeFamily } from "./families/opencode.mjs";
+import { importSdk } from "./sdkLocation.mjs";
 
 const families = {
   fake,
@@ -20,10 +20,10 @@ const families = {
   // the host neither ships nor fetches one, and speaks the protocol in src/families/acp.mjs.
   acp: acpFamily(),
 };
-// The SDKs are dependencies, loaded from node_modules in development. `ORBYN_CLAUDE_SDK_MODULE` and `ORBYN_CURSOR_SDK_MODULE`
-// name another place to load them from (an absolute path to the package's entry file, used by the app bundle and by the
-// tests that check a missing SDK); a plain name is imported as usual.
-const sdkImport = (override, name) => import(override?.startsWith("/") ? pathToFileURL(override).href : (override ?? name));
+// The SDKs are dependencies. `ORBYN_CLAUDE_SDK_MODULE` and `ORBYN_CURSOR_SDK_MODULE` name another place to load them from (an
+// absolute path to the package's entry file, used by the tests that check a missing SDK); a plain name is imported as usual.
+// Without an override the host loads the folder shipped beside it, else `node_modules` in development (src/sdkLocation.mjs).
+const sdkImport = (override, name) => importSdk(override, name);
 // The Claude SDK path is opt-in until the SDK is bundled (docs/sdk-default-plan.md).
 if (process.env.ORBYN_ENGINE_HOST_CLAUDE === "1") {
   families.claude = claudeFamily({

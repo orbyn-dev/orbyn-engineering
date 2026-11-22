@@ -225,6 +225,25 @@ describe("Review and comments tab", () => {
     expect(screen.getByText("Comment on b")).toBeInTheDocument();
   });
 
+  it("sends only the drafts the file filter shows, and says how many", async () => {
+    put([draft("d1", "a.ts", 1, "Fix a"), draft("d2", "b.ts", 2, "Fix b"), draft("d3", "a.ts", 9, "Fix a again")]);
+    render(<ReviewPanel threadId="t1" />);
+    expect(screen.getByRole("button", { name: "Send all to engine" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter by file" }), { target: { value: "a.ts" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send 2 to engine" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("2 comments in 1 file")).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/Fix a again/).length).toBeGreaterThan(0);
+    expect(within(dialog).queryAllByText(/Fix b/)).toHaveLength(0);
+  });
+
+  it("offers no send when the filter shows no draft", () => {
+    put([draft("d1", "a.ts", 1, "Fix a")], [draft("o1", "b.ts", 3, "Sent b")]);
+    render(<ReviewPanel threadId="t1" />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Filter by file" }), { target: { value: "b.ts" } });
+    expect(screen.queryByRole("button", { name: /to engine/ })).toBeNull();
+  });
+
   it("ignores a slow older forge read after the thread changes", async () => {
     const other = { ...thread, id: "t2" } as Thread;
     useWorkspace.setState({ threads: { t1: thread, t2: other } });

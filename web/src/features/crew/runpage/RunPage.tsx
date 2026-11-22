@@ -4,7 +4,7 @@ import type { FlowTaskDetail } from "../../../generated/FlowTaskDetail";
 import { useUi } from "../../../product/state/ui";
 import { Empty, ErrorState, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
-import { useFlowTask } from "../flow/live/useFlow";
+import { useFlowTask, useRunPage } from "../flow/live/useFlow";
 import { saveTextFile } from "./download";
 import { fileNameOf, runPageHtml, runPageMarkdown, runPageModel } from "./runExport";
 import "./runpage.css";
@@ -16,21 +16,27 @@ const Planned = ({ why }: { why: string }) => (
 );
 
 /**
- * The Run page of one Crew task, built on this device from its Flow read. Save as file hands the person a static page and Copy
- * PR comment puts Markdown on the clipboard; each is one click and nothing is sent anywhere. What the read does not carry
- * (the prompt, the plan, each check's command, the signed proof) is marked Planned, never filled in.
+ * The Run page of one Crew task, built on this device from its Flow read and, when the service has it, the task's run read.
+ * Save as file hands the person a static page and Copy PR comment puts Markdown on the clipboard; each is one click and
+ * nothing is sent anywhere. A 404 run read means this service has none, so the page keeps the Flow-based Planned marks; any
+ * other failure is reported beside the page without dropping it. What neither read carries (the plan, the pull request
+ * URL and head, the signed proof, another device) stays Planned, never filled in.
  */
 export function RunPage({ detail, pull = null, onBack }: { detail: FlowTaskDetail; pull?: number | null; onBack?(): void }) {
   const pushToast = useUi((state) => state.pushToast);
-  const model = useMemo(() => runPageModel(detail, new Date().toISOString()), [detail]);
+  const runRead = useRunPage(detail.row.id);
+  const noRunRead = runRead.error instanceof ApiFailure && runRead.error.status === 404;
+  const runFailure = runRead.error && !noRunRead ? runRead.error : null;
+  const run = runRead.data ?? undefined;
+  const model = useMemo(() => runPageModel(detail, new Date().toISOString(), run), [detail, run]);
   const [copy, setCopy] = useState<Copy>(null);
   const save = () => {
-    const made = runPageModel(detail, new Date().toISOString());
+    const made = runPageModel(detail, new Date().toISOString(), run);
     saveTextFile(fileNameOf(made.title), runPageHtml(made));
     pushToast("Download started");
   };
   const copyComment = async () => {
-    const text = runPageMarkdown(runPageModel(detail, new Date().toISOString()), pull);
+    const text = runPageMarkdown(runPageModel(detail, new Date().toISOString(), run), pull);
     try {
       await navigator.clipboard.writeText(text);
       setCopy({ kind: "copied", at: new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC" });
@@ -53,6 +59,11 @@ export function RunPage({ detail, pull = null, onBack }: { detail: FlowTaskDetai
         <Button small onClick={save}>Save as file</Button>
         <Button small onClick={() => void copyComment()}>Copy PR comment</Button>
       </div>
+      {runFailure ? (
+        <div className="rp-sec">
+          <ErrorState compact title="Can’t read this run’s details" failure={runFailure} onRetry={() => void runRead.reload()} />
+        </div>
+      ) : null}
       {copy ? (
         <p className="rp-status" role="status">
           {copy.kind === "copied"
@@ -70,14 +81,76 @@ export function RunPage({ detail, pull = null, onBack }: { detail: FlowTaskDetai
           <dt>Budget</dt><dd>{model.budget}</dd>
           <dt>Route</dt><dd>{model.route ?? "Not routed yet"}</dd>
         </dl>
-        <p className="rp-muted">Prompt and plan <Planned why="The Flow read carries the brief's purpose only" /></p>
+        {model.hasRun ? (
+          model.prompt ? (
+            <>
+              <h4>Prompt</h4>
+              <p>{model.prompt.text}</p>
+              <p className="rp-muted">{model.prompt.note}</p>
+            </>
+          ) : <p className="rp-muted">No prompt was saved for this task.</p>
+        ) : null}
+        <p className="rp-muted">
+          {model.hasRun ? "Plan" : "Prompt and plan"}{" "}
+          <Planned why={model.hasRun ? "Nothing stores a task's plan steps" : "The Flow read carries the brief's purpose only"} />
+        </p>
       </div>
 
       <div className="rp-sec">
         <h3>Checks</h3>
         <p className={model.checksFailed ? "rp-fail" : undefined}>{model.checks ?? "No check result yet."}</p>
-        <p className="rp-muted">Each check's command, exit code, duration and what it proves <Planned why="The Flow read carries counts, never a check" /></p>
+        {model.checkList ? (
+          model.checkList.length === 0
+            ? <p className="rp-muted">No checks were recorded for this run.</p>
+            : (
+              <ul>
+                {model.checkList.map((one, at) => (
+                  <li key={at}>
+                    <b>{one.outcome}</b> <code>{one.command}</code>
+                    <div className="rp-muted">
+                      {one.exitCode != null ? <span>exit {one.exitCode}</span> : <span>no exit code</span>}
+                      {one.duration ? <> · <span>{one.duration}</span></> : null}
+                      {one.commit ? <> · <span>commit {one.commit}</span></> : null}
+                    </div>
+                    <div className="rp-muted">Proves: <span>{one.proves}</span></div>
+                  </li>
+                ))}
+              </ul>
+            )
+        ) : (
+          <p className="rp-muted">Each check's command, exit code, duration and what it proves <Planned why="The Flow read carries counts, never a check" /></p>
+        )}
+        {model.runTruncated ? <p className="rp-muted">A list of this run was cut at its cap.</p> : null}
       </div>
+
+      {model.notVerified ? (
+        <div className="rp-sec">
+          <h3>Not verified</h3>
+          {model.notVerified.length === 0
+            ? <p className="rp-muted">Nothing was recorded as not verified.</p>
+            : <ul>{model.notVerified.map((line, at) => <li key={at}>{line}</li>)}</ul>}
+        </div>
+      ) : null}
+
+      {model.hasRun ? (
+        <div className="rp-sec">
+          <h3>Commit and pull request</h3>
+          <dl>
+            <dt>Commit</dt><dd>{model.commit ?? "No commit recorded."}</dd>
+            <dt>Pull request</dt>
+            <dd>
+              {model.pull ? (
+                <>
+                  {model.pull.number != null ? <span>#{model.pull.number}</span> : <span>Not numbered yet</span>}
+                  {model.pull.branch ? <> · <code>{model.pull.branch}</code></> : null}
+                  {model.pull.commit ? <> · <code>{model.pull.commit}</code></> : null}
+                </>
+              ) : "This task made no pull request."}
+            </dd>
+          </dl>
+          <p className="rp-muted">Pull request URL and head (the stale proof) <Planned why="The read has no pull request URL or head" /></p>
+        </div>
+      ) : null}
 
       <div className="rp-sec">
         <h3>Findings</h3>

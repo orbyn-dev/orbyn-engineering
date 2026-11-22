@@ -19,19 +19,23 @@ function plist(keys) {
   return `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>${body}</dict></plist>`;
 }
 
-/** An app with these binaries, each signed ad hoc with its own entitlements (and the hardened runtime when asked). */
+/**
+ * An app with these binaries, each signed ad hoc with its own entitlements (and the hardened runtime when asked).
+ * A name starting with "Resources/" goes under Contents/Resources (the engine SDKs' native files), any other under Contents/MacOS.
+ */
 function app(binaries, { runtime = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "orbyn-entitlements-"));
-  const macosDirectory = join(directory, "Orbyn Engineering.app", "Contents", "MacOS");
-  mkdirSync(macosDirectory, { recursive: true });
+  const contents = join(directory, "Orbyn Engineering.app", "Contents");
+  mkdirSync(join(contents, "MacOS"), { recursive: true });
   binaries = { "orbyn-engineering": [], ...binaries };
   for (const [name, keys] of Object.entries(binaries)) {
-    const file = join(macosDirectory, name);
+    const file = name.startsWith("Resources/") ? join(contents, name) : join(contents, "MacOS", name);
+    mkdirSync(dirname(file), { recursive: true });
     copyFileSync("/usr/bin/true", file);
     const args = ["--force", "--sign", "-"];
     if (runtime) args.push("--options", "runtime");
     if (keys.length > 0) {
-      const entitlements = join(directory, `${name}.plist`);
+      const entitlements = join(directory, `${name.replaceAll("/", "_")}.plist`);
       writeFileSync(entitlements, plist(keys));
       args.push("--entitlements", entitlements);
     }
@@ -67,6 +71,41 @@ test("the host may carry its three entitlements and nothing else carries any", {
   const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [], orbyn: [], "orbyn-engineering": [] });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Entitlements ok: 4 binaries/);
+});
+
+const NATIVE = "Resources/sdk/node_modules/@cursor/sdk-darwin-arm64/bin/rg";
+
+test("native files of the engine SDKs under Resources/sdk are walked and need no entitlement", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], orbynd: [], [NATIVE]: [], "Resources/sdk/node_modules/@cursor/sdk/vendor/binding.node": [] });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Entitlements ok: 5 binaries/);
+});
+
+test("an SDK native file with an entitlement fails, even one the host may carry", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], [NATIVE]: [LIBRARY] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rg carries com\.apple\.security\.cs\.disable-library-validation, which is not allowed/);
+});
+
+test("an SDK native file with get-task-allow fails", { skip: !macos }, () => {
+  const result = run({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], [NATIVE]: [DEBUG] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rg carries com\.apple\.security\.get-task-allow/);
+});
+
+test("--release fails on an SDK native file without the hardened runtime", { skip: !macos }, () => {
+  const built = app({ "orbyn-engine-host": [JIT, MEMORY, LIBRARY], [NATIVE]: [] }, { runtime: true });
+  try {
+    // Re-sign the native file the way an ad hoc pass would, without the runtime flag, then seal the bundle again.
+    const file = join(built.path, "Contents", NATIVE);
+    assert.equal(spawnSync("codesign", ["--force", "--sign", "-", file], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("codesign", ["--force", "--sign", "-", "--options", "runtime", built.path], { encoding: "utf8" }).status, 0);
+    const result = check(built.path, "--release");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /rg has no hardened runtime flag/);
+  } finally {
+    rmSync(built.directory, { recursive: true, force: true });
+  }
 });
 
 test("orbynd with disable-library-validation fails", { skip: !macos }, () => {

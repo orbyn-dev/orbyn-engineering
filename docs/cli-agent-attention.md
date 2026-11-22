@@ -2,8 +2,9 @@
 
 What the service must tell the web so that an engine running in a terminal (an engine console) shows a Needs you item and a
 notification when it stops and waits for the person. **Built in the service**: detection, redaction and the event on the thread's
-log. **The web side is still built hidden**: in a production build the web has no client and draws nothing; a dev-only preview
-(`#/preview/attention`) installs the mock in `web/mock/attention.ts`. Names here change only if the service pull request says so.
+log. **The web side is wired** (not yet observed against the real service): the window follows a thread's log after the shell stream's
+`thread_event` notice and draws the item, the tab and row dots and the two Settings rows; a dev-only preview (`#/preview/attention`)
+installs the mock in `web/mock/attention.ts`. Names here change only if the service pull request says so.
 It extends G14 (engine console, row G14 in [parity](parity.md)); the product row is W10 in [crew](crew.md). Frames: `attention-*` in
 Engineer Designs. Owner of the detection and the event: Eng 2.
 
@@ -108,14 +109,13 @@ reviewed. Nothing in this design types into a terminal on its own, and the web n
 The frames show one device setting, Settings › General: **Terminal agents waiting for you** (on by default) and **Quiet time before it
 counts as waiting** (10 to 120 s, 20 by default). They follow Thread notifications (system notification) and In-app notifications
 (toast). The service reads two stored device settings: `terminal_attention_enabled` (bool, default `true`) and
-`terminal_attention_quiet_seconds` (whole seconds, 10 to 120, default `20`). The Settings rows are still not built in the web
-(Planned); per-project switches and quiet hours are not in the frames.
+`terminal_attention_quiet_seconds` (whole seconds, 10 to 120, default `20`). Settings › General has both rows in the web (the switch, and a number field kept to 10 to 120 and saved when it loses focus); per-project switches and quiet hours are not in the frames.
 
 ## Web side
 
-`web/src/features/panels/terminal/attention/`: `contract.ts` (the typed client; `attentionApi()` is null in production), `text.ts`
+`web/src/features/panels/terminal/attention/`: `contract.ts` (the types and `attentionApi()`, the service client unless a test or the preview installed another), `client.ts` (the service client: a `thread_event` notice from `GET /api/shell/events` starts following that thread's log from `seq - 1`, at most 32 threads, oldest let go first; reads only; `since` is the RFC 3339 string, parsed in `store.ts`), `text.ts`
 (cleaning, caps, copy), `store.ts` (the pure reducer and the store), `TerminalAttention.tsx` (the item), `useAttention.ts` (the
-subscription, the toast and the notification), `AttentionPreview.tsx` (dev-only). Notifications use the paths that exist
+subscription, the toast and the notification), the amber dot on the terminal tab (`TerminalDrawerBody.tsx`) and on the thread's sidebar row (`ThreadRow.tsx`) while a terminal of the thread waits and is not dismissed here, `AttentionPreview.tsx` (dev-only). Notifications use the paths that exist
 (`pushToast`, and `new Notification` only when permission is already granted); no new OS permission. The mock is never in a production
 bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the route appears.
 

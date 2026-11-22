@@ -11,3 +11,11 @@ it("keeps a loading row empty until its wait is over and then shows a still bar"
   expect(bar?.style.width).toBe("96px");
   expect(view.container.querySelector(".drow")).toHaveAttribute("aria-busy", "true");
 });
+
+it("wraps a quiet sentence with its full text as a title only when asked", () => {
+  const view = render(<DRow icon={null} label="Engine" value="Kiro" sub="A long sentence" subWrap />);
+  expect(view.container.querySelector("small")).toHaveClass("wrap");
+  expect(view.container.querySelector("small")).toHaveAttribute("title", "A long sentence");
+  view.rerender(<DRow icon={null} label="Engine" value="Kiro" sub="Model name" />);
+  expect(view.container.querySelector("small")).not.toHaveClass("wrap");
+});

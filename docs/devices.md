@@ -1,8 +1,8 @@
 # Devices contract
 
 What the web Device panel needs from the service: a list of Android AVDs and iOS simulators, and typed controls for them (toolbar
-actions, fold, unfold, hinge). **Planned**: the web side is built hidden against a mock (see "As built"); the service is not built. Eng 4 owns the service side. A name here changes only if the service
-PR says so. Rows: H20-H25 in [parity](parity.md) (H24 and H25 are the fold and hinge controls).
+actions, fold, unfold, hinge). **Beta, hidden**: the web side is built against a mock (see "As built"); the service is not built. Eng 4 owns the service side. A name here changes only if the service
+PR says so. Rows: H20-H25 and H31 in [parity](parity.md) (H22 is the tabs and float, H24 and H25 the fold and hinge controls, H31 tool versions).
 
 Source: T3 Code at `9168ca73d` (MIT), ideas and field names only, no code copied. T3's contract is `packages/contracts/src/device.ts`
 (`DeviceSummary`, `DeviceActionInput`), its fold client `apps/web/src/components/device/deviceFold.ts` and its hinge control
@@ -18,14 +18,19 @@ call (short cache allowed, at most 2 s); the service never stores it.
 | `id` | string, max 256 | Stable per platform: AVD name for Android, simulator UDID for iOS. Prefixed `android:` or `ios:` so ids never collide. |
 | `name` | string | Display name, such as `Pixel 8` or `iPhone 17 Pro`. |
 | `platform` | `android` or `ios` | |
-| `state` | `booted` or `shutdown` | T3 has `booted: boolean`; this contract names the state so a transition can be added later. |
+| `state` | `booted` or `shutdown` | T3 has `booted: boolean`; this contract names the state so a transition can be added later. These are the only two the service sends: a freshly started device reads as `shutdown` until booted, and `booting` is never sent. |
 | `version` | string | OS version, empty when unknown (T3 `version`). |
+| `orientation` | `portrait`, `landscape_left`, `portrait_upside_down` or `landscape_right`, or absent | The current orientation, when the device is booted and the tool reports it (T3 `setOrientation`); absent when it is not booted or cannot be read. The web shows it when present and assumes none when absent. |
 | `foldable` | boolean | See detection below. |
 | `fold` | object or absent | Only when `foldable` and `state` is `booted`: `{posture, hinge_angle}`. |
 
 `fold.posture` is `closed`, `half_opened`, `opened`, `flipped` or `tent` (T3's Android set; `flipped` and `tent` are read only).
 `fold.hinge_angle` is a number in degrees or `null` when the tool does not report it. Booted devices with no readable posture have
 `fold: {posture: null, hinge_angle: null}`.
+
+`orientation` is read only and is the device's current orientation in this order: `portrait`, `landscape_left`, `portrait_upside_down`,
+`landscape_right`. `rotate` sends the next value after it; with no reported orientation the web sends the first next one,
+`landscape_left`, and shows none rather than inventing a start.
 
 `PlatformStatus` is `{platform, available, code?, message?}`. `available: false` carries a code from the table below (T3
 `DevicePlatformAvailability`). Physical devices, SSH hosts, Expo or Simlock pools are not in the beta: the list holds local AVDs and
@@ -90,8 +95,8 @@ Reads (`GET /api/devices`, `GET /api/devices/{id}`) are local only and not Perso
 `POST /api/devices/{id}/actions` types**, including `screenshot` (it exposes the screen) and `power_off`. A key-bearing client is
 refused with `403 person_required`.
 
-On `404` from `GET /api/devices` (a service without this contract) the web hides the Device feature: no panel entry, no error
-shown. On `404 device_not_found` from a `{id}` route the web removes that device from its list and refreshes. An empty `devices`
+On `404` from `GET /api/devices` (a service without this contract) the web opens no Device panel; the "+" entry after
+Review and comments is drawn disabled with a short reason, and no error is shown. On `404 device_not_found` from a `{id}` route the web removes that device from its list and refreshes. An empty `devices`
 array with `available: false` platforms shows the platform message, not a hidden feature.
 
 ## Security
@@ -136,35 +141,78 @@ Body: `{code, message, ...}`. The web acts on `code` and shows `message`.
 - Stance poses for the Duo (`book`, `laptop`, `tent`, table and face-up controls): T3 has them, this contract reports `tent` and
   `flipped` as read-only postures and sets none of them.
 
+## Planned service pieces
+
+The frames also draw tool inspection and install, a version check, an agent-access toggle and restarting a frozen or crashed device.
+This document does not define those routes, so `web/src/features/devices/planned.ts` declares them as a clearly marked typed client
+(`DevicesPlannedApi`: status, tools, check, install, setAccess, restart, versions). **There is no production implementation**: every
+method answers `null` and sends nothing, so the UI draws the frame's Planned or unavailable state. The dev-only mock
+(`web/mock/devices.ts`, `createDevicesPlannedMock`) answers for tests and the preview. No service route exists for any of them, and
+Eng 4 has not built them. `frozen` and `crashed` are likewise target states of the frames; the service contract has `booted` and
+`shutdown` only.
+
 ## As built
 
-**Web (built hidden, not run against a real service).** `web/src/features/devices` holds the typed client interface (`contract.ts`), the
-real HTTP client (`api.ts`) and the panel (`DevicesPanel.tsx`). The mock is `web/mock/devices.ts` (`createDevicesMock`); the dev-only
-route `#/preview/devices` installs it, and `scripts/assert-no-previews.mjs` fails a build that ships the route or the mock.
+**Web (Beta, hidden until the service reports devices; built against the mock and not run against a real service).**
+`web/src/features/devices` holds the typed client interface (`contract.ts`), the real HTTP client (`api.ts`), the planned client
+(`planned.ts`), the panel (`DevicesPanel.tsx`), the per-device view (`DeviceView.tsx`), tabs (`DeviceTabs.tsx`), the float
+(`FloatingDevice.tsx`) and the setup pages (`setup/`). The mock is `web/mock/devices.ts` (`createDevicesMock`,
+`createDevicesPlannedMock`); the dev-only route `#/preview/devices?frame=<id>` installs it, and
+`scripts/assert-no-previews.mjs` fails a build that ships the route, the mock or the Planned preview screen.
 
-- **Hidden until reported.** The panel strip asks `GET /api/devices` once. `404`, any failure, or an answer that is not a device list
-  means no Devices tab and no "+" entry, and no error. An empty `devices` array with platform messages shows the messages.
-- **Panel.** A Devices tab (closed by default, opened from the "+") with the list (name, platform and version, state, a Foldable tag)
-  and, for the selected device, a bar, a stage for the last screenshot (capped to 360 px high, PNG only, base64 within the 16 MiB
-  cap), a toolbar and a hinge popover. Frames `device-fold-*` are Planned; the live screen, Record, Type text and Device tools are drawn as
-  Planned pills.
-- **Toolbar by platform (Eng 4's rulings).** Android, booted: Back, Home and Recents (`button`), Rotate, Screenshot, Power off. iOS,
+- **Launcher (device-launcher, device-launcher-disabled).** Devices sits after Review and comments with a Beta pill and opens the
+  Devices tab. A phone does not draw the row. When `GET /api/devices` answers `404`, the row is drawn disabled with the reason ("Devices
+  are not available on this service.") and no tab opens; any other failure leaves it out. With no available platform, the row stays
+  enabled only while the Planned setup client answers; it opens the setup hub. Otherwise it is disabled with the platform's sentence.
+- **Tab host (device-panel-list, device-none, device-picker, device-reading-*, device-gone, device-running,
+  device-frozen, device-crashed, device-shutdown, device-narrow-panel, device-narrow-window).** The first open shows the setup hub
+  when no platform is available and the Planned setup client answers, otherwise the list (a remembered last device opens that device
+  instead). The list is the picker: nothing is selected until a row is
+  chosen. An empty list says "No devices are listed."; an unavailable platform shows its sentence above the other platform's devices.
+  While the per-device detail read runs the panel says "Reading what this device can do…" and draws no toolbar; a failed detail read
+  says "Could not read what this device can do." for any code. A `404 device_not_found` from that read or a write removes the device,
+  clears its tab, shows the service's sentence and reads the list again. Running, Not responding, Stopped and Shut down get the bar
+  and stage the frames draw; any other state word, including `booting`, is shown as Unknown and gets no Starting stage. The frozen
+  and crashed overlays call the Planned restart method (no production implementation). The live screen, Record, Type text and Device
+  tools stay Planned pills.
+- **Per-device tabs and float (device-tabs, device-tab-rename, device-float, device-float-docked-hint).** Each open device is a tab
+  inside the Devices tab; closing a tab never shuts the device down. `+` lists the other devices from the service and opens one. A tab
+  menu holds Float over chat, Rename, Device tools (Planned), Setup and tools…, Agent access… (Planned) and Shut down. Double click or
+  Rename edits the person's label inline (Return saves, Escape cancels, an empty label goes back to the device name). Float opens a
+  fixed window over the chat with a draggable title, a resize corner and Dock. Tab labels, the open tabs, the last device and the float
+  place are per-person UI state in `orbyn.prefs.v1`; `readJson`/`writeJson` catch browser-storage failures and damaged values are cleaned
+  on load.
+- **Setup hub (device-setup-hub, -platform-windows, -tools-ios(-missing), -tools-android, -installing, -failed, -access, -done).**
+  Platform, Tools and Agent access, then a ready summary with Open. iOS is dimmed with its reason off a Mac. Orbyn installs no
+  toolchain: each tool row says Ready, Missing or Needs an update, Show steps opens the vendor's instructions with the command and its
+  domain, and Check again re-reads. agent-device is optional and is the one row Orbyn installs; a failed install shows the plain line
+  and the real log with Try again, and Continue stays available because it is optional. Agent access is off until turned on; the step
+  always resolves off in production (Planned). The hub is also reachable from the tab menu after setup.
+- **Tool versions (device-tool-versions, -checking, -offline, -steps).** A row per tool with its installed and latest tested version,
+  Ready, Update available or Not checked; Show steps opens the vendor's steps with a Copy command and an official link; Check now
+  re-reads. Offline keeps the installed versions and hides any update claim. With no Planned client every row and the check are Planned.
+- **Toolbar and fold (H24, H25; existing).** Android, booted: Back, Home and Recents (`button`), Rotate, Screenshot, Power off. iOS,
   booted: Screenshot and Power off only; Rotate and Home are disabled and marked Planned. iOS devices are never foldable in the UI and
   show no fold or hinge control. Controls appear only when the device's `GET /api/devices/{id}` `actions` lists them. A device that is not
-  `booted` shows no controls. `state` is `shutdown`, `booting` or `booted`; any other word shows as Unknown.
-- **Fold (2D, no 3D).** Fold, Unfold (one shows at a time by the returned posture; both when it is unreported), a hinge slider 1 to 179
-  with a Set angle button (one write), and the presets Closed, Half open and Open (`hinge_preset`, never a raw number). The panel shows
-  the posture and angle the service answered (`Open · 180°`), whatever the request was, and never assumes `half_opened` at 130.
-- **One click, one write.** A ref guards every write, the controls are disabled while one runs, and a failure shows the service's
-  message with Try again. `404 device_not_found` drops the device and reads the list again. All writes go through the pending Person route
+  `booted` shows no controls. The bar shows the orientation the service reports (Portrait, Landscape left, Portrait upside down,
+  Landscape right), and Rotate sends the next one in the contract's order; with no reported orientation it sends `landscape_left`
+  (the first next from portrait) and the bar shows none. Fold, Unfold (one shows at a time by the returned posture; both when it is unreported), a hinge slider 1
+  to 179 with a Set angle button, and the presets Closed, Half open and Open (`hinge_preset`, never a raw number). The panel shows the
+  posture and angle the service answered (`Open · 180°`), whatever the request was, and never assumes `half_opened` at 130. The
+  fold frames (`device-fold-*`) stay for phase 3.
+- **One click, one write.** A ref guards every write, the controls are disabled while one runs, and a failure shows the app's own
+  sentence plus the service's message, capped, with Try again. `404 device_not_found` drops the device, clears its tab, shows the
+  service's sentence and reads the list again. All writes go through the pending Person route
   `POST /api/devices/{id}/actions` (`web/src/api/personKey.ts`).
-- **Text.** Device names and messages are cut (name 60, message 160 to 200 characters) and rendered as text; states, platforms and
-  postures are looked up in `Map`s so a service-chosen key such as `__proto__` is Unknown. Device ids come only from the list.
+- **Text.** Device names, tab labels, versions, tool names and messages are cut (names 60, messages 160 to 200 characters) and rendered
+  as text; states, platforms, orientations and postures are looked up in `Map`s so a service-chosen key such as `__proto__` is
+  Unknown (or, for orientation, not shown). Vendor links are used only when they are `http(s)` URLs. Device ids come only from the list.
+
+**Planned.** The live screen stream and typed input (phase 2), the fold and hinge frames (phase 3; the existing 2D controls stay), the
+tools drawer and agent permission flow (phase 4), the Devices settings frames, and the service side of tool install, version check,
+agent access and restart. The service (Eng 4) has not started; nothing here is verified against `adb`, `xcrun` or a real service.
 
 Guessed where the doc is silent: the screenshot answer is `{ok, device, image}` (the doc says `{ok, image}`; the web reads `image` and
-keeps the `device`); Rotate cycles portrait, landscape left, upside down, landscape right from an assumed portrait start (no orientation
-is in the contract); the unfold step uses the `unfold` action, not `hinge_preset: open`; the hinge slider starts at the reported angle or 90.
+keeps the `device`); the unfold step uses the `unfold` action, not `hinge_preset: open`; the hinge slider starts at the reported angle or 90.
 Not verified: every route and field against a real service, `adb` and `simctl` behavior, the hinge preset values (0, 130, 180) and the
 1 to 179 bound.
-
-**Service.** Eng 4's side is not started. Nothing here is verified against `adb` or `xcrun`.
