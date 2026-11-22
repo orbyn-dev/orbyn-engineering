@@ -21,6 +21,7 @@ import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { Empty, Loading } from "../../../product/ui/states";
 
 const listTasks = (signal?: AbortSignal) => listScheduledTasks(signal);
+const intervalMinutes = (value: string) => Math.max(1, Number(value));
 
 type TaskKind = "interval" | "fixed_time" | "webhook" | "after_thread";
 
@@ -229,7 +230,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
         schedule: {
           ...task?.schedule,
           kind,
-          every_minutes: kind === "interval" ? Number(minutes) : null,
+          every_minutes: kind === "interval" ? intervalMinutes(minutes) : null,
           time: kind === "fixed_time" ? time : null,
           weekdays: kind === "fixed_time" ? weekdays : [],
           utc_offset_minutes: -new Date().getTimezoneOffset(),
@@ -293,7 +294,7 @@ function TaskDialog({ task, onClose, onSaved }: { task: ScheduledTask | null; on
       {kind === "interval" ? (
         <Field label="Every (minutes)">
           {(props) => (
-            <input {...props} type="number" min="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} />
+            <input {...props} type="number" min="1" value={minutes} onChange={(event) => setMinutes(event.target.value)} onBlur={() => setMinutes(String(intervalMinutes(minutes)))} />
           )}
         </Field>
       ) : null}

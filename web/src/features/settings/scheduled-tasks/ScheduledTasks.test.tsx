@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import * as fixtures from "../../../../mock/fixtures";
@@ -244,6 +244,31 @@ async function openNewTask() {
   const dialog = await screen.findByRole("dialog", { name: "New scheduled task" });
   return { user, dialog };
 }
+
+it("clamps an interval below one minute on blur and when saving without blur", async () => {
+  ready();
+  installMockFetch();
+  const { user, dialog } = await openNewTask();
+  await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Check");
+  await user.type(within(dialog).getByRole("textbox", { name: "What should the agent do?" }), "Review");
+  const interval = within(dialog).getByRole("spinbutton", { name: "Every (minutes)" });
+  for (const value of ["-3", "0", ""]) {
+    fireEvent.change(interval, { target: { value } });
+    fireEvent.blur(interval);
+    expect(interval).toHaveValue(1);
+  }
+  fireEvent.change(interval, { target: { value: "12" } });
+  fireEvent.blur(interval);
+  expect(interval).toHaveValue(12);
+  fireEvent.change(interval, { target: { value: "-3" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save task" }));
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith("/api/tasks") && init?.method === "POST");
+    expect(call).toBeDefined();
+    const body = JSON.parse(String(call![1]?.body));
+    expect(body.schedule.every_minutes).toBe(1);
+  });
+});
 
 it("offers the projects the rest of the app lists, choosing the first", async () => {
   installMockFetch();
