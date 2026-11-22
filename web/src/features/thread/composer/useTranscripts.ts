@@ -14,9 +14,10 @@ const REASONS: Record<string, { reason: string; canAddAsFile: boolean }> = {
   transcript_too_new: { reason: "Made by a newer Orbyn. Update Orbyn to read it.", canAddAsFile: false },
   transcript_unreadable: { reason: "This isn’t a transcript Orbyn can read.", canAddAsFile: true },
   file_too_large: { reason: TOO_BIG, canAddAsFile: false },
-  // The same sentence as the import sheet, for a request that carries no person key.
+  // A request that carries no person key at all (a browser): the import sheet's sentence.
   desktop_required: { reason: DESKTOP_ONLY, canAddAsFile: false },
-  person_required: { reason: DESKTOP_ONLY, canAddAsFile: false },
+  // The person is in the desktop app but the service refused the key (a stale key after a restart): signing in again fixes it.
+  person_required: { reason: "Sign in on this computer to add a transcript.", canAddAsFile: false },
 };
 
 /**
