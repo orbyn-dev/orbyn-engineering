@@ -9,8 +9,41 @@ import { replaySdk } from "./replay.mjs";
 
 const fixture = (n) => fileURLToPath(new URL(`./fixtures/claude/${n}.ndjson`, import.meta.url));
 
-function boot(file) {
+function boot(file, { history = [], subagentHistory = [], withSessionMessages = true, withSubagentMessages = true, query: sdkQuery } = {}) {
   const replay = replaySdk(fixture(file));
+  const calls = { sessionMessages: [], subagentMessages: [], closes: 0 };
+  const query =
+    sdkQuery ??
+    ((args) => {
+      const live = replay.query(args);
+      return {
+        ...live,
+        close() {
+          calls.closes++;
+          live.close?.();
+        },
+      };
+    });
+  const sdk = {
+    query,
+    forkSession: async () => ({ sessionId: "forked" }),
+    ...(withSessionMessages
+      ? {
+          getSessionMessages: async (...args) => {
+            calls.sessionMessages.push(args);
+            return history;
+          },
+        }
+      : {}),
+    ...(withSubagentMessages
+      ? {
+          getSubagentMessages: async (...args) => {
+            calls.subagentMessages.push(args);
+            return subagentHistory;
+          },
+        }
+      : {}),
+  };
   const input = new PassThrough();
   const output = new PassThrough();
   const frames = [];
@@ -19,11 +52,7 @@ function boot(file) {
     frames.push(JSON.parse(line));
     for (const w of [...waiters]) w();
   });
-  runHost({
-    family: claudeFamily({ loadSdk: async () => ({ query: replay.query, forkSession: async () => ({ sessionId: "forked" }) }) }),
-    input,
-    output,
-  });
+  runHost({ family: claudeFamily({ loadSdk: async () => sdk }), input, output });
   const next = (pred) =>
     new Promise((resolve) => {
       const check = () => {
@@ -37,19 +66,23 @@ function boot(file) {
       if (!check()) waiters.push(check);
     });
   const send = (f) => input.write(`${JSON.stringify(f)}\n`);
-  return { replay, next, send, input, file: fixture(file) };
+  return { replay, calls, next, send, input, file: fixture(file) };
 }
 
-async function open(h, extra = {}) {
+async function open(h, extra = {}, request = {}) {
   const { readFileSync } = await import("node:fs");
   const o = readFileSync(h.file, "utf8").split("\n").map((l) => l && JSON.parse(l)).find((l) => l?.frame?.type === "query.open").frame.options;
   const sdk = { model: o.model, permissionMode: o.permissionMode, ...(o.allowDangerouslySkipPermissions ? { allowDangerouslySkipPermissions: true } : {}) };
   await h.next((f) => f.type === "hello");
   h.send({ id: 1, type: "init", protocol: 1 });
   await h.next((f) => f.id === 1);
-  h.send({ id: 2, type: "open", operation: "create", sessionId: "s", cwd: "/tmp/x", options: { sdk, ...extra } });
+  h.send({ id: 2, type: "open", operation: "create", sessionId: "s", cwd: "/tmp/x", options: { sdk, ...extra }, ...request });
   assert.equal((await h.next((f) => f.id === 2)).ok, true);
 }
+
+const CAPABILITIES = ["steer", "fork", "models", "usage", "readHistory", "readSubagent", "rollback", "stopTask", "background"];
+const NATIVE_SESSION = "01899f29-45f7-43c3-b963-0f9181ed013f";
+const FIRST_PROMPT = "Respond with exactly: first fixture turn complete";
 
 test("multi_turn: two prompts, two runDone, session id reported", async () => {
   const h = boot("multi_turn");
@@ -254,4 +287,179 @@ test("a leftover turn's result never ends the run; a held result waits for the f
   h.send({ id: 13, type: "cancel", sendId: 12 });
   assert.equal((await h.next((f) => f.type === "runDone" && f.sendId === 12)).result.reason, "cancelled");
   assert.equal(h.replay.calls.error, undefined);
+});
+
+test("hello lists the Claude capabilities", async () => {
+  const h = boot("multi_turn");
+  const hello = await h.next((f) => f.type === "hello");
+  assert.deepEqual(hello.capabilities, CAPABILITIES);
+});
+
+test("rollback closes the live query and resumes at the last top-level assistant message of the turn", async () => {
+  const h = boot("multi_turn");
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: FIRST_PROMPT });
+  assert.equal((await h.next((f) => f.type === "runDone" && f.sendId === 3)).result.reason, "completed");
+  assert.equal(h.replay.calls.opens.length, 1);
+  assert.equal(h.calls.closes, 0);
+
+  // A turn the host never reported, or one with no recorded head, is not rolled back.
+  h.send({ id: 4, type: "rollback", sessionId: "s", toTurn: "turn-99" });
+  const unknown = await h.next((f) => f.id === 4);
+  assert.equal(unknown.ok, true);
+  assert.deepEqual(unknown.result, { ok: false });
+  assert.equal(h.calls.closes, 0, "an unknown turn closes nothing");
+
+  h.send({ id: 5, type: "rollback", sessionId: "s", toTurn: "turn-3" });
+  const rolledBack = await h.next((f) => f.id === 5);
+  assert.equal(rolledBack.ok, true);
+  assert.deepEqual(rolledBack.result, { ok: true });
+  assert.equal(h.calls.closes, 1, "the live query was closed");
+
+  h.send({ id: 6, type: "send", sessionId: "s", message: FIRST_PROMPT });
+  assert.equal((await h.next((f) => f.id === 6)).ok, true);
+  await h.next((f) => f.type === "runDone" && f.sendId === 6);
+  assert.equal(h.replay.calls.opens.length, 2, "the next send builds a new query");
+  assert.equal(h.replay.calls.opens[1].resume, NATIVE_SESSION);
+  assert.equal(h.replay.calls.opens[1].resumeSessionAt, "d513887e-fb2d-47a1-adbb-e8678b42ad9a");
+});
+
+test("rollback during a run is refused with RunInProgress", async () => {
+  const h = boot("tool_call_read_only_on_request");
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: await promptOf("tool_call_read_only_on_request") });
+  const ask = await h.next((f) => f.type === "permission");
+  h.send({ id: 4, type: "rollback", sessionId: "s", toTurn: "turn-3" });
+  const refused = await h.next((f) => f.id === 4);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.cause.name, "RunInProgress");
+  assert.equal(refused.error.cause.message, "a run is already open on this session");
+  assert.equal(h.calls.closes, 0, "the live query stays open");
+  h.send({ id: 5, type: "respond", requestId: ask.requestId, decision: { behavior: "allow" } });
+  assert.equal((await h.next((f) => f.type === "runDone")).result.reason, "completed");
+});
+
+test("a subagent's assistant message never becomes a turn head", async () => {
+  const { AsyncQueue } = await import("../src/asyncQueue.mjs");
+  const opens = [];
+  const query = ({ prompt, options }) => {
+    opens.push(options);
+    const out = new AsyncQueue();
+    (async () => {
+      for await (const _ of prompt) {
+        out.push({ type: "assistant", parent_tool_use_id: null, uuid: "top-head", session_id: "engine-sub" });
+        out.push({ type: "assistant", parent_tool_use_id: "toolu_1", uuid: "sub-head", session_id: "engine-sub" });
+        out.push({ type: "result", subtype: "success", is_error: false, session_id: "engine-sub" });
+      }
+      out.close();
+    })();
+    return { [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](), close: () => out.close(), interrupt: async () => {} };
+  };
+  const h = boot("multi_turn", { query });
+  await open(h);
+  h.send({ id: 3, type: "send", sessionId: "s", message: "hello" });
+  await h.next((f) => f.type === "runDone" && f.sendId === 3);
+  h.send({ id: 4, type: "rollback", sessionId: "s", toTurn: "turn-3" });
+  assert.equal((await h.next((f) => f.id === 4)).ok, true);
+  h.send({ id: 5, type: "send", sessionId: "s", message: "again" });
+  await h.next((f) => f.type === "runDone" && f.sendId === 5);
+  assert.equal(opens.length, 2);
+  assert.equal(opens[1].resume, "engine-sub");
+  assert.equal(opens[1].resumeSessionAt, "top-head");
+});
+
+test("readHistory returns the SDK messages and passes the session cwd", async () => {
+  const messages = [{ type: "user", uuid: "u1" }, { type: "assistant", uuid: "a1" }];
+  const h = boot("multi_turn", { history: messages });
+  await open(h, {}, { operation: "resume", engineSessionId: "engine-1" });
+  h.send({ id: 3, type: "readHistory", sessionId: "s" });
+  const res = await h.next((f) => f.id === 3);
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.result, messages);
+  assert.deepEqual(h.calls.sessionMessages, [["engine-1", { dir: "/tmp/x" }]]);
+});
+
+test("readHistory needs an engine session and a getSessionMessages function", async () => {
+  const h = boot("multi_turn", { withSessionMessages: false });
+  await open(h);
+  h.send({ id: 3, type: "readHistory", sessionId: "s" });
+  const missingSession = await h.next((f) => f.id === 3);
+  assert.equal(missingSession.ok, false);
+  assert.equal(missingSession.error.cause.name, "NoEngineSession");
+  assert.equal(missingSession.error.cause.message, "this session has no engine session yet");
+
+  h.send({ id: 4, type: "open", operation: "resume", sessionId: "s2", engineSessionId: "engine-1", cwd: "/tmp/x", options: { sdk: {} } });
+  assert.equal((await h.next((f) => f.id === 4)).ok, true);
+  h.send({ id: 5, type: "readHistory", sessionId: "s2" });
+  const unsupported = await h.next((f) => f.id === 5);
+  assert.equal(unsupported.ok, false);
+  assert.equal(unsupported.error.cause.name, "UnsupportedRequest");
+});
+
+test("readHistory fails with HistoryTooLarge past the shared budget", async () => {
+  const history = [{ type: "assistant", message: { content: "x".repeat(6 * 1024 * 1024 + 1024) } }];
+  const h = boot("multi_turn", { history });
+  await open(h, {}, { operation: "resume", engineSessionId: "engine-1" });
+  h.send({ id: 3, type: "readHistory", sessionId: "s" });
+  const res = await h.next((f) => f.id === 3);
+  assert.equal(res.ok, false);
+  assert.equal(res.error.cause.name, "HistoryTooLarge");
+  assert.equal(res.error.cause.message, "This conversation is too large to read in one piece.");
+  assert.equal(res.error.cause.kind, "host");
+});
+
+test("readSubagent validates the agent id and limit, passes both to the SDK and returns its messages", async () => {
+  const messages = [{ type: "assistant", uuid: "s1", parent_tool_use_id: "toolu_1" }];
+  const h = boot("multi_turn", { subagentHistory: messages });
+  await open(h, {}, { operation: "resume", engineSessionId: "engine-1" });
+
+  const invalid = [
+    { agentId: "bad/agent" },
+    { agentId: "" },
+    { agentId: "a".repeat(129) },
+    { agentId: "agent_1", limit: 0 },
+    { agentId: "agent_1", limit: -1 },
+    { agentId: "agent_1", limit: 1.5 },
+    { agentId: "agent_1", limit: 5001 },
+    { agentId: "agent_1", limit: "5" },
+  ];
+  let id = 3;
+  for (const request of invalid) {
+    h.send({ id, type: "readSubagent", sessionId: "s", ...request });
+    const res = await h.next((f) => f.id === id);
+    assert.equal(res.ok, false, JSON.stringify(request));
+    assert.equal(res.error.cause.name, "InvalidRequest", JSON.stringify(request));
+    assert.equal(res.error.cause.kind, "invalid_request", JSON.stringify(request));
+    id++;
+  }
+  assert.equal(h.calls.subagentMessages.length, 0);
+
+  h.send({ id, type: "readSubagent", sessionId: "s", agentId: "agent_1", limit: 25 });
+  const withLimit = await h.next((f) => f.id === id);
+  assert.equal(withLimit.ok, true);
+  assert.deepEqual(withLimit.result, messages);
+  assert.deepEqual(h.calls.subagentMessages[0], ["engine-1", "agent_1", { dir: "/tmp/x", limit: 25 }]);
+
+  h.send({ id: id + 1, type: "readSubagent", sessionId: "s", agentId: "agent-1" });
+  const withoutLimit = await h.next((f) => f.id === id + 1);
+  assert.equal(withoutLimit.ok, true);
+  assert.deepEqual(withoutLimit.result, messages);
+  assert.deepEqual(h.calls.subagentMessages[1], ["engine-1", "agent-1", { dir: "/tmp/x" }]);
+});
+
+test("readSubagent fails with HistoryTooLarge and needs an engine session", async () => {
+  const h = boot("multi_turn", { subagentHistory: [{ type: "assistant", message: { content: "x".repeat(6 * 1024 * 1024 + 1024) } }] });
+  await open(h);
+  h.send({ id: 3, type: "readSubagent", sessionId: "s", agentId: "agent_1" });
+  const noSession = await h.next((f) => f.id === 3);
+  assert.equal(noSession.ok, false);
+  assert.equal(noSession.error.cause.name, "NoEngineSession");
+
+  h.send({ id: 4, type: "open", operation: "resume", sessionId: "s2", engineSessionId: "engine-1", cwd: "/tmp/x", options: { sdk: {} } });
+  assert.equal((await h.next((f) => f.id === 4)).ok, true);
+  h.send({ id: 5, type: "readSubagent", sessionId: "s2", agentId: "agent_1", limit: 10 });
+  const tooLarge = await h.next((f) => f.id === 5);
+  assert.equal(tooLarge.ok, false);
+  assert.equal(tooLarge.error.cause.name, "HistoryTooLarge");
+  assert.equal(tooLarge.error.cause.kind, "host");
 });

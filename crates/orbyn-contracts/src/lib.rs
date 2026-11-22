@@ -7,6 +7,7 @@ mod macros;
 
 mod account;
 mod acp;
+mod attachments;
 mod automations;
 mod autopilot;
 mod background;
@@ -53,6 +54,7 @@ mod workspace;
 
 pub use account::*;
 pub use acp::*;
+pub use attachments::*;
 pub use automations::*;
 pub use autopilot::*;
 pub use background::*;

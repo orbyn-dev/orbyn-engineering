@@ -6,6 +6,8 @@ import { useCommand } from "../../../product/shell/shortcuts";
 import { useUi } from "../../../product/state/ui";
 import { EngineGlyph } from "../../../product/ui/badges";
 import { pickerGap, PickerGapRow, useEngineHosts, type Gap, type HostRow } from "../../enginehost";
+import { UnmanagedLabel } from "../../../product/engines/UnmanagedLabel";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { closingProps, Presence } from "../../../ui/Presence";
 import { usePopover } from "../../../ui/usePopover";
 import {
@@ -322,23 +324,27 @@ function ModelPopover({
             if (id) choose(id);
           }}
         >
-          {ids.map((id) => (
-            <button
-              key={id}
-              type="button"
-              className="model-chip"
-              aria-label={id !== ALL && engines.find((engine) => engine.id === id)?.capabilities.managed === false ? `${engineName(id)} (Unmanaged)` : undefined}
-              aria-pressed={shownChip === id}
-              aria-controls={listId}
-              tabIndex={shownChip === id ? 0 : -1}
-              onClick={() => {
-                choose(id);
-                input.current?.focus();
-              }}
-            >
-              {id === ALL ? "All" : engineName(id)}
-            </button>
-          ))}
+          {ids.map((id) => {
+            const chipEngine = id === ALL ? null : (engines.find((engine) => engine.id === id) ?? null);
+            return (
+              <button
+                key={id}
+                type="button"
+                className="model-chip"
+                aria-label={isUnmanaged(chipEngine) ? `${engineName(id)} (Unmanaged)` : undefined}
+                aria-pressed={shownChip === id}
+                aria-controls={listId}
+                tabIndex={shownChip === id ? 0 : -1}
+                onClick={() => {
+                  choose(id);
+                  input.current?.focus();
+                }}
+              >
+                {id === ALL ? "All" : engineName(id)}
+                <UnmanagedLabel engine={chipEngine} variant="chip" />
+              </button>
+            );
+          })}
         </div>
       </div>
       <div className="model-list" data-above={more.above || undefined} data-below={more.below || undefined}>
@@ -348,16 +354,21 @@ function ModelPopover({
             if (state) {
               return (
                 <div key={engine.id} role="group" aria-label={engineName(engine.id)}>
-                  <div className="model-heading" aria-hidden>{engineName(engine.id)}</div>
+                  <div className="model-heading" aria-hidden>
+                    {engineName(engine.id)}
+                    <UnmanagedLabel engine={engine} />
+                  </div>
                   <PickerGapRow gap={state.gap} host={state.host} />
                 </div>
               );
             }
             const group = groups.find((entry) => entry.engine === engine.id);
+            const groupEngine = group ? (engines.find((entry) => entry.id === group.engine) ?? null) : null;
             return group ? (
             <div key={group.engine} role="group" aria-label={engineName(group.engine)}>
               <div className="model-heading" aria-hidden>
                 {engineName(group.engine)}
+                <UnmanagedLabel engine={groupEngine} />
               </div>
               {group.rows.map(({ row, index }) => {
                 const on = isSelected(row);
@@ -436,6 +447,7 @@ export function ModelPickerTrigger({
       >
         {engine ? <EngineGlyph name={engine.name} /> : null}
         <span>{name}</span>
+        <UnmanagedLabel engine={engine} />
         {engines.length === 0 ? <ChevronDown size={12} aria-hidden /> : null}
       </button>
       <Presence>

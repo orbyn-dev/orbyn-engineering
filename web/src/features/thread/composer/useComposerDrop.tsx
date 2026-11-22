@@ -5,13 +5,13 @@ import { transcriptsApi, willBeTranscript } from "./transcriptDrop";
 import { useTranscripts } from "./useTranscripts";
 
 /**
- * Files dragged over and dropped on the composer box: a file mention from the file tree, transcripts (B43, hidden: none without a
- * client) and every other file, which goes to `upload`. `boxProps` goes on the box, `layer` inside it.
+ * Files dragged over and dropped on the composer box: a file mention from the file tree, transcripts (B43, the real attach route)
+ * and every other file, which goes to `upload`. `boxProps` goes on the box, `layer` inside it.
  */
 export function useComposerDrop(thread: { id: string }, upload: (files: File[]) => void, mention: (name: string) => void) {
   const transcripts = useTranscripts(thread);
   const [dragging, setDragging] = useState(false);
-  /** What a drop will do, said over the box. Only a build with a transcript client says it. */
+  /** What a drop will do, said over the box. */
   const [line, setLine] = useState<string | null>(null);
   const end = () => {
     setDragging(false);

@@ -224,7 +224,7 @@ pub(super) async fn symbolic_head(cwd: &Path) -> Result<Vec<u8>> {
 
 /// Fingerprint exactly the changed working files, including untracked files and
 /// staged-only changes that add -A will replace. Never follows a symlink.
-pub(super) async fn candidate(cwd: &Path) -> Result<Candidate> {
+pub(super) async fn candidate(cwd: &Path, data_dir: Option<&Path>) -> Result<Candidate> {
     let root = utf8(read_git(cwd, &["rev-parse", "--show-toplevel"]).await?)?;
     let cwd = Path::new(root.trim_end_matches(['\r', '\n']));
     let parent = head(cwd).await?.unwrap_or_default();
@@ -279,6 +279,7 @@ pub(super) async fn candidate(cwd: &Path) -> Result<Candidate> {
                     checkout: cwd.into(),
                     engine_cwd: cwd.into(),
                     excluded: Vec::new(),
+                    data_dir: data_dir.map(Path::to_path_buf),
                 };
                 let full = crate::project::files::inside(&scope, &name)?;
                 let (file, _) = crate::project::files::open_inside(&scope, &name, &full)?;

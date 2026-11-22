@@ -3,7 +3,7 @@ import { Button } from "../../../ui/controls";
 import type { TranscriptEntry } from "./useTranscripts";
 
 /**
- * Transcripts dropped on the composer (B43, hidden). A kept one is a 24 px chip like a thread chip; one being read or refused is
+ * Transcripts dropped on the composer (B43). A kept one is a 24 px chip like a thread chip; one being read or refused is
  * the 40 px chip of a photo, in red with its reason when refused. Names and titles come from a file and are drawn as text.
  */
 export function TranscriptShelf({
@@ -38,6 +38,7 @@ export function TranscriptShelf({
           )}
         </ul>
       ) : null}
+      {kept.length > 0 ? <p className="transcript-note">Attached to your next message only.</p> : null}
       {others.length > 0 ? (
         <ul className="attachment-strip" aria-label="Transcript files">
           {others.map((entry) => (

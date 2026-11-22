@@ -119,31 +119,41 @@ An engine reads environment variables, so none may carry account material, in `o
   reserved name; and `scripts/check_rust_arch.py` (the existing text check for spawns, `docs/refactor.md`) gains a
   rule that a new `Command::new` or `CommandBuilder::new` in `orbyn-core` must be routed through `child_env`.
 
-### 3. The account files are unreadable and hard-denied in Orbyn's own layers (partly exists)
+### 3. The account files are unreadable and hard-denied in Orbyn's own layers (built)
 
-- **File mode.** Account files are written with `util::write_private` or `write_private_atomic` (mode `0600` on Unix,
-  the per-user ACL on Windows: `crates/orbyn-core/src/util.rs:105` and `:129`, and `docs/architecture.md:2511`). The
-  account folder is `<data folder>/account/`, created `0700`.
+- **Where the files are.** The protected files are `account-*.store` and `account-*.sealed` directly in the data
+  folder, plus `service.json`; there is no `account/` subfolder. The `account-keys-<profile>.store` file records which
+  key store a profile uses (and can be the development key store), `account-snapshot-<profile>.sealed` is the sealed
+  sync snapshot, and `service.json` holds the local API's service token.
+- **File mode.** The data folder is mode `0700` on Unix (`Core::open` sets it, including when an older folder was left
+  `0755`); on Windows it keeps the per-user app-data ACL. Account files are written with `util::write_private` or
+  `write_private_atomic` (mode `0600` on Unix, the per-user ACL on Windows: `crates/orbyn-core/src/util.rs`, and
+  `docs/architecture.md`, Persistence).
 - **What the files hold.** Non-secret ids, the outbox, and the sealed cache. Opening the sealed cache needs the vault
   key from the keychain. A file read alone yields no key.
-- **Writes: exists.** A run may write only inside its checkout. `WriteScope::permits` resolves `..` and links and
-  checks the checkout and the `excluded` list (`governance/approvals.rs:43-57`, `excluded` at `:26`), and
-  `outside_scope` denies before policy, "so no rule and no person can widen a run's reach"
-  (`approvals.rs:179-203`, called at `:216`). **To build:** every `WriteScope` gets the data folder in `excluded`, so
-  a project the person added at a parent of the data folder still cannot reach it.
-- **Orbyn's own file reads: exists, extended.** The checkout read routes go through `files::inside` and `open_inside`
-  (`project/files.rs:317` and `:342`), which call `permits`, so the new `excluded` entry covers them. The person's
-  view of a file outside the checkout already refuses the data folder (`project/outside_files.rs:190-217`, the
-  refusal at `:215`; `docs/architecture.md:1520-1546`, which says no engine, MCP tool or agent route reaches that view).
-- **Engine reads and commands: best effort only.** Before policy, `request_inner` (`approvals.rs:208`) gets a second
-  check beside `outside_scope`: an action whose target, paths or detail name the account folder, `service.json` or a
-  reserved variable is denied, with an audit row (rule 6, rule 7 in `docs/architecture.md:22-40`). This matches text, so
-  a shell command that builds the path indirectly gets past it. **It is not a boundary.** The boundaries are controls 1
-  and 2: there is nothing readable in the folder to take.
-- *Checks:* tests that a write, a checkout read and an `outside` read of the account folder are each refused; that an
-  action naming `<data folder>/account` is denied with an audit row even with an allow rule and in Full access mode;
-  and that no secret appears in a plain file (the test signs in with a fake client and scans the data folder for the
-  canary key bytes, base64 and hex).
+- **Writes and checkout reads: built.** `WriteScope` carries the core's `data_dir` (`governance/approvals.rs`).
+  `WriteScope::permits` resolves `..` and links and refuses a path that `protected_files::is_protected` names before
+  it checks the checkout, so a project the person added at a parent of the data folder still cannot write a protected
+  file. `outside_scope` calls `permits`, so such a write is denied before policy, "so no rule and no person can widen a
+  run's reach". Orbyn's own checkout reads, `files::inside` and `open_inside` (`project/files.rs`), also call
+  `permits`, so they refuse the protected files too.
+- **The whole data folder is not excluded.** It holds the default workspace and the library (`<data>/workspace/...`),
+  where runs must keep writing and reading; only the protected direct children are refused.
+- **Engine actions: best effort only.** Before plan, policy and review, `request_inner` (`approvals.rs`) checks the
+  ask's target, paths, summary and serialized detail with `protected_files::names_protected`; a match is denied with
+  "Orbyn keeps its account files private." and one audit row (`action.deny`, `source: protected_files`, detail only
+  the action kind, never the matched text). It runs even when a rule would allow the action and in Full access and
+  Auto modes, because it is before policy. This matches text, so a shell command that builds the path indirectly gets
+  past it. **It is not a boundary.** It stops a gated action, not a direct file read: a same-user process can still
+  read the files, and the `service.json` token is the local API credential control 5 covers. Controls 1 and 2 keep
+  the account secrets out of reach.
+- *Checks:* tests that `is_protected` covers each protected name, `..`, a link, a not-yet-existing name and the
+  case-insensitive platforms, but not a nested workspace file or a neighbour; that a write scope whose checkout is
+  the data folder's parent refuses a protected write and still permits `<data>/workspace/...`; that a file change and
+  a command detail naming a protected file are denied with the `protected_files` audit row even with an allow rule and
+  in Full access mode; that a checkout read refuses the protected file; that the data folder is `0700` on creation and
+  after `0755`; that `write_private_atomic` publishes `0600`; and that no secret appears in a plain file (the test
+  signs in with a fake client and scans the data folder for the canary key bytes, base64 and hex).
 
 ### 4. No key material in logs, traces, events or the API (to build; the paths exist)
 
@@ -192,7 +202,7 @@ An engine that finds `service.json` holds the service token and can call any `/a
 Controls (decision D12 and Engineering 1's answer):
 
 - **Confirm it's you.** Removing a device, signing out every session, turning two-factor off and changing protection
-  each need the password typed again within the last 10 minutes, as account deletion already does. The Engine side is
+  (the last two are **Planned** in this app: it has no route for either yet) each need the password typed again within the last 10 minutes, as account deletion already does. The Engine side is
   orbyn-engine#120 and is needed before real-account sign-in (not for the local end-to-end test). The app asks with a
   "Confirm it's you" password prompt on every platform, and the check is in `orbynd`, not only in the page. Approving
   a device keeps its two-sided digits plus the password. Signing out **this device only** stays open.
@@ -238,6 +248,15 @@ unless the app carries `get-task-allow` or `disable-library-validation`. Control
 - *Release check:* `codesign -d --entitlements - <orbynd>` on the built sidecar must show neither
   `com.apple.security.get-task-allow` nor `com.apple.security.cs.disable-library-validation`, and `codesign -dv` must
   show the `runtime` flag. It runs where the release is verified (parity row P35).
+  **Built as a script:** `scripts/check-macos-entitlements.sh [--release] <App.app>` (tested by
+  `scripts/check-macos-entitlements.test.mjs`) walks every Mach-O in the bundle and fails on anything not listed: the engine
+  host may carry only `allow-jit`, `allow-unsigned-executable-memory` and `disable-library-validation`; every other binary
+  (`orbynd` included) carries none; `get-task-allow` is never allowed; `--release` also requires the `runtime` flag on each.
+  Signing is blocked until there is an Apple Developer ID, so today it can only run against an ad hoc build, where it passes
+  without `--release` and fails with it (an ad hoc build has no hardened runtime). **Known conflict, not fixed yet:**
+  `desktop/src-tauri/tauri.conf.json` sets one `entitlements` file, which Tauri applies to the app and every sidecar, so a
+  release signed that way would give `orbynd` the host's entitlements and fail this check. The release signing step has to sign
+  each binary with its own entitlements; that step is Planned with Developer ID signing.
 - Secrets are zeroed on drop (the Engine's secret types) and held only as long as a call needs.
 - **On Windows memory is as open as Credential Manager**: there is no equivalent of hardened runtime that stops a
   same-user process reading it.
@@ -252,7 +271,7 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
 - **Windows per-user install is fully exposed** to this, since the install folder belongs to the user. It is fixed
   only by a machine-wide install (the package's per-machine option, parity row P32), which needs administrator rights.
 - The Account page could say this for Windows; it is a design request.
-- *Check:* the release verification confirms the signature and the install location of the packaged app.
+- *Check:* the release verification confirms the signature and the install location of the packaged app. The signature half is built: `scripts/check-macos-entitlements.sh` runs `codesign --verify --deep --strict` on the bundle, so a binary changed after signing fails (tested). The install location is the OS's rule (App Management, and a machine-wide install on Windows, row P32), has no test, and stays a manual check on a signed build.
 
 ## What this cannot defend
 
@@ -302,7 +321,7 @@ types. A Windows per-user install, or a macOS app the person dragged to a folder
 | --- | --- |
 | Keychain access rule (macOS) | Unit test for the access-control construction; manual `security find-generic-password` from Terminal on a signed build must prompt |
 | Environment scrub | `child_env` unit tests for every entry point; a spawned child prints its environment; the arch script rule on new spawns |
-| Account files | Mode `0600` and folder `0700` test; write, read and `outside` read refused; an action naming the folder denied in every permission mode; data-folder scan for canary bytes after sign-in |
+| Account files | Mode `0600` and folder `0700` test; write, checkout read and `outside` read refused; a write or command naming a protected file denied with the `protected_files` audit row in every permission mode; nested workspace files still allowed; data-folder scan for canary bytes after sign-in |
 | No key in logs | Canary tests over errors, status, TRACE capture and diagnostics events; no request-logging layer; contract field test |
 | Memory | `codesign -d --entitlements` and the `runtime` flag on the release sidecar |
 | Snapshot | Older, foreign-profile and wrong-version files refused (`account/tests/sealed.rs`); key store and file empty after sign-out, removing this device and `Unauthorized`. Built against the development file key store; the keychain item is checked by hand on a signed build |

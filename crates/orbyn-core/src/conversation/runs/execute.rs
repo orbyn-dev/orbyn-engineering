@@ -6,6 +6,7 @@ impl RunManager {
         thread: Thread,
         run_id: String,
         prompt: String,
+        title_prompt: String,
         files: Vec<PathBuf>,
         write_scope: WriteScope,
         stops: Stops,
@@ -48,7 +49,7 @@ impl RunManager {
                     Ok(false) => return EngineOutcome::Cancelled,
                     Err(error) => return EngineOutcome::Failed(error.public_message()),
                 }
-                self.title_new_thread(&thread, &prompt);
+                self.title_new_thread(&thread, &title_prompt);
                 self.drive(
                     &thread,
                     &scope,
@@ -188,7 +189,12 @@ impl RunManager {
             engine: thread.engine.clone(),
             family: driver.family(),
             // The same limit the thread's runs get, while this token is live unadopted.
-            write_scope: Some(write_scope(&root, Path::new(&thread.cwd), warm_start.1)),
+            write_scope: Some(write_scope(
+                &self.data_dir,
+                &root,
+                Path::new(&thread.cwd),
+                warm_start.1,
+            )),
             mode,
             plan,
         };

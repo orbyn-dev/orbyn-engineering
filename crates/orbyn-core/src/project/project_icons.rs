@@ -91,7 +91,7 @@ pub(crate) struct ImageScope {
 }
 
 impl ImageScope {
-    pub(crate) fn new(project: &Project, library: &Path) -> Result<Self> {
+    pub(crate) fn new(project: &Project, library: &Path, data_dir: Option<&Path>) -> Result<Self> {
         if project.scratch {
             return Err(CoreError::NotFound("project".into()));
         }
@@ -109,6 +109,7 @@ impl ImageScope {
                 checkout: root.clone(),
                 engine_cwd: root,
                 excluded: vec![],
+                data_dir: data_dir.map(Path::to_path_buf),
             },
             library: library.to_owned(),
             source_budget: SOURCE_BUDGET,
@@ -595,7 +596,7 @@ impl Core {
         let _library_reader = self.workspace.library_reader().await;
         let library = self.workspace.root()?;
         let project = self.store.project(project_id)?;
-        let mut scope = ImageScope::new(&project, &library)?;
+        let mut scope = ImageScope::new(&project, &library, Some(&self.config.data_dir))?;
         let saved = match project.favicon_path.as_deref() {
             Some(hint) if crate::project::project_image_import::imported_name(hint).is_some() => {
                 self.imported_image(hint)?
@@ -768,7 +769,11 @@ impl Core {
     ) -> Result<(Project, Option<ResolvedImage>)> {
         let _reader = self.workspace.library_reader().await;
         let project = self.store.project(id)?;
-        let mut scope = ImageScope::new(&project, &self.workspace.root()?)?;
+        let mut scope = ImageScope::new(
+            &project,
+            &self.workspace.root()?,
+            Some(&self.config.data_dir),
+        )?;
         let imported = project
             .favicon_path
             .as_deref()

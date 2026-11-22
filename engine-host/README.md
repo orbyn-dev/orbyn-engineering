@@ -1,10 +1,10 @@
 # orbyn-engine-host
 
-The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, later Codex, ACP, Pi) for the Rust
-core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
+The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, ACP and Codex; later Pi) for the
+Rust core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode` and `muse` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse`, `codex` and `acp` (with per-agent entries for droid, omp, kimi, kiro, mistral-vibe and glm) are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -22,8 +22,9 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 
 1. `create(ctx)` gets `ctx.send(frame)` (write any host frame) and `ctx.log(event)` (a `log` frame, never put prompt text or
    tokens in it). It returns `{ handle(request), close() }`; `handle` returns the response `result` or throws.
-2. Implement `open`, `send`, `cancel`, `respond`, `closeSession` (`steer`, `fork`, `models`, `usage`, `stopTask`, `background`,
-   `rollback`, `probe` only if the engine can) and list the optional ones in `capabilities`. `send` answers `{runId}` when
+2. Implement `open`, `send`, `cancel`, `respond`, `closeSession` (`steer`, `fork`, `models`, `usage`, `readHistory`,
+   `readSubagent`, `stopTask`, `background`, `rollback`, `probe` only if the engine can) and list the optional ones in
+   `capabilities`. `send` answers `{runId}` when
    the turn is accepted, then streams `delta` frames (the engine's own events, untouched) and ends with exactly one `runDone`.
 3. Policy stays in Rust: every engine permission or question becomes a `permission` or `question` frame, answered by `respond`.
    An allow reaches the engine in its once-only form; there is no host timeout on a pending one; cancel, run end and a crash
@@ -32,7 +33,9 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 5. Apply `open.confinement` (argv prefix, env allowlist) to every process the family starts; a family that cannot must
    fail `open` with `kind: "unsupported"`. Log env keys you add before the engine starts.
 6. Register the family in `src/main.mjs` (behind an env flag if a licence or terms gate applies; never bundle an SDK
-   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`).
+   that is not MIT or approved: mark it `external` in `scripts/build-sea.mjs`). The Claude and Cursor SDK gates were lifted
+   on 2026-11-22 on the condition that Orbyn Engineering is open source for public use; both are used as dependencies only
+   and ship with the notices their licences ask for. Neither is bundled yet (Planned, docs/sdk-default-plan.md).
 7. Test by replaying recorded transcripts: copy them unmodified into `test/fixtures/<family>/` with their licence notice in
    `test/fixtures/NOTICE`, drive the family through `runHost` with in-process streams (see `claude.test.mjs`, `replay.mjs`),
    and write each test so it fails before the code. State in the PR what has not run against the real engine.
@@ -65,23 +68,23 @@ one query, permission frames with once-only allow and deny, cancel through `inte
 ids, background task frames, a run held open by a background agent or workflow, confinement through
 `spawnClaudeCodeProcess` (argv prefix and env allowlist).
 
-Not done, so Planned: the leftover-turn echo rule, models and usage requests, `rollback`, `stopTask`,
-`background` request, `AskUserQuestion` as a `question` frame, subagent transcripts, and any run against the real SDK
-or a real `claude`.
+Not done, so Planned: the leftover-turn echo rule on a real run, `AskUserQuestion` against the real SDK, and any run
+against the real SDK or a real `claude`.
 
 `AskUserQuestion` is a `question` frame answered with `answers`.
 
 Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
 `usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
 
+Also done, fake SDK only: `rollback` (closes the live query and resumes at the last top-level assistant message of
+the target turn), `readHistory` (`getSessionMessages`) and `readSubagent` (`getSubagentMessages`), the last two capped
+at the same 6 MiB as OpenCode's history. None of these three has run against the real SDK or a real `claude`.
+
 Run-end rules: the prompt goes in with a `uuid` (the core's `messageId` from `send`, or one the host makes; the accepted answer returns it so the core can tell the prompt's own turn from a leftover one in `command_lifecycle` frames); a `result` that arrives after a `command_lifecycle` `queued` for it but
 before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
 background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
 transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`
 for the prompt's uuid before the result. A leftover turn has not been seen on a real run.
-
-Not done, so Planned: `rollback`, subagent
-transcripts, and any run against a real `claude` with a valid login.
 
 ## Cursor family (behind a flag)
 
@@ -192,20 +195,170 @@ never ends in the recordings); `stopTask`, `readHistory`, `rollback`, fork; atta
 trampoline. Windows launchers (`.cmd` and `.bat` under cmd.exe, PATH and PATHEXT) and verbatim turn roots follow T3 and are unit tested
 with injected platform and file checks only; no Windows run.
 
-## Differences from T3 Code on purpose (Muse and Cursor)
+## Codex family
 
-Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`) and `packages/provider-cursor` (`CursorAgentSdk.ts`,
-`CursorAgentSdkWorker.ts`, `adapter.ts`), commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking
-(`promptUnmatched`, `:ask-me`) where T3 maps full access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability
-(no session MCP yet); Cursor has no approvals; the pooled Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind
-`ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only `CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key.
+`src/families/codex.mjs` is a plain-JS JSON-RPC client of the person's own `codex app-server` (never bundled;
+`options.codexPath` or `codex` on PATH) on its documented newline-delimited JSON stdio. Start it with
+`orbyn-engine-host codex`; no flag. No SDK, package or npm dependency was added. The app-server version the
+recordings name is pinned as `0.156.1`.
 
-Readers added (read-only, through the existing `models` and `usage` requests, capabilities `models` and `usage` on both families; not a
+- **Processes and confinement.** One app-server per distinct confinement (`argvPrefix`, `env`, `cwd`, path
+  and env additions); sessions with the same confinement share it, and it stops with its last session.
+  `confinement.argvPrefix` prefixes the command and `confinement.env` is its whole environment; `options.env`
+  is added and its keys are logged, never its values. A malformed prefix is `invalid_request`; a family that
+  could not apply confinement would be `unsupported`. Windows launchers (PATH/PATHEXT, `.cmd`/`.bat` under
+  `cmd.exe`) are the `codexLaunch` helper, unit tested with injected platform and file checks only; no Windows
+  run.
+- **Options.** `{codexPath?, model?, effort?, mode: "read-only"|"workspace-write" (default read-only),
+  approvalPolicy?: "on-request"|"untrusted", mcpServers?, developerInstructions?, env?}`; `open`
+  `operation: "fork"` also takes `options.atTurn`. `mcpServers` is sent as `mcp_servers.<name>` in the
+  thread's `config`, as T3 does; the host does not decide which tools are allowed. `effort` goes on each
+  `turn/start` (the thread request has no effort field).
+- **Requests.** `open` (create/resume/fork; the Codex thread id is `engineSessionId`), `send` (`turn/start`;
+  `{runId, engineSessionId, turnId?, messageId?}`), `steer` (`turn/steer`; `accepted`/`rejected`, never
+  `queued`), `cancel` (`turn/interrupt`, then `runDone` cancelled), `respond`, `rollback`, `fork` (at
+  `atTurn`), `readHistory` (`{turns}` from `thread/read`), `closeSession`, `models`, `usage`. `stopTask`,
+  `background` and `probe` are not advertised.
+- **Approvals.** Every command, file-change, permissions, legacy patch/exec and MCP URL ask is a `permission`
+  frame; `item/tool/requestUserInput` and MCP form elicitations are `question` frames. `input` is Codex's
+  params untouched. `respond` allow is once-only (`accept`, never `acceptForSession`; permissions with
+  `scope: "turn"`; legacy `approved`); deny is `decline`/empty permissions/legacy denied. The host never
+  sends `approvalPolicy: "never"` or a `danger-full-access` sandbox: the recordings that held them are
+  replayed with `on-request` and a read-only or workspace-write sandbox. There is no host timeout on a pending
+  ask; cancel, run end and a crash refuse it, and a late `respond` is logged.
+- **Frames and run end.** `delta.update` is `{method, params}` from Codex, untouched; a `session` frame is
+  sent when a thread or turn id becomes known later; `background` frames report subagent threads as
+  `{type, id, kind: "agent"}`. `runDone` is once per `send`; a turn only ends the run if its `turnId` is the
+  prompt's (or the first one, if none was known); other threads' turns are deltas. A subagent still running
+  when the parent's turn completes holds the run, and the hold ends on the last agent plus a short follow-up
+  grace, on cancel, after 5 minutes without a notification, after 30 minutes, or when the app-server exits
+  (running agents are then `background` `ended` with `status: "stopped"`). A background shell is neither held
+  nor reported. Usage is the `thread/tokenUsage/updated` delta against the thread baseline, as T3's
+  `CodexTurnTokenUsage.ts` does; failure kinds follow Codex's `codexErrorInfo` and message patterns, with a
+  `retry` for rate limits, network loss and overload.
+- **models and usage.** `models` uses a throwaway app-server: `model/list` pages become
+  `{id, name, isDefault, efforts: [{id, label, isDefault?}], defaultEffort?}`, plus `account?` from
+  `account/read`. `usage` is `{usage, limits}`; `limits` maps `account/rateLimits/read` primary/secondary/
+  individual windows with the plan label. A limits failure is `unavailable: "probeFailed"`, never a request
+  error. Both are synthetic-data tests shaped like T3's, not recordings. T3's `resetCredits` is not in this
+  document's limit shape and is not carried.
+
+Tested against the 28 replayed T3 Code `codex_transcript.ndjson` recordings (MIT, `test/fixtures/NOTICE`;
+app-server 0.156.1), copied unmodified into `test/fixtures/codex/`: simple, multi_turn, message_steering,
+queued_turn, turn_interrupt, turn_interrupt_mid_tool, tool_call_read_only_on_request,
+tool_call_restricted_granular, tool_call_workspace_never, command_output_streaming, plan_questions,
+proposed_plan, todo_list, web_search, provider_thread_resume, thread_fork_native_prior_turn, thread_rollback,
+thread_rollback_after_restart, thread_rollback_to_stopped_turn, subagent, subagent_continue, subagent_v2,
+subagent_v2_approval, subagent_v2_nested, subagent_v2_nested_approval, thread_merge_back_siblings,
+delegated_task_status, codex_model_reroute. `test/replayCodex.mjs` plays a transcript as a fake app-server (it
+asserts each recorded request, rewrites ids, ignores T3's recorder config/approval values, and feeds the
+recorded replies), and `test/codex.test.mjs` drives every scenario through `runHost` with in-process streams.
+Also tested with hand-written fake app-servers: hold-open, confinement, launcher, approval refusal on cancel,
+late respond, attachments, readHistory, fork, structured error kinds/reset, models and usage. One test runs a
+stand-in app-server script through the default spawn over real stdio, so the child-process path is exercised.
+
+**Nothing here has run against a real Codex turn yet.** The wire, ids, error codes, reset-text timezone and
+approval options are T3's recordings, not a live `codex`. Not done, so Planned: `stopTask`/`background`;
+`probe`; a real login/auth flow (the host reads no credential and adds no key); URL-mode MCP elicitations
+beyond answering `cancel`; distinguishing Codex's own review/compact/memory agents from subagents (they would
+hold the run); a quiet/held run longer than the test windows; `resetCredits`; the static/update-required model catalogue of
+`codexModelCatalog.ts` (the host reads `model/list` only); T3's per-turn `additionalContext` runtime
+instructions (`developerInstructions` is passed as the thread request's string); the `session` server requests
+for dynamic tools, attestation and ChatGPT token refresh; a `fork` request that also creates a host session
+(the caller opens one); a read-history size cap; and any Windows run. Compared with T3's adapter: one
+app-server per confinement group instead of one per provider (so a per-run prefix can still apply), `open`
+resume loads the thread eagerly, `rollback.toTurn` names the turn a rollback keeps (later turns are removed;
+T3 counts terminal turns after its target), MCP URL asks answer `cancel` on allow, no always/session approvals,
+no T3 thread names or recorder `config/read`, and no T3 orchestration child threads.
+
+## ACP family
+
+`src/families/acp.mjs` is the generic Agent Client Protocol family: one agent process per open session, spoken to over
+newline JSON-RPC 2.0 on stdio. It starts with `orbyn-engine-host acp`; no flag. The core resolves which agent to run and
+where its binary is, in `open.options.agent = {command, args, env, id}`; this host never downloads, installs or resolves a
+registry and never fetches the network. `options.agent.id` selects a per-agent quirks entry from
+`src/families/acpAgents.mjs`: `default`, `droid` and `omp` (their complete elicitation forms), `kimi` (bare tool names
+with streamed JSON arguments), `kiro` (V3 launch, exact config ids and the autopilot rule), `mistral-vibe` (its
+`thinking` levels belong to the current model) and `glm` (bare model names). An unknown id gets `default`. The
+per-agent rules are a plain-JavaScript port of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc., commit
+`9168ca73d02003557725430b515b44e1551544af`).
+
+- **Kiro.** With `agent.id = "kiro"` and empty args the process runs `kiro-cli acp --agent-engine=v3 --auth-method=cli`
+  (T3's `KIRO_ACP_ARGS`). Session options use Kiro's ids `model`, `effortLevel` and `mode` (agents); a model is written even
+  when Kiro has not listed it, and `effortLevel` only after Kiro advertises it for the written model. **`autopilot` is
+  always written as `off` (Supervised) when Kiro offers it and never as `on`**: the host never lets Kiro auto-approve
+  tools, because policy stays in Rust; if Kiro offers no supervised value the session fails. `/compact` uses Kiro's
+  advertised `_kiro/session/compact`, `steer` uses `_session/steer` (`queued`, no cancel), and `open` operation `fork`
+  forks at a turn with `options.atTurn` as `_meta.kiro.messageId`.
+- **Initialize.** ACP protocol version 2, `clientInfo` "Orbyn", `clientCapabilities` advertising only form elicitation:
+  **no `fs` and no `terminal`**, so the agent keeps using its own tools under the core's confinement. An agent that sends
+  `fs/*` or `terminal/*` anyway gets JSON-RPC method-not-found and a `log` frame naming the method only (T3 advertises
+  and implements both; this family deliberately does not). `authenticate` runs only when session setup says sign-in is
+  required (-32000) and `options.authMethodId` names an advertised method; otherwise `open` fails `kind: "auth"`.
+- **Sessions.** `session/new`, or `session/load` for `resume` (only when the agent advertises `loadSession`, else
+  `kind: "unsupported"`), or `session/fork` for `fork` when the agent advertises it. MCP servers from
+  `options.mcpServers` are sent in the transports the agent advertised; one it does not support is skipped and logged
+  by name. `confinement.argvPrefix` is prepended and `confinement.env` is the whole environment plus the agent's own
+  `env`; a malformed prefix is `invalid_request`. Windows launch resolution follows `acpLaunch` (the same PATH/PATHEXT
+  and `.cmd` handling as `museLaunch`).
+- **Policy stays in Rust.** Every `session/request_permission` is a `permission` frame (`tool` is the tool call's title,
+  `input` the request's own tool call, with fields the `tool_call` update already carried filled in; `options` as
+  received) answered once by `respond`. Allow is only `allow_once`; deny is `reject_once`; an agent offering only an
+  always-allow option is denied. There is no host timeout. Cancel, run end and a crash refuse pending asks. Elicitation
+  forms become `question` frames answered by `respond` `{answers}` (multi-selections comma-joined) or `{behavior:"deny"}`
+  (sent as `action: "cancel"`); Droid's and OMP's complete forms use their own parser and leave other schemas to the
+  generic one.
+- **Turns.** `send` writes `session/prompt` with the person's text, plus image or resource blocks only when the agent's
+  `promptCapabilities` allow them, answers when the prompt is on the wire, streams each `session/update`'s `update`
+  object untouched as a `delta`, and ends with exactly one `runDone` from the prompt response (`end_turn` completed,
+  `cancelled` cancelled, `max_tokens`/`max_turn_requests` maxTurns, `refusal` refused, an error failed with a `kind`).
+  A malformed `session/update` is dropped and logged by method only. Kiro's `/compact` is its advertised extension, not a
+  prompt. `steer` cancels the running prompt and sends the new text as the run's next prompt (Kiro instead queues it
+  through `_session/steer` and does not cancel); `cancel` sends `session/cancel` and ends the run cancelled; `closeSession`
+  cancels and stops the process.
+- **Models.** `models` with an open `sessionId` returns the session's catalog; without one it takes `agent`, `cwd` and
+  optional `confinement`, starts a throwaway agent, reads `session/new`, and stops it. The shape is Muse's
+  `{models: [{id, name, isDefault, efforts: [{id, label, description?, isDefault?}], defaultEffort?}]}`, built from
+  ACP `configOptions` (`model`, `thought_level`/`reasoning`, the Mistral Vibe `thinking` quirk, `mode`) with `_meta.reasoningEfforts`
+  winning per model. Vibe's levels apply to its current model only; Kiro's `_meta.kiro.effortLevels`/`defaultEffortLevel`
+  shape its efforts; bare model ids are their names. `options.model`, `options.effort` and `options.mode` at `open` or `send` go through
+  `session/set_config_option`, or `session/set_model` when only a model state is advertised.
+  Capabilities: `steer` and `models`.
+
+Done and tested against replayed T3 Code transcripts of generic ACP agents (MIT, `test/fixtures/NOTICE`):
+simple, multi-turn, queued turn, message steering, a read-only tool call, a permission ask answered once, turn
+interrupt, a todo list, two elicitation forms, a malformed session update and a failed prompt. Also replayed: fifteen
+Kiro 2.32.0 to 2.33.1 sessions (simple, multi-turn, queued turn, a read-only tool ask, turn interrupt with and without a
+tool, subagents, cloud config, compaction, effort, fork from a turn, steering, model switch, subagent interrupt and an
+unknown model) through the real family with `agent.id = "kiro"`. `test/acpAgents.test.mjs` covers the synthetic
+Droid/OMP forms, Kimi tool titles, Mistral Vibe levels, GLM/Kimi bare names, Kiro launch/config/autopilot, `/compact` and
+native steer. Nothing here has run against a real agent or model yet.
+
+Not done, so Planned: any run against a real agent or model; Kiro's cloud-config and `[STEERING ...]` note filters
+(the host streams the engine's updates untouched), its native session list/delete and `_session/steer` note handling;
+background work, `stopTask`, `background`, `rollback`, `readHistory` and a `usage` request (ACP has no background event;
+usage rides the update stream); `session/resume` for agents that do not advertise `loadSession`; `additionalDirectories`;
+T3's per-agent MCP transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never
+ported); attachments against a real agent; Windows.
+
+## Differences from T3 Code on purpose (Muse, Cursor and Codex)
+
+Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`), `packages/provider-cursor` (`CursorAgentSdk.ts`,
+`CursorAgentSdkWorker.ts`, `adapter.ts`) and `packages/effect-codex-app-server` plus the Codex adapter files named in the section above,
+commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking (`promptUnmatched`, `:ask-me`) where T3 maps full
+access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability (no session MCP yet); Cursor has no approvals; the pooled
+Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind `ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only
+`CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key. Codex keeps T3's asking shape (`on-request`, read-only or
+workspace-write), never T3's full-access `never`/`dangerFullAccess`, and one app-server per confinement group rather than one per provider.
+
+Readers added (read-only, through the existing `models` and `usage` requests, capabilities `models` and `usage` on Cursor, Muse and Codex; not a
 protocol bump). Cursor, from `provider-cursor` `CursorSdkCatalog.ts` (`/v1/me`, `/v1/models`, 30 minute cache, account label dropped when a team
 blocks it) and `usageLimits.ts` + `apiKey.ts` (`GetCurrentPeriodUsage` through the key exchange): `models` returns `{models, account?}`, `usage`
 returns `{usage, limits}` (`src/families/cursorReaders.mjs`). Muse, from `provider-muse` `modelCatalog.ts` (`model/list` from a throwaway
 `muse serve`), `protocol.ts` (`MuseSubscriptionUsage`) and `usageLimits.ts` (`museUsageToLimits`): `models` returns `{models}` with efforts, and
-`usage` returns `{usage, limits}` from the latest account-wide `usage/changed` (`limits` is `null` until Muse sends one). The key, access token
+`usage` returns `{usage, limits}` from the latest account-wide `usage/changed` (`limits` is `null` until Muse sends one). Codex, from
+`Drivers/CodexProvider.ts` (`model/list` with effort descriptors, `account/read`), `CodexTurnTokenUsage.ts` and `codexUsageLimits.ts`:
+`models` returns `{models, account?}`, `usage` returns `{usage, limits}` (`limits` from `account/rateLimits/read`). The key, access token
 and any response body never appear in a result or log; failures carry fixed text. All of it is tested with a fake `fetch` and a fake
 connection only: nothing ran against the real Cursor service, `@cursor/sdk` or `muse`, and the endpoint paths and field names follow T3,
 unverified here.
@@ -214,7 +367,7 @@ T3 has more that is not added: Cursor `accountUsage.ts`, `CursorUsageAccounts.ts
 history, team lookups and an on-disk cache for T3's cost screens; this host keeps no files, and the core owns cost history); `credentialStore.ts`
 and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (they scan `session.jsonl` transcripts under Muse's home for token
 history, a file reader the host does not need; the core reads them, parity J27); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
-retry, and Muse's quota reset already rides `retry.resetsAt`).
+retry, and Muse's quota reset already rides `retry.resetsAt`); Codex `resetCredits` (this document's limit shape has no field for it).
 
 ## In the app bundle (macOS arm64)
 
@@ -228,3 +381,11 @@ Checked by hand on macOS arm64: a stand-in app bundle signed ad hoc in Tauri's o
 hardened runtime) verifies, and the host launched from inside it answers the handshake. With the same signing but
 without the entitlements the host crashes (SIGTRAP), so the entitlements are required. Not checked: a full `tauri build`
 (the app was not built), notarization, other platforms. The entitlements apply to the whole app, not only the host.
+
+**Why the host needs them.** The host is a Node single executable application: it embeds Node, whose V8 engine compiles
+JavaScript at run time. Under the hardened runtime that needs `allow-jit` and `allow-unsigned-executable-memory`, and
+`disable-library-validation` lets the injected Node runtime load code that was not signed by the same team. Without them the
+host crashes at start (SIGTRAP, checked by hand). Nothing else in the app needs them. They are a risk for `orbynd`
+(docs/account-threat-model.md control 6), so a release must carry them on `orbyn-engine-host` only;
+`scripts/check-macos-entitlements.sh --release` enforces that. Signing a release that way (one entitlement file per
+binary, not the single `bundle.macOS.entitlements` Tauri applies to everything) is Planned with Developer ID signing.
