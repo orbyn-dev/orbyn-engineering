@@ -175,8 +175,31 @@
   padding: 46px 10px 10px;
   background: var(--color-sidebar);
 }
+/* The phone (under 600 px): the sidebar is its home page, and over any other page it is a full-screen
+   sheet that takes the page's place, with a Close link of its own (Engineer Designs, "Phone layout
+   (under 600 px)"). Nothing is docked and nothing is drawn beside the page. */
 .shell[data-layout="phone"] > .sidebar {
   grid-area: 2 / 1;
+  padding-top: 6px;
+}
+.sidebar-sheet {
+  grid-area: 2 / 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-sidebar);
+}
+/* The sheet's own row above the sidebar, like the side panel's: the way back to the page. */
+.sidebar-sheet-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 36px;
+  padding: 6px 16px 0;
+}
+.sidebar-sheet > .sidebar {
+  flex: 1 1 auto;
   padding-top: 6px;
 }
 /* Small windows (600 to 899 px): the sidebar is a drawer over the thread, opened from the title bar's

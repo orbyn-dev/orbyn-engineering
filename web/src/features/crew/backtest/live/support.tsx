@@ -25,6 +25,7 @@ export const lane = (over: Partial<BacktestLaneRun> = {}): BacktestLaneRun => ({
   lane: "correctness",
   engine: "claude",
   model: "sonnet-5-5",
+  kind: "review",
   state: "done",
   tokens_used: 1_280_000,
   outcome: "scored",
