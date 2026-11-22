@@ -28,7 +28,7 @@ const SETUP = new Set([
   "device-setup-done",
 ]);
 const VERSIONS = new Set(["device-tool-versions", "device-tool-versions-checking", "device-tool-versions-offline", "device-tool-versions-steps"]);
-const STATES = new Set(["device-booting", "device-running", "device-frozen", "device-crashed", "device-shutdown"]);
+const STATES = new Set(["device-running", "device-frozen", "device-crashed", "device-shutdown"]);
 const FRAMES = [
   ...SETUP,
   ...VERSIONS,
@@ -123,7 +123,7 @@ function Frame({ frame }: { frame: string }) {
         devices = devices.filter((one) => one.platform === "ios");
       }
       if (STATES.has(frame)) {
-        const state = frame.replace("device-", "") as "booting" | "running" | "frozen" | "crashed" | "shutdown";
+        const state = frame.replace("device-", "") as "running" | "frozen" | "crashed" | "shutdown";
         devices = [m.stateFixture(state === "running" ? "booted" : state)];
         open = [devices[0]!.id];
         active = devices[0]!.id;

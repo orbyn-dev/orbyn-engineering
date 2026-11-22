@@ -1,14 +1,13 @@
-import { Camera, ChevronLeft, FoldHorizontal, House, Loader2, Power, RotateCw, SlidersHorizontal, Square, UnfoldHorizontal } from "lucide-react";
+import { Camera, ChevronLeft, FoldHorizontal, House, Power, RotateCw, SlidersHorizontal, Square, UnfoldHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiFailure } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
 import { Button, IconButton, Pill } from "../../ui/controls";
 import { devicesApi, useApiVersion } from "./api";
-import { HINGE_MAX, HINGE_MIN, type ButtonName, type Device, type DeviceAction, type HingePreset, type Orientation } from "./contract";
-import { clampAngle, controlsFor, hingeLabel, plain, postureLabel, screenshotSrc, stateLabel } from "./model";
+import { HINGE_MAX, HINGE_MIN, type ButtonName, type Device, type DeviceAction, type HingePreset } from "./contract";
+import { clampAngle, controlsFor, hingeLabel, nextOrientation, orientationLabel, plain, postureLabel, screenshotSrc, stateLabel } from "./model";
 import { devicesPlannedApi, restartLabel } from "./planned";
 
-const ORIENTATIONS: readonly Orientation[] = ["portrait", "landscape_left", "portrait_upside_down", "landscape_right"];
 const PRESETS: readonly { preset: HingePreset; label: string }[] = [{ preset: "closed", label: "Closed" }, { preset: "half_open", label: "Half open" }, { preset: "open", label: "Open" }];
 /** What the frames draw that no code can do yet: the live view (H22/H23), Record, typing and the tools drawer (H26). */
 const PLANNED = ["Live screen", "Record", "Type text", "Device tools"];
@@ -30,7 +29,7 @@ const readout = (device: Device): string | null => {
 export function DeviceView({ device, onChanged, onGone, onRestart }: {
   device: Device;
   onChanged(device: Device): void;
-  onGone(id: string): void;
+  onGone(id: string, message?: string): void;
   onRestart(): void;
 }) {
   const seen = useApiVersion();
@@ -40,24 +39,24 @@ export function DeviceView({ device, onChanged, onGone, onRestart }: {
   const [shot, setShot] = useState<{ id: string; src: string } | null>(null);
   const [hingeOpen, setHingeOpen] = useState(false);
   const [draft, setDraft] = useState(90);
-  const turn = useRef(0);
   const gone = useRef(false);
+  const answered = useRef(false);
   const detail = useAsync(`device:${seen}:${device.id}`, (signal) => devicesApi().detail(device.id, signal));
   const angle = device.fold?.hinge_angle ?? null;
   useEffect(() => { setDraft(clampAngle(angle ?? 90)); }, [angle, device.id]);
-  useEffect(() => { setFailure(null); setHingeOpen(false); gone.current = false; }, [device.id]);
+  useEffect(() => { setFailure(null); setHingeOpen(false); gone.current = false; answered.current = false; }, [device.id]);
 
   const detailGone = detail.status === "error" && detail.error.code === "device_not_found";
   useEffect(() => {
-    if (!detailGone || gone.current) return;
+    if (!detailGone || gone.current || detail.status !== "error") return;
     gone.current = true;
-    onGone(device.id);
-  }, [detailGone, device.id, onGone]);
+    onGone(device.id, detail.error.message);
+  }, [detailGone, detail, device.id, onGone]);
 
-  const drop = (id: string) => {
+  const drop = (id: string, message?: string) => {
     if (gone.current) return;
     gone.current = true;
-    onGone(id);
+    onGone(id, message);
   };
 
   const run = async (body: DeviceAction, verb: string): Promise<void> => {
@@ -69,7 +68,11 @@ export function DeviceView({ device, onChanged, onGone, onRestart }: {
     try {
       const result = await devicesApi().act(device.id, body);
       if (typeof result.device === "object" && result.device !== null && result.device.id === device.id) {
-        onChanged({ ...device, ...result.device });
+        answered.current = true;
+        const next = { ...device, ...result.device };
+        // The service read the state back: an orientation it did not report is not carried over.
+        if (result.device.orientation === undefined) delete next.orientation;
+        onChanged(next);
       }
       if (body.type === "screenshot") {
         const src = screenshotSrc(result.image);
@@ -79,7 +82,7 @@ export function DeviceView({ device, onChanged, onGone, onRestart }: {
       if (body.type === "hinge" || body.type === "hinge_preset" || body.type === "fold" || body.type === "unfold") setHingeOpen(false);
     } catch (error) {
       if (error instanceof ApiFailure && error.code === "device_not_found") {
-        drop(device.id);
+        drop(device.id, error.message);
         return;
       }
       const message = error instanceof ApiFailure ? plain(error.message, 200) : "Something went wrong.";
@@ -113,17 +116,15 @@ export function DeviceView({ device, onChanged, onGone, onRestart }: {
   const offered = controls.buttons || controls.rotate || controls.screenshot || controls.powerOff || controls.fold || controls.hinge || controls.planned.length > 0;
   const fold = device.fold;
   const closed = fold?.posture === "closed";
+  const detailOrientation = detail.status === "ready" && detail.data.id === device.id ? detail.data.orientation : undefined;
+  const currentOrientation = answered.current ? device.orientation : detailOrientation ?? device.orientation;
+  const orientation = orientationLabel(currentOrientation);
   const press = (name: ButtonName) => void run({ type: "button", value: name }, `press ${name} on`);
-  const rotate = () => {
-    turn.current = (turn.current + 1) % ORIENTATIONS.length;
-    void run({ type: "rotate", value: ORIENTATIONS[turn.current]! }, "rotate");
-  };
+  const rotate = () => void run({ type: "rotate", value: nextOrientation(currentOrientation) }, "rotate");
   const tool = (label: string, icon: ReactNode, onClick: () => void, extra: { pressed?: boolean } = {}) => (
     <IconButton key={label} label={label} onClick={onClick} disabled={busy} pressed={extra.pressed}>{icon}</IconButton>
   );
-  const overlay = device.state === "booting" ? (
-    <div className="dev-stage-note" role="status"><Loader2 size={18} className="spin" aria-hidden /><span>Starting…</span></div>
-  ) : device.state === "frozen" || device.state === "crashed" ? (
+  const overlay = device.state === "frozen" || device.state === "crashed" ? (
     <div className="dev-overlay" data-tone={device.state === "crashed" ? "danger" : undefined} role="alert">
       <b>{device.state === "frozen" ? "Not responding" : "The simulator stopped"}</b>
       <p>{device.state === "frozen" ? "The simulator has not answered." : "The device process exited."}</p>
@@ -136,13 +137,14 @@ export function DeviceView({ device, onChanged, onGone, onRestart }: {
       <div className="dev-bar">
         <b title={plain(device.name, 60)}>{plain(device.name, 60)}</b>
         <span className="dev-meta">{stateLabel(device.state)}</span>
+        {orientation ? <span className="dev-orientation" aria-label="Orientation">{orientation}</span> : null}
         {fold ? <span className="dev-posture" aria-label="Posture">{readout(device)}</span> : null}
       </div>
       <div className="dev-stage" data-state={device.state}>
-        {shot?.id === device.id ? <img className="dev-shot" src={shot.src} alt={`Screenshot of ${plain(device.name, 40)}`} /> : device.state === "booting" || device.state === "frozen" || device.state === "crashed" ? null : <p className="dev-note">No screenshot yet. The live screen is Planned.</p>}
+        {shot?.id === device.id ? <img className="dev-shot" src={shot.src} alt={`Screenshot of ${plain(device.name, 40)}`} /> : device.state === "frozen" || device.state === "crashed" ? null : <p className="dev-note">No screenshot yet. The live screen is Planned.</p>}
         {overlay}
       </div>
-      {device.state === "shutdown" ? <p className="dev-note">Start this device in its own tools to use the controls.</p> : device.state === "frozen" || device.state === "crashed" || device.state === "booting" ? null : detail.status === "loading" ? <p className="dev-note" role="status">Reading what this device can do…</p> : detail.status === "error" ? <p className="field-error" role="alert">Could not read what this device can do.</p> : controls && offered ? (
+      {device.state === "shutdown" ? <p className="dev-note">Start this device in its own tools to use the controls.</p> : device.state === "frozen" || device.state === "crashed" ? null : detail.status === "loading" ? <p className="dev-note" role="status">Reading what this device can do…</p> : detail.status === "error" ? detailGone ? null : <p className="field-error" role="alert">Could not read what this device can do.</p> : controls && offered ? (
         <div className="dev-rail" role="toolbar" aria-label="Device controls">
           {controls.buttons ? <>{tool("Back", <ChevronLeft size={16} aria-hidden />, () => press("back"))}{tool("Home", <House size={16} aria-hidden />, () => press("home"))}{tool("Recents", <Square size={16} aria-hidden />, () => press("recents"))}</> : null}
           {controls.rotate ? tool("Rotate", <RotateCw size={16} aria-hidden />, rotate) : null}

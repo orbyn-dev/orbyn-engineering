@@ -82,11 +82,11 @@ export function DevicesPanel({ threadId = "" }: { threadId?: string }) {
     save({ names });
   };
 
-  const goneDevice = (id: string) => {
+  const goneDevice = (id: string, message = "") => {
     setGone((held) => new Set(held).add(id));
     setOverrides((held) => { const next = new Map(held); next.delete(id); return next; });
     save({ open: open.filter((one) => one !== id), active: open.filter((one) => one !== id)[0] ?? null, float: stored.float?.id === id ? null : stored.float });
-    setNotice("That device is gone. The list is up to date.");
+    setNotice(plain(message, 200));
     reload();
   };
 
@@ -101,7 +101,7 @@ export function DevicesPanel({ threadId = "" }: { threadId?: string }) {
         setOverrides((held) => new Map(held).set(target.id, { ...target, ...result.device }));
       }
     } catch (error) {
-      if (error instanceof ApiFailure && error.code === "device_not_found") goneDevice(target.id);
+      if (error instanceof ApiFailure && error.code === "device_not_found") goneDevice(target.id, error.message);
       else setFailure(error instanceof ApiFailure ? plain(error.message, 200) : "Something went wrong.");
     } finally {
       writing.current = false;

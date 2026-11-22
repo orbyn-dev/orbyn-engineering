@@ -78,17 +78,6 @@ it("lists every device and opens the chosen one as a tab; nothing is selected un
   expect(await screen.findByRole("toolbar", { name: "Device controls" })).toBeVisible();
 });
 
-it("draws the starting state with a spinner and no controls", async () => {
-  const device = stateFixture("booting");
-  setDevicesApi(createDevicesMock({ devices: [device] }));
-  setDevicesPlannedApi(createDevicesPlannedMock());
-  prefs([device.id]);
-  render(<DevicesPanel />);
-  expect(await screen.findByText("Starting…")).toBeVisible();
-  expect(screen.getAllByText("Starting").length).toBeGreaterThan(0);
-  expect(screen.queryByRole("toolbar", { name: "Device controls" })).toBeNull();
-});
-
 it("draws a running device with the toolbar the service lists", async () => {
   const device = stateFixture("booted");
   setDevicesApi(createDevicesMock({ devices: [device] }));
@@ -136,6 +125,18 @@ it("gives a shut-down device no controls and says where to start it", async () =
   expect(screen.queryByRole("toolbar", { name: "Device controls" })).toBeNull();
 });
 
+it("shows the orientation the detail read reports when the list did not carry it", async () => {
+  const { orientation: _unchanged, ...listed } = deviceFixtures()[1]!;
+  const mock = createDevicesMock({ devices: [listed] });
+  const detail = mock.detail.bind(mock);
+  mock.detail = async (id, signal) => ({ ...(await detail(id, signal)), orientation: "landscape_left" });
+  setDevicesApi(mock);
+  setDevicesPlannedApi(createDevicesPlannedMock());
+  prefs([listed.id]);
+  render(<DevicesPanel />);
+  expect(await screen.findByLabelText("Orientation")).toHaveTextContent("Landscape left");
+});
+
 it("says it is reading a device's actions and draws no toolbar while the read is open", async () => {
   const device = deviceFixtures()[1]!;
   const mock = createDevicesMock({ devices: [device] });
@@ -157,6 +158,20 @@ it("says so and draws no toolbar when reading a device's actions fails", async (
   prefs([device.id]);
   render(<DevicesPanel />);
   expect(await screen.findByText("Could not read what this device can do.")).toBeVisible();
+  expect(screen.queryByText("The device tool could not do that. Try again.")).toBeNull();
+  expect(screen.queryByRole("toolbar", { name: "Device controls" })).toBeNull();
+});
+
+it("uses the app's own sentence for every failed actions read, whatever the service code", async () => {
+  const device = deviceFixtures()[1]!;
+  const mock = createDevicesMock({ devices: [device] });
+  mock.failNextDetail("tool_timeout");
+  setDevicesApi(mock);
+  setDevicesPlannedApi(createDevicesPlannedMock());
+  prefs([device.id]);
+  render(<DevicesPanel />);
+  expect(await screen.findByText("Could not read what this device can do.")).toBeVisible();
+  expect(screen.queryByText("The device did not answer in time.")).toBeNull();
   expect(screen.queryByRole("toolbar", { name: "Device controls" })).toBeNull();
 });
 
@@ -168,7 +183,8 @@ it("removes a device the detail read no longer knows and reads the list again", 
   setDevicesPlannedApi(createDevicesPlannedMock());
   prefs([device!.id]);
   render(<DevicesPanel />);
-  expect(await screen.findByText("That device is gone. The list is up to date.")).toBeVisible();
+  expect(await screen.findByText("That device is no longer there.")).toBeVisible();
+  expect(screen.queryByText("That device is gone. The list is up to date.")).toBeNull();
   await waitFor(() => expect(screen.queryByRole("tab", { name: device!.name })).toBeNull());
   const list = await screen.findByRole("list", { name: "Devices" });
   expect(within(list).queryByRole("button", { name: new RegExp(device!.name) })).toBeNull();

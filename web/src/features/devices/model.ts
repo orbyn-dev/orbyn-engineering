@@ -1,4 +1,4 @@
-import { HINGE_MAX, HINGE_MIN, type ActionType, type Device, type DeviceDetail, type DeviceState, type Platform, type Posture } from "./contract";
+import { HINGE_MAX, HINGE_MIN, type ActionType, type Device, type DeviceDetail, type DeviceState, type Orientation, type Platform, type Posture } from "./contract";
 
 /** Text the service chose (a device name, a message): cut so no line can grow the panel. React escapes it; it is never markup. */
 export const plain = (text: unknown, max = 80): string => {
@@ -8,13 +8,27 @@ export const plain = (text: unknown, max = 80): string => {
 
 const STATES = new Map<string, string>([
   ["shutdown", "Shut down"],
-  ["booting", "Starting"],
   ["booted", "Running"],
   // Planned words the frames draw (device-frozen, device-crashed); the service contract has neither yet.
   ["frozen", "Not responding"],
   ["crashed", "Stopped"],
 ]);
 export const stateLabel = (state: DeviceState | string): string => STATES.get(state) ?? "Unknown";
+
+const ORIENTATIONS: readonly Orientation[] = ["portrait", "landscape_left", "portrait_upside_down", "landscape_right"];
+const ORIENTATION_LABELS = new Map<string, string>([
+  ["portrait", "Portrait"],
+  ["landscape_left", "Landscape left"],
+  ["portrait_upside_down", "Portrait upside down"],
+  ["landscape_right", "Landscape right"],
+]);
+/** The orientation the service reported, in words, or `null` for a word this app does not know: nothing is invented. */
+export const orientationLabel = (orientation: Orientation | string | null | undefined): string | null => ORIENTATION_LABELS.get(orientation ?? "") ?? null;
+/** The next orientation in the contract's order. With none reported, start from portrait and send its first next one. */
+export function nextOrientation(orientation: Orientation | string | null | undefined): Orientation {
+  const at = ORIENTATIONS.indexOf(orientation as Orientation);
+  return ORIENTATIONS[(at < 0 ? 1 : at + 1) % ORIENTATIONS.length]!;
+}
 
 const PLATFORMS = new Map<string, string>([["android", "Android"], ["ios", "iOS"]]);
 export const platformLabel = (platform: Platform | string): string => PLATFORMS.get(platform) ?? "Unknown";
