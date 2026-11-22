@@ -213,6 +213,22 @@ fn a_handshake_records_and_clears_the_engine_sign_in() {
 }
 
 #[test]
+fn a_sign_in_needed_is_the_structured_code_not_the_words() {
+    let failure = |code: Option<i64>, message: &str| {
+        super::StartFailure::agent(
+            crate::agents::driver::rpc::RpcCallError {
+                code,
+                error: CoreError::EngineUnavailable(message.into()),
+            },
+            "the agent did not answer its handshake",
+        )
+    };
+    assert!(failure(Some(-32000), "Unknown session").auth_required);
+    assert!(!failure(Some(-32002), "Authentication required").auth_required);
+    assert!(!failure(None, "Authentication required").auth_required);
+}
+
+#[test]
 fn only_this_sessions_updates_reach_the_run() {
     assert!(about_session(&json!({"sessionId":"s","update":{}}), "s"));
     assert!(!about_session(

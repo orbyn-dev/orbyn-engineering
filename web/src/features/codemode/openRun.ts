@@ -1,5 +1,6 @@
 import { navigate, parseRoute } from "../../product/state/route";
 import { runAnchorId } from "./model";
+import { scrollTimelineToRun } from "./timelineScroll";
 
 const TRIES = 30;
 
@@ -12,7 +13,8 @@ const reducedMotion = (): boolean => {
 };
 
 /**
- * Opens a run in its thread: goes to the thread (the thread's own `#/threads/<id>` route; nothing new in the address), then looks for the
+ * Opens a run in its thread: goes to the thread (the thread's own `#/threads/<id>` route; nothing new in the address), asks the mounted
+ * timeline to scroll to the run's row by its place in the list (a long thread mounts only the rows near the view), then looks for the
  * run's block, `id="cm-run-<run id>"`, over the next animation frames because a screen change draws a moment later. When it is there it
  * is scrolled into view (no smooth scroll under reduced motion) and focused. `done(false)` when it never shows; nothing else happens then.
  * Display only: no write, no decision. Returns a function that stops the search.
@@ -28,8 +30,11 @@ export function openRun(threadId: string, codeRun: string, done: (found: boolean
   let tries = 0;
   let frame = 0;
   let stopped = false;
+  // The timeline may mount after the navigation, and its rows after the log reads; ask again until one has the run.
+  let asked = false;
   const look = () => {
     if (stopped) return;
+    if (!asked) asked = scrollTimelineToRun(threadId, codeRun);
     const element = document.getElementById(id);
     if (element) {
       element.scrollIntoView?.({ block: "center", behavior: reducedMotion() ? "auto" : "smooth" });

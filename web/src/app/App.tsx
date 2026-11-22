@@ -12,6 +12,7 @@ import { upgradeToast } from "../product/state/healthToasts";
 import { AttentionPreview, attentionPreviewRoute, CommandBlocksPreview, commandBlocksPreviewRoute, PreviewWindow, previewWindowRoute } from "../features/panels";
 import { CrewPreview, crewPreviewRoute } from "../features/crew";
 import { PreviewScreen, previewScreenRoute } from "../features/platform";
+import { SnapshotPreview, SnapshotRuntime, snapshotPreviewRoute } from "../features/snapshot";
 
 type Boot =
   | { state: "loading" }
@@ -30,6 +31,14 @@ export function App() {
   const hash = useSyncExternalStore(subscribeHash, readHash);
   const screen = previewScreenRoute(hash);
   const crewScreen = crewPreviewRoute(hash);
+  const snapshotScreen = snapshotPreviewRoute(hash);
+  if (snapshotScreen && SnapshotPreview) {
+    return (
+      <Suspense fallback={null}>
+        <SnapshotPreview />
+      </Suspense>
+    );
+  }
   if (crewScreen && CrewPreview) {
     return (
       <Suspense fallback={null}>
@@ -145,7 +154,7 @@ function BootedApp() {
       );
     case "ready": {
       const preview = previewWindowRoute(window.location.hash);
-      return preview ? <PreviewWindow {...preview} /> : <Shell />;
+      return <><SnapshotRuntime />{preview ? <PreviewWindow {...preview} /> : <Shell />}</>;
     }
   }
 }
