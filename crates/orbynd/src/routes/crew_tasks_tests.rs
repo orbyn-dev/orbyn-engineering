@@ -176,10 +176,51 @@ async fn a_stored_task_is_listed_and_zoomed_without_its_key() {
 }
 
 #[tokio::test]
+async fn the_artifacts_read_answers_one_task_and_keeps_the_key_out() {
+    let app = serve("artifacts", true, false).await;
+    let (task, key_text) = seed_task(&app.core, "artifacts");
+    let key_id = app.core.store.crew_answer_key(&task).unwrap().unwrap().id;
+
+    let (status, view) = app
+        .get(&format!("/api/crew/flow/tasks/{task}/artifacts"))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(view["task"], task.as_str());
+    assert_eq!(view["crew"], "crew-1");
+    // The seeded task has no run, so no check ran and there is no checkout to read a diff from.
+    assert_eq!(view["checks"], json!([]));
+    assert!(view["diff"].is_null());
+    assert_eq!(view["diff_absent"], "no_checkout");
+    assert_eq!(view["truncated"], false);
+    let text = view.to_string();
+    assert!(
+        !text.contains(&key_text),
+        "a response holds the key's check"
+    );
+    assert!(
+        !text.contains(key_id.as_str()),
+        "a response holds the key's id"
+    );
+    // A bad id is invalid input, and an unknown task is not there.
+    let (status, body) = app
+        .get("/api/crew/flow/tasks/..%2F..%2Fetc/artifacts")
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_input");
+    let (status, _) = app.get("/api/crew/flow/tasks/sha256:abc/artifacts").await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
 async fn a_remote_viewer_may_read_them() {
     let app = serve("remote", true, true).await;
-    for path in ["/api/crew/flow/crews", "/api/crew/flow/tasks?crew=crew-1"] {
-        let (status, _) = app.get(path).await;
+    let (task, _) = seed_task(&app.core, "remote");
+    for path in [
+        "/api/crew/flow/crews".to_owned(),
+        "/api/crew/flow/tasks?crew=crew-1".to_owned(),
+        format!("/api/crew/flow/tasks/{task}/artifacts"),
+    ] {
+        let (status, _) = app.get(&path).await;
         assert_eq!(status, 200, "{path}");
     }
 }
@@ -192,6 +233,7 @@ async fn with_the_flag_off_they_are_not_there() {
         "/api/crew/flow/crews",
         "/api/crew/flow/tasks?crew=crew-1",
         "/api/crew/flow/tasks/sha256:abc",
+        "/api/crew/flow/tasks/sha256:abc/artifacts",
     ] {
         let (status, body) = app.get(path).await;
         assert_eq!(status, 404, "{path}");
