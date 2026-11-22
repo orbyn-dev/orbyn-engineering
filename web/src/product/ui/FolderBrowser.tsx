@@ -5,6 +5,19 @@ import { useAsync } from "../../lib/useAsync";
 import { Button } from "../../ui/controls";
 import { Empty, ErrorState, Loading } from "./states";
 
+/**
+ * The folder above `path`, read from the text alone: used when the read failed and the service gave no `parent`. Answers `null`
+ * at a root (`/`, `C:\\`) so the service picks its own start.
+ */
+export function parentOfPath(path: string): string | null {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (cut < 0) return null;
+  if (cut === 0) return trimmed.length > 1 ? "/" : null;
+  const head = trimmed.slice(0, cut);
+  return /^[A-Za-z]:$/.test(head) ? `${head}\\` : head;
+}
+
 export function FolderBrowser({
   actionLabel,
   busy,
@@ -17,6 +30,8 @@ export function FolderBrowser({
   const [path, setPath] = useState<string | null>(null);
   const listing = useAsync(`browse:${path ?? ""}`, (signal) => api.browse(path, signal));
   const current = listing.data?.path ?? path;
+  // After a failed read there is no listing to ask for a parent, so Up works from the path that failed.
+  const up = listing.data ? listing.data.parent : listing.status === "error" && path ? parentOfPath(path) : null;
 
   return (
     <div className="browser">
@@ -24,8 +39,8 @@ export function FolderBrowser({
         <Button
           small
           icon={<ArrowUp size={16} aria-hidden />}
-          disabled={!listing.data?.parent}
-          onClick={() => setPath(listing.data?.parent ?? null)}
+          disabled={!up}
+          onClick={() => setPath(up ?? null)}
         >
           Up
         </Button>

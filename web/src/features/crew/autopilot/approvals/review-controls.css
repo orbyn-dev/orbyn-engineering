@@ -22,4 +22,4 @@
 .fv-remove-dialog small { display:block; color:var(--color-muted); }
 .fv-remove-dialog [aria-invalid=true] { border-color:var(--color-danger); }
 .fv-remove-dialog [role=alert] { color:var(--color-danger); }
-@media(max-width:540px) { .et-row { align-items:stretch; flex-direction:column; }.et-field { width:100%; }.fv-required-row { align-items:flex-start; }.et-actions { justify-content:flex-start; } }
+@media(max-width:640px) { .et-row { align-items:stretch; flex-direction:column; }.et-side { align-items:flex-start; }.et-field { width:100%; }.fv-required-row { align-items:flex-start; }.et-actions { justify-content:flex-start; } }

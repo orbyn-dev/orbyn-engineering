@@ -10,6 +10,7 @@ import { useReadingNav } from "./readingNav";
 import { toggleSidebarDrawer, useSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../product/state/ui";
+import { useWaitingThreadIds } from "../product/state/waitingThreads";
 import { useWorkspace } from "../product/state/workspace";
 import { goBack, goForward, useNavHistory } from "./navHistory";
 import { attachBarDrag } from "./barDrag";
@@ -86,6 +87,7 @@ function useTrafficLights(): boolean {
 /** Threads waiting on the person: an approval, a question or a limit. */
 function useWaitingCount(): number {
   const threads = useWorkspace((state) => state.threads);
+  const waiting = useWaitingThreadIds();
   return useMemo(
     () =>
       Object.values(threads).filter(
@@ -93,9 +95,9 @@ function useWaitingCount(): number {
           !thread.lifecycle?.archived_at &&
           !thread.lifecycle?.settled_at &&
           thread.lifecycle?.relation !== "side" &&
-          attentionRank(thread) === 0,
+          attentionRank(thread, waiting.has(thread.id)) === 0,
       ).length,
-    [threads],
+    [threads, waiting],
   );
 }
 

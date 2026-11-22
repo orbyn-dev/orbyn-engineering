@@ -7,9 +7,11 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use orbyn_contracts::ModelSelection;
-use orbyn_contracts::{EditQueuedMessage, EnqueueMessage, SteerRun, UpdateThread};
+use orbyn_contracts::{
+    AttachmentSource, EditQueuedMessage, EnqueueMessage, SteerRun, UpdateThread,
+};
 use orbyn_core::CoreError;
 use orbyn_core::agents::selection;
 use orbyn_core::conversation::photo_conversion::MAX_PHOTO_INPUT_BYTES;
@@ -22,6 +24,8 @@ const UPLOAD_LIMIT: usize = 51 * 1024 * 1024;
 /// The same headroom for the photo route, so core answers `413 file_too_large` in its own words
 /// instead of this layer's body limit.
 const PHOTO_LIMIT: usize = 51 * 1024 * 1024;
+/// The largest source body; core enforces the character limits.
+const SOURCE_LIMIT: usize = 64 * 1024;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -42,6 +46,10 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/attachments/{id}", delete(remove_attachment))
         .route("/api/attachments/{id}/content", get(attachment_content))
+        .route(
+            "/api/attachments/{id}/source",
+            put(set_attachment_source).layer(DefaultBodyLimit::max(SOURCE_LIMIT)),
+        )
         .route("/api/threads/{id}/mentions", get(mentions))
         .route("/api/threads/{id}/commands", get(slash_commands))
 }
@@ -214,6 +222,15 @@ async fn remove_attachment(
 ) -> ApiResult<StatusCode> {
     state.core.remove_attachment(&id)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /api/attachments/{id}/source`: where an image came from, before it is sent.
+async fn set_attachment_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(source): ApiJson<AttachmentSource>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.set_attachment_source(&id, source)?))
 }
 
 /// `GET /api/attachments/{id}/content`. The bytes a sent message carried.

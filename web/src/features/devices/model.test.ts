@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_IMAGE_CHARS, clampAngle, controlsFor, hingeLabel, plain, platformLabel, postureLabel, screenshotSrc, stateLabel } from "./model";
+import { MAX_IMAGE_CHARS, clampAngle, controlsFor, hingeLabel, nextOrientation, orientationLabel, plain, platformLabel, postureLabel, screenshotSrc, stateLabel } from "./model";
 
 const ALL = ["screenshot", "rotate", "button", "power_off", "fold", "unfold", "hinge", "hinge_preset"] as const;
 
@@ -18,13 +18,37 @@ describe("text the service chose", () => {
     }
   });
 
-  it("writes the three states, the postures and a missing angle", () => {
-    expect([stateLabel("shutdown"), stateLabel("booting"), stateLabel("booted")]).toEqual(["Shut down", "Starting", "Running"]);
+  it("writes the two states the service sends, the postures and a missing angle", () => {
+    expect([stateLabel("shutdown"), stateLabel("booted"), stateLabel("paused")]).toEqual(["Shut down", "Running", "Unknown"]);
     expect(postureLabel(null)).toBe("Not reported");
     expect(postureLabel("tent")).toBe("Tent");
     expect(postureLabel("x".repeat(60))).toBe(`${"x".repeat(24)}…`);
     expect(hingeLabel(null)).toBe("not reported");
     expect(hingeLabel(129.6)).toBe("130°");
+  });
+});
+
+describe("orientation", () => {
+  it("names each contract value and shows nothing for a word it does not know", () => {
+    expect([orientationLabel("portrait"), orientationLabel("landscape_left"), orientationLabel("portrait_upside_down"), orientationLabel("landscape_right")]).toEqual([
+      "Portrait",
+      "Landscape left",
+      "Portrait upside down",
+      "Landscape right",
+    ]);
+    expect(orientationLabel(undefined)).toBeNull();
+    expect(orientationLabel("__proto__")).toBeNull();
+  });
+
+  it("sends the next orientation in the contract's order, or the first next one when none is reported", () => {
+    expect([
+      nextOrientation("portrait"),
+      nextOrientation("landscape_left"),
+      nextOrientation("portrait_upside_down"),
+      nextOrientation("landscape_right"),
+    ]).toEqual(["landscape_left", "portrait_upside_down", "landscape_right", "portrait"]);
+    expect(nextOrientation(undefined)).toBe("landscape_left");
+    expect(nextOrientation("__proto__")).toBe("landscape_left");
   });
 });
 

@@ -1,0 +1,60 @@
+@import "../../settings/settingsDesign.css";
+
+/* Dev-only Snap Shot preview page (#/preview/snapshot?frame=...). Never in a production build. */
+.snapshot-preview {
+  min-height: 100vh;
+  padding: 28px 24px;
+  background: var(--bg);
+  color: var(--t1);
+}
+
+.snapshot-preview-page {
+  width: min(760px, 100%);
+  margin: 0 auto;
+}
+
+.snapshot-preview-page h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.snapshot-preview-thread {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0;
+}
+
+.snapshot-preview-thread-body {
+  flex: 1;
+  min-height: 260px;
+}
+
+.preview-composer {
+  width: min(780px, calc(100% - 48px));
+  margin: 0 auto 32px;
+}
+
+.preview-composer .composer-box {
+  min-height: 108px;
+}
+
+.preview-composer textarea {
+  min-height: 34px;
+}
+
+.preview-composer .attachment-snapshot {
+  list-style: none;
+}
+
+.preview-composer .attachment-strip {
+  padding: 0;
+}
+
+.snapshot-preview .settings-scope {
+  color: var(--t3);
+  font-size: 12px;
+  margin: 0 0 12px;
+}

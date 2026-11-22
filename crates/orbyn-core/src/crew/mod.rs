@@ -14,6 +14,7 @@ pub(crate) mod capacity;
 pub mod changes;
 mod checks;
 mod classes;
+mod dashboard;
 mod draft;
 pub mod escapes;
 mod filters;
