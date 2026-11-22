@@ -25,6 +25,36 @@ use crate::agents::driver::{
 };
 use crate::error::{CoreError, Result};
 
+/// Which path a run takes: the SDK through the engine host, or the wrapped Rust (CLI) driver.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EnginePath {
+    #[default]
+    Sdk,
+    Cli,
+}
+
+impl EnginePath {
+    /// The `claude_engine_path` setting's value.
+    pub fn from_preference(value: &Value) -> Result<Self> {
+        match value.as_str() {
+            Some("sdk") => Ok(Self::Sdk),
+            Some("cli") => Ok(Self::Cli),
+            _ => Err(CoreError::Invalid(
+                "claude_engine_path is sdk or cli.".into(),
+            )),
+        }
+    }
+}
+
+/// Read at the start of every run, so a change applies to the next run with no restart. An error
+/// fails the run: an unreadable choice never becomes the other path.
+pub type PathSetting = Arc<dyn Fn() -> Result<EnginePath> + Send + Sync>;
+
+/// The SDK path always: families whose person has no choice.
+pub(super) fn always_sdk() -> PathSetting {
+    Arc::new(|| Ok(EnginePath::Sdk))
+}
+
 pub struct HostDriver {
     inner: Arc<dyn EngineDriver>,
     pool: Arc<Pool>,
@@ -32,6 +62,7 @@ pub struct HostDriver {
     program: String,
     /// The ACP agent this driver starts; `None` for every other family.
     acp: Option<HostAcpAgent>,
+    path: PathSetting,
 }
 
 impl HostDriver {
@@ -55,6 +86,7 @@ impl HostDriver {
             pool,
             program,
             acp,
+            path: always_sdk(),
         }
     }
 
@@ -65,7 +97,15 @@ impl HostDriver {
             pool,
             program: String::new(),
             acp: Some(agent),
+            path: always_sdk(),
         }
+    }
+
+    /// Lets the person's setting pick the path for each run.
+    #[must_use]
+    pub fn with_path(mut self, path: PathSetting) -> Self {
+        self.path = path;
+        self
     }
 
     pub fn pool(&self) -> &Arc<Pool> {
@@ -282,6 +322,10 @@ impl EngineDriver for HostDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
+        // The person chose the CLI: the run is the Rust driver's, as if no host were here. Never a fallback.
+        if (self.path)()? == EnginePath::Cli {
+            return self.inner.start_run(spec, events).await;
+        }
         let family = self.pool.family.clone();
         let mapper = DeltaMapper::for_family(&family).ok_or_else(|| {
             CoreError::EngineUnavailable("This engine has no engine host mapping yet.".into())

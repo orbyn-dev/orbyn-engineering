@@ -347,7 +347,7 @@ const openRun = async (user: ReturnType<typeof userEvent.setup>, name = "Test on
 };
 const sheet = async () => (await screen.findByRole("button", { name: "Run anyway" })).closest("dialog")!;
 
-it("asks for a confirm sheet on 409 confirm_required: the grants in words and the set names, never a value or a key", async () => {
+it("asks for a confirm sheet on 409 confirm_required: the grants in words and each set's name with its key names, never a value", async () => {
   const mock = createLibraryMock({ fixtures: withSet() });
   mock.vault.set(`${SET}/API_BASE`, "https://secret.example");
   const run = vi.spyOn(mock, "runWorkflow");
@@ -358,8 +358,11 @@ it("asks for a confirm sheet on 409 confirm_required: the grants in words and th
   expect(confirm.querySelector("h2")?.textContent).toBe("Run “Test one package”?");
   expect(within(confirm).getByText(/saved values of these env sets go into the command’s environment/)).toBeVisible();
   expect(within(within(confirm).getByRole("list", { name: "Env sets applied" })).getByText("work-laptop")).toBeVisible();
+  const keys = within(confirm).getByRole("list", { name: "Keys in work-laptop" });
+  expect(within(keys).getByText("API_BASE")).toBeVisible();
+  expect(within(keys).getByText("API_TOKEN")).toBeVisible();
   expect(confirm.textContent).not.toContain("secret.example");
-  expect(confirm.textContent).not.toContain("API_TOKEN");
+  expect(confirm.textContent).not.toContain("https://secret.example");
   expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
   expect(run).toHaveBeenCalledTimes(1);
   expect(run.mock.calls[0]![3] ?? []).toEqual([]);

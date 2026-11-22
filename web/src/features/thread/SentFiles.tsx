@@ -157,6 +157,9 @@ export function SentFiles({
                     {src === null ? `Image unavailable · ${file.name}` : ""}
                   </span>
                 )}
+                {file.source ? (
+                  <small className="sent-snapshot-source">Snap Shot · {file.source.app_name} · {file.source.window_title}</small>
+                ) : null}
               </li>
             );
           })}

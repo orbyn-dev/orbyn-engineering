@@ -41,9 +41,11 @@ const markers = [
   // Repositories design preview (features/repos): the dev-only hash route and its mock.
   "preview/repos",
   "createReposMock",
-  // Devices design preview (features/devices): the dev-only hash route and its mock.
+  // Devices design preview (features/devices): the dev-only hash route, its mock and its live frames.
   "preview/devices",
   "createDevicesMock",
+  "createDevicesPlannedMock",
+  "device-input-touch",
   // Photo conversion, transcript drop and earlier-messages design previews (features/thread/composer, features/thread/earlier): the dev-only hash routes and their mocks.
   "preview/attachments",
   "createPhotoConversionMock",
@@ -61,6 +63,9 @@ const markers = [
   // Personal library design preview (features/library): the dev-only hash route and its mock. The real panel ships hidden behind a client that answers 404.
   "preview/library",
   "createLibraryMock",
+  // Snap Shot design preview (features/snapshot): the dev-only hash route and its shell mock. The real feature is absent until the shell answers.
+  "preview/snapshot",
+  "createSnapshotMock",
   // Terminal-agent attention design preview (features/panels/terminal/attention): the dev-only hash route (plain and as a regex source), its mock and its page class.
   "preview/attention",
   "preview\\/attention",

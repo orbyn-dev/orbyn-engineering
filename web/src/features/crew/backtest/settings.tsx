@@ -50,7 +50,7 @@ export function BacktestSettings() {
             <div>
               <b>Run budget</b>
               <small>
-                A backtest uses engines the way a real run does, so each engine has a budget in its own unit, never added up: Claude Code 1.5M tokens, Codex 1M tokens and OpenCode 500k tokens. Crew never goes past a budget.
+                A backtest uses engines the way a real run does, so each engine has a budget in its own unit, never added up: Claude Code 1.5M tokens, Codex 1M tokens and OpenCode 500k tokens. Crew stops at the budget.
               </small>
             </div>
             <span className="cx-sv">3 budgets · Proposed</span>

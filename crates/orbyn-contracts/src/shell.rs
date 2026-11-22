@@ -23,6 +23,14 @@ pub enum ShellEvent {
     Failed { message: String },
     /// Show this preview tab, which the service opened for a web link from another app.
     ShowPreview { thread_id: String, tab_id: String },
+    /// A thread's event log gained an event a window may need while it is not looking
+    /// at that thread. It names the thread and the new `seq`; the window reads the log
+    /// itself when it follows it. No event content travels here.
+    ThreadEvent {
+        thread_id: String,
+        #[ts(type = "number")]
+        seq: i64,
+    },
 }
 }
 

@@ -3,10 +3,11 @@
 
 use std::path::Path;
 
-use orbyn_contracts::{CustomEngine, ModelCatalog, ModelInfo, ModelOption, ModelOptionValue};
+use orbyn_contracts::{CustomEngine, ModelInfo, ModelOption, ModelOptionValue};
 use serde_json::{Value, json};
 
 use super::frames::ErrorKind;
+use crate::agents::driver::ModelCatalog;
 use crate::agents::driver::acp::resolve_agent;
 use crate::agents::engines::known::KnownEngine;
 use crate::error::{CoreError, Result};

@@ -62,9 +62,11 @@ it answers `422 unsupported`.
 
 `EngineStatus` gains `crew_role: "any" | "reviewer_only"` and `crew_role_reason: string | null`. Cursor on the host is `reviewer_only` with the
 reason "Not yet confined for writing work" until the Cursor confinement probe passes under the host prefix; only then does it become
-`any`. Every other engine is `any` with a `null` reason (both fields are always sent). The router refuses a Cursor writer (a brief
-that writes, in a role that is not a reviewer) with `missing_capability` and the sentence "Cursor is reviewer only: Not yet confined
-for writing work."; a reviewer lane may use it. A writer pinned to Cursor is refused, never swapped.
+`any`. An engine Orbyn cannot gate (`capabilities.managed` false) is also `reviewer_only`, with the reason "Orbyn cannot
+ask before it acts"; every other engine is `any` with a `null` reason (both fields are always sent). The router refuses a Cursor writer
+(a brief that writes, in a role that is not a reviewer) with `missing_capability` and the sentence "Cursor is reviewer only: Not yet
+confined for writing work."; it refuses a writing pick of any such managed-false engine with `not_managed` and the sentence "<Name> can't be
+gated by Orbyn, so it can't write.". A reviewer lane may use either. A writer pinned to one is refused, never swapped.
 
 ## Key
 

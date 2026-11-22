@@ -38,7 +38,7 @@ const chipOf = (choice: string): Chip => (typeof choice === "string" ? CHIPS.get
 
 function line(name: string, choice: StorageChoice, variant: Variant): string {
   switch (choice) {
-    case "saved": return variant === "list" ? `Saved in your keychain. It goes only to ${name}.` : "Saved in your keychain";
+    case "saved": return variant === "list" ? `Saved in your keychain. It goes to ${name}.` : "Saved in your keychain";
     case "declined": return variant === "list" ? `Not saved. Orbyn stores nothing; ${name} keeps its own sign-in.` : `Orbyn stores nothing; ${name} keeps its own sign-in.`;
     case "saving": return "Saving it in your keychain…";
     case "removing": return "Removing it from the keychain…";
@@ -194,7 +194,7 @@ function useEntry(row: KeyStorage, replace: (next: KeyStorage) => void) {
             <Button busy={busy === "declining"} disabled={busy !== null} onClick={() => void decline()}>Don’t store</Button>
             <Button tone="primary" disabled={busy !== null} onClick={() => setStep("enter")}>Continue</Button>
           </>}>
-          <p>Orbyn would keep the key in the system keychain only: never in a file, never shown again and never written to a log. It goes only to {name}. If you don’t, Orbyn stores nothing and {name} uses its own sign-in. You can remove the key at any time.</p>
+          <p>Orbyn would keep the key in the system keychain and would not show it again. It goes to {name}. If you don’t, Orbyn stores nothing and {name} uses its own sign-in. You can remove the key at any time.</p>
           {error ? <p className="field-error" role="alert">{error}</p> : null}
         </Dialog>
       ) : null}
@@ -258,7 +258,7 @@ export function KeyStorageGroup() {
   return (
     <>
       <div className="set-grp">API key storage <SetupPill /></div>
-      <p className="setting-line-desc eh-caption">Your choice, one engine at a time, Cursor first. Orbyn only ever uses the system keychain: never a file, never shown again, never in a log, and nothing leaves it except to the engine’s own service.</p>
+      <p className="setting-line-desc eh-caption">Your choice, one engine at a time, Cursor first. Orbyn keeps an API key in the system keychain and does not show it again. It goes to the engine’s own service.</p>
       <div className="set-tbl eh-table" role="table" aria-label="API key storage">
         {rows.map((row) => <GroupRow key={row.engine_id} row={row} replace={replace} />)}
       </div>

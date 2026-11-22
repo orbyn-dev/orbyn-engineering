@@ -144,13 +144,15 @@ function MetricView({ model, metric, onBack }: { model: DashModel; metric: Metri
   );
 }
 
-function ProjectView({ client, id, name, days, compact, metric, onMetric, onWindow }: { client: DashboardClient; id: string; name: string; days: Period; compact: boolean; metric: Metric | null; onMetric(next: Metric | null): void; onWindow(days: number): void }) {
+function ProjectView({ client, id, name, days, compact, metric, onMetric, onWindow }: { client: DashboardClient; id: string; name: string; days: Period; compact: boolean; metric: Metric | null; onMetric(next: Metric | null): void; onWindow(days: number | null): void }) {
   const read = useModel(client, id, days);
   const slow = useWaited(read.status === "loading");
-  const readDays = read.status === "ready" ? read.data.days : null;
+  // Only the trust record reads one window of its own; the history read honours the period chosen.
+  const fixedWindow = read.status === "ready" && read.data.source === "trust" ? read.data.days : null;
+  const readFinished = read.status === "ready";
   useEffect(() => {
-    if (readDays !== null && readDays > 0) onWindow(readDays);
-  }, [readDays, onWindow]);
+    if (readFinished) onWindow(fixedWindow !== null && fixedWindow > 0 ? fixedWindow : null);
+  }, [readFinished, fixedWindow, onWindow]);
   if (read.status === "loading") return slow ? <Skeleton /> : <span className="sr-only" role="status">Reading the history</span>;
   if (read.status === "error") return <><Failure failure={read.error} onRetry={() => void read.reload()} /><Unread /></>;
   const model = read.data;
@@ -203,7 +205,7 @@ export function Dashboard({ projects, client: given, sample, compact, wanted, in
   const [days, setDays] = useState<Period>(kept.days ?? 60);
   const [metric, setMetric] = useState<Metric | null>(initial?.metric ?? null);
   const [window_, setWindow] = useState<number | null>(null);
-  const fixed = client.history === null;
+  const fixed = client.history === null || window_ !== null;
   const shown = fixed ? (window_ ?? 60) : days;
   const choose = (next: string, period: Period) => {
     setProject(next);

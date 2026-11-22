@@ -78,7 +78,7 @@ pub fn acp(spec: &RunSpec, agent: &HostAcpAgent) -> Result<Value> {
     }
     options.insert(
         "mcpServers".into(),
-        super::acp::host_mcp_servers(spec.mcp_url.as_deref(), &spec.run_dir),
+        crate::agents::driver::acp::host_mcp_servers(spec.mcp_url.as_deref(), &spec.run_dir),
     );
     Ok(Value::Object(options))
 }

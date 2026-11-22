@@ -1,7 +1,9 @@
-import { FolderGit2 } from "lucide-react";
+import { FolderGit2, ShieldOff } from "lucide-react";
 import { useState } from "react";
 import type { EngineStatus, PermissionMode } from "../../../api/types";
 import { ACCESS, offeredModes, refusalSentence, refusedModes } from "../../../product/composer/access";
+import { UnmanagedLabel } from "../../../product/engines/UnmanagedLabel";
+import { isUnmanaged } from "../../../product/engines/unmanaged";
 import { Button } from "../../../ui/controls";
 import { NewThreadDialog, useRepos } from "../../repos";
 import { ModelPickerTrigger, useTraitsMenu } from "../../thread";
@@ -10,7 +12,7 @@ import type { ModelChoice } from "./draftHelpers";
 /** The new-thread dialog's Permission control: the composer's own permission menu, with the modes the engine refuses dimmed. */
 function PermissionControl({ engine, access, onAccess }: { engine: EngineStatus; access: PermissionMode; onAccess(mode: PermissionMode): void }) {
   const refused = refusedModes(engine);
-  const sentence = refusalSentence(engine.name, refused);
+  const sentence = refusalSentence(engine.id, engine.name, refused);
   const [pressed, setPressed] = useState(false);
   const traits = useTraitsMenu({
     model: null, effort: null, extras: {}, access, modes: offeredModes(engine),
@@ -48,7 +50,7 @@ export function RepoStart({ project, engines, engine, model, access, onModel, on
   const count = view?.repositories.length ?? 0;
   if (count < 2) return null;
   const refused = refusedModes(engine);
-  const unmanaged = !engine.capabilities.managed;
+  const unmanaged = isUnmanaged(engine);
   return (
     <div>
       <dt className="sr-only">Repositories</dt>
@@ -60,8 +62,8 @@ export function RepoStart({ project, engines, engine, model, access, onModel, on
         {open ? (
           <NewThreadDialog projectId={project.id} projectName={project.name} start={{ engine: engine.id, model, permission_mode: access }}
             engineControl={<ModelPickerTrigger engines={engines} selected={{ engine: engine.id, model }} onPick={onModel} />}
-            permissionControl={unmanaged ? <span>Unmanaged</span> : <PermissionControl engine={engine} access={access} onAccess={onAccess} />}
-            note={refused.length > 0 ? refusalSentence(engine.name, refused) : null}
+            permissionControl={unmanaged ? <UnmanagedLabel engine={engine} variant="text" icon={<ShieldOff size={12} aria-hidden />} /> : <PermissionControl engine={engine} access={access} onAccess={onAccess} />}
+            note={refused.length > 0 ? refusalSentence(engine.id, engine.name, refused) : null}
             onClose={() => setOpen(false)} />
         ) : null}
       </dd>

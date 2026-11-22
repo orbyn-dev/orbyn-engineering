@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orbyn_contracts::AgUiEvent;
+use orbyn_contracts::{ActionKind, AgUiEvent};
 use serde_json::json;
 
 use super::*;
@@ -241,9 +241,11 @@ async fn a_permission_allow_round_trips_and_the_host_picks_allow_once() {
     };
     let driver = acp_driver(&rig, "opencode", agent());
     let (started, ask) = permission(&driver, "[acp-perm]").await;
-    assert_eq!(ask.tool, "Edit");
-    assert_eq!(ask.input["toolCall"]["title"], "Edit");
-    let options = ask.options.as_ref().unwrap().as_array().unwrap();
+    assert_eq!(ask.kind, ActionKind::FileChange);
+    assert_eq!(ask.summary, "Edit");
+    assert_eq!(ask.target, "/workspace/repo/app/a.txt");
+    assert_eq!(ask.detail["toolCall"]["title"], "Edit");
+    let options = ask.detail["options"].as_array().unwrap();
     assert!(options.iter().any(|option| option["kind"] == "allow_once"));
     assert!(options.iter().any(|option| option["kind"] == "reject_once"));
     ask.reply.send(Verdict::Allow).unwrap();

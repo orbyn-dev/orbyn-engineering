@@ -4,6 +4,8 @@ const [scenario, record, cwd] = process.argv.slice(2);
 const log = value => fs.appendFileSync(record, JSON.stringify(value) + "\n");
 log({ pid: process.pid, processCwd: process.cwd() });
 const send = value => fs.writeSync(1, JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+// An agent that cannot start at all: it is gone before it reads its first request.
+if (scenario === "exit") process.exit(1);
 const update = (kind, text, sessionId = "native") => send({ method: "session/update", params: { sessionId, update: { sessionUpdate: kind, content: { type: "text", text } } } });
 const result = id => send({ id, result: {} });
 let loading;
@@ -25,7 +27,12 @@ readline.createInterface({input:process.stdin}).on("line", line => {
   }
   if (msg.method === "session/list") return send({id,result:{sessions:[{sessionId:"native",cwd,title:"Native",additionalDirectories:[]}],nextCursor:"next"}});
   if (msg.method === "session/delete") return result(id);
-  if (msg.method === "session/new") return send({id,result:{sessionId:scenario === "oversize-id" ? "x".repeat(1025) : "new-native"}});
+  if (msg.method === "session/new") {
+    // -32000 is ACP's auth-required code; the words are deliberately unrelated, so
+    // only the code can say a sign-in is needed.
+    if (scenario === "auth-new") return send({id,error:{code:-32000,message:"Unknown session"}});
+    return send({id,result:{sessionId:scenario === "oversize-id" ? "x".repeat(1025) : "new-native"}});
+  }
   if (["session/load","session/resume"].includes(msg.method)) {
     if (scenario === "hang") return;
     if (scenario === "unknown") return send({id,error:{code:-32002,message:"not a string classifier"}});

@@ -1,7 +1,12 @@
 //! The engine host driver: runs an engine SDK in `orbyn-engine-host` and speaks
-//! docs/engine-host-protocol.md to it. Off unless the desktop shell sets `ORBYN_ENGINE_HOST`
-//! and the family's own flag (`ORBYN_ENGINE_HOST_CLAUDE=1`, `ORBYN_ENGINE_HOST_CURSOR=1`,
-//! `ORBYN_ENGINE_HOST_ACP=1`) is on; with any missing the Rust drivers run exactly as before.
+//! docs/engine-host-protocol.md to it. Used only when the desktop shell sets `ORBYN_ENGINE_HOST`; with it missing the
+//! Rust drivers run exactly as before. Claude is on by default (`ORBYN_ENGINE_HOST_CLAUDE=0` opts out, `1` and
+//! an unset or empty flag mean on); Cursor and ACP stay opt-in (`ORBYN_ENGINE_HOST_CURSOR=1`, `ORBYN_ENGINE_HOST_ACP=1`).
+//!
+//! With the Claude host on, the person's `claude_engine_path` setting (`sdk`, the default, or `cli`) is read at the
+//! start of every run: `sdk` runs through the host, `cli` hands the run to the wrapped Rust driver exactly as if the
+//! host were not there. Nothing switches on its own: a down host under `sdk` fails the run with the host's reason.
+//! Both paths resume the same transcript files, so a thread continues on either.
 //!
 //! One responsibility per file: `frames` (wire format), `process` (spawn, handshake),
 //! `connection` (one live host), `pool` (restarts, state), `state` (pure rules),
@@ -22,6 +27,8 @@ mod run;
 mod state;
 
 #[cfg(test)]
+mod path_tests;
+#[cfg(test)]
 mod support;
 #[cfg(test)]
 mod tests;
@@ -30,7 +37,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
 pub use acp::HostAcpAgent;
-pub use driver::HostDriver;
+pub use driver::{EnginePath, HostDriver, PathSetting};
 pub use frames::{ErrorKind, PROTOCOL};
 pub use outcome::HOST_STOPPED;
 pub use pool::{HostStatus, Pool, Refusal, SecretSource};
@@ -45,7 +52,7 @@ use crate::app::Core;
 pub struct HostConfig {
     /// `ORBYN_ENGINE_HOST`: the host binary the desktop shell found.
     pub program: PathBuf,
-    /// `ORBYN_ENGINE_HOST_CLAUDE=1`.
+    /// `ORBYN_ENGINE_HOST_CLAUDE`: on unless it is exactly `0`.
     pub claude: bool,
     /// `ORBYN_ENGINE_HOST_CURSOR=1`.
     pub cursor: bool,
@@ -60,15 +67,15 @@ impl HostConfig {
         let program = host.filter(|path| !path.is_empty())?;
         Some(Self {
             program: PathBuf::from(program),
-            // The host reads the same flag and wants exactly `1`.
-            claude: claude_flag == Some("1"),
+            // On by default: a missing or empty flag means on, and only `0` opts out. The host still gets `1`.
+            claude: claude_flag != Some("0"),
             cursor: false,
             acp: false,
             timings: Timings::default(),
         })
     }
 
-    /// Also reads `ORBYN_ENGINE_HOST_CURSOR`, which wants exactly `1` as the Claude flag does.
+    /// Also reads `ORBYN_ENGINE_HOST_CURSOR`, which wants exactly `1`.
     #[must_use]
     pub fn with_cursor(mut self, cursor_flag: Option<&str>) -> Self {
         self.cursor = cursor_flag == Some("1");
@@ -199,11 +206,22 @@ impl HostHub {
         inner: Arc<dyn EngineDriver>,
         program: String,
     ) -> Arc<dyn EngineDriver> {
+        self.wrap_with(family, inner, program, driver::always_sdk())
+    }
+
+    /// Like [`Self::wrap`], with the setting that picks the SDK or the CLI path at the start of each run.
+    pub fn wrap_with(
+        &self,
+        family: &str,
+        inner: Arc<dyn EngineDriver>,
+        program: String,
+        path: PathSetting,
+    ) -> Arc<dyn EngineDriver> {
         for slot in &self.slots {
             if let Slot::Pool(pool) = slot
                 && pool.family == family
             {
-                return Arc::new(HostDriver::new(inner, pool.clone(), program));
+                return Arc::new(HostDriver::new(inner, pool.clone(), program).with_path(path));
             }
         }
         inner

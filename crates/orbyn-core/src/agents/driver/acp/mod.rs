@@ -13,7 +13,9 @@ use std::ffi::OsString;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use orbyn_contracts::{AuthState, CustomEngine, EngineCapabilities, EngineTier, SkillDelivery};
+use orbyn_contracts::{
+    AuthState, CustomEngine, EngineCapabilities, EngineStartIssueKind, EngineTier, SkillDelivery,
+};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -21,12 +23,13 @@ use tokio_util::sync::CancellationToken;
 use super::pipes::{
     EngineProcess, exit_message, resolve_engine, spawn_engine_confined, spawn_engine_with,
 };
-use super::rpc::{Inbound, RpcClient};
+use super::rpc::{Inbound, RpcCallError, RpcClient};
 use super::worker_identity::{with_identity, worker_env};
 use super::{
     EngineDescriptor, EngineDriver, EngineEvent, EngineOutcome, EngineProbe, MCP_SERVER_NAME,
     ModelCatalog, ProbeDir, RunHandle, RunSpec,
 };
+use crate::agents::engines::start_issue::{clear_start_issue, note_start_issue};
 use crate::agents::selection::MODE;
 use crate::error::{CoreError, Result};
 pub(crate) use events::UpdateMapper;
@@ -35,11 +38,14 @@ use models::{
     require_offered, select_model,
 };
 use permissions::{answer_request, stop_outcome_after};
-use replay::resume_without_replay;
+use replay::{RestoreFailure, resume_without_replay};
 use sign_in::SignInSlot;
 pub use sign_in::known_sign_in;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// ACP's JSON-RPC code for a call the agent serves only after a sign-in. The message it
+/// carries is the agent's own and is never taken as the reason.
+const AUTH_REQUIRED: i64 = -32000;
 /// How many models one probe tries, and how long it may take over them.
 const MAX_PROBED_MODELS: usize = 24;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -48,6 +54,129 @@ const CANCEL_GRACE: Duration = Duration::from_secs(5);
 const METHOD_NOT_FOUND: i64 = -32601;
 /// Prefix of a `ModelOption` id that names one of the agent's config options.
 const CONFIG_PREFIX: &str = "config:";
+/// The longest reason the core puts in a failed-start message.
+const MAX_REASON_CHARS: usize = 160;
+
+/// A start that failed, in the core's words. The agent's message is never kept: a status
+/// note is shown to the person and must not carry an engine's raw output.
+struct StartFailure {
+    error: Box<CoreError>,
+    /// The agent answered with ACP's auth-required code.
+    auth_required: bool,
+    reason: String,
+}
+
+impl StartFailure {
+    /// A failure the RPC layer reported, with a stage the core wrote. The code is the
+    /// only thing read from the agent.
+    fn agent(error: RpcCallError, reason: &'static str) -> Self {
+        let RpcCallError { code, error } = error;
+        Self {
+            error: Box::new(error),
+            auth_required: code == Some(AUTH_REQUIRED),
+            reason: reason.to_owned(),
+        }
+    }
+
+    /// A failure this driver or the core produced. Only call this with an error whose
+    /// text the core wrote, never with an agent's message.
+    fn core(error: CoreError) -> Self {
+        let reason = short_reason(&error);
+        Self {
+            error: Box::new(error),
+            auth_required: false,
+            reason,
+        }
+    }
+
+    /// A core failure with a stage the core wrote, for an error whose own text may quote
+    /// the agent.
+    fn core_at(error: CoreError, reason: &'static str) -> Self {
+        Self {
+            error: Box::new(error),
+            auth_required: false,
+            reason: reason.to_owned(),
+        }
+    }
+
+    fn restore(failure: RestoreFailure) -> Self {
+        Self {
+            error: failure.error,
+            auth_required: failure.auth_required,
+            reason: "the agent did not reopen the session".to_owned(),
+        }
+    }
+}
+
+/// The core's own short words for a failure.
+fn short_reason(error: &CoreError) -> String {
+    let words = match error {
+        CoreError::NotFound(text)
+        | CoreError::Invalid(text)
+        | CoreError::Unsupported(text)
+        | CoreError::EngineUnavailable(text)
+        | CoreError::UnsupportedOption(text) => text.clone(),
+        CoreError::SessionLost => "the engine no longer has this session".to_owned(),
+        other => other.public_message(),
+    };
+    let line = words.lines().next().unwrap_or_default().trim();
+    let short: String = line.chars().take(MAX_REASON_CHARS).collect();
+    if short.is_empty() {
+        "the agent did not answer".to_owned()
+    } else {
+        short
+    }
+}
+
+/// Writes the core's sentence for a start failure, keyed by the engine id the sign-in
+/// capture uses. An agent's own words never reach it.
+fn note_start_failure(id: &str, name: &str, failure: &StartFailure) {
+    let (kind, message) = if failure.auth_required {
+        (
+            EngineStartIssueKind::SignedOut,
+            match known_sign_in(id) {
+                Some(command) => format!("{name} isn't signed in. Run {command}, then try again."),
+                None => {
+                    format!("{name} isn't signed in. Sign in with its own app, then try again.")
+                }
+            },
+        )
+    } else {
+        let reason = failure.reason.trim_end_matches('.').trim();
+        let reason = if reason.is_empty() {
+            "the agent did not answer"
+        } else {
+            reason
+        };
+        let mut chars = reason.chars();
+        let reason: String = chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default();
+        (
+            EngineStartIssueKind::Failed,
+            format!("Couldn't run {name}. {reason}."),
+        )
+    };
+    note_start_issue(id, kind, &message);
+}
+
+/// Which engine a spawned run belongs to, for its start issue.
+struct StartNotes {
+    id: String,
+    name: String,
+}
+
+impl StartNotes {
+    /// The handshake and session opened: nothing is wrong with this engine's start.
+    fn started(&self) {
+        clear_start_issue(&self.id);
+    }
+
+    fn failed(&self, failure: &StartFailure) {
+        note_start_failure(&self.id, &self.name, failure);
+    }
+}
 
 pub struct AcpDriver {
     engine: CustomEngine,
@@ -59,23 +188,32 @@ pub struct AcpDriver {
     known: Option<&'static crate::agents::engines::known::KnownEngine>,
 }
 
+/// Why `command` must not be started for this engine, when it is another CLI. Every
+/// start of the engine goes through here, native or hosted, so none can run the wrong program.
+pub(crate) fn refusal(
+    known: Option<&crate::agents::engines::known::KnownEngine>,
+    command: &crate::host::process::ResolvedCommand,
+) -> Option<CoreError> {
+    let known = known.filter(|known| known.is_other(command))?;
+    Some(CoreError::EngineUnavailable(format!(
+        "Found a program at {} with the name of {}, but it is another program, so Orbyn did not start it. Get {} from its official page.",
+        command.path.display(),
+        known.name,
+        known.name
+    )))
+}
+
 /// The program to start for an ACP engine, and never one that is another CLI under the
-/// engine's name. Every start of the engine goes through here, native or hosted, so none
-/// can run the wrong program.
+/// engine's name.
 pub(crate) fn resolve_agent(
     target: &str,
     known: Option<&crate::agents::engines::known::KnownEngine>,
 ) -> Result<crate::host::process::ResolvedCommand> {
     let found = resolve_engine(target)?;
-    if let Some(known) = known.filter(|known| known.is_other(&found)) {
-        return Err(CoreError::EngineUnavailable(format!(
-            "Found a program at {} with the name of {}, but it is another program, so Orbyn did not start it. Get {} from its official page.",
-            found.path.display(),
-            known.name,
-            known.name
-        )));
+    match refusal(known, &found) {
+        Some(error) => Err(error),
+        None => Ok(found),
     }
-    Ok(found)
 }
 
 impl AcpDriver {
@@ -91,6 +229,10 @@ impl AcpDriver {
                 .chain(self.engine.args.iter().cloned())
                 .collect(),
         }
+    }
+
+    fn note_start_failure(&self, failure: &StartFailure) {
+        note_start_failure(&self.engine.id, &self.engine.name, failure);
     }
 
     pub fn new(engine: CustomEngine) -> Self {
@@ -112,9 +254,39 @@ impl AcpDriver {
             engine,
             env: known.env,
             asks: known.asks,
-            modes: crate::agents::permission_modes::offered(known.id),
+            // An engine that cannot ask before it acts has one mode: no approvals. Supervised and Auto edits
+            // would tell a person they have approvals Orbyn cannot enforce (rule 8).
+            modes: if known.asks {
+                crate::agents::permission_modes::offered(known.id)
+            } else {
+                vec![orbyn_contracts::PermissionMode::NoApprovals]
+            },
             known: Some(known),
         }
+    }
+}
+
+impl AcpDriver {
+    async fn models_result(&self) -> std::result::Result<ModelCatalog, StartFailure> {
+        let command = self.resolve().map_err(StartFailure::core)?;
+        let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
+        let dir = ProbeDir::new().map_err(StartFailure::core)?;
+        let process =
+            spawn_engine_with(&command, &args, dir.path(), self.env).map_err(StartFailure::core)?;
+        let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, true);
+        let (id, session, init) =
+            open_raw(&rpc, dir.path(), None, dir.path(), &self.sign_in_slot()).await?;
+        let options = parse_session_options(&session);
+        let mut models = parse_models(&session);
+        let probing = probe_model_options(&rpc, &id, &session, &options, &mut models);
+        if tokio::time::timeout(PROBE_TIMEOUT, probing).await.is_err() {
+            tracing::debug!("an agent took too long to list its models' options");
+        }
+        delete_probe_session(&rpc, &init, &id).await;
+        Ok(ModelCatalog {
+            options,
+            ..ModelCatalog::engine(models)
+        })
     }
 }
 
@@ -229,24 +401,16 @@ impl EngineDriver for AcpDriver {
     /// ACP has no listing call, so this opens a session in a temp folder, reads
     /// what the agent reports for it, and ends the process. No prompt is sent.
     async fn models(&self) -> Result<Option<ModelCatalog>> {
-        let command = self.resolve()?;
-        let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
-        let dir = ProbeDir::new()?;
-        let process = spawn_engine_with(&command, &args, dir.path(), self.env)?;
-        let (rpc, _inbound) = RpcClient::start(process.stdin, process.stdout, true);
-        let (id, session, init) =
-            open_raw(&rpc, dir.path(), None, dir.path(), &self.sign_in_slot()).await?;
-        let options = parse_session_options(&session);
-        let mut models = parse_models(&session);
-        let probing = probe_model_options(&rpc, &id, &session, &options, &mut models);
-        if tokio::time::timeout(PROBE_TIMEOUT, probing).await.is_err() {
-            tracing::debug!("an agent took too long to list its models' options");
+        match self.models_result().await {
+            Ok(catalog) => {
+                clear_start_issue(&self.engine.id);
+                Ok(Some(catalog))
+            }
+            Err(failure) => {
+                self.note_start_failure(&failure);
+                Err(*failure.error)
+            }
         }
-        delete_probe_session(&rpc, &init, &id).await;
-        Ok(Some(ModelCatalog {
-            options,
-            ..ModelCatalog::engine(models)
-        }))
     }
 
     async fn start_run(
@@ -254,17 +418,30 @@ impl EngineDriver for AcpDriver {
         spec: RunSpec,
         events: mpsc::Sender<EngineEvent>,
     ) -> Result<RunHandle> {
-        let command = self.resolve()?;
+        let command = self.resolve().map_err(|error| {
+            let failure = StartFailure::core(error);
+            self.note_start_failure(&failure);
+            *failure.error
+        })?;
         let args: Vec<OsString> = self.engine.args.iter().map(OsString::from).collect();
         let identity = spec.crew_task.as_deref().map_or_else(Vec::new, |task| {
             worker_env(task, &self.engine.id, spec.model.as_deref())
         });
         let env = with_identity(self.env, &identity);
         let process =
-            spawn_engine_confined(&command, &args, &spec.cwd, &env, spec.confine.as_ref())?;
+            spawn_engine_confined(&command, &args, &spec.cwd, &env, spec.confine.as_ref())
+                .map_err(|error| {
+                    let failure = StartFailure::core(error);
+                    self.note_start_failure(&failure);
+                    *failure.error
+                })?;
         let cancel = CancellationToken::new();
         let slot = self.sign_in_slot();
         let path = command.path.display().to_string();
+        let notes = StartNotes {
+            id: self.engine.id.clone(),
+            name: self.engine.name.clone(),
+        };
         let task = tokio::spawn(run_protocol(
             process,
             spec,
@@ -272,6 +449,7 @@ impl EngineDriver for AcpDriver {
             cancel.clone(),
             slot,
             path,
+            notes,
         ));
         Ok(RunHandle {
             cancel,
@@ -289,16 +467,18 @@ async fn run_protocol(
     cancel: CancellationToken,
     slot: SignInSlot,
     path: String,
+    notes: StartNotes,
 ) {
     let (rpc, mut inbound) = RpcClient::start(process.stdin, process.stdout, true);
     let agent_label;
     let opened = tokio::select! {
         biased;
-        () = cancel.cancelled() => Err(CoreError::RunClosed),
+        () = cancel.cancelled() => Err(StartFailure::core(CoreError::RunClosed)),
         result = open_session(&rpc, &mut inbound, &spec, &slot) => result,
     };
     let session = match opened {
         Ok((session, persistent, agent)) => {
+            notes.started();
             agent_label = agent_label_for(&agent, &path);
             if persistent
                 && events
@@ -310,13 +490,16 @@ async fn run_protocol(
             }
             session
         }
-        Err(error) => {
+        Err(failure) => {
+            if !cancel.is_cancelled() {
+                notes.failed(&failure);
+            }
             let outcome = if cancel.is_cancelled() {
                 EngineOutcome::Cancelled
-            } else if matches!(error, CoreError::SessionLost) {
+            } else if matches!(&*failure.error, CoreError::SessionLost) {
                 EngineOutcome::SessionLost
             } else {
-                EngineOutcome::Failed(error.to_string())
+                EngineOutcome::Failed(failure.error.to_string())
             };
             let _ = events.send(EngineEvent::Finished(outcome)).await;
             return;
@@ -414,13 +597,15 @@ async fn open_session(
     inbound: &mut mpsc::UnboundedReceiver<Inbound>,
     spec: &RunSpec,
     slot: &SignInSlot,
-) -> Result<(String, bool, (String, String))> {
+) -> std::result::Result<(String, bool, (String, String)), StartFailure> {
     if spec
         .resume
         .as_deref()
         .is_some_and(|id| id.is_empty() || id.chars().count() > 1024)
     {
-        return Err(CoreError::Invalid("Invalid ACP session identity.".into()));
+        return Err(StartFailure::core(CoreError::Invalid(
+            "Invalid ACP session identity.".into(),
+        )));
     }
     let init = initialize(rpc).await?;
     slot.record(&init);
@@ -432,50 +617,62 @@ async fn open_session(
         } else if caps.can_load {
             "session/load"
         } else {
-            return Err(CoreError::Unsupported(
+            return Err(StartFailure::core(CoreError::Unsupported(
                 "This agent cannot resume its saved session.".into(),
-            ));
+            )));
         };
         let params = json!({"sessionId":id,"cwd":spec.cwd,"additionalDirectories":[],"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref(),&spec.run_dir)});
-        let session = resume_without_replay(rpc, inbound, method, params, id).await?;
+        let session = resume_without_replay(rpc, inbound, method, params, id)
+            .await
+            .map_err(StartFailure::restore)?;
         (id.clone(), session)
     } else {
         let session = rpc
-            .call(
+            .call_detailed(
                 "session/new",
                 json!({"cwd":spec.cwd,"mcpServers":mcp_servers(&init,spec.mcp_url.as_deref(),&spec.run_dir)}),
                 CALL_TIMEOUT,
             )
-            .await?;
+            .await
+            .map_err(|error| StartFailure::agent(error, "the agent did not open a session"))?;
         let id = session
             .get("sessionId")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty() && s.chars().count() <= 1024)
             .map(str::to_owned)
             .ok_or_else(|| {
-                CoreError::EngineUnavailable("The agent returned no session id.".into())
+                StartFailure::core(CoreError::EngineUnavailable(
+                    "The agent returned no session id.".into(),
+                ))
             })?;
         (id, session)
     };
     // Mode first: an agent can change what it offers per mode and per model, so each
     // step reads the reply of the one before it, and the prompt waits for them all.
     if let Some(mode) = spec.options.get(MODE) {
-        require_offered(&session, MODE, mode)?;
+        require_offered(&session, MODE, mode)
+            .map_err(|error| StartFailure::core_at(error, "the agent did not accept the mode"))?;
         let params = json!({ "sessionId": id, "modeId": mode });
-        rpc.call("session/set_mode", params, CALL_TIMEOUT).await?;
+        rpc.call_detailed("session/set_mode", params, CALL_TIMEOUT)
+            .await
+            .map_err(|error| StartFailure::agent(error, "the agent did not accept the mode"))?;
     }
     if let Some(model) = &spec.model {
-        session = select_model(rpc, &id, &session, model).await?;
+        session = select_model(rpc, &id, &session, model)
+            .await
+            .map_err(|error| StartFailure::core_at(error, "the agent did not accept the model"))?;
     }
     for (option, value) in &spec.options {
         let Some(config) = option.strip_prefix(CONFIG_PREFIX) else {
             continue;
         };
-        require_offered(&session, option, value)?;
+        require_offered(&session, option, value)
+            .map_err(|error| StartFailure::core_at(error, "the agent did not accept an option"))?;
         let params = json!({ "sessionId": id, "configId": config, "value": value });
         let reply = rpc
-            .call("session/set_config_option", params, CALL_TIMEOUT)
-            .await?;
+            .call_detailed("session/set_config_option", params, CALL_TIMEOUT)
+            .await
+            .map_err(|error| StartFailure::agent(error, "the agent did not accept an option"))?;
         if reply.get("configOptions").is_some() {
             session = reply;
         }
@@ -490,22 +687,27 @@ async fn open_raw(
     mcp_url: Option<&str>,
     run_dir: &std::path::Path,
     slot: &SignInSlot,
-) -> Result<(String, Value, Value)> {
+) -> std::result::Result<(String, Value, Value), StartFailure> {
     let init = initialize(rpc).await?;
     slot.record(&init);
     let servers = mcp_servers(&init, mcp_url, run_dir);
     let session = rpc
-        .call(
+        .call_detailed(
             "session/new",
             json!({ "cwd": cwd, "mcpServers": servers }),
             CALL_TIMEOUT,
         )
-        .await?;
+        .await
+        .map_err(|error| StartFailure::agent(error, "the agent did not open a session"))?;
     let id = session
         .get("sessionId")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| CoreError::EngineUnavailable("The agent returned no session id.".into()))?;
+        .ok_or_else(|| {
+            StartFailure::core(CoreError::EngineUnavailable(
+                "The agent returned no session id.".into(),
+            ))
+        })?;
     Ok((id, session, init))
 }
 
@@ -531,11 +733,12 @@ fn agent_label_for((name, version): &(String, String), path: &str) -> String {
     format!("{name} ({path}{version})")
 }
 
-async fn initialize(rpc: &RpcClient) -> Result<Value> {
+async fn initialize(rpc: &RpcClient) -> std::result::Result<Value, StartFailure> {
     let init = rpc
-        .call("initialize", sessions::initialize_params(), CALL_TIMEOUT)
-        .await?;
-    sessions::check_version(&init)?;
+        .call_detailed("initialize", sessions::initialize_params(), CALL_TIMEOUT)
+        .await
+        .map_err(|error| StartFailure::agent(error, "the agent did not answer its handshake"))?;
+    sessions::check_version(&init).map_err(StartFailure::core)?;
     Ok(init)
 }
 

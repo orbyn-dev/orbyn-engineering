@@ -8,7 +8,7 @@ import { usePopover } from "../../../ui/usePopover";
 import { EffortGlyph } from "./EffortGlyph";
 import { FloatingPicker } from "./ModelPicker";
 
-export { ACCESS, neverAsks, offeredModes, refusalSentence, refusedModes, shownAccess } from "../../../product/composer/access";
+export { ACCESS, neverAsks, offeredModes, oneModeReason, refusalSentence, refusedModes, shownAccess } from "../../../product/composer/access";
 
 /** What the composer's access control shows: its label, and for an engine with one mode the reason it cannot be opened (dimmed while a refusal is open). */
 export interface AccessView {
@@ -18,9 +18,9 @@ export interface AccessView {
 }
 
 /** The access control's label and lock: an engine with one mode reads it, and shows the saved mode (dimmed) while a refusal is open. */
-export function accessViewOf(oneMode: boolean, engineName: string, saved: PermissionMode, shown: PermissionMode, refused: boolean): AccessView {
+export function accessViewOf(oneMode: boolean, engineId: string, engineName: string, saved: PermissionMode, shown: PermissionMode, refused: boolean): AccessView {
   if (!oneMode) return { label: ACCESS[shown].label, locked: null, dimmed: false };
-  return { label: refused ? refusalModeName(saved) : oneModeLabel(engineName), locked: oneModeReason(engineName), dimmed: refused };
+  return { label: refused ? refusalModeName(saved) : oneModeLabel(engineName), locked: oneModeReason(engineId, engineName), dimmed: refused };
 }
 
 /** Modes the engine refuses at run start: drawn dimmed in the menu, with the reason at its foot, and never picked. */
