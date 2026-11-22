@@ -403,3 +403,161 @@ async fn a_thread_start_that_cannot_finish_creates_no_thread() {
         before
     );
 }
+
+mod gitlab {
+    use super::*;
+    use crate::issues::GitLab;
+    use crate::issues::fake_http::{Reply, Seen, Server};
+    use serde_json::{Value, json};
+    use std::time::Duration;
+
+    fn row(req: &Seen, iid: u64) -> Value {
+        json!({ "iid": iid, "title": format!("Issue {iid}"), "state": "opened",
+            "web_url": format!("http://{}/team/app/-/issues/{iid}", req.header("host").unwrap_or_default()),
+            "created_at": "2026-11-01T00:00:00Z", "updated_at": format!("2026-11-0{iid}T00:00:00Z"),
+            "labels": [], "assignees": [], "user_notes_count": 0, "description": "Body" })
+    }
+
+    /// A GitLab connection whose reader talks to the fake server. The stored host is https, as it must be.
+    async fn connected(server: &Server) -> super::super::harness::World {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        w.core.issues.set_source(
+            TrackerKind::Gitlab,
+            Arc::new(GitLab::for_test(
+                &server.base,
+                "glpat-secret123",
+                Duration::from_secs(5),
+            )),
+        );
+        w.core
+            .connect_issue_tracker(
+                TrackerKind::Gitlab,
+                connect(Some("https://gitlab.example.test"), Some("glpat-secret123")),
+            )
+            .await
+            .unwrap();
+        w
+    }
+
+    fn key(scope: &str) -> IssueKey {
+        IssueKey {
+            tracker: TrackerKind::Gitlab,
+            scope: scope.into(),
+            key: "1".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scope_outside_the_connection_is_refused_with_no_request_sent() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/notes") {
+                Reply::json(&json!([]))
+            } else {
+                Reply::json(&row(req, 1))
+            }
+        })
+        .await;
+        let w = connected(&server).await;
+        let outside = w.core.issue(&key("other/proj")).await;
+        assert!(matches!(outside, Err(CoreError::Invalid(_))), "{outside:?}");
+        let link = w.core.issue_draft(&key("team/other")).await;
+        assert!(matches!(link, Err(CoreError::Invalid(_))));
+        assert!(server.seen().is_empty(), "nothing was sent");
+        let detail = w.core.issue(&key("team/app")).await.unwrap();
+        assert_eq!(detail.summary.display_key, "#1");
+        assert!(
+            server
+                .seen()
+                .iter()
+                .any(|r| r.path() == "/api/v4/projects/team%2Fapp/issues/1")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failing_gitlab_is_reported_with_fixed_copy_and_a_wait_when_rate_limited() {
+        let server = Server::start(|_| Reply::status(500)).await;
+        let w = connected(&server).await;
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.issues.is_empty());
+        assert_eq!(list.failed.len(), 1);
+        assert_eq!(list.failed[0].tracker, TrackerKind::Gitlab);
+        assert_eq!(list.failed[0].message, "GitLab did not answer.");
+        let limited = Server::start(|_| Reply::status(429).header("retry-after", "42")).await;
+        w.core.issues.set_source(
+            TrackerKind::Gitlab,
+            Arc::new(GitLab::for_test(
+                &limited.base,
+                "glpat-secret123",
+                Duration::from_secs(5),
+            )),
+        );
+        let list = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert!(list.failed[0].message.contains("42 seconds"), "{list:?}");
+        let text = format!("{list:?}");
+        assert!(!text.contains("secret"), "{text}");
+        let one = w.core.issue(&key("team/app")).await;
+        assert!(matches!(one, Err(CoreError::TrackerRateLimited(_))));
+    }
+
+    #[tokio::test]
+    async fn carrying_on_reads_only_the_scopes_named_in_the_cursors() {
+        let server = Server::start(|req| {
+            if req.path().ends_with("/issues_statistics") {
+                return Reply::status(500);
+            }
+            if req.param("page").as_deref() == Some("1") {
+                Reply::json(&json!([row(req, 1)])).header("x-next-page", "2")
+            } else {
+                Reply::json(&json!([row(req, 2)])).header("x-next-page", "")
+            }
+        })
+        .await;
+        let w = connected(&server).await;
+        let first = w.core.list_issues(&IssueQuery::default()).await.unwrap();
+        assert_eq!(first.issues[0].key, "1");
+        assert!(first.next_cursors.contains_key("gitlab team/app"));
+        let second = w
+            .core
+            .list_issues(&IssueQuery {
+                cursors: first.next_cursors.clone(),
+                ..IssueQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(second.issues.len(), 1);
+        assert_eq!(second.issues[0].key, "2");
+        assert!(second.next_cursors.is_empty());
+        let before = server.seen().len();
+        let other = w
+            .core
+            .list_issues(&IssueQuery {
+                cursors: [("gitlab team/elsewhere".to_owned(), "2.x".to_owned())].into(),
+                ..IssueQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(other.issues.is_empty() && other.failed.is_empty());
+        assert_eq!(server.seen().len(), before, "an unnamed scope is not read");
+        let forged = w
+            .core
+            .list_issues(&IssueQuery {
+                cursors: [(
+                    "gitlab team/app".to_owned(),
+                    "2.0000000000000000".to_owned(),
+                )]
+                .into(),
+                ..IssueQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            forged.failed.len(),
+            1,
+            "a cursor we did not issue is refused"
+        );
+        assert_eq!(server.seen().len(), before);
+    }
+}

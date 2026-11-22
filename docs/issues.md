@@ -83,7 +83,8 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   (`cursors=%7B%22github%20o%2Fr%22%3A%22abc%22%7D`), at most 4 KiB, with the same filters. Only the scopes named
   in `cursors` are read, one page each, and the answer holds just those pages and their next cursors. The
   cursor is opaque: the page never builds or edits one, and the service refuses one it did not issue for that
-  scope and filter (`400 invalid`). The beta UI may leave paging out.
+  scope and filter (`400 invalid`). Built for GitLab only; GitHub gives one page and no cursor. The beta UI may
+  leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
@@ -108,6 +109,50 @@ The service's usual error body `{ code, message }`. Codes for issues, with the s
 | `invalid` | 400 | a host that is not `https://`, a scope outside the connection, a bad filter |
 
 A message never contains a token or a raw tracker body.
+
+## GitLab as built
+
+`gitlab` reads issues in `crates/orbyn-core/src/issues/gitlab.rs`, behind the same `ORBYN_ISSUES` flag. List and
+detail only; everything else below is Planned.
+
+- **Requests.** `GET {host}/api/v4/projects/{path}/issues` (`state` `opened|closed|all`, `labels`, `search`,
+  `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
+  `page`), `.../issues_statistics` for `counts` (best effort: no answer means `counts: null`, never a failed
+  list), `.../issues/{iid}` and `.../issues/{iid}/notes` for a detail. `{path}` is the project path with every `/`
+  sent as `%2F`, so `group/sub/project` is one path segment. Reads only: every request is a `GET`.
+- **Credentials and host.** The token is read from the keychain for each source and sent only as the
+  `PRIVATE-TOKEN` header to the connection's own host, which must be `https://` (re-checked when the reader is
+  built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an answer
+  over 2 MiB is refused, and a redirect is followed only within the same scheme, host and port (at most three);
+  any other redirect ends the request as `tracker_unavailable`. The token is in no log line, address or error.
+- **Scope.** The scopes of a GitLab connection are the project paths of the git remotes (`origin`) of this
+  machine's projects whose remote host equals the connection's host (`gitlab_path_of_remote`: https, `ssh://` and
+  `git@host:` forms; user, port and `.git` dropped; subgroups kept), then any the connection names. A connection
+  made in the UI keeps no scope of its own. A scope outside these is `400 invalid` and nothing is sent.
+- **Mapping.** `key` is the project's `iid` as text, `display_key` is `#<iid>`, `author` and `assignees` are
+  usernames, labels are names, `url` is `web_url` when it stays on the connection's host (otherwise
+  `{host}/{path}/-/issues/{iid}`), `comment_count` is `user_notes_count`. State `opened` is category `open`, name
+  `Open`; `closed` is `closed`, `Closed`. GitLab's system notes are events and are not comments; the first 50 comments
+  come back oldest first.
+- **Paging.** The listing carries `next_cursors["gitlab <path>"]` while GitLab advertises a next page. A cursor is
+  the page number and a tag bound to the scope and the filters; one that does not verify is `400 invalid` and
+  nothing is sent. The tag is not signed with a secret, so it proves "made for these filters", not "made by this
+  service". With `cursors` present only the scopes it names are read (this applies to every tracker; GitHub issues no
+  cursor and refuses any).
+- **Failures.** `401` is `tracker_not_connected` ("GitLab did not accept the saved token"), `403` is `forbidden`,
+  `404` is `not_found`, `429` is `rate_limited` with the wait from `Retry-After` or `RateLimit-Reset` when GitLab gave
+  one, and everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
+  `tracker_unavailable`. The message is always the service's sentence, never GitLab's reply. A list that fails goes in
+  `IssueList.failed` while other trackers answer; there is no separate rate-limited screen.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
+  and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
+  and the draft framing above is unchanged.
+- **Planned, not built.** Linked merge requests (`linked_pull_requests` stays empty), "won't fix" and other close
+  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, `candidates` and every
+  write for GitLab. Searching by number or a pasted GitLab link in `find` uses the number path only.
+- **Not verified.** No real GitLab (gitlab.com or self-managed) was contacted. The reader is tested against a
+  local fake server; the field names, header names, `issues_statistics` shape, `x-next-page` and `RateLimit-Reset`
+  behavior are from GitLab's documentation as understood, and a self-managed version or a proxy may differ.
 
 ## Issue text is untrusted
 

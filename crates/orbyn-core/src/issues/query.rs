@@ -2,10 +2,14 @@
 
 use crate::error::{CoreError, Result};
 use orbyn_contracts::TrackerKind;
+use std::collections::BTreeMap;
 
 pub const DEFAULT_LIMIT: usize = 50;
 pub const MAX_LIMIT: usize = 100;
 const MAX_LABELS: usize = 20;
+/// The most the `cursors` value may hold, as the page sends it (docs/issues.md, "Paging").
+const MAX_CURSORS_BYTES: usize = 4096;
+const MAX_CURSORS: usize = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateFilter {
@@ -30,6 +34,8 @@ pub struct IssueQuery {
     pub assignee: AssigneeFilter,
     pub text: String,
     pub limit: usize,
+    /// Where to carry on, per `"<tracker> <scope>"`. Empty for a first page. A source checks that it issued each one.
+    pub cursors: BTreeMap<String, String>,
 }
 
 impl Default for IssueQuery {
@@ -41,6 +47,7 @@ impl Default for IssueQuery {
             assignee: AssigneeFilter::Any,
             text: String::new(),
             limit: DEFAULT_LIMIT,
+            cursors: BTreeMap::new(),
         }
     }
 }
@@ -113,8 +120,28 @@ impl IssueQuery {
                         .map_err(|_| CoreError::Invalid("limit is a number.".into()))?;
                     query.limit = n.clamp(1, MAX_LIMIT);
                 }
-                // The page asks for these and the beta ignores them.
-                "cursors" => {}
+                "cursors" => {
+                    let invalid = || {
+                        CoreError::Invalid(
+                            "cursors is a JSON object of the cursors the service issued.".into(),
+                        )
+                    };
+                    if value.len() > MAX_CURSORS_BYTES {
+                        return Err(invalid());
+                    }
+                    let cursors: BTreeMap<String, String> =
+                        serde_json::from_str(value).map_err(|_| invalid())?;
+                    if cursors.len() > MAX_CURSORS
+                        || cursors.iter().any(|(k, v)| {
+                            k.len() > 300
+                                || v.len() > 200
+                                || k.chars().chain(v.chars()).any(char::is_control)
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                    query.cursors = cursors;
+                }
                 other => {
                     return Err(CoreError::Invalid(format!(
                         "{other} is not an issue filter."
@@ -164,6 +191,26 @@ mod tests {
             (q.state, q.assignee, q.limit),
             (StateFilter::Open, AssigneeFilter::Any, DEFAULT_LIMIT)
         );
+    }
+
+    #[test]
+    fn cursors_are_a_small_json_object_of_text() {
+        let q = IssueQuery::from_pairs(&pairs(&[("cursors", r#"{"gitlab grp/proj":"2.abc"}"#)]))
+            .unwrap();
+        assert_eq!(q.cursors["gitlab grp/proj"], "2.abc");
+        let long = format!(r#"{{"gitlab a/b":"{}"}}"#, "x".repeat(MAX_CURSORS_BYTES));
+        for bad in [
+            "not json",
+            "[]",
+            r#"{"a":1}"#,
+            r#"{"a":"b\u0001"}"#,
+            long.as_str(),
+        ] {
+            assert!(
+                IssueQuery::from_pairs(&pairs(&[("cursors", bad)])).is_err(),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]

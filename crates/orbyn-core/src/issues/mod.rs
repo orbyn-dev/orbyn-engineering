@@ -2,11 +2,16 @@
 //! a thread's links to issues and a thread started from one. Beta, read-only against the tracker. Everything a
 //! tracker returns is untrusted text and is never fed to an engine except in the framed first message.
 
+#[cfg(test)]
+pub(crate) mod fake_http;
 mod frame;
 mod github;
+mod gitlab;
 mod host;
 mod query;
 
+#[cfg(test)]
+pub(crate) use gitlab::GitLab;
 pub use host::validate_host;
 pub use query::{AssigneeFilter, IssueQuery, StateFilter};
 
@@ -32,6 +37,7 @@ const ALL: [TrackerKind; 5] = [
 ];
 const CACHE_FOR: Duration = Duration::from_secs(30);
 const MAX_SCOPE_BYTES: usize = 200;
+const GITLAB_DEFAULT_HOST: &str = "https://gitlab.com";
 
 /// One scope's page of a listing.
 #[derive(Clone, Debug)]
@@ -138,6 +144,7 @@ impl Core {
             TrackerKind::Github => Ok(Arc::new(github::GitHub {
                 cwd: self.config.data_dir.clone(),
             })),
+            TrackerKind::Gitlab => self.gitlab_source(),
             other => Err(CoreError::Unsupported(format!(
                 "Reading {} issues arrives in a later update.",
                 crate::issues::display_name(other)
@@ -145,11 +152,41 @@ impl Core {
         }
     }
 
-    /// The scopes a tracker is read in: for GitHub the repositories of the projects' remotes, then any the
-    /// connection names; for the others the connection's own.
+    /// The GitLab reader of the stored connection: its https host and the token from the keychain.
+    fn gitlab_source(&self) -> Result<Arc<dyn IssueSource>> {
+        let not_connected = |why: &str| CoreError::TrackerNotConnected(why.to_owned());
+        let connection = self
+            .store
+            .tracker_connections()?
+            .into_iter()
+            .find(|c| c.tracker == TrackerKind::Gitlab)
+            .ok_or_else(|| not_connected("GitLab is not connected."))?;
+        let token = self
+            .issues
+            .creds()
+            .tracker_token(tracker_name(TrackerKind::Gitlab))
+            .map_err(|error| match error {
+                CredentialError::Unavailable => not_connected("There is no usable keychain here"),
+                CredentialError::Blocked => {
+                    not_connected("The keychain refused for now. Unlock it and try again.")
+                }
+                _ => not_connected("The saved GitLab token could not be read."),
+            })?
+            .ok_or_else(|| not_connected("No token is saved"))?;
+        let host = connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST);
+        Ok(Arc::new(gitlab::GitLab::new(host, token)?))
+    }
+
+    /// The scopes a tracker is read in: for GitHub and GitLab the projects of this machine's git remotes (for
+    /// GitLab only those on the connection's host), then any the connection names; for the others the
+    /// connection's own.
     async fn issue_scopes(&self, connection: &TrackerConnection) -> Vec<String> {
         let mut scopes = connection.scopes.clone();
-        if connection.tracker == TrackerKind::Github {
+        if matches!(
+            connection.tracker,
+            TrackerKind::Github | TrackerKind::Gitlab
+        ) {
+            let host = connection.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST);
             for project in self.store.list_projects().unwrap_or_default() {
                 if project.scratch || !project.is_git {
                     continue;
@@ -160,10 +197,15 @@ impl Core {
                 else {
                     continue;
                 };
-                if let Some(repo) = github_repo_of_remote(&crate::source_control::git::text(&url))
-                    && !scopes.contains(&repo)
+                let remote = crate::source_control::git::text(&url);
+                let path = match connection.tracker {
+                    TrackerKind::Github => github_repo_of_remote(&remote),
+                    _ => gitlab::gitlab_path_of_remote(&remote, host),
+                };
+                if let Some(path) = path
+                    && !scopes.contains(&path)
                 {
-                    scopes.push(repo);
+                    scopes.push(path);
                 }
             }
         }
@@ -246,7 +288,7 @@ impl Core {
                 Some("https://api.linear.app".to_owned())
             }
             TrackerKind::Gitlab => Some(validate_host(
-                input.host.as_deref().unwrap_or("https://gitlab.com"),
+                input.host.as_deref().unwrap_or(GITLAB_DEFAULT_HOST),
             )?),
             TrackerKind::AzureDevops | TrackerKind::Forgejo => {
                 Some(validate_host(input.host.as_deref().ok_or_else(|| {
@@ -361,7 +403,15 @@ impl Core {
         let mut counted = true;
         let mut any = false;
         for (kind, connection) in jobs {
-            let scopes = self.issue_scopes(&connection).await;
+            let mut scopes = self.issue_scopes(&connection).await;
+            if !query.cursors.is_empty() {
+                // Carrying on: only the scopes named in `cursors` are read, one page each.
+                scopes.retain(|s| {
+                    query
+                        .cursors
+                        .contains_key(&format!("{} {s}", tracker_name(kind)))
+                });
+            }
             let answers = futures_util::future::join_all(
                 scopes.iter().map(|s| self.scope_list(kind, s, query)),
             )
