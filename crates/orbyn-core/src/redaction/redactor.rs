@@ -110,7 +110,7 @@ impl Redactor {
             });
         }
         // The same patterns, in one set, so a text costs one pass before the detectors that can
-        // match it run. A set that cannot be compiled leaves every detector to run its own pass.
+        // match it run. A pattern too big for the set keeps its own pass (see `prefilter`).
         let prefilter = super::prefilter::Prefilter::new(
             detectors
                 .iter()
