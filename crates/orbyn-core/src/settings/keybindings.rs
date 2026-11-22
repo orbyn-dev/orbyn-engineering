@@ -254,6 +254,12 @@ fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
             conflict.commands = unconditional;
         }
     }
+    for conflict in &mut found {
+        let mut seen = std::collections::HashSet::new();
+        conflict
+            .commands
+            .retain(|command| seen.insert(command.clone()));
+    }
     found.retain(|conflict| conflict.commands.len() > 1);
     found
 }
@@ -500,6 +506,21 @@ mod tests {
         assert_eq!(rules[0].command, "a // not a comment");
         assert_eq!(issues.len(), 2);
         assert_eq!(parse("{ nope").1.len(), 1);
+    }
+
+    #[test]
+    fn repeated_command_in_overlapping_contexts_is_not_a_conflict() {
+        let rules = [
+            rule("mod+q", "same", None),
+            rule("mod+q", "same", Some("")),
+            rule("mod+q", "same", Some("!terminalFocus")),
+        ];
+        assert!(conflicts(&rules).is_empty());
+        let mut with_other = rules.to_vec();
+        with_other.push(rule("mod+q", "other", Some("!terminalFocus")));
+        let clashes = conflicts(&with_other);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].commands, ["same", "other"]);
     }
 
     #[test]
