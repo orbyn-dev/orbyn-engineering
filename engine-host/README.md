@@ -1,10 +1,10 @@
 # orbyn-engine-host
 
-The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, ACP, later Codex, Pi) for the Rust
-core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
+The Node host that runs engine SDKs (Claude, Cursor, OpenCode, Muse, ACP and Codex; later Pi) for the
+Rust core over newline-JSON on stdio. The wire contract is [docs/engine-host-protocol.md](../docs/engine-host-protocol.md);
 change that document in the same PR as any frame change.
 
-Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse` and `acp` are the real ones. Not part of the Rust
+Status: skeleton. The `fake` family drives the `HostDriver` tests; `claude` and `cursor` (each behind a flag), `opencode`, `muse`, `acp` and `codex` are the real ones. Not part of the Rust
 workspace or the web lint scope; it has its own `package.json`.
 
 ```bash
@@ -193,6 +193,82 @@ never ends in the recordings); `stopTask`, `readHistory`, `rollback`, fork; atta
 trampoline. Windows launchers (`.cmd` and `.bat` under cmd.exe, PATH and PATHEXT) and verbatim turn roots follow T3 and are unit tested
 with injected platform and file checks only; no Windows run.
 
+## Codex family
+
+`src/families/codex.mjs` is a plain-JS JSON-RPC client of the person's own `codex app-server` (never bundled;
+`options.codexPath` or `codex` on PATH) on its documented newline-delimited JSON stdio. Start it with
+`orbyn-engine-host codex`; no flag. No SDK, package or npm dependency was added. The app-server version the
+recordings name is pinned as `0.156.1`.
+
+- **Processes and confinement.** One app-server per distinct confinement (`argvPrefix`, `env`, `cwd`, path
+  and env additions); sessions with the same confinement share it, and it stops with its last session.
+  `confinement.argvPrefix` prefixes the command and `confinement.env` is its whole environment; `options.env`
+  is added and its keys are logged, never its values. A malformed prefix is `invalid_request`; a family that
+  could not apply confinement would be `unsupported`. Windows launchers (PATH/PATHEXT, `.cmd`/`.bat` under
+  `cmd.exe`) are the `codexLaunch` helper, unit tested with injected platform and file checks only; no Windows
+  run.
+- **Options.** `{codexPath?, model?, effort?, mode: "read-only"|"workspace-write" (default read-only),
+  approvalPolicy?: "on-request"|"untrusted", mcpServers?, developerInstructions?, env?}`; `open`
+  `operation: "fork"` also takes `options.atTurn`. `mcpServers` is sent as `mcp_servers.<name>` in the
+  thread's `config`, as T3 does; the host does not decide which tools are allowed. `effort` goes on each
+  `turn/start` (the thread request has no effort field).
+- **Requests.** `open` (create/resume/fork; the Codex thread id is `engineSessionId`), `send` (`turn/start`;
+  `{runId, engineSessionId, turnId?, messageId?}`), `steer` (`turn/steer`; `accepted`/`rejected`, never
+  `queued`), `cancel` (`turn/interrupt`, then `runDone` cancelled), `respond`, `rollback`, `fork` (at
+  `atTurn`), `readHistory` (`{turns}` from `thread/read`), `closeSession`, `models`, `usage`. `stopTask`,
+  `background` and `probe` are not advertised.
+- **Approvals.** Every command, file-change, permissions, legacy patch/exec and MCP URL ask is a `permission`
+  frame; `item/tool/requestUserInput` and MCP form elicitations are `question` frames. `input` is Codex's
+  params untouched. `respond` allow is once-only (`accept`, never `acceptForSession`; permissions with
+  `scope: "turn"`; legacy `approved`); deny is `decline`/empty permissions/legacy denied. The host never
+  sends `approvalPolicy: "never"` or a `danger-full-access` sandbox: the recordings that held them are
+  replayed with `on-request` and a read-only or workspace-write sandbox. There is no host timeout on a pending
+  ask; cancel, run end and a crash refuse it, and a late `respond` is logged.
+- **Frames and run end.** `delta.update` is `{method, params}` from Codex, untouched; a `session` frame is
+  sent when a thread or turn id becomes known later; `background` frames report subagent threads as
+  `{type, id, kind: "agent"}`. `runDone` is once per `send`; a turn only ends the run if its `turnId` is the
+  prompt's (or the first one, if none was known); other threads' turns are deltas. A subagent still running
+  when the parent's turn completes holds the run, and the hold ends on the last agent plus a short follow-up
+  grace, on cancel, after 5 minutes without a notification, after 30 minutes, or when the app-server exits
+  (running agents are then `background` `ended` with `status: "stopped"`). A background shell is neither held
+  nor reported. Usage is the `thread/tokenUsage/updated` delta against the thread baseline, as T3's
+  `CodexTurnTokenUsage.ts` does; failure kinds follow Codex's `codexErrorInfo` and message patterns, with a
+  `retry` for rate limits, network loss and overload.
+- **models and usage.** `models` uses a throwaway app-server: `model/list` pages become
+  `{id, name, isDefault, efforts: [{id, label, isDefault?}], defaultEffort?}`, plus `account?` from
+  `account/read`. `usage` is `{usage, limits}`; `limits` maps `account/rateLimits/read` primary/secondary/
+  individual windows with the plan label. A limits failure is `unavailable: "probeFailed"`, never a request
+  error. Both are synthetic-data tests shaped like T3's, not recordings. T3's `resetCredits` is not in this
+  document's limit shape and is not carried.
+
+Tested against the 28 replayed T3 Code `codex_transcript.ndjson` recordings (MIT, `test/fixtures/NOTICE`;
+app-server 0.156.1), copied unmodified into `test/fixtures/codex/`: simple, multi_turn, message_steering,
+queued_turn, turn_interrupt, turn_interrupt_mid_tool, tool_call_read_only_on_request,
+tool_call_restricted_granular, tool_call_workspace_never, command_output_streaming, plan_questions,
+proposed_plan, todo_list, web_search, provider_thread_resume, thread_fork_native_prior_turn, thread_rollback,
+thread_rollback_after_restart, thread_rollback_to_stopped_turn, subagent, subagent_continue, subagent_v2,
+subagent_v2_approval, subagent_v2_nested, subagent_v2_nested_approval, thread_merge_back_siblings,
+delegated_task_status, codex_model_reroute. `test/replayCodex.mjs` plays a transcript as a fake app-server (it
+asserts each recorded request, rewrites ids, ignores T3's recorder config/approval values, and feeds the
+recorded replies), and `test/codex.test.mjs` drives every scenario through `runHost` with in-process streams.
+Also tested with hand-written fake app-servers: hold-open, confinement, launcher, approval refusal on cancel,
+late respond, attachments, readHistory, fork, structured error kinds/reset, models and usage. One test runs a
+stand-in app-server script through the default spawn over real stdio, so the child-process path is exercised.
+
+**Nothing here has run against a real Codex turn yet.** The wire, ids, error codes, reset-text timezone and
+approval options are T3's recordings, not a live `codex`. Not done, so Planned: `stopTask`/`background`;
+`probe`; a real login/auth flow (the host reads no credential and adds no key); URL-mode MCP elicitations
+beyond answering `cancel`; distinguishing Codex's own review/compact/memory agents from subagents (they would
+hold the run); a quiet/held run longer than the test windows; `resetCredits`; the static/update-required model catalogue of
+`codexModelCatalog.ts` (the host reads `model/list` only); T3's per-turn `additionalContext` runtime
+instructions (`developerInstructions` is passed as the thread request's string); the `session` server requests
+for dynamic tools, attestation and ChatGPT token refresh; a `fork` request that also creates a host session
+(the caller opens one); a read-history size cap; and any Windows run. Compared with T3's adapter: one
+app-server per confinement group instead of one per provider (so a per-run prefix can still apply), `open`
+resume loads the thread eagerly, `rollback.toTurn` names the turn a rollback keeps (later turns are removed;
+T3 counts terminal turns after its target), MCP URL asks answer `cancel` on allow, no always/session approvals,
+no T3 thread names or recorder `config/read`, and no T3 orchestration child threads.
+
 ## ACP family
 
 `src/families/acp.mjs` is the generic Agent Client Protocol family: one agent process per open session, spoken to over
@@ -244,20 +320,24 @@ stream); `session/resume` for agents that do not advertise `loadSession`; `addit
 transport preference (mcpTransport.ts) and its fs/terminal/URL-elicitation client policy (never ported); attachments
 against a real agent; Windows.
 
-## Differences from T3 Code on purpose (Muse and Cursor)
+## Differences from T3 Code on purpose (Muse, Cursor and Codex)
 
-Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`) and `packages/provider-cursor` (`CursorAgentSdk.ts`,
-`CursorAgentSdkWorker.ts`, `adapter.ts`), commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking
-(`promptUnmatched`, `:ask-me`) where T3 maps full access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability
-(no session MCP yet); Cursor has no approvals; the pooled Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind
-`ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only `CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key.
+Compared with T3 `packages/provider-muse` (`sdk.ts`, `adapter.ts`), `packages/provider-cursor` (`CursorAgentSdk.ts`,
+`CursorAgentSdkWorker.ts`, `adapter.ts`) and `packages/effect-codex-app-server` plus the Codex adapter files named in the section above,
+commit 9168ca7. Kept different: policy stays in Rust, so Muse always starts asking (`promptUnmatched`, `:ask-me`) where T3 maps full
+access to `allowAll` and `:unrestricted`; Muse requests no `sessionMcp` capability (no session MCP yet); Cursor has no approvals; the pooled
+Cursor host takes no `argvPrefix`; the Cursor SDK is not bundled and is behind `ORBYN_ENGINE_HOST_CURSOR=1`; the API key is only
+`CURSOR_API_KEY` at spawn and is redacted; no keychain or stored key. Codex keeps T3's asking shape (`on-request`, read-only or
+workspace-write), never T3's full-access `never`/`dangerFullAccess`, and one app-server per confinement group rather than one per provider.
 
-Readers added (read-only, through the existing `models` and `usage` requests, capabilities `models` and `usage` on both families; not a
+Readers added (read-only, through the existing `models` and `usage` requests, capabilities `models` and `usage` on Cursor, Muse and Codex; not a
 protocol bump). Cursor, from `provider-cursor` `CursorSdkCatalog.ts` (`/v1/me`, `/v1/models`, 30 minute cache, account label dropped when a team
 blocks it) and `usageLimits.ts` + `apiKey.ts` (`GetCurrentPeriodUsage` through the key exchange): `models` returns `{models, account?}`, `usage`
 returns `{usage, limits}` (`src/families/cursorReaders.mjs`). Muse, from `provider-muse` `modelCatalog.ts` (`model/list` from a throwaway
 `muse serve`), `protocol.ts` (`MuseSubscriptionUsage`) and `usageLimits.ts` (`museUsageToLimits`): `models` returns `{models}` with efforts, and
-`usage` returns `{usage, limits}` from the latest account-wide `usage/changed` (`limits` is `null` until Muse sends one). The key, access token
+`usage` returns `{usage, limits}` from the latest account-wide `usage/changed` (`limits` is `null` until Muse sends one). Codex, from
+`Drivers/CodexProvider.ts` (`model/list` with effort descriptors, `account/read`), `CodexTurnTokenUsage.ts` and `codexUsageLimits.ts`:
+`models` returns `{models, account?}`, `usage` returns `{usage, limits}` (`limits` from `account/rateLimits/read`). The key, access token
 and any response body never appear in a result or log; failures carry fixed text. All of it is tested with a fake `fetch` and a fake
 connection only: nothing ran against the real Cursor service, `@cursor/sdk` or `muse`, and the endpoint paths and field names follow T3,
 unverified here.
@@ -266,7 +346,7 @@ T3 has more that is not added: Cursor `accountUsage.ts`, `CursorUsageAccounts.ts
 history, team lookups and an on-disk cache for T3's cost screens; this host keeps no files, and the core owns cost history); `credentialStore.ts`
 and `auth.ts` (stored keys, sign-in); Muse `usage.ts` and `MuseUsageHome.ts` (they scan `session.jsonl` transcripts under Muse's home for token
 history, a file reader the host does not need; the core reads them, parity J27); Muse `isMuseUsageLimitFailure` and `museUsageLimitResetAt` (retry scheduling from refusal text: the core owns
-retry, and Muse's quota reset already rides `retry.resetsAt`).
+retry, and Muse's quota reset already rides `retry.resetsAt`); Codex `resetCredits` (this document's limit shape has no field for it).
 
 ## In the app bundle (macOS arm64)
 

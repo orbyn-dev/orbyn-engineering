@@ -2,6 +2,7 @@
 //! file or database implementation, on purpose.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zeroize::Zeroizing;
 
@@ -124,6 +125,7 @@ fn failure_of(code: i32) -> Failure {
 pub struct MemoryBackend {
     items: std::sync::Mutex<std::collections::HashMap<(String, String), Vec<u8>>>,
     fail: std::sync::Mutex<Option<Failure>>,
+    gets: AtomicUsize,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -138,6 +140,11 @@ impl MemoryBackend {
         let mut all: Vec<_> = self.items.lock().unwrap().keys().cloned().collect();
         all.sort();
         all
+    }
+
+    /// How many `get` calls every use of this backend has made, failed ones included. The env-set state check is one.
+    pub fn get_calls(&self) -> usize {
+        self.gets.load(Ordering::Relaxed)
     }
 
     /// The item's bytes, for a test that proves a value reached the keychain.
@@ -157,6 +164,7 @@ impl MemoryBackend {
 #[cfg(any(test, feature = "test-support"))]
 impl SecretBackend for MemoryBackend {
     fn get(&self, service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Failure> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
         self.check()?;
         Ok(self.bytes(service, account).map(Zeroizing::new))
     }
