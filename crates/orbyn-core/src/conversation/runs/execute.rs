@@ -1,6 +1,7 @@
 use super::*;
 
 impl RunManager {
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn execute(
         self: Arc<Self>,
         thread: Thread,
