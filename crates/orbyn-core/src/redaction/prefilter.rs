@@ -302,7 +302,7 @@ mod tests {
             "axxbxxc".to_owned(),
         ];
         for text in &examples {
-            same_output(&redactor, text);
+            same_output(redactor, text);
         }
         // A person's own pattern, a broad one, and many patterns at once.
         let many: Vec<Custom<'_>> = (0..40)
