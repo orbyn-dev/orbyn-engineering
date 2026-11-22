@@ -215,8 +215,8 @@ fn merged(own: &[KeybindingRule]) -> Vec<KeybindingRule> {
     rules
 }
 
-/// One key in one exact context with more than one command. Different contexts are
-/// how one key does two jobs, so they are not conflicts.
+/// Report exact-context collisions and unconditional bindings that overlap a context.
+/// Distinct nonempty contexts are left separate because they may be disjoint.
 fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
     let mut found: Vec<KeybindingConflict> = Vec::new();
     for rule in rules {
@@ -230,6 +230,27 @@ fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
                 when: rule.when.clone(),
                 commands: vec![rule.command.clone()],
             }),
+        }
+    }
+    for conflict in &mut found {
+        if conflict
+            .when
+            .as_deref()
+            .is_some_and(|when| !when.trim().is_empty())
+        {
+            let mut unconditional: Vec<String> = rules
+                .iter()
+                .filter(|rule| {
+                    rule.key == conflict.key
+                        && rule
+                            .when
+                            .as_deref()
+                            .is_none_or(|when| when.trim().is_empty())
+                })
+                .map(|rule| rule.command.clone())
+                .collect();
+            unconditional.append(&mut conflict.commands);
+            conflict.commands = unconditional;
         }
     }
     found.retain(|conflict| conflict.commands.len() > 1);
@@ -481,6 +502,26 @@ mod tests {
     }
 
     #[test]
+    fn rebinding_sidebar_to_palette_key_reports_overlap() {
+        let rules = merged(&[rule("mod+k", "sidebar.toggle", None)]);
+        let clashes = conflicts(&rules);
+        let clash = clashes.iter().find(|clash| clash.key == "mod+k").unwrap();
+        assert_eq!(clash.when.as_deref(), Some("!terminalFocus"));
+        assert!(
+            clash
+                .commands
+                .iter()
+                .any(|command| command == "sidebar.toggle")
+        );
+        assert!(
+            clash
+                .commands
+                .iter()
+                .any(|command| command == "commandPalette.toggle")
+        );
+    }
+
+    #[test]
     fn the_file_rebinds_removes_and_reports_conflicts() {
         let rules = merged(&[rule("mod+y", "sidebar.toggle", None)]);
         assert!(
@@ -499,7 +540,17 @@ mod tests {
                 .any(|r| r.command == "terminal.toggle")
         );
         let clash = [rule("mod+q", "one", None), rule("mod+q", "two", Some("x"))];
-        assert!(conflicts(&merged(&clash)).is_empty(), "contexts differ");
+        assert_eq!(conflicts(&merged(&clash))[0].commands, ["one", "two"]);
+        let disjoint = [
+            rule("mod+q", "one", Some("terminalFocus")),
+            rule("mod+q", "two", Some("!terminalFocus")),
+        ];
+        assert!(conflicts(&merged(&disjoint)).is_empty());
+        let blank = [
+            rule("mod+q", "one", Some("  ")),
+            rule("mod+q", "two", Some("!terminalFocus")),
+        ];
+        assert_eq!(conflicts(&merged(&blank))[0].commands, ["one", "two"]);
         let same = [rule("a", "one", None), rule("a", "two", None)];
         assert_eq!(conflicts(&same)[0].commands, ["one", "two"]);
     }

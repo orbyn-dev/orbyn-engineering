@@ -105,7 +105,7 @@ export function KeybindingsSection() {
                 .filter((rule) => !rule.remove && `${commandLabel(rule.command)} ${rule.command} ${whenPhrase(rule.when)} ${rule.key}`.toLowerCase().includes(filter.toLowerCase()))
                 .map((rule) => {
                   const id = `${rule.command}:${rule.key}:${rule.when ?? ""}`;
-                  const clash = view.data.conflicts.find((conflict) => conflict.key === rule.key && (conflict.when ?? "") === (rule.when ?? "") && conflict.commands.includes(rule.command));
+                  const clash = view.data.conflicts.find((conflict) => conflict.key === rule.key && ((conflict.when ?? "") === (rule.when ?? "") || !rule.when?.trim()) && conflict.commands.includes(rule.command));
                   return (
                     <div key={id} role="row" className="set-tr" style={{ gridTemplateColumns: COLUMNS }}>
                       <span role="cell" title={rule.command}>{commandLabel(rule.command)}</span>

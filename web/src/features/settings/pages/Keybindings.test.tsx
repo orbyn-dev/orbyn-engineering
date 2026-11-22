@@ -76,6 +76,22 @@ it("names a clash in plain words, with the context as a phrase", async () => {
   expect(screen.getByText(/Send the other way and/).textContent).toBe("Send the other way and Send in the background both use ⌘↵ when the composer is focused and a turn is running.");
 });
 
+it.each([null, "  "])("highlights both unconditional and conditional rules with context %s", async (when) => {
+  vi.mocked(request).mockReset().mockResolvedValue({
+    ...initial,
+    rules: [
+      { key: "mod+k", command: "sidebar.toggle", when, remove: false },
+      { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus", remove: false },
+    ],
+    conflicts: [{ key: "mod+k", when: "!terminalFocus", commands: ["sidebar.toggle", "commandPalette.toggle"] }],
+  });
+  render(<KeybindingsSection />);
+  for (const name of ["Toggle sidebar", "Command palette"]) {
+    const row = (await screen.findByText(name)).closest('[role="row"]');
+    expect(row?.querySelector(".kc.warn")).not.toBeNull();
+  }
+});
+
 it("shows arrow keys as arrows", async () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   vi.mocked(request).mockReset().mockResolvedValue({
