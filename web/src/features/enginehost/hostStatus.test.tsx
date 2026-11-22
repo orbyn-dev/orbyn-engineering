@@ -175,7 +175,7 @@ it("reads the try, limit and wait the service sends for a restarting host", () =
   expect(processLine(sent, Date.now())).toBe("Restarting · try 3 of 5 · next try in 4 s");
 });
 
-it("maps the host hello and the run fallback the service now sends", () => {
+it("maps the host hello, its wrapped driver and a missing SDK", () => {
   const local = (hours: number, minutes: number) => new Date(2026, 10, 21, hours, minutes).toISOString();
   const row = toHostRow(status({
     family: "claude", state: "running", since: local(9, 12), pooled: true,
