@@ -695,4 +695,24 @@ async fn the_open_read_names_the_terminal_and_engine_and_refuses_an_unknown_thre
     core.attention.closed(&thread_id, "engine-console");
     assert!(core.terminal_attention(&thread_id).unwrap().is_empty());
     assert!(core.terminal_attention("no-such-thread").is_err());
+
+/// Where no echo mode can be read (Windows ConPTY), a `Password:` line is a plain question and
+/// its last lines are shown. They are redacted first, so a secret printed above it never leaves.
+#[test]
+fn a_password_line_read_as_a_question_still_hides_secret_text() {
+    let redactor = Redactor::only(vec![Custom {
+        name: "token",
+        regex: Regex::new("hunter2").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    let reading = evaluate(
+        &redactor,
+        "token is hunter2\nhunter2 again\nPassword:",
+        false,
+    )
+    .unwrap();
+    assert_eq!(reading.kind, TerminalAttentionKind::Question);
+    let text = reading.excerpt.join("\n");
+    assert!(!text.contains("hunter2"), "{text}");
+    assert!(text.contains("[hidden: token]"), "{text}");
 }

@@ -49,6 +49,18 @@ export const withTab = (order: readonly RightTab[], tab: RightTab): RightTab[] =
 /** The default order: the panel's own surfaces as listed, then the open files as they were. */
 export const defaultOrder = (order: readonly RightTab[]): RightTab[] => [...RIGHT_TAB_IDS, ...order.filter(isFileTab)];
 
+/** Per-person Devices state: the open per-device tabs, the last device, the person's labels and one floating window. */
+export interface DevicesPrefs {
+  /** Device ids the person opened, in tab order. Ids come only from the service list. */
+  open: string[];
+  /** The last device shown; the launcher opens it again. */
+  active: string | null;
+  /** The person's own tab label, by device id. An empty map means every tab keeps the device name. */
+  names: Record<string, string>;
+  /** The one device floating over the chat, with its last place and width. */
+  float: { id: string; x: number; y: number; width: number } | null;
+}
+
 export type ContextTab = RightTab | "terminal";
 export interface ThreadNavigationOrigin { threadId: string; cwd: string }
 
@@ -72,6 +84,8 @@ export interface Prefs {
   panelWidth: number | null;
   /** The side chat the panel shows. */
   sideChat: string | null;
+  /** Devices tabs, labels, last device and float (per-person UI state, never a service route). */
+  devices: DevicesPrefs;
   /** The current thread's layout is the fields above; others wait here. */
   layouts: Record<string, ThreadLayout>;
   layoutKey: string;

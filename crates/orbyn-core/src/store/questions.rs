@@ -1,7 +1,7 @@
 //! Engine questions. Like an approval, an open question holds its run in
 //! `awaiting_approval`, and the first answer wins by compare-and-set.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use orbyn_contracts::{AgUiEvent, Question, QuestionRequest, QuestionState, RunState};
 use rusqlite::{OptionalExtension, Row, Transaction, params};
@@ -212,6 +212,36 @@ impl Store {
         )?;
         let rows = statement.query_map(params![thread_id, state], question_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Which of these tasks had an engine question answered after the task's brief, on either its
+    /// lead's thread or its worker's, in one task-scoped `EXISTS` query.
+    ///
+    /// A question on the lead's thread outlives any one task, so the task's `created_at` is the
+    /// boundary: a question asked and answered in an earlier task never marks a later one. The
+    /// store's 500-row question list is not involved.
+    pub fn crew_answered_question_tasks(&self, task_ids: &[String]) -> Result<BTreeSet<String>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT ct.id FROM crew_tasks ct
+             JOIN crew_runs r ON r.task_id = ct.id
+             WHERE ct.id IN ({marks})
+               AND EXISTS (
+                 SELECT 1 FROM question_requests q
+                 WHERE q.state = 'answered'
+                   AND (q.thread_id = r.lead_thread_id OR q.thread_id = r.worker_thread_id)
+                   AND q.created_at >= ct.created_at
+                   AND q.decided_at >= ct.created_at
+               )"
+        ))?;
+        let rows = statement.query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+            row.get::<_, String>(0)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<BTreeSet<_>>>()?)
     }
 
     /// The first decision wins. `answers` is `None` for a dismissal or expiry;

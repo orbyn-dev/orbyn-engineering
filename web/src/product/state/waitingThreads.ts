@@ -10,5 +10,8 @@ export function setWaitingThreads(ids: ReadonlySet<string>): void {
   useWaiting.setState({ ids });
 }
 
+/** Every thread with a terminal waiting, for the counts that add them up. */
+export const useWaitingThreadIds = (): ReadonlySet<string> => useWaiting((state) => state.ids);
+
 /** True while a terminal of the thread waits and has not been dismissed on this window. */
 export const useThreadWaiting = (threadId: string): boolean => useWaiting((state) => state.ids.has(threadId));
