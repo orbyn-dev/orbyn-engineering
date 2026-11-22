@@ -40,13 +40,13 @@ impl RunManager {
         run_id: &str,
         state: RunState,
         error: Option<&str>,
-        sign_in_note: Option<&Value>,
+        failure_note: Option<&Value>,
     ) -> Option<Run> {
         // An agent may have committed, switched branch or added a worktree during the run.
         self.workspace.invalidate_status();
         match self
             .store
-            .finish_run_with_sign_in(run_id, state, error, sign_in_note)
+            .finish_run_with_sign_in(run_id, state, error, failure_note)
         {
             Ok((run, expired)) => {
                 self.gate.settle(&expired);
