@@ -3,9 +3,11 @@
 //! through the store's read connection, starts no process and takes no lock beyond it. It approves, merges and reverts
 //! nothing; the person's answers are `autopilot`'s.
 //!
-//! What it never returns: the answer key or any part of a check (command, output, what it proves), a repro, a thread
-//! id, a path on this machine, a bus message. A text is redacted, the key's text withheld and the length cut
+//! What these views never return: the answer key, or any part of a check (command, output, what it proves), a repro, a
+//! thread id, a path on this machine, a bus message. A text is redacted, the key's text withheld and the length cut
 //! ([`scrub`]). A gate's reason is read only once the task is final, so a running task shows no check text at all (H1).
+//! One read here parts from that rule and says why: the Run page (`run_page`), which the person generated for their own
+//! run, names the command the verifier ran and never the key's id or its expectations (`docs/crew-run-page.md`).
 
 mod board;
 mod cells;
@@ -13,6 +15,7 @@ mod facts;
 mod map;
 mod messages;
 mod review_controls;
+mod run_page;
 mod scrub;
 
 use orbyn_contracts as wire;

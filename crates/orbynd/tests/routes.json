@@ -74,6 +74,7 @@
     ["GET","/api/crew/flow/messages","local"],
     ["GET","/api/crew/flow/tasks","local"],
     ["GET","/api/crew/flow/tasks/{id}","local"],
+    ["GET","/api/crew/flow/tasks/{id}/run","local"],
     ["GET","/api/crew/guard/targets","local"],
     ["GET","/api/crew/guard/test","local"],
     ["GET","/api/crew/preview","local"],
