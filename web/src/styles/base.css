@@ -27,7 +27,7 @@ body {
    Dark and Dim (rgba(255, 255, 255, .14)), so one rule follows the theme instead of the platform default.
    Chromium and WebKit paint the thumb through these pseudo-elements; Firefox has none, and its standard pair
    wins over them in Chromium, so the pair is scoped to the engines that cannot paint the thumb. A row that
-   scrolls sideways without a bar hides it on its own. */
+   draws no bar at all, such as the model picker's chips, hides it on its own. */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;

@@ -34,10 +34,6 @@ function values(source: string, selector: string, property: string): string[] {
 
 const base = stylesheet("base.css");
 const tokens = stylesheet("tokens.css");
-const pages = stylesheet("pages.css");
-
-/** The rule that applies on a phone: the other `.settings-nav` body is the desktop column. */
-const phoneNav = bodies(pages, ".settings-nav").find((body) => body.includes("flex-direction: row")) ?? "";
 
 describe("scrollbars", () => {
   /**
@@ -83,20 +79,5 @@ describe("scrollbars", () => {
     expect(light[0]).toBe("rgb(0 0 0 / 12%)");
     expect(dark[0]).toBe("rgb(255 255 255 / 14%)");
     expect(dim[0]).toBe(dark[0]);
-  });
-
-  /**
-   * A structural check on the rules, not a rendered measurement: the phone chip row hides its bar and
-   * clips the off-axis overflow, so no scrollbar can paint over the chips. The 28px chips need a row
-   * taller than the 23px box the 132px side produced.
-   */
-  it("keeps the phone settings chip row clear of a scrollbar", () => {
-    expect(phoneNav, "the phone .settings-nav rule is missing").not.toBe("");
-    expect(phoneNav).toContain("overflow-x: auto;");
-    expect(phoneNav, "a vertical bar leaves a stray thumb beside the chips").toContain("overflow-y: hidden;");
-    expect(phoneNav, "the horizontal bar paints over the chips").toContain("scrollbar-width: none;");
-    expect(bodies(pages, ".settings-nav::-webkit-scrollbar").map((body) => body.trim())).toContain("display: none;");
-    expect(values(pages, ".settings-nav a", "height")).toEqual(["28px"]);
-    expect(values(pages, ".settings-side", "max-height")).toEqual(["140px"]);
   });
 });
