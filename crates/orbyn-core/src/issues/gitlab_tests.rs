@@ -29,6 +29,22 @@ fn issue(base: &str, iid: u64) -> Value {
 async fn answering(items: Vec<u64>) -> Server {
     Server::start(move |req| {
         let base = base_of(req);
+        let path = req.path();
+        if path.ends_with("/notes") {
+            return Reply::json(&json!([]));
+        }
+        if path.ends_with("/issues_statistics") {
+            return Reply::json(
+                &json!({ "statistics": { "counts": { "all": 1, "closed": 0, "opened": 1 } } }),
+            );
+        }
+        // One issue is read at `.../issues/<iid>`; the list is everything else.
+        if let Some(iid) = path
+            .rsplit_once("/issues/")
+            .and_then(|(_, tail)| tail.parse::<u64>().ok())
+        {
+            return Reply::json(&issue(&base, iid));
+        }
         Reply::json(&Value::Array(
             items.iter().map(|i| issue(&base, *i)).collect(),
         ))
