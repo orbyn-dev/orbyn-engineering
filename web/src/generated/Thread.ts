@@ -36,10 +36,10 @@ project_removed?: boolean,
  */
 removed_project_name?: string, 
 /**
- * Set on a thread made from a file: `orbyn-transcript`. Absent on a thread made here. The "Imported" pill reads it.
+ * Set on a transcript-imported thread: `orbyn-transcript`. Absent on a thread made here or from an engine's history. The "Imported" pill reads it.
  */
 source?: string, 
 /**
- * When the file was imported. Set together with `source`.
+ * When the thread was imported, from a transcript file or an engine's history. Absent on a thread made here.
  */
 imported_at?: string, };

@@ -185,6 +185,7 @@
     ["GET","/api/threads/{id}/commands","local"],
     ["GET","/api/threads/{id}/commits","local"],
     ["GET","/api/threads/{id}/diff","local"],
+    ["GET","/api/threads/{id}/earlier","local"],
     ["GET","/api/threads/{id}/events","local"],
     ["GET","/api/threads/{id}/export","local"],
     ["GET","/api/threads/{id}/family","local"],

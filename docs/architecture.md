@@ -1520,13 +1520,24 @@ project at exactly its folder and whether that project is trusted.
 
 `POST /api/history/import` takes only an engine and a session id; the service rescans
 and finds the file itself. It needs the session's project registered and trusted and
-the engine enabled there, then creates a thread whose engine session is that id, with
-no copied messages, so the next run resumes the engine's own conversation. A second
-import returns the same thread. Claude's `subagents` folders and `isSidechain`
+the engine enabled there, then creates a thread whose engine session is that id,
+marked with `imported_at`, with no copied messages, so the next run resumes the
+engine's own conversation. A second import returns the same thread. Claude's `subagents` folders and `isSidechain`
 transcripts are skipped, and a session listed by several files appears once, from its
 newest file. A session whose folder is not a project offers Add folder, which registers
 it untrusted through the ordinary add path; trusting it is the ordinary trust page. Pi is not an engine Orbyn runs, so its history is not
 scanned.
+
+`GET /api/threads/{id}/earlier?before=<cursor>` reads an imported thread's earlier
+messages from that same session file: the service resolves the recorded session id
+through the import's scan and head parser, then reads the whole file within a bounded
+size and line count and maps user, assistant and tool entries (never arguments,
+tool output, reasoning or meta entries) through the export redactor. It writes no row
+and nothing in the provider's folder. A page is 50 messages, oldest first; the cursor
+is bound to the file's size and mtime. A thread with no engine session is
+`404 not_imported`; a missing, changed, oversized, malformed or newer session file is
+`422 history_unreadable`, and a malformed cursor is `422 bad_cursor`. The production
+web client is still pending.
 
 ## Message search
 
