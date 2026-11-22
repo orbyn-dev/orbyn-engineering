@@ -6,6 +6,8 @@ import { BlockCard, isRunning } from "./BlockCard";
 
 /** How often the list is read again while a command runs. */
 const POLL_MS = 2000;
+/** While nothing runs the list is still read now and then, so the first command of a quiet terminal, or the next one, appears. */
+const IDLE_POLL_MS = 5000;
 
 export interface CommandBlocksProps {
   threadId: string;
@@ -17,12 +19,11 @@ export interface CommandBlocksProps {
 }
 
 /**
- * The drawer's blocks, one per command. Hidden: with no client installed (the production default) this draws nothing and sends nothing.
- * Every key that comes from the service is kept in a Map or Set, never as an object key.
+ * The drawer's blocks, one per command. The production client draws nothing until it has blocks, so a shell that emits no marks leaves
+ * the terminal exactly as it was. Every key that comes from the service is kept in a Map or Set, never as an object key.
  */
 export function CommandBlocks(props: CommandBlocksProps) {
-  const api = blocksApi();
-  return api ? <Live api={api} {...props} /> : null;
+  return <Live api={blocksApi()} {...props} />;
 }
 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready" };
@@ -62,11 +63,18 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
     return () => controller.abort();
   }, [api, terminal, attempt, tick]);
 
+  // The newest page again every 2 s while a block runs and every 5 s otherwise (a terminal whose shell emits marks later, or a next
+  // command). Only the production client reads while idle: the preview mock stays still, and a hidden page reads nothing.
+  const quietClient = api.quietWhenEmpty === true;
   useEffect(() => {
-    if (!running || load.status !== "ready") return;
-    const timer = setTimeout(() => setTick((value) => value + 1), POLL_MS);
-    return () => clearTimeout(timer);
-  }, [running, load.status, tick]);
+    if (load.status === "loading") return;
+    if (load.status === "error" && !quietClient) return;
+    if (!running && !quietClient) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) setTick((value) => value + 1);
+    }, running ? POLL_MS : IDLE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [running, load.status, quietClient]);
 
   const showEarlier = useCallback(async () => {
     if (paging.current || before === null) return;
@@ -90,8 +98,11 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
     });
   const showAll = (id: string) => setExpanded((old) => new Set(old).add(id));
 
-  if (load.status === "loading") return <div className="cb-list" aria-busy="true" />;
+  // The production client draws the terminal alone until it has blocks; only the preview mock shows these loading, empty and error frames.
+  const quiet = api.quietWhenEmpty === true;
+  if (load.status === "loading") return quiet ? null : <div className="cb-list" aria-busy="true" />;
   if (load.status === "error" && blocks.length === 0) {
+    if (quiet) return null;
     return (
       <div className="cb-list">
         <div className="cb-empty">
@@ -104,6 +115,7 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
     );
   }
   if (blocks.length === 0) {
+    if (quiet) return null;
     return (
       <div className="cb-list">
         <div className="cb-empty">

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "../../../../api/client";
 import { useUi } from "../../../../product/state/ui";
 import { blocksApi, setBlocksApi, type BlockList, type BlockOutputPage, type CommandBlock, type CommandBlocksApi } from "./blocksContract";
+import { realBlocksApi } from "./blocksClient";
 import { CommandBlocks } from "./CommandBlocks";
 
 const T0 = Date.UTC(2026, 10, 22, 14, 0, 0);
@@ -40,14 +41,38 @@ beforeEach(() => useUi.setState({ toasts: [] }));
 afterEach(() => {
   setBlocksApi(null);
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-describe("hidden by default", () => {
-  it("draws nothing and sends nothing while no client is installed", () => {
-    expect(blocksApi()).toBeNull();
+describe("the production client", () => {
+  const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+  it("draws nothing and says nothing when its first list is empty", async () => {
+    const limits = { max_blocks: 500, max_block_bytes: 1_048_576, max_total_bytes: 8_388_608 };
+    const fetching = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ blocks: [], next_before: null, limits }), { status: 200 }));
+    vi.stubGlobal("fetch", fetching);
+    setBlocksApi(null);
+    expect(blocksApi()).toBe(realBlocksApi);
     const { container } = mount();
+    await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    expect(String(fetching.mock.calls[0]?.[0])).toBe("/api/threads/th/terminals/main/blocks");
+    await settle();
     expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Commands Orbyn runs appear here as blocks")).not.toBeInTheDocument();
+    expect(useUi.getState().toasts).toEqual([]);
+  });
+
+  it("draws nothing and says nothing when its list fails", async () => {
+    const fetching = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ code: "internal", message: "No." }), { status: 500 }));
+    vi.stubGlobal("fetch", fetching);
+    setBlocksApi(null);
+    const { container } = mount();
+    await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Couldn't read this terminal's blocks.")).not.toBeInTheDocument();
+    expect(useUi.getState().toasts).toEqual([]);
   });
 });
 
