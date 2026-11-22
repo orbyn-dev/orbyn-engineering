@@ -178,6 +178,14 @@ pub enum TerminalAttentionEvent {
 }
 
 wire! {
+/// `GET /api/threads/{id}/terminal-attention`: the items waiting now, each shaped as the
+/// `waiting` value of the thread log's event. Only `waiting` values appear here.
+pub struct TerminalAttentionOpen {
+    pub items: Vec<TerminalAttentionEvent>,
+}
+}
+
+wire! {
 /// One frame of `GET /api/threads/{id}/terminals/{terminal}/output/events`: a
 /// terminal's output as it is produced. Text is UTF-8, so a character split across
 /// two PTY reads arrives whole in the next frame; control sequences are kept and

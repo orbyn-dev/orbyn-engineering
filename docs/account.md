@@ -170,7 +170,7 @@ backoff timer wakes it.
 
 **Merge.** The client gives conflicts back as plain records. The app merges them field by field with `orbyn-sync`:
 per-field hybrid logical clock, the larger stamp wins, ties break by canonical JSON. **The apply path applies only the allowlist.** Today `check` in
-`preferences.rs` accepts all 64 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
+`preferences.rs` accepts all 65 catalog keys, and the Engine crate drops only its never-synced keys, passing the rest
 through as unknown. So a peer could send `default_project_scripts`, which would run commands on the person's other
 computers, and a compromised device could use that. The rule: the sync apply path (a private path that does not queue
 fields again) applies **only the 11 allowlisted keys plus keybindings**, each through `check` and the per-key rules
@@ -264,7 +264,7 @@ field name or a rule itself. What follows is the app's side of the agreement.
 - `default_theme` syncs; `default_theme_set_at` does not. It stays the local "apply once" stamp
   ([EnvironmentTheme](../crates/orbyn-contracts/src/settings.rs)) and is set when a remote theme is applied.
 
-**Synced keys** (11 of the 64 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
+**Synced keys** (11 of the 65 in the catalog in `preferences.rs`, plus keybindings). This is the list agreed with
 Engineering 1, narrowed by the [rule below](#what-never-syncs). Only the person-level value of a key syncs.
 
 | Group | Keys |
@@ -298,7 +298,7 @@ Twenty-eight keys, by decision:
 
 ### Not in v1, may sync later
 
-The other 25 keys are not synced in v1, so 11 + 28 + 25 = 64:
+The other 26 keys are not synced in v1, so 11 + 28 + 26 = 65:
 
 | Key | Reason |
 | --- | --- |
@@ -306,6 +306,7 @@ The other 25 keys are not synced in v1, so 11 + 28 + 25 = 64:
 | `auto_pull`, `new_worktrees_start_from_origin`, `worktree_submodules` | Change what git does on each computer; held back with project defaults |
 | `remove_agent_credits_on_merge`, `pull_request_merge_method`, `review_guides_enabled`, `review_guide_model` | Project and forge defaults; held back with project defaults |
 | `project_title_instructions`, `review_guide_instructions`, `source_control_writing_style` | Free-text prompts; wait for the prompts record |
+| `claude_engine_path` | Which path Claude runs take (SDK or CLI) depends on this computer's installed `claude` and host |
 | `enable_provider_update_checks`, `continue_threads_after_update`, `warm_next_turn`, `preview_profiles` | Per-computer behaviour or local browser data |
 | `compact_idle_threads`, `idle_compaction`, `snooze_limited_threads`, `auto_resume_limited_threads`, `task_skip_near_limit`, `poll_pull_requests` | Thread and polling behaviour; not requested for v1 |
 | `crew_digest` | The daily digest's send time; a notification schedule stays on this device |

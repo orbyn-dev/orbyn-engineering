@@ -14,12 +14,14 @@ interface Editing { id: string; value: string }
  * down. "+" lists the devices the service gave; there is no create. Renaming is inline: Return saves, Escape cancels,
  * and an empty name goes back to the device name.
  */
-export function DeviceTabs({ devices, open, active, names, busy, onSelect, onClose, onRename, onFloat, onSetup, onShutdown }: {
+export function DeviceTabs({ devices, open, active, names, busy, initialMenu = false, onSelect, onClose, onRename, onFloat, onSetup, onShutdown }: {
   devices: Device[];
   open: string[];
   active: string | null;
   names: Record<string, string>;
   busy: boolean;
+  /** The dev preview's device-float-docked-hint frame opens the tab menu without a click. */
+  initialMenu?: boolean;
   onSelect(id: string): void;
   onClose(id: string): void;
   onRename(id: string, name: string): void;
@@ -32,11 +34,18 @@ export function DeviceTabs({ devices, open, active, names, busy, onSelect, onClo
   const [editing, setEditing] = useState<Editing | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const cancelled = useRef(false);
+  const menuOpened = useRef(false);
 
   const editingId = editing?.id;
   useEffect(() => {
     if (editingId) input.current?.select();
   }, [editingId]);
+  useEffect(() => {
+    if (!initialMenu || menuOpened.current || !active) return;
+    menuOpened.current = true;
+    const rect = document.querySelector(".dev-tab-slot[data-on] .dev-tab-more")?.getBoundingClientRect();
+    setMenu({ x: rect && rect.width > 0 ? rect.right - 200 : 220, y: rect && rect.height > 0 ? rect.bottom + 4 : 140, id: active });
+  }, [initialMenu, active]);
 
   const deviceOf = (id: string) => devices.find((device) => device.id === id);
   const labelOf = (device: Device) => tabName(names[device.id], plain(device.name, 60));
