@@ -358,12 +358,7 @@ async fn a_digits_call_the_server_answered_keeps_the_try_it_reserved() {
         .stand_in()
         .fail_next_digits_with(DeviceError::Server { retryable: true });
     assert_eq!(
-        code(
-            core.account
-                .submit_digits(typed(&right))
-                .await
-                .unwrap_err()
-        ),
+        code(core.account.submit_digits(typed(&right)).await.unwrap_err()),
         "account_unavailable"
     );
     assert_eq!(core.account.spent_digit_tries().await, Some(1));
@@ -389,12 +384,7 @@ async fn a_digits_call_that_never_reached_the_server_gives_its_try_back() {
         .stand_in()
         .fail_next_digits_with(DeviceError::Offline);
     assert_eq!(
-        code(
-            core.account
-                .submit_digits(typed(&right))
-                .await
-                .unwrap_err()
-        ),
+        code(core.account.submit_digits(typed(&right)).await.unwrap_err()),
         "account_offline"
     );
     assert_eq!(core.account.spent_digit_tries().await, Some(0));
@@ -404,17 +394,19 @@ async fn a_digits_call_that_never_reached_the_server_gives_its_try_back() {
 async fn the_stand_ins_digits_die_with_the_request_not_with_the_allowance() {
     let dir = TempDir::new();
     let core = dev(&dir, "digits-life");
-    // The request lives 200 ms; the trusted device answers 60 ms into it.
+    // The request lives 800 ms; the trusted device answers 150 ms into it.
     core.account
         .stand_in()
-        .set_incoming_life(Duration::from_millis(200));
+        .set_incoming_life(Duration::from_millis(800));
     asking(&core, "late@example.com").await;
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
     core.account.stand_in().answer(Answer::Allow);
-    // What is left of the request, not ten minutes from the allowance: the Engine issues the digits
-    // inside the request they belong to.
+    // What is left of the request, not the full life from the allowance: the Engine issues the
+    // digits inside the request they belong to.
     assert!(!core.account.stand_in().digits_expired());
-    tokio::time::sleep(Duration::from_millis(220)).await;
+    // 725 ms on, the request is 875 ms old and over its 800 ms, though only 725 ms have passed
+    // since the allowance a clock that started there would still be serving.
+    tokio::time::sleep(Duration::from_millis(725)).await;
     assert!(core.account.stand_in().digits_expired());
 }
 
