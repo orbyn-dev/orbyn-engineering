@@ -8,14 +8,17 @@
 //! figure the records cannot measure is left out (`cycle`, `cost`) rather than sent as `0`, and
 //! free text is scrubbed and capped as the trust read does it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use orbyn_contracts as wire;
+use orbyn_contracts::{AnswerKey, Brief};
 use serde_json::Value;
 
 use crate::app::Core;
-use crate::crew::{redact, valid_id};
+use crate::crew::autopilot::ledger;
+use crate::crew::{key_needles, valid_id};
 use crate::error::{CoreError, Result};
+use crate::redaction::Redactor;
 use crate::store::{AutopilotEvent, MergeRecord};
 use crate::util::parse_time;
 
@@ -49,13 +52,32 @@ const APPROVAL_KINDS: [&str; 5] = [
 /// Ledger kinds that mean something waited on the person and none of them is an approval.
 const OTHER_NEEDED_KINDS: [&str; 3] = ["person", "main_broken", "merge_waiting"];
 
+/// The ledger kinds this read looks at. The window's rows are fetched in one query over these,
+/// never one task at a time and never the whole ledger.
+const DASHBOARD_KINDS: [&str; 10] = [
+    "held",
+    "approved_once",
+    "denied_by_person",
+    "dismissed_by_person",
+    "hold_used",
+    "person",
+    "main_broken",
+    "merge_waiting",
+    "person_told",
+    "reverted",
+];
+
 /// One merge with the records the answer needs beside it.
 struct Merge {
     record: MergeRecord,
-    /// The brief's outcome, which the page shows as the title: scrubbed and capped.
+    /// The brief's outcome, which the page shows as the title: scrubbed, withheld and capped.
     title: String,
-    /// The model the brief named, when it named one.
+    /// The model the brief named, when it named one: scrubbed, withheld and capped.
     model: Option<String>,
+    /// The engine that did the work, scrubbed, withheld and capped.
+    engine: String,
+    /// The areas the merge touched, each scrubbed, withheld and capped.
+    areas: Vec<String>,
     /// The moment the brief was accepted, in Unix seconds. Cycle time starts here.
     created_unix: Option<i64>,
     /// The task's rows in the approval ledger.
@@ -107,18 +129,20 @@ impl Merge {
             .any(|e| e.body.get("about").and_then(Value::as_str) == Some("reverted"))
     }
 
-    /// Whether the cause of the revert was certain. An automatic revert is only made from a
-    /// certain break; a person's revert is certain only when the watch recorded that.
+    /// Whether the cause of the revert was certain. The watch reverts by itself only from a
+    /// certain break; a person's revert is `false` when the watch recorded a break without
+    /// certainty, `true` when it recorded one, and `null` when nothing recorded a cause.
     fn revert_certain(&self) -> Option<bool> {
-        if self.reverted_by_auto()
-            || self
-                .events_of("main_broken")
-                .any(|e| e.body.get("certain").and_then(Value::as_bool) == Some(true))
-        {
-            Some(true)
-        } else {
-            None
+        if self.reverted_by_auto() {
+            return Some(true);
         }
+        self.events_of("main_broken").next_back().map(|event| {
+            event
+                .body
+                .get("certain")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
     }
 
     /// When the revert was recorded, in Unix seconds. The merge's own time stands in when the
@@ -210,10 +234,64 @@ fn p90(sorted: &[i64]) -> i64 {
     sorted[(sorted.len() * 9).div_ceil(10).max(1) - 1]
 }
 
-/// Free text the page draws: scrubbed as the trust read scrubs it, then capped, so a long or a
-/// hostile outcome can be neither a whole screen nor a megabyte.
-fn shown(text: &str) -> String {
-    redact(text).chars().take(TEXT_MAX).collect()
+/// Free text the page draws: the task's answer-key text is withheld, the person's own Settings ›
+/// Secrets patterns mask it, the whole is redacted and checked once more, then capped, so a long
+/// or a hostile outcome can be neither a whole screen nor a megabyte. Text that still fails the
+/// check is withheld by [`ledger::shown_masked`] rather than sent.
+fn shown(text: &str, needles: &[String], person: &Redactor) -> String {
+    ledger::shown_masked(text, needles, person)
+        .chars()
+        .take(TEXT_MAX)
+        .collect()
+}
+
+/// The largest list each answer sends, lowered as one by the test hook.
+#[derive(Clone, Copy)]
+struct Caps {
+    engines: usize,
+    areas: usize,
+    reverts: usize,
+    recent: usize,
+}
+
+impl Default for Caps {
+    fn default() -> Self {
+        Self {
+            engines: ENGINES_MAX,
+            areas: AREAS_MAX,
+            reverts: REVERTS_MAX,
+            recent: RECENT_MAX,
+        }
+    }
+}
+
+/// A store read that failed in this read: the Crew records on this device could not be read, and
+/// the answer is the contract's `500 history_unreadable`, never a bare `internal`.
+fn history_unreadable(error: CoreError) -> CoreError {
+    match error {
+        CoreError::Store(_)
+        | CoreError::Io(_)
+        | CoreError::Json(_)
+        | CoreError::Internal(_)
+        | CoreError::StoredDataDamaged(_)
+        | CoreError::Unreadable(_) => CoreError::Refused {
+            status: 500,
+            code: "history_unreadable",
+            message: "The Crew records on this device could not be read.".into(),
+            detail: Value::Null,
+        },
+        other => other,
+    }
+}
+
+/// Every record one window's merges need, read in a few queries for the whole window rather than
+/// six per merge.
+struct WindowFacts {
+    briefs: BTreeMap<String, Brief>,
+    created: BTreeMap<String, String>,
+    keys: BTreeMap<String, AnswerKey>,
+    events: BTreeMap<String, Vec<AutopilotEvent>>,
+    answered: BTreeSet<String>,
 }
 
 impl Core {
@@ -225,6 +303,42 @@ impl Core {
         days: Option<u32>,
         utc_offset_minutes: i32,
         now: i64,
+    ) -> Result<wire::CrewDashboard> {
+        self.crew_dashboard_with(project, days, utc_offset_minutes, now, Caps::default())
+    }
+
+    /// The same read with every bounded list cut at `cap`, so a test can prove `truncated` without
+    /// writing more rows than production holds.
+    #[cfg(test)]
+    pub(crate) fn crew_dashboard_with_caps(
+        &self,
+        project: &str,
+        days: Option<u32>,
+        utc_offset_minutes: i32,
+        now: i64,
+        cap: usize,
+    ) -> Result<wire::CrewDashboard> {
+        self.crew_dashboard_with(
+            project,
+            days,
+            utc_offset_minutes,
+            now,
+            Caps {
+                engines: cap,
+                areas: cap,
+                reverts: cap,
+                recent: cap,
+            },
+        )
+    }
+
+    fn crew_dashboard_with(
+        &self,
+        project: &str,
+        days: Option<u32>,
+        utc_offset_minutes: i32,
+        now: i64,
+        caps: Caps,
     ) -> Result<wire::CrewDashboard> {
         self.crew_preview_only()?;
         valid_id(project)?;
@@ -239,66 +353,92 @@ impl Core {
         }
         // A project the service does not list is not found; a project whose record cannot be read
         // is an error, never a repository with no merges.
-        self.store.project(project)?;
+        self.store.project(project).map_err(history_unreadable)?;
         let since = now - i64::from(days) * DAY_SECS;
-        let window = self
+        // The project and the window are in SQL: the whole merge history is never handed back.
+        let records = self
             .store
-            .crew_merges_of_project_since(project, since)?
+            .crew_merges_of_project_since(project, since)
+            .map_err(history_unreadable)?;
+        let task_ids: Vec<String> = records
+            .iter()
+            .map(|record| record.task_id.clone())
+            .collect();
+        let facts = self.window_facts(&task_ids)?;
+        let person = self.display_redactor().map_err(history_unreadable)?;
+        let window: Vec<Merge> = records
             .into_iter()
-            .filter(|merge| merge.merged_unix >= since)
-            .map(|record| self.merge_facts(record))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(figures(project, days, now, utc_offset_minutes, window))
+            .map(|record| merge_facts(record, &facts, &person))
+            .collect();
+        Ok(figures(
+            project,
+            days,
+            now,
+            utc_offset_minutes,
+            window,
+            caps,
+        ))
     }
 
-    /// One merge with the records the answer needs beside it. A record that cannot be read stops
-    /// the read, rather than counting that merge as one that needed nothing.
-    fn merge_facts(&self, record: MergeRecord) -> Result<Merge> {
-        let task_id = record.task_id.clone();
-        let brief = self.store.crew_brief(&task_id)?;
-        let title = brief
-            .as_ref()
-            .map_or_else(String::new, |brief| shown(&brief.outcome));
-        let model = brief
-            .as_ref()
-            .and_then(|brief| brief.engine.as_ref())
-            .and_then(|engine| engine.model.as_ref())
-            .map(|model| shown(model.as_str()));
-        let created_unix = self
-            .store
-            .crew_task(&task_id)?
-            .as_ref()
-            .and_then(|task| parse_time(&task.created_at));
-        let events = self.store.crew_autopilot_events(&task_id)?;
-        let answered = self.task_question_answered(&task_id)?;
-        Ok(Merge {
-            record,
-            title,
-            model,
-            created_unix,
-            events,
-            answered,
+    /// Every record the window's merges need, read for all their task ids at once. A store read
+    /// that fails stops the answer with `history_unreadable` rather than counting that merge as
+    /// one that needed nothing.
+    fn window_facts(&self, task_ids: &[String]) -> Result<WindowFacts> {
+        Ok(WindowFacts {
+            briefs: self
+                .store
+                .crew_briefs_of_tasks(task_ids)
+                .map_err(history_unreadable)?,
+            created: self
+                .store
+                .crew_task_created_at(task_ids)
+                .map_err(history_unreadable)?,
+            keys: self
+                .store
+                .crew_answer_keys_of_tasks(task_ids)
+                .map_err(history_unreadable)?,
+            events: self
+                .store
+                .crew_autopilot_events_of_tasks(task_ids, &DASHBOARD_KINDS)
+                .map_err(history_unreadable)?,
+            answered: self
+                .store
+                .crew_answered_question_tasks(task_ids)
+                .map_err(history_unreadable)?,
         })
     }
+}
 
-    /// Whether the person answered an engine's question in this task: on the lead's thread or the
-    /// worker's, since a question holds whichever run asked it.
-    fn task_question_answered(&self, task_id: &str) -> Result<bool> {
-        let Some(run) = self.store.crew_run(task_id)? else {
-            return Ok(false);
-        };
-        for thread in [Some(run.lead_thread_id), run.worker_thread_id] {
-            let Some(thread) = thread else { continue };
-            let answered = self
-                .store
-                .list_questions(Some(&thread), None)?
-                .iter()
-                .any(|question| question.state == orbyn_contracts::QuestionState::Answered);
-            if answered {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+/// One merge with the window's records beside it. Free text is scrubbed with the task's own key
+/// needles and the person's Settings › Secrets patterns, so no title, model, engine or area can
+/// show either.
+fn merge_facts(record: MergeRecord, facts: &WindowFacts, person: &Redactor) -> Merge {
+    let task_id = record.task_id.as_str();
+    let needles = facts.keys.get(task_id).map(key_needles).unwrap_or_default();
+    let brief = facts.briefs.get(task_id);
+    let title = brief.map_or_else(String::new, |brief| shown(&brief.outcome, &needles, person));
+    let model = brief
+        .and_then(|brief| brief.engine.as_ref())
+        .and_then(|engine| engine.model.as_ref())
+        .map(|model| shown(model.as_str(), &needles, person));
+    let created_unix = facts.created.get(task_id).and_then(|at| parse_time(at));
+    let events = facts.events.get(task_id).cloned().unwrap_or_default();
+    let answered = facts.answered.contains(task_id);
+    let engine = shown(&record.engine, &needles, person);
+    let areas = record
+        .areas
+        .iter()
+        .map(|area| shown(area, &needles, person))
+        .collect();
+    Merge {
+        record,
+        title,
+        model,
+        engine,
+        areas,
+        created_unix,
+        events,
+        answered,
     }
 }
 
@@ -310,6 +450,7 @@ fn figures(
     now: i64,
     offset_minutes: i32,
     merges: Vec<Merge>,
+    caps: Caps,
 ) -> wire::CrewDashboard {
     let mut unaided = 0u32;
     let mut reverted = 0u32;
@@ -342,11 +483,11 @@ fn figures(
         week.reverted += u32::from(was_reverted);
 
         let engine = engines
-            .entry(merge.record.engine.clone())
+            .entry(merge.engine.clone())
             .or_insert_with(|| EngineTotal {
                 model: None,
                 row: wire::CrewDashboardEngine {
-                    name: shown(&merge.record.engine),
+                    name: merge.engine.clone(),
                     model: None,
                     merges: 0,
                     unaided: 0,
@@ -373,11 +514,11 @@ fn figures(
             }
         }
 
-        for area in &merge.record.areas {
+        for area in &merge.areas {
             let row = areas
                 .entry(area.clone())
                 .or_insert_with(|| wire::CrewDashboardArea {
-                    name: shown(area),
+                    name: area.clone(),
                     merges: 0,
                     unaided: 0,
                     reverted: 0,
@@ -401,7 +542,7 @@ fn figures(
         }
         recent.push(wire::CrewDashboardRecent {
             title: merge.title.clone(),
-            engine: shown(&merge.record.engine),
+            engine: merge.engine.clone(),
             at: merge.record.merged_unix,
             needed: merge.needed(),
             checks: merge.checks(),
@@ -430,10 +571,10 @@ fn figures(
     let mut area_rows: Vec<wire::CrewDashboardArea> = areas.into_values().collect();
     area_rows.sort_by(|a, b| b.merges.cmp(&a.merges).then_with(|| a.name.cmp(&b.name)));
 
-    let (engine_rows, more_engines) = capped(engine_rows, ENGINES_MAX);
-    let (area_rows, more_areas) = capped(area_rows, AREAS_MAX);
-    let (reverts, more_reverts) = capped(reverts, REVERTS_MAX);
-    let (recent, more_recent) = capped(recent, RECENT_MAX);
+    let (engine_rows, more_engines) = capped(engine_rows, caps.engines);
+    let (area_rows, more_areas) = capped(area_rows, caps.areas);
+    let (reverts, more_reverts) = capped(reverts, caps.reverts);
+    let (recent, more_recent) = capped(recent, caps.recent);
 
     wire::CrewDashboard {
         project: project.to_owned(),
@@ -469,7 +610,10 @@ fn week_rows(
     let Some(first) = weeks.keys().next().copied() else {
         return Vec::new();
     };
-    let last = local_week_start(now, offset_minutes);
+    // A merge stamped after `now` is still counted in `merges`, so its week is the last bar: the
+    // weeks always add up to the merges figure, even when the record's clock ran ahead.
+    let last_merge = weeks.keys().next_back().copied().unwrap_or(first);
+    let last = local_week_start(now, offset_minutes).max(last_merge);
     let mut rows = Vec::new();
     let mut start = first;
     while start <= last {
@@ -511,13 +655,24 @@ fn capped<T>(mut rows: Vec<T>, max: usize) -> (Vec<T>, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::redaction::{Custom, Redactor, compile};
+    use orbyn_contracts::{PatternKind, PatternScope};
 
-    /// 2026-11-22T00:00:00Z, a Sunday.
-    const SUNDAY: i64 = 1_795_305_600;
+    /// 2025-11-23T00:00:00Z, a Sunday.
+    const SUNDAY: i64 = 1_763_856_000;
+
+    /// The weekday of a Unix instant, Sunday is 0 and Monday is 1, from the known anchor that
+    /// 1970-01-01 was a Thursday. The read counts Monday as 0; this test counts from the anchor
+    /// so a wrong fixture cannot agree with a wrong formula.
+    fn weekday(unix: i64) -> i64 {
+        (unix.div_euclid(DAY_SECS) + 4).rem_euclid(7)
+    }
 
     #[test]
     fn a_local_week_starts_on_the_monday_the_person_sees() {
+        assert_eq!(weekday(SUNDAY), 0, "the fixture is a Sunday");
         let monday = SUNDAY - 6 * DAY_SECS;
+        assert_eq!(weekday(monday), 1, "six days back is the Monday");
         assert_eq!(local_week_start(SUNDAY, 0), monday);
         // The person's Monday 00:00 in a +10:00 zone falls ten hours before UTC's Monday.
         assert_eq!(local_week_start(SUNDAY, 600), monday - 10 * 3_600);
@@ -528,6 +683,8 @@ mod tests {
     #[test]
     fn every_instant_of_a_local_week_names_the_same_monday() {
         let start = local_week_start(SUNDAY, 600);
+        // 2025-11-17T00:00:00+10:00 is 2025-11-16T14:00:00Z.
+        assert_eq!(start, SUNDAY - 6 * DAY_SECS - 10 * 3_600);
         for hour in [0i64, 1, 23, 24, 6 * 24] {
             assert_eq!(
                 local_week_start(SUNDAY - 6 * DAY_SECS + hour * 3_600, 600),
@@ -590,9 +747,36 @@ mod tests {
 
     #[test]
     fn a_long_or_hostile_title_is_capped_and_scrubbed() {
+        let person = Redactor::default();
         let long = "x".repeat(TEXT_MAX + 50);
-        assert_eq!(shown(&long).chars().count(), TEXT_MAX);
-        assert!(!shown("token ghp_1234567890123456789012345678901234567890").contains("ghp_1"));
+        assert_eq!(shown(&long, &[], &person).chars().count(), TEXT_MAX);
+        assert!(
+            !shown(
+                "token ghp_1234567890123456789012345678901234567890",
+                &[],
+                &person
+            )
+            .contains("ghp_1")
+        );
+    }
+
+    #[test]
+    fn a_title_withholds_the_answer_key_and_masks_the_persons_patterns() {
+        let person = Redactor::only(vec![Custom {
+            name: "Corp id",
+            regex: compile(PatternKind::Regex, "corp_[a-z]{6}").unwrap(),
+            applies_to: PatternScope::Anywhere,
+        }]);
+        let needles = vec!["echo orbyn-key-marker-77".to_owned()];
+        let title = shown(
+            "Ran echo orbyn-key-marker-77 for corp_abcdef and finished.",
+            &needles,
+            &person,
+        );
+        assert!(!title.contains("orbyn-key-marker-77"), "{title}");
+        assert!(!title.contains("corp_abcdef"), "{title}");
+        assert!(title.contains("[check]"), "{title}");
+        assert!(title.contains("[hidden: Corp id]"), "{title}");
     }
 
     #[test]

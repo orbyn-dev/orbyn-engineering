@@ -50,8 +50,9 @@ Rules the service keeps and the page relies on:
 
 - Every figure is for the repository and the window asked, on this device. Runs made on other devices are not included, and the page says so.
 - Cost is never summed across engines or units, by the service or the page. The page adds one engine's own unit across repositories for the All projects total.
-- A `title`, `name` or `model` is text from a pull request, a branch or an engine: untrusted. The service scrubs secrets as `trust` does (`redact`) and caps
-  each at 200 characters; the page caps again at 60 and draws it as text, never as markup or a link.
+- A `title`, `name` or `model` is text from a pull request, a branch or an engine: untrusted. The service scrubs it like the trust read (`redact`), withholds the task's
+  answer-key text, masks the person's own Settings › Secrets patterns, and caps each at 200 characters; text that still fails the secret or answer-key check is
+  withheld, never sent. The page caps again at 60 and draws it as text, never as markup or a link.
 - A count the service cannot measure is left out of the answer (`cycle: null`, `cost: null`), never sent as `0`.
 
 Errors (the usual `{code, message}` body):
@@ -69,7 +70,8 @@ Limits: one repository per request; the answer is at most about 40 KiB. The merg
 The service answers them from records it already keeps (`crates/orbyn-core/src/crew/dashboard.rs`); none needed a new table or column.
 
 1. **"Needed nothing from the person"** is: no row in the approval ledger for the task of the kinds `held`, `approved_once`, `denied_by_person`,
-   `dismissed_by_person` or `hold_used`; no engine question in the task's lead or worker thread left `answered`; and no row of the kinds `person`
+   `dismissed_by_person` or `hold_used`; no engine question asked and answered after the task's brief on its lead or worker thread (one `EXISTS` scoped to
+   the task, so a question from an earlier task on the shared lead thread never marks a later one); and no row of the kinds `person`
    (a request that needs a person), `main_broken` (a broken main it asked about) or `merge_waiting`. `needed` and `unaided` are both read from that.
    An answered lead question inside a Crew task is an engine question (`question_requests`), not a crew message, so that is the record read.
 2. **Where the brief moment lives:** `crew_tasks.created_at`, the row written when the brief was accepted. A task that began as a thread or from a
@@ -87,8 +89,14 @@ The service answers them from records it already keeps (`crates/orbyn-core/src/c
 
 - Route: `GET /api/crew/dashboard` in `crates/orbynd/src/routes/crew.rs`, listed in `crates/orbynd/tests/routes.json`. Read: `Core::crew_dashboard`
   in `crates/orbyn-core/src/crew/dashboard.rs`. Types: `crates/orbyn-contracts/src/crew_dashboard.rs` (`CrewDashboard` and its rows).
-- Weeks: one row per week from the first week with a merge to the week of `as_of`, at most 14 (newest kept), so a quiet week is a zero bar and never
-  a missing one. `title`, `name` and `model` are redacted as `trust` redacts and capped at 200 characters; the page caps again at 60.
+- Weeks: one row per week from the first week with a merge to the week of `as_of`, or to the week of a merge stamped after `as_of` (it is still counted in
+  `merges`), at most 14 (newest kept), so a quiet week is a zero bar and never a missing one and the weeks add up to `merges`. `title`, `name` and `model`
+  are redacted, have the task's answer-key text withheld and the person's Settings › Secrets patterns masked, and are capped at 200 characters; the page
+  caps again at 60.
+- `certain` is `true` for a revert the watch made by itself or a recorded certain break, `false` when the watch recorded a break without certainty and a
+  person reverted it, and `null` when no record says why.
+- The merge read is bounded to the project and the window in SQL, and the brief, task stamp, answer key, ledger rows and answered-question check for all
+  the window's tasks are each read once, not once per merge. A store read that fails answers `500 history_unreadable`, as the contract says.
 - `merge_checks` and `not_verified` are not part of this read: it sends the task's own checks as `passed`, `failed` or `none`, and the proof itself stays
   in the Review queue reads.
 - Tests: `crates/orbyn-core/src/crew/tests/dashboard.rs` (window, project, weeks, cost units, reverts, checks, cycle, truncation, refusals, and that the

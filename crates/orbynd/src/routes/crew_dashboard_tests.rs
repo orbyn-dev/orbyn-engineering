@@ -121,6 +121,23 @@ async fn an_empty_repository_answers_zeros_and_no_figures_it_cannot_measure() {
 }
 
 #[tokio::test]
+async fn a_store_that_cannot_be_read_answers_history_unreadable() {
+    let app = serve("unreadable", true, false).await;
+    let project = fixtures::add_project(&app.core, app.dir.join("project").to_str().unwrap());
+    // A damaged database is what the page's "could not be read" state is for: the read fails at
+    // the merge query, and the answer carries the document's code and status, not `internal`.
+    app.core
+        .store
+        .reader()
+        .execute_batch("ALTER TABLE crew_runs RENAME TO crew_runs_unreadable")
+        .unwrap();
+    let (status, body) = app
+        .get(&format!("{DASHBOARD}?project={project}"), true)
+        .await;
+    assert_eq!((status, &body["code"]), (500, &json!("history_unreadable")));
+}
+
+#[tokio::test]
 async fn the_request_shape_is_checked_before_anything_is_read() {
     let app = serve("shape", true, false).await;
     let project = fixtures::add_project(&app.core, app.dir.join("project").to_str().unwrap());
