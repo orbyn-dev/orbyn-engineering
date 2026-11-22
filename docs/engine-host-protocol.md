@@ -292,6 +292,27 @@ Family `claude` (`src/families/claude.mjs`) runs `query()` of `@anthropic-ai/cla
 
 None of these three requests has run against the real SDK or a real `claude`; they are tested against a fake SDK only.
 
+### Planned, after the beta: native Claude rewind
+
+Not built. In this app the Claude host's `revert_session` stays unsupported, so a rewind leaves a handoff, which works today.
+`rollback` cannot serve it: the host keeps its turn heads (`turn-<sendId>` to the last top-level assistant uuid) in one live host
+session, the core opens a new host session for every run, and `resumeSessionAt` applies to the next query only. The design
+for later keeps no state in the host:
+
+- The core already names each prompt with a uuid (`messageId`). To revert before a run, it reads the session's JSONL (as
+  `agents/claude_history.rs` does) and takes the last top-level assistant message that comes before the user message with that
+  uuid.
+- `open` with `operation: "resume"` gains an optional `resumeAt` (that assistant uuid). The host passes it as
+  `resumeSessionAt` on the first query of that session. The core sends it on the next run after a rewind and records that
+  it has been applied.
+- A prompt with no earlier assistant message is not rewound natively (the core already requires an earlier run in the same
+  engine session) and falls back to a handoff.
+- This is a protocol change in a document Engineering 2 reviews, so it goes through them. The Claude host also stays behind
+  its flag until Anthropic approves it.
+
+`readSubagent` is announced and gated in the core (`GATED`), but the core has no method that sends it yet. It gets one when a
+subagent transcript panel is queued.
+
 ## Errors
 
 One shape everywhere an error crosses the wire:
