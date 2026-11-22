@@ -763,6 +763,105 @@ export const FRAMES = {
   "route-log-none": { route: "#/crew/approvals", scenario: "crew-route-none", steps: [click("button", "Routing", { prefix: true })] },
   "route-log": { route: "#/crew/approvals", scenario: "crew-route-blocked", steps: [click("button", "Routing", { prefix: true })] },
 
+  // Crew, the background create form and its daily budget (Crew Designs frames background-new, background-new-label,
+  // background-new-schedule and background-create-daily-*). The mock's crew-background scenario lists crews, so the
+  // header's New background crew opens the form with the default template, budget and daily budget.
+  "background-new": { route: "#/crew/background", scenario: "crew-background", steps: [click("button", "New background crew")] },
+  "background-new-label": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [click("button", "New background crew"), click("radio", "An issue gets a label"), { do: "fill", label: "Label", value: "flaky-test", exact: true }],
+  },
+  "background-new-schedule": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [click("button", "New background crew"), click("radio", "On a schedule")],
+  },
+  "background-create-daily-max": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "On a schedule"),
+      { do: "fill", label: "Turns", value: "1000", exact: true },
+      { do: "fill", label: "Minutes", value: "1440", exact: true },
+      { do: "fill", label: "Runs a day", value: "1000", exact: true },
+      { do: "fill", label: "Turns a day", value: "10000", exact: true },
+    ],
+  },
+  "background-create-daily-min": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "An issue gets a label"),
+      { do: "fill", label: "Label", value: "crew-fix", exact: true },
+      { do: "fill", label: "Turns", value: "1", exact: true },
+      { do: "fill", label: "Minutes", value: "1", exact: true },
+      { do: "fill", label: "Runs a day", value: "1", exact: true },
+      { do: "fill", label: "Turns a day", value: "1", exact: true },
+    ],
+  },
+  "background-create-daily-invalid": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      { do: "fill", label: "Runs a day", value: "1001", exact: true },
+      { do: "fill", label: "Turns a day", value: "0", exact: true },
+    ],
+  },
+  "background-create-daily-range-per-run": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      { do: "fill", label: "Turns", value: "0", exact: true },
+      { do: "fill", label: "Minutes", value: "1441", exact: true },
+    ],
+  },
+  "background-create-daily-range-empty": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "An issue gets a label"),
+      { do: "fill", label: "Label", value: "crew-fix", exact: true },
+      { do: "fill", label: "Runs a day", value: "", exact: true },
+      { do: "fill", label: "Turns a day", value: "1.5", exact: true },
+    ],
+  },
+  "background-create-daily-range-hours": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "On a schedule"),
+      { do: "fill", label: "Every N hours", value: "0", exact: true },
+    ],
+  },
+  "background-create-daily-range-name-label": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    steps: [
+      click("button", "New background crew"),
+      click("radio", "An issue gets a label"),
+      { do: "fill", label: "Name", value: "", exact: true },
+    ],
+  },
+  "background-create-daily-range-narrow": {
+    route: "#/crew/background",
+    scenario: "crew-background",
+    width: 520,
+    steps: [
+      click("button", "New background crew"),
+      { do: "fill", label: "Turns", value: "0", exact: true },
+      { do: "fill", label: "Minutes", value: "1441", exact: true },
+      { do: "fill", label: "Runs a day", value: "1001", exact: true },
+      { do: "fill", label: "Turns a day", value: "0", exact: true },
+    ],
+  },
+
   /** Crew, the escape log (Crew Designs v79), on the real escape routes over the mock's crew-escapes scenarios. A detail
    *  frame names its escape in the hash; escape-gap opens the same escape with its Set-the-gap dialog. */
   "escape-log": { route: "#/preview/crew/escape-log", scenario: "crew-escapes", wait: 2500 },
