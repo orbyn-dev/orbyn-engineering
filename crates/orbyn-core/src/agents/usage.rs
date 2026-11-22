@@ -556,8 +556,6 @@ struct Entry {
     model: String,
     tier: String,
     tokens: Tokens,
-    /// The account's own billed amount for this row, when it reports one.
-    billed: Option<f64>,
 }
 
 fn summarize_entries(
@@ -584,17 +582,16 @@ fn summarize_entries(
         model,
         tier,
         tokens,
-        billed,
     } in entries
     {
         if since.is_some_and(|since| day.as_str() < since) {
             continue;
         }
         let model = resolve(&model);
-        // An account's own bill is not an estimate, so it stands where it is reported.
-        let cost = billed.or_else(|| {
-            price_for(settings, &model, &tier).map(|price| split_total(&cost_split(tokens, price)))
-        });
+        // One source of cost for every engine: the configured price table. An amount the account
+        // reports is not mixed in here, since a day row and its model row would then disagree.
+        let cost =
+            price_for(settings, &model, &tier).map(|price| split_total(&cost_split(tokens, price)));
         model_days
             .entry(model.clone())
             .or_default()
@@ -638,27 +635,21 @@ fn summarize(
             model,
             tier,
             tokens,
-            billed: None,
         });
     summarize_entries(engine, status, scanned, skipped, entries, settings, since)
 }
 
 /// Cursor reports no local history: its spend is billed to the account, and the account's billed
-/// events are what the store holds. Its counters arrive separate, so nothing is folded together,
-/// and the account's own billed amount is the day's cost where it reports one.
+/// events are what the store holds. Its counters arrive separate, so nothing is folded together.
+/// The report is only asked for when the store holds events at all, so an engine with no history
+/// is absent rather than an empty row, and a period with no events is a scanned engine of nothing.
 fn summarize_billed(
     engine: &str,
     totals: Vec<crate::store::BilledTotal>,
     settings: &ServerSettings,
     since: Option<&str>,
 ) -> EngineUsage {
-    let status = if totals.is_empty() {
-        "no_history"
-    } else {
-        "scanned"
-    };
     let entries = totals.into_iter().map(|total| Entry {
-        billed: total.reported_cents.map(|cents| cents as f64 / 100.0),
         tokens: Tokens {
             input: total.input,
             output: total.output,
@@ -669,7 +660,7 @@ fn summarize_billed(
         model: total.model,
         tier: STANDARD_TIER.to_owned(),
     });
-    summarize_entries(engine, status.to_owned(), 0, 0, entries, settings, since)
+    summarize_entries(engine, "scanned".to_owned(), 0, 0, entries, settings, since)
 }
 
 pub struct UsageCenter {
@@ -725,13 +716,16 @@ impl UsageCenter {
             .into_iter()
             .map(|(name, scan)| summarize(name, scan, settings, since.as_deref()))
             .collect();
-        // Cursor's account reports its own billed events, which the store keeps; a store
-        // that never recorded one answers no history, never an error.
-        let billed = match store {
-            Some(store) => store.billed_totals(CURSOR, since.as_deref())?,
-            None => Vec::new(),
-        };
-        engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
+        // Cursor's account reports its own billed events, which the store keeps. No store, or a
+        // store that never recorded an event, is no history at all and no row: another engine's
+        // empty row would show spend that does not exist. A store with events but none in this
+        // period is a scanned engine of nothing, which is a different state from no history.
+        if let Some(store) = store {
+            if store.billed_event_count(CURSOR)? > 0 {
+                let billed = store.billed_totals(CURSOR, since.as_deref())?;
+                engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
+            }
+        }
         Ok(UsageReport {
             host_id: self.host_id.clone(),
             scanned_at: now(),
@@ -1378,27 +1372,32 @@ mod tests {
     }
 
     /// Cursor keeps no local history, so its spend comes from the account's billed events in the
-    /// store. No store at all is no history rather than an error.
+    /// store. No store, an empty store and a period with nothing in it are three states: the first
+    /// two have no row at all, and the third is a scanned engine of nothing.
     #[tokio::test]
-    async fn a_billed_store_feeds_the_report_and_an_absent_one_is_no_history() {
+    async fn a_billed_store_feeds_the_report_only_when_it_holds_events() {
         let dir = crate::testing::TempDir::new();
         let center = UsageCenter::new(dir.path()).unwrap();
         let settings = crate::store::default_settings();
-        let without = center.report(None, &settings, None).await.unwrap();
-        let cursor = without
-            .engines
-            .iter()
-            .find(|row| row.engine == CURSOR)
-            .unwrap();
-        assert_eq!(cursor.status, "no_history");
-        assert!(cursor.models.is_empty());
+        let cursor_row = |report: &UsageReport| {
+            report
+                .engines
+                .iter()
+                .find(|row| row.engine == CURSOR)
+                .cloned()
+        };
 
+        // No store at all, and a store that never recorded an event: no row, so no spend shown.
+        assert!(cursor_row(&center.report(None, &settings, None).await.unwrap()).is_none());
         let store = crate::store::Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        assert!(cursor_row(&center.report(Some(&store), &settings, None).await.unwrap()).is_none());
+
         let events = crate::store::parse_billed_events(
             CURSOR,
             &json!({ "usageEventsDisplay": [{
                 "timestamp": "1791691200000",
                 "model": "claude-4.5",
+                "conversationId": "conversation-a",
                 "tokenUsage": {
                     "inputTokens": 100,
                     "cacheReadTokens": 900,
@@ -1408,23 +1407,34 @@ mod tests {
                 },
             }]}),
         );
-        assert_eq!(store.record_billed_events(&events).unwrap(), 1);
-        let report = center.report(Some(&store), &settings, None).await.unwrap();
-        let cursor = report
-            .engines
-            .iter()
-            .find(|row| row.engine == CURSOR)
+        assert_eq!(store.record_billed_events(&events).unwrap().new, 1);
+
+        // The events are on 2026-10-11. A one-day period that ends today holds none of them, which
+        // is a scanned engine of nothing rather than no history.
+        let past = center
+            .report(Some(&store), &settings, Some(1))
+            .await
             .unwrap();
-        assert_eq!(cursor.status, "scanned");
-        assert_eq!(cursor.models.len(), 1);
-        assert_eq!(cursor.models[0].model, "claude-4.5");
-        assert_eq!(cursor.models[0].input_tokens, 100);
-        assert_eq!(cursor.models[0].cache_read_tokens, 900);
-        assert_eq!(cursor.models[0].output_tokens, 40);
-        // The account's own billed cents are the day's cost, not an estimate from a price table.
-        assert_eq!(cursor.days.len(), 1);
-        assert_eq!(cursor.days[0].tokens, 1040);
-        assert_eq!(cursor.days[0].estimated_cost, Some(1.25));
+        let row = cursor_row(&past).expect("a store with events reports the engine");
+        assert_eq!(row.status, "scanned");
+        assert!(row.models.is_empty(), "nothing in this period");
+
+        let all = center.report(Some(&store), &settings, None).await.unwrap();
+        let row = cursor_row(&all).expect("the engine is reported");
+        assert_eq!(row.status, "scanned");
+        assert_eq!(row.models.len(), 1);
+        assert_eq!(row.models[0].model, "claude-4.5");
+        assert_eq!(row.models[0].input_tokens, 100);
+        assert_eq!(row.models[0].cache_read_tokens, 900);
+        assert_eq!(row.models[0].output_tokens, 40);
+        // One source of cost for every engine: the price table, which prices nothing here, so the
+        // tokens are reported as unpriced rather than costed from the account's own cents. That is
+        // the same answer the day row and the model row give.
+        assert!(row.models[0].estimated_cost.is_none());
+        assert_eq!(row.models[0].unpriced_tokens, 1040);
+        assert_eq!(row.days.len(), 1);
+        assert_eq!(row.days[0].tokens, 1040);
+        assert_eq!(row.days[0].estimated_cost, None);
     }
 
     #[tokio::test]

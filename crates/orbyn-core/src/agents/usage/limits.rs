@@ -55,15 +55,6 @@ impl Core {
         let report = report?.ok_or_else(|| {
             CoreError::Unsupported("This engine does not report its limits.".into())
         })?;
-        // Cursor's account reports its billed events inside this read. Keeping them is what
-        // gives the Usage screen a history the engine host keeps no file for; a report without
-        // them, or a store that cannot write, leaves this read as it was.
-        if driver.family() == super::CURSOR {
-            let events = crate::store::parse_billed_events(super::CURSOR, &report);
-            if !events.is_empty() {
-                let _ = self.store.record_billed_events(&events);
-            }
-        }
         Ok(EngineLimits {
             engine: id.to_owned(),
             checked_at: now(),
