@@ -163,12 +163,12 @@ export function Shell() {
       <Toasts
         lead={
           <>
+            <CloneJobs />
             <FoldersNotice />
             <GitHubStarPrompt />
           </>
         }
       />
-      <CloneJobs />
       {palette ? <CommandPalette start={palette} onClose={() => setPalette(null)} /> : null}
       {phone && home ? (
         // The sidebar is this page, so nothing is drawn under it.
