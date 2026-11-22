@@ -81,6 +81,8 @@ describe("the reviewer backtest on the real 4n routes", () => {
     answers.estimate = { status: 200, body: estimate({ running: "run-live" }) };
     render(<LiveBacktest view="estimate" />);
     expect(await screen.findByText(/A backtest is running/)).toBeInTheDocument();
+    expect(screen.getByText(/Only one runs at a time: it finishes by itself\./)).toBeVisible();
+    expect(screen.queryByText(/stops it on its report/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Open the running backtest" })).toBeEnabled();
   });
 

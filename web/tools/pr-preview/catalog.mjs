@@ -879,6 +879,19 @@ export const FRAMES = {
   "backtest-estimate": { route: "#/preview/crew/backtest-estimate", scenario: "crew-backtest", wait: 2500 },
   "backtest-report": { route: "#/preview/crew/backtest-report?id=run-4n", scenario: "crew-backtest-report" },
   "backtest-stopped": { route: "#/preview/crew/backtest-stopped?id=run-stopped", scenario: "crew-backtest-stopped" },
+  /** The backtest page on the start-view read: a project with no run, a finished run, a stopped run and a narrow window. */
+  "entry-crew-backtest-page": { route: "#/settings/crew/backtest", scenario: "crew-backtest-none", wait: 2500 },
+  "entry-crew-backtest-page-last-finished": { route: "#/settings/crew/backtest", scenario: "crew-backtest", wait: 2500 },
+  "entry-crew-backtest-page-last-stopped": { route: "#/settings/crew/backtest", scenario: "crew-backtest-stopped", wait: 2500 },
+  "entry-crew-backtest-page-running": { route: "#/settings/crew/backtest", scenario: "crew-backtest-running", wait: 2500 },
+  "entry-crew-backtest-page-narrow-window": { route: "#/settings/crew/backtest", scenario: "crew-backtest-none", width: 640, wait: 2500 },
+  /** The lanes and budgets states: reading, an error with Try again, a lane with no kind, an engine with no budget and a failed last run. */
+  "backtest-lanes-reading": { route: "#/settings/crew/backtest", scenario: "crew-backtest", pre: [{ route: "**/api/crew/backtest/start-view*", delay: 20000 }], wait: 900 },
+  "backtest-lanes-error": { route: "#/settings/crew/backtest", scenario: "crew-backtest", pre: [{ route: "**/api/crew/backtest/start-view*", status: 500 }] },
+  "backtest-lanes-kind-not-recorded": { route: "#/settings/crew/backtest", scenario: "crew-backtest-kind-none" },
+  "backtest-lanes-budget-not-set": { route: "#/settings/crew/backtest", scenario: "crew-backtest-budget-none" },
+  "backtest-lanes-last-failed": { route: "#/settings/crew/backtest", scenario: "crew-backtest-failed" },
+  "backtest-lanes-narrow-window": { route: "#/settings/crew/backtest", scenario: "crew-backtest", width: 640 },
   /** Crew, the escape check frames (Crew Designs v79): one escape's own page with its check in the state the mock leaves it. */
   "escape-check-proposed": { route: "#/preview/crew/escape-check-proposed?id=esc-proposed", scenario: "crew-escapes-checks" },
   "escape-check-writing": { route: "#/preview/crew/escape-check-writing?id=esc-writing", scenario: "crew-escapes-checks" },
