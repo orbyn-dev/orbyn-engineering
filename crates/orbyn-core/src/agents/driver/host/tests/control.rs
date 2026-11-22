@@ -1,11 +1,14 @@
 //! The person's stop and restart of a family's host, and the rule that a host with background work
 //! open is not stopped unless the person's stop says so.
 
+use std::time::Instant;
+
 use serde_json::{Value, json};
 
 use super::*;
 use crate::agents::claude_history::project_folder_name;
 use crate::agents::driver::host::connection::ClosedReason;
+use crate::error::CoreError;
 
 #[tokio::test]
 async fn a_stop_ends_the_host_and_its_open_run_and_the_next_run_starts_it_again() {
@@ -480,7 +483,9 @@ async fn resume_at_is_never_sent_on_create_or_for_another_family() {
         return;
     };
     let driver = driver_on_node(&rig.pool, &node);
-    rig.pool.note_resume_at("claude", "session-1", HEAD);
+    rig.pool
+        .note_resume_at("claude", "session-1", HEAD)
+        .unwrap();
     let (_, outcome) = start(&driver, spec("create"))
         .await
         .unwrap()
@@ -492,8 +497,8 @@ async fn resume_at_is_never_sent_on_create_or_for_another_family() {
     assert!(created[0].get("resumeAt").is_none());
     assert_eq!(
         rig.pool.take_resume_at("claude", "session-1"),
-        Some(HEAD.to_owned()),
-        "a create did not consume it"
+        None,
+        "a create starts a new session, so the old point is gone"
     );
     rig.pool.shutdown().await;
 
@@ -501,7 +506,10 @@ async fn resume_at_is_never_sent_on_create_or_for_another_family() {
         return;
     };
     let other_driver = driver_on_node(&other.pool, &node);
-    other.pool.note_resume_at("claude", "eng-run-1", HEAD);
+    other
+        .pool
+        .note_resume_at("claude", "eng-run-1", HEAD)
+        .unwrap();
     let mut resumed = spec("resume");
     resumed.resume = Some("eng-run-1".into());
     let (_, outcome) = start(&other_driver, resumed).await.unwrap().outcome().await;
@@ -515,4 +523,89 @@ async fn resume_at_is_never_sent_on_create_or_for_another_family() {
         "another family did not consume it"
     );
     other.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_expired_rewind_point_is_not_sent_and_leaves_nothing_behind() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let driver = driver_on_node(&rig.pool, &node);
+    let noted = Instant::now();
+    rig.pool.set_resume_at_now(Some(noted));
+    rig.pool
+        .note_resume_at("claude", "session-1", HEAD)
+        .unwrap();
+    rig.pool
+        .set_resume_at_now(Some(noted + Duration::from_secs(121)));
+
+    let mut resumed = spec("resume");
+    resumed.resume = Some("session-1".into());
+    let (_, outcome) = start(&driver, resumed).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let open = opens(&rig);
+    assert_eq!(open[0]["operation"], "resume");
+    assert!(
+        open[0].get("resumeAt").is_none(),
+        "an expired point is never sent: {:?}",
+        open[0]
+    );
+    assert_eq!(rig.pool.take_resume_at("claude", "session-1"), None);
+    rig.pool.set_resume_at_now(None);
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_resume_of_another_session_drops_the_waiting_point() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let driver = driver_on_node(&rig.pool, &node);
+    rig.pool
+        .note_resume_at("claude", "old-session", HEAD)
+        .unwrap();
+    let mut resumed = spec("resume");
+    resumed.resume = Some("new-session".into());
+    let (_, outcome) = start(&driver, resumed).await.unwrap().outcome().await;
+    assert_eq!(outcome, EngineOutcome::Completed);
+    let open = opens(&rig);
+    assert_eq!(open[0]["operation"], "resume");
+    assert!(open[0].get("resumeAt").is_none());
+    assert_eq!(
+        rig.pool.take_resume_at("claude", "old-session"),
+        None,
+        "the thread's session changed, so the old point cannot apply"
+    );
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_rewind_refuses_when_the_point_store_is_poisoned() {
+    let Some(node) = node() else {
+        return;
+    };
+    let Some(rig) = standin_family("claude", &[], fast()) else {
+        return;
+    };
+    let history = TempDir::new();
+    let projects = history.path().join("projects");
+    let cwd = history.path().join("repo").to_string_lossy().into_owned();
+    transcript(&projects, &cwd, &[assistant(HEAD), user(PROMPT)]);
+    let driver = driver_on_node(&rig.pool, &node)
+        .with_history_root(projects)
+        .with_path(Arc::new(|| Ok(EnginePath::Sdk)));
+    rig.pool.poison_resume_at();
+    assert!(matches!(
+        driver
+            .revert_session(Path::new(&cwd), SESSION, PROMPT)
+            .await,
+        Err(CoreError::Internal(_))
+    ));
+    rig.pool.shutdown().await;
 }

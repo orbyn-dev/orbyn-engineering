@@ -1,10 +1,11 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
 use super::*;
 use crate::agents::driver::host::connection::{ClosedReason, RunFrame};
 use crate::agents::driver::host::frames::PROTOCOL;
+use crate::error::CoreError;
 
 #[tokio::test]
 async fn a_host_that_says_hello_and_ready_is_running() {
@@ -104,7 +105,11 @@ async fn a_restarting_host_reports_the_try_the_limit_and_the_wait() {
     assert!(rig.pool.acquire().await.is_err());
     let restart = rig.pool.status().await.restart.expect("a restart waits");
     assert_eq!((restart.attempt, restart.limit), (1, 5));
-    assert!(matches!(restart.next_try_seconds, Some(1..=30)), "{:?}", restart.next_try_seconds);
+    assert!(
+        matches!(restart.next_try_seconds, Some(1..=30)),
+        "{:?}",
+        restart.next_try_seconds
+    );
     rig.pool.shutdown().await;
 }
 
@@ -353,9 +358,8 @@ fn claude_uses_the_host_by_default_and_only_a_zero_flag_or_a_missing_host_keeps_
     );
 }
 
-#[test]
-fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
-    let pool = Pool::new(
+fn test_pool() -> Arc<Pool> {
+    Pool::new(
         "claude",
         HostSpec {
             program: "/nonexistent/orbyn-engine-host".into(),
@@ -365,12 +369,18 @@ fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
         },
         Timings::default(),
         None,
-    );
-    let head = "b2b2b2b2-1111-4222-8333-444455556666";
-    pool.note_resume_at("claude", "session-1", head);
+    )
+}
+
+const HEAD: &str = "b2b2b2b2-1111-4222-8333-444455556666";
+
+#[test]
+fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
+    let pool = test_pool();
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
     assert_eq!(
         pool.take_resume_at("claude", "session-1"),
-        Some(head.to_owned())
+        Some(HEAD.to_owned())
     );
     assert_eq!(
         pool.take_resume_at("claude", "session-1"),
@@ -378,7 +388,7 @@ fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
         "an open consumes it"
     );
 
-    pool.note_resume_at("claude", "session-1", head);
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
     assert_eq!(
         pool.take_resume_at("claude", "session-2"),
         None,
@@ -391,14 +401,89 @@ fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
     );
     assert_eq!(
         pool.take_resume_at("claude", "session-1"),
-        Some(head.to_owned())
+        Some(HEAD.to_owned())
     );
 
     // An empty id is not a rewind point.
-    pool.note_resume_at("claude", "", head);
-    pool.note_resume_at("claude", "session-1", "");
+    assert!(matches!(
+        pool.note_resume_at("claude", "", HEAD),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", ""),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", "not-a-uuid"),
+        Err(CoreError::Invalid(_))
+    ));
     assert_eq!(pool.take_resume_at("claude", ""), None);
     assert_eq!(pool.take_resume_at("claude", "session-1"), None);
+}
+
+#[test]
+fn a_rewind_point_expires_two_minutes_after_it_is_noted() {
+    let pool = test_pool();
+    let noted = Instant::now();
+    pool.set_resume_at_now(Some(noted));
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+
+    pool.set_resume_at_now(Some(noted + Duration::from_secs(119)));
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(HEAD.to_owned()),
+        "inside the window it still works"
+    );
+    pool.set_resume_at_now(None);
+
+    let noted = Instant::now();
+    pool.set_resume_at_now(Some(noted));
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+    pool.set_resume_at_now(Some(noted + Duration::from_secs(120)));
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        None,
+        "at the TTL the point is expired"
+    );
+    pool.set_resume_at_now(Some(noted));
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        None,
+        "taking an expired point dropped it, so moving the clock back does not revive it"
+    );
+    pool.set_resume_at_now(None);
+}
+
+#[test]
+fn a_rewind_point_refuses_a_poisoned_store() {
+    let pool = test_pool();
+    pool.poison_resume_at();
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", HEAD),
+        Err(CoreError::Internal(_))
+    ));
+}
+
+#[test]
+fn a_changed_thread_session_drops_its_waiting_rewind_point() {
+    let pool = test_pool();
+    pool.note_session("claude", "thread-1", "old-session");
+    pool.note_resume_at("claude", "old-session", HEAD).unwrap();
+    pool.note_session("claude", "thread-1", "old-session");
+    assert_eq!(
+        pool.take_resume_at("claude", "old-session"),
+        Some(HEAD.to_owned()),
+        "the session did not change"
+    );
+
+    pool.note_session("claude", "thread-1", "old-session");
+    pool.note_resume_at("claude", "old-session", HEAD).unwrap();
+    pool.note_session("claude", "thread-1", "new-session");
+    assert_eq!(
+        pool.take_resume_at("claude", "old-session"),
+        None,
+        "the thread's session changed"
+    );
 }
 
 #[test]
