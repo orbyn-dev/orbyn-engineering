@@ -77,11 +77,15 @@ describe("the first-run notice", () => {
 
   it("keeps the card and the message when the write fails, and says so", async () => {
     vi.spyOn(api, "startRun").mockRejectedValue(refusal("engine_notice_required"));
-    setCursorThreadApi(null);
+    setCursorThreadApi({
+      notice: async () => ({ engine: "cursor", project_id: "p", acknowledged: false, acknowledged_at: null }),
+      acknowledge: async () => { throw new Error("The service refused the write."); },
+      sendWithoutApprovals: async () => { throw new Error("The service refused the write."); },
+    });
     setup();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     await userEvent.click(await screen.findByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save that. This service does not offer that yet. Your message is kept.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save that. The service refused the write. Your message is kept.");
     expect(screen.getByRole("group", { name: "Before the first Cursor run" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(field()).toHaveValue("Run the tests.");
