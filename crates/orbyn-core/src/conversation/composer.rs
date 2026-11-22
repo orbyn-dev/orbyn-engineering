@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use orbyn_contracts::{Attachment, EngineTier, Mentions, SlashCommand, ThreadMention};
+use orbyn_contracts::{
+    Attachment, AttachmentSource, EngineTier, Mentions, SlashCommand, ThreadMention,
+};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -17,6 +19,11 @@ pub const MAX_ATTACHMENTS: usize = 100;
 pub const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_IMAGES_TOTAL: u64 = 80 * 1024 * 1024;
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+pub const MAX_SOURCE_APP_NAME_CHARS: usize = 255;
+pub const MAX_SOURCE_WINDOW_TITLE_CHARS: usize = 1_000;
+pub const MAX_SOURCE_APP_ID_CHARS: usize = 255;
+pub const MAX_SOURCE_ACCESSIBLE_TEXT_CHARS: usize = 32_000;
+pub const MAX_SOURCE_CAPTURED_AT_CHARS: usize = 64;
 const MAX_FILE_RESULTS: usize = 50;
 const MAX_THREAD_RESULTS: usize = 20;
 const MAX_WALKED_FILES: usize = 50_000;
@@ -36,6 +43,65 @@ pub fn check_prompt(prompt: &str) -> Result<()> {
 
 fn is_image(mime: &str) -> bool {
     mime.starts_with("image/")
+}
+
+fn unsupported_source_type() -> CoreError {
+    CoreError::Refused {
+        status: 422,
+        code: "unsupported_type",
+        message: "Only an image can carry a Snap Shot source.".into(),
+        detail: serde_json::Value::Null,
+    }
+}
+
+/// Checks an attachment source against its limits, counted in characters.
+fn check_source(source: &AttachmentSource) -> Result<()> {
+    let AttachmentSource::SnapShot {
+        captured_at,
+        app_name,
+        window_title,
+        app_id,
+        accessible_text,
+    } = source;
+    if app_name.is_empty() {
+        return Err(CoreError::Invalid(
+            "Give the Snap Shot its app's name.".into(),
+        ));
+    }
+    if captured_at.is_empty() {
+        return Err(CoreError::Invalid(
+            "The Snap Shot's captured time is missing.".into(),
+        ));
+    }
+    let fields: [(&'static str, &str, usize); 5] = [
+        ("app_name", app_name.as_str(), MAX_SOURCE_APP_NAME_CHARS),
+        (
+            "window_title",
+            window_title.as_str(),
+            MAX_SOURCE_WINDOW_TITLE_CHARS,
+        ),
+        (
+            "app_id",
+            app_id.as_deref().unwrap_or_default(),
+            MAX_SOURCE_APP_ID_CHARS,
+        ),
+        (
+            "accessible_text",
+            accessible_text.as_deref().unwrap_or_default(),
+            MAX_SOURCE_ACCESSIBLE_TEXT_CHARS,
+        ),
+        (
+            "captured_at",
+            captured_at.as_str(),
+            MAX_SOURCE_CAPTURED_AT_CHARS,
+        ),
+    ];
+    for (field, text, limit) in fields {
+        if text.chars().count() > limit {
+            return Err(CoreError::SourceTooLarge { field, limit });
+        }
+    }
+    Ok(())
 }
 
 /// The file name alone, so a name cannot steer where the upload lands.
@@ -114,6 +180,7 @@ impl Core {
             mime: mime.to_owned(),
             size: bytes.len() as u64,
             created_at: now(),
+            source: None,
         };
         if let Err(error) = self
             .store
@@ -129,6 +196,29 @@ impl Core {
         let path = self.store.remove_attachment(id)?;
         let _ = std::fs::remove_file(path);
         Ok(())
+    }
+
+    /// Keeps what the page knows about an image's origin, before it is sent. An attachment a
+    /// queued message or a run already names is no longer a draft, so it answers like an
+    /// unknown one.
+    pub fn set_attachment_source(
+        &self,
+        attachment_id: &str,
+        source: AttachmentSource,
+    ) -> Result<Attachment> {
+        let (attachment, _) = self.store.attachment(attachment_id)?;
+        if self
+            .store
+            .attachment_is_sent(attachment_id, &attachment.thread_id)?
+        {
+            return Err(CoreError::NotFound("attachment".into()));
+        }
+        if !is_image(&attachment.mime) {
+            return Err(unsupported_source_type());
+        }
+        check_source(&source)?;
+        self.store.set_attachment_source(attachment_id, &source)?;
+        Ok(self.store.attachment(attachment_id)?.0)
     }
 
     pub async fn mentions(&self, thread_id: &str, query: &str) -> Result<Mentions> {
@@ -421,6 +511,8 @@ async fn matching_files(checkout: &Path, needle: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::TempDir;
+    use orbyn_contracts::{AgUiEvent, AttachmentSource, ModelSelection};
 
     fn stored(mime: &str, size: u64) -> Attachment {
         Attachment {
@@ -430,6 +522,7 @@ mod tests {
             mime: mime.into(),
             size,
             created_at: String::new(),
+            source: None,
         }
     }
 
@@ -496,5 +589,262 @@ mod tests {
         assert_eq!(safe_name(".."), "attachment");
         assert_eq!(safe_name(""), "attachment");
         assert_eq!(safe_name(".hidden"), "hidden");
+    }
+
+    struct SourceFixture {
+        _dir: TempDir,
+        core: Core,
+        thread: String,
+    }
+
+    fn source_fixture() -> SourceFixture {
+        let dir = TempDir::new();
+        let mut config =
+            crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        let project = core
+            .store
+            .add_project(crate::store::NewProject {
+                path: "/repo",
+                name: "repo",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "t").unwrap();
+        let thread = core
+            .store
+            .create_thread(crate::store::NewThread {
+                project_id: project.id,
+                title: "t".into(),
+                engine: "script".into(),
+                model: None,
+                cwd: "/repo".into(),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        SourceFixture {
+            _dir: dir,
+            core,
+            thread: thread.id,
+        }
+    }
+
+    impl SourceFixture {
+        fn image(&self) -> Attachment {
+            self.core
+                .add_attachment(&self.thread, "shot.png", "image/png", b"png")
+                .unwrap()
+        }
+    }
+
+    fn snap_shot(app_name: &str, title: &str, text: Option<&str>) -> AttachmentSource {
+        AttachmentSource::SnapShot {
+            captured_at: "2026-11-22T10:00:00Z".into(),
+            app_name: app_name.into(),
+            window_title: title.into(),
+            app_id: Some("com.example.app".into()),
+            accessible_text: text.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_source_is_saved_and_replaces_the_one_before_it() {
+        let f = source_fixture();
+        let image = f.image();
+        let first = snap_shot("Notes", "Weekly plan", Some("buy milk"));
+        let saved = f
+            .core
+            .set_attachment_source(&image.id, first.clone())
+            .unwrap();
+        assert_eq!(saved.source, Some(first));
+
+        let replacement = snap_shot("Browser", "Docs", None);
+        let saved = f
+            .core
+            .set_attachment_source(&image.id, replacement.clone())
+            .unwrap();
+        assert_eq!(saved.source, Some(replacement));
+    }
+
+    #[test]
+    fn an_unknown_attachment_is_not_found() {
+        let f = source_fixture();
+        assert!(matches!(
+            f.core
+                .set_attachment_source("missing", snap_shot("Notes", "Plan", None)),
+            Err(CoreError::NotFound(what)) if what == "attachment"
+        ));
+    }
+
+    #[test]
+    fn only_an_image_takes_a_source() {
+        let f = source_fixture();
+        let file = f
+            .core
+            .add_attachment(&f.thread, "notes.txt", "text/plain", b"hi")
+            .unwrap();
+        assert!(matches!(
+            f.core
+                .set_attachment_source(&file.id, snap_shot("Notes", "Plan", None)),
+            Err(CoreError::Refused {
+                status: 422,
+                code: "unsupported_type",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_attachment_a_queued_message_names_is_already_sent() {
+        let f = source_fixture();
+        let image = f.image();
+        f.core
+            .store
+            .enqueue(
+                &f.thread,
+                "later",
+                &[image.id.clone()],
+                &ModelSelection::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            f.core
+                .set_attachment_source(&image.id, snap_shot("Notes", "Plan", None)),
+            Err(CoreError::NotFound(what)) if what == "attachment"
+        ));
+    }
+
+    #[test]
+    fn an_attachment_a_sent_run_names_is_already_sent() {
+        let f = source_fixture();
+        let image = f.image();
+        f.core
+            .store
+            .append_thread_event(
+                &f.thread,
+                &AgUiEvent::Custom {
+                    name: "user.attachments".into(),
+                    value: serde_json::json!({ "attachments": [{ "id": image.id.clone() }] }),
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            f.core
+                .set_attachment_source(&image.id, snap_shot("Notes", "Plan", None)),
+            Err(CoreError::NotFound(what)) if what == "attachment"
+        ));
+    }
+
+    #[test]
+    fn the_source_limits_count_characters() {
+        let f = source_fixture();
+        let image = f.image();
+        assert!(
+            f.core
+                .set_attachment_source(
+                    &image.id,
+                    AttachmentSource::SnapShot {
+                        captured_at: "x".repeat(64),
+                        app_name: "é".repeat(255),
+                        window_title: "t".repeat(1000),
+                        app_id: Some("a".repeat(255)),
+                        accessible_text: Some("x".repeat(32_000)),
+                    },
+                )
+                .is_ok()
+        );
+        for (source, field, limit) in [
+            (
+                AttachmentSource::SnapShot {
+                    captured_at: "2026-11-22T10:00:00Z".into(),
+                    app_name: "a".repeat(256),
+                    window_title: String::new(),
+                    app_id: None,
+                    accessible_text: None,
+                },
+                "app_name",
+                255,
+            ),
+            (
+                AttachmentSource::SnapShot {
+                    captured_at: "2026-11-22T10:00:00Z".into(),
+                    app_name: "Notes".into(),
+                    window_title: "a".repeat(1001),
+                    app_id: None,
+                    accessible_text: None,
+                },
+                "window_title",
+                1000,
+            ),
+            (
+                AttachmentSource::SnapShot {
+                    captured_at: "2026-11-22T10:00:00Z".into(),
+                    app_name: "Notes".into(),
+                    window_title: String::new(),
+                    app_id: Some("a".repeat(256)),
+                    accessible_text: None,
+                },
+                "app_id",
+                255,
+            ),
+            (
+                AttachmentSource::SnapShot {
+                    captured_at: "2026-11-22T10:00:00Z".into(),
+                    app_name: "Notes".into(),
+                    window_title: String::new(),
+                    app_id: None,
+                    accessible_text: Some("a".repeat(32_001)),
+                },
+                "accessible_text",
+                32_000,
+            ),
+            (
+                AttachmentSource::SnapShot {
+                    captured_at: "a".repeat(65),
+                    app_name: "Notes".into(),
+                    window_title: String::new(),
+                    app_id: None,
+                    accessible_text: None,
+                },
+                "captured_at",
+                64,
+            ),
+        ] {
+            assert!(matches!(
+                f.core.set_attachment_source(&image.id, source),
+                Err(CoreError::SourceTooLarge {
+                    field: found,
+                    limit: max,
+                }) if found == field && max == limit
+            ));
+        }
+    }
+
+    #[test]
+    fn an_empty_app_name_or_capture_time_is_invalid() {
+        let f = source_fixture();
+        let image = f.image();
+        for source in [
+            snap_shot("", "Plan", None),
+            AttachmentSource::SnapShot {
+                captured_at: String::new(),
+                app_name: "Notes".into(),
+                window_title: "Plan".into(),
+                app_id: None,
+                accessible_text: None,
+            },
+        ] {
+            assert!(matches!(
+                f.core.set_attachment_source(&image.id, source),
+                Err(CoreError::Invalid(_))
+            ));
+        }
     }
 }
