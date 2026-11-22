@@ -8,6 +8,8 @@ import { DevicesPanel } from "./DevicesPanel";
 import { SetupHub } from "./setup/SetupHub";
 import { ToolVersions } from "./setup/ToolVersions";
 import { setDevicesPlannedApi } from "./planned";
+import { DevicesToolsPreview, TOOLS_FRAMES } from "./DevicesToolsPreview";
+import { DevicesLivePreview, LIVE_FRAMES } from "./DevicesLivePreview";
 import "./devices.css";
 
 /**
@@ -33,6 +35,8 @@ const FRAMES = [
   ...SETUP,
   ...VERSIONS,
   ...STATES,
+  ...TOOLS_FRAMES,
+  ...LIVE_FRAMES,
   "device-none",
   "device-panel-list",
   "device-panel-list-narrow",
@@ -76,9 +80,11 @@ interface Prepared {
 }
 
 function Frame({ frame }: { frame: string }) {
+  const liveFrame = LIVE_FRAMES.includes(frame as (typeof LIVE_FRAMES)[number]);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
 
   useEffect(() => {
+    if (liveFrame) return;
     let live = true;
     void import("../../../mock/devices").then((m) => {
       if (!live) return;
@@ -133,9 +139,17 @@ function Frame({ frame }: { frame: string }) {
         open = [devices[0]!.id];
         active = devices[0]!.id;
       }
-      if (frame === "device-tabs" || frame === "device-tab-rename" || frame === "device-float-docked-hint") {
+      if (frame === "device-tabs" || frame === "device-tab-rename") {
         open = [m.deviceFixtures()[0]!.id, m.deviceFixtures()[3]!.id];
         active = m.deviceFixtures()[0]!.id;
+      }
+      if (frame === "device-float-docked-hint") {
+        devices = [m.stateFixture("booted")];
+        open = [devices[0]!.id];
+        active = devices[0]!.id;
+      }
+      if (frame === "device-float") {
+        devices = [m.stateFixture("booted")];
       }
       if (frame === "device-narrow-panel" || frame === "device-narrow-window" || frame === "device-panel-list-narrow") {
         open = frame === "device-panel-list-narrow" ? [] : [m.deviceFixtures()[3]!.id];
@@ -157,7 +171,7 @@ function Frame({ frame }: { frame: string }) {
           open,
           active,
           names: frame === "device-tab-rename" ? { [m.deviceFixtures()[0]!.id]: "Checkout flow" } : {},
-          float: frame === "device-float" ? { id: m.deviceFixtures()[3]!.id, x: 48, y: 96, width: 360 } : null,
+          float: frame === "device-float" ? { id: m.stateFixture("booted").id, x: 48, y: 96, width: 360 } : null,
         },
       });
       setPrepared({ narrow: frame.includes("narrow") || frame === "device-narrow-window", platforms, deviceToOpen: m.deviceFixtures()[3]! });
@@ -167,13 +181,14 @@ function Frame({ frame }: { frame: string }) {
       setDevicesApi(null);
       setDevicesPlannedApi(null);
     };
-  }, [frame]);
+  }, [frame, liveFrame]);
 
+  if (liveFrame) return <DevicesLivePreview frame={frame} />;
   if (!prepared) return null;
   const initialStep = frame === "device-setup-access" ? 3 : frame === "device-setup-done" ? "done" : ["device-setup-tools-ios", "device-setup-tools-ios-missing", "device-setup-tools-android", "device-setup-installing", "device-setup-failed"].includes(frame) ? 2 : 1;
   const panel = (
     <div className="dvp-panel">
-      <DevicesPanel threadId="preview-thread" />
+      <DevicesPanel threadId="preview-thread" initialTabMenu={frame === "device-float-docked-hint"} />
     </div>
   );
 
@@ -209,6 +224,8 @@ function Frame({ frame }: { frame: string }) {
           <p className="dev-note">The thread stays usable under the floating device.</p>
           <DevicesFloat threadId="preview-thread" />
         </div>
+      ) : (TOOLS_FRAMES as readonly string[]).includes(frame) ? (
+        <DevicesToolsPreview frame={frame} />
       ) : panel}
     </div>
   );
