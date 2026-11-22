@@ -3,10 +3,14 @@
 
 use orbyn_code_sandbox::{CodeExecutor, Limits, RunError, RunSeed, Step, ToolHost};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+/// How long a cancel waits for an aborted task to drop its calls and future.
+const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A call in flight, as `paused` reports it.
 #[derive(Clone, Debug)]
@@ -32,12 +36,22 @@ pub(super) struct Live {
     done: watch::Receiver<Option<Step>>,
     pending: PendingList,
     finished_at: Arc<Mutex<Option<Instant>>>,
-    task: JoinHandle<()>,
+    /// Set before a cancel stops the task, so a finish already in progress records the cancel and
+    /// never a late `completed`.
+    cancelled: Arc<AtomicBool>,
+    task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = self
+            .task
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            task.abort();
+        }
     }
 }
 
@@ -57,6 +71,21 @@ impl Live {
             _ => None,
         }
     }
+
+    /// Stops the script task and waits briefly for its future to drop. The token is set first, so a
+    /// call that is about to begin sees the cancel before it records itself.
+    async fn stop(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        let task = self
+            .task
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = tokio::time::timeout(STOP_TIMEOUT, task).await;
+        }
+    }
 }
 
 pub(super) enum Refused {
@@ -66,6 +95,14 @@ pub(super) enum Refused {
     Script(RunError),
     /// The run id is already live or starting.
     Duplicate(String),
+    /// The person cancelled the run while `prepare` was still running.
+    Cancelled,
+}
+
+/// What a cancel found: a live run or a start still preparing.
+pub(super) enum CancelBegin {
+    Live,
+    Starting,
 }
 
 /// A run id held from the cap check until its run is inserted. `prepare` awaits in between, so
@@ -79,6 +116,7 @@ struct Slots {
 struct Starting {
     thread_id: String,
     crew_worker: bool,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Slots {
@@ -173,6 +211,50 @@ impl CodeRuns {
             .is_none()
     }
 
+    /// Marks one run cancelled before its approvals are denied: a live run's task, or a start still
+    /// waiting in `prepare`. The mark is set under the same lock `start` uses to spawn, so a cancel
+    /// either wins before the script exists or sees the live run.
+    pub(super) fn begin_cancel(&self, run_id: &str) -> Option<CancelBegin> {
+        let mut slots = self.lock();
+        slots.sweep();
+        if let Some(live) = slots.runs.get(run_id) {
+            if !Self::is_live(live) {
+                return None;
+            }
+            live.cancelled.store(true, Ordering::SeqCst);
+            return Some(CancelBegin::Live);
+        }
+        let starting = slots.starting.get(run_id)?;
+        starting.cancelled.store(true, Ordering::SeqCst);
+        Some(CancelBegin::Starting)
+    }
+
+    /// Stops a cancelled run's script task and releases its slot. A start still in `prepare` is
+    /// released too; its `start` sees the marked reservation and never spawns. Waits briefly for a
+    /// live task to drop so no call is left starting after the cancel answers.
+    pub(super) async fn finish_cancel(&self, run_id: &str) {
+        enum Stopped {
+            Live(Arc<Live>),
+            Starting,
+            Nothing,
+        }
+        let stopped = {
+            let mut slots = self.lock();
+            if let Some(live) = slots.runs.remove(run_id) {
+                live.cancelled.store(true, Ordering::SeqCst);
+                Stopped::Live(live)
+            } else if let Some(start) = slots.starting.remove(run_id) {
+                start.cancelled.store(true, Ordering::SeqCst);
+                Stopped::Starting
+            } else {
+                Stopped::Nothing
+            }
+        };
+        if let Stopped::Live(live) = stopped {
+            live.stop().await;
+        }
+    }
+
     /// Forgets every live run, as a restart would (tests).
     #[cfg(test)]
     pub(crate) fn forget_all(&self) {
@@ -197,8 +279,8 @@ impl CodeRuns {
         crew_worker: bool,
         code: &str,
         seed: RunSeed,
-        host: impl FnOnce(PendingList) -> Arc<dyn ToolHost>,
-        finish: impl FnOnce(Step) -> Step + Send + 'static,
+        host: impl FnOnce(PendingList, Arc<AtomicBool>) -> Arc<dyn ToolHost>,
+        finish: impl FnOnce(Step, bool) -> Step + Send + 'static,
     ) -> Result<Arc<Live>, Refused> {
         let mut reservation = Reservation {
             runs: self,
@@ -265,10 +347,19 @@ impl CodeRuns {
                 Starting {
                     thread_id: thread_id.to_owned(),
                     crew_worker,
+                    cancelled: Arc::new(AtomicBool::new(false)),
                 },
             );
             reservation.held = true;
         }
+        let cancelled = {
+            let slots = self.lock();
+            slots
+                .starting
+                .get(run_id)
+                .map(|start| start.cancelled.clone())
+                .ok_or(Refused::Cancelled)?
+        };
         let executor = self
             .executor
             .lock()
@@ -282,19 +373,42 @@ impl CodeRuns {
         let limits = Limits::default();
         let wall = limits.wall;
         let pending: PendingList = Arc::default();
-        let run = executor
-            .prepare(code, limits, seed, host(pending.clone()))
+        let run = match executor
+            .prepare(code, limits, seed, host(pending.clone(), cancelled.clone()))
             .await
-            .map_err(Refused::Script)?;
+        {
+            Ok(run) => run,
+            Err(error) => {
+                if cancelled.load(Ordering::SeqCst) {
+                    self.lock().starting.remove(run_id);
+                    reservation.commit();
+                    return Err(Refused::Cancelled);
+                }
+                return Err(Refused::Script(error));
+            }
+        };
         let (sender, done) = watch::channel(None);
         let finished_at = Arc::new(Mutex::new(None));
         let marker = finished_at.clone();
+        let was_cancelled = cancelled.clone();
+        // The check, the spawn and the insertion happen under the same lock `begin_cancel` takes.
+        let mut slots = self.lock();
+        let Some(starting) = slots.starting.get(run_id) else {
+            // `finish_cancel` released the preparing slot already.
+            reservation.commit();
+            return Err(Refused::Cancelled);
+        };
+        if starting.cancelled.load(Ordering::SeqCst) {
+            slots.starting.remove(run_id);
+            reservation.commit();
+            return Err(Refused::Cancelled);
+        }
         let task = tokio::spawn(async move {
             let mut run = run;
             let step = run
                 .drive(Instant::now() + wall + Duration::from_secs(5))
                 .await;
-            let step = finish(step);
+            let step = finish(step, was_cancelled.load(Ordering::SeqCst));
             *marker.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
             let _ = sender.send(Some(step));
         });
@@ -304,13 +418,12 @@ impl CodeRuns {
             done,
             pending,
             finished_at,
-            task,
+            cancelled: cancelled.clone(),
+            task: Mutex::new(Some(task)),
         });
-        {
-            let mut slots = self.lock();
-            slots.starting.remove(run_id);
-            slots.runs.insert(run_id.to_owned(), live.clone());
-        }
+        slots.starting.remove(run_id);
+        slots.runs.insert(run_id.to_owned(), live.clone());
+        drop(slots);
         reservation.commit();
         Ok(live)
     }

@@ -67,7 +67,7 @@ The reply is one JSON object:
   "result": "...",
   "logs": ["..."],
   "runId": "...",
-  "error": { "kind": "syntax | runtime | limit | denied | lost", "message": "...", "line": 12 },
+  "error": { "kind": "syntax | runtime | limit | denied | lost | cancelled", "message": "...", "line": 12 },
   "pending": [{ "tool": "orbyn_thread_send", "call": 4 }],
   "truncated": false
 }
@@ -79,8 +79,8 @@ The reply is one JSON object:
   or a call still running). `result` is absent. Call `orbyn_code_run` again with the same `runId`.
 - `error`: the run ended and will not continue. `error.kind` is `syntax` (the code did not parse),
   `runtime` (a thrown error nobody caught), `limit` (a sandbox limit, see below), `denied` (the script
-  stopped on a refusal it did not catch; the message is the gate's reason) or `lost` (the run could not be
-  resumed). `logs` still holds what the script printed.
+  stopped on a refusal it did not catch; the message is the gate's reason), `lost` (the run could not be
+  resumed) or `cancelled` (the person stopped it). `logs` still holds what the script printed.
 - `runId` is always present, so the person and the audit trail can name the run.
 
 `logs` is what the script wrote with `console.log`, `console.warn` and `console.error`, one string per call.
@@ -196,8 +196,13 @@ A script cannot ask for broader approval than its calls would need on their own.
 Every run is stored (a new table pair, `code_runs` and `code_run_calls`; the migration takes the next free
 number at merge time): run id, thread, run, status, script, start and end time, and per call the index, tool
 name, argument digest, status and a result preview (4 KiB) plus the full result when it is at most 256 KiB.
-The web UI's run log reads it. Records are kept 7 days, then deleted. The record is what makes resume work
-across a restart, and the only place a script is kept.
+`waited_ms` is the total time the run waited for a person: each approval an inner call asks adds the exact
+milliseconds from its creation to its decision or expiry. The sum lives on the run row, not in the call rows:
+a call's `duration_ms` is its whole time and does not say how much of it was the gate, a call can ask more
+than one approval, and the total must survive a pause, a resume and a replay. Migration 74 adds
+`code_runs.waited_ms` and `approvals.created_at_ms`; a run that begins after it starts at `0`, and a row
+stored before it stays `null`. The web UI's run log reads it. Records are kept 7 days, then deleted. The
+record is what makes resume work across a restart, and the only place a script is kept.
 
 Read access is built: see "As built: run record, routes and the switch" below.
 
@@ -215,6 +220,9 @@ take minutes to approve. So a run does not live inside the outer call.
 - `orbyn_code_run({ run_id })` waits another slice on the same run and answers the same way.
 - A run nobody resumes keeps going: reads finish, and a held call waits for its approval until the approval
   times out. The finished state is kept until the run record expires, and a later resume returns it.
+- The person can cancel a live (running or paused) run. Its task is aborted, its slot is released, its pending
+  approval is denied with "The run was cancelled.", and the run ends as `error: cancelled`. A cancelled run
+  cannot be resumed or replayed, before or after a restart; cancelling it again returns the same record.
 - The outer call's budget is `TOOL_BUDGET`. It is never `GATED_BUDGET`, because an engine that gives up at
   about 60 s would cut a 240 s call and lose the run's reply.
 
@@ -245,6 +253,28 @@ code: the core then replays the script from the start with the recorded results.
 - A call that was in flight at the crash and has an effect ends the replay as `lost`: the core cannot know
   whether it happened. A read in flight is run again.
 - Past the last recorded call the script runs live, through the gate as usual.
+- A cancelled run is never replayed. A restart keeps its `error: cancelled` record, and a resume or a replay
+  answers "The run was cancelled." instead of `lost`.
+
+### Cancel
+
+Only the person cancels, through `POST /api/code-runs/{id}/cancel` (Person-class, no body, over 1 KiB refused
+with "This route takes no body."). No MCP tool, script or Crew worker reaches it.
+
+- A live run (`running` or `paused`) ends as `error: cancelled` with "The run was cancelled." Its task is
+  aborted and its slot is released before the route answers, so a new start may take the place at the cap.
+- Every approval the run has pending is denied through the same store path a person's denial takes, with the
+  reason "The run was cancelled." and the person as the decider. It is gone from the approval queue.
+- The record keeps its calls so far. A call whose effect was already in flight at the abort may still finish
+  that effect, but its call row is recorded `failed` with the cancel's reason. The route waits briefly for the
+  task to drop, then fails every call still `running`: after it answers, no call is left `running` and no new
+  call can record itself. A late answer from a call or a late task finish cannot change the record back to
+  `running` or `completed`.
+- Cancelling twice returns the same record. A run that already ended (completed or error), including a lost
+  run, is not live: the answer is `409 run_finished` with "This run already ended." An unknown id is `404
+  not_found`, as for a read. A cancelled run is never resumed or replayed; both answer "The run was
+  cancelled.", and that stays true after a restart.
+- The cancel writes one `code_run.cancel` audit row with the person as actor.
 
 ## Budgets
 
@@ -336,10 +366,12 @@ calls.", "The run took longer than its time limit.", "The script is over 65536 b
 own reason, verbatim (a timed-out approval is a refusal with the gate's timeout reason). `lost`: "This run
 was lost when Orbyn restarted. Call orbyn_code_run again with the same code and run_id to replay it.", and
 for a failed replay "The script changed or is not repeatable, so the recorded calls can't be replayed." or "A
-call that may have changed something was running when Orbyn restarted, so the run can't continue." There is
-no cancel in v1: a person ends a paused run by denying its pending approval. The list view of runs shows
-run id, status, start and end, call count and the first 120 characters of the script; the detail view adds the
-calls with their 4 KiB previews, and a call's full result is fetched on its own.
+call that may have changed something was running when Orbyn restarted, so the run can't continue." A
+cancelled run ends, resumes and replays with "The run was cancelled."; cancelling a run that already ended
+answers `409 run_finished` with "This run already ended." The run record and the runs list API carry
+`waited_ms`; the list view itself shows run id, status, start and end, call count and the first 120
+characters of the script, and the detail view adds the calls with their 4 KiB previews. A call's full
+result is fetched on its own.
 
 ## Switches and what is not here yet
 
@@ -366,6 +398,9 @@ calls with their 4 KiB previews, and a call's full result is fetched on its own.
    held approval.
 6. Replay never repeats a recorded effect, and re-checks the allow list before answering from the record.
 7. A run is readable and resumable only from its own thread.
+8. Only the person cancels. A cancel ends a live run with the fixed reason, denies its pending approval through the
+   person's path, stops its task and frees its slot; a late call answer or task finish cannot make it live, completed
+   or resumable again, and a cancelled run is never replayed.
 
 The tests named in this document cover the worker, replay and search/describe claims; the sandbox crate's
 tests cover the capability limits.
@@ -395,17 +430,19 @@ route below answers `404`.
   4 KiB of the result and its size; the whole result is kept when it is at most 256 KiB, as `{ "code", "message" }` for a failure. The
   end of the run keeps the result (whole up to 256 KiB, else `{ truncated, bytes, preview }`), the newest 500 log lines and the error.
   `paused` is stored when an outer call returns before the end, `running` again when a call resumes it. A start refused for a limit
-  leaves no record.
+  leaves no record. `waited_ms` starts at `0`; every approval an inner call asks adds its creation-to-decision or
+  creation-to-expiry milliseconds to it (migration 74, `approvals.created_at_ms`), and an old row stays `null`.
 - **Restart.** At start the core marks every run that was `running` or `paused` as `error` with kind `lost` and the lost message; its
-  calls stay as they were, so a call that was running shows as `running`. Records older than 7 days are deleted at start and on every
-  new run.
+  calls stay as they were, so a call that was running shows as `running`. A cancelled run keeps its `error: cancelled` record, and a
+  resume or replay of it still answers "The run was cancelled." Records older than 7 days are deleted at start and on every new run.
 - **Replay.** `orbyn_code_run({ code, run_id })` replays a run of this thread that ended as `lost` when the code's SHA-256 equals the
   record's. The run keeps its id, seed and start time, `resumes` goes up by one, and the rules above under "Restart and replay" hold:
   calls match by index, tool and argument digest; a finished call answers from the record and runs nothing; a mismatch, a missing
   stored answer, or an effect call that was running ends the run as `lost` with the doc's texts, and once a replay has failed every
   later call of the script is refused. A read that was running is run again; past the last recorded call the script runs live through
   the gate. Replay of a run that did not end as lost, or of another thread's run, is refused as lost (the id of another thread's run is
-  never confirmed). A resume with `run_id` alone of a finished run that left memory answers from its record.
+  never confirmed); a cancelled run answers "The run was cancelled." instead and is never replayed. A resume with `run_id` alone of a
+  finished run that left memory answers from its record.
 - **Routes.** Reads are `Local`; a run id is a key and only ids of letters, digits, `_` and `-` up to 64 characters reach the store.
 
 | Route | Person | Answers |
@@ -414,17 +451,29 @@ route below answers `404`.
 | `GET /api/threads/{id}/code-runs` | no | `{ runs: CodeRunSummary[] }`, newest first, at most 100; `script_head` is the first 120 characters |
 | `GET /api/engines/{id}/code-mode` | no | `{ enabled }`; off until a person turns it on |
 | `PUT /api/engines/{id}/code-mode` | **yes** | `{ enabled }`, what is stored; in `ENFORCED` and `PERSON_ROUTES` |
+| `POST /api/code-runs/{id}/cancel` | **yes** | no body (over 1 KiB is `400 invalid_input`); the cancelled `CodeRunRecord`; `409 run_finished` for an ended run, `404 not_found` for an unknown id; in `ENFORCED` and `PERSON_ROUTES` |
 
 - **The switch.** `code_mode:<engine id>` in the settings table, `on` or `off`. The three tools are listed and callable only when the
-  service flag is on and the calling engine's switch is on. `waited_ms` is `null` for now (the time a run waited for a person is not
-  recorded). `resumes` counts both resumes after a pause and replays. Run statuses are `running`, `paused`, `completed` and `error`;
-  the error kinds are the five above. Types: `CodeRunRecord`, `CodeRunSummary`, `CodeRunList`, `CodeModeSetting` in `orbyn-contracts`.
+  service flag is on and the calling engine's switch is on. `waited_ms` is the recorded total, `0` for a run that never waited and
+  `null` for a row stored before migration 74. `resumes` counts both resumes after a pause and replays. Run statuses are `running`,
+  `paused`, `completed` and `error`; the error kinds are the six above. Types: `CodeRunRecord`, `CodeRunSummary`, `CodeRunList`,
+  `CodeModeSetting` in `orbyn-contracts`.
 - **Approval `via`.** `Approval.via` is `{ code_run, call, script_sha256 }` or `null`, stored as JSON in `approvals.via` (migration 68).
   The run host sets it from a task-local around each inner call (`governance::approvals::with_via`), and the gate copies it onto the
   approval it creates; `call` is the call's index in the run, `script_sha256` the hash of the script that is running. The card reads the
   script and the calls from the run record by `code_run`. No rule, decision or audit row reads it; a script's call asks exactly what a
   direct call asks. The wire type is `ApprovalVia` in `orbyn-contracts`.
-- **Not built.** Cancelling a run.
+- **Cancel.** `Core::code_run_cancel` ends a live run as `error: cancelled` with "The run was cancelled.", denies its pending
+  approvals with the person's own denial path and reason, aborts the script task, releases its slot under the run-store lock, fails
+  every call still running, and writes one `code_run.cancel` audit row. It also covers a start still in `prepare`: the reservation is
+  marked, the script is never spawned, and the slot is released. The route awaits the aborted task (at most 2 s) and then fails the
+  calls left, so no call is still `running` when it answers. The record is written before the task is released, and the
+  store only ends a `running` or `paused` run and a `running` call, so a late answer cannot flip either back. The task also records
+  the cancel before a finish already in progress can write `completed` (unless the finish's own write already won; then cancel
+  answers `409 run_finished`). Cancelling a cancelled run returns its record; a completed,
+  errored or lost run is `409 run_finished`; an unknown id is `404 not_found`. The route is `POST /api/code-runs/{id}/cancel`, a
+  body-less Person-class write in `ENFORCED`, `PERSON_ROUTES`, `routes.json` and `web/src/api/personKey.ts`.
+- **Not built.** The web UI's Stop button (the route is the web owner's to draw).
 
 ## As built: web UI
 
@@ -437,7 +486,7 @@ card draws from the engine's own reply, and nothing shows an error. The dev mock
 
 - **Setting.** Settings › Providers › an engine has a Code Mode group with one switch, off by default, read when the page opens and
   written once per click. The Planned pill goes once the service has answered the read; on a `404` it stays.
-- **Run card.** An `orbyn_code_run` call in the thread is drawn from its run: running, paused, completed, and the five error kinds, with the
+- **Run card.** An `orbyn_code_run` call in the thread is drawn from its run: running, paused, completed, and the six error kinds, with the
   script excerpt (5 lines, opened a 400-line page at a time), calls (3 and a "Show all" line past 8, at most 200), logs (newest 500),
   and the result (first 64 KiB). The run record is read every two seconds while the run is not over; without it only the engine's reply
   is drawn, and there is no call list. A resumed run is one record shown on each call that names it.
@@ -448,7 +497,8 @@ card draws from the engine's own reply, and nothing shows an error. The dev mock
 - **Reading the record.** A call's `status` on the wire is `running`, `ok`, `failed` or `denied`; there is no "waiting". The card reads a
   `running` call of a `paused` run that `pending` names as waiting for a person, and a `running` call of a run that ended as `error` (a
   restart) as interrupted. `result`, `logs_total` and `waited_ms` are read as the contract has them (`{ truncated, bytes, preview }`,
-  a count when the record kept fewer lines, `null` for now), and an error `kind` it does not know is drawn as a runtime error.
+  a count when the record kept fewer lines, `null` for a row stored before waits were recorded), and an error `kind` it does not
+  know is drawn as a runtime error. `cancelled` is one of the kinds it knows; the card and row say "Cancelled".
 - **Search and describe.** Drawn as rows in the thread, from the reply read leniently (the exact reply shapes are not in this document).
 - **Untrusted text.** The script, logs, results and call previews are React text, never markup or links, never logged, never opened.
 - **Lost runs.** The run card shows the core's `lost` message as it is, with no text of its own around it, and the calls the record
@@ -457,8 +507,8 @@ card draws from the engine's own reply, and nothing shows an error. The dev mock
   a replay that could not match, a call in flight) differ only in the message and the calls.
 - **Runs list.** `CodeRunsList` draws the per-thread list (id, status, times, call count, the first 120 characters of the script,
   "Runs are kept for 7 days") from `GET /api/threads/{id}/code-runs` (`CodeRunList`) and opens a run as the same
-  block the thread draws. It sits under the Tools tab, not in a tab of its own, because where it opens is not settled. There is no Stop.
-  An unknown status is shown as Unknown and cannot be opened.
+  block the thread draws. It sits under the Tools tab, not in a tab of its own, because where it opens is not settled. The service
+  has the Person cancel route; this list draws no Stop yet. An unknown status is shown as Unknown and cannot be opened.
 - **Not built.** The Tools tab for a Crew worker ("allowed for this worker") has no data behind it; the three tools are marked Planned in
   the Orbyn group when an engine reports them.
 - **The switch write.** `PUT /api/engines/{id}/code-mode` changes what an engine may call, so it is a Person-class write
