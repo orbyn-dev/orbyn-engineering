@@ -160,6 +160,8 @@ pub struct Core {
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
+    /// Local AVDs and simulators, their actions and one writer per device (`devices`).
+    pub devices: Arc<crate::devices::Devices>,
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
@@ -326,6 +328,7 @@ impl Core {
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
+            devices: Arc::new(crate::devices::Devices::new()),
             http,
             recovery,
             keybinding_writer,

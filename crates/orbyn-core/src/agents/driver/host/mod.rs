@@ -1,7 +1,7 @@
 //! The engine host driver: runs an engine SDK in `orbyn-engine-host` and speaks
 //! docs/engine-host-protocol.md to it. Used only when the desktop shell sets `ORBYN_ENGINE_HOST`; with it missing the
 //! Rust drivers run exactly as before. Claude is on by default (`ORBYN_ENGINE_HOST_CLAUDE=0` opts out, `1` and
-//! an unset or empty flag mean on); Cursor stays opt-in (`ORBYN_ENGINE_HOST_CURSOR=1`).
+//! an unset or empty flag mean on); Cursor and ACP stay opt-in (`ORBYN_ENGINE_HOST_CURSOR=1`, `ORBYN_ENGINE_HOST_ACP=1`).
 //!
 //! With the Claude host on, the person's `claude_engine_path` setting (`sdk`, the default, or `cli`) is read at the
 //! start of every run: `sdk` runs through the host, `cli` hands the run to the wrapped Rust driver exactly as if the
@@ -13,6 +13,7 @@
 //! `options`, `confinement`, `delta`, `outcome` (what a run gets from the host),
 //! `run` (one turn), `driver` (the `EngineDriver`).
 
+mod acp;
 mod confinement;
 mod connection;
 mod delta;
@@ -35,6 +36,7 @@ mod tests;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
+pub use acp::HostAcpAgent;
 pub use driver::{EnginePath, HostDriver, PathSetting};
 pub use frames::{ErrorKind, PROTOCOL};
 #[cfg(test)]
@@ -56,6 +58,8 @@ pub struct HostConfig {
     pub claude: bool,
     /// `ORBYN_ENGINE_HOST_CURSOR=1`.
     pub cursor: bool,
+    /// `ORBYN_ENGINE_HOST_ACP=1`.
+    pub acp: bool,
     pub timings: Timings,
 }
 
@@ -68,6 +72,7 @@ impl HostConfig {
             // On by default: a missing or empty flag means on, and only `0` opts out. The host still gets `1`.
             claude: claude_flag != Some("0"),
             cursor: false,
+            acp: false,
             timings: Timings::default(),
         })
     }
@@ -76,6 +81,13 @@ impl HostConfig {
     #[must_use]
     pub fn with_cursor(mut self, cursor_flag: Option<&str>) -> Self {
         self.cursor = cursor_flag == Some("1");
+        self
+    }
+
+    /// Also reads `ORBYN_ENGINE_HOST_ACP`, which wants exactly `1` as the Claude flag does.
+    #[must_use]
+    pub fn with_acp(mut self, acp_flag: Option<&str>) -> Self {
+        self.acp = acp_flag == Some("1");
         self
     }
 }
@@ -140,7 +152,28 @@ impl HostHub {
                 Some(secrets_from(core.clone(), "claude")),
             ))
         };
-        let mut slots = vec![claude];
+        // Off still gets a slot, as Claude does: the status route reports the family as
+        // not used instead of hiding it. The host starts only when the flag is on.
+        let acp = if !platform_supported() {
+            Slot::NotUsed("acp", NotUsed::UnsupportedPlatform)
+        } else if !config.acp {
+            Slot::NotUsed("acp", NotUsed::FlagOff)
+        } else {
+            Slot::Pool(Pool::new(
+                "acp",
+                HostSpec {
+                    program: config.program.clone(),
+                    args: vec!["acp".into()],
+                    env: vec![("ORBYN_ENGINE_HOST_ACP".into(), "1".into())],
+                    instance: "acp-default".into(),
+                },
+                config.timings.clone(),
+                // ACP agents sign in through their own CLI. No engine key is
+                // allowlisted under this family, so there is no spawn secret to ask for.
+                None,
+            ))
+        };
+        let mut slots = vec![claude, acp];
         // Off means no slot at all: nothing about Cursor changes until the flag is on.
         if config.cursor {
             slots.push(if platform_supported() {
@@ -191,6 +224,23 @@ impl HostHub {
                 && pool.family == family
             {
                 return Arc::new(HostDriver::new(inner, pool.clone(), program).with_path(path));
+            }
+        }
+        inner
+    }
+
+    /// `inner` run through the host as the ACP family, when the flag is on; otherwise
+    /// `inner` unchanged. The agent is what `open.options.agent` will name.
+    pub fn wrap_acp(
+        &self,
+        inner: Arc<dyn EngineDriver>,
+        agent: HostAcpAgent,
+    ) -> Arc<dyn EngineDriver> {
+        for slot in &self.slots {
+            if let Slot::Pool(pool) = slot
+                && pool.family == "acp"
+            {
+                return Arc::new(HostDriver::for_acp(inner, pool.clone(), agent));
             }
         }
         inner

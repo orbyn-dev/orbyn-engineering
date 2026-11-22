@@ -10,6 +10,7 @@ import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button, IconButton } from "../../ui/controls";
 import { failureWantsResend } from "./runFailures";
+import { isClaudeEngine } from "../../product/engines/claudePath";
 
 const dismissed = new Set<string>();
 
@@ -91,9 +92,13 @@ export function ThreadErrorBanner({ thread }: { thread: Thread }) {
   const [, redraw] = useState(0);
   const refreshThread = useWorkspace((state) => state.refreshThread);
   const pushToast = useUi((state) => state.pushToast);
+  const engine = useWorkspace((state) => state.engines.data?.find((entry) => entry.id === thread.engine));
   if (thread.active_run || thread.last_run_state !== "failed" || thread.lifecycle?.limit || !items) return null;
   const failure = items.findLast((item) => item.kind === "notice" && item.tone === "error");
   if (!failure || failure.kind !== "notice" || dismissed.has(failure.key)) return null;
+  // The Claude host failures keep their two actions on the failed run; a second Retry here would send the message.
+  if (isClaudeEngine(thread.engine, engine?.instance_of)
+    && (failure.code === "engine_unavailable" || failure.code === "engine_host_stopped")) return null;
   const prompt = items.findLast((item) => item.kind === "message" && item.role === "user");
   if (failure.code === "workspace_preparation_failed" || failure.code === "workspace_preparation_unavailable") return null;
   // A no-reply or lost-conversation failure keeps only Resend, which sits on the
