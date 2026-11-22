@@ -175,7 +175,7 @@ export function FlowOffline() {
         <div className="cx-db">
           <div className="cx-fbx cx-amber">
             <h6>Codex isn’t signed in, and no engine besides Claude Code is signed in at the lead tier</h6>
-            <p>Security needs a different engine at the lead tier, and none is available. Nothing started, and Crew never falls back to the author’s engine without asking you.</p>
+            <p>Security needs a different engine at the lead tier, and none is available. Nothing started, and Crew does not fall back to the author’s engine without asking you.</p>
           </div>
           <div className="cx-fcol">
             <h5>Your options</h5>

@@ -186,7 +186,7 @@ describe("the exclusion list", () => {
     view();
     await user.click(await screen.findByRole("switch", { name: "Snap Shot" }));
     await user.click(await screen.findByRole("button", { name: "Edit list…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Apps never captured" });
+    const dialog = await screen.findByRole("dialog", { name: "Apps to skip" });
     for (const name of ["Orbyn (its own windows)", "1Password", "Keychain Access", "Passwords"]) {
       expect(within(dialog).getByText(name)).toBeVisible();
     }
@@ -209,7 +209,7 @@ describe("the exclusion list", () => {
     const user = userEvent.setup();
     view();
     await user.click(await screen.findByRole("button", { name: "Edit list…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Apps never captured" });
+    const dialog = await screen.findByRole("dialog", { name: "Apps to skip" });
     await user.type(within(dialog).getByLabelText("App id"), "com.example.one-too-many");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("The list holds at most 64 apps.");

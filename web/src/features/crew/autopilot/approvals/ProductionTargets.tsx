@@ -62,8 +62,8 @@ export function ProductionTargets() {
         <Chip tone="plain">Preview</Chip>
       </header>
       <section className="ap-box">
-        <h4>Always on, in every mode</h4>
-        <p>A destructive command against a production-linked target needs two keys from models under Full: the lead’s and one from a different vendor. Under On and Off it is held for you. You can always approve a command yourself, once, as one deliberate action that names the exact command and the target; that makes you the final authority, not a second key, and it is logged. This is a hard rule, checked by Orbyn’s code before any model sees the request. Read-only: it can’t be switched off here, and nothing the lead decides can either.</p>
+        <h4>On in every mode</h4>
+        <p>A destructive command against a production-linked target needs two keys from models under Full: the lead’s and one from a different vendor. Under On and Off it is held for you. You can approve a command yourself, once, as one deliberate action that names the exact command and the target; that makes you the final authority, not a second key, and it is logged. This is a hard rule, checked by Orbyn’s code before any model sees the request. Read-only: it can’t be switched off here, and nothing the lead decides can either.</p>
       </section>
       <section className="ap-box">
         <h4>What is production-linked · this device’s lists</h4>
@@ -71,7 +71,7 @@ export function ProductionTargets() {
       </section>
       <Targets title="Always guarded" list="prod" items={items.filter((item) => item.list === "prod")} />
       <Targets title="Exempt (safe)" list="safe" items={items.filter((item) => item.list === "safe")} />
-      <p className="ap-muted">prod_targets are always guarded. safe_targets are exempt, for example a throwaway staging database. Both are this device’s lists, kept on this computer. They are not in .orbyn/crew.json, so a file in the repo can never loosen the guard.</p>
+      <p className="ap-muted">prod_targets are guarded. safe_targets are exempt, for example a throwaway staging database. Both are this device’s lists, kept on this computer. They are not in .orbyn/crew.json, so a file in the repo can never loosen the guard.</p>
       <section className="ap-box">
         <h4>What counts as destructive</h4>
         <p>A list built into Orbyn, by category. A file in the repo can’t add to it, remove from it or loosen it; this device’s lists above are what change what counts as production-linked. Orbyn checks the command, not the worker’s description of it.</p>

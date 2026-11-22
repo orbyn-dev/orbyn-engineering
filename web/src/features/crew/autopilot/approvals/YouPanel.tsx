@@ -60,7 +60,7 @@ export function YouPanel({ state, act = {} }: { state: YouState; act?: YouAction
           <p className="ap-muted">Merged by Crew at {state.mergedAt}</p>
           <p>{state.text} With Autopilot On or Off this is how a change merges without waiting for you; with Full, every change that passes merges.</p>
           <Facts rows={[{ label: "Rule", text: state.rule }, { label: "Set by", text: state.setBy }, { label: "Required stages", text: state.stages }]} />
-          <Box title="Where this does not apply"><p>Bots and agents never merge in the skills library; no rule can change that, so there it always waits for a person.</p></Box>
+          <Box title="Where this does not apply"><p>In the skills library, merging is left to a person, whatever the rules say.</p></Box>
           <Buttons items={[["Open the PR", act.openPr], ["Edit the rule", act.editRule], ["Turn the rule off", act.turnRuleOff]]} />
         </aside>
       );

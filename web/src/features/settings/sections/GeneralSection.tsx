@@ -121,7 +121,7 @@ export function GeneralSection() {
       <PreferenceGroups groups={[{ title: "", rows: [{
         key: "quit_confirmation",
         title: settingsLabel("general-quit-confirmation"),
-        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item always quits.",
+        description: "How ⌘Q quits the desktop app on macOS. The Quit menu item quits.",
         segmented: true,
         options: [
           { value: "direct", label: "Quit at once" },

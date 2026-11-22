@@ -179,7 +179,7 @@ export function FlowArtifactPruned() {
                 <span>Result kept</span>
                 <b>Passed · commit a41c9e2</b>
               </div>
-              <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned once a retention window exists; v1 has none yet. The hash stays in the hash-chained ledger, so the log can be checked if you still have a copy. Replay is never truncated: every event stays.</p>
+              <p style={{ margin: "0", color: "var(--color-muted)", fontSize: "11.5px" }}>Large artifacts (logs, screenshots) can be pruned once a retention window exists; v1 has none yet. The hash is kept in the ledger, so the log can be checked if you still have a copy. Replay keeps every event.</p>
               <div className="cx-ra"><Btn className="cx-ghost">Verify a copy…</Btn><Btn className="cx-ghost">Re-run the check</Btn></div>
               <div style={{ marginTop: "6px" }}><span className="cx-cwpv" style={{ marginLeft: "0" }}>Re-run the check: Available when the write route ships</span></div>
             </div>

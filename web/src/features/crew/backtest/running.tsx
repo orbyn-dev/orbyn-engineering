@@ -57,7 +57,7 @@ export function BacktestRunning() {
                 <span>
                   <b>Replay started</b>
                   <small>
-                    64 merged pull requests in orbyn-engineering, #392 to #455, starting with the oldest. Each review sees the diff and the checks as they were at merge time, never the later revert or fix.
+                    64 merged pull requests in orbyn-engineering, #392 to #455, starting with the oldest. Each review sees the diff and the checks as they were at merge time, not the later revert or fix.
                   </small>
                 </span>
               </div>

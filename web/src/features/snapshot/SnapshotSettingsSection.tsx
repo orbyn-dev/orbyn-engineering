@@ -116,8 +116,8 @@ function ExclusionDialog({ onClose }: { onClose(): void }) {
     setProblem(null);
   };
   return (
-    <Dialog title="Apps never captured" onClose={onClose} footer={<Button onClick={onClose}>Done</Button>}>
-      <p className="snapshot-excluded-intro">Snap Shot never captures these apps. It says so and keeps nothing.</p>
+    <Dialog title="Apps to skip" onClose={onClose} footer={<Button onClick={onClose}>Done</Button>}>
+      <p className="snapshot-excluded-intro">Snap Shot skips these apps. It says so and keeps nothing.</p>
       <ul className="snapshot-excluded-list">
         {BUILT_IN_EXCLUDED_APPS.map((name) => (
           <li key={name}><span><b>{name}</b><small>Built in. Cannot be removed.</small></span><span aria-hidden>Built in</span></li>
@@ -256,10 +256,10 @@ export function SnapshotSettingsSection() {
           <Row title="Flash" description="Flash the screen once when a window is captured.">
             <input type="checkbox" role="switch" aria-label="Flash" checked={flash} onChange={(event) => setPrefs({ snapshotFlash: event.target.checked })} />
           </Row>
-          <Row title="Animations" description="Animate the capture into the draft. Always off with Reduce motion.">
+          <Row title="Animations" description="Animate the capture into the draft. Off when Reduce motion is on.">
             <input type="checkbox" role="switch" aria-label="Animations" checked={animations} onChange={(event) => setPrefs({ snapshotAnimations: event.target.checked })} />
           </Row>
-          <Row title="Apps never captured" description="Orbyn and password managers are never captured. Add other apps here.">
+          <Row title="Apps to skip" description="Orbyn and password managers are skipped. Add other apps here.">
             <span className="snapshot-added-count">{excluded.length === 0 ? "None added" : `${excluded.length} added`}</span>
             <Button small tone="quiet" onClick={() => setEditingExclusions(true)}>Edit list…</Button>
           </Row>
