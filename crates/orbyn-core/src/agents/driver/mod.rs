@@ -543,8 +543,10 @@ pub trait EngineDriver: Send + Sync {
     }
 
     /// Drops `before_turn` and every later turn from `session`'s own history, for a
-    /// rewind that keeps the session. Files are not touched. The default says this
-    /// engine has no native rollback, and the rewind leaves a handoff instead.
+    /// rewind that keeps the session. Files are not touched. For the Claude host,
+    /// `before_turn` is the run's prompt message id: the host's own turn id is a counter
+    /// and never appears in the session file. The default says this engine has no native
+    /// rollback, and the rewind leaves a handoff instead.
     async fn revert_session(
         &self,
         _cwd: &std::path::Path,
