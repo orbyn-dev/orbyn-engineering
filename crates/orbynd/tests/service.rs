@@ -926,6 +926,20 @@ async fn static_ui_has_csp_and_spa_fallback() {
             .unwrap()
             .contains("javascript")
     );
+    for path in [
+        "/assets/missing.js",
+        "/assets/missing.css",
+        "/%61ssets/missing.js",
+    ] {
+        for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+            let response = client
+                .request(method.clone(), format!("{}{path}", service.url))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 404, "{method} {path}");
+        }
+    }
     let missing_api = service.get("/api/nothing").send().await.unwrap();
     assert_eq!(missing_api.status(), 404);
     let body: Value = missing_api.json().await.unwrap();

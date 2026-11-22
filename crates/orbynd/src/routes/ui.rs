@@ -73,9 +73,17 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
         return ApiFailure::new(StatusCode::NOT_FOUND, "no_ui", "No UI is installed.")
             .into_response();
     };
-    let target = resolve(root, &path)
-        .filter(|candidate| candidate.is_file())
-        .unwrap_or_else(|| root.join("index.html"));
+    let target = match resolve(root, &path).filter(|candidate| candidate.is_file()) {
+        Some(target) => target,
+        None if percent_decode(&path).is_some_and(|decoded| {
+            let relative = decoded.trim_start_matches('/');
+            relative == "assets" || relative.starts_with("assets/")
+        }) =>
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        None => root.join("index.html"),
+    };
     match tokio::fs::read(&target).await {
         Ok(bytes) => {
             let mut response = bytes.into_response();
