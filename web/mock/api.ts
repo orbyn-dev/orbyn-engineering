@@ -586,6 +586,7 @@ export function createMockApi(options: MockOptions = {}) {
         };
       }
       if (seg[5] === "checks" || seg[5] === "timeline") return { status: 200, body: [] };
+      if (seg[5] === "comments") return { status: 200, body: fixtures.pullConversation() };
       if (seg[5] === "stack") return { status: 200, body: { layers: [], position: 0 } };
     }
 
