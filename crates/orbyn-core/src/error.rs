@@ -48,6 +48,8 @@ pub enum CoreError {
     FileConflict { revision: Option<String> },
     #[error("This file is too large to open here: {size} bytes, over the {limit} byte limit.")]
     FileTooLarge { size: u64, limit: u64 },
+    #[error("The Snap Shot's {field} is over the {limit} character limit.")]
+    SourceTooLarge { field: &'static str, limit: usize },
     #[error("{0} other thread(s) work in this folder, so restoring could lose their work.")]
     SharedDirectory(usize),
     #[error("finish or stop active runs first")]
@@ -228,6 +230,7 @@ impl CoreError {
             Self::NotFastForward(_) => "not_fast_forward",
             Self::FileConflict { .. } => "file_conflict",
             Self::FileTooLarge { .. } => "file_too_large",
+            Self::SourceTooLarge { .. } => "source_too_large",
             Self::SharedDirectory(_) => "shared_directory",
             Self::RunsActive => "runs_active",
             Self::Updating => "updating",
@@ -285,7 +288,7 @@ impl CoreError {
             Self::NotFound(_) => 404,
             Self::Updating => 503,
             Self::Invalid(_) | Self::CloneRefused(_) | Self::PermissionModeUnsupported(_) => 400,
-            Self::FileTooLarge { .. } => 413,
+            Self::FileTooLarge { .. } | Self::SourceTooLarge { .. } => 413,
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
             | Self::PolicyDenied(_)
@@ -389,6 +392,10 @@ impl CoreError {
             },
             Self::FileTooLarge { size, limit } => Self::FileTooLarge {
                 size: *size,
+                limit: *limit,
+            },
+            Self::SourceTooLarge { field, limit } => Self::SourceTooLarge {
+                field: *field,
                 limit: *limit,
             },
             Self::SharedDirectory(n) => Self::SharedDirectory(*n),

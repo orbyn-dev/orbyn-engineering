@@ -485,6 +485,7 @@
     ["POST","/api/workspace/rollback","person"],
     ["POST","/api/workspace/setup","person"],
     ["POST","/api/workspace/update","person"],
+    ["PUT","/api/attachments/{id}/source","local"],
     ["PUT","/api/crew/autopilot/mode","person"],
     ["PUT","/api/engines/{id}/code-mode","person"],
     ["PUT","/api/library/env-sets/{id}/keys/{key}","person"],
