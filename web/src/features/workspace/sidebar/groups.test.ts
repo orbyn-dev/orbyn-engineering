@@ -245,6 +245,17 @@ describe("ledger order", () => {
   });
 });
 
+describe("a terminal wait in the Ledger", () => {
+  it("puts a thread waiting on a terminal in Needs you, sorted first", () => {
+    const threads = [thread("plain", { position: 0 }), thread("term", { position: 1 })];
+    const ids = new Set(["term"]);
+    expect(arrangeThreads(threads, now, true, true, ids).active.map((t) => t.id)).toEqual(["term", "plain"]);
+    const groups = ledgerGroupsOf(threads, ids);
+    expect(groups.find((g) => g.key === "needs")?.rows.map((t) => t.id)).toEqual(["term"]);
+    expect(groups.find((g) => g.key === "done")?.rows.map((t) => t.id)).toEqual(["plain"]);
+  });
+});
+
 describe("drawn order", () => {
   const waiting = { active_run: { id: "r", state: "awaiting_approval" } as Thread["active_run"] };
   const failed = { last_run_state: "failed" } as Partial<Thread>;
