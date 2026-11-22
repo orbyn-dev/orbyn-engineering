@@ -348,13 +348,13 @@ fn claude_content(role: &str, content: Option<&Value>, skip_meta: bool) -> Vec<M
         let kind = part.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
             "text" => {
-                if let Some(value) = part.get("text").and_then(Value::as_str) {
-                    if !(skip_meta && meta_text(value)) {
-                        if !text.is_empty() {
-                            text.push_str("\n\n");
-                        }
-                        text.push_str(value.trim());
+                if let Some(value) = part.get("text").and_then(Value::as_str)
+                    && !(skip_meta && meta_text(value))
+                {
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
                     }
+                    text.push_str(value.trim());
                 }
             }
             "tool_use" | "server_tool_use" | "mcp_tool_use" => {
@@ -499,13 +499,13 @@ fn codex_content(role: &str, content: Option<&Value>, skip_meta: bool) -> Vec<Ma
         let kind = part.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
             "input_text" | "output_text" | "text" => {
-                if let Some(value) = part.get("text").and_then(Value::as_str) {
-                    if !(skip_meta && meta_text(value)) {
-                        if !text.is_empty() {
-                            text.push_str("\n\n");
-                        }
-                        text.push_str(value.trim());
+                if let Some(value) = part.get("text").and_then(Value::as_str)
+                    && !(skip_meta && meta_text(value))
+                {
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
                     }
+                    text.push_str(value.trim());
                 }
             }
             other => {
@@ -570,13 +570,14 @@ fn parse_codex(reader: impl BufRead) -> Result<Vec<Mapped>> {
                 let messages = match kind {
                     "user_message" => {
                         let mut messages = Vec::new();
-                        if let Some(text) = payload.get("message").and_then(Value::as_str) {
-                            if !text.trim().is_empty() && !meta_text(text) {
-                                messages.push(Mapped {
-                                    role: "user".into(),
-                                    text: text.trim().to_owned(),
-                                });
-                            }
+                        if let Some(text) = payload.get("message").and_then(Value::as_str)
+                            && !text.trim().is_empty()
+                            && !meta_text(text)
+                        {
+                            messages.push(Mapped {
+                                role: "user".into(),
+                                text: text.trim().to_owned(),
+                            });
                         }
                         if messages.is_empty()
                             && payload
