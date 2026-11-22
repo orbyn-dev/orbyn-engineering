@@ -6,7 +6,7 @@ side (`orbyn-contracts` `engines.rs` and `threads.rs`, `orbyn-core` `agents/engi
 the end.
 
 It all applies only while Cursor runs on the engine host (`ORBYN_ENGINE_HOST_CURSOR=1`, with `ORBYN_ENGINE_HOST` set, the same pattern
-as `ORBYN_ENGINE_HOST_CLAUDE=1`). With the flag off Cursor is the ACP engine it was: every mode, no notice, no refusal, no
+as `ORBYN_ENGINE_HOST_CLAUDE=1` and `ORBYN_ENGINE_HOST_ACP=1`). With the flag off Cursor is the ACP engine it was: every mode, no notice, no refusal, no
 `reviewer_only`. No real Cursor turn has run against any of this: there is no key and no terms decision yet, and the tests use a
 stand-in engine.
 

@@ -52,6 +52,26 @@ fn sentence(reason: Option<Reason>, error: Option<&HostError>) -> String {
     }
 }
 
+/// The outcome of a `runDone` for a family, and the events that go with it. ACP's
+/// `auth` failure is a sign-in to the agent, said in the core's own words.
+pub fn map_family(family: &str, done: &RunDone) -> (EngineOutcome, Vec<EngineEvent>) {
+    let (outcome, events) = map(done);
+    if family != "acp" {
+        return (outcome, events);
+    }
+    let signed_out = done
+        .error
+        .as_ref()
+        .is_some_and(|error| error.effective_kind() == ErrorKind::Auth);
+    match outcome {
+        EngineOutcome::FailedWith(mut failure) if signed_out => {
+            failure.message = super::acp::auth_sentence();
+            (EngineOutcome::FailedWith(failure), events)
+        }
+        other => (other, events),
+    }
+}
+
 /// The outcome of a `runDone`, and the events that go with it (a rate limit's reset time).
 /// Called once per run: the caller drops the route after the first.
 pub fn map(done: &RunDone) -> (EngineOutcome, Vec<EngineEvent>) {

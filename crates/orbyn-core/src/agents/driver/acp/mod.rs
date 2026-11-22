@@ -29,7 +29,7 @@ use super::{
 };
 use crate::agents::selection::MODE;
 use crate::error::{CoreError, Result};
-use events::UpdateMapper;
+pub(crate) use events::UpdateMapper;
 use models::{
     delete_probe_session, parse_models, parse_session_options, probe_model_options,
     require_offered, select_model,
@@ -59,26 +59,30 @@ pub struct AcpDriver {
     known: Option<&'static crate::agents::engines::known::KnownEngine>,
 }
 
-impl AcpDriver {
-    /// Why `command` must not be started for this engine, when it is another CLI.
-    fn refusal(&self, command: &crate::host::process::ResolvedCommand) -> Option<CoreError> {
-        let known = self.known.filter(|known| known.is_other(command))?;
-        Some(CoreError::EngineUnavailable(format!(
+/// The program to start for an ACP engine, and never one that is another CLI under the
+/// engine's name. Every start of the engine goes through here, native or hosted, so none
+/// can run the wrong program.
+pub(crate) fn resolve_agent(
+    target: &str,
+    known: Option<&crate::agents::engines::known::KnownEngine>,
+) -> Result<crate::host::process::ResolvedCommand> {
+    let found = resolve_engine(target)?;
+    if let Some(known) = known.filter(|known| known.is_other(&found)) {
+        return Err(CoreError::EngineUnavailable(format!(
             "Found a program at {} with the name of {}, but it is another program, so Orbyn did not start it. Get {} from its official page.",
-            command.path.display(),
+            found.path.display(),
             known.name,
             known.name
-        )))
+        )));
     }
+    Ok(found)
+}
 
+impl AcpDriver {
     /// The program to start, and never one that is another CLI under this engine's name.
     /// Every start of this engine goes through here, so none can run the wrong program.
     fn resolve(&self) -> Result<crate::host::process::ResolvedCommand> {
-        let found = resolve_engine(&self.engine.target)?;
-        match self.refusal(&found) {
-            Some(error) => Err(error),
-            None => Ok(found),
-        }
+        resolve_agent(&self.engine.target, self.known)
     }
     fn sign_in_slot(&self) -> SignInSlot {
         SignInSlot {
@@ -542,6 +546,37 @@ fn mcp_servers(init: &Value, url: Option<&str>, run_dir: &std::path::Path) -> Va
         run_dir,
         crate::agents::acp_mcp_bridge::bridge_program,
     )
+}
+
+/// The MCP servers an `open` over the engine host carries. The host negotiates the
+/// transports the agent advertised, so this side cannot pick HTTP for an agent that
+/// supports it. The stdio bridge, which ACP requires every agent to support, is used
+/// whenever this build can start it; HTTP is the fallback for a build without the
+/// bridge, and the host skips it when the agent does not advertise HTTP.
+pub(crate) fn host_mcp_servers(url: Option<&str>, run_dir: &std::path::Path) -> Value {
+    let Some(url) = url else {
+        return json!([]);
+    };
+    if let Some(program) = crate::agents::acp_mcp_bridge::bridge_program()
+        && let Ok(file) = crate::agents::acp_mcp_bridge::write_endpoint(run_dir, url)
+    {
+        return json!([crate::agents::acp_mcp_bridge::stdio_server(&program, &file)]);
+    }
+    json!([{"type":"http","name":MCP_SERVER_NAME,"url":url,"headers":[]}])
+}
+
+/// A `session/request_permission` as the approval gate sees it. The host puts the
+/// request's own parameters in the frame's `input`, with the tool call it names.
+pub(crate) fn permission_action(input: &Value) -> crate::governance::approvals::ActionAsk {
+    let (kind, target, summary) = permissions::classify(input);
+    let paths = permissions::gate_paths(input, kind);
+    crate::governance::approvals::ActionAsk {
+        kind,
+        target,
+        summary,
+        detail: input.clone(),
+        paths,
+    }
 }
 
 /// HTTP when the agent says it supports it. Otherwise stdio, which ACP requires of

@@ -9,7 +9,7 @@ use crate::util::new_id;
 /// Maps `session/update` payloads. Chunks of one kind form one message, which
 /// closes when another kind of update arrives.
 #[derive(Default)]
-pub(super) struct UpdateMapper {
+pub(crate) struct UpdateMapper {
     text: Option<String>,
     text_role: Option<String>,
     historical_id: Option<u64>,
@@ -18,7 +18,7 @@ pub(super) struct UpdateMapper {
 }
 
 impl UpdateMapper {
-    pub(super) fn historical() -> Self {
+    pub(crate) fn historical() -> Self {
         Self {
             historical_id: Some(0),
             ..Self::default()
@@ -32,7 +32,7 @@ impl UpdateMapper {
             new_id()
         }
     }
-    pub(super) fn on_update(&mut self, update: &Value) -> Vec<EngineEvent> {
+    pub(crate) fn on_update(&mut self, update: &Value) -> Vec<EngineEvent> {
         let mut events = Vec::new();
         match update.get("sessionUpdate").and_then(Value::as_str) {
             Some("agent_message_chunk" | "user_message_chunk") => {
@@ -211,7 +211,7 @@ impl UpdateMapper {
         }
     }
 
-    pub(super) fn close(&mut self) -> Vec<EngineEvent> {
+    pub(crate) fn close(&mut self) -> Vec<EngineEvent> {
         let mut events = Vec::new();
         self.close_text(&mut events);
         self.close_reasoning(&mut events);

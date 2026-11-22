@@ -2,6 +2,7 @@
 //! misbehaves on purpose) and the engine host's own `fake` family. They need `node`; without
 //! it a test says so loudly and returns, it never passes silently.
 
+mod acp;
 mod asks;
 mod control;
 mod pool;
@@ -89,6 +90,20 @@ pub(super) fn standin_with(
     timings: Timings,
     secrets: Option<SecretSource>,
 ) -> Option<Rig> {
+    standin_family_with("fake", env, timings, secrets)
+}
+
+/// The stand-in as another family, so its script can be the family it stands in for.
+pub(super) fn standin_family(family: &str, env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
+    standin_family_with(family, env, timings, None)
+}
+
+fn standin_family_with(
+    family: &str,
+    env: &[(&str, &str)],
+    timings: Timings,
+    secrets: Option<SecretSource>,
+) -> Option<Rig> {
     let program = node()?;
     let dir = TempDir::new();
     let script =
@@ -97,6 +112,7 @@ pub(super) fn standin_with(
         .iter()
         .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
         .collect();
+    vars.push(("STANDIN_FAMILY".into(), family.to_owned()));
     vars.push((
         "STANDIN_LOG".into(),
         dir.path()
@@ -111,7 +127,7 @@ pub(super) fn standin_with(
         instance: "test".into(),
     };
     Some(Rig {
-        pool: Pool::new("fake", spec, timings, secrets),
+        pool: Pool::new(family, spec, timings, secrets),
         dir,
     })
 }

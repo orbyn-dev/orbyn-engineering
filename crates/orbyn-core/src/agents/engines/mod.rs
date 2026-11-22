@@ -241,20 +241,43 @@ impl EngineManager {
     /// `engine`, launched the way the known engine `base` has to be, if it is one.
     fn custom_driver_for(&self, engine: CustomEngine, base: &str) -> Result<Arc<dyn EngineDriver>> {
         let known = known_engine(base);
-        match engine.tier {
-            EngineTier::Acp => Ok(Arc::new(match known {
-                Some(known) => AcpDriver::known(engine, known),
-                None => AcpDriver::new(engine),
-            })),
-            EngineTier::Agui => Ok(Arc::new(AguiDriver::new(engine, self.http.clone()))),
-            EngineTier::Terminal => Ok(Arc::new(TerminalDriver::new(
-                engine,
-                self.terminals.clone(),
-            ))),
-            EngineTier::Native => Err(CoreError::Invalid(
-                "Custom engines use the ACP, AG-UI or terminal tier.".into(),
-            )),
+        let tier = engine.tier;
+        let rust: Arc<dyn EngineDriver> = match tier {
+            EngineTier::Acp => Arc::new(match known {
+                Some(known) => AcpDriver::known(engine.clone(), known),
+                None => AcpDriver::new(engine.clone()),
+            }),
+            EngineTier::Agui => Arc::new(AguiDriver::new(engine.clone(), self.http.clone())),
+            EngineTier::Terminal => {
+                Arc::new(TerminalDriver::new(engine.clone(), self.terminals.clone()))
+            }
+            EngineTier::Native => {
+                return Err(CoreError::Invalid(
+                    "Custom engines use the ACP, AG-UI or terminal tier.".into(),
+                ));
+            }
+        };
+        Ok(self.hosted(rust, &engine, known))
+    }
+
+    /// Every engine the native ACP driver serves goes through the ACP host when its flag
+    /// is on. Cursor keeps its own family flag, and non-ACP tiers are untouched.
+    fn hosted(
+        &self,
+        inner: Arc<dyn EngineDriver>,
+        engine: &CustomEngine,
+        known: Option<&'static crate::agents::engines::known::KnownEngine>,
+    ) -> Arc<dyn EngineDriver> {
+        if engine.tier != EngineTier::Acp || known.is_some_and(|known| known.id == "cursor") {
+            return inner;
         }
+        let Some(hub) = &self.host else {
+            return inner;
+        };
+        hub.wrap_acp(
+            inner,
+            crate::agents::driver::host::HostAcpAgent::for_engine(engine, known),
+        )
     }
 
     pub fn driver(&self, id: &str) -> Result<Arc<dyn EngineDriver>> {
@@ -301,13 +324,15 @@ impl EngineManager {
                 .ok_or_else(|| {
                     CoreError::Invalid("A local ACP instance needs a program.".into())
                 })?;
-            return Ok(Arc::new(AcpDriver::new(CustomEngine {
+            let engine = CustomEngine {
                 id: instance.id.clone(),
                 name: instance.name.clone().unwrap_or_else(|| instance.id.clone()),
                 tier: EngineTier::Acp,
                 target,
                 args: instance.args.clone(),
-            })));
+            };
+            let rust: Arc<dyn EngineDriver> = Arc::new(AcpDriver::new(engine.clone()));
+            return Ok(self.hosted(rust, &engine, None));
         }
         let base =
             base.ok_or_else(|| CoreError::NotFound(format!("engine {}", instance.driver)))?;

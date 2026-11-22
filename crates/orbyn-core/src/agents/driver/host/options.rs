@@ -5,7 +5,9 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use super::acp::HostAcpAgent;
 use crate::agents::driver::{MCP_SERVER_NAME, RunSpec};
+use crate::error::Result;
 
 /// Claude: the Agent SDK's `query()` options under `sdk`, and the person's own `claude` path.
 /// The permission mode is never one that skips asking: every tool the SDK is unsure about
@@ -57,6 +59,28 @@ pub fn claude(spec: &RunSpec, claude_path: Option<&Path>) -> Value {
         options.insert("claudePath".into(), json!(path));
     }
     Value::Object(options)
+}
+
+/// ACP: the agent the core resolved, the turn's model, effort and mode, and the run's MCP
+/// servers. Policy stays in Rust: no autopilot value is ever sent, and the host's own
+/// session rules decide the rest.
+pub fn acp(spec: &RunSpec, agent: &HostAcpAgent) -> Result<Value> {
+    let mut options = Map::new();
+    options.insert("agent".into(), agent.json()?);
+    if let Some(model) = &spec.model {
+        options.insert("model".into(), json!(model));
+    }
+    if let Some(effort) = &spec.effort {
+        options.insert("effort".into(), json!(effort));
+    }
+    if let Some(mode) = spec.options.get(crate::agents::selection::MODE) {
+        options.insert("mode".into(), json!(mode));
+    }
+    options.insert(
+        "mcpServers".into(),
+        super::acp::host_mcp_servers(spec.mcp_url.as_deref(), &spec.run_dir),
+    );
+    Ok(Value::Object(options))
 }
 
 #[cfg(test)]
