@@ -1,17 +1,17 @@
 # Command blocks (W1)
 
-What the terminal drawer needs from the service to show one block per command. **Planned**: the web side is built hidden, the
-service routes are not built. In a production build the web has no client and sends nothing, so the terminal is unchanged; a dev-only
-preview (`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here change only if the service pull
-request says so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs. Owner of the service side: Eng 2.
+What the terminal drawer needs from the service to show one block per command. **Service built, web hidden**: the service keeps,
+redacts and serves blocks through the two routes below; the web side is built hidden and in a production build has no client, so the
+terminal is unchanged. A dev-only preview (`#/preview/command-blocks`) installs the mock in `web/mock/commandBlocks.ts`. Names here
+change only if the service pull request says so. Row: G17 in [parity](parity.md). Frames: `block-*` in Engineer Designs.
 
 ## What the service keeps
 
 Per terminal (a thread's `main` shell or a named terminal), an ordered list of blocks, oldest first. A block starts at an OSC 133 `C`
 mark (output starts) and ends at the `D` mark (or at the next `A` or `C` mark when no `D` arrives, with no exit code). The marks are
 the ones the web already reads in `web/src/features/panels/terminal/shellMarks.ts`; Orbyn installs no shell integration, so a shell
-that emits none yields no blocks. A command Orbyn itself runs (a project script, a Crew check, an agent command) is one block with
-the same fields.
+that emits none yields no blocks. A command Orbyn itself runs (a project script, a Crew check, an agent command) would be one block
+with the same fields only when a single marked-terminal write path already exists; the service adds none today (see Decisions).
 
 | Field | Type | Rules |
 | --- | --- | --- |
@@ -98,8 +98,17 @@ Products Research, not something the web invents.
 - **The service redacts, the web does not trust that it did.** The service runs its secret rules (the Redactor, per the `redact-*`
   frames) over both `command` and the output text **before** it stores them and again before it answers, so a secret printed by a
   command is never in the list or the output. The hook is a single function in the block store, `redact(text) -> text`, so the rule set
-  can change without touching the routes. Until the Redactor exists the hook is the identity and the routes stay behind the hidden
-  flag: **do not turn blocks on in a build before redaction lands**.
+  can change without touching the routes. If the rules cannot be read, that terminal keeps nothing and the list answers empty.
+- **Marks are not verified.** A block's boundaries, `exit_code` and `command` come from marks (OSC 133, OSC 633;E, OSC 7) in the
+  terminal's own output, so any program or `cat file` can forge them: a failing build can show exit 0 and a Run again line can be
+  chosen by a file's content. The web shows the command before Run again and never sends Enter; treat `exit_code` as advisory until
+  the shell integration passes a nonce (not built). A flood of forged `C` marks can fill the 500-block cap and evict real history.
+- **Live output lags one line.** The last line of a running block is held back until its newline or the block's end, so a command that
+  prints "Compiling..." and waits shows it only with the next line; `output_bytes` does not count it either. A prompt with no newline
+  does not show in the block until the command ends.
+- The working directory (`cwd`) is redacted like the command.
+- **A terminal that carries a workflow run's env values keeps no blocks.** Those values are masked on the output stream after the block
+  parser reads it, so the parser never records such a terminal (tested: `a_terminal_with_run_secrets_keeps_no_command_blocks`).
 - Redaction applies to what the web copies too: the web copies what the service sent. A copy therefore never holds more than the drawer
   showed.
 - A block's `command` and `cwd` are labels. The web never opens a path from them, never builds a URL from them and never puts them in a
@@ -114,10 +123,34 @@ Products Research, not something the web invents.
 (the dev-only screen). The mock, `web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the
 build if its marker or the route appears.
 
-## Questions for Eng 2
+## Decisions
 
-1. Route names and paths above (`/api/threads/{id}/terminals/{terminal}/blocks…`): confirm or rename.
-2. Are `max_blocks`, `max_block_bytes` and `max_total_bytes` right, and is "in memory, cleared by a restart" acceptable for the first version?
-3. Does `orbynd` see OSC 133 marks, or only the web's xterm? Today only the web reads them (`shellMarks.ts`), so the service needs its own
-   parser on the pty stream; the OSC 133 `D` exit code is the one source for `exit_code`.
-4. Full-screen detection (`fullscreen`) needs the alternate-screen switch (`CSI ? 1049 h/l`) parsed on the same stream.
+The service side of #974 is built in `crates/orbyn-core/src/host/blocks/` (parser, store, text) and
+`crates/orbynd/src/routes/blocks.rs`, with module tests and a service test in `crates/orbynd/tests/command_blocks.rs`. The web stays
+hidden.
+
+1. **Routes stay as written.** `GET /api/threads/{id}/terminals/{terminal}/blocks?before=&limit=` and
+   `GET .../blocks/{block_id}/output?after=&limit=` are both Local reads, like the neighbouring terminal reads. Neither writes. There
+   is no service-side run, rerun or delete route.
+2. **Limits stay as written.** 500 blocks per terminal, 1 MiB of text per block, 8 MiB per terminal; the oldest is dropped whole and a
+   running block is never dropped. The list returns `limits`. Blocks are in memory only: an `orbynd` restart clears them and closing,
+   settling or archiving a terminal drops them with it. A running block ends there with no exit code.
+3. **The service parses the pty stream.** A small streaming state machine reads OSC 133 and 633 across read boundaries (`A`, `B`, `C`,
+   `D;<code>`), plus `633;E` for `command`, OSC 7 and `633;P;Cwd=` for `cwd`, and the alternate-screen switch (`CSI ? 1049 h/l`, also
+   `?1047` and `?47`) for `fullscreen`. It emits no block for a shell that emits no marks; that is an empty list, never an error. A
+   block ends at `D`, at the next `A` or `C` when no `D` arrived, or when the terminal closes. A block that used the alternate screen
+   keeps no output: `output_bytes` is 0 and the output route answers an empty page.
+4. **Text is stored plain.** Bytes are decoded as UTF-8 lossily, then CSI, OSC, DCS and every other ESC sequence and every control
+   character except newline and tab are removed; a carriage return that redraws a line keeps the last text of that line. `command` is
+   one line, cut (not wrapped) at 4096 characters, taken from `633;E` when the shell sent it and null otherwise.
+5. **Redaction runs before storage.** Every command and every chunk of output goes through the `Redactor` for `Surface::Terminal`
+   through one `redact(text) -> text` in the block store before it is stored, and again before it is answered. If no redactor can be
+   obtained the store keeps nothing and the list is empty. Nothing logs command text or output; a log line names the terminal id, block
+   id and a byte count.
+6. **Cursors are opaque and validated.** A cursor into text the service dropped is `410 cursor_expired`; a malformed cursor is
+   `422 bad_cursor`; a gone thread, terminal or block is `404 not_found`, and a thread the person cannot open answers the same `404`.
+   Output pages never cut a UTF-8 character and prefer a line boundary.
+7. **A command Orbyn itself runs is not a block yet.** Project scripts, Crew checks and agent commands either run as a separate
+   `shell -lc` process that emits no marks or are typed into an engine's pty; there is no single place that writes a shell command into
+   a marked terminal. The parser would read the marks if such a terminal emitted them, but the service adds no synthetic block. This
+   stays listed in G17.

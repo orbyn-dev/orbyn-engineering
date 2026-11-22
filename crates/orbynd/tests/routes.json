@@ -224,6 +224,8 @@
     ["GET","/api/threads/{id}/task-folder","local"],
     ["GET","/api/threads/{id}/terminal-attention","local"],
     ["GET","/api/threads/{id}/terminals","local"],
+    ["GET","/api/threads/{id}/terminals/{terminal}/blocks","local"],
+    ["GET","/api/threads/{id}/terminals/{terminal}/blocks/{block_id}/output","local"],
     ["GET","/api/threads/{id}/terminals/{terminal}/output/events","local"],
     ["GET","/api/threads/{id}/terminals/{terminal}/scrollback","local"],
     ["GET","/api/threads/{id}/tools","local"],

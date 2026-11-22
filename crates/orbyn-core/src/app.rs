@@ -17,6 +17,7 @@ use crate::conversation::runs::{RunManager, RunServices};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::ApprovalGate;
 use crate::governance::computer::{ComputerBackend, ComputerConfig, ComputerGateway, LocalBackend};
+use crate::host::blocks::BlockStore;
 use crate::host::shell::ShellBridge;
 use crate::host::terminal::TerminalManager;
 use crate::operations::updates::UpdateCenter;
@@ -238,7 +239,9 @@ impl Core {
         }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
-        let terminals = Arc::new(TerminalManager::default());
+        let terminals = Arc::new(TerminalManager::with_blocks(Arc::new(BlockStore::new(
+            store.clone(),
+        ))));
         let setups = Arc::new(SetupManager::new(store.clone())?);
         let http = reqwest::Client::builder()
             .user_agent(concat!("orbyn/", env!("CARGO_PKG_VERSION")))
