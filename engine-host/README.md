@@ -22,8 +22,9 @@ A family is one file in `src/families/` that exports `{ name, sdk: {name, versio
 
 1. `create(ctx)` gets `ctx.send(frame)` (write any host frame) and `ctx.log(event)` (a `log` frame, never put prompt text or
    tokens in it). It returns `{ handle(request), close() }`; `handle` returns the response `result` or throws.
-2. Implement `open`, `send`, `cancel`, `respond`, `closeSession` (`steer`, `fork`, `models`, `usage`, `stopTask`, `background`,
-   `rollback`, `probe` only if the engine can) and list the optional ones in `capabilities`. `send` answers `{runId}` when
+2. Implement `open`, `send`, `cancel`, `respond`, `closeSession` (`steer`, `fork`, `models`, `usage`, `readHistory`,
+   `readSubagent`, `stopTask`, `background`, `rollback`, `probe` only if the engine can) and list the optional ones in
+   `capabilities`. `send` answers `{runId}` when
    the turn is accepted, then streams `delta` frames (the engine's own events, untouched) and ends with exactly one `runDone`.
 3. Policy stays in Rust: every engine permission or question becomes a `permission` or `question` frame, answered by `respond`.
    An allow reaches the engine in its once-only form; there is no host timeout on a pending one; cancel, run end and a crash
@@ -65,23 +66,23 @@ one query, permission frames with once-only allow and deny, cancel through `inte
 ids, background task frames, a run held open by a background agent or workflow, confinement through
 `spawnClaudeCodeProcess` (argv prefix and env allowlist).
 
-Not done, so Planned: the leftover-turn echo rule, models and usage requests, `rollback`, `stopTask`,
-`background` request, `AskUserQuestion` as a `question` frame, subagent transcripts, and any run against the real SDK
-or a real `claude`.
+Not done, so Planned: the leftover-turn echo rule on a real run, `AskUserQuestion` against the real SDK, and any run
+against the real SDK or a real `claude`.
 
 `AskUserQuestion` is a `question` frame answered with `answers`.
 
 Also done, from the SDK's own types (0.3.321), tested against a fake query: `models` (a throwaway query),
 `usage` (`getContextUsage`), `stopTask`, `background` (`backgroundTasks`).
 
+Also done, fake SDK only: `rollback` (closes the live query and resumes at the last top-level assistant message of
+the target turn), `readHistory` (`getSessionMessages`) and `readSubagent` (`getSubagentMessages`), the last two capped
+at the same 6 MiB as OpenCode's history. None of these three has run against the real SDK or a real `claude`.
+
 Run-end rules: the prompt goes in with a `uuid` (the core's `messageId` from `send`, or one the host makes; the accepted answer returns it so the core can tell the prompt's own turn from a leftover one in `command_lifecycle` frames); a `result` that arrives after a `command_lifecycle` `queued` for it but
 before `started` belongs to a leftover turn and is ignored (logged as `leftoverResult`); the first result while a
 background agent or workflow runs is held, and the follow-up turn's result ends the run. Checked against a T3
 transcript, and a real run (SDK 0.3.321, `claude` 2.1.327, haiku) showed `command_lifecycle` `queued` then `started`
 for the prompt's uuid before the result. A leftover turn has not been seen on a real run.
-
-Not done, so Planned: `rollback`, subagent
-transcripts, and any run against a real `claude` with a valid login.
 
 ## Cursor family (behind a flag)
 
