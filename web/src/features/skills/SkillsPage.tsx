@@ -57,7 +57,16 @@ export function SkillsPage({ skill }: { skill?: string }) {
     }
     const card = opened.current ? grid.current?.querySelector<HTMLElement>(`[data-skill="${CSS.escape(opened.current)}"]`) : null;
     (card ?? heading.current)?.focus({ preventScroll: true });
-    if (opened.current && content.current) content.current.scrollTop = listScrollTop.current;
+    if (opened.current && content.current) {
+      const scroller = content.current;
+      scroller.scrollTop = listScrollTop.current;
+      if (card) {
+        const bounds = scroller.getBoundingClientRect();
+        const target = card.getBoundingClientRect();
+        if (target.top < bounds.top) scroller.scrollTop += target.top - bounds.top;
+        else if (target.bottom > bounds.bottom) scroller.scrollTop += target.bottom - bounds.bottom;
+      }
+    }
   }, [skill, ready, known]);
 
   if (!result.data && !result.error) {
