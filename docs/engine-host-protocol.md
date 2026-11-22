@@ -1,11 +1,11 @@
 # Engine host protocol
 
 The wire contract between the Rust core and `orbyn-engine-host`, the signed Node SEA binary that runs
-engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse, and later Codex, ACP and Pi).
+engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse and Codex; later ACP and Pi).
 The Rust `HostDriver{family}` implements `EngineDriver` against this document; the host implements
 the other side. Neither side reads the other's code.
 
-Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude family is behind a flag. The shape follows the
+Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude family is behind a flag and the Codex family is registered without one. The shape follows the
 worker protocol of T3 Code's Cursor provider (MIT, `CursorAgentSdkWorkerProtocol.ts`), with three
 changes: a version handshake, `permission`/`question` frames so policy stays in Rust, and
 per-run confinement inputs supplied by Rust.
@@ -76,8 +76,8 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
 | `fork` | `sessionId`, `atTurn?` | `{engineSessionId}` |
 | `readHistory` | `sessionId` | list of messages (family-shaped, mapped by the core) |
-| `usage` | `sessionId` (optional for the Cursor and Muse families, which also answer account-wide) | context and cost counters. Cursor and Muse: `{usage, limits}`, see below |
-| `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process) | model list with efforts and capabilities. Cursor and Muse: `{models, account?}`, see below |
+| `usage` | `sessionId` (optional for the Cursor, Muse and Codex families, which also answer account-wide) | context and cost counters. Cursor, Muse and Codex: `{usage, limits}`, see below |
+| `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process; Codex takes optional `cwd`, `codexPath`, `env`, `confinement`) | model list with efforts and capabilities. Cursor, Muse and Codex: `{models, account?}`, see below |
 | `closeSession` | `sessionId` | `null` |
 | `probe` | `sessionId`, `kind` (`confinement`) | `{refused: [...], allowed: [...]}`: the host runs a scripted attempt to write outside the roots and read a forbidden path through the engine and reports which were refused; the Crew probe per family and the Codex confinement probe use it |
 | `ping` | none | `null` (liveness; see crash and recovery) |
@@ -140,7 +140,7 @@ Unknown request types get `ok:false` with `error.name = "UnsupportedRequest"`.
 - `log` is for protocol-level events the core stores as run diagnostics (T3's `protocolLog`). Never
   put prompt text or tokens in `log`; the host redacts before sending.
 
-## Account, limits and catalog results (Cursor and Muse)
+## Account, limits and catalog results (Cursor, Muse and Codex)
 
 Read-only, family-shaped results of `models` and `usage`, all optional and ignorable (no protocol bump; a core that ignores them loses only the display):
 
@@ -150,6 +150,71 @@ Read-only, family-shaped results of `models` and `usage`, all optional and ignor
 - `usage` result `{usage, limits}`: `usage` is the named session's last finished run total (or `null`); `limits` is `{checkedAt, windows: [{id, kind, label, usedPercent (0 to 100), resetsAt?, windowDurationMins?}], authLabel?, unavailable?, message?}` or, for Muse before any report, `null`. `unavailable` is
   `"unsupported"` or `"probeFailed"` with empty `windows`; a limits failure is never a request error.
 - No credential, token, key or response body appears in a result or `log`; the host redacts and failures carry fixed text.
+
+## Codex family
+
+`orbyn-engine-host codex` speaks the newline-delimited JSON-RPC of the person's own `codex app-server`
+(`options.codexPath`, default `codex`; never bundled). It starts one app-server per distinct confinement
+(`argvPrefix`, `env`, `cwd`, path and env additions); sessions with the same confinement share it, and it is
+stopped when its last session closes. `open.confinement` is applied when that process starts; a family that
+could not apply it would fail `open` with `kind: "unsupported"`. Windows launchers resolve `codex` with PATH
+and PATHEXT and run a `.cmd`/`.bat` under `cmd.exe`.
+
+`open` options (family-shaped): `codexPath?`, `model?`, `effort?`, `mode` (`"read-only"` default, or
+`"workspace-write"`), `approvalPolicy?` (`"on-request"` default, or the stricter `"untrusted"`),
+`mcpServers?` (a record, sent as `mcp_servers.<name>` thread config), `developerInstructions?`, and `env?`
+(environment additions for the child; keys are logged, never values). `open` `operation: "fork"` also takes
+`options.atTurn`, sent as `thread/fork` `lastTurnId`. `effort` is applied on each `turn/start`, where Codex
+accepts it; the thread request carries `cwd`, `model`, `developerInstructions` and MCP config.
+
+Requests: `open` (`create` is `thread/start`; `resume` is `thread/resume`; `fork` is `thread/fork`; every
+answer is the Codex thread id), `send` (`turn/start` with text and image/audio attachments by path, answers
+`{runId, engineSessionId, turnId?, messageId?}`), `steer` (`turn/steer`; `accepted` or `rejected`, never
+`queued`), `cancel` (`turn/interrupt`, then `runDone` cancelled), `respond`, `rollback` (`thread/read`,
+`thread/resume` when unloaded, `thread/turns/list` descending, `thread/revert` before the turn after `toTurn`
+(so `toTurn` is kept and later turns are removed), and a reload),
+`fork` (`thread/fork` at `atTurn`), `readHistory` (`thread/read` with turns, returned as `{turns}`),
+`closeSession`, `models` and `usage`. `stopTask`, `background` and `probe` are not in its capabilities.
+
+Frames: `delta.update` is Codex's own notification as `{method, params}`, untouched; a `session` frame is
+sent when a thread or turn id becomes known later; `background` events report a subagent thread as
+`{type: "started"|"ended", id: "<thread id>", kind: "agent"}` with `toolCallId`/`description` when Codex
+names them. `runDone` is sent once per `send`, with `result.reason`, `threadDisposition`, the turn's token
+usage and, on a rate limit, network loss or overload, `retry`. A run ends only on a `turn/completed` for its
+own turn id (the first one if Codex never returned one); another thread's turn is a delta and never ends it.
+A subagent thread still running when the parent's turn completes holds the run as
+[engine-run-contract.md](engine-run-contract.md) describes; the hold ends when the last agent ends plus a short
+grace for its follow-up turn, on cancel, after 5 minutes without a notification, after 30 minutes in all, or
+when the app-server exits (agents still running are then `background` `ended` with status `stopped`). A
+background shell is neither held nor reported. Codex's own review, compact and memory agents are not
+distinguished from subagents.
+
+Approvals and questions: `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval`, `applyPatchApproval` and `execCommandApproval` are `permission` frames
+(`tool` is `command`, `fileChange`, `permissions`, `applyPatch` or `execCommand`; `input` is Codex's params
+unchanged; `options` is `availableDecisions` when Codex sends it, else the wire's fixed decision set).
+`item/tool/requestUserInput` is a `question` frame (`tool: "request_user_input"`); its answers are keyed by
+the question text and sent back by question id. A form-mode MCP elicitation is a `question` frame
+(`tool` is the server name); a URL-mode one is a `permission` frame and an allow answers `cancel`, because
+this host cannot open the page. `respond` `allow` reaches Codex once only: `accept` (never
+`acceptForSession`), the requested permissions with `scope: "turn"`, `approved`, or an elicitation `accept`.
+`deny` is `decline`, empty permissions, a legacy denied decision, or an elicitation `decline`. The host
+never sends `approvalPolicy: "never"` or a `danger-full-access` sandbox; a recorded one is replaced by the
+asking values. `respond` has no timeout; cancel, run end and a crash refuse pending asks, and a late
+`respond` is logged and ignored.
+
+`models` (host-wide, throwaway app-server; optional `cwd`, `codexPath`, `env`, `confinement`) is
+`{models, account?}`; a model is
+`{id, name, isDefault, efforts: [{id, label, isDefault?}], defaultEffort?}` from `model/list`, and `account`
+is `{type?, planType?, email?}` from `account/read` when signed in. `usage` without a session also uses a
+throwaway app-server (same optional fields); `usage` is `{usage, limits}`:
+`usage` is the named session's last finished run total, or `null`; `limits` is `{checkedAt, windows,
+authLabel?}` from `account/rateLimits/read`, with `primary`/`secondary`/`individual` windows. A limits
+failure is `{checkedAt, windows: [], unavailable: "probeFailed", message}`, never a request error. T3's
+`resetCredits` is not carried because this document's limit shape has no field for it.
+
+Not run against a real Codex turn: every behaviour above comes from replayed T3 Code transcripts
+(app-server 0.156.1) and synthetic frames; see `engine-host/README.md`.
 
 ## Errors
 

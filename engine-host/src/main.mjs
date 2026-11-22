@@ -1,5 +1,6 @@
 import { runHost } from "./host.mjs";
 import { claudeFamily } from "./families/claude.mjs";
+import { codexFamily } from "./families/codex.mjs";
 import { cursorFamily, isBenignSdkRejection } from "./families/cursor.mjs";
 import { fake } from "./families/fake.mjs";
 import { museFamily } from "./families/muse.mjs";
@@ -7,6 +8,8 @@ import { opencodeFamily } from "./families/opencode.mjs";
 
 const families = {
   fake,
+  // The person's own `codex app-server`, over its documented JSON-RPC. No SDK or binary is bundled.
+  codex: codexFamily(),
   // MIT SDK, bundled. It drives the person's own `opencode serve`; no binary is shipped.
   opencode: opencodeFamily({ loadSdk: () => import("@opencode/client") }),
   // MIT SDK, bundled. It drives the person's own `muse serve`; no binary is shipped.
