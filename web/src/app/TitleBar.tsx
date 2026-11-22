@@ -100,21 +100,21 @@ function useWaitingCount(): number {
 }
 
 /** The window's top line: the brand, the page it is on and page-level status. */
-export function TitleBar({ layout }: { layout: LayoutWidth }) {
+export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: boolean }) {
   const phone = layout === "phone";
   const small = layout === "small";
   const drawerOpen = useSidebarDrawer((state) => state.open);
+  const closeDrawer = useSidebarDrawer((state) => state.close);
   const lights = useTrafficLights();
-  const collapsed = useUi((state) => state.sidebarCollapsed);
   const toggleSidebar = useUi((state) => state.toggleSidebar);
   const reading = useUi((state) => state.workspaceLayout === "reading");
-  const readingNav = useReadingNav((state) => state.open);
   const toggleReadingNav = useReadingNav((state) => state.toggle);
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
   const waiting = useWaitingCount();
   const account = useSignedInAccount();
 
-  const shown = small ? drawerOpen : reading ? readingNav : !collapsed;
+  // What the shell puts on screen, so the button and its label never disagree with the sidebar.
+  const shown = navShown;
   // Folding the sidebar away must not strand focus on a row that no longer exists; a docked sidebar
   // keeps its rows mounted, so focus can also be left inside one of them.
   const wasShown = useRef(shown);
@@ -139,7 +139,7 @@ export function TitleBar({ layout }: { layout: LayoutWidth }) {
 
   // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
   // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
-  // whose sidebar is its home page, gives the bar a row of its own, and it holds the buttons alone.
+  // whose sidebar has the page to itself, gives the bar a row of its own, and it holds the buttons alone.
   const row = phone;
   return (
     <header className="titlebar"
@@ -157,8 +157,10 @@ export function TitleBar({ layout }: { layout: LayoutWidth }) {
         data-sidebar-toggle
         onClick={
           phone
-            ? // On the phone the sidebar is the home page: it opens by going home and closes by leaving it.
-              () => navigate(shown ? { name: "new", projectId: null } : { name: "home" })
+            ? // The phone draws the sidebar as its home page and as a full-screen sheet over any other
+              // page: this closes the sheet, leaves the home page where the sidebar already is, or opens
+              // the sheet over the page, so the places in it are reachable from anywhere.
+              drawerOpen ? closeDrawer : shown ? () => navigate({ name: "new", projectId: null }) : toggleSidebarDrawer
             : small
               ? // On a small window it is a drawer over the thread.
                 toggleSidebarDrawer

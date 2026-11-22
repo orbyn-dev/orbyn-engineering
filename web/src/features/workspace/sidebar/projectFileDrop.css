@@ -1,0 +1,45 @@
+/* A project row held over a transcript: the composer's dashed target, on the row. */
+.folder-head[data-file-over] .folder-toggle {
+  outline: 2px dashed var(--color-textSoft);
+  outline-offset: -2px;
+}
+
+.transcript-drop-hint {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 300px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow:
+    0 8px 24px var(--color-shadow),
+    0 0 0 1px var(--color-borderStrong);
+  color: var(--color-text);
+  font-size: var(--text-small);
+  pointer-events: none;
+}
+
+.transcript-drop-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.transcript-drop-name > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-drop-name > svg {
+  flex: none;
+}
+
+.transcript-drop-label {
+  color: var(--color-muted);
+}

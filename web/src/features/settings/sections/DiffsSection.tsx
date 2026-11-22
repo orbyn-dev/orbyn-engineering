@@ -3,7 +3,7 @@ import { useUi } from "../../../product/state/ui";
 import { Segmented } from "../../../ui/Segmented";
 import { SettingGroup, SettingRow } from "../rows/SettingRow";
 import { PreferenceGroups } from "../rows/PreferenceRows";
-import { heading, Toggle } from "./parts";
+import { Toggle } from "./parts";
 
 /** The same stored layout the diff panel's own switch uses. */
 function DiffViewRow() {
@@ -36,7 +36,6 @@ export function DiffsSection() {
   const setPrefs = useUi((state) => state.setPrefs);
   return (
     <>
-      {heading("Diffs & pull requests")}
       <SettingGroup>
         <DiffViewRow />
         <IgnoreWhitespaceRow />

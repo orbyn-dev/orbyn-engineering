@@ -119,7 +119,7 @@ export function EngineTiers() {
         }}><option value="unmapped">Builder · not mapped</option><option value="lead" disabled={!available}>Lead</option><option value="worker" disabled={!available}>Builder</option><option value="scout" disabled={!available}>Scout</option></select>
           {draft && current && draft.model !== current && engine?.available ? <Button small disabled={busy || readonly || editor.phase === "conflict"} onClick={() => patchTierEditor(scope, { draft: { ...editor.draft, [id]: { ...draft, model: current } }, error: undefined })}>Use current default</Button> : null}
         </div> : !engine?.native && !saved ? <Button small disabled={readonly || !available} onClick={() => edit(id)}>Map it</Button> : null}
-          <CrewRoleNote engine={statuses?.find((status) => status.id === id) as CrewRoleFields | undefined} engineName={engine?.name ?? id} />
+          <CrewRoleNote engine={statuses?.find((status) => status.id === id) as CrewRoleFields | undefined} />
         </div>
       </div>;
     })}

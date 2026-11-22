@@ -96,11 +96,26 @@ pub struct PtySession {
     scrollback: Mutex<Scrollback>,
     exit: watch::Sender<Option<i32>>,
     output_state: watch::Sender<PtyOutputState>,
+    /// The spec ran a coding engine, never a plain shell. W10 reads this so only an
+    /// engine console can report a wait.
+    engine: bool,
+    /// Counts writes to the child, never the bytes. A watcher uses it as the only
+    /// signal that the person wrote something, without reading what was written.
+    writes: watch::Sender<u64>,
     tree: ProcessTree,
 }
 
 impl PtySession {
     pub fn write(&self, bytes: &[u8]) -> Result<()> {
+        self.write_raw(bytes)?;
+        self.writes
+            .send_modify(|count| *count = count.wrapping_add(1));
+        Ok(())
+    }
+
+    /// Writes without telling the write watchers. `write` counts the person's input;
+    /// the cursor reply to ConPTY must not read as the person answering a prompt.
+    fn write_raw(&self, bytes: &[u8]) -> Result<()> {
         let mut writer = lock(&self.writer);
         writer.write_all(bytes)?;
         writer.flush()?;
@@ -132,6 +147,13 @@ impl PtySession {
         lock(&self.scrollback).bytes.iter().copied().collect()
     }
 
+    /// The last `max` bytes of the scrollback, without copying the rest.
+    pub fn scrollback_tail(&self, max: usize) -> Vec<u8> {
+        let scrollback = lock(&self.scrollback);
+        let start = scrollback.bytes.len().saturating_sub(max);
+        scrollback.bytes.range(start..).copied().collect()
+    }
+
     pub fn clear(&self) {
         *lock(&self.scrollback) = Scrollback::default();
     }
@@ -148,6 +170,40 @@ impl PtySession {
     /// close may stop observation without waiting for inherited descriptors.
     pub fn output_state(&self) -> watch::Receiver<PtyOutputState> {
         self.output_state.subscribe()
+    }
+
+    /// Whether this terminal runs a coding engine, not a plain shell.
+    pub fn engine(&self) -> bool {
+        self.engine
+    }
+
+    /// Changes when `write` is called. It carries a count, not the bytes.
+    pub fn writes(&self) -> watch::Receiver<u64> {
+        self.writes.subscribe()
+    }
+
+    /// Whether the pty's termios has `ECHO` off, so a prompt is in no-echo mode. Only
+    /// unix has the mode to read; a ConPTY has none, so Windows never reports a secret.
+    #[cfg(unix)]
+    pub fn echo_off(&self) -> bool {
+        let master = lock(&self.master);
+        let Some(master) = master.as_ref() else {
+            return false;
+        };
+        let Some(fd) = master.as_raw_fd() else {
+            return false;
+        };
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
+            return false;
+        }
+        termios.c_lflag & libc::ECHO == 0
+    }
+
+    /// ConPTY has no echo flag, so no pty on Windows is in a no-echo mode.
+    #[cfg(not(unix))]
+    pub fn echo_off(&self) -> bool {
+        false
     }
 
     pub fn attached_clients(&self) -> usize {
@@ -439,6 +495,7 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
     let (output, _) = broadcast::channel(256);
     let (exit, _) = watch::channel(None);
     let (output_state, _) = watch::channel(PtyOutputState::Reading);
+    let (writes, _) = watch::channel(0);
     let session = Arc::new(PtySession {
         writer: Mutex::new(writer),
         master: Mutex::new(Some(pty.master)),
@@ -446,6 +503,8 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
         scrollback: Mutex::new(Scrollback::default()),
         exit,
         output_state,
+        engine: spec.engine,
+        writes,
         tree: tree_for(pid),
     });
     // PTY reads block, and a blocking thread must not hold a strong reference
@@ -464,7 +523,7 @@ fn spawn(spec: PtySpec, secrets: Option<RunSecrets>) -> Result<Arc<PtySession>> 
             let mut chunk = buffer[..read].to_vec();
             if awaiting_cursor_query && take_cursor_query(&mut chunk) {
                 awaiting_cursor_query = false;
-                let _ = session.write(CURSOR_REPLY);
+                let _ = session.write_raw(CURSOR_REPLY);
             }
             // A workflow run's output passes its mask before any byte reaches the saved output or a frame.
             if let Some(mask) = masker.as_mut() {
