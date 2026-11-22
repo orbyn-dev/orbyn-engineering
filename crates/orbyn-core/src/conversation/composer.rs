@@ -39,7 +39,7 @@ fn is_image(mime: &str) -> bool {
 }
 
 /// The file name alone, so a name cannot steer where the upload lands.
-fn safe_name(name: &str) -> String {
+pub(crate) fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
         .chars()

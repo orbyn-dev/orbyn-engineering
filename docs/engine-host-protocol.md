@@ -1,7 +1,7 @@
 # Engine host protocol
 
 The wire contract between the Rust core and `orbyn-engine-host`, the signed Node SEA binary that runs
-engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse, and later Codex, ACP and Pi).
+engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse, ACP, and later Codex and Pi).
 The Rust `HostDriver{family}` implements `EngineDriver` against this document; the host implements
 the other side. Neither side reads the other's code.
 
@@ -39,7 +39,7 @@ A frame over 8 MiB is a protocol error. Large payloads (file contents, diffs) tr
 The core starts the host as `orbyn-engine-host <family> [flags]` and the host speaks first:
 
 ```json
-{"type":"hello","protocol":1,"host":"0.1.0","family":"claude","sdk":{"name":"@anthropic-ai/claude-agent-sdk","version":"0.3.321"},"capabilities":["steer","fork","background","rollback","models","usage"]}
+{"type":"hello","protocol":1,"host":"0.1.0","family":"claude","sdk":{"name":"@anthropic-ai/claude-agent-sdk","version":"0.3.321"},"capabilities":["steer","fork","models","usage","readHistory","readSubagent","rollback","stopTask","background"]}
 ```
 
 The core answers with the one request it may send before `ready`:
@@ -76,8 +76,9 @@ one `response` frame with the same `id`, except `send`, whose response comes whe
 | `rollback` | `sessionId`, `toTurn` (a `turnId` the host reported) | `{ok: bool}` |
 | `fork` | `sessionId`, `atTurn?` | `{engineSessionId}` |
 | `readHistory` | `sessionId` | list of messages (family-shaped, mapped by the core) |
+| `readSubagent` | `sessionId`, `agentId`, `limit?` (1 to 5000) | list of one subagent's messages (family-shaped, mapped by the core) |
 | `usage` | `sessionId` (optional for the Cursor and Muse families, which also answer account-wide) | context and cost counters. Cursor and Muse: `{usage, limits}`, see below |
-| `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process) | model list with efforts and capabilities. Cursor and Muse: `{models, account?}`, see below |
+| `models` | none (host-wide; Muse takes optional `cwd`, `musePath`, `confinement` for its throwaway process; ACP takes optional `agent`, `cwd`, `confinement`, or an open `sessionId` for that session's catalog) | model list with efforts and capabilities. Cursor and Muse: `{models, account?}`, see below. ACP: `{models}`, see the ACP family below |
 | `closeSession` | `sessionId` | `null` |
 | `probe` | `sessionId`, `kind` (`confinement`) | `{refused: [...], allowed: [...]}`: the host runs a scripted attempt to write outside the roots and read a forbidden path through the engine and reports which were refused; the Crew probe per family and the Codex confinement probe use it |
 | `ping` | none | `null` (liveness; see crash and recovery) |
@@ -150,6 +151,82 @@ Read-only, family-shaped results of `models` and `usage`, all optional and ignor
 - `usage` result `{usage, limits}`: `usage` is the named session's last finished run total (or `null`); `limits` is `{checkedAt, windows: [{id, kind, label, usedPercent (0 to 100), resetsAt?, windowDurationMins?}], authLabel?, unavailable?, message?}` or, for Muse before any report, `null`. `unavailable` is
   `"unsupported"` or `"probeFailed"` with empty `windows`; a limits failure is never a request error.
 - No credential, token, key or response body appears in a result or `log`; the host redacts and failures carry fixed text.
+
+## ACP family
+
+Family `acp` (`src/families/acp.mjs`) speaks the Agent Client Protocol, newline JSON-RPC 2.0 on stdio, to one agent
+process per open session. Capabilities: `steer` and `models`.
+
+- **Options.** `open.options.agent = {command, args, env, id}`: the core resolves the agent and its binary; the host
+  never downloads, installs or resolves a registry and never fetches the network. `id` selects the per-agent quirks entry
+  in `src/families/acpAgents.mjs`. `options.authMethodId` names the sign-in method used when session setup says auth is
+  required. `options.mcpServers` are sent as ACP `mcpServers` (`stdio`/`http`/`acp`) in the transports the agent
+  advertised; an unsupported one is skipped and logged by name. `options.model`, `options.effort` and `options.mode` at
+  `open` or `send` are applied with `session/set_config_option` (or `session/set_model` when the session advertises only a
+  model state). `confinement.argvPrefix` and `confinement.env` apply exactly as they do to Muse; a malformed prefix is
+  `invalid_request`.
+- **Initialize.** `initialize` sends protocol version 2 with `clientInfo.name` "Orbyn" and `clientCapabilities` advertising
+  **only** form elicitation: no `fs` and no `terminal`. The agent keeps its own file and shell tools under the core's
+  confinement; an `fs/*` or `terminal/*` request is answered with JSON-RPC method-not-found (-32601) and a `log` frame
+  naming the method only, never its payload. This is deliberately unlike T3, which advertises and implements both.
+  `authenticate` runs only when session setup fails as auth-required (-32000) and `options.authMethodId` is an advertised
+  method; otherwise `open` fails `kind: "auth"`.
+- **Session setup.** `create` uses `session/new`; `resume` uses `session/load` and fails `kind: "unsupported"` when the
+  agent does not advertise `loadSession`; `fork` uses `session/fork` only when the agent advertises it. `open` returns
+  `{engineSessionId}` and the host sends no `session` frame (ACP names the session at setup).
+- **`delta`.** Every `session/update` notification becomes `{type:"delta", sendId, update: <params.update>}`: the
+  notification's `update` object is passed through unmodified (the same payload the CLI ACP driver maps). A malformed
+  `update` is dropped and logged as `{type:"malformedSessionUpdate", method:"session/update"}` with no content; an update
+  naming another session is dropped.
+- **`runDone`.** Exactly once, from the `session/prompt` reply: `end_turn` is `completed`, `cancelled` is `cancelled`,
+  `max_tokens`/`max_turn_requests` are `maxTurns`, `refusal` is `refused`, an RPC error is `failed` with a `kind` from the
+  closed set (and `retry` for `rate_limit`, `network` or overloaded). `result.usage` is ACP `Usage` mapped to the token
+  counters. `threadDisposition` is `broken` when the process is gone or the session is lost. There is no background
+  event in ACP, so the run is never held.
+- **Asks.** A `session/request_permission` is a `permission` frame: `tool` is the request tool call's title (its
+  `title`, else `kind`, else "tool"), `input` is the request's own parameters with fields the earlier `tool_call` update
+  carried filled into its `toolCall`, and `options` is the agent's option list exactly as received. `respond` allow
+  selects `allow_once`; when the agent offers no `allow_once` it selects `reject_once` (or the cancelled outcome when
+  there is none either). Deny selects `reject_once`, else the cancelled outcome. An `elicitation/create` form is a
+  `question` frame (`tool: "AskUserQuestion"`, `input.questions` from the form schema); `respond` `{answers}` (several
+  selections joined by a comma; labels are mapped back to the schema values) answers `{action:"accept", content}`, and
+  `{behavior:"deny"}` answers `{action:"cancel"}`. Non-form or unparseable elicitations are declined. Asks have no host
+  timeout; cancel, run end and a crash answer them cancelled (with `{action:"cancel"}` for a question).
+- **Requests.** `send` writes `session/prompt` with the person's text (minus T3's instruction wrapper) and image or
+  resource blocks only when `promptCapabilities` allows them, and answers when the prompt is on the wire. ACP's prompt
+  has no message id, so the core's `messageId` is echoed in the accepted result and not sent to the agent. `steer` sends
+  `session/cancel` and then a new `session/prompt` carrying the steering text; the run stays open and ends on the
+  replacement prompt's reply. `cancel` sends `session/cancel` and ends the run cancelled. `closeSession` cancels an open
+  run, sends `session/close` when advertised, and stops the process. A second `send` while a run is open is
+  `invalid_request`: the core queues its own messages.
+- **Models.** `models` returns `{models: [{id, name, isDefault, efforts: [{id, label, description?, isDefault?}],
+  defaultEffort?}]}`. The catalog comes from the setup result's `configOptions` (category `model`, with efforts from
+  `thought_level`/`reasoning`, the Mistral Vibe `thinking` category, and a model's `_meta.reasoningEfforts`) or from its
+  `models` state; bare ids are their own names. Without an open `sessionId` the request takes `agent`, `cwd` and optional
+  `confinement`, starts a throwaway agent, reads `session/new`, and stops it.
+- **Not supported by this family** (no capability): `fork` as a request, `stopTask`, `background`, `rollback`,
+  `readHistory`, a `usage` request, `probe`, and ACP `session/resume` for agents without `loadSession`.
+
+## Claude family
+
+Family `claude` (`src/families/claude.mjs`) runs `query()` of `@anthropic-ai/claude-agent-sdk` over the person's own
+`claude`. Capabilities: `steer`, `fork`, `models`, `usage`, `readHistory`, `readSubagent`, `rollback`, `stopTask` and
+`background`.
+
+- **`rollback`** is allowed only when no run is open. The host closes the live query, sets `resume` to the current engine
+  session id and `resumeSessionAt` to the uuid of the last top-level `assistant` message (one with no
+  `parent_tool_use_id`) of the target turn; the next `send` builds a query with `resumeSessionAt`, so the engine resumes
+  after that message. An unknown turn, or a session with no engine session yet, answers `{ok:false}`. The engine session
+  id may change on the resumed query and is reported by a `session` frame as today.
+- **`readHistory`** calls the SDK's `getSessionMessages(engineSessionId, {dir: cwd})` and returns its messages unchanged.
+  A session with no engine session yet is `NoEngineSession`; an SDK without the function is `UnsupportedRequest`.
+- **`readSubagent`** calls `getSubagentMessages(engineSessionId, agentId, {dir: cwd, limit?})` and returns its messages
+  unchanged. `agentId` must be 1 to 128 letters, digits, underscores or hyphens; `limit` must be a positive integer no
+  greater than 5000; anything else is `InvalidRequest` (`kind: "invalid_request"`).
+- Both readers fail with `HistoryTooLarge` (`kind: "host"`, "This conversation is too large to read in one piece.")
+  when the messages' JSON exceeds the same 6 MiB budget as the OpenCode family's `readHistory`.
+
+None of these three requests has run against the real SDK or a real `claude`; they are tested against a fake SDK only.
 
 ## Errors
 

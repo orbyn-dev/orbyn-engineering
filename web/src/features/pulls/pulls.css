@@ -7,9 +7,12 @@
 
 /* The list. Its toolbar is in pullsToolbar.css. */
 .pulls-table {
-  --c-rev: 140px;
-  --c-yours: 170px;
-  --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px 50px;
+  --c-rev: 118px;
+  --c-yours: 130px;
+  /* The drawn tracks (the width table in pr-list-narrow-900 and -800): number 24, title, Checks 132,
+     Reviewers 118, Your review 130, Comments 44, Updated 44. The two middle tracks come from variables so a
+     column with no data anywhere in the list can empty its own track. */
+  --pulls-cols: 24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours) 44px 44px;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -432,29 +435,76 @@
   text-decoration: underline;
   cursor: pointer;
 }
+/* The phone list (pr-list-narrow-580, pr-phone-list). Under 600 px the web app drops the column header and the rows
+   become cards: the title with its state label, the number line, then the checks line, where a review asked of the
+   person shows as a small amber Review asked marker in place of the Your review column this width hides. */
+.pull-phone-line {
+  display: none;
+}
 @media (max-width: 599px) {
   .pulls-table {
     padding-inline: 16px;
-    --pulls-cols: 18px minmax(0, 1fr) 14px auto;
+  }
+  /* One track, on the grids themselves: a container query sets the same property with lower specificity, and it would
+     otherwise still give the row its four column tracks under the media query's width. */
+  .pulls-table .pulls-head,
+  .pulls-table .pull-rows > li {
+    --pulls-cols: minmax(0, 1fr);
   }
   .pulls-head,
+  .pull-lead,
+  .pull-checks-cell,
   .pull-reviewers-cell,
   .pull-yours-cell,
   .pull-comments-cell,
-  .pull-age {
+  .pull-age,
+  .pull-row-actions {
     display: none;
   }
-  /* The state word gives way to its icon; it stays for assistive technology. */
-  .pull-checks-cell {
-    position: relative;
+  .pull-rows > li {
+    align-items: start;
+    row-gap: 3px;
+    padding-block: 12px;
   }
-  .pull-res-word {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
+  .pull-rows > li > .pull-open {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .pull-phone-line {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  /* The narrow container step hides the checks word in favour of its icon; the phone line shows both. */
+  .pull-phone-line .pull-res-word {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
     white-space: nowrap;
+  }
+  /* Changes requested is a neutral label; amber is only for changes on the person's own pull request, and for a
+     review asked of them. */
+  .pull-phone-changes,
+  .pull-phone-asked {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: var(--radius-pill);
+    background: var(--color-raised);
+    color: var(--color-textSoft);
+    font-size: var(--text-label);
+    white-space: nowrap;
+  }
+  .pull-phone-changes[data-tone="act"],
+  .pull-phone-asked {
+    background: var(--color-warnSoft);
+    color: var(--color-warnText);
   }
 }
 
@@ -904,9 +954,10 @@
   display: none;
 }
 
-/* Narrow: columns go in the order Updated, Comments; then Checks keeps only its icon and Reviewers and Your review take
-   their narrow tracks (the list at 900 px, pr-list-narrow-900); then Reviewers goes. A container query styles what is
-   inside the container, never the container itself, so the tracks are set on the header and the rows, which are the grids. */
+/* Narrow: the steps are at list widths 820, 760, 710 and 590 px (queries at 819, 759, 709 and 589), which keeps the
+   title about 245 px wide or more. Columns go in the order Updated, Comments; then Checks keeps only its icon and
+   Reviewers and Your review take their narrow tracks (36, 96 and 130 px); then Reviewers goes. A container query styles
+   what is inside the container, never the container itself, so the tracks are set on the header and the rows. */
 .pulls-table {
   container: pulls / inline-size;
   --c-rev-n: 96px;
@@ -919,10 +970,10 @@
 .h-checks-icon {
   display: none;
 }
-@container pulls (max-width: 759px) {
+@container pulls (max-width: 819px) {
   .pulls-head,
   .pull-rows > li {
-    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours) 56px;
+    --pulls-cols: 24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours) 44px;
   }
   .h-age {
     display: none;
@@ -931,17 +982,17 @@
     right: 4px;
   }
 }
-@container pulls (max-width: 699px) {
+@container pulls (max-width: 759px) {
   .pulls-head,
   .pull-rows > li {
-    --pulls-cols: 24px minmax(0, 1fr) 190px var(--c-rev) var(--c-yours);
+    --pulls-cols: 24px minmax(0, 1fr) 132px var(--c-rev) var(--c-yours);
   }
   .h-comments,
   .pull-comments-cell {
     display: none;
   }
 }
-@container pulls (max-width: 639px) {
+@container pulls (max-width: 709px) {
   .pulls-head,
   .pull-rows > li {
     --pulls-cols: 24px minmax(0, 1fr) 36px var(--c-rev-n) var(--c-yours-n);
@@ -962,7 +1013,7 @@
     white-space: nowrap;
   }
 }
-@container pulls (max-width: 579px) {
+@container pulls (max-width: 589px) {
   .pulls-head,
   .pull-rows > li {
     --pulls-cols: 24px minmax(0, 1fr) 36px var(--c-yours-n);
