@@ -220,6 +220,7 @@
     ["GET","/api/threads/{id}/servers","local"],
     ["GET","/api/threads/{id}/setup","local"],
     ["GET","/api/threads/{id}/task-folder","local"],
+    ["GET","/api/threads/{id}/terminal-attention","local"],
     ["GET","/api/threads/{id}/terminals","local"],
     ["GET","/api/threads/{id}/terminals/{terminal}/output/events","local"],
     ["GET","/api/threads/{id}/terminals/{terminal}/scrollback","local"],

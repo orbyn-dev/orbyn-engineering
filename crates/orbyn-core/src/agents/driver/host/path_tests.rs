@@ -211,8 +211,7 @@ async fn a_thread_moves_between_the_paths_on_the_same_session_id() {
         .raw()
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|frame| frame["type"] == "open")
-        .next_back()
+        .rfind(|frame| frame["type"] == "open")
         .expect("an open request");
     assert_eq!(open["operation"], "resume");
     assert_eq!(open["engineSessionId"], "cli-session-9");

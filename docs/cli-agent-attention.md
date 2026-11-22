@@ -1,10 +1,11 @@
 # CLI-agent attention (W10)
 
 What the service must tell the web so that an engine running in a terminal (an engine console) shows a Needs you item and a
-notification when it stops and waits for the person. **Built in the service**: detection, redaction and the event on the thread's
-log. **The web side is wired** (not yet observed against the real service): the window follows a thread's log after the shell stream's
-`thread_event` notice and draws the item, the tab and row dots and the two Settings rows; a dev-only preview (`#/preview/attention`)
-installs the mock in `web/mock/attention.ts`. Names here change only if the service pull request says so.
+notification when it stops and waits for the person. **Built in the service**: detection, redaction, the event on the thread's
+log and the open-items read. **The web side is wired** (not yet observed against the real service): the window follows a thread's log
+after the shell stream's `thread_event` notice, reads the thread's current open items once when it starts for threads with an open
+terminal and once before a notice's follow, and draws the item, the tab and row dots and the two Settings rows; a dev-only preview
+(`#/preview/attention`) installs the mock in `web/mock/attention.ts`. Names here change only if the service pull request says so.
 It extends G14 (engine console, row G14 in [parity](parity.md)); the product row is W10 in [crew](crew.md). Frames: `attention-*` in
 Engineer Designs. Owner of the detection and the event: Eng 2.
 
@@ -51,6 +52,23 @@ only in the thread's log.
 
 The service never records what was typed. The cleared line says "Answered in the terminal" for `input`, "Continued" for `output` and
 "The terminal closed" for `closed`.
+
+## Open items read
+
+`GET /api/threads/{id}/terminal-attention` (Local) answers `{ "items": [...] }`: the items waiting now in that thread, each shaped
+exactly as the `waiting` value above, oldest first, at most 8 (`TerminalAttentionOpen`). A window that opens after an item began reads
+it once, then follows the log as before. It reads the service's in-memory registry only: the stored, already redacted excerpt (a
+`secret` item carries only its label), never the terminal's text, and it writes nothing. Cleared and closed items are gone; an
+unknown thread is a 404.
+
+The web reads it once when the attention client starts, for the threads that already have a terminal open in this window (and once
+more for a thread whose terminal opens later), and once before it begins following a thread from a `thread_event` notice. The wait is
+bound: it reads threads the window knows have an open terminal plus threads that announce a notice, at most 32 threads
+(`MAX_FOLLOWED`), in small batches, and never polls. Each answer feeds the same store path as a log event: latest per `id`, the excerpt
+cleaned, capped, ANSI-stripped and drawn as text; a `secret` keeps only its label. A read item was already waiting before the window
+opened, so it raises no toast and no system notification, while the amber terminal-tab and sidebar dots and the thread's Needs you item
+still show it. A read that fails or answers 404 draws nothing and says nothing; the log follow still starts. Items beyond 8 and unknown
+shapes are ignored.
 
 ## Detection rules (built)
 
@@ -113,11 +131,11 @@ counts as waiting** (10 to 120 s, 20 by default). They follow Thread notificatio
 
 ## Web side
 
-`web/src/features/panels/terminal/attention/`: `contract.ts` (the types and `attentionApi()`, the service client unless a test or the preview installed another), `client.ts` (the service client: a `thread_event` notice from `GET /api/shell/events` starts following that thread's log from `seq - 1`, at most 32 threads, oldest let go first; reads only; `since` is the RFC 3339 string, parsed in `store.ts`), `text.ts`
+`web/src/features/panels/terminal/attention/`: `contract.ts` (the types and `attentionApi()`, the service client unless a test or the preview installed another), `client.ts` (the service client: a `thread_event` notice from `GET /api/shell/events` starts following that thread's log from `seq - 1`, at most 32 threads, oldest let go first; before that follow, and once when the client starts for each thread with a terminal open in this window, it reads the thread's open items through `api.terminalAttention` (also once for a terminal that opens later) and feeds them through the same store path without a toast; reads only; `since` is the RFC 3339 string, parsed in `store.ts`), `text.ts`
 (cleaning, caps, copy), `store.ts` (the pure reducer and the store), `TerminalAttention.tsx` (the item), `useAttention.ts` (the
 subscription, the toast and the notification), the amber dot on the terminal tab (`TerminalDrawerBody.tsx`) and on the thread's sidebar row (`ThreadRow.tsx`) while a terminal of the thread waits and is not dismissed here, `AttentionPreview.tsx` (dev-only). Notifications use the paths that exist
 (`pushToast`, and `new Notification` only when permission is already granted); no new OS permission. The mock is never in a production
-bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the route appears.
+bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the route appears. The open-items read has not been observed against a real service.
 
 ## Decisions
 
