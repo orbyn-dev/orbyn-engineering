@@ -208,11 +208,29 @@ Eng 4 has not built them. `frozen` and `crashed` are likewise target states of t
   as text; states, platforms, orientations and postures are looked up in `Map`s so a service-chosen key such as `__proto__` is
   Unknown (or, for orientation, not shown). Vendor links are used only when they are `http(s)` URLs. Device ids come only from the list.
 
+- **Device tools drawer (H26; device-tools-appearance, -text, -accessibility, -location, -permissions, -push,
+  -push-android, -platforms).** The Device tools Planned pill under the device opens a drawer over the panel. It has the six tabs
+  the frames draw (Appearance, Text, Accessibility, Location, Permissions, Push) and an info action with the "Device tools by
+  platform" table. Every control is labelled Not verified; Push on Android says "Not available on Android" and offers nothing to send,
+  while the rest of the tabs keep working. Appearance, text size, show elements, location, permissions and the push payload are typed
+  changes on the Planned client (`DeviceToolsPlannedApi`): there is no service route, so the production client answers `null` and the
+  drawer draws one Planned note with no controls. The mock (`createDevicesPlannedMock`) supplies the frame state for tests and the
+  preview. Nothing here changes Orbyn's own appearance, and the payload is kept per device.
+- **Agent permission (H27; device-agent-permission, -lead, -granted, -revoked, -off).** Agent access is off by default and only the
+  person's switch turns it on; reading the Planned client never grants anything. One request waits with Deny, Allow once and Allow for
+  this thread; the lead answer, the running-as Device chip ("Claude Code · this thread") and the revoked and off messages are drawn from
+  the same typed state. The production Planned client answers `null`, so access always resolves off and the permission flow cannot
+  happen until the agent-device CLI exists (H42). The frames are preview-only; the setup hub keeps its access step.
+
 **Planned.** The live screen stream and typed input (phase 2), the fold and hinge frames (phase 3; the existing 2D controls stay), the
-tools drawer and agent permission flow (phase 4), the Devices settings frames, and the service side of tool install, version check,
-agent access and restart. The service (Eng 4) has not started; nothing here is verified against `adb`, `xcrun` or a real service.
+Devices settings frames, and the service side of tool install, version check, agent access, restart and the H26 tools route. The
+tools drawer and agent permission frames are built against the Planned client and are still Planned; their controls only work through
+the dev mock. The service (Eng 4) has not started; nothing here is verified against `adb`, `xcrun` or a real service.
 
 Guessed where the doc is silent: the screenshot answer is `{ok, device, image}` (the doc says `{ok, image}`; the web reads `image` and
 keeps the `device`); the unfold step uses the `unfold` action, not `hinge_preset: open`; the hinge slider starts at the reported angle or 90.
+For the Planned H26/H27 client there is no route at all: its state shape, the 12 text-size steps (Default is step 3), the short place list,
+Ask/Allow/Deny as reset/grant/deny, the 4000-character push cap, the once/thread agent scopes and the lead answer are the preview's own
+stand-ins. The accessibility element outlines need the live screen (phase 2), so the drawer lists the tree but cannot draw the outlines yet.
 Not verified: every route and field against a real service, `adb` and `simctl` behavior, the hinge preset values (0, 130, 180) and the
 1 to 179 bound.

@@ -5,12 +5,14 @@
  * `not_foldable`, `action_unsupported` (iOS rotate and buttons) and `device_busy`. The posture it answers for a hinge angle is the
  * mock's own guess (the doc leaves open what Android reports at 130); the panel must render whatever comes back.
  *
- * `createDevicesPlannedMock` covers the pieces docs/devices.md does not define (tools, their versions, the one Orbyn install and
- * the agent-access toggle). The production client for those answers nothing; only this mock makes the setup frames interactive.
+ * `createDevicesPlannedMock` covers the pieces docs/devices.md does not define (tools, their versions, the one Orbyn install,
+ * the agent-access toggle, the H26 device-tools drawer and the H27 permission flow). The production client for those answers
+ * nothing; only this mock makes the setup, tools and agent frames interactive.
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { ActionResult, ActionType, Device, DeviceAction, DeviceDetail, DeviceList, DeviceState, DevicesApi, Fold, PlatformStatus } from "../src/features/devices/contract.ts";
 import type { DeviceTool, DevicesPlannedApi, InstallProgress, ToolSnapshot, ToolVersions } from "../src/features/devices/planned.ts";
+import type { AgentAccessState, AgentDeviceGrant, AgentDeviceRequest, DeviceToolsState, DeviceToolChange, PushOutcome } from "../src/features/devices/planned.ts";
 
 /** A 1 by 1 PNG, as base64. */
 export const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -191,6 +193,38 @@ function androidTools(missing = true): DeviceTool[] {
   ];
 }
 
+const TEXT_STEPS = ["Small", "Smaller", "Default", "Large", "Larger", "Extra large", "Accessibility 1", "Accessibility 2", "Accessibility 3", "Accessibility 4", "Accessibility 5", "Accessibility 6"];
+
+/** The H26 drawer's default state. Nothing here is a production route. */
+function defaultToolsState(): DeviceToolsState {
+  return {
+    appearance: { mode: "light", increaseContrast: false, reduceMotion: false },
+    text: { step: 4, total: TEXT_STEPS.length, name: TEXT_STEPS[3]!, bold: false },
+    accessibility: {
+      showElements: true,
+      elements: [
+        { id: "sign-in", label: "Sign in", role: "Button", detail: "Label “Sign in”, enabled, 192 × 32" },
+        { id: "email", label: "Email", role: "Text field", detail: "Label “Email”, empty" },
+      ],
+    },
+    location: {
+      place: "Berlin, Germany",
+      coordinates: "52.5200, 13.4050",
+      places: ["None", "Berlin, Germany", "London, UK", "San Francisco, CA", "Tokyo, Japan"],
+    },
+    permissions: [
+      { id: "camera", name: "Camera", app: "Acme", askedOnce: true, decision: "ask" },
+      { id: "notifications", name: "Notifications", app: "Acme", askedOnce: false, decision: "allow" },
+      { id: "location", name: "Location", app: "Acme", askedOnce: false, decision: "deny" },
+    ],
+    push: {
+      app: "Acme",
+      apps: ["Acme", "Orbyn Preview"],
+      payload: '{ "aps": { "alert": { "title": "Order shipped", "body": "Arrives Friday" } } }',
+    },
+  };
+}
+
 export interface DevicesPlannedMock extends DevicesPlannedApi {
   /** How many times a version check ran. */
   checks: number;
@@ -200,6 +234,14 @@ export interface DevicesPlannedMock extends DevicesPlannedApi {
   restarts: string[];
   /** How many agent-device installs started. */
   installs: number;
+  /** Every device-tools change, as `<device id>:<type>:<value>`. */
+  toolWrites: string[];
+  /** Every push send, by device id. */
+  pushWrites: string[];
+  /** The current tools state for one device, or null when none was read yet. */
+  toolState(id: string): DeviceToolsState | null;
+  /** Make the next push answer the platform's failure line. */
+  failNextPush(on: boolean): void;
   /** Make the next install fail with the frame's connection-reset line. */
   failInstall(on: boolean): void;
   setOffline(offline: boolean): void;
@@ -216,6 +258,10 @@ export function createDevicesPlannedMock(init: {
   androidTools?: DeviceTool[];
   versions?: DeviceTool[];
   supported?: boolean;
+  tools?: Partial<DeviceToolsState>;
+  agentRequest?: AgentDeviceRequest | null;
+  agentGrant?: AgentDeviceGrant | null;
+  agentReason?: string;
 } = {}): DevicesPlannedMock {
   const tools = new Map<"android" | "ios", DeviceTool[]>([
     ["ios", init.iosTools ?? iosTools(init.iosMissing === true)],
@@ -231,6 +277,58 @@ export function createDevicesPlannedMock(init: {
   let offline = init.offline === true;
   let access = init.access === true;
   let failInstall = false;
+  let failPush = false;
+  const toolsById = new Map<string, DeviceToolsState>();
+  let agent: AgentAccessState = {
+    enabled: access,
+    request: init.agentRequest ?? null,
+    grant: init.agentGrant ?? null,
+    ...(init.agentReason ? { reason: init.agentReason } : {}),
+  };
+  const toolState = (id: string): DeviceToolsState => {
+    const held = toolsById.get(id);
+    if (held) return held;
+    const next: DeviceToolsState = { ...defaultToolsState(), ...init.tools };
+    toolsById.set(id, next);
+    return next;
+  };
+  const answer = (id: string, change: DeviceToolChange): DeviceToolsState => {
+    const state = toolState(id);
+    const next: DeviceToolsState = {
+      appearance: { ...state.appearance },
+      text: { ...state.text },
+      accessibility: { ...state.accessibility, elements: state.accessibility.elements },
+      location: { ...state.location },
+      permissions: state.permissions.map((one) => ({ ...one })),
+      push: { ...state.push },
+    };
+    switch (change.type) {
+      case "appearance": next.appearance.mode = change.mode; break;
+      case "increase_contrast": next.appearance.increaseContrast = change.on; break;
+      case "reduce_motion": next.appearance.reduceMotion = change.on; break;
+      case "text_size": {
+        const step = Math.min(next.text.total, Math.max(1, Math.round(change.step)));
+        next.text = { ...next.text, step, name: TEXT_STEPS[step - 1] ?? next.text.name };
+        break;
+      }
+      case "bold": next.text.bold = change.on; break;
+      case "show_elements": next.accessibility.showElements = change.on; break;
+      case "location":
+        next.location.place = change.place;
+        if (change.place === null) next.location.coordinates = "";
+        else if (change.coordinates !== undefined) next.location.coordinates = change.coordinates;
+        else next.location.coordinates = state.location.coordinates;
+        break;
+      case "permission":
+        next.permissions = next.permissions.map((one) => one.id === change.id ? { ...one, decision: change.decision } : one);
+        break;
+      case "push_app": next.push.app = change.app; break;
+    }
+    toolsById.set(id, next);
+    return next;
+  };
+  const toolWrites: string[] = [];
+  const pushWrites: string[] = [];
   const ready = (list: DeviceTool[]): DeviceTool[] => list.map((tool) => ({ ...tool }));
   const snapshot = (platform: "android" | "ios"): ToolSnapshot => ({
     platform,
@@ -245,6 +343,13 @@ export function createDevicesPlannedMock(init: {
     accessWrites: [],
     restarts: [],
     installs: 0,
+    toolWrites,
+    pushWrites,
+    toolState: (id) => {
+      const held = toolsById.get(id);
+      return held ? { ...held } : null;
+    },
+    failNextPush: (on) => { failPush = on; },
     failInstall: (on) => { failInstall = on; },
     setOffline: (next) => { offline = next; },
     setTools: (platform, list) => { tools.set(platform, list); },
@@ -291,6 +396,7 @@ export function createDevicesPlannedMock(init: {
     async setAccess(on) {
       await wait();
       access = on;
+      agent = { ...agent, enabled: on, ...(on ? {} : { request: null, grant: null }) };
       this.accessWrites.push(on);
       return access;
     },
@@ -306,6 +412,64 @@ export function createDevicesPlannedMock(init: {
         checkedAt,
         offline,
       };
+    },
+    async deviceTools(id) {
+      await wait();
+      return toolState(id);
+    },
+    async setDeviceTool(id, change) {
+      await wait();
+      const suffix = change.type === "location"
+        ? change.place === null ? "none" : `${change.coordinates ?? ""}`
+        : change.type === "permission" ? `${change.id}:${change.decision}`
+        : change.type === "push_app" ? change.app
+        : change.type === "appearance" ? change.mode
+        : change.type === "text_size" ? `${change.step}`
+        : change.type === "increase_contrast" || change.type === "reduce_motion" || change.type === "bold" || change.type === "show_elements" ? `${change.on}`
+        : "";
+      toolWrites.push(`${id}:${change.type}:${suffix}`);
+      return answer(id, change);
+    },
+    async sendDevicePush(id, payload) {
+      await wait();
+      if (id.startsWith("android:")) return { ok: false, error: "Not available on Android" } satisfies PushOutcome;
+      if (failPush) {
+        failPush = false;
+        return { ok: false, error: "The device did not accept the notification." } satisfies PushOutcome;
+      }
+      const state = toolState(id);
+      toolsById.set(id, { ...state, push: { ...state.push, payload } });
+      pushWrites.push(id);
+      return { ok: true } satisfies PushOutcome;
+    },
+    async agentAccess() {
+      await wait();
+      return { ...agent };
+    },
+    async setAgentAccess(on) {
+      await wait();
+      access = on;
+      agent = { ...agent, enabled: on, reason: undefined, ...(on ? {} : { request: null, grant: null }) };
+      this.accessWrites.push(on);
+      return { ...agent };
+    },
+    async answerAgentRequest(id, decision) {
+      await wait();
+      if (!agent.enabled) throw new ApiFailure("agent_access_off", "Agent access is off.", 403);
+      const request = agent.request;
+      if (!request || request.id !== id) return { ...agent };
+      if (decision === "deny") agent = { ...agent, request: null, grant: null };
+      else agent = {
+        ...agent,
+        request: null,
+        grant: { agent: request.agent, device: request.device, scope: decision === "once" ? "once" : "thread", thread: request.thread, by: "person" },
+      };
+      return { ...agent };
+    },
+    async revokeAgentAccess() {
+      await wait();
+      agent = { ...agent, grant: null };
+      return { ...agent };
     },
   };
 }
