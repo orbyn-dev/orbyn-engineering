@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::connection::{ClosedReason, Connection, RunFrame, RunRoute};
 use super::delta::DeltaMapper;
 use super::frames::{AskFrame, ErrorKind, Reason};
-use super::outcome::{host_stopped, map};
+use super::outcome::{host_stopped, map_family};
 use super::pool::Pool;
 use crate::agents::driver::{
     EngineEvent, EngineOutcome, PermissionRequest, QuestionAsk, RunControl, SteerMessage,
@@ -35,6 +35,13 @@ pub(super) struct Run {
     pub route: RunRoute,
     pub send_id: u64,
     pub session: String,
+    /// The engine's resumable session, when the `open` reply already named it.
+    pub open_session: Option<String>,
+    /// The family whose frame shapes this run reads (`acp`, `claude`, ...).
+    pub family: String,
+    /// The thread and engine this run is for, so the pool can name its live session.
+    pub thread: String,
+    pub engine: String,
     pub mapper: DeltaMapper,
     pub events: mpsc::Sender<EngineEvent>,
     pub cancel: CancellationToken,
@@ -45,6 +52,16 @@ pub(super) struct Run {
     pub accepted: Value,
     /// The id the prompt went in under; the engine's frames name it when its turn is queued and starts.
     pub message_id: String,
+    /// ACP names no turn ids. Until the host accepts the prompt, a delta is not this
+    /// prompt's answer; it is shown as a leftover, never counted.
+    pub prompt_accepted: bool,
+}
+
+impl Drop for Run {
+    fn drop(&mut self) {
+        self.pool
+            .forget_session(&self.engine, &self.thread, self.session_id());
+    }
 }
 
 /// Where the prompt's turn is, from the engine's own frames about this run's `messageId`.
@@ -115,10 +132,24 @@ fn answered(answers: Option<Answers>) -> Value {
 }
 
 impl Run {
-    /// The resumable session and turn the host named when it accepted the turn.
+    /// The resumable session the host named, from the `send` reply first and the `open`
+    /// reply after it. ACP names its session at setup, before the prompt is sent.
+    fn session_id(&self) -> Option<&str> {
+        self.accepted
+            .get("engineSessionId")
+            .and_then(Value::as_str)
+            .or(self.open_session.as_deref())
+    }
+
+    /// The resumable session and turn the host named when it accepted the turn. ACP
+    /// names its session in the `open` reply, before the prompt is sent.
     fn accepted_events(&self) -> Vec<EngineEvent> {
         let mut events = Vec::new();
+        let mut session = self.open_session.as_deref();
         if let Some(id) = self.accepted.get("engineSessionId").and_then(Value::as_str) {
+            session = Some(id);
+        }
+        if let Some(id) = session {
             events.push(EngineEvent::Session(id.to_owned()));
         }
         if let Some(id) = self.accepted.get("turnId").and_then(Value::as_str) {
@@ -168,7 +199,11 @@ impl Run {
             self.respond(&ask.request_id, decision(Verdict::Allow));
             return true;
         }
-        let action = classify_tool(&ask.tool, &ask.input);
+        let action = if self.family == "acp" {
+            crate::agents::driver::acp::permission_action(&ask.input)
+        } else {
+            classify_tool(&ask.tool, &ask.input)
+        };
         let mut detail = action.detail;
         // The engine's choices are part of what an approval binds (option kinds), so they travel.
         if let (Some(options), Some(detail)) = (ask.options, detail.as_object_mut()) {
@@ -262,13 +297,15 @@ impl Run {
                 frame = self.route.frames.recv() => match frame {
                     None => break self.after_close().await,
                     Some(RunFrame::Delta(update)) => {
-                        if turn.note(&update, &self.message_id) {
+                        if self.family != "acp" && turn.note(&update, &self.message_id) {
                             // Lifecycle bookkeeping makes no event.
                             continue;
                         }
                         // Output between the prompt being queued and its turn starting is a leftover turn's:
                         // shown, never counted as the answer (docs/engine-run-contract.md, rule 3).
-                        let leftover = turn == Turn::Queued;
+                        // ACP names no turn ids, so nothing counts until the prompt is accepted.
+                        let leftover = turn == Turn::Queued
+                            || (self.family == "acp" && !self.prompt_accepted);
                         for event in self.mapper.map(&update) {
                             let event = if leftover {
                                 EngineEvent::Leftover(Box::new(event))
@@ -292,6 +329,9 @@ impl Run {
                             self.abandon();
                             return;
                         }
+                    }
+                    Some(RunFrame::Accepted) => {
+                        self.prompt_accepted = true;
                     }
                     Some(RunFrame::Session { engine_session_id, turn_id }) => {
                         let events = engine_session_id
@@ -330,7 +370,7 @@ impl Run {
                         } else if !cancel_sent && done.reason == Some(Reason::Completed) {
                             self.pool.note_run(None);
                         }
-                        let (outcome, extra) = map(&done);
+                        let (outcome, extra) = map_family(&self.family, &done);
                         for event in extra {
                             let _ = self.events.send(event).await;
                         }

@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use super::acp::{self, HostAcpAgent};
 use super::connection::{Connection, RequestError};
 use super::delta::DeltaMapper;
 use super::frames::ErrorKind;
@@ -20,7 +21,7 @@ use super::{confinement, options};
 use crate::agents::driver::pipes::resolve_engine;
 use crate::agents::driver::{
     ApprovalSpec, EngineDescriptor, EngineDriver, EngineEvent, EngineProbe, ModelCatalog,
-    NativeSessionReplay, RunHandle, RunSpec, UpdatePlan,
+    NativeSessionReplay, ProbeDir, RunHandle, RunSpec, UpdatePlan,
 };
 use crate::error::{CoreError, Result};
 
@@ -59,15 +60,43 @@ pub struct HostDriver {
     pool: Arc<Pool>,
     /// The person's own program (`claude`), which the SDK drives.
     program: String,
+    /// The ACP agent this driver starts; `None` for every other family.
+    acp: Option<HostAcpAgent>,
     path: PathSetting,
 }
 
 impl HostDriver {
     pub fn new(inner: Arc<dyn EngineDriver>, pool: Arc<Pool>, program: String) -> Self {
+        // A caller that builds the ACP pool directly gets the host's default agent entry
+        // from the program it named; the engine manager passes the known engine's shape
+        // through `for_acp` instead.
+        let acp = if pool.family == "acp" {
+            Some(HostAcpAgent::new(
+                "default",
+                program.clone(),
+                Vec::new(),
+                Vec::new(),
+                None,
+            ))
+        } else {
+            None
+        };
         Self {
             inner,
             pool,
             program,
+            acp,
+            path: always_sdk(),
+        }
+    }
+
+    /// The ACP family, whose agent the core resolved before the host starts it.
+    pub fn for_acp(inner: Arc<dyn EngineDriver>, pool: Arc<Pool>, agent: HostAcpAgent) -> Self {
+        Self {
+            inner,
+            pool,
+            program: String::new(),
+            acp: Some(agent),
             path: always_sdk(),
         }
     }
@@ -123,23 +152,39 @@ fn refused(error: RequestError) -> CoreError {
     }
 }
 
+/// An `open` that failed, as the error `start_run` returns. ACP's mapping is one place
+/// (`acp::open_failed`) so a later status hook is a one-line change.
+fn begin_failed(family: &str, resume: bool, engine_id: &str, error: RequestError) -> CoreError {
+    if family != "acp" {
+        return refused(error);
+    }
+    let failed = match &error {
+        RequestError::Failed(error) => Some(error),
+        _ => None,
+    };
+    if let Some(error) = failed {
+        let kind = error.effective_kind();
+        // A resume an agent does not implement is the same sentence the Rust driver gives.
+        if resume && kind == ErrorKind::Unsupported {
+            return CoreError::Unsupported("This agent cannot resume its saved session.".into());
+        }
+        return acp::open_failed(engine_id, kind, error.message_text());
+    }
+    refused(error)
+}
+
 async fn begin(
     connection: &Arc<Connection>,
     spec: &RunSpec,
-    family: &str,
-    claude_path: Option<&Path>,
+    options: Value,
     confinement: Option<Value>,
     send_id: u64,
     message_id: &str,
-) -> std::result::Result<Value, RequestError> {
+) -> std::result::Result<(Value, Value), RequestError> {
     let operation = if spec.resume.is_some() {
         "resume"
     } else {
         "create"
-    };
-    let options = match family {
-        "claude" => options::claude(spec, claude_path),
-        _ => json!({}),
     };
     let mut open = json!({
         "operation": operation,
@@ -153,14 +198,16 @@ async fn begin(
     if let Some(confinement) = confinement {
         open["confinement"] = confinement;
     }
-    connection.request("open", open).await?;
-    connection
-        .request_as(
+    let opened = connection.request("open", open).await?;
+    let accepted = connection
+        .request_accepting(
             send_id,
             "send",
             json!({ "sessionId": spec.run_id, "message": HostDriver::message(spec), "messageId": message_id }),
+            send_id,
         )
-        .await
+        .await?;
+    Ok((opened, accepted))
 }
 
 #[async_trait]
@@ -299,37 +346,62 @@ impl EngineDriver for HostDriver {
                     "The engine host is stopping. Send your message again.".into(),
                 )
             })?;
+        let engine = self.inner.descriptor().id;
         let message_id = crate::agents::driver::claude::prompt_uuid();
-        let accepted = match begin(
+        let options = match family.as_str() {
+            "claude" => options::claude(&spec, claude_path.as_deref()),
+            "acp" => match self.acp.as_ref() {
+                Some(agent) => options::acp(&spec, agent)?,
+                None => {
+                    return Err(CoreError::EngineUnavailable(
+                        "The ACP engine was not given an agent.".into(),
+                    ));
+                }
+            },
+            _ => json!({}),
+        };
+        let (opened, accepted) = match begin(
             &connection,
             &spec,
-            &family,
-            claude_path.as_deref(),
+            options,
             confinement,
             send_id,
             &message_id,
         )
         .await
         {
-            Ok(accepted) => {
+            Ok(pair) => {
                 // The SDK loaded before the host accepted the turn, so this build carries it.
                 self.pool.note_sdk_present();
-                accepted
+                pair
             }
             Err(error) => {
-                if error.sdk_missing() {
+                let sdk_missing = error.sdk_missing();
+                if sdk_missing {
                     self.pool.note_sdk_missing();
                 }
+                let error = begin_failed(&family, spec.resume.is_some(), &engine, error);
                 connection.fire("closeSession", json!({ "sessionId": spec.run_id }));
-                if error.sdk_missing() {
+                if sdk_missing {
                     // Say what is wrong: the SDK is not in this build, not that the run could not be restricted.
                     return Err(CoreError::EngineUnavailable(
                         "This build does not include the engine's SDK.".into(),
                     ));
                 }
-                return Err(refused(error));
+                return Err(error);
             }
         };
+        let open_session = opened
+            .get("engineSessionId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let accepted_session = accepted
+            .get("engineSessionId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(session) = accepted_session.as_ref().or(open_session.as_ref()) {
+            self.pool.note_session(&engine, &spec.thread_id, session);
+        }
         let cancel = CancellationToken::new();
         let (input, steering) = mpsc::unbounded_channel();
         let (control, controls) = mpsc::unbounded_channel();
@@ -339,6 +411,10 @@ impl EngineDriver for HostDriver {
             route,
             send_id,
             session: spec.run_id.clone(),
+            open_session,
+            family,
+            thread: spec.thread_id.clone(),
+            engine,
             mapper,
             events,
             cancel: cancel.clone(),
@@ -347,6 +423,7 @@ impl EngineDriver for HostDriver {
             cancel_grace: self.pool.timings().cancel_grace,
             accepted,
             message_id,
+            prompt_accepted: self.pool.family != "acp",
         };
         Ok(RunHandle {
             cancel,
@@ -371,7 +448,30 @@ impl EngineDriver for HostDriver {
     }
 
     async fn models(&self) -> Result<Option<ModelCatalog>> {
-        self.inner.models().await
+        let Some(agent) = &self.acp else {
+            return self.inner.models().await;
+        };
+        let engine = self.inner.descriptor().id;
+        let connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|unavailable| CoreError::EngineUnavailable(unavailable.0))?;
+        // A live run's session answers for its own catalog; without one the host starts a
+        // throwaway agent in a private folder, as the Rust driver's probe does.
+        let _probe;
+        let fields = match self.pool.open_session(&engine) {
+            Some(session) => json!({ "sessionId": session }),
+            None => {
+                _probe = ProbeDir::new()?;
+                agent.probe_fields(_probe.path())?
+            }
+        };
+        match connection.request("models", fields).await {
+            Ok(reply) => Ok(Some(acp::catalog(&reply))),
+            Err(RequestError::Unsupported(_)) => Ok(None),
+            Err(error) => Err(refused(error)),
+        }
     }
 
     async fn mcp_app_tool_call(

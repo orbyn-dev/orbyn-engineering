@@ -66,6 +66,7 @@ async fn serve(name: &str, flag_on: bool) -> Option<Served> {
         program: launcher,
         claude: flag_on,
         cursor: false,
+        acp: false,
         timings: Timings::default(),
     });
     let core = Arc::new(Core::open(config).unwrap());

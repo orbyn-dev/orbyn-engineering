@@ -25,6 +25,8 @@ pub enum RunFrame {
         engine_session_id: Option<String>,
         turn_id: Option<String>,
     },
+    /// The host took the prompt: frames after this one are the prompt's own turn.
+    Accepted,
     Done(RunDone),
     Background(Value),
 }
@@ -78,7 +80,11 @@ struct Book {
     closing: bool,
 }
 
-type Pending = oneshot::Sender<Result<Value, HostError>>;
+struct Pending {
+    reply: oneshot::Sender<Result<Value, HostError>>,
+    /// The run to tell when this request is accepted; the `send` response does it.
+    accepted: Option<u64>,
+}
 
 struct Shared {
     next_id: AtomicU64,
@@ -194,11 +200,40 @@ impl Connection {
         kind: &str,
         fields: Value,
     ) -> Result<Value, RequestError> {
+        self.request_inner(id, kind, fields, None).await
+    }
+
+    /// A request whose acceptance belongs to run `send_id`: the response dispatches an
+    /// `Accepted` frame to that run before this future wakes, so every frame the host
+    /// sent before taking the prompt is ordered ahead of it.
+    pub async fn request_accepting(
+        &self,
+        id: u64,
+        kind: &str,
+        fields: Value,
+        send_id: u64,
+    ) -> Result<Value, RequestError> {
+        self.request_inner(id, kind, fields, Some(send_id)).await
+    }
+
+    async fn request_inner(
+        &self,
+        id: u64,
+        kind: &str,
+        fields: Value,
+        accepted: Option<u64>,
+    ) -> Result<Value, RequestError> {
         if is_gated(kind) && !self.has_capability(kind) {
             return Err(RequestError::Unsupported(kind.to_owned()));
         }
         let (tx, rx) = oneshot::channel();
-        lock(&self.shared.pending).insert(id, tx);
+        lock(&self.shared.pending).insert(
+            id,
+            Pending {
+                reply: tx,
+                accepted,
+            },
+        );
         if self.outbox.send(request(id, kind, fields)).is_err() {
             lock(&self.shared.pending).remove(&id);
             return Err(RequestError::Closed);
@@ -302,8 +337,13 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
                 pings.clear();
                 return true;
             }
-            if let Some(reply) = lock(&shared.pending).remove(&response.id) {
-                let _ = reply.send(response.result);
+            if let Some(pending) = lock(&shared.pending).remove(&response.id) {
+                if let Some(send_id) = pending.accepted
+                    && response.result.is_ok()
+                {
+                    route(send_id, RunFrame::Accepted);
+                }
+                let _ = pending.reply.send(response.result);
             }
         }
         Incoming::Delta { send_id, update } => route(send_id, RunFrame::Delta(update)),

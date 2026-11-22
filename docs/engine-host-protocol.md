@@ -5,7 +5,7 @@ engine SDKs and libraries (Claude Agent SDK, Cursor SDK, OpenCode, Muse, ACP and
 The Rust `HostDriver{family}` implements `EngineDriver` against this document; the host implements
 the other side. Neither side reads the other's code.
 
-Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude family is behind a flag and the Codex family is registered without one. The shape follows the
+Status: slices 1 and 2 of the Rust side are built (spawn and handshake, runs, steer, cancel, restarts, status; then permissions, questions, stop, restart and the spawn secret); the Claude, Cursor and ACP families are behind their own flags and the Codex family is registered without one. The shape follows the
 worker protocol of T3 Code's Cursor provider (MIT, `CursorAgentSdkWorkerProtocol.ts`), with three
 changes: a version handshake, `permission`/`question` frames so policy stays in Rust, and
 per-run confinement inputs supplied by Rust.
@@ -219,7 +219,9 @@ Not run against a real Codex turn: every behaviour above comes from replayed T3 
 ## ACP family
 
 Family `acp` (`src/families/acp.mjs`) speaks the Agent Client Protocol, newline JSON-RPC 2.0 on stdio, to one agent
-process per open session. Capabilities: `steer` and `models`. The per-agent quirks and Kiro's launch/session knowledge
+process per open session. Capabilities: `steer` and `models`. The Rust side maps every engine the native ACP driver serves through this family when `ORBYN_ENGINE_HOST_ACP=1`
+(with `ORBYN_ENGINE_HOST` set), the same pattern as Claude and Cursor; with the flag off those engines keep the
+Rust driver. The per-agent quirks and Kiro's launch/session knowledge
 are a plain-JavaScript port of T3 Code (MIT, Copyright (c) 2026 T3 Tools Inc., commit
 `9168ca73d02003557725430b515b44e1551544af`): `provider-acp-registry`'s droid/omp/kimi flavours and
 `provider-kiro`/`provider-acp`'s Kiro and model/config rules.
@@ -427,7 +429,8 @@ The web client reads this route with the generated types (`web/src/features/engi
 
 - **Host exits or closes stdout.** The core fails every open run on that host with
   "The engine host stopped. Your work in the project is kept; send your message again." (outcome
-  `engine_error`, `threadDisposition` unknown), answers pending `permission` frames as refused (they
+  `engine_error`, `threadDisposition` unknown, and the run's `RUN_ERROR` code
+  `engine_host_stopped`), answers pending `permission` frames as refused (they
   are already unanswerable), and restarts the host with exponential backoff (1 s, doubling, cap 30 s,
   reset after 60 s of uptime). After five restarts inside five minutes the family is marked
   unavailable with the last error and no further restarts until the person asks.
