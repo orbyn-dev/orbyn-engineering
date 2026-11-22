@@ -9,7 +9,7 @@ today. Nothing here is a legal opinion.
 | Item | State |
 | --- | --- |
 | Repository visibility | `orbyn-dev/orbyn-engineering` is public. |
-| Licence | `LICENSE` is PolyForm Strict 1.0.0 (source-available: it does not grant the right to copy, modify or redistribute). That is not an open-source licence, so it does not meet the SDK condition as it stands. The owner decides the replacement. |
+| Licence | `LICENSE` is PolyForm Strict 1.0.0 (source-available). The owner has said the licence does not matter for the SDK permissions: they are already granted, so the licence is not a gate for the SDK work. It stays the owner's choice for the project itself. |
 | Engine dependency | `orbyn-dev/orbyn-engine` is **public** (Apache-2.0), not private. The app depends on it through one optional git dependency, `orbyn-device-client` at tag `engine-v0.2.4` (revision `db006e3bdf4e5dc411af1464665f63c8679172ce`), which brings the crates `orbyn-auth-client`, `orbyn-client`, `orbyn-contracts`, `orbyn-crypto`, `orbyn-device-client`, `orbyn-sync` and `orbyn-translog` from the same repository. No vendoring is needed. |
 | Contributors | A CLA check runs on pull requests (`cla / CLA`). Check that it covers relicensing under the new licence. |
 | Third-party notices | None shipped in the app bundle yet; SDK notices come with step 3 of the plan. |
@@ -29,6 +29,6 @@ today. Nothing here is a legal opinion.
    design repository; remove or replace. The private designs are never published (CONTRIBUTING.md).
 6. **Trademark and names.** Decide the policy for the Orbyn name and logo separately from the code licence.
 7. **Project files.** `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` current; issue and PR templates public-safe.
-8. **Release gate.** Keep the SDK path off by default until steps 1 to 5 are done, then follow plan steps 3 to 6.
+8. **Release gate.** None from the licence: the SDK permissions are already granted (owner, 2026-11-22). Follow plan steps 3 to 6.
 9. **Written permissions.** The owner keeps the Anthropic and Cursor permissions; they are not copied into the repository.
    Re-read their conditions before the first public release and note the date here.
