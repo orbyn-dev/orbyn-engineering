@@ -7,7 +7,7 @@ use orbyn_contracts::{
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-use super::approvals::{activity_event, approval_row};
+use super::approvals::{activity_event, add_run_wait, approval_row};
 use super::{Appended, AuditRecord, Store, insert_audit, insert_event, run_row, wire_name};
 use crate::agents::driver::ItemRecord;
 use crate::error::{CoreError, Result};
@@ -863,6 +863,7 @@ fn expire_pending(
         approval.state = ApprovalState::Expired;
         approval.decided_by = Some(actor.to_owned());
         approval.decided_at = Some(stamp);
+        add_run_wait(tx, &approval);
         insert_audit(
             tx,
             &AuditRecord {
