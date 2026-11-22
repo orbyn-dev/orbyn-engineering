@@ -1,0 +1,11 @@
+/* Keybindings rows. The Action and When tracks keep a minimum width (see COLUMNS in
+   Keybindings.tsx): a table narrower than those minimums scrolls sideways here rather than
+   squeezing a track to nothing and letting one column's text draw over the next. */
+.kb-scroll {
+  min-width: 0;
+  overflow-x: auto;
+}
+.kb-table .set-tr > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

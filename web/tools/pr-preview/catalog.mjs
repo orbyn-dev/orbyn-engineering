@@ -147,6 +147,11 @@ export const FRAMES = {
   "pr-tb-narrow": { route: "#/pulls", scenario: "pulls", width: 900, steps: filterChips },
   "pr-tb-phone": { route: "#/pulls", scenario: "pulls", width: 390, steps: filterChips },
   "pr-list-narrow-900": { route: "#/pulls", scenario: "pulls", width: 900 },
+  // The drawn steps below it: the list reads its own width (the window minus 56 px, and minus the docked 224 px sidebar from 900 up).
+  "pr-list-narrow-800": { route: "#/pulls", scenario: "pulls", width: 800 },
+  "pr-list-narrow-700": { route: "#/pulls", scenario: "pulls", width: 700 },
+  "pr-list-narrow-640": { route: "#/pulls", scenario: "pulls", width: 640 },
+  "pr-list-narrow-580": { route: "#/pulls", scenario: "pulls", width: 580 },
   // The cell's tooltip says why a value is missing.
   "pr-row-tooltips": { route: "#/pulls", scenario: "pulls", steps: [{ do: "hover", selector: ".pull-rows > li:last-child .pull-reviewers-cell" }] },
   // Two rows selected, the pointer on the Ready to merge row: its Merge and Close appear at its end.
@@ -177,8 +182,11 @@ export const FRAMES = {
   "pr-detail-error-uncached": { route: pull(142), scenario: "pulls", pre: [{ route: "**/api/projects/*/pulls/142", status: 502 }] },
   "pr-detail-menu": { route: pull(205), scenario: "pulls", steps: [click("button", "More actions")] },
   "pr-detail-merge-dialog": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
-  // The dialog's states. The account setting is off in the mock, so the switch reads off (the credits-readonly-on frame needs a mock with the setting on).
+  // The dialog's states. The account setting is off in the mock, so the switch reads off; the on frame drives a mock with
+  // it on. The design's two read-only frames described the switch before the service obeys the per-merge value; it does now
+  // (crates/orbyn-core/src/source_control/scm/review.rs), so the switch is editable and only the setting decides its start.
   "pr-detail-merge-dialog-credits-readonly": { route: pull(205), scenario: "pulls", steps: [click("button", "Merge", { exact: true })] },
+  "pr-detail-merge-dialog-credits-readonly-on": { route: pull(205), scenario: "pulls-credits-on", steps: [click("button", "Merge", { exact: true })] },
   "pr-detail-merge-dialog-auto": {
     route: pull(205),
     scenario: "pulls",

@@ -1377,6 +1377,7 @@ One operation runs per instance: it excludes that instance's run admission, upda
 edits to `provider_instances`. A later run resumes with `session/resume` when offered,
 else `session/load` with its replay discarded; an unknown session ends the run as a lost
 session. The session link is the thread's engine session, so no table or migration exists.
+A cancelled request stops that process and releases the instance for the next request.
 
 A new worktree uses `branch_name_prefix`, `base_branch` or the origin's head when
 `new_worktrees_start_from_origin` is on, falling back to HEAD, and
@@ -3308,12 +3309,16 @@ engines; a plain shell terminal does not. `EngineStatus` reports inherited crede
 variable name and an endpoint by origin, never a value. No value is read for any other
 purpose, which keeps this inside rule 1.
 
-`PATH` for lookups and for children is the inherited one, then usual install folders
-that exist: Homebrew, `~/.local/bin`, cargo, bun, Volta, asdf, mise, pnpm, fnm's default,
-the newest nvm or `n` Node, and the npm prefix from `NPM_CONFIG_PREFIX` or `~/.npmrc`.
-Nothing runs a shell or npm to learn these. On Windows a `.cmd` is followed to the script
-it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the shim
-wins, and a shim that points at a shell is refused.
+`PATH` for lookups and for children is the inherited one, then the person's login-shell
+`PATH`, then usual install folders that exist: Homebrew, `~/.local/bin`, cargo, bun,
+Volta, asdf, mise, pnpm, fnm's default, the newest nvm or `n` Node, and the npm prefix
+from `NPM_CONFIG_PREFIX` or `~/.npmrc`. The service runs the person's login shell once,
+interactive login (`$SHELL -ilc`), with one fixed command that contains no user input; it
+reads back only `PATH`, runs with a cleared environment and a 3 second limit, falls back
+silently on any failure, and can be switched off with `ORBYN_NO_LOGIN_SHELL=1`. On Windows
+the login shell is not asked. npm is never run to learn these. A `.cmd` is followed to the
+script it wraps, including pnpm's store and a same-named sibling, a `node.exe` beside the
+shim wins, and a shim that points at a shell is refused.
 
 ## Escape log capacity
 

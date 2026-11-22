@@ -8,6 +8,7 @@ import { LIMITS_WAIT_MS } from "./UsageLimits";
 import { UsagePage } from "./UsagePage";
 import { dataChanged } from "../../api/shell";
 import { COALESCE_MS, startDataRefresh } from "../../lib/dataRefresh";
+import { LIMITS_STALE_MS, engineLimitsKey, limitsAnsweredAt, resetLimitsStore } from "../../lib/limitsStore";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -402,6 +403,44 @@ it("says a Codex read failed with no last figure, and Try again asks that engine
   await waitFor(() => expect(one).toHaveBeenCalledWith("codex", true));
   await waitFor(() => expect(all).toHaveBeenCalledTimes(1));
   expect(all).not.toHaveBeenCalledWith(true);
+});
+
+it("keeps the retried engine's answer for the panel and details row that show it", async () => {
+  resetLimitsStore();
+  vi.spyOn(api, "limits").mockResolvedValue(limitsOf([], [{ engine: "codex", reason: "boom" }]));
+  vi.spyOn(api, "engineLimits").mockResolvedValue({
+    engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow()],
+  } as never);
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  await openLimits();
+  await screen.findByText("Couldn\u2019t read the limit.");
+  expect(limitsAnsweredAt(engineLimitsKey("codex"))).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(limitsAnsweredAt(engineLimitsKey("codex"))).not.toBeNull());
+});
+
+it("checks limits again when the app comes back into view, but not while the answer is fresh", async () => {
+  const read = vi.spyOn(api, "limits").mockResolvedValue(limitsOf([
+    { engine: "codex", checked_at: "", limits: {}, plan: null, windows: [codexWindow()] },
+  ]));
+  useWorkspace.setState({ engines: { data: [engine("codex", "Codex")], error: null, loading: false } });
+  const stop = startDataRefresh();
+  try {
+    await openLimits();
+    await screen.findByRole("meter");
+    expect(read).toHaveBeenCalledTimes(1);
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await new Promise((done) => setTimeout(done, COALESCE_MS + 50));
+    expect(read).toHaveBeenCalledTimes(1);
+    // A person away longer than the window: the click on the window reads again, as one event read.
+    const fresh = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(fresh + LIMITS_STALE_MS);
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    dateNow.mockRestore();
+  } finally {
+    stop();
+  }
 });
 
 for (const used of [62, 100]) {

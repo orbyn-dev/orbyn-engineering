@@ -8,7 +8,6 @@ import { Button } from "../../../ui/controls";
 import { ConfirmDialog } from "../../../ui/Dialog";
 import { clearBrowserProfile, createBrowserProfile, deleteBrowserProfile, listBrowserProfiles } from "../api";
 import { SettingRowIds } from "../rows/SettingRow";
-import { heading } from "../sections/parts";
 import "./browserProfiles.css";
 
 /**
@@ -101,7 +100,6 @@ export function BrowserProfilesSection() {
 
   return (
     <>
-      {heading("Browser")}
       <p className="setting-line-desc">A profile keeps cookies, storage and history between Browser tabs, so a sign-in lasts. A tab with no profile starts clean and forgets everything when it closes. A profile is open in one tab at a time.</p>
       {refused ? (
         <div className="set-banner err" role="alert"><div>{refused}</div>
