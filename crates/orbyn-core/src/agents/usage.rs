@@ -720,11 +720,11 @@ impl UsageCenter {
         // store that never recorded an event, is no history at all and no row: another engine's
         // empty row would show spend that does not exist. A store with events but none in this
         // period is a scanned engine of nothing, which is a different state from no history.
-        if let Some(store) = store {
-            if store.billed_event_count(CURSOR)? > 0 {
-                let billed = store.billed_totals(CURSOR, since.as_deref())?;
-                engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
-            }
+        if let Some(store) = store
+            && store.billed_event_count(CURSOR)? > 0
+        {
+            let billed = store.billed_totals(CURSOR, since.as_deref())?;
+            engines.push(summarize_billed(CURSOR, billed, settings, since.as_deref()));
         }
         Ok(UsageReport {
             host_id: self.host_id.clone(),
