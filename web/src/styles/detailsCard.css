@@ -92,6 +92,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.drow .dv small.wrap {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
 .drow .dv .row1 {
   display: flex;
   align-items: center;
