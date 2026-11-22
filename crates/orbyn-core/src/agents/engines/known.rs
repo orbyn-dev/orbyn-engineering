@@ -88,6 +88,16 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         not_from: &[],
     },
     KnownEngine {
+        id: "droid",
+        name: "Factory Droid",
+        programs: &["droid"],
+        args: &["exec", "--output-format", "acp"],
+        env: &[],
+        // Its autonomy level is unobserved, so it stays labelled until a run shows it asks. The flag is in Factory's own editor guides; `droid exec --help` is the check.
+        asks: false,
+        not_from: &[],
+    },
+    KnownEngine {
         id: "fx",
         name: "fx",
         programs: &["fx"],
@@ -98,6 +108,16 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         asks: false,
         // The `fx` JSON viewer from npm or Homebrew has the same name.
         not_from: &["node_modules/fx", "Cellar/fx"],
+    },
+    KnownEngine {
+        id: "glm",
+        name: "GLM",
+        programs: &["glm-acp-agent"],
+        args: &[],
+        env: &[],
+        // The GLM ACP agent (npm `glm-acp-agent`) for the Z.AI GLM Coding Plan. Whether it asks before an edit is unobserved.
+        asks: false,
+        not_from: &[],
     },
     KnownEngine {
         id: "grok",
@@ -141,6 +161,36 @@ pub const KNOWN_ENGINES: &[KnownEngine] = &[
         args: &["acp"],
         env: &[],
         asks: true,
+        not_from: &[],
+    },
+    KnownEngine {
+        id: "kiro",
+        name: "Kiro",
+        programs: &["kiro-cli"],
+        args: &["acp", "--agent-engine=v3", "--auth-method=cli"],
+        env: &[],
+        // Kiro starts a session in autopilot, which acts without asking, until a client turns it off; Orbyn's ACP driver does not yet, so it stays labelled. `--auth-method=cli` keeps tokens inside Kiro; V3 is the engine T3 Code speaks.
+        asks: false,
+        not_from: &[],
+    },
+    KnownEngine {
+        id: "mistral-vibe",
+        name: "Mistral Vibe",
+        programs: &["vibe-acp"],
+        args: &[],
+        env: &[],
+        // Installed with the `mistral-vibe` package next to `vibe`. Whether it asks before an edit is unobserved.
+        asks: false,
+        not_from: &[],
+    },
+    KnownEngine {
+        id: "omp",
+        name: "Oh My Pi",
+        programs: &["omp"],
+        args: &["acp"],
+        env: &[],
+        // Oh My Pi's own ACP command; Zed-style guides also show `--mode acp`. Unobserved, so it stays labelled.
+        asks: false,
         not_from: &[],
     },
     KnownEngine {
@@ -293,6 +343,35 @@ mod tests {
     }
 
     #[test]
+    fn the_acp_agents_added_for_the_host_launch_as_their_own_docs_say() {
+        let launch = |id: &str| {
+            let engine = known_engine(id).unwrap();
+            (engine.programs.to_vec(), engine.args.to_vec())
+        };
+        assert_eq!(
+            launch("kiro"),
+            (
+                vec!["kiro-cli"],
+                vec!["acp", "--agent-engine=v3", "--auth-method=cli"]
+            )
+        );
+        assert_eq!(
+            launch("droid"),
+            (vec!["droid"], vec!["exec", "--output-format", "acp"])
+        );
+        assert_eq!(launch("omp"), (vec!["omp"], vec!["acp"]));
+        assert_eq!(
+            launch("mistral-vibe"),
+            (vec!["vibe-acp"], Vec::<&str>::new())
+        );
+        assert_eq!(launch("glm"), (vec!["glm-acp-agent"], Vec::<&str>::new()));
+        assert_eq!(launch("kimi"), (vec!["kimi"], vec!["acp"]));
+        for id in ["kiro", "droid", "omp", "mistral-vibe", "glm", "kimi"] {
+            assert_eq!(known_engine(id).unwrap().as_custom().tier, EngineTier::Acp);
+        }
+    }
+
+    #[test]
     fn a_same_named_cli_from_another_package_is_not_the_engine() {
         let other = std::path::Path::new("lib")
             .join("node_modules")
@@ -327,7 +406,18 @@ mod tests {
             .filter(|e| !e.asks)
             .map(|e| e.id)
             .collect();
-        assert_eq!(silent, ["deepseek", "fx"]);
+        assert_eq!(
+            silent,
+            [
+                "deepseek",
+                "droid",
+                "fx",
+                "glm",
+                "kiro",
+                "mistral-vibe",
+                "omp"
+            ]
+        );
     }
 }
 
