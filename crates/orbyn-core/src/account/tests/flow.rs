@@ -249,6 +249,31 @@ async fn codes_entered_at_once_share_the_last_try() {
 }
 
 #[tokio::test]
+async fn signing_up_for_an_address_that_has_an_account_is_refused_and_leaves_it_alone() {
+    let dir = TempDir::new();
+    let core = dev(&dir, "replace");
+    let a = &core.account;
+    // The stand-in already has this address, as the Engine would: a sign-up for it ends like a wrong
+    // code, and the account that is there must not be replaced by the one the sign-up offered.
+    a.start_sign_up(INVITE, "dev@example.com", new_password())
+        .await
+        .unwrap();
+    assert_eq!(
+        code(a.verify_email_code(EMAIL_CODE).await.unwrap_err()),
+        "invalid_code"
+    );
+    // Nobody is signed in, and the address kept the password it had: the sign-up's does not sign in.
+    assert!(a.view("macos").await.session.is_none());
+    assert!(
+        a.sign_in("dev@example.com", pw("a-different-password"))
+            .await
+            .is_err()
+    );
+    a.sign_in("dev@example.com", pw(PASSWORD)).await.unwrap();
+    assert!(a.view("macos").await.session.is_some());
+}
+
+#[tokio::test]
 async fn sign_in_answers_one_message_for_wrong_password_and_unknown_email() {
     let dir = TempDir::new();
     let core = dev(&dir, "in");
