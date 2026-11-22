@@ -79,7 +79,7 @@ export const watchAsks: WatchData = {
   ask: {
     heading: "Needs you.",
     text: "Pick what to do. Nothing has been reverted.",
-    actions: [{ label: "Revert the later one", primary: true }, { label: "Revert both" }, { label: "Re-run the check" }, { label: "Leave main" }],
+    actions: [{ label: "Revert the later one", primary: true }, { label: "Revert both" }, { label: "Re-run the check", planned: true }, { label: "Leave main" }],
   },
   evidence: {
     heading: "What Crew knows",
@@ -108,7 +108,7 @@ export const watchFlaky: WatchData = {
   ask: {
     heading: "Needs you.",
     text: "Nothing has been reverted. Main is as it was.",
-    actions: [{ label: "Re-run the check", primary: true }, { label: "Revert 9be4410" }, { label: "Leave main" }],
+    actions: [{ label: "Re-run the check", primary: true, planned: true }, { label: "Revert 9be4410" }, { label: "Leave main" }],
   },
   evidence: {
     heading: "What Crew saw",

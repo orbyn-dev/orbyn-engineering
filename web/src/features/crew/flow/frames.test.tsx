@@ -50,6 +50,7 @@ describe("Flow frames (Crew Designs)", () => {
   it.each(FLOW_FRAMES)("#/preview/crew/%s draws its state and makes no request", async (name) => {
     const { container, fetchSpy } = await openFrame(name);
     for (const text of SHOWS[name] ?? []) expect(container.textContent).toContain(text);
+    expect(container.textContent).not.toMatch(/Inbox\s*(?:·\s*\d+|\d+)/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

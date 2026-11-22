@@ -27,7 +27,6 @@ export function CrewFrame({
   tool,
   reviewCount,
   mergeCount,
-  inbox = 4,
   health,
   crumbs,
   children,
@@ -37,7 +36,6 @@ export function CrewFrame({
   reviewCount: number;
   /** Candidates in the Merge queue; shown on its tab when above zero. */
   mergeCount?: number;
-  inbox?: number;
   health?: string;
   crumbs?: ReactNode;
   children: ReactNode;
@@ -64,8 +62,8 @@ export function CrewFrame({
       <div className="crew-tabs">
         <div className="crew-seg" role="tablist" aria-label="Crew views">
           {PAGE_TABS.map((name) => {
-            const raw = name === "Review" ? reviewCount : name === "Inbox" ? inbox : 0;
-            const count = raw > 0 ? raw : undefined;
+            // The live page labels Inbox without a count; Review keeps its count until that copy is decided.
+            const count = name === "Review" && reviewCount > 0 ? reviewCount : undefined;
             const on = name === tab;
             return (
               <button
