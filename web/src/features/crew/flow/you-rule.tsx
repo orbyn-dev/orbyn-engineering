@@ -17,7 +17,7 @@ export function FlowYouRule() {
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
               <Ic n="right" sm />
               <b>Update the login docs</b>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">Planned</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "236px", width: "1110px" }}>
               <span className="cx-cwpv" style={{ position: "absolute", left: "0", top: "0", margin: "0", zIndex: 1 }} title="The wide graph is Planned; the app’s zoom is the stage list">Planned</span>
@@ -154,7 +154,7 @@ export function FlowYouRule() {
                 </div>
                 <div className="cx-fbx">
                   <h6>Where this does not apply</h6>
-                  <p>Bots and agents never merge in the skills library; no rule can change that, so there it always waits for a person.</p>
+                  <p>In the skills library, merging is left to a person, whatever the rules say.</p>
                 </div>
               </div>
               <div className="cx-acts3"><Btn className="cx-btn">Open the PR</Btn><span className="cx-cwpv">Planned</span><Btn className="cx-ghost">Edit the rule</Btn><Btn className="cx-ghost">Turn the rule off</Btn></div>

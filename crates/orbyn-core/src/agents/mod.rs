@@ -2,6 +2,7 @@
 
 pub mod acp_mcp_bridge;
 pub mod acp_registry;
+pub(crate) mod attention;
 pub mod claude_history;
 pub mod console;
 pub mod driver;

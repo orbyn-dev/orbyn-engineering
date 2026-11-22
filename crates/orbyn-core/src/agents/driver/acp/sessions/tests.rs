@@ -2,7 +2,8 @@
 use super::*;
 use crate::agents::driver::acp::AcpDriver;
 use crate::agents::driver::{EngineDriver, EngineOutcome, RunKind, RunSpec};
-use orbyn_contracts::{AgUiEvent, EngineTier, PermissionMode};
+use crate::agents::engines::start_issue::{clear_start_issue, start_issue};
+use orbyn_contracts::{AgUiEvent, EngineStartIssueKind, EngineTier, PermissionMode};
 use std::collections::BTreeMap;
 
 const PEER: &str = include_str!("peer.cjs");
@@ -15,6 +16,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new(scenario: &str) -> Self {
+        Self::with_id("test-acp", scenario)
+    }
+    fn with_id(id: &str, scenario: &str) -> Self {
         let dir = ProbeDir::new().unwrap();
         let script = dir.path().join("peer.cjs");
         std::fs::write(&script, PEER).unwrap();
@@ -24,7 +28,7 @@ impl Fixture {
         let node = crate::host::process::resolve("node")
             .expect("Node is required by the repository's protocol fixture");
         let driver = AcpDriver::new(CustomEngine {
-            id: "test-acp".into(),
+            id: id.into(),
             name: "Test ACP".into(),
             tier: EngineTier::Acp,
             target: node.path.to_string_lossy().into_owned(),
@@ -439,6 +443,52 @@ async fn live_session_ids_are_bounded_before_prompt_or_persistence() {
         Some(EngineEvent::Finished(EngineOutcome::Failed(_)))
     ));
     assert!(f.methods().is_empty());
+}
+
+#[tokio::test]
+async fn an_auth_required_session_new_records_signed_out_and_a_good_open_clears_it() {
+    let id = "test-acp-start-issue-auth";
+    let refused = Fixture::with_id(id, "auth-new");
+    let events = refused.run(None).await;
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::Finished(EngineOutcome::Failed(_)))
+    ));
+    let issue = start_issue(id).expect("the refused open records a start issue");
+    assert_eq!(issue.kind, EngineStartIssueKind::SignedOut);
+    assert!(
+        issue.message.contains("isn't signed in"),
+        "{}",
+        issue.message
+    );
+    // The fixture's own words were "Unknown session": the -32000 code, not the text,
+    // is what says a sign-in is needed.
+    let good = Fixture::with_id(id, "load");
+    let events = good.run(None).await;
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::Finished(EngineOutcome::Completed))
+    ));
+    assert_eq!(start_issue(id), None);
+}
+
+#[tokio::test]
+async fn an_agent_that_exits_at_once_records_a_failed_start() {
+    let id = "test-acp-start-issue-exit";
+    let gone = Fixture::with_id(id, "exit");
+    let events = gone.run(None).await;
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::Finished(EngineOutcome::Failed(_)))
+    ));
+    let issue = start_issue(id).expect("the failed open records a start issue");
+    assert_eq!(issue.kind, EngineStartIssueKind::Failed);
+    assert!(
+        issue.message.starts_with("Couldn't run Test ACP."),
+        "{}",
+        issue.message
+    );
+    clear_start_issue(id);
 }
 
 #[test]

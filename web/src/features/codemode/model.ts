@@ -1,5 +1,7 @@
 import { callDuration } from "../../lib/format";
 import type { Approval } from "../../api/types";
+import { parsed } from "../../product/timeline/toolTrace";
+import type { ToolItem } from "../../product/timeline/types";
 import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeReply, CodeRunCall, CodeRunRecord, CodeRunStatus, RunError, RunView } from "./types";
 
 export const CODE_TOOLS = ["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run"] as const;
@@ -64,6 +66,15 @@ export const isRunId = (value: unknown): value is string => typeof value === "st
 
 /** The `id` of a run's block in the transcript, or null for an id that is not a run id. */
 export const runAnchorId = (runId: unknown): string | null => (isRunId(runId) ? `cm-run-${runId}` : null);
+
+/** The run id a code-run call's block carries, from its reply or its resume argument; null for another tool or an unusable id. */
+export function runIdOf(item: ToolItem): string | null {
+  if (codeToolOf(item.name) !== "run") return null;
+  const reply = readReply(item.result);
+  const args = parsed(item.args);
+  const runId = reply?.runId ?? (typeof args.run_id === "string" ? args.run_id : null);
+  return isRunId(runId) ? runId : null;
+}
 
 /** The approval's `via`, or null. Display only: nothing that decides an approval reads it. */
 export function viaOf(approval: Approval): ApprovalVia | null {

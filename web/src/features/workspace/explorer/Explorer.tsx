@@ -15,6 +15,7 @@ import { ErrorState, Loading } from "../../../product/ui/states";
 import { IconButton } from "../../../ui/controls";
 import { Menu, type MenuItem } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
+import { useWaitingThreadIds } from "../../../product/state/waitingThreads";
 import { arrangeThreads, attentionRank } from "../sidebar/groups";
 import { ExplorerRow, type RowHandlers } from "./ExplorerRow";
 import { useExplorerWatch } from "./watch";
@@ -73,16 +74,17 @@ export function Explorer({ route }: { route: Route }) {
   const currentProjectId = current?.project_id ?? (route.name === "project" || route.name === "new" ? route.projectId : null);
 
   const now = useNow(true, 30_000);
+  const waitingTerminals = useWaitingThreadIds();
   const { byProject, needs } = useMemo(() => {
     const sections = arrangeThreads(Object.values(threads), now, false, false);
     const byProject: Record<string, typeof sections.active> = {};
     const needs: Record<string, number> = {};
     for (const thread of [...sections.pinned, ...sections.active]) {
       (byProject[thread.project_id] ??= []).push(thread);
-      if (attentionRank(thread) === 0) needs[thread.project_id] = (needs[thread.project_id] ?? 0) + 1;
+      if (attentionRank(thread, waitingTerminals.has(thread.id)) === 0) needs[thread.project_id] = (needs[thread.project_id] ?? 0) + 1;
     }
     return { byProject, needs };
-  }, [threads, now]);
+  }, [threads, now, waitingTerminals]);
 
   const rows = useMemo(
     () =>

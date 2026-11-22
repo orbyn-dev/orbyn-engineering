@@ -37,7 +37,7 @@ describe("Settings › Secrets", () => {
     expect(screen.queryByText(/Reveal/)).toBeNull();
     expect(screen.queryByText(/apply to new output/)).toBeNull();
     expect(screen.getByText(/They apply to the Crew ledger when you read it, old rows included, and to what agents read/)).toBeVisible();
-    expect(screen.getByText("Always on")).toBeVisible();
+    expect(screen.getByText("On, locked")).toBeVisible();
     expect(screen.queryByRole("switch", { name: /Crew ledger/ })).toBeNull();
     expect(screen.getByText("None. Redaction is on in every project.")).toBeVisible();
     // What is not built is said so, not promised.

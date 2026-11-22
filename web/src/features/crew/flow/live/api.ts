@@ -4,6 +4,7 @@ import { ApiFailure, request } from "../../../../api/client";
 import type { FlowCrewList } from "../../../../generated/FlowCrewList";
 import type { FlowCrewRow } from "../../../../generated/FlowCrewRow";
 import type { FlowFilter } from "../../../../generated/FlowFilter";
+import type { FlowRunPage } from "../../../../generated/FlowRunPage";
 import type { FlowTaskDetail } from "../../../../generated/FlowTaskDetail";
 import type { FlowTaskList } from "../../../../generated/FlowTaskList";
 import type { CrewReviewConsentInput } from "../../../../generated/CrewReviewConsentInput";
@@ -36,6 +37,10 @@ export function tasksPath(query: TaskQuery): string {
   return `/api/crew/flow/tasks?${params.toString()}`;
 }
 
+/** One work task's Run page: the prompt, the checks, what was not verified, the commit and the pull request. */
+export const readRun = (id: string, signal?: AbortSignal): Promise<FlowRunPage> =>
+  get<FlowRunPage>(`/api/crew/flow/tasks/${encodeURIComponent(id)}/run`, signal);
+
 export const flowApi = {
   consent: (task: string, input: CrewReviewConsentInput): Promise<CrewReviewConsentAnswer> => {
     if (!validTaskId(task)) throw new ApiFailure("invalid", "That task’s id is not valid.", 0);
@@ -54,4 +59,5 @@ export const flowApi = {
   },
   tasks: (query: TaskQuery, signal?: AbortSignal): Promise<FlowTaskList> => get<FlowTaskList>(tasksPath(query), signal),
   task: (id: string, signal?: AbortSignal): Promise<FlowTaskDetail> => get<FlowTaskDetail>(`/api/crew/flow/tasks/${encodeURIComponent(id)}`, signal),
+  run: readRun,
 };
