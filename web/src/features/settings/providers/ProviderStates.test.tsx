@@ -216,3 +216,25 @@ it("lists the six ACP engines not installed as via ACP and Not found alone, with
     expect(row.querySelector(`[aria-label="Use ${name}"]`)).not.toBeNull();
   }
 });
+
+it("shows a failed start in the Status cell instead of Ready, once, with the service's straight apostrophe kept", async () => {
+  show([engine({ id: "kiro", name: "Kiro", tier: "acp", auth: "not_applicable", start_issue: { kind: "failed", message: "Couldn't run Kiro. It exited.", at: "2026-11-22T10:00:00Z" } })], [
+    entry({ id: "kiro", name: "Kiro", group: "found", labels: ["start_failed"], note: "Couldn't run Kiro. It exited.", openable: false }),
+  ]);
+  await switches();
+  const row = rowOf("Kiro");
+  expect(within(row).getAllByText("Start failed")).toHaveLength(1);
+  expect(within(row).queryByText("Ready")).toBeNull();
+  expect(within(row).getByText("Couldn't run Kiro. It exited.")).toBeVisible();
+});
+
+it("says Signed out once for a signed-out ACP engine, with its sign-in command", async () => {
+  show([engine({ id: "droid", name: "Factory Droid", tier: "acp", auth: "logged_out", sign_in_command: "droid login", start_issue: { kind: "signed_out", message: "Factory Droid isn't signed in. Run droid login, then try again.", at: "2026-11-22T10:00:00Z" } })], [
+    entry({ id: "droid", name: "Factory Droid", group: "found", labels: ["signed_out"], openable: false }),
+  ]);
+  await switches();
+  const row = rowOf("Factory Droid");
+  expect(within(row).getAllByText("Signed out")).toHaveLength(1);
+  expect(within(row).getByText("droid login")).toBeVisible();
+  expect(within(row).queryByText("Ready")).toBeNull();
+});
