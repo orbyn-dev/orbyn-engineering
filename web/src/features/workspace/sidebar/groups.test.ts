@@ -8,6 +8,7 @@ import {
   dropVerb,
   foldersOf,
   ledgerGroupsOf,
+  ledgerKey,
   projectDrop,
   sectionOf,
   sweepIds,
@@ -227,6 +228,14 @@ describe("ledger order", () => {
     expect(attentionRank(thread("a", { limit: { kind: "usage" } } as never))).toBe(0);
     expect(attentionRank(thread("a", {}, failed))).toBe(1);
     expect(attentionRank(thread("a"))).toBe(2);
+  });
+
+  it("counts a terminal waiting for the person as needing you, whatever else the thread is doing", () => {
+    expect(attentionRank(thread("a"), true)).toBe(0);
+    expect(attentionRank(thread("a", {}, failed), true)).toBe(0);
+    expect(attentionRank(thread("a"), false)).toBe(2);
+    expect(ledgerKey(thread("a"), true)).toBe("needs");
+    expect(ledgerKey(thread("a"))).toBe("done");
   });
 
   it("lists active threads that need you first only when asked", () => {

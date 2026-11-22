@@ -13,6 +13,7 @@ import type { ProjectGroupingMode } from "../../../generated/ProjectGroupingMode
 import { useDraftStore } from "../../../product/state/draftStore";
 import { navigate, type Route } from "../../../product/state/route";
 import { useUi } from "../../../product/state/ui";
+import { useWaitingThreadIds } from "../../../product/state/waitingThreads";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { useNow } from "../../../lib/useNow";
 import { IconButton } from "../../../ui/controls";
@@ -69,6 +70,7 @@ interface MenuState {
 }
 
 export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
+  const waitingTerminals = useWaitingThreadIds();
   const jumpHeld = useJumpHeld();
   const projects = useWorkspace((state) => state.projects);
   const visibleProjects = useVisibleProjects();
@@ -532,7 +534,7 @@ export const Sidebar = memo(function Sidebar({ route }: { route: Route }) {
                           label={folder.label}
                           collapsed={collapsed}
                           count={folder.threads.length}
-                          needs={folder.threads.filter((thread) => attentionRank(thread) === 0).length}
+                          needs={folder.threads.filter((thread) => attentionRank(thread, waitingTerminals.has(thread.id)) === 0).length}
                           onToggle={() => toggleGroup(key, true)}
                           onMenu={(event) => folderMenu(event, folder)}
                         />,

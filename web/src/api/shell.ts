@@ -87,6 +87,21 @@ export function onDataChanged(listener: (what: string) => void): () => void {
 
 export const dataChanged = (what: string) => dataListeners.forEach((listener) => listener(what));
 
+const threadListeners = new Set<(threadId: string, seq: number) => void>();
+
+/**
+ * Calls back when the service appended an event to a thread's log that a window may want to follow (a terminal waiting for the
+ * person): the thread and the event's `seq`, with no payload. The event itself is only in the thread's log. Returns a stop function.
+ */
+export function onThreadNotice(listener: (threadId: string, seq: number) => void): () => void {
+  threadListeners.add(listener);
+  return () => {
+    threadListeners.delete(listener);
+  };
+}
+
+export const threadNotice = (threadId: string, seq: number) => threadListeners.forEach((listener) => listener(threadId, seq));
+
 /** Not a service topic: the event stream came back after a gap, so anything may have changed unheard. */
 export const ALL_DATA = "*";
 

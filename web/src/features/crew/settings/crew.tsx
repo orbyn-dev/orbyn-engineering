@@ -1,7 +1,8 @@
+import { CrewRoleNote } from "../../cursorthread";
 import { Frame } from "../shared/Frame";
 import { Btn } from "../shared/parts";
 
-/** Crew Designs v23, frame `settings-crew`, with its four entry rows as Crew Designs v87 draws them (Review capacity, Escapes, Independent oracle, Reviewer backtest). */
+/** Crew Designs v23, frame `settings-crew`, with its four entry rows as Crew Designs v87 draws them (Review capacity, Escapes, Independent oracle, Reviewer backtest). The Cursor row is frame `crew-cursor-reviewer-only`: the small Map it and the Reviewer only chip, with the reason as its title. */
 export function SettingsCrew() {
   return (
     <Frame sheet>
@@ -115,7 +116,13 @@ export function SettingsCrew() {
           </div>
           <div className="cx-setrow cx-sub">
             <div><b>Cursor</b><small>Connects over ACP. Not mapped yet, so it is treated as Builder and marked “not mapped” wherever its tier shows.</small></div>
-            <span className="cx-sv">{"Builder · not mapped "}<u>Map it</u></span>
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+              <span style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <span className="cx-sv">Builder · not mapped</span>
+                <Btn className="cx-ghost cx-sm">Map it</Btn>
+              </span>
+              <CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: "Not yet confined for writing work" }} />
+            </span>
           </div>
           <div className="cx-setrow cx-sub">
             <div><b>Kimi CLI</b><small>Not installed.</small></div>
