@@ -107,7 +107,7 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function failureFrom(response: Response): Promise<ApiFailure> {
+export async function failureFrom(response: Response): Promise<ApiFailure> {
   let code = `http_${response.status}`;
   let message = `The server answered ${response.status}.`;
   let detail: unknown;
