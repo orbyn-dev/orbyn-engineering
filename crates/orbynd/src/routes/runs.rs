@@ -92,10 +92,17 @@ async fn start_run(
         };
         state.core.update_thread(&id, &patch, LOCAL_USER)?;
     }
-    let run = state
-        .core
-        .runs
-        .admit_with(&id, &body.prompt, &body.attachment_ids, LOCAL_USER)?;
+    let result = orbyn_core::conversation::runs::result::ResultRequest::from_body(
+        body.result_schema.clone(),
+        body.purpose,
+    )?;
+    let run = state.core.runs.admit_with_result(
+        &id,
+        &body.prompt,
+        &body.attachment_ids,
+        LOCAL_USER,
+        result,
+    )?;
     Ok((StatusCode::ACCEPTED, Json(run)))
 }
 
@@ -106,6 +113,12 @@ async fn send_without_approvals(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<StartRun>,
 ) -> ApiResult<impl IntoResponse> {
+    if body.result_schema.is_some() || body.purpose.is_some() {
+        return Err(CoreError::Invalid(
+            "A typed result is not available when sending once without approvals.".into(),
+        )
+        .into());
+    }
     if body.permission_mode.is_some() {
         return Err(CoreError::Invalid(
             "This sends once without approvals and saves no mode. Leave the permission mode out."

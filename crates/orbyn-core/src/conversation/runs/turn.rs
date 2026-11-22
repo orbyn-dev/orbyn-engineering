@@ -388,6 +388,14 @@ impl RunManager {
         )
         .is_ok_and(|mode| mode == "turn");
         let mut shaper = EventShaper::new(whole);
+        // What this run was asked to return (M20), and the assistant's words as they go by.
+        let request = self
+            .results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&scope.run_id)
+            .cloned();
+        let mut answer = result::AnswerText::default();
         // A note taken for this turn is on the timeline before anything the engine says.
         let sent = self
             .notes_sent
@@ -469,6 +477,9 @@ impl RunManager {
                     replied |= shows_work(&event, &mut user_messages) && own_turn;
                     match event {
                         EngineEvent::Agui(event) => {
+                            if own_turn && request.is_some() {
+                                answer.observe(&event);
+                            }
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
                                 break outcome;
                             }
@@ -547,6 +558,15 @@ impl RunManager {
             }
         };
         let _ = self.write_events(scope, shaper.flush());
+        if let Some(request) = &request
+            && matches!(outcome, EngineOutcome::Completed)
+            && !cancelling
+        {
+            let text = answer.finish().unwrap_or_default();
+            let events = request.events(&text);
+            tracing::debug!(run = %scope.run_id, bytes = text.len(), "recorded a typed turn result");
+            let _ = self.write_events(scope, events);
+        }
         // Blocked engines hear a denial even when the engine ended on its own.
         if let Err(error) = self
             .gate

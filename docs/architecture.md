@@ -3817,3 +3817,16 @@ every method, path and which routes need a credential.
 | `POST /auth/session` | Exchange a remote access key for a cookie (`204`) |
 | `POST /agui/threads/:id` | External AG-UI endpoint (`RunAgentInput` in, SSE out) |
 | `POST /mcp/:thread_token` | Per-run MCP server |
+
+## Typed turn result
+
+A send (`POST /api/threads/{id}/runs`) may carry `result_schema`, a JSON Schema object (draft 2020-12, at most 16 KiB, nesting at
+most 32, local `#/` references only, no `$dynamicRef`; otherwise `400 invalid`, "The result schema is not valid."), or
+`purpose: "terminal_proposal"` where Orbyn supplies the schema; the two are exclusive, and a send without approvals takes neither.
+The core adds one fixed instruction after the person's text asking the engine to end its final message with a fenced `json` block. When
+the run completes it takes the last such block of the final assistant message (or the whole message if it is JSON), checks it against
+the schema with no network loader (so nothing is ever fetched) and records one run event `orbyn.turn_result` (`CUSTOM`):
+`{ok: true, value}` (value at most 256 KiB) or `{ok: false, reason}` with `reason` one of `no_json`, `not_valid_json`,
+`schema_mismatch`, `too_large`. No retry or repair turn; a cancelled or failed run records none. The event is stored with the run like
+any other and reads back from the thread history. Log lines carry the run id and sizes only. **Planned**: each engine's own structured
+output; today every engine gets the instruction. Not verified on a real engine.
