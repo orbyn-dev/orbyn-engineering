@@ -930,6 +930,8 @@ async fn static_ui_has_csp_and_spa_fallback() {
         "/assets/missing.js",
         "/assets/missing.css",
         "/%61ssets/missing.js",
+        "/assets/%FF.js",
+        "/assets%2F%FF.js",
     ] {
         for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
             let response = client

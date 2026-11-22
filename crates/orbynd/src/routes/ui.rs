@@ -57,6 +57,41 @@ fn percent_decode(text: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// Classify the first decoded path component without decoding the asset name.
+/// A malformed filename must not turn an asset request into an SPA navigation.
+fn is_asset_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let mut component = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = if bytes[index] == b'%' {
+            let Some(pair) = path.get(index + 1..index + 3) else {
+                return false;
+            };
+            let Ok(byte) = u8::from_str_radix(pair, 16) else {
+                return false;
+            };
+            index += 3;
+            byte
+        } else {
+            let byte = bytes[index];
+            index += 1;
+            byte
+        };
+        if byte == b'/' || (cfg!(windows) && byte == b'\\') {
+            if !component.is_empty() {
+                return component == b"assets";
+            }
+        } else {
+            component.push(byte);
+            if component.len() > b"assets".len() {
+                return false;
+            }
+        }
+    }
+    component == b"assets"
+}
+
 pub async fn serve(State(state): State<AppState>, request: Request) -> Response {
     let path = request.uri().path().to_owned();
     if SERVICE_PREFIXES
@@ -75,11 +110,7 @@ pub async fn serve(State(state): State<AppState>, request: Request) -> Response 
     };
     let target = match resolve(root, &path).filter(|candidate| candidate.is_file()) {
         Some(target) => target,
-        None if percent_decode(&path).is_some_and(|decoded| {
-            let relative = decoded.trim_start_matches('/');
-            relative == "assets" || relative.starts_with("assets/")
-        }) =>
-        {
+        None if is_asset_path(&path) => {
             return StatusCode::NOT_FOUND.into_response();
         }
         None => root.join("index.html"),
@@ -126,5 +157,13 @@ mod tests {
         assert_eq!(resolve(root, "/../secret"), None);
         assert_eq!(resolve(root, "/a/%2e%2e/%2e%2e/secret"), None);
         assert_eq!(resolve(root, "/%ff"), None);
+    }
+
+    #[test]
+    fn asset_classification_does_not_decode_the_filename() {
+        assert!(is_asset_path("/assets/%FF.js"));
+        assert!(is_asset_path("/%61ssets%2F%FF.js"));
+        assert!(!is_asset_path("/assets-extra/missing.js"));
+        assert_eq!(is_asset_path("/assets%5C%FF.js"), cfg!(windows));
     }
 }
