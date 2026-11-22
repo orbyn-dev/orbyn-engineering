@@ -138,16 +138,16 @@ export function nativeSessionCapabilities(engineId: string, signal?: AbortSignal
   return request<AcpSessionCapabilities>("GET", `/api/engines/${q(engineId)}/native-sessions/capabilities`, undefined, signal);
 }
 
-export function listNativeSessions(engineId: string, query: string) {
-  return request<AcpNativeSessionPage>("GET", `/api/engines/${q(engineId)}/native-sessions${query}`);
+export function listNativeSessions(engineId: string, query: string, signal?: AbortSignal) {
+  return request<AcpNativeSessionPage>("GET", `/api/engines/${q(engineId)}/native-sessions${query}`, undefined, signal);
 }
 
-export function importNativeSession(engineId: string, body: unknown) {
-  return request<AcpNativeSessionImported>("POST", `/api/engines/${q(engineId)}/native-sessions/import`, body);
+export function importNativeSession(engineId: string, body: unknown, signal?: AbortSignal) {
+  return request<AcpNativeSessionImported>("POST", `/api/engines/${q(engineId)}/native-sessions/import`, body, signal);
 }
 
-export function deleteNativeSession(engineId: string, body: { project_id: string; session_id: string }) {
-  return request("POST", `/api/engines/${q(engineId)}/native-sessions/delete`, body);
+export function deleteNativeSession(engineId: string, body: { project_id: string; session_id: string }, signal?: AbortSignal) {
+  return request("POST", `/api/engines/${q(engineId)}/native-sessions/delete`, body, signal);
 }
 
 export { ApiFailure, NETWORK_ERROR, api, authHeaders } from "../../api/client";
