@@ -39,4 +39,5 @@
   .skills-heading { align-items: center; padding: 8px 8px 6px; }
   .skills-filters { padding-left: 16px; padding-right: 16px; }
   .skills-content, .skills-detail { padding-left: 16px; padding-right: 16px; }
+  .skills-page .skills-loading { padding: 10px 16px 24px; }
 }

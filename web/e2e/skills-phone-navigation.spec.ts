@@ -39,3 +39,30 @@ test("Skills does not add phone back controls on desktop", async ({ page }) => {
   await expect(detail).toBeVisible();
   await expect(detail.getByRole("link", { name: "Back to skills" })).toHaveCount(0);
 });
+
+for (const state of ["loading", "error"] as const) {
+  for (const detail of [false, true]) {
+    test(`phone can leave ${state} Skills ${detail ? "detail" : "list"}`, async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await page.goto("/__mock/scenario/default", { waitUntil: "domcontentloaded" });
+      let release!: () => void;
+      let requested = false;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route("**/api/skills", async (route) => {
+        requested = true;
+        if (state === "loading") await held;
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "unavailable", message: "Unavailable" } }) });
+      });
+      await page.goto(detail ? "/#/skills/architect" : "/#/skills", { waitUntil: "domcontentloaded" });
+      await expect.poll(() => requested).toBe(true);
+      if (state === "error") await expect(page.getByText("Couldn't load skills")).toBeVisible();
+      if (detail) {
+        await page.getByRole("link", { name: "Back to skills" }).click();
+        await expect(page).toHaveURL(/#\/skills$/);
+      }
+      await page.getByRole("link", { name: "Back to threads" }).click();
+      await expect(page).toHaveURL(/#\/$/);
+      release();
+    });
+  }
+}
