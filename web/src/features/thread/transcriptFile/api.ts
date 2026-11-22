@@ -1,12 +1,17 @@
 import { ApiFailure, NETWORK_ERROR, authHeaders, request } from "../../../api/client";
 import { personKeyHeaders } from "../../../api/personKey";
 import { serviceUrl } from "../../../api/origin";
+import type { PreferenceView } from "../../../api/types";
 import type { TranscriptDocument } from "../../../generated/TranscriptDocument";
 import type { TranscriptImportAnswer } from "../../../generated/TranscriptImportAnswer";
 import { TRANSCRIPT_EXTENSION, TRANSCRIPT_TYPE } from "../composer/transcriptDrop";
 
 /** The service refuses a file over this (`413 file_too_large`); the page stops it before sending. */
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
+
+/** The project's model defaults and the engines it allows, as the import sheet reads them. */
+export const readProjectPreferences = (projectId: string, signal?: AbortSignal): Promise<PreferenceView[]> =>
+  request<PreferenceView[]>("GET", `/api/preferences?project_id=${encodeURIComponent(projectId)}`, undefined, signal);
 
 /** The thread as one document, already redacted by the service. Nothing is written on the computer here. */
 export const exportTranscript = (threadId: string, signal?: AbortSignal): Promise<TranscriptDocument> =>

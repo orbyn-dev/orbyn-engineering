@@ -13,7 +13,8 @@
 // Deliberate differences from T3:
 // - Policy stays in Rust. Every `session/request_permission` is a `permission` frame answered by
 //   `respond`; an allow is only ever the agent's `allow_once` option (never `allow_always`), and
-//   an ask the person denies is `reject_once`.
+//   an ask the person denies is `reject_once`. Kiro's `autopilot` is therefore always written as
+//   its supervised value, where T3 turns it on for a full-access thread.
 // - The client advertises NO `fs` and NO `terminal` capability: the agent keeps using its own
 //   tools under the core's confinement. T3 advertises and implements `fs/*` and `terminal/*`
 //   (clientFileSystem, clientTerminals, clientPolicy); when an agent sends one anyway this host
@@ -24,7 +25,9 @@
 //   background event, and a steer cancels the running prompt and prompts the new text (the wire
 //   T3's `message_steering` recording shows).
 // - `models` returns Muse's `{models}` shape (see docs/engine-host-protocol.md), not T3's
-//   provider catalog.
+//   provider catalog. The per-agent entries in acpAgents.mjs add the droid/omp/kimi quirks, the
+//   Mistral Vibe model scope and Kiro's launch/config rules; T3's Kiro cloud-config and steering
+//   note filters are not ported, so those updates stay engine events.
 //
 // See test/fixtures/NOTICE for the transcript notice and test/acp.test.mjs for what is replayed.
 
@@ -35,7 +38,16 @@ import { homedir } from "node:os";
 import { win32 } from "node:path";
 import { createInterface } from "node:readline";
 import { serializeError } from "../frame.mjs";
-import { acpAgentHooks } from "./acpAgents.mjs";
+import {
+  acpAgentHooks,
+  KIRO_AGENT_CONFIG_ID,
+  KIRO_AUTOPILOT_CONFIG_ID,
+  KIRO_AUTOPILOT_OFF,
+  KIRO_COMPACT_METHOD,
+  KIRO_EFFORT_CONFIG_ID,
+  KIRO_MODEL_CONFIG_ID,
+  KIRO_STEER_METHOD,
+} from "./acpAgents.mjs";
 
 /** The ACP protocol generation this host speaks; also the `hello.sdk.version` string. */
 export const ACP_PROTOCOL_VERSION = 2;
@@ -91,6 +103,18 @@ export function acpLaunch(binary, env = process.env, { platform = process.platfo
     // /d skips AutoRun; a bare @ keeps a quoted path with spaces intact under /c.
     args: ["/d", "/c", ...(/\s/.test(resolved) ? ["@", resolved] : [resolved.replace(/[()&<>@^|]/g, "^$&")])],
   };
+}
+
+/**
+ * The args a session passes to the agent. Kiro's V3 engine needs `acp --agent-engine=v3
+ * --auth-method=cli` when the core leaves the list empty (T3's KIRO_ACP_ARGS); explicit args are
+ * the core's choice and are never replaced. Other agents run with what the core gave them.
+ */
+export function acpAgentArgs(agent) {
+  const args = Array.isArray(agent?.args) ? agent.args : [];
+  const launchArgs = acpAgentHooks(agent?.id).launchArgs;
+  if (Array.isArray(launchArgs) && launchArgs.length > 0 && args.length === 0) return [...launchArgs];
+  return args;
 }
 
 /** The default child: a real process, one per open session. Tests inject a fake instead. */
@@ -296,14 +320,31 @@ function collectConfigOptionValues(option) {
   return option?.type === "select" ? flattenSelectChoices(option.options).map((choice) => choice.value) : [];
 }
 
-/** The model catalog in Muse's `{models}` shape: ids, names, a default, efforts and a default effort. */
-export function acpModelCatalog(setup = {}) {
+const KIRO_EFFORT_LABELS = Object.freeze({
+  none: "None",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+});
+
+/**
+ * The model catalog in Muse's `{models}` shape: ids, names, a default, efforts and a default effort.
+ *
+ * `agentId` carries the per-agent catalog rules from acpAgents.mjs: Mistral Vibe's `thinking`
+ * option describes only the session's current model, and Kiro sends each model's levels under
+ * `_meta.kiro` (effortLevels/defaultEffortLevel). The generic entry keeps the session levels on
+ * every model, as before.
+ */
+export function acpModelCatalog(setup = {}, agentId = "default") {
+  const hooks = acpAgentHooks(agentId);
   const configOptions = Array.isArray(setup.configOptions) ? setup.configOptions : [];
   const modelState = isRecord(setup.models) ? setup.models : null;
   const modelOption = findModelConfigOption(configOptions);
   const currentModelId = modelOption !== undefined ? text(modelOption.currentValue) : text(modelState?.currentModelId);
   const candidates = modelOption !== undefined
-    ? flattenSelectChoices(modelOption.options).map((choice) => ({ id: choice.value, name: choice.name, description: choice.description }))
+    ? flattenSelectChoices(modelOption.options).map((choice) => ({ id: choice.value, name: choice.name, description: choice.description, meta: choice._meta }))
     : (Array.isArray(modelState?.availableModels) ? modelState.availableModels : []).map((model) => ({ id: model?.modelId, name: model?.name, description: model?.description, meta: model?._meta }));
   const effortOption = findThoughtLevelConfigOption(configOptions);
   const sessionEfforts = effortOption === undefined ? [] : flattenSelectChoices(effortOption.options).map((choice) => ({ id: choice.value, label: text(choice.name) ?? choice.value, ...(text(choice.description) ? { description: text(choice.description) } : {}) }));
@@ -315,9 +356,17 @@ export function acpModelCatalog(setup = {}) {
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
     const meta = candidate.meta ?? (Array.isArray(modelState?.availableModels) ? modelState.availableModels.find((model) => model?.modelId === id)?._meta : undefined);
+    const kiro = isRecord(meta) && isRecord(meta.kiro) ? meta.kiro : undefined;
     let efforts;
     let defaultEffort;
-    if (effortOption === undefined) {
+    if (kiro !== undefined && (kiro.hasEffort === false || Array.isArray(kiro.effortLevels))) {
+      efforts = kiro.hasEffort === false || !Array.isArray(kiro.effortLevels)
+        ? []
+        : kiro.effortLevels
+            .filter((level) => typeof level === "string" && level.length > 0)
+            .map((level) => ({ id: level, label: KIRO_EFFORT_LABELS[level] ?? level }));
+      defaultEffort = text(kiro.defaultEffortLevel);
+    } else if (effortOption === undefined) {
       efforts = [];
     } else if (isRecord(meta) && meta.supportsReasoningEffort === false) {
       efforts = [];
@@ -326,6 +375,9 @@ export function acpModelCatalog(setup = {}) {
         .filter((level) => isRecord(level) && typeof level.value === "string" && level.value.length > 0)
         .map((level) => ({ id: level.value, label: text(level.label) ?? level.value }));
       defaultEffort = text(meta.reasoningEffort);
+    } else if (hooks.modelEfforts === "current-model" && id !== currentModelId) {
+      // Mistral Vibe 3.1 sends its `thinking` levels for the session's model only.
+      efforts = [];
     } else {
       efforts = sessionEfforts;
       defaultEffort = sessionEffort;
@@ -684,10 +736,14 @@ function normalizeInitialize(result) {
   const session = isRecord(result.capabilities?.session) ? result.capabilities.session : undefined;
   const prompt = isRecord(session?.prompt) ? session.prompt : {};
   const mcp = isRecord(session?.mcp) ? session.mcp : {};
+  // Kiro keeps its extension methods under `_meta.kiro` on the agent capabilities, even when it
+  // otherwise answers with the v1 shape. Preserve the meta either way.
+  const meta = isRecord(result.agentCapabilities?._meta) ? result.agentCapabilities._meta : isRecord(result.capabilities?._meta) ? result.capabilities._meta : undefined;
   return {
     generation: 2,
     protocolVersion: result.protocolVersion,
     agentCapabilities: {
+      ...(meta === undefined ? {} : { _meta: meta }),
       loadSession: session !== undefined,
       promptCapabilities: {
         image: prompt.image != null,
@@ -786,6 +842,14 @@ const modeStateOf = (setup) => {
   return isRecord(modes) && text(modes.currentModeId) !== undefined ? modes : undefined;
 };
 
+const isKiro = (session) => session.agent?.id === "kiro";
+const isKiroCompactCommand = (value) => /^\/compact(?:\s|$)/.test(value.trim());
+const kiroExtensionMethods = (session) =>
+  Array.isArray(session.init?.agentCapabilities?._meta?.kiro?.extensionMethods)
+    ? session.init.agentCapabilities._meta.kiro.extensionMethods.filter((method) => typeof method === "string")
+    : [];
+const kiroAdvertises = (session, method) => kiroExtensionMethods(session).includes(method);
+
 // ---------------------------------------------------------------------------------------------
 
 export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS, cancelGraceMs = CANCEL_GRACE_MS } = {}) {
@@ -862,6 +926,18 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         };
       };
 
+      /**
+       * Kiro answers a prompt error with -32000 (normally ACP's auth-required code), e.g. "The
+       * model 'x' is not available". A prompt failure is the engine's, not a sign-in: keep the
+       * message Kiro meant for the person and do not send the core to the sign-in path.
+       */
+      const promptError = (session, cause) => {
+        const error = acpError(cause, "engine");
+        return isKiro(session) && error.kind === "auth"
+          ? hostError("KiroPromptError", error.message, "engine")
+          : error;
+      };
+
       const settleRun = (session, run, result) => {
         if (run.done || session.run !== run) return;
         const usage = acpUsage(result?.usage);
@@ -881,7 +957,7 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           return;
         }
         if (stopReason === "error") {
-          const error = acpError({
+          const error = promptError(session, {
             name: "AcpPromptError",
             message: typeof result?.error?.message === "string" ? result.error.message : "The agent ended the turn with an error.",
             ...(isRecord(result?.error?.data) ? { data: result.error.data } : {}),
@@ -895,7 +971,7 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
 
       const failRun = (session, run, cause) => {
         if (run.done || session.run !== run) return;
-        let error = acpError(cause, "engine");
+        let error = promptError(session, cause);
         // The prompt's pending request fails with the transport error first; add the sanitized
         // stderr excerpt here, where the run ends, so it is in the run's error and nowhere else.
         if (error.name === "AcpExited" && session.stderrTail.trim() !== "") {
@@ -918,30 +994,95 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         );
       };
 
-      const refreshConfig = (session, configOptions) => {
-        const normalized = normalizeConfigOptions(configOptions);
-        if (normalized === undefined) return;
-        session.configOptions = normalized;
-        session.models = acpModelCatalog({ configOptions: session.configOptions, models: session.modelState });
-        session.modes = modeStateOf({ configOptions: session.configOptions }) ?? session.modes;
+      /**
+       * The session's catalog. Mistral Vibe advertises `thinking` levels for its current model
+       * only; keep the levels each model last advertised so a switch away and back does not lose
+       * them (T3's applyAcpRegistryLiveConfiguration keeps them per model).
+       */
+      const catalogFor = (session, setup) => {
+        const next = acpModelCatalog(setup, session.agent.id);
+        if (session.hooks.modelEfforts !== "current-model") return next;
+        const currentId = next.models.find((model) => model.isDefault)?.id;
+        const models = next.models.map((model) => {
+          if (model.id === currentId || model.efforts.length > 0) return model;
+          const known = session.modelEfforts.get(model.id);
+          if (known === undefined) return model;
+          return {
+            ...model,
+            efforts: known.efforts.map((effort) => ({ ...effort })),
+            ...(known.defaultEffort === undefined ? {} : { defaultEffort: known.defaultEffort }),
+          };
+        });
+        for (const model of models) {
+          if (model.efforts.length === 0) continue;
+          session.modelEfforts.set(model.id, { efforts: model.efforts.map((effort) => ({ ...effort })), defaultEffort: model.defaultEffort });
+        }
+        return { models };
       };
 
-      const setConfigOption = async (session, configId, value) => {
+      const refreshConfig = (session, configOptions, { preserveMissing = false } = {}) => {
+        const normalized = normalizeConfigOptions(configOptions);
+        if (normalized === undefined) return;
+        // Kiro's model write can answer before its config_option_update advertises effortLevel;
+        // keep an option a notification already delivered when the older response omits it.
+        session.configOptions = preserveMissing
+          ? [...normalized, ...session.configOptions.filter((option) => !normalized.some((candidate) => candidate.id === option.id))]
+          : normalized;
+        session.models = catalogFor(session, { configOptions: session.configOptions, models: session.modelState });
+        session.modes = modeStateOf({ configOptions: session.configOptions }) ?? session.modes;
+        for (const [configId, waiters] of session.configWaiters) {
+          const option = session.configOptions.find((candidate) => candidate.id === configId);
+          if (option === undefined) continue;
+          for (const waiter of [...waiters]) waiter(option);
+        }
+      };
+
+      /** Wait until the agent advertises a config option (Kiro's effortLevel arrives late). */
+      const waitForConfigOption = (session, configId, timeoutMs) => {
+        const existing = session.configOptions.find((candidate) => candidate.id === configId);
+        if (existing !== undefined) return Promise.resolve(existing);
+        return new Promise((resolve) => {
+          let timer;
+          const done = (option) => {
+            if (timer !== undefined) clearTimeout(timer);
+            const waiters = session.configWaiters.get(configId);
+            waiters?.delete(done);
+            resolve(option);
+          };
+          const waiters = session.configWaiters.get(configId) ?? new Set();
+          waiters.add(done);
+          session.configWaiters.set(configId, waiters);
+          timer = setTimeout(() => done(undefined), timeoutMs);
+          timer.unref?.();
+        });
+      };
+
+      const setConfigOption = async (session, configId, value, { allowUnlisted = false } = {}) => {
         const option = session.configOptions.find((candidate) => candidate?.id === configId);
         if (option !== undefined) {
           if (option.type === "boolean" && typeof value !== "boolean") throw hostError("AcpConfigValue", `The agent expects a boolean for ${configId}.`, "invalid_request");
-          if (option.type === "select" && typeof value === "string") {
+          if (option.type === "select" && typeof value === "string" && !allowUnlisted) {
             const values = collectConfigOptionValues(option);
             if (values.length > 0 && !values.includes(value)) throw hostError("AcpConfigValue", `The agent does not offer ${value} for ${configId}.`, "invalid_request");
           }
         }
         const params = { sessionId: session.engineSessionId, configId, ...(typeof value === "boolean" ? { type: "boolean" } : {}), value };
         const result = await session.connection.request("session/set_config_option", params);
-        refreshConfig(session, result?.configOptions);
+        refreshConfig(session, result?.configOptions, { preserveMissing: isKiro(session) });
         return result;
       };
 
       const setModel = async (session, modelId) => {
+        if (isKiro(session)) {
+          // Kiro's own id for "Kiro default" is not known here; a fresh session already runs it.
+          if (modelId === "default") return;
+          const option = session.configOptions.find((candidate) => candidate.id === KIRO_MODEL_CONFIG_ID) ?? findModelConfigOption(session.configOptions);
+          if (option?.type === "select" && option.currentValue === modelId) return;
+          // Kiro writes the model even before it advertises the option and for unlisted ids; it
+          // fails the next prompt on a model it cannot run (T3's applyKiroModel).
+          await setConfigOption(session, option?.id ?? KIRO_MODEL_CONFIG_ID, modelId, { allowUnlisted: true });
+          return;
+        }
         const option = findModelConfigOption(session.configOptions);
         if (option !== undefined) {
           await setConfigOption(session, option.id, modelId);
@@ -955,16 +1096,42 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         if (session.modelState.currentModelId === modelId) return;
         await session.connection.request("session/set_model", { sessionId: session.engineSessionId, modelId });
         session.modelState = { ...session.modelState, currentModelId: modelId };
-        session.models = acpModelCatalog({ configOptions: session.configOptions, models: session.modelState });
+        session.models = catalogFor(session, { configOptions: session.configOptions, models: session.modelState });
       };
 
       const setEffort = async (session, effort) => {
+        if (isKiro(session)) {
+          // Kiro advertises effortLevel only once the written model runs. Levels the model does
+          // not offer are not sent; a missing advert keeps Kiro's own level (T3's applyKiroEffort).
+          const option = await waitForConfigOption(session, KIRO_EFFORT_CONFIG_ID, 2_000);
+          if (option?.type !== "select" || !collectConfigOptionValues(option).includes(effort)) {
+            ctx.log({ type: "kiroEffortSkipped", sessionId: session.id });
+            return;
+          }
+          await setConfigOption(session, KIRO_EFFORT_CONFIG_ID, effort);
+          return;
+        }
         const option = findThoughtLevelConfigOption(session.configOptions);
         if (option === undefined) return;
         await setConfigOption(session, option.id, effort);
       };
 
       const setMode = async (session, modeId) => {
+        if (isKiro(session)) {
+          const option = session.configOptions.find((candidate) => candidate.id === KIRO_AGENT_CONFIG_ID) ??
+            session.configOptions.find((candidate) => candidate?.category === "mode" && candidate.type === "select");
+          if (option?.type === "select") {
+            const values = collectConfigOptionValues(option);
+            if (option.currentValue === modeId) return;
+            // An agent the session does not list is skipped: Kiro would accept it and not switch.
+            if (values.length > 0 && !values.includes(modeId)) {
+              ctx.log({ type: "kiroAgentSkipped", sessionId: session.id });
+              return;
+            }
+            await setConfigOption(session, option.id, modeId);
+            return;
+          }
+        }
         const option = Array.isArray(session.configOptions) ? session.configOptions.find((candidate) => candidate?.category === "mode" && candidate.type === "select") : undefined;
         if (option !== undefined) {
           await setConfigOption(session, option.id, modeId);
@@ -975,7 +1142,45 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         session.modes = { ...session.modes, currentModeId: modeId };
       };
 
+      /**
+       * Kiro starts sessions with autopilot "on" (tools run without asking). Policy stays in
+       * Rust, so the host writes Kiro's supervised value whenever the option is offered and never
+       * writes the other one. An option that is on and offers no supervised value cannot be made
+       * safe, so opening the session fails instead of running auto-approved tools.
+       */
+      const enforceKiroAutopilot = async (session) => {
+        if (!isKiro(session) || session.autopilotWrite === true) return;
+        const option = session.configOptions.find((candidate) => candidate.id === KIRO_AUTOPILOT_CONFIG_ID);
+        if (option?.type !== "select" || option.currentValue === KIRO_AUTOPILOT_OFF) return;
+        const values = collectConfigOptionValues(option);
+        if (!values.includes(KIRO_AUTOPILOT_OFF)) {
+          if (option.currentValue === "on") {
+            throw hostError("KiroAutopilot", "Kiro offers autopilot without its supervised value.", "unsupported");
+          }
+          return;
+        }
+        session.autopilotWrite = true;
+        try {
+          await setConfigOption(session, KIRO_AUTOPILOT_CONFIG_ID, KIRO_AUTOPILOT_OFF);
+          // The result may not echo configOptions; remember the value the host just wrote so a
+          // later advert does not send the same supervised write again.
+          session.configOptions = session.configOptions.map((candidate) =>
+            candidate.id === KIRO_AUTOPILOT_CONFIG_ID ? { ...candidate, currentValue: KIRO_AUTOPILOT_OFF } : candidate,
+          );
+        } finally {
+          session.autopilotWrite = false;
+        }
+      };
+
       const applySelection = async (session, selection = {}) => {
+        if (isKiro(session)) {
+          // Kiro's agent switch applies that agent's own model, so it runs before the model write;
+          // effortLevel waits for the written model's advert (T3's applyKiroModelSelection).
+          if (typeof selection.mode === "string" && selection.mode.trim() !== "") await setMode(session, selection.mode.trim());
+          if (typeof selection.model === "string" && selection.model.trim() !== "") await setModel(session, selection.model.trim());
+          if (typeof selection.effort === "string" && selection.effort.trim() !== "") await setEffort(session, selection.effort.trim());
+          return;
+        }
         if (typeof selection.model === "string" && selection.model.trim() !== "") await setModel(session, selection.model.trim());
         if (typeof selection.effort === "string" && selection.effort.trim() !== "") await setEffort(session, selection.effort.trim());
         if (typeof selection.mode === "string" && selection.mode.trim() !== "") await setMode(session, selection.mode.trim());
@@ -1011,7 +1216,7 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         for (const [key, value] of Object.entries(agent.env ?? {})) env[key] = value;
         const cwd = confinement?.cwd ?? requestCwd ?? process.cwd();
         const launch = prefix === undefined ? acpLaunch(agent.command, env) : { command: agent.command, args: [] };
-        const [command, ...args] = [...(prefix ?? []), launch.command, ...launch.args, ...(agent.args ?? [])];
+        const [command, ...args] = [...(prefix ?? []), launch.command, ...launch.args, ...acpAgentArgs(agent)];
         return { command, args, cwd, env };
       };
 
@@ -1077,32 +1282,63 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           }
           return session.connection.request("session/new", { cwd, mcpServers }, { timeoutMs: requestTimeoutMs });
         };
-        let result;
-        try {
-          result = await setupCall();
-        } catch (cause) {
-          const error = acpError(cause);
-          if (error.kind !== "auth") throw error;
-          const methodId = text(request.options?.authMethodId);
-          if (methodId === undefined) throw hostError("AcpAuthRequired", "Sign in to the agent before opening a session.", "auth");
-          const advertised = Array.isArray(session.init?.authMethods) ? session.init.authMethods : [];
-          if (advertised.length > 0 && !advertised.some((method) => method?.id === methodId)) {
-            throw hostError("AcpAuthMethod", "The agent did not advertise that sign-in method.", "auth");
+        const setupWithAuth = async (call) => {
+          try {
+            return await call();
+          } catch (cause) {
+            const error = acpError(cause);
+            if (error.kind !== "auth") throw error;
+            const methodId = text(request.options?.authMethodId);
+            if (methodId === undefined) throw hostError("AcpAuthRequired", "Sign in to the agent before opening a session.", "auth");
+            const advertised = Array.isArray(session.init?.authMethods) ? session.init.authMethods : [];
+            if (advertised.length > 0 && !advertised.some((method) => method?.id === methodId)) {
+              throw hostError("AcpAuthMethod", "The agent did not advertise that sign-in method.", "auth");
+            }
+            await session.connection.request("authenticate", { methodId }, { timeoutMs: requestTimeoutMs });
+            return await call();
           }
-          await session.connection.request("authenticate", { methodId }, { timeoutMs: requestTimeoutMs });
-          result = await setupCall();
+        };
+        const adoptSetup = (result, engineSessionId) => {
+          session.engineSessionId = engineSessionId;
+          session.modelState = isRecord(result?.models) ? result.models : null;
+          session.configOptions = normalizeConfigOptions(result?.configOptions) ?? [];
+          session.modes = modeStateOf(result);
+          session.models = catalogFor(session, { configOptions: session.configOptions, models: session.modelState });
+        };
+        let result;
+        if (operand === "fork" && isKiro(session)) {
+          // Kiro can only fork a session it has started in this process, and a turn fork names
+          // the source prompt's `userMessageId`. T3 starts a session, configures it, and then
+          // calls session/fork with `_meta.kiro.messageId` (packages/provider-kiro adapter.ts).
+          const provisional = await setupWithAuth(() => session.connection.request("session/new", { cwd, mcpServers }, { timeoutMs: requestTimeoutMs }));
+          const provisionalId = text(provisional?.sessionId);
+          if (provisionalId === undefined) throw hostError("AcpSession", "The agent returned no session id.", "engine");
+          adoptSetup(provisional, provisionalId);
+          await applySelection(session, request.options ?? {});
+          await enforceKiroAutopilot(session);
+          const atTurn = text(request.options?.atTurn) ?? text(request.options?.forkAtTurn) ?? text(request.atTurn);
+          result = await setupWithAuth(() =>
+            session.connection.request(
+              "session/fork",
+              {
+                sessionId: request.engineSessionId,
+                cwd,
+                mcpServers,
+                ...(atTurn === undefined ? {} : { _meta: { kiro: { messageId: atTurn } } }),
+              },
+              { timeoutMs: requestTimeoutMs },
+            ),
+          );
+        } else {
+          result = await setupWithAuth(setupCall);
         }
         if (operand === "create" || operand === "fork") {
           const engineSessionId = text(result?.sessionId);
           if (engineSessionId === undefined) throw hostError("AcpSession", "The agent returned no session id.", "engine");
-          session.engineSessionId = engineSessionId;
+          adoptSetup(result, engineSessionId);
         } else {
-          session.engineSessionId = request.engineSessionId;
+          adoptSetup(result, request.engineSessionId);
         }
-        session.modelState = isRecord(result?.models) ? result.models : null;
-        session.configOptions = normalizeConfigOptions(result?.configOptions) ?? [];
-        session.modes = modeStateOf(result);
-        session.models = acpModelCatalog({ configOptions: session.configOptions, models: session.modelState });
       };
 
       const onAgentNotification = (session, method, params) => {
@@ -1117,7 +1353,16 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           ctx.log({ type: "malformedSessionUpdate", method: "session/update" });
           return;
         }
-        if (update.sessionUpdate === "config_option_update") refreshConfig(session, update.configOptions);
+        if (update.sessionUpdate === "config_option_update") {
+          refreshConfig(session, update.configOptions);
+          if (isKiro(session)) {
+            // Kiro can advertise a new option set at any time; a supervised session never keeps
+            // autopilot on, so correct an advert that says on (without delaying the delta stream).
+            void enforceKiroAutopilot(session).catch((cause) => {
+              ctx.log({ type: "kiroAutopilotFailed", sessionId: session.id, kind: acpError(cause).kind });
+            });
+          }
+        }
         if (update.sessionUpdate === "current_mode_update" && session.modes !== undefined) {
           const modeId = text(update.currentModeId);
           if (modeId !== undefined) session.modes = { ...session.modes, currentModeId: modeId };
@@ -1359,6 +1604,9 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           generation: 1,
           modelState: null,
           configOptions: [],
+          configWaiters: new Map(),
+          autopilotWrite: false,
+          modelEfforts: new Map(),
           models: { models: [] },
           modes: undefined,
           run: null,
@@ -1378,6 +1626,7 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           }
           await openSessionSetup(session, request, operation);
           await applySelection(session, { model: request.options?.model, effort: request.options?.effort, mode: request.options?.mode });
+          await enforceKiroAutopilot(session);
         } catch (cause) {
           session.closing = true;
           session.connection?.failAll(acpError(cause));
@@ -1388,13 +1637,7 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         return { engineSessionId: session.engineSessionId };
       };
 
-      const send = async (request) => {
-        const session = sessionOf(request.sessionId);
-        if (session.broken || session.processGone) throw hostError("AcpSessionLost", "The agent lost this conversation.", "session_lost");
-        if (session.run) throw hostError("RunInProgress", "a run is already open on this session", "invalid_request");
-        const textValue = messageText(request.message);
-        await applySelection(session, request.options ?? {});
-        const blocks = await promptBlocks(session, textValue, request.message);
+      const beginRun = (session, request) => {
         const run = {
           sendId: request.id,
           open: false,
@@ -1402,11 +1645,76 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           done: false,
           generation: 0,
           prompt: undefined,
+          compact: false,
           settledResolve: undefined,
           settled: undefined,
         };
         run.settled = new Promise((resolve) => (run.settledResolve = resolve));
         session.run = run;
+        return run;
+      };
+      const openRun = (run) => {
+        setImmediate(() => {
+          run.open = true;
+          for (const frame of run.buffer.splice(0)) ctx.send(frame);
+        });
+      };
+      const acceptedRun = (session, request) => ({
+        runId: `run-${request.id}`,
+        engineSessionId: session.engineSessionId,
+        ...(request.messageId === undefined ? {} : { messageId: request.messageId }),
+      });
+
+      /**
+       * Kiro's `/compact` is its `_kiro/session/compact` extension, not a prompt: T3 answers a
+       * `/compact` turn from that request (packages/provider-kiro/src/server/adapter.ts). It runs
+       * as one completed run with no prompt and is used only when Kiro advertised the method;
+       * otherwise `/compact` travels as an ordinary message.
+       */
+      const sendKiroCompact = async (session, request) => {
+        const run = beginRun(session, request);
+        run.compact = true;
+        let promise;
+        try {
+          promise = session.connection.request(KIRO_COMPACT_METHOD, { sessionId: session.engineSessionId }, { timeoutMs: 0 });
+        } catch (cause) {
+          if (session.run === run) session.run = null;
+          throw acpError(cause);
+        }
+        run.prompt = promise;
+        promise.then(
+          (result) => {
+            if (run.done) return;
+            if (result?.success !== true) {
+              failRun(session, run, hostError("KiroCompact", "Kiro could not compact the conversation.", "engine"));
+              return;
+            }
+            finish(session, run, { ok: true, result: { reason: "completed", threadDisposition: "reusable" } });
+          },
+          (cause) => failRun(session, run, cause),
+        );
+        openRun(run);
+        return acceptedRun(session, request);
+      };
+
+      const send = async (request) => {
+        const session = sessionOf(request.sessionId);
+        if (session.broken || session.processGone) throw hostError("AcpSessionLost", "The agent lost this conversation.", "session_lost");
+        if (session.run) throw hostError("RunInProgress", "a run is already open on this session", "invalid_request");
+        const textValue = messageText(request.message);
+        if (
+          isKiro(session) &&
+          isKiroCompactCommand(textValue) &&
+          attachmentList(request.message).length === 0 &&
+          kiroAdvertises(session, KIRO_COMPACT_METHOD)
+        ) {
+          await enforceKiroAutopilot(session);
+          return sendKiroCompact(session, request);
+        }
+        await applySelection(session, request.options ?? {});
+        await enforceKiroAutopilot(session);
+        const blocks = await promptBlocks(session, textValue, request.message);
+        const run = beginRun(session, request);
         let promise;
         try {
           run.generation += 1;
@@ -1418,15 +1726,8 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           if (session.run === run) session.run = null;
           throw acpError(cause);
         }
-        setImmediate(() => {
-          run.open = true;
-          for (const frame of run.buffer.splice(0)) ctx.send(frame);
-        });
-        return {
-          runId: `run-${request.id}`,
-          engineSessionId: session.engineSessionId,
-          ...(request.messageId === undefined ? {} : { messageId: request.messageId }),
-        };
+        openRun(run);
+        return acceptedRun(session, request);
       };
 
       const steer = async (request) => {
@@ -1434,6 +1735,25 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
         if (!session || session.broken || session.run?.done) return { outcome: "rejected", messageId: request.messageId };
         if (typeof request.text !== "string") throw hostError("InvalidMessage", "steer.text must be text.", "invalid_request");
         const run = session.run;
+        if (isKiro(session) && run.compact !== true) {
+          // Kiro's native steer queues the message for the running turn; it waits for the tool
+          // in flight and never cancels it (T3's KiroSteering). The prompt's own reply ends the run.
+          try {
+            const result = await session.connection.request(
+              KIRO_STEER_METHOD,
+              { sessionId: session.engineSessionId, message: request.text },
+              { timeoutMs: requestTimeoutMs },
+            );
+            if (result?.queued !== true) {
+              ctx.log({ type: "steerRejected", kind: "engine" });
+              return { outcome: "rejected", messageId: request.messageId };
+            }
+            return { outcome: "queued", messageId: request.messageId };
+          } catch (cause) {
+            ctx.log({ type: "steerRejected", kind: acpError(cause).kind });
+            return { outcome: "rejected", messageId: request.messageId };
+          }
+        }
         refuseAsks(session, run);
         const previousGeneration = run.generation;
         run.generation += 1;
@@ -1550,6 +1870,9 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           generation: 1,
           modelState: null,
           configOptions: [],
+          configWaiters: new Map(),
+          autopilotWrite: false,
+          modelEfforts: new Map(),
           modes: undefined,
           run: null,
           tools: new Map(),
@@ -1562,7 +1885,7 @@ export function acpFamily({ spawn = spawnAcpAgent, startTimeoutMs = START_TIMEOU
           await startSession(request, session);
           const result = await session.connection.request("session/new", { cwd: session.spawn.cwd, mcpServers: [] }, { timeoutMs: requestTimeoutMs });
           session.engineSessionId = text(result?.sessionId);
-          return acpModelCatalog({ configOptions: result?.configOptions, models: result?.models });
+          return acpModelCatalog({ configOptions: result?.configOptions, models: result?.models }, agent.id);
         } catch (cause) {
           throw acpError(cause);
         } finally {

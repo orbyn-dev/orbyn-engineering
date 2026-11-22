@@ -68,6 +68,32 @@ const approveAndType = (digits) => [
   ...typeDigits(digits),
 ];
 
+
+/** Transcript import sheets: the same file and the same two menu steps, then whichever state the frame draws. */
+const TRANSCRIPT_TITLE = "Redirect loop on logout";
+const TRANSCRIPT_MESSAGES = Array.from({ length: 214 }, (_, i) => ({
+  role: i % 2 === 0 ? "user" : "assistant",
+  ts: "2026-11-20T09:00:05Z",
+  text: `Message ${i + 1}`,
+}));
+const transcriptBody = (thread, over = {}) =>
+  JSON.stringify({ format: "orbyn-transcript", version: 1, exported_at: "2026-11-22T10:00:00Z", thread, messages: TRANSCRIPT_MESSAGES, omitted_earlier: 0, ...over });
+const importSteps = (name, thread, over = {}, after = [], content = transcriptBody(thread, over)) => [
+  { do: "contextmenu", selector: ".folder-toggle", text: "orbyn-engineering-app" },
+  click("menuitem", "Import transcript…"),
+  { do: "file", name, mime: "application/vnd.orbyn.transcript+json", content },
+  ...after,
+];
+const importRoute = (name, thread, over = {}, after = [], content = transcriptBody(thread, over)) => ({
+  route: "#/threads/t-done",
+  scenario: "transcript-import",
+  steps: importSteps(name, thread, over, after, content),
+  wait: 1200,
+});
+const engineThread = { title: TRANSCRIPT_TITLE, engine: "codex", model: "opus", created_at: "2026-11-20T09:00:00Z" };
+/** A transcript over the cap, so the page refuses it before sending; 3.4 MiB as the frame shows. */
+const TOO_LARGE = "x".repeat(Math.ceil(3.4 * 1024 * 1024));
+
 export const FRAMES = {
   // The shell.
   "shell-home": { route: "#/" },
@@ -782,4 +808,67 @@ export const FRAMES = {
   "capacity-settings-editor": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", steps: [click("button", "Change the limit")] },
   "capacity-settings-editor-narrow": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity", width: 640, steps: [click("button", "Change the limit")] },
   "capacity-settings-editor-error": { route: "#/preview/crew/capacity-live-settings", scenario: "crew-capacity-save-fails", steps: [click("button", "Change the limit"), click("button", "Save")] },
+  // Transcript export and import (frames transcript-*): the two menus, the export toasts, the import sheet's states,
+  // its four refusals, and an imported thread. The mock's transcript-import scenarios carry a project default engine.
+  "transcript-export-menu": { route: "#/threads/t-done", steps: [click("button", "Thread menu")] },
+  "transcript-export-menu-sidebar": {
+    route: "#/threads/t-done",
+    steps: [{ do: "contextmenu", role: "link", name: "Explain how the event log resumes", prefix: true }],
+  },
+  "transcript-export-exporting": {
+    route: "#/threads/t-done",
+    pre: [{ route: "**/api/threads/t-done/export", delay: 20000 }],
+    steps: [click("button", "Thread menu"), click("menuitem", "Export transcript")],
+  },
+  "transcript-export-saved": {
+    route: "#/threads/t-done",
+    steps: [click("button", "Thread menu"), click("menuitem", "Export transcript")],
+  },
+  "transcript-export-failed": {
+    route: "#/threads/t-done",
+    pre: [{ route: "**/api/threads/t-done/export", status: 500 }],
+    steps: [click("button", "Thread menu"), click("menuitem", "Export transcript")],
+  },
+  "transcript-import-project-menu": {
+    route: "#/threads/t-done",
+    scenario: "transcript-import",
+    steps: [{ do: "contextmenu", selector: ".folder-toggle", text: "orbyn-engineering-app" }],
+  },
+  "transcript-import-drop": {
+    route: "#/threads/t-done",
+    scenario: "transcript-import",
+    steps: [
+      {
+        do: "drag",
+        selector: ".folder-toggle",
+        name: "Redirect loop on logout.orbyn.json",
+        mime: "application/vnd.orbyn.transcript+json",
+        text: "orbyn-engineering-app",
+        content: transcriptBody(engineThread),
+      },
+    ],
+  },
+  "transcript-import-reading": {
+    route: "#/threads/t-done",
+    scenario: "transcript-import",
+    pre: [{ route: "**/api/threads/import*", delay: 20000 }],
+    steps: importSteps("Redirect loop on logout.orbyn.json", engineThread),
+  },
+  "transcript-import-preview": importRoute("Redirect loop on logout.orbyn.json", engineThread),
+  "transcript-import-preview-dropped": importRoute("Redirect loop on logout dropped.orbyn.json", engineThread),
+  "transcript-import-importing": importRoute("Redirect loop on logout.orbyn.json", engineThread, {}, [
+    { do: "route", route: "**/api/threads/import*", delay: 20000 },
+    click("button", "Import as new thread"),
+    { do: "wait", ms: 300 },
+  ]),
+  "transcript-import-engine-menu": importRoute("Redirect loop on logout.orbyn.json", engineThread, {}, [
+    click("combobox", "Engine"),
+  ]),
+  "transcript-import-preview-no-engine": importRoute("Redirect loop on logout.orbyn.json", { title: TRANSCRIPT_TITLE }),
+  "transcript-import-error-too-large": importRoute("too large.orbyn.json", engineThread, {}, [], TOO_LARGE),
+  "transcript-import-error-too-new": importRoute("newer.orbyn.json", engineThread),
+  "transcript-import-error-unreadable": importRoute("notes.orbyn.json", engineThread),
+  "transcript-import-error-key-missing": importRoute("nokey.orbyn.json", engineThread),
+  "transcript-imported-thread": { route: "#/threads/t-imported", scenario: "transcript-imported" },
+
 };

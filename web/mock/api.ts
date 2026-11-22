@@ -97,7 +97,11 @@ export type Scenario =
   | "browser-profiles"
   | "browser-profiles-empty"
   /** The first thread on Cursor: the first send answers 409 engine_notice_required, every later one 409 engine_mode_refused (use with #/preview/cursor-thread). */
-  | "cursor-thread";
+  | "cursor-thread"
+  /** Transcript import: a project default engine, so the sheet can preview; `transcript-imported` adds a thread made from a file. */
+  | "transcript-import"
+  | "transcript-import-no-default"
+  | "transcript-imported";
 
 type Subscriber = (event: WireThreadEvent) => void;
 
@@ -204,6 +208,7 @@ export function createMockApi(options: MockOptions = {}) {
     // Autopilot by area is drawn for one repository (the design has a separate frame for several): its scenarios keep the first project.
     if (next.startsWith("crew-areas")) projects = projects.slice(0, 1);
     threads = blank ? [] : fixtures.threads();
+    if (next === "transcript-imported") threads = [...threads, fixtures.importedThread()];
     approvals = blank ? [] : fixtures.pendingApprovals();
     tasks = blank ? [] : fixtures.scheduledTasks();
     cursorSends = 0;
@@ -216,6 +221,7 @@ export function createMockApi(options: MockOptions = {}) {
         ]
       : [];
     logs = blank ? {} : fixtures.logs();
+    if (next === "transcript-imported") logs["t-imported"] = fixtures.importedLog();
     if (next === "reference") {
       const state = fixtures.referenceState(Date.now());
       projects = state.projects;
@@ -244,6 +250,10 @@ export function createMockApi(options: MockOptions = {}) {
       engines = engines.filter((engine) => keep.includes(engine.id));
       for (const engine of engines) if (engine.id === "codex" && next !== "limits-signedout") engine.auth = "logged_in";
     }
+    if (next === "transcript-import" || next === "transcript-imported") {
+      preferenceValues = { ...preferenceValues, default_engine: "claude", default_model: "", default_effort: "", default_model_options: {}, disabled_engines: [] };
+    }
+    if (next === "transcript-import-no-default") preferenceValues = { ...preferenceValues, disabled_engines: [] };
     if (!blank) preferenceValues = { ...preferenceValues, provider_instances: structuredClone(providerInstances), custom_models: structuredClone(customModels) };
   }
   reset();
@@ -586,6 +596,7 @@ export function createMockApi(options: MockOptions = {}) {
         };
       }
       if (seg[5] === "checks" || seg[5] === "timeline") return { status: 200, body: [] };
+      if (seg[5] === "comments") return { status: 200, body: fixtures.pullConversation() };
       if (seg[5] === "stack") return { status: 200, body: { layers: [], position: 0 } };
     }
 
@@ -595,6 +606,80 @@ export function createMockApi(options: MockOptions = {}) {
     }
     if (method === "POST" && seg[1] === "threads" && seg[3] === "pulls" && seg[4] === "refresh") {
       return { status: 200, body: fixtures.pulls().map((entry) => entry.pull) };
+    }
+
+    if (method === "GET" && seg[1] === "threads" && seg[3] === "export" && !seg[4]) {
+      const thread = threads.find((entry) => entry.id === seg[2]);
+      if (!thread) return err(404, "not_found", "Thread not found.");
+      return {
+        status: 200,
+        body: {
+          format: "orbyn-transcript",
+          version: 1,
+          exported_at: now(),
+          thread: { title: thread.title, engine: thread.engine, model: thread.model, created_at: thread.created_at },
+          messages: [
+            { role: "user", ts: thread.created_at, text: "The logout page redirects back to itself in a loop." },
+            { role: "assistant", ts: thread.updated_at, text: "The cookie is cleared after the redirect has already fired." },
+          ],
+          omitted_earlier: 0,
+        },
+      };
+    }
+
+    if (method === "POST" && seg[1] === "threads" && seg[2] === "import") {
+      const project = projects.find((entry) => entry.id === query.get("project_id"));
+      if (!project) return err(404, "not_found", "Project not found.");
+      const name = query.get("name") ?? "transcript.orbyn.json";
+      if (/huge/i.test(name)) return err(413, "file_too_large", "A transcript is at most 2 MiB.");
+      if (/newer/i.test(name)) return err(422, "transcript_too_new", "This transcript was made by a newer Orbyn.");
+      if (/notes/i.test(name)) return err(422, "transcript_unreadable", "This file is not an Orbyn transcript.");
+      if (/nokey/i.test(name)) return err(403, "person_required", "This action is only available in the desktop app.");
+      if (/engine-gone/i.test(name)) return err(404, "engine_unavailable", "That engine is not available here. Choose another.");
+      const document = (body ?? {}) as Record<string, unknown>;
+      const sourceThread = typeof document.thread === "object" && document.thread !== null ? (document.thread as Record<string, unknown>) : {};
+      const messages = Array.isArray(document.messages) ? document.messages : [];
+      const engineId = query.get("engine") ?? (typeof sourceThread.engine === "string" ? sourceThread.engine : "");
+      const known = engines.find((entry) => entry.id === engineId);
+      if (engineId === "" || !known || known.installed === false) {
+        return err(404, "engine_unavailable", "That engine is not available here. Choose another.");
+      }
+      const namedTitle = typeof sourceThread.title === "string" && sourceThread.title !== "" ? sourceThread.title : null;
+      const title = namedTitle ?? (name.replace(/\.orbyn\.json$/i, "").replace(/[-_]+/g, " ") || "Imported transcript");
+      const droppedSample = /dropped/i.test(name);
+      const problems = droppedSample
+        ? [
+            { kind: "message", index: 7, code: "unknown_role" },
+            { kind: "message", index: 31, code: "text_empty" },
+            { kind: "message", index: 96, code: "not_an_object" },
+          ]
+        : [];
+      const common = {
+        title,
+        message_count: droppedSample ? 211 : messages.length,
+        dropped: problems.length,
+        problems,
+      };
+      if (query.get("dry_run") === "true") return { status: 200, body: { dry_run: true, thread: null, ...common } };
+      const thread: Thread = {
+        scratch: false,
+        id: nextId("t"),
+        project_id: project.id,
+        title,
+        engine: engineId,
+        model: null,
+        cwd: project.path,
+        worktree: null,
+        skill_profile: null,
+        active_run: null,
+        last_run_state: null,
+        created_at: now(),
+        updated_at: now(),
+        source: "orbyn-transcript",
+        imported_at: now(),
+      };
+      threads = [...threads, thread];
+      return { status: 201, body: { dry_run: false, thread, ...common } };
     }
 
     switch (key) {
