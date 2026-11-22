@@ -4,7 +4,7 @@ import { Dialog } from "../../ui/Dialog";
 import { useUi } from "../../product/state/ui";
 import { useSnapshot } from "./runtime";
 import { SnapshotDraftChip, SnapshotWorks } from "./SnapshotChip";
-import { shortcutKeys, shortcutText } from "./types";
+import { shortcutKeys, shortcutText, SNAPSHOT_SETUP_AVAILABLE } from "./types";
 import "./snapshot.css";
 
 const Pill = ({ children, kind = "" }: { children: ReactNode; kind?: string }) => (
@@ -48,7 +48,7 @@ export function SnapshotSetupDialog() {
     return () => window.removeEventListener("focus", read);
   }, [open, refresh]);
 
-  if (!open || !state || !state.supported) return null;
+  if (!SNAPSHOT_SETUP_AVAILABLE || !open || !state || !state.supported) return null;
   const mac = state.platform === "macos";
   const screenRecording = state.permissions.screen_recording;
   const accessibility = state.permissions.accessibility;

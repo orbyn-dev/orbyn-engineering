@@ -9,7 +9,7 @@ const TABS = [
 ] as const;
 const VIEWS = ["Flow", "Review", "Map", "Board", "Lanes"] as const;
 
-/** The side panel at 320 px as drawn: its tabs with Crew selected, the Crew header and the Crew views. `on` is the view drawn as chosen; the last view is Inbox 4, or Report when that is the chosen one. */
+/** The side panel at 320 px as drawn: its tabs with Crew selected, the Crew header and the Crew views. `on` is the view drawn as chosen; the last view is Inbox, or Report when that is the chosen one. */
 export function PanelShell({ on, children }: { on: "Review" | "Report"; children: ReactNode }) {
   return (
     <>
@@ -45,7 +45,7 @@ export function PanelShell({ on, children }: { on: "Review" | "Report"; children
       </div>
       <div className="cx-cwpseg" style={{ padding: "8px 10px", flex: "none" }}>
         <span className="cx-segx" aria-label="Crew views">
-          {[...VIEWS, on === "Report" ? "Report" : "Inbox 4"].map((name) => (
+          {[...VIEWS, on === "Report" ? "Report" : "Inbox"].map((name) => (
             <span key={name} className={name === on ? "cx-on" : undefined} aria-current={name === on ? "true" : undefined}>
               {name}
             </span>

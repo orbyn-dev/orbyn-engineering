@@ -84,8 +84,8 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   same limit to what it emits: at most 50 cursors and 4 KiB of them as that JSON, with any further scopes dropped in
   key order. Only the scopes named in `cursors` are read, one page each, and the answer holds just those pages and
   their next cursors. The cursor is opaque: the page never builds or edits one, and the service refuses one it did
-  not issue for that scope and filter (`400 invalid`). Built for GitLab only; GitHub gives one page and no cursor.
-  The beta UI may leave paging out.
+  not issue for that scope and filter (`400 invalid`). Built for GitLab and Forgejo; GitHub gives one page and no
+  cursor. The beta UI may leave paging out.
 - **"Not planned"** is `close_reason: "not_planned"` when the tracker says so (GitHub, GitLab "won't fix"
   labels are not guessed at). A tracker that does not say reports `null`.
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
@@ -161,6 +161,64 @@ detail are built, and the thread link, start-thread, draft and find paths use th
 - **Not verified.** No real GitLab (gitlab.com or self-managed) was contacted. The reader is tested against a
   local fake server; the field names, header names, `issues_statistics` shape, `x-next-page` and `RateLimit-Reset`
   behavior are from GitLab's documentation as understood, and a self-managed version or a proxy may differ.
+
+## Forgejo as built
+
+`forgejo` reads issues in `crates/orbyn-core/src/issues/forgejo.rs`, behind the same `ORBYN_ISSUES` flag. List and
+detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
+`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for Forgejo (Planned).
+
+- **Requests.** `GET {host}/api/v1/repos/{owner}/{repo}/issues` (`type=issues`, `state` `open|closed|all`, `q`,
+  `labels` as comma-separated names, `assigned_by`, `sort=recentupdate`, `page`, `limit` up to Forgejo's 50), two
+  `limit=1` reads for the open and closed totals from `X-Total-Count` (best effort: no answer means `counts: null`,
+  never a failed list), `GET .../issues/{number}` and `GET .../issues/{number}/comments` for a detail. `owner` and
+  `repo` are validated to plain characters, so nothing needs encoding, and are sent as two separate path segments.
+  Reads only: every request is a `GET`.
+- **Credentials and host.** The token is read from the keychain for each source (`tracker:forgejo`) and sent only as
+  the `Authorization: token <token>` header to the connection's own host, which must be `https://` (re-checked when
+  the reader is built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an
+  answer over 2 MiB is refused, and a redirect is followed only within the same scheme, host and port (at most
+  three); any other redirect ends the request as `tracker_unavailable`. The token is in no log line, address or
+  error.
+- **Scope.** The scopes of a Forgejo connection are the `owner/repo` of the git remotes (`origin`) of this machine's
+  projects whose remote host equals the connection's host (`forgejo_path_of_remote`: https, `ssh://` and
+  `git@host:` forms; user, port and `.git` dropped; Forgejo has no subgroups, so only exactly two path segments are
+  a scope), then any the connection names. A connection made in the UI keeps no scope of its own. A scope outside
+  these is `400 invalid` and nothing is sent.
+- **Mapping.** `key` is `number` as text, `display_key` is `#<number>`, `author` and `assignees` are `user.login`
+  and `assignees[].login`, labels are names, `url` is `html_url` when it stays on the connection's host (otherwise
+  `{host}/{owner}/{repo}/issues/{number}`), `comment_count` is `comments`. State `open` is category `open`, name
+  `Open`; `closed` is `closed`, `Closed`; `close_reason` is always `null`. A row carrying a `pull_request` object is
+  skipped even though `type=issues` asks Forgejo to leave pull requests out. The comments endpoint returns every
+  comment (Forgejo's API reference lists no page or limit for it); the first 50 are kept, oldest first.
+- **Paging.** The listing carries `next_cursors["forgejo <owner/repo>"]` while Forgejo's `Link` header names a next
+  page, and infers the next page from a full page when the header is absent. A cursor is the page number and a tag
+  bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is sent. The tag is not
+  signed with a secret, so it proves "made for these filters", not "made by this service". With `cursors` present
+  only the scopes it names are read (this applies to every tracker; GitHub issues no cursor and refuses any).
+- **Filters.** The `assigned_by` filter sends the login; `me` is resolved with a `GET /api/v1/user` on the same
+  host and token; `none` is refused as `400 invalid` because Forgejo's issue list has no way to ask for unassigned
+  issues. A label name containing a comma cannot be expressed as the comma-separated `labels` value and is
+  `400 invalid` before anything is sent.
+- **Failures.** `401` is `tracker_not_connected` ("Forgejo did not accept the saved token"), `403` is `forbidden`,
+  `404` is `not_found`, `429` is `rate_limited` with the wait from `Retry-After` when Forgejo gave one, and
+  everything else (a `5xx`, a timeout, a refused redirect, an unreadable or oversized answer) is
+  `tracker_unavailable` ("Forgejo did not answer."). The message is always the service's sentence, never Forgejo's
+  reply. A list that fails for any other reason goes in `IssueList.failed` while other trackers answer; an invalid
+  cursor or a comma in a label filter is the usual `400 invalid` and no list at all.
+- **Untrusted text.** Titles are cut to 256 characters, labels to 200 and at most 100 of them, user names to 100
+  and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
+  and the draft framing above is unchanged.
+- **Planned, not built.** Linked pull requests (`linked_pull_requests` stays empty), close reasons (`close_reason`
+  stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and `state`, the
+  `candidates` read, and the T3 list `sort` option (the reader always asks for newest update first). Thread link,
+  start-thread, draft and find already work through list and detail. `find` parses only
+  `https://github.com/.../issues/<n>` links: a pasted Forgejo link is not parsed as one and goes to the tracker as
+  search text. A bare number is looked up as the issue `number` in every connected scope.
+- **Not verified.** No real Forgejo (or Codeberg) was contacted. The reader is tested against a local fake server;
+  the field names, `X-Total-Count`, the `Link` header, `sort=recentupdate`, the comments endpoint returning every
+  comment, and the `assigned_by` filter are UNVERIFIED: they are from the API as understood, and a version or a
+  proxy may differ.
 
 ## Issue text is untrusted
 

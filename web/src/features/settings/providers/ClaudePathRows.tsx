@@ -5,9 +5,10 @@ import type { ClaudeEnginePath } from "../../../product/engines/claudePath";
 import { useHostFor } from "../../enginehost";
 import { HostChip } from "../engineHost/HostParts";
 
-/** The helper line under each Claude row: what that path is, in the provider list. */
-const CLAUDE_SDK_NOTE = "Runs through Orbyn’s engine host with the Claude Agent SDK, using your own Claude Code. Default.";
-const CLAUDE_CLI_NOTE = "Runs your Claude Code directly, without the engine host.";
+import { CLAUDE_CLI_NOTE, CLAUDE_SDK_NOTE } from "../../../product/engines/claudePath";
+
+/** The helper line under each Claude row: what that path is, in the provider list and the engine picker. */
+export { CLAUDE_CLI_NOTE, CLAUDE_SDK_NOTE };
 
 export interface ClaudePathRow {
   key: string;

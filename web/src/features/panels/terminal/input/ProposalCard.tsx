@@ -1,11 +1,18 @@
 import { Play, Pencil } from "lucide-react";
+import { useMemo } from "react";
+import { useThreadLogs } from "../../../../product/state/threadLogs";
 import { maskSecrets } from "./history";
-import { proposalKey, useProposalSource, type Proposal } from "./proposal";
+import { proposalFromEvents, proposalKey, useProposalSource, type Proposal } from "./proposal";
 
-/** The typed proposal the service reported for the run the editor started. Nothing is read from model text; with no source, always null. */
+/** The proposal for the run the editor started, from the service's event or a test's typed offer. Nothing is read from model text. */
 export function useProposal(threadId: string, runId: string | null): { key: string; proposal: Proposal } | null {
-  const proposal = useProposalSource((state) => (state.source === "service" && runId ? state.byRun[proposalKey(threadId, runId)] : undefined));
-  return proposal && runId ? { key: proposalKey(threadId, runId), proposal } : null;
+  const source = useProposalSource((state) => state.source);
+  const offered = useProposalSource((state) => (runId ? state.byRun[proposalKey(threadId, runId)] : undefined));
+  const events = useThreadLogs((state) => (runId ? state.logs[threadId]?.events : undefined));
+  const recorded = useMemo(() => (runId && events ? proposalFromEvents(events, runId) : null), [events, runId]);
+  if (source !== "service" || !runId) return null;
+  const proposal = offered ?? recorded;
+  return proposal ? { key: proposalKey(threadId, runId), proposal } : null;
 }
 
 /**

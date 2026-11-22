@@ -24,7 +24,7 @@ export function WatchOnMain({ data }: { data: WatchData }) {
         {data.strip.actions.length ? (
           <span className="crew-bn-acts">
             {data.strip.actions.map((action) => (
-              <Act key={action.label} label={action.label} primary={action.primary} />
+              <Act key={action.label} label={action.label} primary={action.primary} planned={action.planned} />
             ))}
           </span>
         ) : null}
