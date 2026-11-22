@@ -663,7 +663,7 @@ fn an_unusable_keychain_reads_false_and_keeps_the_record() {
     let f = fixture();
     let set = env_set_with_value(&f, "S", "K");
     assert_eq!(stored_flags(&f, &set.id), [Some(true)]);
-    f.memory.fail_with(Some(Failure::Unavailable));
+    f.memory.fail_with(Some(Failure::Unusable));
     let reads = f.memory.get_calls();
     let listed = f.core.list_env_sets().unwrap();
     // The state check fails straight away; no key is read and the record is left as it was.
