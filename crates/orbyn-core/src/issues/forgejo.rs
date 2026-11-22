@@ -6,8 +6,8 @@
 //!
 //! UNVERIFIED against a live Forgejo. The field names, `X-Total-Count`, the `Link` header, `sort=recentupdate`,
 //! the comments endpoint (Forgejo 17's API reference lists no page or limit for it, so the answer holds every
-//! comment) and the `assignee` filter name (Forgejo 17's API reference calls the list filter `assigned_by`) come
-//! from the API as understood; a version or an instance behind a proxy may differ.
+//! comment) and the `assigned_by` filter come from the API as understood; a version or an instance behind a proxy
+//! may differ.
 
 use super::frame::cut;
 use super::host::validate_host;
@@ -218,7 +218,7 @@ impl Forgejo {
             .ok_or_else(unreadable)
     }
 
-    /// The `assignee` parameter for a filter. Forgejo's issue list has no way to ask for no assignee.
+    /// The `assigned_by` parameter for a filter. Forgejo's issue list has no way to ask for no assignee.
     async fn assignee_param(&self, filter: &AssigneeFilter) -> Result<Option<String>> {
         match filter {
             AssigneeFilter::Any => Ok(None),
@@ -281,27 +281,15 @@ fn segment_ok(segment: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
 }
 
-/// Percent-encode one path segment, so an `owner` or `repo` can never add a path separator or a query.
-fn encode_segment(segment: &str) -> String {
-    let mut out = String::with_capacity(segment.len());
-    for byte in segment.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
-/// The `owner` and `repo` path segments of a scope. Forgejo has no subgroups, so it is exactly two segments.
+/// The `owner` and `repo` path segments of a scope. Forgejo has no subgroups, so it is exactly two segments,
+/// and each is validated to plain characters, so nothing needs percent-encoding.
 fn repository(scope: &str) -> Result<(String, String)> {
     let segments: Vec<&str> = scope.split('/').collect();
     if scope.len() <= MAX_SCOPE_BYTES
         && segments.len() == 2
         && segments.iter().all(|s| segment_ok(s))
     {
-        Ok((encode_segment(segments[0]), encode_segment(segments[1])))
+        Ok((segments[0].to_owned(), segments[1].to_owned()))
     } else {
         Err(CoreError::Invalid("A Forgejo scope is owner/repo.".into()))
     }
@@ -417,28 +405,81 @@ fn page_of(scope: &str, query: &IssueQuery) -> Result<u32> {
     Ok(page)
 }
 
-/// The page `Link` names as next, when Forgejo sent one.
+/// Where one `Link` entry's parameters end: the first comma outside a quoted string.
+fn entry_end(params: &str) -> usize {
+    let mut in_quotes = false;
+    for (index, ch) in params.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => return index,
+            _ => {}
+        }
+    }
+    params.len()
+}
+
+/// The `<url>; rel="..."` entries of one `Link` header, read independently. A comma inside a URL stays in that
+/// entry, and a malformed entry is skipped rather than swallowing a later one.
+fn link_entries(text: &str) -> Vec<(&str, &str)> {
+    let mut entries = Vec::new();
+    let mut rest = text;
+    loop {
+        let Some(open) = rest.find('<') else {
+            break;
+        };
+        let after = &rest[open + 1..];
+        let close = after.find('>');
+        // A second `<` before the `>` means this URL never closed: skip to that later entry.
+        if let Some(another) = after.find('<')
+            && close.is_none_or(|close| another < close)
+        {
+            rest = &after[another..];
+            continue;
+        }
+        let Some(close) = close else {
+            break;
+        };
+        let url = &after[..close];
+        let tail = &after[close + 1..];
+        let end = entry_end(tail);
+        entries.push((url, &tail[..end]));
+        if end == tail.len() {
+            break;
+        }
+        rest = &tail[end + 1..];
+    }
+    entries
+}
+
+/// The page `Link` names as next, when Forgejo sent one. Only the integer `page` query of that entry is used.
 fn next_page_from_link(headers: &HeaderMap) -> Option<u32> {
     for header in headers.get_all("link").iter() {
-        let text = header.to_str().ok()?;
-        for part in text.split(',') {
-            let Some((target, params)) = part.trim().split_once(';') else {
-                continue;
-            };
+        let Ok(text) = header.to_str() else {
+            continue;
+        };
+        for (target, params) in link_entries(text) {
             let is_next = params.split(';').any(|param| {
                 let (name, value) = param.trim().split_once('=').unwrap_or((param.trim(), ""));
                 name.trim().eq_ignore_ascii_case("rel")
-                    && value.trim().trim_matches('"').eq_ignore_ascii_case("next")
+                    && value
+                        .trim()
+                        .trim_matches('"')
+                        .split_whitespace()
+                        .any(|rel| rel.eq_ignore_ascii_case("next"))
             });
             if !is_next {
                 continue;
             }
-            let target = target.trim().trim_start_matches('<').trim_end_matches('>');
-            let url = Url::parse(target).ok()?;
-            return url
+            let Ok(url) = Url::parse(target) else {
+                continue;
+            };
+            if let Some(page) = url
                 .query_pairs()
                 .find(|(key, _)| key == "page")
-                .and_then(|(_, value)| value.parse::<u32>().ok());
+                .and_then(|(_, page)| page.parse::<u32>().ok())
+            {
+                return Some(page);
+            }
         }
     }
     None
@@ -581,7 +622,7 @@ impl IssueSource for Forgejo {
             params.push(("labels", query.labels.join(",")));
         }
         if let Some(login) = assignee {
-            params.push(("assignee", login));
+            params.push(("assigned_by", login));
         }
         if !query.text.is_empty() {
             params.push(("q", query.text.clone()));

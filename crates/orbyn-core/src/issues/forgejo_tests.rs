@@ -170,7 +170,8 @@ async fn the_filters_become_forgejo_parameters() {
     let sent = listing(&server);
     assert_eq!(sent.param("state").as_deref(), Some("closed"));
     assert_eq!(sent.param("labels").as_deref(), Some("bug,ui"));
-    assert_eq!(sent.param("assignee").as_deref(), Some("bo"));
+    assert_eq!(sent.param("assigned_by").as_deref(), Some("bo"));
+    assert_eq!(sent.param("assignee"), None, "Forgejo reads assigned_by");
     assert_eq!(sent.param("q").as_deref(), Some("crash & burn"));
     assert_eq!(
         sent.param("limit").as_deref(),
@@ -189,6 +190,7 @@ async fn the_filters_become_forgejo_parameters() {
         .unwrap();
     let sent = listing(&server);
     assert_eq!(sent.param("state").as_deref(), Some("all"));
+    assert_eq!(sent.param("assigned_by"), None);
     assert_eq!(sent.param("assignee"), None);
     let before = server.seen().len();
     let comma = forgejo
@@ -228,7 +230,8 @@ async fn the_me_filter_uses_the_signed_in_login_and_none_is_refused() {
         .await
         .unwrap();
     let sent = listing(&server);
-    assert_eq!(sent.param("assignee").as_deref(), Some("me"));
+    assert_eq!(sent.param("assigned_by").as_deref(), Some("me"));
+    assert_eq!(sent.param("assignee"), None, "Forgejo reads assigned_by");
     assert!(
         server.seen().iter().any(|r| r.path() == "/api/v1/user"),
         "the login came from the authenticated user"
@@ -529,6 +532,27 @@ async fn an_answer_over_the_size_cap_is_refused_sized_or_not() {
 }
 
 #[tokio::test]
+async fn an_oversized_comments_answer_fails_the_detail_with_fixed_copy() {
+    let big = vec![b'a'; MAX_RESPONSE + 1];
+    let server = Server::start(move |req| {
+        if req.path().ends_with("/comments") {
+            return Reply::raw(200, big.clone());
+        }
+        Reply::json(&issue(&base_of(req), 1))
+    })
+    .await;
+    let error = reader(&server)
+        .get("grp/proj", "1")
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        matches!(&error, CoreError::TrackerUnavailable(m) if m == "Forgejo answered more than we read."),
+        "an oversized comments answer fails the whole detail, never a partial list: {error:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_redirect_to_another_host_is_refused_and_never_followed() {
     let elsewhere = answering(vec![1]).await;
     let target = format!("{}/api/v1/repos/grp/proj/issues", elsewhere.base);
@@ -810,14 +834,71 @@ async fn a_scope_or_key_that_is_not_plain_is_refused_before_a_request() {
     assert!(server.seen().is_empty());
 }
 
+#[tokio::test]
+async fn a_scope_with_a_reserved_segment_is_refused_with_no_request() {
+    let server = answering(vec![1]).await;
+    let forgejo = reader(&server);
+    for scope in [
+        "grp/re%2Fpo",
+        "grp/re/po",
+        "grp/re po",
+        "grp/../po",
+        "../grp/po",
+    ] {
+        let listed = forgejo
+            .list(scope, &IssueQuery::default())
+            .await
+            .map(|_| ());
+        assert!(matches!(listed, Err(CoreError::Invalid(_))), "{scope:?}");
+        let got = forgejo.get(scope, "1").await.map(|_| ());
+        assert!(matches!(got, Err(CoreError::Invalid(_))), "{scope:?}");
+    }
+    assert!(server.seen().is_empty(), "nothing was sent");
+}
+
+fn links(value: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert("link", HeaderValue::from_str(value).unwrap());
+    headers
+}
+
 #[test]
-fn path_segments_are_percent_encoded_individually() {
-    assert_eq!(encode_segment("owner"), "owner");
-    assert_eq!(encode_segment("a b/c?d#e%f"), "a%20b%2Fc%3Fd%23e%25f");
-    assert_eq!(encode_segment("\u{e9}"), "%C3%A9");
+fn the_link_header_is_read_entry_by_entry() {
     assert_eq!(
-        repository("owner/repo").unwrap(),
-        ("owner".to_owned(), "repo".to_owned())
+        next_page_from_link(&links(
+            "<https://code.example.com/api/v1/repos/a/b/issues?q=a,b&page=2>; rel=\"next\""
+        )),
+        Some(2),
+        "a comma inside the URL does not split the entry"
+    );
+    assert_eq!(
+        next_page_from_link(&links(
+            "not a link; rel=\"next\", <https://code.example.com/x?page=3>; rel=\"next\""
+        )),
+        Some(3),
+        "a malformed first entry does not hide a later next"
+    );
+    assert_eq!(
+        next_page_from_link(&links(
+            "<never closed; rel=\"next\", <https://code.example.com/x?page=4>; rel=\"next\""
+        )),
+        Some(4),
+        "an unclosed first entry does not hide a later next"
+    );
+    assert_eq!(
+        next_page_from_link(&links(
+            "<https://code.example.com/x?page=9>; rel=\"last\", \
+             <https://code.example.com/x?page=2>; rel=\"next\""
+        )),
+        Some(2),
+        "last before next is read independently"
+    );
+    assert_eq!(
+        next_page_from_link(&links(
+            "<https://code.example.com/x?page=two>; rel=\"next\""
+        )),
+        None,
+        "only an integer page query names a page"
     );
 }
 

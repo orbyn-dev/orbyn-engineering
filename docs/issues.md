@@ -166,13 +166,14 @@ detail are built, and the thread link, start-thread, draft and find paths use th
 
 `forgejo` reads issues in `crates/orbyn-core/src/issues/forgejo.rs`, behind the same `ORBYN_ISSUES` flag. List and
 detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work only the
-`update` and `state` writes and the `candidates` read are missing for Forgejo (Planned).
+`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for Forgejo (Planned).
 
 - **Requests.** `GET {host}/api/v1/repos/{owner}/{repo}/issues` (`type=issues`, `state` `open|closed|all`, `q`,
-  `labels` as comma-separated names, `assignee`, `sort=recentupdate`, `page`, `limit` up to Forgejo's 50), two
+  `labels` as comma-separated names, `assigned_by`, `sort=recentupdate`, `page`, `limit` up to Forgejo's 50), two
   `limit=1` reads for the open and closed totals from `X-Total-Count` (best effort: no answer means `counts: null`,
   never a failed list), `GET .../issues/{number}` and `GET .../issues/{number}/comments` for a detail. `owner` and
-  `repo` are percent-encoded as two separate path segments. Reads only: every request is a `GET`.
+  `repo` are validated to plain characters, so nothing needs encoding, and are sent as two separate path segments.
+  Reads only: every request is a `GET`.
 - **Credentials and host.** The token is read from the keychain for each source (`tracker:forgejo`) and sent only as
   the `Authorization: token <token>` header to the connection's own host, which must be `https://` (re-checked when
   the reader is built, and the HTTP client itself refuses plain `http`). No proxy, no referer, 10 second timeout, an
@@ -195,8 +196,8 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   bound to the scope and the filters; one that does not verify is `400 invalid` and nothing is sent. The tag is not
   signed with a secret, so it proves "made for these filters", not "made by this service". With `cursors` present
   only the scopes it names are read (this applies to every tracker; GitHub issues no cursor and refuses any).
-- **Filters.** The `assignee` filter sends the login; `me` is resolved with a `GET /api/v1/user` on the same host
-  and token; `none` is refused as `400 invalid` because Forgejo's issue list has no way to ask for unassigned
+- **Filters.** The `assigned_by` filter sends the login; `me` is resolved with a `GET /api/v1/user` on the same
+  host and token; `none` is refused as `400 invalid` because Forgejo's issue list has no way to ask for unassigned
   issues. A label name containing a comma cannot be expressed as the comma-separated `labels` value and is
   `400 invalid` before anything is sent.
 - **Failures.** `401` is `tracker_not_connected` ("Forgejo did not accept the saved token"), `403` is `forbidden`,
@@ -209,14 +210,15 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
   and the draft framing above is unchanged.
 - **Planned, not built.** Linked pull requests (`linked_pull_requests` stays empty), close reasons (`close_reason`
-  stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and `state`, and the
-  `candidates` read. Thread link, start-thread, draft and find already work through list and detail. `find` parses
-  only `https://github.com/.../issues/<n>` links: a pasted Forgejo link is not parsed as one and goes to the tracker
-  as search text. A bare number is looked up as the issue `number` in every connected scope.
+  stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and `state`, the
+  `candidates` read, and the T3 list `sort` option (the reader always asks for newest update first). Thread link,
+  start-thread, draft and find already work through list and detail. `find` parses only
+  `https://github.com/.../issues/<n>` links: a pasted Forgejo link is not parsed as one and goes to the tracker as
+  search text. A bare number is looked up as the issue `number` in every connected scope.
 - **Not verified.** No real Forgejo (or Codeberg) was contacted. The reader is tested against a local fake server;
   the field names, `X-Total-Count`, the `Link` header, `sort=recentupdate`, the comments endpoint returning every
-  comment, and the `assignee` filter name (Forgejo 17's own API reference calls the list filter `assigned_by`) are
-  UNVERIFIED: they are from the API as understood, and a version or a proxy may differ.
+  comment, and the `assigned_by` filter are UNVERIFIED: they are from the API as understood, and a version or a
+  proxy may differ.
 
 ## Issue text is untrusted
 
