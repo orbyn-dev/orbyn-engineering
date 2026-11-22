@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { historyOf, maskSecrets, recordCommand, searchHistory, suggestion, type HistoryEntry } from "./history";
+import { historyOf, maskSecrets, recordCommand, recordExitCode, searchHistory, suggestion, type HistoryEntry } from "./history";
 
 const at = (command: string, n = 0): HistoryEntry => ({ command, ok: true, at: n });
 
@@ -37,6 +37,47 @@ describe("history", () => {
   });
 });
 
+describe("how a command ended", () => {
+  it("gives a success and a failure to the oldest unknown line with that command, in the order they arrived", () => {
+    recordCommand("ended:main", "npm test", 1);
+    recordCommand("ended:main", "npm test", 2);
+    expect(recordExitCode("ended:main", "npm test", 0)).toBe(true);
+    expect(recordExitCode("ended:main", "npm test", 1)).toBe(true);
+    expect(historyOf("ended:main").map((entry) => entry.ok)).toEqual([true, false]);
+    // Both lines have their result: a third report of the same command has no line to give it to.
+    expect(recordExitCode("ended:main", "npm test", 0)).toBe(false);
+  });
+
+  it("finds the line through the shell's own spacing and through a line break", () => {
+    recordCommand("space:main", "cargo   test    --workspace", 1);
+    recordCommand("space:main", "npm run\n  build", 2);
+    expect(recordExitCode("space:main", "cargo test --workspace", 1)).toBe(true);
+    expect(recordExitCode("space:main", "npm run build", 0)).toBe(true);
+    expect(historyOf("space:main").map((entry) => entry.ok)).toEqual([false, true]);
+  });
+
+  it("treats any non-zero code as a failure, an interrupted one included", () => {
+    recordCommand("code:main", "sleep 9", 1);
+    recordExitCode("code:main", "sleep 9", 130);
+    expect(historyOf("code:main")[0]?.ok).toBe(false);
+  });
+
+  it("leaves every line alone when no unknown line carries that command", () => {
+    recordCommand("none:main", "ls", 1);
+    expect(recordExitCode("none:main", "cargo test", 0)).toBe(false);
+    expect(recordExitCode("other:main", "ls", 0)).toBe(false);
+    expect(recordExitCode("none:main", "   ", 0)).toBe(false);
+    expect(historyOf("none:main")[0]?.ok).toBeNull();
+  });
+
+  it("never gives the same line a second result", () => {
+    recordCommand("once:main", "ls", 1);
+    expect(recordExitCode("once:main", "ls", 1)).toBe(true);
+    expect(recordExitCode("once:main", "ls", 0)).toBe(false);
+    expect(historyOf("once:main").map((entry) => entry.ok)).toEqual([false]);
+  });
+});
+
 describe("history across a project", () => {
   it("joins the terminals of a project, oldest first like one history, and leaves other projects out", async () => {
     const { historyAcross } = await import("./history");
@@ -49,11 +90,12 @@ describe("history across a project", () => {
 });
 
 describe("history row time", () => {
-  it("says how long ago it ran, and the result only when the shell reported one", async () => {
-    const { rowWhen } = await import("./history");
-    expect(rowWhen({ command: "x", ok: null, at: 0 }, 4 * 60_000)).toBe("4 min ago");
-    expect(rowWhen({ command: "x", ok: false, at: 0 }, 4 * 60_000)).toBe("failed · 4 min ago");
-    expect(rowWhen({ command: "x", ok: true, at: 0 }, 4 * 60_000)).toBe("ok · 4 min ago");
+  it("says how long ago it ran, and how it ended only when the shell reported one", async () => {
+    const { rowDetail } = await import("./history");
+    expect(rowDetail({ command: "x", ok: null, at: 0 }, 4 * 60_000)).toBe("4 min ago");
+    expect(rowDetail({ command: "x", ok: false, at: 0 }, 4 * 60_000)).toBe("4 min ago · 1 failed");
+    // The check mark carries a success, so the row says only when.
+    expect(rowDetail({ command: "x", ok: true, at: 0 }, 4 * 60_000)).toBe("4 min ago");
   });
   it("shows a multi-line command as one row with a visible separator, and returns the real text", () => {
     const command = "for f in a b; do\n  echo $f\ndone";
