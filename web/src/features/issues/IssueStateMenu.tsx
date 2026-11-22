@@ -31,6 +31,8 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
   // write landed is the state it is already in, and writes nothing.
   const now = useRef(issue.state);
   now.current = issue.state;
+  // Set at the click, not at the next render: two quick choices in one frame are still one write.
+  const sending = useRef(false);
   const choices = issue.states ?? [];
   if (issue.states === undefined || refused) {
     return (
@@ -42,7 +44,8 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
   }
   if (choices.length === 0) return <span className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span>;
   const choose = async (next: IssueState) => {
-    if (busy || sameState(next, now.current)) return;
+    if (busy || sending.current || sameState(next, now.current)) return;
+    sending.current = true;
     try {
       await write(() => issuesApi().setState(issue, next));
     } catch (failure) {
@@ -52,6 +55,8 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
         return;
       }
       pushToast(`Couldn't change the state. Nothing changed. ${reasonOf(failure)}`);
+    } finally {
+      sending.current = false;
     }
   };
   return (
